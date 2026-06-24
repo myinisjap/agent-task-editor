@@ -14,7 +14,7 @@ import (
 )
 
 // NewRouter builds and returns the application router.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine)
@@ -28,6 +28,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	r.Use(middleware.Logger)
 	r.Use(chimiddleware.RequestID)
 	r.Use(middleware.CORS(corsOrigins))
+	r.Use(middleware.BearerAuth(bearerToken))
 
 	r.Get("/healthz", handlers.Health)
 
@@ -58,6 +59,8 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Get("/workflows/{id}", workflowsH.Get)
 		r.Put("/workflows/{id}", workflowsH.Update)
 		r.Delete("/workflows/{id}", workflowsH.Delete)
+		r.Get("/workflows/{id}/export.yaml", workflowsH.ExportWorkflowYAML)
+		r.Post("/workflows/import", workflowsH.ImportWorkflowYAML)
 
 		// Agent configs
 		r.Get("/agents", agentsH.List)

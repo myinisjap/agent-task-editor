@@ -12,27 +12,32 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
+	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
 func main() {
-	dbPath := env("DB_PATH", "agent-task-editor.db")
-	port := env("PORT", "8080")
-	corsOrigins := env("CORS_ORIGINS", "*")
-	mcpBinary := env("MCP_SERVER_PATH", "")
-	llmBaseURL := env("LLM_BASE_URL", "https://api.openai.com/v1")
-	llmAPIKey := env("LLM_API_KEY", "")
+	cfgPath := os.Getenv("CONFIG_FILE")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		slog.Error("failed to load config", "err", err)
+		os.Exit(1)
+	}
 
-	db, err := storage.Open(dbPath)
+	if cfg.APIToken != "" {
+		slog.Info("bearer auth enabled")
+	}
+
+	db, err := storage.Open(cfg.DBPath)
 	if err != nil {
 		slog.Error("failed to open database", "err", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	slog.Info("database ready", "path", dbPath)
+	slog.Info("database ready", "path", cfg.DBPath)
 
 	seedCtx := context.Background()
 	if err := storage.SeedDefaultWorkflow(seedCtx, db); err != nil {
@@ -47,26 +52,30 @@ func main() {
 	engine := workflow.New(db.SQL(), hub)
 
 	// Agent provider factory — selects backend based on AgentConfig.Provider
-	providerFactory := func(cfg agent.AgentConfig) agent.Provider {
-		switch cfg.Provider {
+	providerFactory := func(agentCfg agent.AgentConfig) agent.Provider {
+		switch agentCfg.Provider {
 		case "claude":
 			var mcp *agent.MCPManager
-			if mcpBinary != "" {
-				mcp = &agent.MCPManager{ServerBinary: mcpBinary}
+			if cfg.MCPBinary != "" {
+				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &agent.ClaudeRunner{MCP: mcp}
 		default:
-			return &agent.LLMRunner{BaseURL: llmBaseURL, APIKey: llmAPIKey}
+			return &agent.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 		}
 	}
 
-	pool := agent.NewPool(5, db.SQL(), engine, hub)
+	maxWorkers := cfg.MaxWorkers
+	if maxWorkers <= 0 {
+		maxWorkers = 5
+	}
+	pool := agent.NewPool(maxWorkers, db.SQL(), engine, hub)
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 
-	router := api.NewRouter(db, engine, hub, corsOrigins)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken)
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%s", port),
+		Addr:         fmt.Sprintf(":%s", cfg.Port),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,
@@ -81,7 +90,7 @@ func main() {
 	go dispatcher.Run(ctx)
 
 	go func() {
-		slog.Info("server starting", "port", port)
+		slog.Info("server starting", "port", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "err", err)
 			cancel()
@@ -100,11 +109,4 @@ func main() {
 	if err := srv.Shutdown(shutCtx); err != nil {
 		slog.Error("shutdown error", "err", err)
 	}
-}
-
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

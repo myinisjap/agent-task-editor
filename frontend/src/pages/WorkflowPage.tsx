@@ -161,6 +161,15 @@ export default function WorkflowPage() {
               </div>
             ))}
           </div>
+          {workflow && (
+            <a
+              href={`/api/v1/workflows/${workflow.id}/export.yaml`}
+              download="workflow.yaml"
+              className="px-3 py-1.5 text-sm font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-200"
+            >
+              Export YAML
+            </a>
+          )}
           <button
             onClick={handleSave}
             disabled={saving || !workflow}
