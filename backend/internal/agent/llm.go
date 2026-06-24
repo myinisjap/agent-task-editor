@@ -6,10 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -176,61 +172,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 func (r *LLMRunner) executeTool(repoPath string, tc toolCall) (string, *Result) {
 	var args map[string]string
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-
-	switch tc.Function.Name {
-	case "read_file":
-		path := filepath.Join(repoPath, filepath.Clean("/"+args["path"]))
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Sprintf("error: %v", err), nil
-		}
-		return string(data), nil
-
-	case "write_file":
-		path := filepath.Join(repoPath, filepath.Clean("/"+args["path"]))
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return fmt.Sprintf("error creating dirs: %v", err), nil
-		}
-		if err := os.WriteFile(path, []byte(args["content"]), 0644); err != nil {
-			return fmt.Sprintf("error: %v", err), nil
-		}
-		return "ok", nil
-
-	case "run_bash":
-		out, err := exec.Command("sh", "-c", args["command"]).CombinedOutput()
-		if err != nil {
-			return fmt.Sprintf("exit error: %v\n%s", err, out), nil
-		}
-		return string(out), nil
-
-	case "list_files":
-		dir := repoPath
-		if p := args["path"]; p != "" {
-			dir = filepath.Join(repoPath, filepath.Clean("/"+p))
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return fmt.Sprintf("error: %v", err), nil
-		}
-		var names []string
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		return strings.Join(names, "\n"), nil
-
-	case "signal_complete":
-		label := args["next_label"]
-		summary := args["summary"]
-		msg := summary
-		return "acknowledged", &Result{Status: "completed", NextLabel: &label, Message: &msg}
-
-	case "request_human":
-		msg := args["message"]
-		return "pausing for human input", &Result{Status: "waiting_human", Message: &msg}
-
-	default:
-		return fmt.Sprintf("unknown tool: %s", tc.Function.Name), nil
-	}
+	return executeLLMTool(repoPath, tc.Function.Name, args)
 }
 
 type completionResponse struct {
