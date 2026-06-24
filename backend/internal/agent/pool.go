@@ -29,6 +29,7 @@ type Job struct {
 type Pool struct {
 	maxWorkers int
 	jobs       chan Job
+	db         *sql.DB
 	q          *gen.Queries
 	engine     *workflow.Engine
 	pub        Publisher
@@ -40,6 +41,7 @@ func NewPool(maxWorkers int, db *sql.DB, engine *workflow.Engine, pub Publisher)
 	return &Pool{
 		maxWorkers: maxWorkers,
 		jobs:       make(chan Job, maxWorkers*4),
+		db:         db,
 		q:          gen.New(db),
 		engine:     engine,
 		pub:        pub,
@@ -83,11 +85,12 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 	if _, err := p.q.SetAgentRunStarted(ctx, job.RunID); err != nil {
 		slog.Error("set run started", "err", err)
-		// Mark as failed so the task becomes re-dispatchable.
+		// Mark as failed and clear the active slot so the task re-queues.
 		_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
 			Status: "failed",
 			ID:     job.RunID,
 		})
+		_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
 		return
 	}
 	if p.pub != nil {
@@ -122,6 +125,13 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		ID:     job.RunID,
 	}); err != nil {
 		slog.Error("set run completed", "err", err)
+	}
+
+	// Clear the active-run slot for completed/failed runs so the dispatcher
+	// can pick up the task again. For waiting_human we leave it set — the
+	// engine.Transition called by the human action will clear it.
+	if finalStatus == "completed" || finalStatus == "failed" {
+		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 	}
 
 	if p.pub != nil {
@@ -161,7 +171,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	slog.Info("agent run finished", "run_id", job.RunID, "status", finalStatus)
 }
 
-// persistLogs drains logCh and writes to SQLite in batches.
+// persistLogs drains logCh and writes to SQLite in batches wrapped in a transaction.
 func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-chan LogEntry) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -169,10 +179,24 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 	var batch []gen.CreateAgentLogParams
 
 	flush := func(flushCtx context.Context) {
+		if len(batch) == 0 {
+			return
+		}
+		tx, err := p.db.BeginTx(flushCtx, nil)
+		if err != nil {
+			slog.Error("persist log begin tx", "err", err)
+			batch = batch[:0]
+			return
+		}
+		tq := gen.New(tx)
 		for _, entry := range batch {
-			if err := p.q.CreateAgentLog(flushCtx, entry); err != nil {
+			if err := tq.CreateAgentLog(flushCtx, entry); err != nil {
 				slog.Error("persist log", "err", err)
 			}
+		}
+		if err := tx.Commit(); err != nil {
+			slog.Error("persist log commit", "err", err)
+			_ = tx.Rollback()
 		}
 		batch = batch[:0]
 	}
@@ -186,11 +210,11 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 				return
 			}
 			batch = append(batch, gen.CreateAgentLogParams{
-				ID:          uuid.NewString(),
-				AgentRunID:  runID,
-				Timestamp:   entry.At,
-				Type:        string(entry.Type),
-				Content:     entry.Content,
+				ID:         uuid.NewString(),
+				AgentRunID: runID,
+				Timestamp:  entry.At,
+				Type:       string(entry.Type),
+				Content:    entry.Content,
 			})
 			if len(batch) >= 50 {
 				flush(ctx)

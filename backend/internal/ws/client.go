@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"nhooyr.io/websocket"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
 const maxSubscriptions = 100
@@ -35,7 +37,8 @@ type inboundMsg struct {
 // ServeWS upgrades the HTTP connection and starts the client goroutines.
 // authToken is the expected bearer token (empty = no auth required).
 // corsOrigins is the CORS allowed origins list (comma-separated, "*" = any).
-func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOrigins string) {
+// q is used to replay historical log entries when a client subscribes to a task.
+func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOrigins string, q *gen.Queries) {
 	// Validate token from query param (browsers can't set Authorization on WS).
 	if authToken != "" {
 		tok := r.URL.Query().Get("token")
@@ -97,10 +100,15 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 			case "subscribe":
 				if msg.TaskID != "" {
 					c.subMu.Lock()
+					added := false
 					if len(c.subscriptions) < maxSubscriptions {
 						c.subscriptions[msg.TaskID] = true
+						added = true
 					}
 					c.subMu.Unlock()
+					if added && q != nil {
+						go replayTaskLogs(ctx, c, q, msg.TaskID)
+					}
 				}
 			case "unsubscribe":
 				if msg.TaskID != "" {
@@ -140,4 +148,42 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 
 	wg.Wait()
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// replayTaskLogs fetches historical log entries for the task's current run
+// and sends them to the client so a reconnecting browser sees prior output.
+func replayTaskLogs(ctx context.Context, c *Client, q *gen.Queries, taskID string) {
+	task, err := q.GetTask(ctx, taskID)
+	if err != nil || task.CurrentAgentRunID == nil {
+		return
+	}
+	runID := *task.CurrentAgentRunID
+
+	logs, err := q.ListAgentLogs(ctx, runID)
+	if err != nil || len(logs) == 0 {
+		return
+	}
+
+	for _, log := range logs {
+		msg, err := json.Marshal(Event{
+			Type: "agent.log",
+			Payload: map[string]any{
+				"run_id":  runID,
+				"task_id": taskID,
+				"entry": map[string]any{
+					"type":    log.Type,
+					"content": log.Content,
+					"at":      log.Timestamp,
+				},
+			},
+		})
+		if err != nil {
+			continue
+		}
+		select {
+		case c.send <- msg:
+		case <-ctx.Done():
+			return
+		}
+	}
 }

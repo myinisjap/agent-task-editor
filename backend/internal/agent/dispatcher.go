@@ -119,13 +119,13 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		return
 	}
 
-	// Mark task as having this active run so the next sweep skips it
-	if _, err := d.q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{
-		Label:             t.Label,
-		CurrentAgentRunID: &runID,
+	// Mark the task's active run so the next sweep skips it.
+	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: runID,
+		ActiveAgentRunID:  runID,
 		ID:                t.ID,
 	}); err != nil {
-		slog.Error("update task current run", "task_id", t.ID, "err", err)
+		slog.Error("set task active run", "task_id", t.ID, "err", err)
 		return
 	}
 
@@ -143,11 +143,12 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		},
 	})
 	if !enqueued {
-		// Pool was full; mark the run failed so the task becomes re-dispatchable.
+		// Pool was full; mark the run failed and clear the active slot.
 		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 			Status: "failed",
 			ID:     runID,
 		})
+		_ = d.q.ClearActiveAgentRun(ctx, t.ID)
 		return
 	}
 

@@ -29,6 +29,11 @@ func main() {
 	if cfg.APIToken != "" {
 		slog.Info("bearer auth enabled")
 	}
+	if cfg.RepoBaseDir == "" {
+		slog.Warn("REPO_BASE_DIR is not set; any host path can be registered as a repo")
+	} else {
+		slog.Info("repo base dir enforced", "path", cfg.RepoBaseDir)
+	}
 
 	db, err := storage.Open(cfg.DBPath)
 	if err != nil {
@@ -52,6 +57,14 @@ func main() {
 		os.Exit(1)
 	} else if n, _ := res.RowsAffected(); n > 0 {
 		slog.Warn("marked stuck runs as failed", "count", n)
+	}
+
+	// Clear active_agent_run_id for all tasks — the worker pool has restarted
+	// so nothing is genuinely active from the previous process.
+	if _, err := db.SQL().ExecContext(seedCtx,
+		`UPDATE tasks SET active_agent_run_id = NULL WHERE active_agent_run_id IS NOT NULL`); err != nil {
+		slog.Error("failed to clear active agent runs", "err", err)
+		os.Exit(1)
 	}
 
 	// WebSocket hub — satisfies workflow.Publisher and agent.Publisher
@@ -85,7 +98,7 @@ func main() {
 	pool := agent.NewPool(maxWorkers, db.SQL(), engine, hub)
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),

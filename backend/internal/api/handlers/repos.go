@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -20,11 +22,12 @@ func isValidGitRef(ref string) bool {
 }
 
 type ReposHandler struct {
-	q *gen.Queries
+	q           *gen.Queries
+	repoBaseDir string
 }
 
-func NewReposHandler(q *gen.Queries) *ReposHandler {
-	return &ReposHandler{q: q}
+func NewReposHandler(q *gen.Queries, repoBaseDir string) *ReposHandler {
+	return &ReposHandler{q: q, repoBaseDir: repoBaseDir}
 }
 
 func (h *ReposHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +62,24 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.Name == "" || body.Path == "" {
 		Err(w, http.StatusBadRequest, "name and path are required")
 		return
+	}
+
+	// Enforce base-dir restriction when configured.
+	if h.repoBaseDir != "" {
+		realPath, err := filepath.EvalSymlinks(body.Path)
+		if err != nil {
+			// Path may not exist yet; fall back to clean path for the prefix check.
+			realPath = filepath.Clean(body.Path)
+		}
+		realBase, err := filepath.EvalSymlinks(h.repoBaseDir)
+		if err != nil {
+			realBase = filepath.Clean(h.repoBaseDir)
+		}
+		sep := string(os.PathSeparator)
+		if realPath != realBase && !strings.HasPrefix(realPath+sep, realBase+sep) {
+			Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
+			return
+		}
 	}
 
 	// Verify the path exists and is a git repository before persisting.

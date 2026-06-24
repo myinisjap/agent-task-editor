@@ -12,7 +12,7 @@ import (
 const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id)
 VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at, active_agent_run_id
 `
 
 type CreateTaskParams struct {
@@ -47,8 +47,20 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.CurrentAgentRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActiveAgentRunID,
 	)
 	return i, err
+}
+
+const clearActiveAgentRun = `-- name: ClearActiveAgentRun :exec
+UPDATE tasks
+SET active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+func (q *Queries) ClearActiveAgentRun(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, clearActiveAgentRun, id)
+	return err
 }
 
 const deleteTask = `-- name: DeleteTask :exec
@@ -61,7 +73,7 @@ func (q *Queries) DeleteTask(ctx context.Context, id string) error {
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at FROM tasks WHERE id = ?
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at, active_agent_run_id FROM tasks WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
@@ -78,21 +90,19 @@ func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
 		&i.CurrentAgentRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActiveAgentRunID,
 	)
 	return i, err
 }
 
 const listAgentPickupTasks = `-- name: ListAgentPickupTasks :many
-SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.created_at, t.updated_at FROM tasks t
+SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.created_at, t.updated_at, t.active_agent_run_id FROM tasks t
 WHERE t.label IN (
     SELECT wt.from_label FROM workflow_transitions wt
     WHERE wt.workflow_id = t.workflow_id
       AND wt.trigger_type IN ('agent', 'both')
 )
-AND (t.current_agent_run_id IS NULL OR NOT EXISTS (
-    SELECT 1 FROM agent_runs ar
-    WHERE ar.id = t.current_agent_run_id AND ar.status IN ('running', 'pending')
-))
+AND t.active_agent_run_id IS NULL
 `
 
 func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
@@ -115,6 +125,7 @@ func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 			&i.CurrentAgentRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActiveAgentRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -130,7 +141,7 @@ func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at FROM tasks ORDER BY created_at DESC
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at, active_agent_run_id FROM tasks ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
@@ -153,6 +164,7 @@ func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
 			&i.CurrentAgentRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActiveAgentRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +180,7 @@ func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
 }
 
 const listTasksByLabel = `-- name: ListTasksByLabel :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at FROM tasks WHERE label = ? ORDER BY created_at DESC
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at, active_agent_run_id FROM tasks WHERE label = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTasksByLabel(ctx context.Context, label string) ([]Task, error) {
@@ -191,6 +203,7 @@ func (q *Queries) ListTasksByLabel(ctx context.Context, label string) ([]Task, e
 			&i.CurrentAgentRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ActiveAgentRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -205,11 +218,28 @@ func (q *Queries) ListTasksByLabel(ctx context.Context, label string) ([]Task, e
 	return items, nil
 }
 
+const setTaskActiveRun = `-- name: SetTaskActiveRun :exec
+UPDATE tasks
+SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type SetTaskActiveRunParams struct {
+	CurrentAgentRunID string `json:"current_agent_run_id"`
+	ActiveAgentRunID  string `json:"active_agent_run_id"`
+	ID                string `json:"id"`
+}
+
+func (q *Queries) SetTaskActiveRun(ctx context.Context, arg SetTaskActiveRunParams) error {
+	_, err := q.db.ExecContext(ctx, setTaskActiveRun, arg.CurrentAgentRunID, arg.ActiveAgentRunID, arg.ID)
+	return err
+}
+
 const updateTask = `-- name: UpdateTask :one
 UPDATE tasks
 SET title = ?, description = ?, type = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at, active_agent_run_id
 `
 
 type UpdateTaskParams struct {
@@ -238,15 +268,16 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		&i.CurrentAgentRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActiveAgentRunID,
 	)
 	return i, err
 }
 
 const updateTaskLabel = `-- name: UpdateTaskLabel :one
 UPDATE tasks
-SET label = ?, current_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, created_at, updated_at, active_agent_run_id
 `
 
 type UpdateTaskLabelParams struct {
@@ -269,6 +300,7 @@ func (q *Queries) UpdateTaskLabel(ctx context.Context, arg UpdateTaskLabelParams
 		&i.CurrentAgentRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ActiveAgentRunID,
 	)
 	return i, err
 }

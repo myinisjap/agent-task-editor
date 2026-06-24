@@ -31,20 +31,21 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 	}
 
 	labels := []struct {
-		name        string
-		color       string
-		order       int
-		agentIgnore bool
-		terminal    bool
+		name             string
+		color            string
+		order            int
+		agentIgnore      bool
+		terminal         bool
+		rejectionTarget  bool
 	}{
-		{"not_ready", "#6B7280", 0, true, false},
-		{"plan", "#8B5CF6", 1, false, false},
-		{"todo", "#3B82F6", 2, false, false},
-		{"in-progress", "#F59E0B", 3, false, false},
-		{"testing", "#F97316", 4, false, false},
-		{"agent-review", "#6366F1", 5, false, false},
-		{"review", "#EC4899", 6, false, false},
-		{"done", "#10B981", 7, false, true},
+		{"not_ready", "#6B7280", 0, true, false, false},
+		{"plan", "#8B5CF6", 1, false, false, false},
+		{"todo", "#3B82F6", 2, false, false, false},
+		{"in-progress", "#F59E0B", 3, false, false, true},
+		{"testing", "#F97316", 4, false, false, false},
+		{"agent-review", "#6366F1", 5, false, false, false},
+		{"review", "#EC4899", 6, false, false, false},
+		{"done", "#10B981", 7, false, true, false},
 	}
 
 	for _, l := range labels {
@@ -56,14 +57,19 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 		if l.terminal {
 			isTerminal = 1
 		}
+		isRejectionTarget := int64(0)
+		if l.rejectionTarget {
+			isRejectionTarget = 1
+		}
 		if _, err := q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
-			ID:          uuid.NewString(),
-			WorkflowID:  wfID,
-			Name:        l.name,
-			Color:       l.color,
-			SortOrder:   int64(l.order),
-			AgentIgnore: agentIgnore,
-			IsTerminal:  isTerminal,
+			ID:                uuid.NewString(),
+			WorkflowID:        wfID,
+			Name:              l.name,
+			Color:             l.color,
+			SortOrder:         int64(l.order),
+			AgentIgnore:       agentIgnore,
+			IsTerminal:        isTerminal,
+			IsRejectionTarget: isRejectionTarget,
 		}); err != nil {
 			return fmt.Errorf("create label %s: %w", l.name, err)
 		}

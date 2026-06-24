@@ -147,7 +147,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Note string `json:"note"`
 	}
-	_ = decode(r, &body) // optional body — ignore decode error
+	_ = decode(r, &body) // optional body
 
 	taskID := chi.URLParam(r, "id")
 	task, err := h.q.GetTask(r.Context(), taskID)
@@ -156,17 +156,22 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Find the workflow's designated rejection target so Approve can skip it.
+	rejectionTarget := ""
+	if rl, err := h.q.GetWorkflowRejectionLabel(r.Context(), task.WorkflowID); err == nil {
+		rejectionTarget = rl.Name
+	}
+
 	available, err := h.engine.AvailableTransitions(r.Context(), taskID, workflow.TriggerHuman)
 	if err != nil || len(available) == 0 {
 		Err(w, http.StatusBadRequest, "no available human transitions for this task")
 		return
 	}
 
-	// Approve advances to the first available human-forward transition
-	// (exclude backward moves like not_ready and in-progress when approving)
+	// Approve picks the first forward transition that isn't the rejection target.
 	target := available[0]
 	for _, t := range available {
-		if t != "not_ready" && t != "in-progress" {
+		if t != rejectionTarget {
 			target = t
 			break
 		}
@@ -176,7 +181,6 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		handleTransitionError(w, err)
 		return
 	}
-	_ = task
 	updated, err := h.q.GetTask(r.Context(), taskID)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
@@ -194,12 +198,25 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.ToLabel == "" {
-		body.ToLabel = "in-progress"
-	}
 
 	taskID := chi.URLParam(r, "id")
-	if err := h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, "", body.Note); err != nil {
+
+	// Determine rejection target: explicit override, then workflow config, then "in-progress".
+	toLabel := body.ToLabel
+	if toLabel == "" {
+		task, err := h.q.GetTask(r.Context(), taskID)
+		if err != nil {
+			Err(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if rl, err := h.q.GetWorkflowRejectionLabel(r.Context(), task.WorkflowID); err == nil {
+			toLabel = rl.Name
+		} else {
+			toLabel = "in-progress"
+		}
+	}
+
+	if err := h.engine.Transition(r.Context(), taskID, toLabel, workflow.TriggerHuman, "", body.Note); err != nil {
 		handleTransitionError(w, err)
 		return
 	}

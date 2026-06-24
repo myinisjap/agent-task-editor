@@ -46,19 +46,20 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 }
 
 const createWorkflowLabel = `-- name: CreateWorkflowLabel :one
-INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal
+INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, is_rejection_target)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, is_rejection_target
 `
 
 type CreateWorkflowLabelParams struct {
-	ID          string `json:"id"`
-	WorkflowID  string `json:"workflow_id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	SortOrder   int64  `json:"sort_order"`
-	AgentIgnore int64  `json:"agent_ignore"`
-	IsTerminal  int64  `json:"is_terminal"`
+	ID                string `json:"id"`
+	WorkflowID        string `json:"workflow_id"`
+	Name              string `json:"name"`
+	Color             string `json:"color"`
+	SortOrder         int64  `json:"sort_order"`
+	AgentIgnore       int64  `json:"agent_ignore"`
+	IsTerminal        int64  `json:"is_terminal"`
+	IsRejectionTarget int64  `json:"is_rejection_target"`
 }
 
 func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLabelParams) (WorkflowLabel, error) {
@@ -70,6 +71,7 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		arg.SortOrder,
 		arg.AgentIgnore,
 		arg.IsTerminal,
+		arg.IsRejectionTarget,
 	)
 	var i WorkflowLabel
 	err := row.Scan(
@@ -80,6 +82,30 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		&i.SortOrder,
 		&i.AgentIgnore,
 		&i.IsTerminal,
+		&i.IsRejectionTarget,
+	)
+	return i, err
+}
+
+const getWorkflowRejectionLabel = `-- name: GetWorkflowRejectionLabel :one
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, is_rejection_target
+FROM workflow_labels
+WHERE workflow_id = ? AND is_rejection_target = 1
+LIMIT 1
+`
+
+func (q *Queries) GetWorkflowRejectionLabel(ctx context.Context, workflowID string) (WorkflowLabel, error) {
+	row := q.db.QueryRowContext(ctx, getWorkflowRejectionLabel, workflowID)
+	var i WorkflowLabel
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.Name,
+		&i.Color,
+		&i.SortOrder,
+		&i.AgentIgnore,
+		&i.IsTerminal,
+		&i.IsRejectionTarget,
 	)
 	return i, err
 }
@@ -190,7 +216,7 @@ func (q *Queries) GetWorkflowTransition(ctx context.Context, arg GetWorkflowTran
 }
 
 const listWorkflowLabels = `-- name: ListWorkflowLabels :many
-SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, is_rejection_target FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
 `
 
 func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]WorkflowLabel, error) {
@@ -210,6 +236,7 @@ func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]
 			&i.SortOrder,
 			&i.AgentIgnore,
 			&i.IsTerminal,
+			&i.IsRejectionTarget,
 		); err != nil {
 			return nil, err
 		}

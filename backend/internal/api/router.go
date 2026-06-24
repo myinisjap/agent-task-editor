@@ -15,13 +15,13 @@ import (
 )
 
 // NewRouter builds and returns the application router.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
-	reposH := handlers.NewReposHandler(q)
+	reposH := handlers.NewReposHandler(q, repoBaseDir)
 	dashH := handlers.NewDashboardHandler(q)
 
 	r := chi.NewRouter()
@@ -35,7 +35,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 	// WebSocket endpoint — auth via ?token= query param (browsers can't set headers)
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
-		ws.ServeWS(hub, w, req, bearerToken, corsOrigins)
+		ws.ServeWS(hub, w, req, bearerToken, corsOrigins, q)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {

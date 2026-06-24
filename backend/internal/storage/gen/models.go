@@ -61,6 +61,7 @@ type Task struct {
 	CurrentAgentRunID *string   `json:"current_agent_run_id"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	ActiveAgentRunID  *string   `json:"active_agent_run_id"`
 }
 
 type TaskLabelHistory struct {
@@ -83,13 +84,14 @@ type Workflow struct {
 }
 
 type WorkflowLabel struct {
-	ID          string `json:"id"`
-	WorkflowID  string `json:"workflow_id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	SortOrder   int64  `json:"sort_order"`
-	AgentIgnore int64  `json:"agent_ignore"`
-	IsTerminal  int64  `json:"is_terminal"`
+	ID                string `json:"id"`
+	WorkflowID        string `json:"workflow_id"`
+	Name              string `json:"name"`
+	Color             string `json:"color"`
+	SortOrder         int64  `json:"sort_order"`
+	AgentIgnore       int64  `json:"agent_ignore"`
+	IsTerminal        int64  `json:"is_terminal"`
+	IsRejectionTarget int64  `json:"is_rejection_target"`
 }
 
 type WorkflowTransition struct {

@@ -19,6 +19,7 @@ type Config struct {
 	LLMBaseURL  string `yaml:"llm_base_url"`
 	LLMAPIKey   string `yaml:"llm_api_key"`
 	MaxWorkers  int    `yaml:"max_workers"`
+	RepoBaseDir string `yaml:"repo_base_dir"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -71,6 +72,9 @@ func Load(path string) (Config, error) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.MaxWorkers = n
 		}
+	}
+	if v := os.Getenv("REPO_BASE_DIR"); v != "" {
+		cfg.RepoBaseDir = v
 	}
 
 	return cfg, nil
