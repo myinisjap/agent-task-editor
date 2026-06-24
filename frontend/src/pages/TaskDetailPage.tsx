@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type AgentLog } from '../api/client'
 import { wsClient } from '../api/ws'
+import { parseDiff, type FileDiff } from '../lib/parseDiff'
+import FileDiffViewer from '../components/diff/FileDiffViewer'
 
 const LOG_COLORS: Record<string, string> = {
   stdout:      'text-slate-300',
@@ -21,6 +23,8 @@ export default function TaskDetailPage() {
   const [loading, setLoading] = useState(true)
   const [rejectNote, setRejectNote] = useState('')
   const [actionPending, setActionPending] = useState(false)
+  const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
+  const [diffLoading, setDiffLoading] = useState(false)
   const logBottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
 
@@ -59,6 +63,16 @@ export default function TaskDetailPage() {
       autoScrollRef.current = true
     }).catch(() => {})
   }, [id, selectedRun])
+
+  // Load diff when task is available
+  useEffect(() => {
+    if (!task?.repo_id) return
+    setDiffLoading(true)
+    api.repos.diff(task.repo_id)
+      .then((d) => setDiffFiles(parseDiff(d.diff)))
+      .catch(() => setDiffFiles([]))
+      .finally(() => setDiffLoading(false))
+  }, [task?.repo_id])
 
   // WS subscription
   useEffect(() => {
@@ -224,10 +238,25 @@ export default function TaskDetailPage() {
           <div ref={logBottomRef} />
         </div>
 
-        {/* Right panel — placeholder for diff viewer (Phase 8) */}
-        <div className="w-80 shrink-0 border-l border-slate-800 overflow-y-auto p-5">
-          <p className="text-xs text-slate-500 mb-2">File changes</p>
-          <p className="text-xs text-slate-600">Git diff viewer — Phase 8</p>
+        {/* Right panel — git diff viewer */}
+        <div className="w-96 shrink-0 border-l border-slate-800 overflow-y-auto p-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs text-slate-500">File changes (HEAD~1…HEAD)</p>
+            <button
+              onClick={() => {
+                if (!task?.repo_id) return
+                setDiffLoading(true)
+                api.repos.diff(task.repo_id)
+                  .then((d) => setDiffFiles(parseDiff(d.diff)))
+                  .catch(() => setDiffFiles([]))
+                  .finally(() => setDiffLoading(false))
+              }}
+              className="text-xs text-slate-500 hover:text-slate-300"
+            >
+              ↻
+            </button>
+          </div>
+          <FileDiffViewer files={diffFiles} loading={diffLoading} />
         </div>
       </div>
 
