@@ -10,7 +10,7 @@ type TasksState = {
   remove: (id: string) => void
 }
 
-export const useTasksStore = create<TasksState>((set, get) => ({
+export const useTasksStore = create<TasksState>((set) => ({
   tasks: [],
   loading: false,
   error: null,

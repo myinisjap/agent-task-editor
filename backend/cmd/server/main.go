@@ -14,6 +14,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
 func main() {
@@ -39,8 +40,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Shared workflow engine (publisher wired in Phase 6)
-	engine := workflow.New(db.SQL(), nil)
+	// WebSocket hub — satisfies workflow.Publisher and agent.Publisher
+	hub := ws.NewHub()
+
+	// Shared workflow engine with WS publisher
+	engine := workflow.New(db.SQL(), hub)
 
 	// Agent provider factory — selects backend based on AgentConfig.Provider
 	providerFactory := func(cfg agent.AgentConfig) agent.Provider {
@@ -56,10 +60,10 @@ func main() {
 		}
 	}
 
-	pool := agent.NewPool(5, db.SQL(), engine, nil) // publisher wired in Phase 6
+	pool := agent.NewPool(5, db.SQL(), engine, hub)
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 
-	router := api.NewRouter(db, engine, corsOrigins)
+	router := api.NewRouter(db, engine, hub, corsOrigins)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", port),

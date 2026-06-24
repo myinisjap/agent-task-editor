@@ -97,7 +97,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// Persist log entries in the background
 	go func() {
 		defer close(done)
-		p.persistLogs(ctx, job.RunID, logCh)
+		p.persistLogs(ctx, job.RunID, job.Input.Task.ID, logCh)
 	}()
 
 	result, err := job.Provider.Run(ctx, job.Input, logCh)
@@ -155,7 +155,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 }
 
 // persistLogs drains logCh and writes to SQLite in batches.
-func (p *Pool) persistLogs(ctx context.Context, runID string, logCh <-chan LogEntry) {
+func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-chan LogEntry) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -190,7 +190,8 @@ func (p *Pool) persistLogs(ctx context.Context, runID string, logCh <-chan LogEn
 			// Also publish to WebSocket for live streaming
 			if p.pub != nil {
 				p.pub.Publish("agent.log", map[string]any{
-					"run_id": runID,
+					"run_id":  runID,
+					"task_id": taskID,
 					"entry": map[string]any{
 						"type":    entry.Type,
 						"content": entry.Content,

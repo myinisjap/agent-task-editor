@@ -51,14 +51,14 @@ class WSClient {
   subscribeTask(taskId: string) {
     this.subscriptions.add(taskId)
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'subscribe_task', task_id: taskId }))
+      this.ws.send(JSON.stringify({ type: 'subscribe', task_id: taskId }))
     }
   }
 
   unsubscribeTask(taskId: string) {
     this.subscriptions.delete(taskId)
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'unsubscribe_task', task_id: taskId }))
+      this.ws.send(JSON.stringify({ type: 'unsubscribe', task_id: taskId }))
     }
   }
 }

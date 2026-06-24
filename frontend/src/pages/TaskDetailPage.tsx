@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type AgentLog } from '../api/client'
+import { wsClient } from '../api/ws'
 
 const LOG_COLORS: Record<string, string> = {
   stdout:      'text-slate-300',
@@ -8,17 +9,6 @@ const LOG_COLORS: Record<string, string> = {
   system:      'text-yellow-400',
   tool_call:   'text-cyan-400',
   tool_result: 'text-emerald-400',
-}
-
-const LABEL_COLORS: Record<string, string> = {
-  'not_ready':    '#6B7280',
-  'plan':         '#8B5CF6',
-  'todo':         '#3B82F6',
-  'in-progress':  '#F59E0B',
-  'testing':      '#F97316',
-  'agent-review': '#6366F1',
-  'review':       '#EC4899',
-  'done':         '#10B981',
 }
 
 export default function TaskDetailPage() {
@@ -29,7 +19,27 @@ export default function TaskDetailPage() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null)
   const [logs, setLogs] = useState<AgentLog[]>([])
   const [loading, setLoading] = useState(true)
+  const [rejectNote, setRejectNote] = useState('')
+  const [actionPending, setActionPending] = useState(false)
+  const logBottomRef = useRef<HTMLDivElement>(null)
+  const autoScrollRef = useRef(true)
 
+  const refreshTask = useCallback(() => {
+    if (!id) return
+    api.tasks.get(id).then(setTask).catch(() => {})
+  }, [id])
+
+  const refreshRuns = useCallback(() => {
+    if (!id) return
+    api.tasks.runs(id).then((r) => {
+      setRuns(r ?? [])
+      if (r && r.length > 0) {
+        setSelectedRun((prev) => prev ?? r[0].id)
+      }
+    }).catch(() => {})
+  }, [id])
+
+  // Initial load
   useEffect(() => {
     if (!id) return
     Promise.all([api.tasks.get(id), api.tasks.runs(id)])
@@ -41,108 +51,233 @@ export default function TaskDetailPage() {
       .finally(() => setLoading(false))
   }, [id])
 
+  // Load logs when selected run changes
   useEffect(() => {
     if (!id || !selectedRun) return
-    api.tasks.runLogs(id, selectedRun).then((l) => setLogs(l ?? []))
+    api.tasks.runLogs(id, selectedRun).then((l) => {
+      setLogs(l ?? [])
+      autoScrollRef.current = true
+    }).catch(() => {})
   }, [id, selectedRun])
+
+  // WS subscription
+  useEffect(() => {
+    if (!id) return
+    wsClient.subscribeTask(id)
+
+    const off = wsClient.on((event) => {
+      if (event.type === 'agent.log' && event.payload.task_id === id) {
+        const entry = event.payload.entry as AgentLog
+        if (entry && event.payload.run_id === selectedRun) {
+          setLogs((prev) => [...prev, { ...entry, id: entry.id ?? crypto.randomUUID() }])
+        }
+      } else if (event.type === 'task.label_changed' && event.payload.task_id === id) {
+        refreshTask()
+      } else if (event.type === 'task.agent_started' && event.payload.task_id === id) {
+        refreshRuns()
+        refreshTask()
+      } else if (event.type === 'task.agent_done' && event.payload.task_id === id) {
+        setRuns((prev) =>
+          prev.map((r) =>
+            r.id === event.payload.run_id ? { ...r, status: event.payload.status } : r
+          )
+        )
+        refreshTask()
+      } else if (event.type === 'task.needs_human' && event.payload.task_id === id) {
+        refreshRuns()
+        refreshTask()
+      }
+    })
+
+    return () => {
+      off()
+      wsClient.unsubscribeTask(id)
+    }
+  }, [id, selectedRun, refreshTask, refreshRuns])
+
+  // Auto-scroll log pane
+  useEffect(() => {
+    if (autoScrollRef.current) {
+      logBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [logs])
+
+  const activeRun = runs.find((r) => r.id === selectedRun)
+  const needsHuman = activeRun?.status === 'waiting_human'
+  const isRunning = activeRun?.status === 'running'
+
+  const handleApprove = async () => {
+    if (!id) return
+    setActionPending(true)
+    try {
+      const updated = await api.tasks.approve(id)
+      setTask(updated)
+      refreshRuns()
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  const handleReject = async () => {
+    if (!id || !rejectNote.trim()) return
+    setActionPending(true)
+    try {
+      const updated = await api.tasks.reject(id, rejectNote)
+      setTask(updated)
+      setRejectNote('')
+      refreshRuns()
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setActionPending(false)
+    }
+  }
 
   if (loading) return <div className="p-6 text-slate-400">Loading…</div>
   if (!task) return <div className="p-6 text-slate-400">Task not found</div>
 
-  const labelColor = LABEL_COLORS[task.label] ?? '#6B7280'
-
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left panel — metadata */}
-      <div className="w-72 shrink-0 border-r border-slate-800 overflow-y-auto p-5 flex flex-col gap-4">
-        <button
-          onClick={() => navigate('/board')}
-          className="text-xs text-slate-500 hover:text-slate-300 text-left"
-        >
-          ← Board
-        </button>
-        <div>
-          <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
-          {task.description && (
-            <p className="text-sm text-slate-400 mt-2">{task.description}</p>
+    <div className="flex h-full overflow-hidden flex-col">
+      {/* Main content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left panel — metadata */}
+        <div className="w-72 shrink-0 border-r border-slate-800 overflow-y-auto p-5 flex flex-col gap-4">
+          <button
+            onClick={() => navigate('/board')}
+            className="text-xs text-slate-500 hover:text-slate-300 text-left"
+          >
+            ← Board
+          </button>
+          <div>
+            <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
+            {task.description && (
+              <p className="text-sm text-slate-400 mt-2">{task.description}</p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Row label="Label">
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white bg-slate-600">
+                {task.label}
+              </span>
+            </Row>
+            <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+            <Row label="Created">
+              <span className="text-xs text-slate-400">{new Date(task.created_at).toLocaleDateString()}</span>
+            </Row>
+          </div>
+
+          {runs.length > 0 && (
+            <div>
+              <p className="text-xs text-slate-500 mb-2">Agent runs</p>
+              <div className="flex flex-col gap-1">
+                {runs.map((run) => (
+                  <button
+                    key={run.id}
+                    onClick={() => { setSelectedRun(run.id); autoScrollRef.current = false }}
+                    className={`text-left text-xs px-2 py-1.5 rounded ${
+                      selectedRun === run.id
+                        ? 'bg-slate-700 text-slate-100'
+                        : 'text-slate-400 hover:bg-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono truncate">{run.id.slice(0, 8)}</span>
+                      <span className={`shrink-0 ${
+                        run.status === 'completed'     ? 'text-emerald-400' :
+                        run.status === 'running'       ? 'text-yellow-400 animate-pulse' :
+                        run.status === 'failed'        ? 'text-red-400' :
+                        run.status === 'waiting_human' ? 'text-pink-400' :
+                        'text-slate-500'
+                      }`}>{run.status}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 w-16">Label</span>
-            <span
-              className="text-xs px-2 py-0.5 rounded-full font-medium text-white"
-              style={{ backgroundColor: labelColor }}
-            >
-              {task.label}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 w-16">Type</span>
-            <span className="text-xs text-slate-300">{task.type}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 w-16">Created</span>
-            <span className="text-xs text-slate-400">
-              {new Date(task.created_at).toLocaleDateString()}
-            </span>
-          </div>
+        {/* Center panel — agent log stream */}
+        <div
+          className="flex-1 overflow-y-auto p-5 font-mono text-xs"
+          onScroll={(e) => {
+            const el = e.currentTarget
+            autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+          }}
+        >
+          <p className="text-slate-500 mb-3 font-sans">
+            {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse mr-2" />}
+            {selectedRun ? `Run ${selectedRun.slice(0, 8)}` : 'No agent runs yet'}
+          </p>
+          {logs.length === 0 && selectedRun && (
+            <p className="text-slate-600">No log entries</p>
+          )}
+          {logs.map((log, i) => (
+            <div key={log.id ?? i} className={`mb-0.5 break-all ${LOG_COLORS[log.type] ?? 'text-slate-400'}`}>
+              <span className="text-slate-600 mr-2 select-none">[{log.type.padEnd(11)}]</span>
+              {log.content}
+            </div>
+          ))}
+          <div ref={logBottomRef} />
         </div>
 
-        {runs.length > 0 && (
-          <div>
-            <p className="text-xs text-slate-500 mb-2">Agent runs</p>
-            <div className="flex flex-col gap-1">
-              {runs.map((run) => (
-                <button
-                  key={run.id}
-                  onClick={() => setSelectedRun(run.id)}
-                  className={`text-left text-xs px-2 py-1.5 rounded ${
-                    selectedRun === run.id
-                      ? 'bg-slate-700 text-slate-100'
-                      : 'text-slate-400 hover:bg-slate-800'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono">{run.id.slice(0, 8)}</span>
-                    <span className={`text-xs ${
-                      run.status === 'completed' ? 'text-emerald-400' :
-                      run.status === 'running'   ? 'text-yellow-400 animate-pulse' :
-                      run.status === 'failed'    ? 'text-red-400' :
-                      'text-slate-500'
-                    }`}>{run.status}</span>
-                  </div>
-                </button>
-              ))}
+        {/* Right panel — placeholder for diff viewer (Phase 8) */}
+        <div className="w-80 shrink-0 border-l border-slate-800 overflow-y-auto p-5">
+          <p className="text-xs text-slate-500 mb-2">File changes</p>
+          <p className="text-xs text-slate-600">Git diff viewer — Phase 8</p>
+        </div>
+      </div>
+
+      {/* Approval panel — shown when agent needs human or task is in review */}
+      {(needsHuman || task.label === 'review') && (
+        <div className="shrink-0 border-t border-slate-700 bg-slate-900 p-4">
+          <p className="text-sm font-medium text-slate-200 mb-3">
+            {needsHuman ? 'Agent is waiting for your input' : 'Human review required'}
+          </p>
+          {activeRun?.feedback && (
+            <p className="text-xs text-slate-400 mb-3 bg-slate-800 rounded p-2">
+              {activeRun.feedback}
+            </p>
+          )}
+          <div className="flex gap-3 items-start">
+            <textarea
+              value={rejectNote}
+              onChange={(e) => setRejectNote(e.target.value)}
+              placeholder="Rejection note (required to reject)…"
+              rows={2}
+              className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500"
+            />
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleApprove}
+                disabled={actionPending}
+                className="px-4 py-1.5 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                onClick={handleReject}
+                disabled={actionPending || !rejectNote.trim()}
+                className="px-4 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+              >
+                Reject
+              </button>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
-      {/* Center panel — agent log stream */}
-      <div className="flex-1 overflow-y-auto p-5 font-mono text-xs">
-        <p className="text-slate-500 mb-3">
-          {selectedRun ? `Run ${selectedRun.slice(0, 8)}` : 'No agent runs yet'}
-        </p>
-        {logs.length === 0 && selectedRun && (
-          <p className="text-slate-600">No log entries</p>
-        )}
-        {logs.map((log) => (
-          <div key={log.id} className={`mb-0.5 ${LOG_COLORS[log.type] ?? 'text-slate-400'}`}>
-            <span className="text-slate-600 mr-2 select-none">
-              [{log.type.padEnd(11)}]
-            </span>
-            {log.content}
-          </div>
-        ))}
-      </div>
-
-      {/* Right panel — placeholder for diff viewer (Phase 8) */}
-      <div className="w-80 shrink-0 border-l border-slate-800 overflow-y-auto p-5">
-        <p className="text-xs text-slate-500 mb-2">File changes</p>
-        <p className="text-xs text-slate-600">Git diff viewer — Phase 8</p>
-      </div>
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-slate-500 w-16">{label}</span>
+      {children}
     </div>
   )
 }

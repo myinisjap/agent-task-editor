@@ -10,10 +10,11 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
 // NewRouter builds and returns the application router.
-func NewRouter(db *storage.DB, engine *workflow.Engine, corsOrigins string) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine)
@@ -29,6 +30,11 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, corsOrigins string) http
 	r.Use(middleware.CORS(corsOrigins))
 
 	r.Get("/healthz", handlers.Health)
+
+	// WebSocket endpoint
+	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
+		ws.ServeWS(hub, w, req)
+	})
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Tasks
