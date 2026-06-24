@@ -6,11 +6,20 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -o bin/server ./cmd/server
+# Build both binaries — mcp-server is the signal_complete/request_human sidecar
+RUN go build -o bin/server ./cmd/server && \
+    go build -o bin/mcp-server ./cmd/mcp-server
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+# Use node:22-alpine as the runtime so the claude CLI is available
+FROM node:22-alpine
+RUN apk add --no-cache ca-certificates git
+
+# Install Claude Code CLI globally so 'claude' is on PATH
+RUN npm install -g @anthropic-ai/claude-code
+
 WORKDIR /app
 COPY --from=builder /app/bin/server .
+COPY --from=builder /app/bin/mcp-server .
+
 EXPOSE 8080
 CMD ["./server"]

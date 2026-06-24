@@ -60,6 +60,10 @@ func main() {
 				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &agent.ClaudeRunner{MCP: mcp}
+		case "anthropic":
+			// Calls the Anthropic Messages API directly — no CLI binary needed.
+			// Requires LLM_API_KEY to be set. Billed per-token (not Claude Max).
+			return &agent.AnthropicRunner{APIKey: cfg.LLMAPIKey}
 		default:
 			return &agent.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 		}

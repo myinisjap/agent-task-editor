@@ -9,8 +9,21 @@ services:
       - PORT=8080
       - DB_PATH=/data/agent-task-editor.db
       - CORS_ORIGINS=http://localhost:5173
+      # Path to the MCP sidecar binary built into the image
+      - MCP_SERVER_PATH=/app/mcp-server
+      # Optional: set API_TOKEN to require a Bearer token on all API requests
+      # - API_TOKEN=change-me
+      # Optional: use provider=anthropic in agent configs to call the API directly
+      # instead of the CLI (different billing — pay-per-token vs Claude Max)
+      # - LLM_API_KEY=sk-ant-...
     volumes:
       - db_data:/data
+      # Claude Max auth — run 'claude login' on your host machine first,
+      # then this mount shares that session with the container.
+      - ${HOME}/.claude:/root/.claude
+      # Mount your code repositories here.
+      # Register them in the UI using the container path (e.g. /repos/myproject).
+      # - ${HOME}/code:/repos
 
   frontend:
     build:
