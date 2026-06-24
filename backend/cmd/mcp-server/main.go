@@ -63,10 +63,14 @@ func main() {
 		}
 
 		respond := func(res any) {
-			enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: res})
+			if err := enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: res}); err != nil {
+				slog.Error("mcp encode response", "err", err)
+			}
 		}
 		respondErr := func(code int, msg string) {
-			enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: msg}})
+			if err := enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: msg}}); err != nil {
+				slog.Error("mcp encode error response", "err", err)
+			}
 		}
 
 		switch req.Method {
@@ -118,7 +122,9 @@ func main() {
 			text, r := dispatchTool(params.Name, params.Arguments)
 			if r != nil {
 				if data, err := json.Marshal(r); err == nil {
-					os.WriteFile(resultFile, data, 0600)
+					if err := os.WriteFile(resultFile, data, 0600); err != nil {
+						slog.Error("write result file", "err", err)
+					}
 				}
 			}
 			respond(map[string]any{
@@ -139,7 +145,7 @@ func dispatchTool(name string, args json.RawMessage) (string, *result) {
 			NextLabel string `json:"next_label"`
 			Summary   string `json:"summary"`
 		}
-		json.Unmarshal(args, &a)
+		_ = json.Unmarshal(args, &a)
 		msg := a.Summary
 		return "acknowledged", &result{Status: "completed", NextLabel: &a.NextLabel, Message: &msg}
 
@@ -147,7 +153,7 @@ func dispatchTool(name string, args json.RawMessage) (string, *result) {
 		var a struct {
 			Message string `json:"message"`
 		}
-		json.Unmarshal(args, &a)
+		_ = json.Unmarshal(args, &a)
 		msg := a.Message
 		return "pausing for human input", &result{Status: "waiting_human", Message: &msg}
 

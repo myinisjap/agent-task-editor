@@ -1,3 +1,4 @@
+// Package storage handles SQLite database setup, migrations, and seeding.
 package storage
 
 import (

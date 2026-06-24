@@ -26,14 +26,14 @@ func setupTestDB(t *testing.T) *storage.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
-	t.Cleanup(func() { os.Remove(f.Name()) })
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
 
 	db, err := storage.Open(f.Name())
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	ctx := context.Background()
 	if err := storage.SeedDefaultWorkflow(ctx, db); err != nil {

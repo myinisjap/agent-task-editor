@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-SA1019" # nhooyr.io/websocket marks itself deprecated; suppressed until migration
+
+issues:
+  exclude-rules:
+    - path: internal/ws/
+      linters:
+        - staticcheck
+      text: "SA1019"

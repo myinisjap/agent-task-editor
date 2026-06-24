@@ -143,7 +143,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Note string `json:"note"`
 	}
-	decode(r, &body) //nolint:errcheck — optional body
+	_ = decode(r, &body) // optional body — ignore decode error
 
 	taskID := chi.URLParam(r, "id")
 	task, err := h.q.GetTask(r.Context(), taskID)

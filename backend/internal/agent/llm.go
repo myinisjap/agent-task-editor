@@ -175,7 +175,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 
 func (r *LLMRunner) executeTool(repoPath string, tc toolCall) (string, *Result) {
 	var args map[string]string
-	json.Unmarshal([]byte(tc.Function.Arguments), &args)
+	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
 	switch tc.Function.Name {
 	case "read_file":
@@ -256,7 +256,7 @@ func (r *LLMRunner) chatComplete(ctx context.Context, model string, messages []c
 	if err != nil {
 		return completionResponse{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		Choices []struct {

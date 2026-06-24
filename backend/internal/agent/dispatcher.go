@@ -148,7 +148,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task) {
 
 func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 	var env map[string]string
-	json.Unmarshal([]byte(cfg.Env), &env)
+	_ = json.Unmarshal([]byte(cfg.Env), &env)
 	if env == nil {
 		env = map[string]string{}
 	}

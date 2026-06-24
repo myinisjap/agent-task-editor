@@ -1,3 +1,4 @@
+// Package workflow implements the label-based state machine that governs task progression.
 package workflow
 
 import (

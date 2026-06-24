@@ -76,7 +76,7 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", "application/yaml")
 	w.Header().Set("Content-Disposition", `attachment; filename="workflow.yaml"`)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // ImportWorkflowYAML creates a new workflow from an uploaded YAML body.

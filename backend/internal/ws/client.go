@@ -1,3 +1,4 @@
+// Package ws provides the WebSocket hub and per-client connection management.
 package ws
 
 import (
@@ -109,5 +110,5 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}()
 
 	wg.Wait()
-	conn.Close(websocket.StatusNormalClosure, "")
+	_ = conn.Close(websocket.StatusNormalClosure, "")
 }

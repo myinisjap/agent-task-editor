@@ -13,6 +13,7 @@ export default function BoardPage() {
   useEffect(() => {
     fetchTasks()
     fetchWorkflows()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {

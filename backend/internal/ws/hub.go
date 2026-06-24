@@ -32,9 +32,7 @@ func (h *Hub) register(c *Client) {
 
 func (h *Hub) unregister(c *Client) {
 	h.mu.Lock()
-	if _, ok := h.clients[c]; ok {
-		delete(h.clients, c)
-	}
+	delete(h.clients, c)
 	h.mu.Unlock()
 }
 

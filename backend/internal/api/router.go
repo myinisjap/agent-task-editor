@@ -1,3 +1,4 @@
+// Package api wires together the HTTP router, middleware, and handlers.
 package api
 
 import (

@@ -63,8 +63,8 @@ func (m *MCPManager) Prepare(runID string) (*MCPRunConfig, error) {
 
 // Cleanup removes the temp files created by Prepare.
 func (c *MCPRunConfig) Cleanup() {
-	os.Remove(c.ConfigFile)
-	os.Remove(c.ResultFile)
+	_ = os.Remove(c.ConfigFile)
+	_ = os.Remove(c.ResultFile)
 }
 
 // ReadResult reads and parses the result written by the MCP sidecar.
