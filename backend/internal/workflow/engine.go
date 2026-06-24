@@ -44,13 +44,14 @@ type Publisher interface {
 
 // Engine validates and executes workflow label transitions.
 type Engine struct {
+	db  *sql.DB
 	q   querier
 	pub Publisher
 }
 
 // New creates a new Engine.
 func New(db *sql.DB, pub Publisher) *Engine {
-	return &Engine{q: gen.New(db), pub: pub}
+	return &Engine{db: db, q: gen.New(db), pub: pub}
 }
 
 // Transition validates and executes a label change for a task.
@@ -88,13 +89,6 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	}
 
 	fromLabel := task.Label
-	if _, err := e.q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{
-		Label:             toLabel,
-		CurrentAgentRunID: task.CurrentAgentRunID,
-		ID:                taskID,
-	}); err != nil {
-		return fmt.Errorf("update task label: %w", err)
-	}
 
 	notePtr := (*string)(nil)
 	if note != "" {
@@ -104,7 +98,22 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	if actorID != "" {
 		actorPtr = &actorID
 	}
-	if err := e.q.CreateTaskLabelHistory(ctx, gen.CreateTaskLabelHistoryParams{
+
+	tx, err := e.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	tq := gen.New(tx)
+	if _, err := tq.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{
+		Label:             toLabel,
+		CurrentAgentRunID: task.CurrentAgentRunID,
+		ID:                taskID,
+	}); err != nil {
+		return fmt.Errorf("update task label: %w", err)
+	}
+	if err := tq.CreateTaskLabelHistory(ctx, gen.CreateTaskLabelHistoryParams{
 		ID:        uuid.NewString(),
 		TaskID:    taskID,
 		FromLabel: &fromLabel,
@@ -114,6 +123,9 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 		Note:      notePtr,
 	}); err != nil {
 		return fmt.Errorf("record history: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
 	}
 
 	if e.pub != nil {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -9,11 +10,12 @@ import (
 )
 
 type WorkflowsHandler struct {
-	q *gen.Queries
+	q  *gen.Queries
+	db *sql.DB
 }
 
-func NewWorkflowsHandler(q *gen.Queries) *WorkflowsHandler {
-	return &WorkflowsHandler{q: q}
+func NewWorkflowsHandler(q *gen.Queries, db *sql.DB) *WorkflowsHandler {
+	return &WorkflowsHandler{q: q, db: db}
 }
 
 type workflowResponse struct {
@@ -122,8 +124,16 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Replace labels and transitions atomically
-	if err := h.q.DeleteWorkflowLabels(r.Context(), wfID); err != nil {
+	// Replace labels and transitions atomically inside a transaction.
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	tq := gen.New(tx)
+
+	if err := tq.DeleteWorkflowLabels(r.Context(), wfID); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -136,7 +146,7 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if l.IsTerminal {
 			isTerminal = 1
 		}
-		if _, err := h.q.CreateWorkflowLabel(r.Context(), gen.CreateWorkflowLabelParams{
+		if _, err := tq.CreateWorkflowLabel(r.Context(), gen.CreateWorkflowLabelParams{
 			ID:          uuid.NewString(),
 			WorkflowID:  wfID,
 			Name:        l.Name,
@@ -150,12 +160,12 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.q.DeleteWorkflowTransitions(r.Context(), wfID); err != nil {
+	if err := tq.DeleteWorkflowTransitions(r.Context(), wfID); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	for _, t := range body.Transitions {
-		if _, err := h.q.CreateWorkflowTransition(r.Context(), gen.CreateWorkflowTransitionParams{
+		if _, err := tq.CreateWorkflowTransition(r.Context(), gen.CreateWorkflowTransitionParams{
 			ID:            uuid.NewString(),
 			WorkflowID:    wfID,
 			FromLabel:     t.FromLabel,
@@ -168,7 +178,16 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, _ := h.buildResponse(r, wf)
+	if err := tx.Commit(); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	resp, err := h.buildResponse(r, wf)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	JSON(w, http.StatusOK, resp)
 }
 

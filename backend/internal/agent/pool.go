@@ -55,12 +55,14 @@ func (p *Pool) Start(ctx context.Context) {
 	p.wg.Wait()
 }
 
-// Submit enqueues a job. Non-blocking; drops if the queue is full.
-func (p *Pool) Submit(job Job) {
+// Submit enqueues a job. Returns false if the queue is full (job was not enqueued).
+func (p *Pool) Submit(job Job) bool {
 	select {
 	case p.jobs <- job:
+		return true
 	default:
 		slog.Warn("agent pool queue full, dropping job", "run_id", job.RunID)
+		return false
 	}
 }
 
@@ -81,6 +83,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 	if _, err := p.q.SetAgentRunStarted(ctx, job.RunID); err != nil {
 		slog.Error("set run started", "err", err)
+		// Mark as failed so the task becomes re-dispatchable.
+		_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
+			Status: "failed",
+			ID:     job.RunID,
+		})
 		return
 	}
 	if p.pub != nil {
@@ -161,9 +168,9 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 
 	var batch []gen.CreateAgentLogParams
 
-	flush := func() {
+	flush := func(flushCtx context.Context) {
 		for _, entry := range batch {
-			if err := p.q.CreateAgentLog(ctx, entry); err != nil {
+			if err := p.q.CreateAgentLog(flushCtx, entry); err != nil {
 				slog.Error("persist log", "err", err)
 			}
 		}
@@ -174,7 +181,8 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 		select {
 		case entry, ok := <-logCh:
 			if !ok {
-				flush()
+				// Use Background so a cancelled worker ctx doesn't drop the final batch.
+				flush(context.Background())
 				return
 			}
 			batch = append(batch, gen.CreateAgentLogParams{
@@ -185,7 +193,7 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 				Content:     entry.Content,
 			})
 			if len(batch) >= 50 {
-				flush()
+				flush(ctx)
 			}
 			// Also publish to WebSocket for live streaming
 			if p.pub != nil {
@@ -201,7 +209,7 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 			}
 
 		case <-ticker.C:
-			flush()
+			flush(ctx)
 		}
 	}
 }

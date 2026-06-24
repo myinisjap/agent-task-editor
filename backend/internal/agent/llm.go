@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
+
+var llmHTTPClient = &http.Client{Timeout: 120 * time.Second}
 
 // LLMRunner implements Provider using a raw OpenAI-compatible HTTP API.
 // It runs a tool-use loop until signal_complete or request_human is called.
@@ -150,7 +153,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 		for _, tc := range resp.ToolCalls {
 			logCh <- LogEntry{Type: LogToolCall, Content: fmt.Sprintf("%s(%s)", tc.Function.Name, tc.Function.Arguments), At: time.Now()}
 
-			result, signal := r.executeTool(input.RepoPath, tc)
+			result, signal := r.executeTool(runCtx, input.RepoPath, tc)
 
 			logCh <- LogEntry{Type: LogToolResult, Content: result, At: time.Now()}
 
@@ -169,10 +172,10 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 	return Result{Status: "failed"}, fmt.Errorf("exceeded max turns (%d)", maxTurns)
 }
 
-func (r *LLMRunner) executeTool(repoPath string, tc toolCall) (string, *Result) {
+func (r *LLMRunner) executeTool(ctx context.Context, repoPath string, tc toolCall) (string, *Result) {
 	var args map[string]string
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-	return executeLLMTool(repoPath, tc.Function.Name, args)
+	return executeLLMTool(ctx, repoPath, tc.Function.Name, args)
 }
 
 type completionResponse struct {
@@ -194,11 +197,16 @@ func (r *LLMRunner) chatComplete(ctx context.Context, model string, messages []c
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.APIKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := llmHTTPClient.Do(req)
 	if err != nil {
 		return completionResponse{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return completionResponse{}, fmt.Errorf("http %d: %s", resp.StatusCode, body)
+	}
 
 	var result struct {
 		Choices []struct {

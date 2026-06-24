@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
+
+var anthropicHTTPClient = &http.Client{Timeout: 120 * time.Second}
 
 const anthropicDefaultBase = "https://api.anthropic.com"
 const anthropicVersion = "2023-06-01"
@@ -170,7 +173,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 			var args map[string]string
 			_ = json.Unmarshal(tu.Input, &args)
 
-			output, signal := executeLLMTool(input.RepoPath, tu.Name, args)
+			output, signal := executeLLMTool(runCtx, input.RepoPath, tu.Name, args)
 			logCh <- LogEntry{Type: LogToolResult, Content: output, At: time.Now()}
 
 			resultBlocks = append(resultBlocks, anthropicContent{
@@ -211,11 +214,16 @@ func (r *AnthropicRunner) messagesComplete(ctx context.Context, model, system st
 	req.Header.Set("x-api-key", r.APIKey)
 	req.Header.Set("anthropic-version", anthropicVersion)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := anthropicHTTPClient.Do(req)
 	if err != nil {
 		return anthropicResponse{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return anthropicResponse{}, fmt.Errorf("http %d: %s", resp.StatusCode, body)
+	}
 
 	var result anthropicResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

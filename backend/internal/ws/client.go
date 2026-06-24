@@ -3,14 +3,18 @@ package ws
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
 )
+
+const maxSubscriptions = 100
 
 // Client represents a single WebSocket connection.
 type Client struct {
@@ -29,9 +33,32 @@ type inboundMsg struct {
 }
 
 // ServeWS upgrades the HTTP connection and starts the client goroutines.
-func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
+// authToken is the expected bearer token (empty = no auth required).
+// corsOrigins is the CORS allowed origins list (comma-separated, "*" = any).
+func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOrigins string) {
+	// Validate token from query param (browsers can't set Authorization on WS).
+	if authToken != "" {
+		tok := r.URL.Query().Get("token")
+		if subtle.ConstantTimeCompare([]byte(tok), []byte(authToken)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// Build origin pattern list from the same CORS config used by the middleware.
+	var originPatterns []string
+	if corsOrigins == "*" || corsOrigins == "" {
+		originPatterns = []string{"*"}
+	} else {
+		for _, o := range strings.Split(corsOrigins, ",") {
+			if s := strings.TrimSpace(o); s != "" {
+				originPatterns = append(originPatterns, s)
+			}
+		}
+	}
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // CORS handled by middleware
+		OriginPatterns: originPatterns,
 	})
 	if err != nil {
 		slog.Error("ws upgrade", "err", err)
@@ -70,7 +97,9 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 			case "subscribe":
 				if msg.TaskID != "" {
 					c.subMu.Lock()
-					c.subscriptions[msg.TaskID] = true
+					if len(c.subscriptions) < maxSubscriptions {
+						c.subscriptions[msg.TaskID] = true
+					}
 					c.subMu.Unlock()
 				}
 			case "unsubscribe":

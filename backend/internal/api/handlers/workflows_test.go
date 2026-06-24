@@ -16,7 +16,7 @@ func setupWorkflowRouter(t *testing.T) (http.Handler, *gen.Queries) {
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewWorkflowsHandler(q)
+	h := handlers.NewWorkflowsHandler(q, db.SQL())
 
 	r := chi.NewRouter()
 	r.Get("/workflows", h.List)

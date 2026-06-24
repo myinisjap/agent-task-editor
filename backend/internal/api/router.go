@@ -19,7 +19,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine)
-	workflowsH := handlers.NewWorkflowsHandler(q)
+	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
 	reposH := handlers.NewReposHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
@@ -33,12 +33,19 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 	r.Get("/healthz", handlers.Health)
 
-	// WebSocket endpoint
+	// WebSocket endpoint — auth via ?token= query param (browsers can't set headers)
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
-		ws.ServeWS(hub, w, req)
+		ws.ServeWS(hub, w, req, bearerToken, corsOrigins)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// Limit request bodies to 1 MB to prevent memory exhaustion.
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				req.Body = http.MaxBytesReader(w, req.Body, 1<<20)
+				next.ServeHTTP(w, req)
+			})
+		})
 		// Tasks
 		r.Get("/tasks", tasksH.List)
 		r.Post("/tasks", tasksH.Create)

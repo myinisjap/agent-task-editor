@@ -17,9 +17,15 @@ RUN apk add --no-cache ca-certificates git
 # Install Claude Code CLI globally so 'claude' is on PATH
 RUN npm install -g @anthropic-ai/claude-code
 
+RUN addgroup -S appuser && adduser -S appuser -G appuser && \
+    mkdir -p /data && chown appuser:appuser /data
+
 WORKDIR /app
 COPY --from=builder /app/bin/server .
 COPY --from=builder /app/bin/mcp-server .
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8080
 CMD ["./server"]

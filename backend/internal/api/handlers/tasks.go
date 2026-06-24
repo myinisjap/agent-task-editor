@@ -135,8 +135,12 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 		handleTransitionError(w, err)
 		return
 	}
-	task, _ := h.q.GetTask(r.Context(), taskID)
-	JSON(w, http.StatusOK, task)
+	updated, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
+		return
+	}
+	JSON(w, http.StatusOK, updated)
 }
 
 func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +177,11 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = task
-	updated, _ := h.q.GetTask(r.Context(), taskID)
+	updated, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
+		return
+	}
 	JSON(w, http.StatusOK, updated)
 }
 
@@ -195,7 +203,11 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 		handleTransitionError(w, err)
 		return
 	}
-	updated, _ := h.q.GetTask(r.Context(), taskID)
+	updated, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
+		return
+	}
 	JSON(w, http.StatusOK, updated)
 }
 

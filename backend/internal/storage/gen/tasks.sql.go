@@ -91,7 +91,7 @@ WHERE t.label IN (
 )
 AND (t.current_agent_run_id IS NULL OR NOT EXISTS (
     SELECT 1 FROM agent_runs ar
-    WHERE ar.id = t.current_agent_run_id AND ar.status = 'running'
+    WHERE ar.id = t.current_agent_run_id AND ar.status IN ('running', 'pending')
 ))
 `
 

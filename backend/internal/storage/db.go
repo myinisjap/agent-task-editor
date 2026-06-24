@@ -29,6 +29,9 @@ func Open(path string) (*DB, error) {
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
+	// Serialise writes at the Go layer — SQLite only supports one concurrent writer.
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 
 	if err := runMigrations(sqlDB); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)

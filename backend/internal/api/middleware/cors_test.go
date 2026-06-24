@@ -8,7 +8,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 )
 
-func TestCORS_Wildcard_SetsOrigin(t *testing.T) {
+func TestCORS_Wildcard_SetsLiteralStar(t *testing.T) {
 	h := middleware.CORS("*")(http.HandlerFunc(okHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -19,8 +19,13 @@ func TestCORS_Wildcard_SetsOrigin(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://example.com" {
-		t.Errorf("expected ACAO=https://example.com, got %q", got)
+	// Wildcard must be the literal "*", not the reflected origin, so
+	// browsers enforce same-origin cookie policy (no Allow-Credentials).
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("expected ACAO=*, got %q", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("expected no Allow-Credentials with wildcard, got %q", got)
 	}
 }
 

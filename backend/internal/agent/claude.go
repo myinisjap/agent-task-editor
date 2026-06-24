@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -199,10 +200,21 @@ func buildSystemPrompt(input RunInput) string {
 	return base + "\n\nWhen your work is complete, call the signal_complete tool with the next workflow label and a summary. If you need human input before continuing, call request_human."
 }
 
+// dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.
+var dangerousEnvKeys = map[string]bool{
+	"PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true,
+	"HOME": true, "SHELL": true, "IFS": true,
+	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
+}
+
 func mergeEnv(base []string, extra map[string]string) []string {
 	out := make([]string, len(base))
 	copy(out, base)
 	for k, v := range extra {
+		if dangerousEnvKeys[strings.ToUpper(k)] {
+			slog.Warn("agent env: blocked dangerous key", "key", k)
+			continue
+		}
 		out = append(out, fmt.Sprintf("%s=%s", k, v))
 	}
 	return out

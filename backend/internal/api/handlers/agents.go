@@ -1,12 +1,32 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
+
+// redactEnv replaces env values with "***" so API keys are never returned to clients.
+func redactEnv(envJSON string) string {
+	var env map[string]string
+	if err := json.Unmarshal([]byte(envJSON), &env); err != nil || len(env) == 0 {
+		return envJSON
+	}
+	redacted := make(map[string]string, len(env))
+	for k := range env {
+		redacted[k] = "***"
+	}
+	out, _ := json.Marshal(redacted)
+	return string(out)
+}
+
+func safeConfig(cfg gen.AgentConfig) gen.AgentConfig {
+	cfg.Env = redactEnv(cfg.Env)
+	return cfg
+}
 
 type AgentsHandler struct {
 	q *gen.Queries
@@ -22,7 +42,11 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, configs)
+	safe := make([]gen.AgentConfig, len(configs))
+	for i, c := range configs {
+		safe[i] = safeConfig(c)
+	}
+	JSON(w, http.StatusOK, safe)
 }
 
 func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +55,7 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "agent config not found")
 		return
 	}
-	JSON(w, http.StatusOK, cfg)
+	JSON(w, http.StatusOK, safeConfig(cfg))
 }
 
 func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {

@@ -12,7 +12,8 @@ import (
 )
 
 // validGitRef matches HEAD, HEAD~N, HEAD^N, 40/64-char hex SHAs, and safe branch/tag names.
-var validGitRef = regexp.MustCompile(`^(HEAD([~^][0-9]+)?|[0-9a-f]{40,64}|[a-zA-Z0-9._/-]+)$`)
+// First char must be alphanumeric to prevent flag injection (e.g. --no-index).
+var validGitRef = regexp.MustCompile(`^(HEAD([~^][0-9]+)?|[0-9a-f]{40,64}|[a-zA-Z0-9][a-zA-Z0-9._/-]*)$`)
 
 func isValidGitRef(ref string) bool {
 	return validGitRef.MatchString(ref) && !strings.Contains(ref, "..")
@@ -104,7 +105,7 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", ref).Output()
+	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", "--", ref).Output()
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to read git tree")
 		return
@@ -137,7 +138,7 @@ func (h *ReposHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "diff", base, head).Output()
+	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "diff", base, head, "--").Output()
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to compute diff")
 		return

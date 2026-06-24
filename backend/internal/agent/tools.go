@@ -1,17 +1,21 @@
 package agent
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
+const bashOutputLimit = 1 << 20 // 1 MB
+
 // executeLLMTool runs a single tool call for LLMRunner and AnthropicRunner.
 // Returns (output, nil) for file/shell tools, or (output, *Result) for
 // signal_complete and request_human which terminate the run.
-func executeLLMTool(repoPath, name string, args map[string]string) (string, *Result) {
+func executeLLMTool(ctx context.Context, repoPath, name string, args map[string]string) (string, *Result) {
 	switch name {
 	case "read_file":
 		path, err := safeRepoPath(repoPath, args["path"])
@@ -38,13 +42,26 @@ func executeLLMTool(repoPath, name string, args map[string]string) (string, *Res
 		return "ok", nil
 
 	case "run_bash":
-		cmd := exec.Command("sh", "-c", args["command"])
-		cmd.Dir = repoPath // run inside the repo, not the server's cwd
-		out, err := cmd.CombinedOutput()
+		cmd := exec.CommandContext(ctx, "sh", "-c", args["command"])
+		cmd.Dir = repoPath
+		pipe, err := cmd.StdoutPipe()
 		if err != nil {
-			return fmt.Sprintf("exit error: %v\n%s", err, out), nil
+			return fmt.Sprintf("error: %v", err), nil
 		}
-		return string(out), nil
+		cmd.Stderr = cmd.Stdout // combined
+		if err := cmd.Start(); err != nil {
+			return fmt.Sprintf("error starting: %v", err), nil
+		}
+		out, _ := io.ReadAll(io.LimitReader(pipe, bashOutputLimit))
+		err = cmd.Wait()
+		result := string(out)
+		if len(out) == bashOutputLimit {
+			result += "\n[output truncated at 1 MB]"
+		}
+		if err != nil {
+			return fmt.Sprintf("exit error: %v\n%s", err, result), nil
+		}
+		return result, nil
 
 	case "list_files":
 		dir := repoPath
@@ -80,15 +97,26 @@ func executeLLMTool(repoPath, name string, args map[string]string) (string, *Res
 }
 
 // safeRepoPath joins repoPath and rel, then verifies the result is still
-// inside repoPath to prevent path traversal attacks.
+// inside repoPath, including symlink resolution to prevent traversal via symlinks.
 func safeRepoPath(repoPath, rel string) (string, error) {
 	// filepath.Join with an absolute second arg discards the first in Go,
-	// so we must clean relative to a "/" prefix then re-root.
+	// so use filepath.FromSlash to keep it relative, then prefix-check.
 	clean := filepath.Join(repoPath, filepath.FromSlash(rel))
-	// Resolve symlinks not needed — just check the prefix.
 	root := filepath.Clean(repoPath) + string(os.PathSeparator)
 	if clean != filepath.Clean(repoPath) && !strings.HasPrefix(clean, root) {
 		return "", fmt.Errorf("path %q escapes repository root", rel)
+	}
+	// Resolve symlinks to prevent a symlink inside the repo pointing outside.
+	// Skip if the path doesn't exist yet (write_file creates new files).
+	if real, err := filepath.EvalSymlinks(clean); err == nil {
+		realRoot, rerr := filepath.EvalSymlinks(filepath.Clean(repoPath))
+		if rerr != nil {
+			realRoot = filepath.Clean(repoPath)
+		}
+		rootWithSep := realRoot + string(os.PathSeparator)
+		if real != realRoot && !strings.HasPrefix(real, rootWithSep) {
+			return "", fmt.Errorf("path %q escapes repository root via symlink", rel)
+		}
 	}
 	return clean, nil
 }

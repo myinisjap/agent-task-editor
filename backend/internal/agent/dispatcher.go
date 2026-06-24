@@ -58,19 +58,19 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 		return
 	}
 
-	for _, t := range tasks {
-		d.dispatch(ctx, t)
-	}
-}
-
-func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task) {
-	// Find an agent config that covers this label
+	// Fetch configs once per sweep, not once per task.
 	configs, err := d.q.ListAgentConfigs(ctx)
 	if err != nil {
 		slog.Error("list agent configs", "err", err)
 		return
 	}
 
+	for _, t := range tasks {
+		d.dispatch(ctx, t, configs)
+	}
+}
+
+func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig) {
 	var matched *gen.AgentConfig
 	for i, cfg := range configs {
 		var labels []string
@@ -131,7 +131,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task) {
 
 	provider := d.ProviderFactory(agentCfg)
 
-	d.pool.Submit(Job{
+	enqueued := d.pool.Submit(Job{
 		RunID:    runID,
 		Provider: provider,
 		Input: RunInput{
@@ -142,6 +142,14 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task) {
 			Feedback:    feedback,
 		},
 	})
+	if !enqueued {
+		// Pool was full; mark the run failed so the task becomes re-dispatchable.
+		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status: "failed",
+			ID:     runID,
+		})
+		return
+	}
 
 	slog.Info("dispatched agent", "task_id", t.ID, "label", t.Label, "run_id", runID, "agent", matched.Name)
 }
