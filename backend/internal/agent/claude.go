@@ -50,6 +50,9 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		"--allowedTools", allowedTools,
 		"--max-turns", "50",
 	}
+	if input.AgentConfig.MaxTokens > 0 {
+		args = append(args, "--max-tokens", fmt.Sprintf("%d", input.AgentConfig.MaxTokens))
+	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
 	}

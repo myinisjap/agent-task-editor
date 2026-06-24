@@ -3,12 +3,20 @@ package handlers
 import (
 	"net/http"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
+
+// validGitRef matches HEAD, HEAD~N, HEAD^N, 40/64-char hex SHAs, and safe branch/tag names.
+var validGitRef = regexp.MustCompile(`^(HEAD([~^][0-9]+)?|[0-9a-f]{40,64}|[a-zA-Z0-9._/-]+)$`)
+
+func isValidGitRef(ref string) bool {
+	return validGitRef.MatchString(ref) && !strings.Contains(ref, "..")
+}
 
 type ReposHandler struct {
 	q *gen.Queries
@@ -52,6 +60,12 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify the path exists and is a git repository before persisting.
+	if err := exec.CommandContext(r.Context(), "git", "-C", body.Path, "rev-parse", "--git-dir").Run(); err != nil {
+		Err(w, http.StatusBadRequest, "path is not a git repository")
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:         uuid.NewString(),
 		Name:       body.Name,
@@ -85,6 +99,10 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 	if ref == "" {
 		ref = "HEAD"
 	}
+	if !isValidGitRef(ref) {
+		Err(w, http.StatusBadRequest, "invalid git ref")
+		return
+	}
 
 	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", ref).Output()
 	if err != nil {
@@ -113,6 +131,10 @@ func (h *ReposHandler) Diff(w http.ResponseWriter, r *http.Request) {
 	}
 	if head == "" {
 		head = "HEAD"
+	}
+	if !isValidGitRef(base) || !isValidGitRef(head) {
+		Err(w, http.StatusBadRequest, "invalid git ref")
+		return
 	}
 
 	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "diff", base, head).Output()

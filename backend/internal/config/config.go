@@ -4,6 +4,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -65,6 +66,11 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("LLM_API_KEY"); v != "" {
 		cfg.LLMAPIKey = v
+	}
+	if v := os.Getenv("MAX_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MaxWorkers = n
+		}
 	}
 
 	return cfg, nil

@@ -76,7 +76,7 @@ func TestBearerAuth_WebSocketUpgrade_Bypasses(t *testing.T) {
 	}
 }
 
-func TestBearerAuth_TokenCaseInsensitive(t *testing.T) {
+func TestBearerAuth_TokenCaseSensitive(t *testing.T) {
 	h := middleware.BearerAuth("MyToken")(http.HandlerFunc(okHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -84,7 +84,7 @@ func TestBearerAuth_TokenCaseInsensitive(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 for case-insensitive token match, got %d", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for wrong-case token, got %d", w.Code)
 	}
 }

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 )
@@ -19,7 +20,8 @@ func BearerAuth(bearerToken string) func(http.Handler) http.Handler {
 				return
 			}
 			auth := r.Header.Get("Authorization")
-			if !strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")), bearerToken) {
+			token := strings.TrimPrefix(auth, "Bearer ")
+			if subtle.ConstantTimeCompare([]byte(token), []byte(bearerToken)) != 1 {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="agent-task-editor"`)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return

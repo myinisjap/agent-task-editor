@@ -45,6 +45,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Mark any runs left in 'running' from a previous crash as 'failed'.
+	if res, err := db.SQL().ExecContext(seedCtx,
+		`UPDATE agent_runs SET status='failed', completed_at=CURRENT_TIMESTAMP WHERE status='running'`); err != nil {
+		slog.Error("failed to sweep stuck runs", "err", err)
+		os.Exit(1)
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		slog.Warn("marked stuck runs as failed", "count", n)
+	}
+
 	// WebSocket hub — satisfies workflow.Publisher and agent.Publisher
 	hub := ws.NewHub()
 
