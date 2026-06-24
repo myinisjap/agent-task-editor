@@ -1,4 +1,6 @@
 import { useNavigate } from 'react-router-dom'
+import { useDraggable } from '@dnd-kit/core'
+import { CSS } from '@dnd-kit/utilities'
 import type { Task } from '../../api/client'
 
 const TYPE_COLORS: Record<string, string> = {
@@ -10,11 +12,25 @@ const TYPE_COLORS: Record<string, string> = {
 
 export default function TaskCard({ task, isRunning }: { task: Task; isRunning?: boolean }) {
   const navigate = useNavigate()
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id })
+
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.4 : 1,
+    cursor: isDragging ? 'grabbing' : 'grab',
+  }
 
   return (
     <div
-      onClick={() => navigate(`/tasks/${task.id}`)}
-      className="bg-slate-800 border border-slate-700 rounded-lg p-3 cursor-pointer hover:border-slate-500 transition-colors"
+      ref={setNodeRef}
+      style={style}
+      {...listeners}
+      {...attributes}
+      onClick={(e) => {
+        if (!isDragging) navigate(`/tasks/${task.id}`)
+        e.stopPropagation()
+      }}
+      className="bg-slate-800 border border-slate-700 rounded-lg p-3 hover:border-slate-500 transition-colors select-none"
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>

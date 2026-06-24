@@ -1,5 +1,5 @@
-import type { Task } from '../../api/client'
-import type { WorkflowLabel } from '../../api/client'
+import { useDroppable } from '@dnd-kit/core'
+import type { Task, WorkflowLabel } from '../../api/client'
 import TaskCard from './TaskCard'
 
 type Props = {
@@ -9,12 +9,13 @@ type Props = {
 }
 
 export default function TaskColumn({ label, tasks, runningTaskIds }: Props) {
+  const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const isIgnored = label.agent_ignore === 1
 
   return (
     <div className="flex flex-col w-64 shrink-0">
       <div
-        className="flex items-center gap-2 mb-3 px-1"
+        className="flex items-center gap-2 mb-3 px-1 pb-1"
         style={{ borderBottom: `2px solid ${label.color}` }}
       >
         <span
@@ -29,7 +30,12 @@ export default function TaskColumn({ label, tasks, runningTaskIds }: Props) {
         </span>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div
+        ref={setNodeRef}
+        className={`flex flex-col gap-2 flex-1 min-h-12 rounded-lg transition-colors ${
+          isOver ? 'bg-slate-800/50 ring-1 ring-slate-600' : ''
+        }`}
+      >
         {tasks.map((task) => (
           <TaskCard
             key={task.id}
@@ -38,8 +44,10 @@ export default function TaskColumn({ label, tasks, runningTaskIds }: Props) {
           />
         ))}
         {tasks.length === 0 && (
-          <div className="text-xs text-slate-600 text-center py-4 border border-dashed border-slate-700 rounded-lg">
-            empty
+          <div className={`text-xs text-center py-4 border border-dashed rounded-lg ${
+            isOver ? 'border-slate-500 text-slate-400' : 'border-slate-700 text-slate-600'
+          }`}>
+            {isOver ? 'drop here' : 'empty'}
           </div>
         )}
       </div>

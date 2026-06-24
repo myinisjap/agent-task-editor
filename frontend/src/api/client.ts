@@ -127,6 +127,8 @@ export const api = {
   workflows: {
     list: () => request<Workflow[]>('/workflows'),
     get: (id: string) => request<Workflow>(`/workflows/${id}`),
+    update: (id: string, body: { name: string; description: string; labels: Omit<WorkflowLabel, 'id' | 'workflow_id'>[]; transitions: { from_label: string; to_label: string; trigger_type: string; agent_config_id?: string }[] }) =>
+      request<Workflow>(`/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   },
   agents: {
     list: () => request<AgentConfig[]>('/agents'),
