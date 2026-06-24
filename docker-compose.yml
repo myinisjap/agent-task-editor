@@ -20,7 +20,8 @@ services:
       - db_data:/data
       # Claude Max auth — run 'claude login' on your host machine first,
       # then this mount shares that session with the container.
-      - ${HOME}/.claude:/root/.claude
+      # appuser home is /home/appuser, so mount there (not /root).
+      - ${HOME}/.claude:/home/appuser/.claude
       # Mount your code repositories here.
       # Register them in the UI using the container path (e.g. /repos/myproject).
       # - ${HOME}/code:/repos
