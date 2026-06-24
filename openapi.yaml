@@ -1,0 +1,496 @@
+openapi: "3.1.0"
+info:
+  title: Agent Task Editor API
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:8080/api/v1
+
+components:
+  schemas:
+    Task:
+      type: object
+      properties:
+        id:          { type: string }
+        title:       { type: string }
+        description: { type: string }
+        type:        { type: string, enum: [feature, bug, chore, spike] }
+        label:       { type: string }
+        repo_id:     { type: string }
+        workflow_id: { type: string }
+        current_agent_run_id: { type: string, nullable: true }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    WorkflowLabel:
+      type: object
+      properties:
+        id:           { type: string }
+        workflow_id:  { type: string }
+        name:         { type: string }
+        color:        { type: string }
+        sort_order:   { type: integer }
+        agent_ignore: { type: integer }
+        is_terminal:  { type: integer }
+
+    WorkflowTransition:
+      type: object
+      properties:
+        id:               { type: string }
+        workflow_id:      { type: string }
+        from_label:       { type: string }
+        to_label:         { type: string }
+        trigger_type:     { type: string, enum: [agent, human, both] }
+        agent_config_id:  { type: string, nullable: true }
+
+    Workflow:
+      type: object
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        description: { type: string }
+        labels:      { type: array, items: { $ref: "#/components/schemas/WorkflowLabel" } }
+        transitions: { type: array, items: { $ref: "#/components/schemas/WorkflowTransition" } }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    AgentConfig:
+      type: object
+      properties:
+        id:            { type: string }
+        name:          { type: string }
+        provider:      { type: string, enum: [claude_code, openai, anthropic, custom] }
+        model:         { type: string }
+        system_prompt: { type: string }
+        labels:        { type: string, description: "JSON array of label names" }
+        env:           { type: string, description: "JSON object of env vars" }
+        max_tokens:    { type: integer }
+        timeout_secs:  { type: integer }
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+
+    Repo:
+      type: object
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        path:        { type: string }
+        remote_url:  { type: string, nullable: true }
+        workflow_id: { type: string, nullable: true }
+        created_at:  { type: string, format: date-time }
+
+    AgentRun:
+      type: object
+      properties:
+        id:               { type: string }
+        task_id:          { type: string }
+        agent_config_id:  { type: string }
+        status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled] }
+        feedback:         { type: string, nullable: true }
+        started_at:       { type: string, format: date-time, nullable: true }
+        completed_at:     { type: string, format: date-time, nullable: true }
+        created_at:       { type: string, format: date-time }
+
+    AgentLog:
+      type: object
+      properties:
+        id:           { type: string }
+        agent_run_id: { type: string }
+        timestamp:    { type: string, format: date-time }
+        type:         { type: string, enum: [stdout, stderr, system, tool_call, tool_result] }
+        content:      { type: string }
+
+    Dashboard:
+      type: object
+      properties:
+        label_counts:
+          type: object
+          additionalProperties: { type: integer }
+        active_agents:
+          type: array
+          items:
+            type: object
+            properties:
+              run_id:     { type: string }
+              task_id:    { type: string }
+              task_title: { type: string }
+              agent_name: { type: string }
+              started_at: { type: string }
+        intervention_queue:
+          type: array
+          items:
+            type: object
+            properties:
+              run_id:     { type: string }
+              task_id:    { type: string }
+              task_title: { type: string }
+              message:    { type: string, nullable: true }
+              created_at: { type: string }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+paths:
+  /tasks:
+    get:
+      summary: List tasks
+      parameters:
+        - name: label
+          in: query
+          schema: { type: string }
+        - name: repo_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Task" } }
+    post:
+      summary: Create a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, repo_id, workflow_id]
+              properties:
+                title:       { type: string }
+                description: { type: string }
+                type:        { type: string }
+                repo_id:     { type: string }
+                workflow_id: { type: string }
+      responses:
+        "201":
+          description: Created task
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+
+  /tasks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a task
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+    patch:
+      summary: Update a task's metadata
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:       { type: string }
+                description: { type: string }
+                type:        { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+    delete:
+      summary: Delete a task
+      responses:
+        "204": { description: Deleted }
+
+  /tasks/{id}/label:
+    patch:
+      summary: Move task label (human-initiated)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_label]
+              properties:
+                to_label: { type: string }
+                note:     { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "400": { description: Invalid transition }
+        "403": { description: Gate required }
+
+  /tasks/{id}/approve:
+    post:
+      summary: Approve the current human gate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+
+  /tasks/{id}/reject:
+    post:
+      summary: Reject and push back with feedback
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:     { type: string }
+                to_label: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+
+  /tasks/{id}/runs:
+    get:
+      summary: List agent runs for a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentRun" } }
+
+  /tasks/{id}/runs/{run_id}:
+    get:
+      summary: Get an agent run
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRun" }
+
+  /tasks/{id}/runs/{run_id}/logs:
+    get:
+      summary: Get logs for an agent run
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentLog" } }
+
+  /workflows:
+    get:
+      summary: List workflows
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Workflow" } }
+    post:
+      summary: Create a workflow
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workflow" }
+
+  /workflows/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a workflow with labels and transitions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workflow" }
+    put:
+      summary: Replace workflow labels and transitions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workflow" }
+    delete:
+      summary: Delete a workflow
+      responses:
+        "204": { description: Deleted }
+
+  /agents:
+    get:
+      summary: List agent configs
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentConfig" } }
+    post:
+      summary: Create an agent config
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentConfig" }
+
+  /agents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get an agent config
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentConfig" }
+    put:
+      summary: Update an agent config
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentConfig" }
+    delete:
+      summary: Delete an agent config
+      responses:
+        "204": { description: Deleted }
+
+  /repos:
+    get:
+      summary: List repos
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Repo" } }
+    post:
+      summary: Register a repo
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+
+  /repos/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a repo
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+    delete:
+      summary: Remove a repo
+      responses:
+        "204": { description: Removed }
+
+  /repos/{id}/tree:
+    get:
+      summary: Get repo file tree
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: ref
+          in: query
+          schema: { type: string, default: HEAD }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ref:   { type: string }
+                  files: { type: array, items: { type: string } }
+
+  /repos/{id}/diff:
+    get:
+      summary: Get git diff for a repo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: base
+          in: query
+          schema: { type: string, default: "HEAD~1" }
+        - name: head
+          in: query
+          schema: { type: string, default: HEAD }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  base: { type: string }
+                  head: { type: string }
+                  diff: { type: string }
+
+  /dashboard:
+    get:
+      summary: Get dashboard summary
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }

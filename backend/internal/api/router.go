@@ -8,12 +8,22 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
 // NewRouter builds and returns the application router.
 func NewRouter(db *storage.DB, corsOrigins string) http.Handler {
-	r := chi.NewRouter()
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), nil) // publisher wired in Phase 6
 
+	tasksH := handlers.NewTasksHandler(q, engine)
+	workflowsH := handlers.NewWorkflowsHandler(q)
+	agentsH := handlers.NewAgentsHandler(q)
+	reposH := handlers.NewReposHandler(q)
+	dashH := handlers.NewDashboardHandler(q)
+
+	r := chi.NewRouter()
 	r.Use(middleware.Recover)
 	r.Use(middleware.Logger)
 	r.Use(chimiddleware.RequestID)
@@ -22,12 +32,45 @@ func NewRouter(db *storage.DB, corsOrigins string) http.Handler {
 	r.Get("/healthz", handlers.Health)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		// Placeholder routes — handlers added in Phase 2/3
-		r.Get("/tasks", handlers.NotImplemented)
-		r.Get("/workflows", handlers.NotImplemented)
-		r.Get("/agents", handlers.NotImplemented)
-		r.Get("/repos", handlers.NotImplemented)
-		r.Get("/dashboard", handlers.NotImplemented)
+		// Tasks
+		r.Get("/tasks", tasksH.List)
+		r.Post("/tasks", tasksH.Create)
+		r.Get("/tasks/{id}", tasksH.Get)
+		r.Patch("/tasks/{id}", tasksH.Update)
+		r.Delete("/tasks/{id}", tasksH.Delete)
+		r.Patch("/tasks/{id}/label", tasksH.MoveLabel)
+		r.Post("/tasks/{id}/approve", tasksH.Approve)
+		r.Post("/tasks/{id}/reject", tasksH.Reject)
+
+		// Agent runs
+		r.Get("/tasks/{id}/runs", tasksH.ListRuns)
+		r.Get("/tasks/{id}/runs/{run_id}", tasksH.GetRun)
+		r.Get("/tasks/{id}/runs/{run_id}/logs", tasksH.GetRunLogs)
+
+		// Workflows
+		r.Get("/workflows", workflowsH.List)
+		r.Post("/workflows", workflowsH.Create)
+		r.Get("/workflows/{id}", workflowsH.Get)
+		r.Put("/workflows/{id}", workflowsH.Update)
+		r.Delete("/workflows/{id}", workflowsH.Delete)
+
+		// Agent configs
+		r.Get("/agents", agentsH.List)
+		r.Post("/agents", agentsH.Create)
+		r.Get("/agents/{id}", agentsH.Get)
+		r.Put("/agents/{id}", agentsH.Update)
+		r.Delete("/agents/{id}", agentsH.Delete)
+
+		// Repos
+		r.Get("/repos", reposH.List)
+		r.Post("/repos", reposH.Create)
+		r.Get("/repos/{id}", reposH.Get)
+		r.Delete("/repos/{id}", reposH.Delete)
+		r.Get("/repos/{id}/tree", reposH.Tree)
+		r.Get("/repos/{id}/diff", reposH.Diff)
+
+		// Dashboard
+		r.Get("/dashboard", dashH.Get)
 	})
 
 	return r
