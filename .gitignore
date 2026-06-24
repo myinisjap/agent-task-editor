@@ -1,0 +1,15 @@
+# Go
+backend/tmp/
+backend/bin/
+*.db
+*.db-shm
+*.db-wal
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Editor
+.DS_Store
+.env
+.env.local
