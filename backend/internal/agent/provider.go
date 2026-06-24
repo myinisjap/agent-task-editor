@@ -1,0 +1,72 @@
+package agent
+
+import (
+	"context"
+	"time"
+)
+
+// LogType classifies a single streamed log line.
+type LogType string
+
+const (
+	LogStdout     LogType = "stdout"
+	LogStderr     LogType = "stderr"
+	LogSystem     LogType = "system"
+	LogToolCall   LogType = "tool_call"
+	LogToolResult LogType = "tool_result"
+)
+
+// LogEntry is a single streamed output line from an agent run.
+type LogEntry struct {
+	Type    LogType
+	Content string
+	At      time.Time
+}
+
+// Result is what an agent returns when its run ends.
+type Result struct {
+	// completed | failed | waiting_human
+	Status    string
+	// Agent-requested label to transition to (validated by workflow engine before use)
+	NextLabel *string
+	// Summary message or human help request
+	Message   *string
+}
+
+// RunInput carries everything an agent needs to start work.
+type RunInput struct {
+	RunID       string
+	Task        Task
+	AgentConfig AgentConfig
+	RepoPath    string
+	// Human rejection note from a prior run, injected at the top of the prompt
+	Feedback  *string
+	// Output from the plan stage, injected for later stages
+	PriorPlan *string
+}
+
+// Task is a minimal copy of storage.Task to avoid import cycles.
+type Task struct {
+	ID          string
+	Title       string
+	Description string
+	Type        string
+	Label       string
+}
+
+// AgentConfig is a minimal copy of storage.AgentConfig.
+type AgentConfig struct {
+	ID           string
+	Name         string
+	Provider     string
+	Model        string
+	SystemPrompt string
+	MaxTokens    int64
+	TimeoutSecs  int64
+	Env          map[string]string
+}
+
+// Provider is the interface all agent backends must satisfy.
+type Provider interface {
+	Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error)
+}

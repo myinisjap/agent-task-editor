@@ -13,9 +13,8 @@ import (
 )
 
 // NewRouter builds and returns the application router.
-func NewRouter(db *storage.DB, corsOrigins string) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, corsOrigins string) http.Handler {
 	q := gen.New(db.SQL())
-	engine := workflow.New(db.SQL(), nil) // publisher wired in Phase 6
 
 	tasksH := handlers.NewTasksHandler(q, engine)
 	workflowsH := handlers.NewWorkflowsHandler(q)
