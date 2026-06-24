@@ -14,6 +14,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 )
 
+
 func main() {
 	dbPath := env("DB_PATH", "agent-task-editor.db")
 	port := env("PORT", "8080")
@@ -27,6 +28,12 @@ func main() {
 	defer db.Close()
 
 	slog.Info("database ready", "path", dbPath)
+
+	ctx := context.Background()
+	if err := storage.SeedDefaultWorkflow(ctx, db); err != nil {
+		slog.Error("failed to seed default workflow", "err", err)
+		os.Exit(1)
+	}
 
 	router := api.NewRouter(db, corsOrigins)
 

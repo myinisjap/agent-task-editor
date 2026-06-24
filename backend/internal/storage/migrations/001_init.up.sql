@@ -1,5 +1,3 @@
--- +migrate Up
-
 CREATE TABLE workflows (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -100,20 +98,3 @@ CREATE INDEX idx_tasks_repo      ON tasks(repo_id);
 CREATE INDEX idx_agent_runs_task ON agent_runs(task_id);
 CREATE INDEX idx_agent_logs_run  ON agent_logs(agent_run_id);
 CREATE INDEX idx_history_task    ON task_label_history(task_id);
-
--- +migrate Down
-
-DROP INDEX IF EXISTS idx_history_task;
-DROP INDEX IF EXISTS idx_agent_logs_run;
-DROP INDEX IF EXISTS idx_agent_runs_task;
-DROP INDEX IF EXISTS idx_tasks_repo;
-DROP INDEX IF EXISTS idx_tasks_label;
-DROP TABLE IF EXISTS agent_logs;
-DROP TABLE IF EXISTS agent_runs;
-DROP TABLE IF EXISTS task_label_history;
-DROP TABLE IF EXISTS tasks;
-DROP TABLE IF EXISTS repos;
-DROP TABLE IF EXISTS workflow_transitions;
-DROP TABLE IF EXISTS agent_configs;
-DROP TABLE IF EXISTS workflow_labels;
-DROP TABLE IF EXISTS workflows;

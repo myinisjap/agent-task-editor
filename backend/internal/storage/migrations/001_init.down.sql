@@ -1,0 +1,14 @@
+DROP INDEX IF EXISTS idx_history_task;
+DROP INDEX IF EXISTS idx_agent_logs_run;
+DROP INDEX IF EXISTS idx_agent_runs_task;
+DROP INDEX IF EXISTS idx_tasks_repo;
+DROP INDEX IF EXISTS idx_tasks_label;
+DROP TABLE IF EXISTS agent_logs;
+DROP TABLE IF EXISTS agent_runs;
+DROP TABLE IF EXISTS task_label_history;
+DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS repos;
+DROP TABLE IF EXISTS workflow_transitions;
+DROP TABLE IF EXISTS agent_configs;
+DROP TABLE IF EXISTS workflow_labels;
+DROP TABLE IF EXISTS workflows;
