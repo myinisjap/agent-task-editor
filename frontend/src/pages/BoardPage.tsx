@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTasksStore } from '../stores/tasks'
 import { useWorkflowStore } from '../stores/workflow'
 import TaskBoard from '../components/board/TaskBoard'
+import NewTaskModal from '../components/board/NewTaskModal'
 import { api } from '../api/client'
 import { wsClient } from '../api/ws'
 
@@ -9,6 +10,7 @@ export default function BoardPage() {
   const { tasks, loading, fetch: fetchTasks, upsert } = useTasksStore()
   const { workflows, fetch: fetchWorkflows } = useWorkflowStore()
   const [runningTaskIds] = useState(() => new Set<string>())
+  const [showNewTask, setShowNewTask] = useState(false)
 
   useEffect(() => {
     fetchTasks()
@@ -35,10 +37,24 @@ export default function BoardPage() {
     <div className="p-6 h-full flex flex-col">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-slate-100">Board</h1>
-        {workflow && (
-          <span className="text-xs text-slate-500">Workflow: {workflow.name}</span>
-        )}
+        <div className="flex items-center gap-3">
+          {workflow && (
+            <span className="text-xs text-slate-500">Workflow: {workflow.name}</span>
+          )}
+          {workflow && (
+            <button
+              onClick={() => setShowNewTask(true)}
+              className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
+            >
+              + New Task
+            </button>
+          )}
+        </div>
       </div>
+
+      {showNewTask && workflow && (
+        <NewTaskModal workflow={workflow} onClose={() => setShowNewTask(false)} />
+      )}
 
       {loading ? (
         <div className="text-slate-400 text-sm">Loading…</div>

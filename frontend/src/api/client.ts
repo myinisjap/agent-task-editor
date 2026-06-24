@@ -122,13 +122,19 @@ export const api = {
     reject: (id: string, note: string, to_label?: string) =>
       request<Task>(`/tasks/${id}/reject`, { method: 'POST', body: JSON.stringify({ note, to_label }) }),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
+    getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),
   },
   workflows: {
     list: () => request<Workflow[]>('/workflows'),
     get: (id: string) => request<Workflow>(`/workflows/${id}`),
+    create: () => request<Workflow>('/workflows', { method: 'POST' }),
     update: (id: string, body: { name: string; description: string; labels: Omit<WorkflowLabel, 'id' | 'workflow_id'>[]; transitions: { from_label: string; to_label: string; trigger_type: string; agent_config_id?: string }[] }) =>
       request<Workflow>(`/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/workflows/${id}`, { method: 'DELETE' }),
+    exportYaml: (id: string) => `${BASE}/workflows/${id}/export.yaml`,
+    importYaml: (yaml: string) =>
+      request<Workflow>('/workflows/import', { method: 'POST', body: yaml, headers: { 'Content-Type': 'application/yaml' } }),
   },
   agents: {
     list: () => request<AgentConfig[]>('/agents'),

@@ -5,6 +5,7 @@ const links = [
   { to: '/board',     label: 'Board' },
   { to: '/workflow',  label: 'Workflow' },
   { to: '/agents',    label: 'Agents' },
+  { to: '/repos',     label: 'Repos' },
 ]
 
 export default function NavSidebar() {
