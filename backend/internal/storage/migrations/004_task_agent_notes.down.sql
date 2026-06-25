@@ -1,0 +1,2 @@
+-- ALTER TABLE tasks requires recreating the table in SQLite.
+-- For a production system, copy data to a new table, drop the old, and rename.
