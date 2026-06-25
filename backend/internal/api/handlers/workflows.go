@@ -102,10 +102,11 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			IsTerminal  bool   `json:"is_terminal"`
 		} `json:"labels"`
 		Transitions []struct {
-			FromLabel      string  `json:"from_label"`
-			ToLabel        string  `json:"to_label"`
-			TriggerType    string  `json:"trigger_type"`
-			AgentConfigID  *string `json:"agent_config_id"`
+			FromLabel     string  `json:"from_label"`
+			ToLabel       string  `json:"to_label"`
+			TriggerType   string  `json:"trigger_type"`
+			AgentConfigID *string `json:"agent_config_id"`
+			Path          *string `json:"path"`
 		} `json:"transitions"`
 	}
 	if err := decode(r, &body); err != nil {
@@ -172,6 +173,7 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			ToLabel:       t.ToLabel,
 			TriggerType:   t.TriggerType,
 			AgentConfigID: t.AgentConfigID,
+			Path:          t.Path,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return

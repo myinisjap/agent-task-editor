@@ -106,6 +106,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		feedback = prior.Feedback
 	}
 
+	var agentNotes *string
+	if t.AgentNotes != "" {
+		agentNotes = &t.AgentNotes
+	}
+
 	agentCfg := toAgentConfig(*matched)
 
 	_, err = d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
@@ -121,14 +126,15 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 
 	// Mark the task's active run so the next sweep skips it.
 	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-		CurrentAgentRunID: runID,
-		ActiveAgentRunID:  runID,
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
 		ID:                t.ID,
 	}); err != nil {
 		slog.Error("set task active run", "task_id", t.ID, "err", err)
 		return
 	}
 
+	transitions := d.buildTransitionHints(ctx, t.WorkflowID, t.Label)
 	provider := d.ProviderFactory(agentCfg)
 
 	enqueued := d.pool.Submit(Job{
@@ -136,10 +142,12 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		Provider: provider,
 		Input: RunInput{
 			RunID:       runID,
-			Task:        Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label},
+			Task:        Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes},
 			AgentConfig: agentCfg,
 			RepoPath:    repo.Path,
+			Transitions: transitions,
 			Feedback:    feedback,
+			PriorPlan:   agentNotes,
 		},
 	})
 	if !enqueued {
@@ -153,6 +161,22 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	}
 
 	slog.Info("dispatched agent", "task_id", t.ID, "label", t.Label, "run_id", runID, "agent", matched.Name)
+}
+
+func (d *Dispatcher) buildTransitionHints(ctx context.Context, workflowID, fromLabel string) []TransitionHint {
+	all, err := d.q.ListWorkflowTransitions(ctx, workflowID)
+	if err != nil {
+		slog.Warn("build transition hints: list transitions", "err", err)
+		return nil
+	}
+	var hints []TransitionHint
+	for _, t := range all {
+		if t.FromLabel != fromLabel || t.Path == nil {
+			continue
+		}
+		hints = append(hints, TransitionHint{ToLabel: t.ToLabel, Path: *t.Path})
+	}
+	return hints
 }
 
 func toAgentConfig(cfg gen.AgentConfig) AgentConfig {

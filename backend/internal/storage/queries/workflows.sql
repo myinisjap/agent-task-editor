@@ -43,8 +43,8 @@ SELECT * FROM workflow_transitions
 WHERE workflow_id = ? AND from_label = ? AND to_label = ?;
 
 -- name: CreateWorkflowTransition :one
-INSERT INTO workflow_transitions (id, workflow_id, from_label, to_label, trigger_type, agent_config_id)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO workflow_transitions (id, workflow_id, from_label, to_label, trigger_type, agent_config_id, path)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: DeleteWorkflowTransitions :exec

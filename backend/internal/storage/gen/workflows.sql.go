@@ -87,33 +87,10 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 	return i, err
 }
 
-const getWorkflowRejectionLabel = `-- name: GetWorkflowRejectionLabel :one
-SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, is_rejection_target
-FROM workflow_labels
-WHERE workflow_id = ? AND is_rejection_target = 1
-LIMIT 1
-`
-
-func (q *Queries) GetWorkflowRejectionLabel(ctx context.Context, workflowID string) (WorkflowLabel, error) {
-	row := q.db.QueryRowContext(ctx, getWorkflowRejectionLabel, workflowID)
-	var i WorkflowLabel
-	err := row.Scan(
-		&i.ID,
-		&i.WorkflowID,
-		&i.Name,
-		&i.Color,
-		&i.SortOrder,
-		&i.AgentIgnore,
-		&i.IsTerminal,
-		&i.IsRejectionTarget,
-	)
-	return i, err
-}
-
 const createWorkflowTransition = `-- name: CreateWorkflowTransition :one
-INSERT INTO workflow_transitions (id, workflow_id, from_label, to_label, trigger_type, agent_config_id)
-VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, from_label, to_label, trigger_type, agent_config_id
+INSERT INTO workflow_transitions (id, workflow_id, from_label, to_label, trigger_type, agent_config_id, path)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workflow_id, from_label, to_label, trigger_type, agent_config_id, path
 `
 
 type CreateWorkflowTransitionParams struct {
@@ -123,6 +100,7 @@ type CreateWorkflowTransitionParams struct {
 	ToLabel       string  `json:"to_label"`
 	TriggerType   string  `json:"trigger_type"`
 	AgentConfigID *string `json:"agent_config_id"`
+	Path          *string `json:"path"`
 }
 
 func (q *Queries) CreateWorkflowTransition(ctx context.Context, arg CreateWorkflowTransitionParams) (WorkflowTransition, error) {
@@ -133,6 +111,7 @@ func (q *Queries) CreateWorkflowTransition(ctx context.Context, arg CreateWorkfl
 		arg.ToLabel,
 		arg.TriggerType,
 		arg.AgentConfigID,
+		arg.Path,
 	)
 	var i WorkflowTransition
 	err := row.Scan(
@@ -142,6 +121,7 @@ func (q *Queries) CreateWorkflowTransition(ctx context.Context, arg CreateWorkfl
 		&i.ToLabel,
 		&i.TriggerType,
 		&i.AgentConfigID,
+		&i.Path,
 	)
 	return i, err
 }
@@ -190,8 +170,31 @@ func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) 
 	return i, err
 }
 
+const getWorkflowRejectionLabel = `-- name: GetWorkflowRejectionLabel :one
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, is_rejection_target
+FROM workflow_labels
+WHERE workflow_id = ? AND is_rejection_target = 1
+LIMIT 1
+`
+
+func (q *Queries) GetWorkflowRejectionLabel(ctx context.Context, workflowID string) (WorkflowLabel, error) {
+	row := q.db.QueryRowContext(ctx, getWorkflowRejectionLabel, workflowID)
+	var i WorkflowLabel
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.Name,
+		&i.Color,
+		&i.SortOrder,
+		&i.AgentIgnore,
+		&i.IsTerminal,
+		&i.IsRejectionTarget,
+	)
+	return i, err
+}
+
 const getWorkflowTransition = `-- name: GetWorkflowTransition :one
-SELECT id, workflow_id, from_label, to_label, trigger_type, agent_config_id FROM workflow_transitions
+SELECT id, workflow_id, from_label, to_label, trigger_type, agent_config_id, path FROM workflow_transitions
 WHERE workflow_id = ? AND from_label = ? AND to_label = ?
 `
 
@@ -211,6 +214,7 @@ func (q *Queries) GetWorkflowTransition(ctx context.Context, arg GetWorkflowTran
 		&i.ToLabel,
 		&i.TriggerType,
 		&i.AgentConfigID,
+		&i.Path,
 	)
 	return i, err
 }
@@ -252,7 +256,7 @@ func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]
 }
 
 const listWorkflowTransitions = `-- name: ListWorkflowTransitions :many
-SELECT id, workflow_id, from_label, to_label, trigger_type, agent_config_id FROM workflow_transitions WHERE workflow_id = ?
+SELECT id, workflow_id, from_label, to_label, trigger_type, agent_config_id, path FROM workflow_transitions WHERE workflow_id = ?
 `
 
 func (q *Queries) ListWorkflowTransitions(ctx context.Context, workflowID string) ([]WorkflowTransition, error) {
@@ -271,6 +275,7 @@ func (q *Queries) ListWorkflowTransitions(ctx context.Context, workflowID string
 			&i.ToLabel,
 			&i.TriggerType,
 			&i.AgentConfigID,
+			&i.Path,
 		); err != nil {
 			return nil, err
 		}

@@ -83,9 +83,9 @@ func executeLLMTool(ctx context.Context, repoPath, name string, args map[string]
 		return strings.Join(names, "\n"), nil
 
 	case "signal_complete":
-		label := args["next_label"]
+		outcome := args["outcome"]
 		msg := args["summary"]
-		return "acknowledged", &Result{Status: "completed", NextLabel: &label, Message: &msg}
+		return "acknowledged", &Result{Status: "completed", Outcome: outcome, Message: &msg}
 
 	case "request_human":
 		msg := args["message"]

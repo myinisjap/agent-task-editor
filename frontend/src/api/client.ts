@@ -24,6 +24,7 @@ export type Task = {
   repo_id: string
   workflow_id: string
   current_agent_run_id?: string
+  agent_notes?: string
   created_at: string
   updated_at: string
 }
@@ -64,6 +65,7 @@ export type WorkflowTransition = {
   to_label: string
   trigger_type: 'agent' | 'human' | 'both'
   agent_config_id?: string
+  path?: 'success' | 'failure' | 'either' | null
 }
 
 export type Workflow = {
@@ -119,9 +121,11 @@ export const api = {
       request<Task>(`/tasks/${id}/label`, { method: 'PATCH', body: JSON.stringify({ to_label, note }) }),
     approve: (id: string, note?: string) =>
       request<Task>(`/tasks/${id}/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
-    reject: (id: string, note: string, to_label?: string) =>
-      request<Task>(`/tasks/${id}/reject`, { method: 'POST', body: JSON.stringify({ note, to_label }) }),
-    runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
+   reject: (id: string, note: string, to_label?: string) =>
+       request<Task>(`/tasks/${id}/reject`, { method: 'POST', body: JSON.stringify({ note, to_label }) }),
+     updateNotes: (id: string, notes: string, append = false) =>
+       request<Task>(`/tasks/${id}/notes`, { method: 'PATCH', body: JSON.stringify({ notes, append }) }),
+     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),
   },
@@ -129,7 +133,7 @@ export const api = {
     list: () => request<Workflow[]>('/workflows'),
     get: (id: string) => request<Workflow>(`/workflows/${id}`),
     create: () => request<Workflow>('/workflows', { method: 'POST' }),
-    update: (id: string, body: { name: string; description: string; labels: Omit<WorkflowLabel, 'id' | 'workflow_id'>[]; transitions: { from_label: string; to_label: string; trigger_type: string; agent_config_id?: string }[] }) =>
+    update: (id: string, body: { name: string; description: string; labels: { name: string; color: string; sort_order: number; agent_ignore: boolean; is_terminal: boolean; is_rejection_target: boolean }[]; transitions: { from_label: string; to_label: string; trigger_type: string; agent_config_id?: string; path?: string | null }[] }) =>
       request<Workflow>(`/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/workflows/${id}`, { method: 'DELETE' }),
     exportYaml: (id: string) => `${BASE}/workflows/${id}/export.yaml`,

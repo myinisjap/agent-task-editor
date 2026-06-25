@@ -127,10 +127,26 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		slog.Error("set run completed", "err", err)
 	}
 
-	// Clear the active-run slot for completed/failed runs so the dispatcher
-	// can pick up the task again. For waiting_human we leave it set — the
-	// engine.Transition called by the human action will clear it.
-	if finalStatus == "completed" || finalStatus == "failed" {
+	if result.Notes != nil && *result.Notes != "" {
+		if _, err := p.q.UpdateTaskNotes(ctx, gen.UpdateTaskNotesParams{
+			AgentNotes: *result.Notes,
+			ID:         job.Input.Task.ID,
+		}); err != nil {
+			slog.Error("persist agent notes", "err", err)
+		}
+	}
+
+	// Resolve outcome → next label via workflow transitions.
+	var resolvedLabel string
+	if finalStatus == "completed" && result.Outcome != "" {
+		resolvedLabel = p.resolveOutcome(ctx, job.Input.Task, result.Outcome)
+	}
+
+	// Clear the active-run slot so the dispatcher can pick up the task again.
+	// For waiting_human (or completed with no resolved label) we leave it set —
+	// the engine.Transition called by the human action will clear it via SQL.
+	clearActive := finalStatus == "failed" || (finalStatus == "completed" && resolvedLabel != "")
+	if clearActive {
 		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 	}
 
@@ -144,13 +160,22 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 	switch result.Status {
 	case "completed":
-		if result.NextLabel != nil && *result.NextLabel != "" {
+		if resolvedLabel != "" {
 			note := ""
 			if result.Message != nil {
 				note = *result.Message
 			}
-			if err := p.engine.Transition(ctx, job.Input.Task.ID, *result.NextLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
-				slog.Warn("agent-requested transition rejected", "run_id", job.RunID, "to", *result.NextLabel, "err", err)
+			if err := p.engine.Transition(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
+				slog.Warn("agent-requested transition rejected", "run_id", job.RunID, "to", resolvedLabel, "err", err)
+			}
+		} else {
+			// No resolved label — block re-dispatch until a human acts.
+			if p.pub != nil {
+				p.pub.Publish("task.needs_human", map[string]any{
+					"task_id": job.Input.Task.ID,
+					"run_id":  job.RunID,
+					"message": "Agent completed but outcome could not be resolved to a transition. Please review and move the task manually.",
+				})
 			}
 		}
 
@@ -169,6 +194,34 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	slog.Info("agent run finished", "run_id", job.RunID, "status", finalStatus)
+}
+
+// resolveOutcome finds the to_label for a given outcome ("success"|"failure") from the task's current label.
+// Returns empty string if no unambiguous match is found.
+func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) string {
+	all, err := p.q.ListWorkflowTransitions(ctx, task.WorkflowID)
+	if err != nil {
+		slog.Error("resolve outcome: list transitions", "err", err)
+		return ""
+	}
+	var match string
+	for _, t := range all {
+		if t.FromLabel != task.Label {
+			continue
+		}
+		if t.Path == nil {
+			continue
+		}
+		if *t.Path != outcome && *t.Path != "either" {
+			continue
+		}
+		if match != "" {
+			slog.Warn("resolve outcome: ambiguous transitions", "task", task.ID, "outcome", outcome)
+			return ""
+		}
+		match = t.ToLabel
+	}
+	return match
 }
 
 // persistLogs drains logCh and writes to SQLite in batches wrapped in a transaction.

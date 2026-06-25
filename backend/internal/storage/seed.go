@@ -75,31 +75,34 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 		}
 	}
 
+	sp := func(s string) *string { return &s }
+
 	transitions := []struct {
 		from        string
 		to          string
 		triggerType string
+		path        *string
 	}{
-		// Forward flow
-		{"plan", "todo", "human"},
-		{"todo", "in-progress", "agent"},
-		{"in-progress", "testing", "agent"},
-		{"testing", "agent-review", "agent"},
-		{"agent-review", "review", "agent"},
-		{"review", "done", "human"},
-		// Feedback loops
-		{"testing", "in-progress", "agent"},
-		{"agent-review", "in-progress", "agent"},
-		{"review", "in-progress", "human"},
-		// Park anything back to not_ready
-		{"plan", "not_ready", "human"},
-		{"todo", "not_ready", "human"},
-		{"in-progress", "not_ready", "human"},
-		{"testing", "not_ready", "human"},
-		{"agent-review", "not_ready", "human"},
-		{"review", "not_ready", "human"},
+		// Forward flow (success path)
+		{"plan", "todo", "both", sp("success")},
+		{"todo", "in-progress", "agent", sp("success")},
+		{"in-progress", "testing", "agent", sp("success")},
+		{"testing", "agent-review", "agent", sp("success")},
+		{"agent-review", "review", "agent", sp("success")},
+		{"review", "done", "human", nil},
+		// Feedback loops (failure path)
+		{"testing", "in-progress", "agent", sp("failure")},
+		{"agent-review", "in-progress", "agent", sp("failure")},
+		{"review", "in-progress", "human", nil},
+		// Park anything back to not_ready (human only, no path)
+		{"plan", "not_ready", "human", nil},
+		{"todo", "not_ready", "human", nil},
+		{"in-progress", "not_ready", "human", nil},
+		{"testing", "not_ready", "human", nil},
+		{"agent-review", "not_ready", "human", nil},
+		{"review", "not_ready", "human", nil},
 		// not_ready can go to plan
-		{"not_ready", "plan", "human"},
+		{"not_ready", "plan", "human", nil},
 	}
 
 	for _, t := range transitions {
@@ -109,6 +112,7 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 			FromLabel:   t.from,
 			ToLabel:     t.to,
 			TriggerType: t.triggerType,
+			Path:        t.path,
 		}); err != nil {
 			return fmt.Errorf("create transition %s→%s: %w", t.from, t.to, err)
 		}

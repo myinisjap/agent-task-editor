@@ -30,6 +30,7 @@ type yamlTransition struct {
 	To          string  `yaml:"to"`
 	TriggerType string  `yaml:"trigger"`
 	AgentConfig *string `yaml:"agent_config,omitempty"`
+	Path        *string `yaml:"path,omitempty"`
 }
 
 // ExportWorkflowYAML exports a workflow as YAML.
@@ -66,6 +67,7 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			To:          t.ToLabel,
 			TriggerType: t.TriggerType,
 			AgentConfig: t.AgentConfigID,
+			Path:        t.Path,
 		})
 	}
 
@@ -134,6 +136,7 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			ToLabel:       t.To,
 			TriggerType:   t.TriggerType,
 			AgentConfigID: t.AgentConfig,
+			Path:          t.Path,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return

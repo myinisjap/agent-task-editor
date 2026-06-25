@@ -8,11 +8,16 @@ import (
 )
 
 // result mirrors agent.Result for JSON serialisation.
-// Field names must match agent.Result (no json tags there, so default capitalized).
 type result struct {
-	Status    string  `json:"Status"`
-	NextLabel *string `json:"NextLabel,omitempty"`
-	Message   *string `json:"Message,omitempty"`
+	Status  string  `json:"Status"`
+	Outcome string  `json:"Outcome,omitempty"`
+	Message *string `json:"Message,omitempty"`
+	Notes   *string `json:"Notes,omitempty"`
+}
+
+type transitionHint struct {
+	ToLabel string `json:"to_label"`
+	Path    string `json:"path"`
 }
 
 type rpcRequest struct {
@@ -42,9 +47,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Parse available transitions from env (set by MCPManager.Prepare).
+	var transitions []transitionHint
+	if raw := os.Getenv("TRANSITIONS"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &transitions)
+	}
+
 	enc := json.NewEncoder(os.Stdout)
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+
+	var currentNotes string
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -85,15 +98,23 @@ func main() {
 			respond(map[string]any{
 				"tools": []map[string]any{
 					{
+						"name":        "get_task_transitions",
+						"description": "Returns the available workflow transitions from the task's current label. Call this first to know which outcome values are valid for signal_complete.",
+						"inputSchema": map[string]any{
+							"type":       "object",
+							"properties": map[string]any{},
+						},
+					},
+					{
 						"name":        "signal_complete",
-						"description": "Call when your work is done. Advances the task to the next workflow stage.",
+						"description": "Call when your work is done. Pass outcome='success' if the work succeeded or outcome='failure' if it did not. The system resolves the correct next workflow label automatically.",
 						"inputSchema": map[string]any{
 							"type": "object",
 							"properties": map[string]any{
-								"next_label": map[string]any{"type": "string", "description": "Workflow label to move the task to"},
-								"summary":    map[string]any{"type": "string", "description": "Brief summary of what was done"},
+								"outcome": map[string]any{"type": "string", "enum": []string{"success", "failure"}, "description": "Whether the work succeeded or failed"},
+								"summary": map[string]any{"type": "string", "description": "Brief summary of what was done"},
 							},
-							"required": []string{"next_label", "summary"},
+							"required": []string{"outcome", "summary"},
 						},
 					},
 					{
@@ -105,6 +126,18 @@ func main() {
 								"message": map[string]any{"type": "string", "description": "Question or context for the human reviewer"},
 							},
 							"required": []string{"message"},
+						},
+					},
+					{
+						"name":        "update_task_notes",
+						"description": "Write structured notes to the task for subsequent agents to read. Use this to record plans, analysis, review findings, or any context that the next agent in the workflow should have.",
+						"inputSchema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"notes":  map[string]any{"type": "string", "description": "The notes content (supports markdown)"},
+								"append": map[string]any{"type": "boolean", "description": "If true, append to existing notes instead of replacing"},
+							},
+							"required": []string{"notes"},
 						},
 					},
 				},
@@ -119,7 +152,8 @@ func main() {
 				respondErr(-32602, "invalid params")
 				continue
 			}
-			text, r := dispatchTool(params.Name, params.Arguments)
+
+			text, r := dispatchTool(params.Name, params.Arguments, &currentNotes, transitions)
 			if r != nil {
 				if data, err := json.Marshal(r); err == nil {
 					if err := os.WriteFile(resultFile, data, 0600); err != nil {
@@ -138,16 +172,27 @@ func main() {
 	}
 }
 
-func dispatchTool(name string, args json.RawMessage) (string, *result) {
+func dispatchTool(name string, args json.RawMessage, currentNotes *string, transitions []transitionHint) (string, *result) {
 	switch name {
+	case "get_task_transitions":
+		if len(transitions) == 0 {
+			return "No transitions configured for this label.", nil
+		}
+		data, _ := json.Marshal(transitions)
+		return string(data), nil
+
 	case "signal_complete":
 		var a struct {
-			NextLabel string `json:"next_label"`
-			Summary   string `json:"summary"`
+			Outcome string `json:"outcome"`
+			Summary string `json:"summary"`
 		}
 		_ = json.Unmarshal(args, &a)
 		msg := a.Summary
-		return "acknowledged", &result{Status: "completed", NextLabel: &a.NextLabel, Message: &msg}
+		r := &result{Status: "completed", Outcome: a.Outcome, Message: &msg}
+		if *currentNotes != "" {
+			r.Notes = currentNotes
+		}
+		return "acknowledged", r
 
 	case "request_human":
 		var a struct {
@@ -155,7 +200,24 @@ func dispatchTool(name string, args json.RawMessage) (string, *result) {
 		}
 		_ = json.Unmarshal(args, &a)
 		msg := a.Message
-		return "pausing for human input", &result{Status: "waiting_human", Message: &msg}
+		r := &result{Status: "waiting_human", Message: &msg}
+		if *currentNotes != "" {
+			r.Notes = currentNotes
+		}
+		return "pausing for human input", r
+
+	case "update_task_notes":
+		var a struct {
+			Notes  string `json:"notes"`
+			Append bool   `json:"append"`
+		}
+		_ = json.Unmarshal(args, &a)
+		if a.Append && *currentNotes != "" {
+			*currentNotes = *currentNotes + "\n\n" + a.Notes
+		} else {
+			*currentNotes = a.Notes
+		}
+		return "Task notes updated", nil
 
 	default:
 		return "unknown tool: " + name, nil

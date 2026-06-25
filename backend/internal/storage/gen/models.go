@@ -59,9 +59,10 @@ type Task struct {
 	RepoID            string    `json:"repo_id"`
 	WorkflowID        string    `json:"workflow_id"`
 	CurrentAgentRunID *string   `json:"current_agent_run_id"`
+	AgentNotes        string    `json:"agent_notes"`
+	ActiveAgentRunID  *string   `json:"active_agent_run_id"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
-	ActiveAgentRunID  *string   `json:"active_agent_run_id"`
 }
 
 type TaskLabelHistory struct {
@@ -101,4 +102,5 @@ type WorkflowTransition struct {
 	ToLabel       string  `json:"to_label"`
 	TriggerType   string  `json:"trigger_type"`
 	AgentConfigID *string `json:"agent_config_id"`
+	Path          *string `json:"path"`
 }

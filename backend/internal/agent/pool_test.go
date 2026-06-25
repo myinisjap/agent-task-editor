@@ -108,13 +108,13 @@ func seedJobFixtures(t *testing.T, q *gen.Queries, wfID string) (taskID, agCfgID
 	return
 }
 
-func buildJob(runID, taskID, agCfgID, repoPath string, provider agent.Provider) agent.Job {
+func buildJob(runID, taskID, agCfgID, wfID, repoPath string, provider agent.Provider) agent.Job {
 	return agent.Job{
 		RunID:    runID,
 		Provider: provider,
 		Input: agent.RunInput{
 			RunID: runID,
-			Task:  agent.Task{ID: taskID, Title: "Pool test task", Label: "todo"},
+			Task:  agent.Task{ID: taskID, Title: "Pool test task", Label: "todo", WorkflowID: wfID},
 			AgentConfig: agent.AgentConfig{
 				ID:       agCfgID,
 				Name:     "mock-agent",
@@ -150,13 +150,12 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 	wfs, _ := q.ListWorkflows(context.Background())
 	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
 
-	nextLabel := "in-progress"
-	provider := &mockProvider{result: agent.Result{Status: "completed", NextLabel: &nextLabel}}
+	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "success"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)
 
-	pool.Submit(buildJob(runID, taskID, agCfgID, t.TempDir(), provider))
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
 	waitForStatus(t, q, runID, "completed")
 	cancel()
@@ -199,7 +198,7 @@ func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)
 
-	pool.Submit(buildJob(runID, taskID, agCfgID, t.TempDir(), provider))
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
 	waitForStatus(t, q, runID, "failed")
 	cancel()
@@ -226,7 +225,7 @@ func TestPool_WaitingHuman_PublishesEvent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)
 
-	pool.Submit(buildJob(runID, taskID, agCfgID, t.TempDir(), provider))
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
 	waitForStatus(t, q, runID, "waiting_human")
 	cancel()
@@ -255,7 +254,7 @@ func TestPool_Submit_DoesNotBlockWhenFull(t *testing.T) {
 	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
 
 	provider := &mockProvider{result: agent.Result{Status: "completed"}}
-	job := buildJob(runID, taskID, agCfgID, t.TempDir(), provider)
+	job := buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider)
 
 	// Flood the queue; Submit must never block
 	done := make(chan struct{})

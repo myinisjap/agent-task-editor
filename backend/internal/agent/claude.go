@@ -32,7 +32,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	var mcpCfg *MCPRunConfig
 	if r.MCP != nil && r.MCP.ServerBinary != "" {
 		var err error
-		mcpCfg, err = r.MCP.Prepare(input.RunID)
+		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions)
 		if err != nil {
 			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
 		}
@@ -41,18 +41,16 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 
 	allowedTools := "Edit,Write,Read,Bash,Glob,Grep"
 	if mcpCfg != nil {
-		allowedTools += ",task-editor__signal_complete,task-editor__request_human"
+		allowedTools += ",task-editor__get_task_transitions,task-editor__signal_complete,task-editor__request_human,task-editor__update_task_notes"
 	}
 
 	args := []string{
 		"-p", buildPrompt(input),
-		"--system", buildSystemPrompt(input),
+		"--system-prompt", buildSystemPrompt(input),
 		"--output-format", "stream-json",
+		"--verbose",
 		"--allowedTools", allowedTools,
 		"--max-turns", "50",
-	}
-	if input.AgentConfig.MaxTokens > 0 {
-		args = append(args, "--max-tokens", fmt.Sprintf("%d", input.AgentConfig.MaxTokens))
 	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
@@ -84,7 +82,11 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 
 	logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("started claude pid=%d", cmd.Process.Pid), At: time.Now()}
 
-	var wg sync.WaitGroup
+	var (
+		wg      sync.WaitGroup
+		outcome string
+		mu      sync.Mutex
+	)
 	wg.Add(2)
 
 	// Stream stdout (stream-json lines)
@@ -97,8 +99,13 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			if line == "" {
 				continue
 			}
-			entry := classifyStreamJSON(line)
+			entry, parsed := classifyStreamJSON(line)
 			logCh <- entry
+			if parsed != "" {
+				mu.Lock()
+				outcome = parsed
+				mu.Unlock()
+			}
 		}
 	}()
 
@@ -122,34 +129,70 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited: %v", err), At: time.Now()}
 	}
 
-	// Read result from MCP sidecar output file
+	// MCP result takes priority; fall back to OUTCOME text parsing if the
+	// agent completed without calling signal_complete.
 	if mcpCfg != nil {
-		return mcpCfg.ReadResult(), nil
+		r := mcpCfg.ReadResult()
+		if r.Outcome == "" && outcome != "" {
+			r.Outcome = outcome
+		}
+		return r, nil
 	}
-	return Result{Status: "completed"}, nil
+
+	return Result{Status: "completed", Outcome: outcome}, nil
 }
 
 // classifyStreamJSON parses one NDJSON line from claude --output-format stream-json.
-func classifyStreamJSON(line string) LogEntry {
+// Returns the log entry and an optional next label parsed from a NEXT_LABEL marker.
+func classifyStreamJSON(line string) (LogEntry, string) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}
+		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, ""
 	}
 
 	msgType := strings.Trim(string(raw["type"]), `"`)
 	switch msgType {
 	case "assistant":
-		// Extract text content for display
-		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}
+		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, ""
 	case "tool_use":
-		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}
+		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, ""
 	case "tool_result":
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}
+		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, ""
+	case "user":
+		// Claude SDK wraps tool results in a user message: {"type":"user","message":{"role":"user","content":[{"type":"tool_result",...}]}}
+		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, ""
 	case "result":
-		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}
+		// Parse OUTCOME: success|failure from the result text
+		var outcome string
+		if resultText, ok := raw["result"]; ok {
+			var text string
+			if err := json.Unmarshal(resultText, &text); err == nil {
+				outcome = extractOutcome(text)
+			}
+		}
+		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome
 	default:
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}
+		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, ""
 	}
+}
+
+// extractOutcome looks for "OUTCOME: success|failure" anywhere in the text.
+func extractOutcome(text string) string {
+	const marker = "OUTCOME:"
+	idx := strings.Index(text, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(text[idx+len(marker):])
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	v := strings.ToLower(fields[0])
+	if v == "success" || v == "failure" {
+		return v
+	}
+	return ""
 }
 
 func extractAssistantText(raw map[string]json.RawMessage) string {
@@ -181,7 +224,7 @@ func buildPrompt(input RunInput) string {
 		b.WriteString("\n\n---\n\n")
 	}
 	if input.PriorPlan != nil && *input.PriorPlan != "" {
-		b.WriteString("IMPLEMENTATION PLAN:\n")
+		b.WriteString("NOTES FROM PRIOR AGENT:\n")
 		b.WriteString(*input.PriorPlan)
 		b.WriteString("\n\n---\n\n")
 	}
@@ -197,7 +240,7 @@ func buildSystemPrompt(input RunInput) string {
 	if base == "" {
 		base = "You are an expert software engineer. Complete the assigned task thoroughly and carefully."
 	}
-	return base + "\n\nWhen your work is complete, call the signal_complete tool with the next workflow label and a summary. If you need human input before continuing, call request_human."
+	return base + "\n\nWhen your work is complete, call the signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"
 }
 
 // dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.

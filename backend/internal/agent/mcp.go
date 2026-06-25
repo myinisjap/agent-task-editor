@@ -30,13 +30,25 @@ type MCPManager struct {
 	ServerBinary string
 }
 
+// TransitionHint describes an available transition for the MCP sidecar.
+type TransitionHint struct {
+	ToLabel string `json:"to_label"`
+	Path    string `json:"path"` // success | failure | either
+}
+
 // Prepare creates temp files for one agent run and returns the config.
+// transitions is the list of agent-available transitions from the task's current label.
 // The caller must call Cleanup when the run ends.
-func (m *MCPManager) Prepare(runID string) (*MCPRunConfig, error) {
+func (m *MCPManager) Prepare(runID string, transitions []TransitionHint) (*MCPRunConfig, error) {
 	dir := os.TempDir()
 
 	resultFile := filepath.Join(dir, fmt.Sprintf("ate-result-%s.json", runID))
 	configFile := filepath.Join(dir, fmt.Sprintf("ate-mcp-%s.json", runID))
+
+	transitionsJSON, err := json.Marshal(transitions)
+	if err != nil {
+		return nil, fmt.Errorf("marshal transitions: %w", err)
+	}
 
 	cfg := mcpConfig{
 		MCPServers: map[string]mcpServerEntry{
@@ -45,6 +57,7 @@ func (m *MCPManager) Prepare(runID string) (*MCPRunConfig, error) {
 				Env: map[string]string{
 					"RUN_ID":      runID,
 					"RESULT_FILE": resultFile,
+					"TRANSITIONS": string(transitionsJSON),
 				},
 			},
 		},

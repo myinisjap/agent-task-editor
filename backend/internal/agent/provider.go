@@ -28,11 +28,13 @@ type LogEntry struct {
 // Result is what an agent returns when its run ends.
 type Result struct {
 	// completed | failed | waiting_human
-	Status    string
-	// Agent-requested label to transition to (validated by workflow engine before use)
-	NextLabel *string
+	Status string
+	// success | failure — resolved to a label by the pool via workflow transitions
+	Outcome string
 	// Summary message or human help request
-	Message   *string
+	Message *string
+	// Agent-written notes to persist on the task (from MCP sidecar)
+	Notes *string
 }
 
 // RunInput carries everything an agent needs to start work.
@@ -41,6 +43,8 @@ type RunInput struct {
 	Task        Task
 	AgentConfig AgentConfig
 	RepoPath    string
+	// Available transitions from the task's current label, passed to the MCP sidecar.
+	Transitions []TransitionHint
 	// Human rejection note from a prior run, injected at the top of the prompt
 	Feedback  *string
 	// Output from the plan stage, injected for later stages
@@ -54,6 +58,8 @@ type Task struct {
 	Description string
 	Type        string
 	Label       string
+	WorkflowID  string
+	AgentNotes  string
 }
 
 // AgentConfig is a minimal copy of storage.AgentConfig.
