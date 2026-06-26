@@ -56,6 +56,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Post("/tasks/{id}/approve", tasksH.Approve)
 		r.Post("/tasks/{id}/reject", tasksH.Reject)
 		r.Patch("/tasks/{id}/notes", tasksH.UpdateNotes)
+		r.Post("/tasks/{id}/rerun", tasksH.Rerun)
 
 		// Agent runs
 		r.Get("/tasks/{id}/runs", tasksH.ListRuns)
@@ -69,6 +70,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Put("/workflows/{id}", workflowsH.Update)
 		r.Delete("/workflows/{id}", workflowsH.Delete)
 		r.Get("/workflows/{id}/export.yaml", workflowsH.ExportWorkflowYAML)
+		r.Put("/workflows/{id}/yaml", workflowsH.UpdateWorkflowYAML)
 		r.Post("/workflows/import", workflowsH.ImportWorkflowYAML)
 
 		// Agent configs
@@ -77,6 +79,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Get("/agents/{id}", agentsH.Get)
 		r.Put("/agents/{id}", agentsH.Update)
 		r.Delete("/agents/{id}", agentsH.Delete)
+		r.Get("/agents/models", agentsH.GetModels)
 
 		// Repos
 		r.Get("/repos", reposH.List)

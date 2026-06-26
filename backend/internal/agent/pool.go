@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,9 +121,18 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	finalStatus := result.Status
+	// If the run failed due to an auth error, escalate to waiting_human so a human
+	// can intervene (e.g. re-login) rather than silently retrying forever.
+	if finalStatus == "failed" && p.hasLoginError(ctx, job.RunID) {
+		finalStatus = "waiting_human"
+		msg := "Agent failed: not logged in. Please re-authenticate and re-run."
+		result.Message = &msg
+	}
+
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status: finalStatus,
-		ID:     job.RunID,
+		Status:     finalStatus,
+		StoredInfo: result.StoredInfo,
+		ID:         job.RunID,
 	}); err != nil {
 		slog.Error("set run completed", "err", err)
 	}
@@ -158,7 +168,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		})
 	}
 
-	switch result.Status {
+	switch finalStatus {
 	case "completed":
 		if resolvedLabel != "" {
 			note := ""
@@ -194,6 +204,25 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	slog.Info("agent run finished", "run_id", job.RunID, "status", finalStatus)
+}
+
+// hasLoginError scans the last 20 log entries for an auth/login error signal.
+func (p *Pool) hasLoginError(ctx context.Context, runID string) bool {
+	logs, err := p.q.ListAgentLogs(ctx, runID)
+	if err != nil {
+		return false
+	}
+	// Check the last 20 entries only — login errors appear near the end.
+	start := len(logs) - 20
+	if start < 0 {
+		start = 0
+	}
+	for _, l := range logs[start:] {
+		if strings.Contains(l.Content, "Not logged in") || strings.Contains(l.Content, "Please run /login") {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveOutcome finds the to_label for a given outcome ("success"|"failure") from the task's current label.

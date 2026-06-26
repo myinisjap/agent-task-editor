@@ -35,6 +35,7 @@ export type AgentRun = {
   agent_config_id: string
   status: string
   feedback?: string
+  stored_info?: string
   started_at?: string
   completed_at?: string
   created_at: string
@@ -88,6 +89,7 @@ export type AgentConfig = {
   env: string
   max_tokens: number
   timeout_secs: number
+  enabled: number | boolean
   created_at: string
   updated_at: string
 }
@@ -99,6 +101,12 @@ export type Repo = {
   remote_url?: string
   workflow_id?: string
   created_at: string
+}
+
+export type ModelList = {
+  provider: string
+  default_model: string
+  models: string[]
 }
 
 export type Dashboard = {
@@ -125,7 +133,8 @@ export const api = {
        request<Task>(`/tasks/${id}/reject`, { method: 'POST', body: JSON.stringify({ note, to_label }) }),
      updateNotes: (id: string, notes: string, append = false) =>
        request<Task>(`/tasks/${id}/notes`, { method: 'PATCH', body: JSON.stringify({ notes, append }) }),
-     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
+     rerun: (id: string) => request<void>(`/tasks/${id}/rerun`, { method: 'POST' }),
+    runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),
   },
@@ -137,17 +146,20 @@ export const api = {
       request<Workflow>(`/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/workflows/${id}`, { method: 'DELETE' }),
     exportYaml: (id: string) => `${BASE}/workflows/${id}/export.yaml`,
+    updateYaml: (id: string, yaml: string) =>
+      request<Workflow>(`/workflows/${id}/yaml`, { method: 'PUT', body: yaml, headers: { 'Content-Type': 'application/yaml' } }),
     importYaml: (yaml: string) =>
       request<Workflow>('/workflows/import', { method: 'POST', body: yaml, headers: { 'Content-Type': 'application/yaml' } }),
   },
   agents: {
     list: () => request<AgentConfig[]>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
-    create: (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'>) =>
+    create: (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>) =>
       request<AgentConfig>('/agents', { method: 'POST', body: JSON.stringify(body) }),
-    update: (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'>) =>
+    update: (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }) =>
       request<AgentConfig>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
+    models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),
   },
   repos: {
     list: () => request<Repo[]>('/repos'),

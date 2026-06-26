@@ -261,6 +261,19 @@ func (h *TasksHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, task)
 }
 
+func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if err := h.q.ClearActiveAgentRun(r.Context(), taskID); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	runs, err := h.q.ListAgentRuns(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {

@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type AgentLog } from '../api/client'
 import { wsClient } from '../api/ws'
 import { parseDiff, type FileDiff } from '../lib/parseDiff'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
 import AgentLogEntry from '../components/board/AgentLogEntry'
+
+type Tab = 'overview' | 'logs' | 'diff'
 
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -18,6 +20,7 @@ export default function TaskDetailPage() {
   const [actionPending, setActionPending] = useState(false)
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
+  const [activeTab, setActiveTab] = useState<Tab>('overview')
   const logBottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
 
@@ -112,6 +115,21 @@ export default function TaskDetailPage() {
   const activeRun = runs.find((r) => r.id === selectedRun)
   const needsHuman = activeRun?.status === 'waiting_human'
   const isRunning = activeRun?.status === 'running'
+  const latestRun = runs[0]
+  const canRerun = latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed')
+
+  const handleRerun = async () => {
+    if (!id) return
+    setActionPending(true)
+    try {
+      await api.tasks.rerun(id)
+      refreshRuns()
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setActionPending(false)
+    }
+  }
 
   const handleApprove = async () => {
     if (!id) return
@@ -145,118 +163,173 @@ export default function TaskDetailPage() {
   if (loading) return <div className="p-6 text-slate-400">Loading…</div>
   if (!task) return <div className="p-6 text-slate-400">Task not found</div>
 
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'logs', label: 'Logs' },
+    { id: 'diff', label: 'Diff' },
+  ]
+
   return (
     <div className="flex h-full overflow-hidden flex-col">
-      {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left panel — metadata */}
-        <div className="w-72 shrink-0 border-r border-slate-800 overflow-y-auto p-5 flex flex-col gap-4">
+      {/* Tab bar */}
+      <div className="shrink-0 flex items-center gap-1 border-b border-slate-800 px-4 pt-3">
+        {tabs.map((t) => (
           <button
-            onClick={() => navigate('/board')}
-            className="text-xs text-slate-500 hover:text-slate-300 text-left"
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+              activeTab === t.id
+                ? 'bg-slate-800 text-slate-100 border-b-2 border-slate-400'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
           >
-            ← Board
+            {t.label}
           </button>
-          <div>
-            <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
-            {task.description && (
-              <p className="text-sm text-slate-400 mt-2">{task.description}</p>
-            )}
-          </div>
+        ))}
+      </div>
 
-          <div className="flex flex-col gap-2">
-            <Row label="Label">
-              <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white bg-slate-600">
-                {task.label}
-              </span>
-            </Row>
-            <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
-            {task.agent_notes && (
-              <div>
-                <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
-                <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-60 overflow-y-auto font-sans">
-                  {task.agent_notes}
-                </pre>
-              </div>
-            )}
-            <Row label="Created">
-              <span className="text-xs text-slate-400">{new Date(task.created_at).toLocaleDateString()}</span>
-            </Row>
-          </div>
-
-          {runs.length > 0 && (
-            <div>
-              <p className="text-xs text-slate-500 mb-2">Agent runs</p>
-              <div className="flex flex-col gap-1">
-                {runs.map((run) => (
-                  <button
-                    key={run.id}
-                    onClick={() => { setSelectedRun(run.id); autoScrollRef.current = false }}
-                    className={`text-left text-xs px-2 py-1.5 rounded ${
-                      selectedRun === run.id
-                        ? 'bg-slate-700 text-slate-100'
-                        : 'text-slate-400 hover:bg-slate-800'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono truncate">{run.id.slice(0, 8)}</span>
-                      <span className={`shrink-0 ${
-                        run.status === 'completed'     ? 'text-emerald-400' :
-                        run.status === 'running'       ? 'text-yellow-400 animate-pulse' :
-                        run.status === 'failed'        ? 'text-red-400' :
-                        run.status === 'waiting_human' ? 'text-pink-400' :
-                        'text-slate-500'
-                      }`}>{run.status}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
+      {/* Tab content */}
+      <div className="flex-1 overflow-hidden">
+        {/* Overview tab */}
+        {activeTab === 'overview' && (
+          <div className="h-full overflow-y-auto p-5 flex flex-col gap-4 max-w-2xl">
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => navigate('/board')}
+                className="text-xs text-slate-500 hover:text-slate-300 text-left"
+              >
+                ← Board
+              </button>
+              <button
+                onClick={async () => {
+                  if (!id || !window.confirm('Delete this task?')) return
+                  await api.tasks.delete(id)
+                  navigate('/board')
+                }}
+                className="text-xs text-red-700 hover:text-red-400"
+              >
+                Delete
+              </button>
             </div>
-          )}
-        </div>
+            <div>
+              <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
+              {task.description && (
+                <p className="text-sm text-slate-400 mt-2">{task.description}</p>
+              )}
+            </div>
 
-        {/* Center panel — agent log stream */}
-        <div
-          className="flex-1 overflow-y-auto py-3 px-2"
-          onScroll={(e) => {
-            const el = e.currentTarget
-            autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-          }}
-        >
-          <p className="text-slate-500 text-xs mb-3 px-3 font-sans flex items-center gap-2">
-            {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
-            {selectedRun ? `Run ${selectedRun.slice(0, 8)}` : 'No agent runs yet'}
-            {logs.length > 0 && <span className="text-slate-700">· {logs.length} events</span>}
-          </p>
-          {logs.length === 0 && selectedRun && (
-            <p className="text-slate-600 text-xs px-3">No log entries</p>
-          )}
-          {logs.map((log, i) => (
-            <AgentLogEntry key={log.id ?? i} log={log} />
-          ))}
-          <div ref={logBottomRef} />
-        </div>
+            <div className="flex flex-col gap-2">
+              <Row label="Label">
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white bg-slate-600">
+                  {task.label}
+                </span>
+              </Row>
+              <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+              {task.agent_notes && (
+                <div>
+                  <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
+                  <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-60 overflow-y-auto font-sans">
+                    {task.agent_notes}
+                  </pre>
+                </div>
+              )}
+              <Row label="Created">
+                <span className="text-xs text-slate-400">{new Date(task.created_at).toLocaleDateString()}</span>
+              </Row>
+            </div>
 
-        {/* Right panel — git diff viewer */}
-        <div className="w-96 shrink-0 border-l border-slate-800 overflow-y-auto p-4">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-slate-500">File changes (HEAD~1…HEAD)</p>
-            <button
-              onClick={() => {
-                if (!task?.repo_id) return
-                setDiffLoading(true)
-                api.repos.diff(task.repo_id)
-                  .then((d) => setDiffFiles(parseDiff(d.diff)))
-                  .catch(() => setDiffFiles([]))
-                  .finally(() => setDiffLoading(false))
-              }}
-              className="text-xs text-slate-500 hover:text-slate-300"
-            >
-              ↻
-            </button>
+            {runs.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-500 mb-2">Agent runs</p>
+                <div className="flex flex-col gap-1">
+                  {runs.map((run) => (
+                    <Fragment key={run.id}>
+                      <button
+                        onClick={() => { setSelectedRun(run.id); autoScrollRef.current = false; setActiveTab('logs') }}
+                        className={`text-left text-xs px-2 py-1.5 rounded ${
+                          selectedRun === run.id
+                            ? 'bg-slate-700 text-slate-100'
+                            : 'text-slate-400 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono truncate">{run.id.slice(0, 8)}</span>
+                          <span className={`shrink-0 ${
+                            run.status === 'completed'     ? 'text-emerald-400' :
+                            run.status === 'running'       ? 'text-yellow-400 animate-pulse' :
+                            run.status === 'failed'        ? 'text-red-400' :
+                            run.status === 'waiting_human' ? 'text-pink-400' :
+                            'text-slate-500'
+                          }`}>{run.status}</span>
+                        </div>
+                      </button>
+                      {run.stored_info && (
+                        <StoredInfoPanel runId={run.id} info={run.stored_info} />
+                      )}
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {canRerun && (
+              <button
+                onClick={handleRerun}
+                disabled={actionPending}
+                className="w-full px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-50"
+              >
+                ↻ Re-run
+              </button>
+            )}
           </div>
-          <FileDiffViewer files={diffFiles} loading={diffLoading} />
-        </div>
+        )}
+
+        {/* Logs tab */}
+        {activeTab === 'logs' && (
+          <div
+            className="h-full overflow-y-auto py-3 px-2"
+            onScroll={(e) => {
+              const el = e.currentTarget
+              autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+            }}
+          >
+            <p className="text-slate-500 text-xs mb-3 px-3 font-sans flex items-center gap-2">
+              {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
+              {selectedRun ? `Run ${selectedRun.slice(0, 8)}` : 'No agent runs yet'}
+              {logs.length > 0 && <span className="text-slate-700">· {logs.length} events</span>}
+            </p>
+            {logs.length === 0 && selectedRun && (
+              <p className="text-slate-600 text-xs px-3">No log entries</p>
+            )}
+            {logs.map((log, i) => (
+              <AgentLogEntry key={log.id ?? i} log={log} />
+            ))}
+            <div ref={logBottomRef} />
+          </div>
+        )}
+
+        {/* Diff tab */}
+        {activeTab === 'diff' && (
+          <div className="h-full overflow-y-auto p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs text-slate-500">File changes (HEAD~1…HEAD)</p>
+              <button
+                onClick={() => {
+                  if (!task?.repo_id) return
+                  setDiffLoading(true)
+                  api.repos.diff(task.repo_id)
+                    .then((d) => setDiffFiles(parseDiff(d.diff)))
+                    .catch(() => setDiffFiles([]))
+                    .finally(() => setDiffLoading(false))
+                }}
+                className="text-xs text-slate-500 hover:text-slate-300"
+              >
+                ↻
+              </button>
+            </div>
+            <FileDiffViewer files={diffFiles} loading={diffLoading} />
+          </div>
+        )}
       </div>
 
       {/* Approval panel — shown when agent needs human or task is in review */}
@@ -306,6 +379,27 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div className="flex items-center gap-2">
       <span className="text-xs text-slate-500 w-16">{label}</span>
       {children}
+    </div>
+  )
+}
+
+function StoredInfoPanel({ runId, info }: { runId: string; info: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="ml-2 border-l border-slate-700 pl-2">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 w-full text-left py-0.5"
+      >
+        <span>{open ? '▾' : '▸'}</span>
+        <span className="font-mono text-slate-600">{runId.slice(0, 8)}</span>
+        <span>stored info</span>
+      </button>
+      {open && (
+        <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 mt-1 whitespace-pre-wrap max-h-48 overflow-y-auto font-sans">
+          {info}
+        </pre>
+      )}
     </div>
   )
 }

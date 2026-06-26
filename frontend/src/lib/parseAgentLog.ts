@@ -230,7 +230,8 @@ function parseResult(obj: Record<string, unknown>): ParsedLog | null {
   const subtype = obj.subtype as string | undefined
   const isError = obj.is_error === true
   const result = (obj.result ?? '') as string
-  const event = isError ? `Failed (${subtype ?? 'error'})` : `Completed (${subtype ?? 'success'})`
+  const errorLabel = result.trim() ? result.trim().split('\n')[0].slice(0, 120) : (subtype ?? 'error')
+  const event = isError ? `Failed: ${errorLabel}` : `Completed (${subtype ?? 'success'})`
   const detail = result.length > 200 ? result.slice(0, 200) + '…' : result || undefined
   return { kind: 'system_event', event, detail }
 }
