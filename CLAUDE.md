@@ -38,12 +38,11 @@ agent-task-editor/
 
 ```bash
 # Docker (recommended)
-docker compose up -d
+./dev.sh start   # or: docker compose up -d
 # Open http://localhost:5173
 
-# Local dev
-cd backend && go run ./cmd/server   # :8080
-cd frontend && npm install && npm run dev  # :5173
+# Local dev (builds MCP server + backend + frontend, all in one)
+./dev.sh dev
 ```
 
 See `docs/getting-started.md` for full setup including Claude CLI auth and repo mounts.
@@ -64,6 +63,31 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 - **Tests:** `cd backend && go test ./...`
 - **Frontend types:** edit `frontend/src/api/types.ts` when adding new API fields
 - **Migrations:** add numbered files to `backend/internal/storage/migrations/`; they run automatically on startup
+
+## Common API Calls
+
+```bash
+# List all tasks
+curl http://localhost:8080/tasks
+
+# Filter by label
+curl "http://localhost:8080/tasks?label=in-progress"
+
+# Filter by repo
+curl "http://localhost:8080/tasks?repo_id=<id>"
+
+# Move a task to a different label
+curl -X PATCH http://localhost:8080/tasks/<id>/label \
+  -H "Content-Type: application/json" \
+  -d '{"to_label": "review"}'
+
+# Move with a note
+curl -X PATCH http://localhost:8080/tasks/<id>/label \
+  -H "Content-Type: application/json" \
+  -d '{"to_label": "done", "note": "shipped"}'
+```
+
+If `API_TOKEN` is set, add `-H "Authorization: Bearer <token>"` to every request.
 
 ## Architecture Decision Notes
 
