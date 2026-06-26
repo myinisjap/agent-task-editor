@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { api, type AgentConfig } from '../api/client'
+import { api, type AgentConfig, type ModelList } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
 
-const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> = {
+const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'> = {
   name: '',
   provider: 'claude',
   model: 'claude-sonnet-4-6',
@@ -14,6 +14,105 @@ const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> = {
   timeout_secs: 600,
 }
 
+const PLAN_PROMPT = `You are a planning agent. Your ONLY job is to write an implementation plan.
+
+You MUST NOT write any code or make any file changes.
+You MUST NOT use Edit, Write, or Bash to modify files.
+
+Steps:
+1. Read the task description and any relevant files to understand the work needed.
+2. Write a detailed implementation plan using the mcp__task-editor__update_task_notes tool.
+3. Call mcp__task-editor__signal_complete with outcome='success'.
+
+Do not implement anything. Stop after calling signal_complete.`
+
+const CODE_PROMPT = `You are an implementation agent. Your job is to implement the plan written by the planning agent.
+
+Steps:
+1. Read the "NOTES FROM PRIOR AGENT" section carefully — it contains your implementation plan.
+2. Implement the plan exactly as described.
+3. Before finishing, call mcp__task-editor__update_task_notes with a summary of what you changed (use append:true).
+4. Call mcp__task-editor__signal_complete with outcome='success' if done, 'failure' if you hit a blocker.`
+
+const TEST_PROMPT = `You are a testing agent. Your job is to verify the implementation is correct.
+
+Steps:
+1. Read the "NOTES FROM PRIOR AGENT" section to understand what was implemented.
+2. Run the test suite and any relevant checks.
+3. Call mcp__task-editor__update_task_notes with your findings (use append:true).
+4. Call mcp__task-editor__signal_complete with outcome='success' if tests pass, 'failure' if they fail.`
+
+const REVIEW_PROMPT = `You are a code review agent. Your job is to review the implementation for correctness, style, and completeness.
+
+Steps:
+1. Read the "NOTES FROM PRIOR AGENT" section to understand context.
+2. Review the relevant code changes.
+3. Call mcp__task-editor__update_task_notes with your review findings (use append:true).
+4. Call mcp__task-editor__signal_complete with outcome='success' if the work is acceptable, 'failure' if changes are needed.`
+
+const WORK_PROMPT = `You are a general implementation agent. Complete the assigned task thoroughly.
+
+Steps:
+1. Read the task description and any prior agent notes.
+2. Implement the required changes.
+3. Call mcp__task-editor__update_task_notes with a summary of what you did (use append:true if notes exist).
+4. Call mcp__task-editor__signal_complete with outcome='success' if done, 'failure' if blocked.`
+
+const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>> = [
+  {
+    name: 'Planner',
+    provider: 'claude',
+    model: 'claude-sonnet-4-6',
+    system_prompt: PLAN_PROMPT,
+    labels: '["plan"]',
+    env: '{}',
+    max_tokens: 8192,
+    timeout_secs: 600,
+  },
+  {
+    name: 'Coder',
+    provider: 'claude',
+    model: 'claude-sonnet-4-6',
+    system_prompt: CODE_PROMPT,
+    labels: '["todo"]',
+    env: '{}',
+    max_tokens: 8192,
+    timeout_secs: 600,
+  },
+  {
+    name: 'Tester',
+    provider: 'claude',
+    model: 'claude-sonnet-4-6',
+    system_prompt: TEST_PROMPT,
+    labels: '["testing"]',
+    env: '{}',
+    max_tokens: 8192,
+    timeout_secs: 600,
+  },
+  {
+    name: 'Reviewer',
+    provider: 'claude',
+    model: 'claude-sonnet-4-6',
+    system_prompt: REVIEW_PROMPT,
+    labels: '["agent-review"]',
+    env: '{}',
+    max_tokens: 8192,
+    timeout_secs: 600,
+  },
+  {
+    name: 'Worker',
+    provider: 'claude',
+    model: 'claude-sonnet-4-6',
+    system_prompt: WORK_PROMPT,
+    labels: '["work"]',
+    env: '{}',
+    max_tokens: 8192,
+    timeout_secs: 600,
+  },
+]
+
+const PROVIDERS = ['claude', 'opencode', 'openai', 'llm', 'anthropic']
+
 export default function AgentConfigPage() {
   const { configs: agents, fetch: fetchAgents } = useAgentsStore()
   const { workflows, fetch: fetchWorkflows } = useWorkflowStore()
@@ -21,6 +120,10 @@ export default function AgentConfigPage() {
   const [form, setForm] = useState<typeof EMPTY>(EMPTY)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [modelList, setModelList] = useState<ModelList | null>(null)
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [creatingTemplate, setCreatingTemplate] = useState(false)
 
   const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
 
@@ -28,6 +131,23 @@ export default function AgentConfigPage() {
     fetchAgents()
     fetchWorkflows()
   }, [fetchAgents, fetchWorkflows])
+
+  useEffect(() => {
+    if (PROVIDERS.includes(form.provider)) {
+      setFetchingModels(true)
+      api.agents.models(form.provider)
+        .then((data) => {
+          setModelList(data)
+          if (form.model === '' || form.model === EMPTY.model) {
+            setForm((f) => ({ ...f, model: data.default_model }))
+          }
+        })
+        .catch(() => setModelList(null))
+        .finally(() => setFetchingModels(false))
+    } else {
+      setModelList(null)
+    }
+  }, [form.provider])
 
   function selectAgent(a: AgentConfig) {
     setSelected(a)
@@ -48,16 +168,58 @@ export default function AgentConfigPage() {
     setForm(EMPTY)
   }
 
+  async function applyTemplate(t: typeof TEMPLATES[0]) {
+    setCreatingTemplate(true)
+    setShowTemplates(false)
+    try {
+      const created = await api.agents.create(t)
+      await fetchAgents()
+      selectAgent(created)
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setCreatingTemplate(false)
+    }
+  }
+
+  function sanitizeEnv(envJson: string): string {
+    try {
+      const parsed = JSON.parse(envJson) as Record<string, string>
+      const clean: Record<string, string> = {}
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v !== '***' && v !== '') clean[k] = v
+      }
+      return JSON.stringify(clean)
+    } catch {
+      return envJson
+    }
+  }
+
   async function handleSave() {
     setSaving(true)
     try {
+      const payload = { ...form, env: sanitizeEnv(form.env) }
       if (selected) {
-        await api.agents.update(selected.id, form)
+        await api.agents.update(selected.id, { ...payload, enabled: !!selected.enabled })
       } else {
-        await api.agents.create(form)
+        await api.agents.create(payload)
       }
       fetchAgents()
       newAgent()
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleToggleEnabled() {
+    if (!selected) return
+    setSaving(true)
+    try {
+      const updated = await api.agents.update(selected.id, { ...form, enabled: !selected.enabled })
+      await fetchAgents()
+      selectAgent(updated)
     } catch (e: any) {
       alert(e.message)
     } finally {
@@ -80,6 +242,8 @@ export default function AgentConfigPage() {
     }
   }
 
+  const isEnabled = selected ? (selected.enabled !== 0 && selected.enabled !== false) : true
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Sidebar */}
@@ -93,6 +257,34 @@ export default function AgentConfigPage() {
             + New
           </button>
         </div>
+
+        {/* Templates section */}
+        <div className="border-b border-slate-800">
+          <button
+            onClick={() => setShowTemplates((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+          >
+            <span>Templates</span>
+            <span className="text-slate-600">{showTemplates ? '▲' : '▼'}</span>
+          </button>
+          {showTemplates && (
+            <div className="flex flex-col gap-0.5 px-2 pb-2">
+              {TEMPLATES.map((t) => (
+                <button
+                  key={t.name}
+                  onClick={() => applyTemplate(t)}
+                  disabled={creatingTemplate}
+                  className="text-left text-xs px-3 py-1.5 rounded text-indigo-400 hover:bg-slate-800 hover:text-indigo-300 disabled:opacity-50"
+                >
+                  + {t.name}
+                  <span className="ml-1 text-slate-600">{JSON.parse(t.labels)[0] ?? ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Agent list */}
         <div className="flex flex-col gap-0.5 p-2">
           {agents.map((a) => (
             <button
@@ -102,10 +294,15 @@ export default function AgentConfigPage() {
                 selected?.id === a.id
                   ? 'bg-slate-700 text-slate-100'
                   : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-              }`}
+              } ${(a.enabled === 0 || a.enabled === false) ? 'opacity-50' : ''}`}
             >
-              <div className="truncate">{a.name}</div>
-              <div className="text-xs text-slate-500 mt-0.5">{a.provider}/{a.model}</div>
+              <div className="truncate flex items-center gap-1.5">
+                {(a.enabled === 0 || a.enabled === false) && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-600 shrink-0" />
+                )}
+                {a.name}
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5">{a.provider}/{a.model.split('-').slice(0,2).join('-')}</div>
             </button>
           ))}
           {agents.length === 0 && (
@@ -116,9 +313,25 @@ export default function AgentConfigPage() {
 
       {/* Editor */}
       <div className="flex-1 overflow-y-auto p-6">
-        <h2 className="text-base font-semibold text-slate-100 mb-6">
-          {selected ? `Edit: ${selected.name}` : 'New Agent Config'}
-        </h2>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-base font-semibold text-slate-100">
+            {selected ? `Edit: ${selected.name}` : 'New Agent Config'}
+          </h2>
+          {selected && (
+            <div className="flex items-center gap-2">
+              <span className={`text-xs ${isEnabled ? 'text-green-400' : 'text-slate-500'}`}>
+                {isEnabled ? 'Active' : 'Disabled'}
+              </span>
+<button
+                onClick={handleToggleEnabled}
+                disabled={saving}
+                className={`relative z-10 w-9 h-5 rounded-full transition-colors ${isEnabled ? 'bg-green-600' : 'bg-slate-700'} disabled:opacity-50`}
+              >
+                <span className={`absolute top-1/2 w-4 h-4 rounded-full bg-white shadow transition-transform -translate-y-1/2 ${isEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 gap-5 max-w-2xl">
           <Field label="Name">
@@ -136,19 +349,32 @@ export default function AgentConfigPage() {
               onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
               className="input"
             >
-              <option value="claude">claude</option>
-              <option value="openai">openai</option>
-              <option value="llm">llm (generic)</option>
+              {PROVIDERS.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
             </select>
           </Field>
 
           <Field label="Model">
-            <input
-              value={form.model}
-              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-              className="input"
-              placeholder="e.g. claude-sonnet-4-6"
-            />
+            {modelList && modelList.models.length > 0 ? (
+              <select
+                value={form.model}
+                onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+                className="input"
+              >
+                <option value="">Select a model...</option>
+                {modelList.models.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={form.model}
+                onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+                className="input"
+                placeholder={fetchingModels ? 'Loading models...' : 'e.g. claude-sonnet-4-6'}
+              />
+            )}
           </Field>
 
           <Field label="Timeout (secs)">
@@ -199,6 +425,9 @@ export default function AgentConfigPage() {
               className="input resize-none font-mono text-xs"
               placeholder='{"ANTHROPIC_API_KEY": "..."}'
             />
+            {selected && /"\*\*\*"/.test(form.env) && (
+              <p className="mt-1 text-xs text-slate-500">Keys showing *** are already set. Clear or replace the value to update; leave *** to keep existing.</p>
+            )}
           </Field>
         </div>
 

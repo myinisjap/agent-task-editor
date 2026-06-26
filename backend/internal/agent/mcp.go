@@ -9,6 +9,7 @@ import (
 
 // MCPConfig is written as JSON and passed to the Claude CLI via --mcp-config.
 type mcpServerEntry struct {
+	Type    string            `json:"type"`
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env"`
@@ -53,7 +54,9 @@ func (m *MCPManager) Prepare(runID string, transitions []TransitionHint) (*MCPRu
 	cfg := mcpConfig{
 		MCPServers: map[string]mcpServerEntry{
 			"task-editor": {
+				Type:    "stdio",
 				Command: m.ServerBinary,
+				Args:    []string{},
 				Env: map[string]string{
 					"RUN_ID":      runID,
 					"RESULT_FILE": resultFile,

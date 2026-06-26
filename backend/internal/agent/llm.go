@@ -77,6 +77,33 @@ var llmTools = []map[string]any{
 	{
 		"type": "function",
 		"function": map[string]any{
+			"name":        "store_info",
+			"description": "Store structured information about this run that will be visible in the task view after completion.",
+			"parameters": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"info": map[string]any{"type": "string", "description": "Information to store (markdown or plain text)"}},
+				"required":   []string{"info"},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "update_task_notes",
+			"description": "Write structured notes to the task for subsequent agents to read. Use this to record plans, analysis, review findings, or any context that the next agent in the workflow should have.",
+			"parameters": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{
+					"notes":  map[string]any{"type": "string", "description": "The notes content (supports markdown)"},
+					"append": map[string]any{"type": "boolean", "description": "If true, append to existing notes instead of replacing"},
+				},
+				"required": []string{"notes"},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": map[string]any{
 			"name":        "signal_complete",
 			"description": "Call when your work is done. Advances the task to the next workflow stage.",
 			"parameters": map[string]any{
@@ -132,6 +159,8 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 		{Role: "user", Content: buildPrompt(input)},
 	}
 
+	var storedInfo string
+	var taskNotes string
 	const maxTurns = 50
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := r.chatComplete(runCtx, input.AgentConfig.Model, messages)
@@ -142,8 +171,14 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 		if len(resp.ToolCalls) == 0 {
 			// No tool calls — treat as completion
 			logCh <- LogEntry{Type: LogStdout, Content: fmt.Sprintf("%v", resp.Content), At: time.Now()}
-			status := "completed"
-			return Result{Status: status}, nil
+			res := Result{Status: "completed"}
+			if storedInfo != "" {
+				res.StoredInfo = &storedInfo
+			}
+			if taskNotes != "" {
+				res.Notes = &taskNotes
+			}
+			return res, nil
 		}
 
 		// Append assistant message with tool calls
@@ -153,17 +188,47 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 		for _, tc := range resp.ToolCalls {
 			logCh <- LogEntry{Type: LogToolCall, Content: fmt.Sprintf("%s(%s)", tc.Function.Name, tc.Function.Arguments), At: time.Now()}
 
-			result, signal := r.executeTool(runCtx, input.RepoPath, tc)
+			var args map[string]string
+			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
-			logCh <- LogEntry{Type: LogToolResult, Content: result, At: time.Now()}
+			var output string
+			var signal *Result
+			switch tc.Function.Name {
+			case "store_info":
+				storedInfo = args["info"]
+				output = "stored"
+			case "update_task_notes":
+				var appendNote bool
+				var rawArgs map[string]json.RawMessage
+				_ = json.Unmarshal([]byte(tc.Function.Arguments), &rawArgs)
+				if v, ok := rawArgs["append"]; ok {
+					_ = json.Unmarshal(v, &appendNote)
+				}
+				if appendNote && taskNotes != "" {
+					taskNotes = taskNotes + "\n\n" + args["notes"]
+				} else {
+					taskNotes = args["notes"]
+				}
+				output = "Task notes updated"
+			default:
+				output, signal = r.executeTool(runCtx, input.RepoPath, tc)
+			}
+
+			logCh <- LogEntry{Type: LogToolResult, Content: output, At: time.Now()}
 
 			messages = append(messages, chatMessage{
 				Role:       "tool",
-				Content:    result,
+				Content:    output,
 				ToolCallID: tc.ID,
 			})
 
 			if signal != nil {
+				if storedInfo != "" {
+					signal.StoredInfo = &storedInfo
+				}
+				if taskNotes != "" {
+					signal.Notes = &taskNotes
+				}
 				return *signal, nil
 			}
 		}

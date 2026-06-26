@@ -34,6 +34,11 @@ func main() {
 	} else {
 		slog.Info("repo base dir enforced", "path", cfg.RepoBaseDir)
 	}
+	if cfg.MCPBinary == "" {
+		slog.Warn("MCP_SERVER_PATH is not set; signal_complete/update_task_notes unavailable to claude agents")
+	} else {
+		slog.Info("MCP sidecar enabled", "binary", cfg.MCPBinary)
+	}
 
 	db, err := storage.Open(cfg.DBPath)
 	if err != nil {
@@ -86,6 +91,8 @@ func main() {
 			// Calls the Anthropic Messages API directly — no CLI binary needed.
 			// Requires LLM_API_KEY to be set. Billed per-token (not Claude Max).
 			return &agent.AnthropicRunner{APIKey: cfg.LLMAPIKey}
+		case "opencode":
+			return &agent.OpencodeRunner{}
 		default:
 			return &agent.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 		}

@@ -81,6 +81,97 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 	_, _ = w.Write(data)
 }
 
+// UpdateWorkflowYAML replaces a workflow's labels and transitions from a YAML body.
+func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Request) {
+	var in yamlWorkflow
+	if err := yaml.NewDecoder(r.Body).Decode(&in); err != nil {
+		Err(w, http.StatusBadRequest, "invalid yaml: "+err.Error())
+		return
+	}
+	if in.Name == "" {
+		Err(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	ctx := r.Context()
+	wfID := chi.URLParam(r, "id")
+
+	wf, err := h.q.UpdateWorkflow(ctx, gen.UpdateWorkflowParams{
+		ID:          wfID,
+		Name:        in.Name,
+		Description: in.Description,
+	})
+	if err != nil {
+		Err(w, http.StatusNotFound, "workflow not found")
+		return
+	}
+
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	tq := gen.New(tx)
+
+	if err := tq.DeleteWorkflowLabels(ctx, wfID); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, l := range in.Labels {
+		agentIgnore := int64(0)
+		if l.AgentIgnore {
+			agentIgnore = 1
+		}
+		isTerminal := int64(0)
+		if l.IsTerminal {
+			isTerminal = 1
+		}
+		if _, err := tq.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
+			ID:          uuid.NewString(),
+			WorkflowID:  wfID,
+			Name:        l.Name,
+			Color:       l.Color,
+			SortOrder:   int64(l.SortOrder),
+			AgentIgnore: agentIgnore,
+			IsTerminal:  isTerminal,
+		}); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	if err := tq.DeleteWorkflowTransitions(ctx, wfID); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, t := range in.Transitions {
+		if _, err := tq.CreateWorkflowTransition(ctx, gen.CreateWorkflowTransitionParams{
+			ID:          uuid.NewString(),
+			WorkflowID:  wfID,
+			FromLabel:   t.From,
+			ToLabel:     t.To,
+			TriggerType: t.TriggerType,
+			Path:        t.Path,
+		}); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	resp, err := h.buildResponse(r, wf)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, resp)
+}
+
 // ImportWorkflowYAML creates a new workflow from an uploaded YAML body.
 func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Request) {
 	var in yamlWorkflow

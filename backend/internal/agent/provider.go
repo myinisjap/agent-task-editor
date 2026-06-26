@@ -35,6 +35,8 @@ type Result struct {
 	Message *string
 	// Agent-written notes to persist on the task (from MCP sidecar)
 	Notes *string
+	// Structured info stored on the run for later inspection
+	StoredInfo *string
 }
 
 // RunInput carries everything an agent needs to start work.

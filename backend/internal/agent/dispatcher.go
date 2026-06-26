@@ -73,6 +73,9 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig) {
 	var matched *gen.AgentConfig
 	for i, cfg := range configs {
+		if cfg.Enabled == 0 {
+			continue
+		}
 		var labels []string
 		if err := json.Unmarshal([]byte(cfg.Labels), &labels); err != nil {
 			continue
@@ -116,7 +119,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	_, err = d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:             runID,
 		TaskID:         t.ID,
-		AgentConfigID:  matched.ID,
+		AgentConfigID:  &matched.ID,
 		Feedback:       feedback,
 	})
 	if err != nil {

@@ -100,7 +100,7 @@ func seedJobFixtures(t *testing.T, q *gen.Queries, wfID string) (taskID, agCfgID
 	_, err = q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:            runID,
 		TaskID:        taskID,
-		AgentConfigID: agCfgID,
+		AgentConfigID: &agCfgID,
 	})
 	if err != nil {
 		t.Fatalf("create agent run: %v", err)

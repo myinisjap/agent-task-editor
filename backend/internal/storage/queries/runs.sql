@@ -23,7 +23,7 @@ RETURNING *;
 
 -- name: SetAgentRunCompleted :one
 UPDATE agent_runs
-SET status = ?, completed_at = CURRENT_TIMESTAMP
+SET status = ?, stored_info = ?, completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 

@@ -9,10 +9,11 @@ import (
 
 // result mirrors agent.Result for JSON serialisation.
 type result struct {
-	Status  string  `json:"Status"`
-	Outcome string  `json:"Outcome,omitempty"`
-	Message *string `json:"Message,omitempty"`
-	Notes   *string `json:"Notes,omitempty"`
+	Status     string  `json:"Status"`
+	Outcome    string  `json:"Outcome,omitempty"`
+	Message    *string `json:"Message,omitempty"`
+	Notes      *string `json:"Notes,omitempty"`
+	StoredInfo *string `json:"StoredInfo,omitempty"`
 }
 
 type transitionHint struct {
@@ -58,6 +59,7 @@ func main() {
 	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 
 	var currentNotes string
+	var currentStoredInfo string
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -140,6 +142,17 @@ func main() {
 							"required": []string{"notes"},
 						},
 					},
+					{
+						"name":        "store_info",
+						"description": "Store structured information about this run that will be visible in the task view after completion.",
+						"inputSchema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"info": map[string]any{"type": "string", "description": "Information to store (markdown or plain text)"},
+							},
+							"required": []string{"info"},
+						},
+					},
 				},
 			})
 
@@ -153,7 +166,7 @@ func main() {
 				continue
 			}
 
-			text, r := dispatchTool(params.Name, params.Arguments, &currentNotes, transitions)
+			text, r := dispatchTool(params.Name, params.Arguments, &currentNotes, &currentStoredInfo, transitions)
 			if r != nil {
 				if data, err := json.Marshal(r); err == nil {
 					if err := os.WriteFile(resultFile, data, 0600); err != nil {
@@ -172,7 +185,7 @@ func main() {
 	}
 }
 
-func dispatchTool(name string, args json.RawMessage, currentNotes *string, transitions []transitionHint) (string, *result) {
+func dispatchTool(name string, args json.RawMessage, currentNotes, currentStoredInfo *string, transitions []transitionHint) (string, *result) {
 	switch name {
 	case "get_task_transitions":
 		if len(transitions) == 0 {
@@ -192,6 +205,9 @@ func dispatchTool(name string, args json.RawMessage, currentNotes *string, trans
 		if *currentNotes != "" {
 			r.Notes = currentNotes
 		}
+		if *currentStoredInfo != "" {
+			r.StoredInfo = currentStoredInfo
+		}
 		return "acknowledged", r
 
 	case "request_human":
@@ -204,7 +220,18 @@ func dispatchTool(name string, args json.RawMessage, currentNotes *string, trans
 		if *currentNotes != "" {
 			r.Notes = currentNotes
 		}
+		if *currentStoredInfo != "" {
+			r.StoredInfo = currentStoredInfo
+		}
 		return "pausing for human input", r
+
+	case "store_info":
+		var a struct {
+			Info string `json:"info"`
+		}
+		_ = json.Unmarshal(args, &a)
+		*currentStoredInfo = a.Info
+		return "stored", nil
 
 	case "update_task_notes":
 		var a struct {

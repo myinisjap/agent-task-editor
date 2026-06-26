@@ -74,6 +74,27 @@ var anthropicTools = []map[string]any{
 		},
 	},
 	{
+		"name":        "store_info",
+		"description": "Store structured information about this run that will be visible in the task view after completion.",
+		"input_schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"info": map[string]any{"type": "string", "description": "Information to store (markdown or plain text)"}},
+			"required":   []string{"info"},
+		},
+	},
+	{
+		"name":        "update_task_notes",
+		"description": "Write structured notes to the task for subsequent agents to read. Use this to record plans, analysis, review findings, or any context that the next agent in the workflow should have.",
+		"input_schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{
+				"notes":  map[string]any{"type": "string", "description": "The notes content (supports markdown)"},
+				"append": map[string]any{"type": "boolean", "description": "If true, append to existing notes instead of replacing"},
+			},
+			"required": []string{"notes"},
+		},
+	},
+	{
 		"name":        "signal_complete",
 		"description": "Call when your work is done. Advances the task to the next workflow stage.",
 		"input_schema": map[string]any{
@@ -138,6 +159,8 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 		{Role: "user", Content: buildPrompt(input)},
 	}
 
+	var storedInfo string
+	var taskNotes string
 	const maxTurns = 50
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := r.messagesComplete(runCtx, input.AgentConfig.Model, buildSystemPrompt(input), maxTokens, messages)
@@ -161,7 +184,14 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 
 		// No tool calls — model finished
 		if len(toolUses) == 0 || resp.StopReason == "end_turn" {
-			return Result{Status: "completed"}, nil
+			res := Result{Status: "completed"}
+			if storedInfo != "" {
+				res.StoredInfo = &storedInfo
+			}
+			if taskNotes != "" {
+				res.Notes = &taskNotes
+			}
+			return res, nil
 		}
 
 		// Append assistant turn
@@ -170,10 +200,36 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 		// Execute tools and build tool_result blocks
 		var resultBlocks []anthropicContent
 		for _, tu := range toolUses {
-			var args map[string]string
+			var args map[string]json.RawMessage
 			_ = json.Unmarshal(tu.Input, &args)
+			strArgs := make(map[string]string, len(args))
+			for k, v := range args {
+				var s string
+				if err := json.Unmarshal(v, &s); err == nil {
+					strArgs[k] = s
+				}
+			}
 
-			output, signal := executeLLMTool(runCtx, input.RepoPath, tu.Name, args)
+			var output string
+			var signal *Result
+			switch tu.Name {
+			case "store_info":
+				storedInfo = strArgs["info"]
+				output = "stored"
+			case "update_task_notes":
+				var appendNote bool
+				if v, ok := args["append"]; ok {
+					_ = json.Unmarshal(v, &appendNote)
+				}
+				if appendNote && taskNotes != "" {
+					taskNotes = taskNotes + "\n\n" + strArgs["notes"]
+				} else {
+					taskNotes = strArgs["notes"]
+				}
+				output = "Task notes updated"
+			default:
+				output, signal = executeLLMTool(runCtx, input.RepoPath, tu.Name, strArgs)
+			}
 			logCh <- LogEntry{Type: LogToolResult, Content: output, At: time.Now()}
 
 			resultBlocks = append(resultBlocks, anthropicContent{
@@ -183,6 +239,12 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 			})
 
 			if signal != nil {
+				if storedInfo != "" {
+					signal.StoredInfo = &storedInfo
+				}
+				if taskNotes != "" {
+					signal.Notes = &taskNotes
+				}
 				return *signal, nil
 			}
 		}

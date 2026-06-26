@@ -41,7 +41,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 
 	allowedTools := "Edit,Write,Read,Bash,Glob,Grep"
 	if mcpCfg != nil {
-		allowedTools += ",task-editor__get_task_transitions,task-editor__signal_complete,task-editor__request_human,task-editor__update_task_notes"
+		allowedTools += ",mcp__task-editor__get_task_transitions,mcp__task-editor__signal_complete,mcp__task-editor__request_human,mcp__task-editor__update_task_notes,mcp__task-editor__store_info"
 	}
 
 	args := []string{
@@ -51,6 +51,8 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		"--verbose",
 		"--allowedTools", allowedTools,
 		"--max-turns", "50",
+		"--bare",
+		"--settings", `{"enabledPlugins":{"oh-my-claudecode@omc":false}}`,
 	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
@@ -139,6 +141,10 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		return r, nil
 	}
 
+	// Non-zero exit with no parsed outcome means the agent failed (e.g. error_max_turns).
+	if err != nil && outcome == "" {
+		return Result{Status: "failed"}, nil
+	}
 	return Result{Status: "completed", Outcome: outcome}, nil
 }
 
@@ -240,7 +246,8 @@ func buildSystemPrompt(input RunInput) string {
 	if base == "" {
 		base = "You are an expert software engineer. Complete the assigned task thoroughly and carefully."
 	}
-	return base + "\n\nWhen your work is complete, call the signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"
+	suffix := "\n\nIf the prompt contains a \"NOTES FROM PRIOR AGENT\" section, read it carefully before starting — it contains context, plans, and decisions from previous agents in this workflow.\n\nBefore calling mcp__task-editor__signal_complete, call mcp__task-editor__update_task_notes with a concise summary of what you did, what decisions you made, and any context the next agent will need. If prior notes exist (\"NOTES FROM PRIOR AGENT\" was present), use append:true to preserve them. This is how agents hand off state to each other — always do it.\n\nWhen your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"
+	return base + suffix
 }
 
 // dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.

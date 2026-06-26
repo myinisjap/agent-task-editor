@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+export LLM_API_KEY=${LLM_API_KEY:-"your_api_key_here"}
+export LLM_BASE_URL=${LLM_BASE_URL:-"http://localhost:8081/v1"}
+export LLM_MODEL=${LLM_MODEL:-"gemma-4-12B-it-qat-UD-Q4_K_XL"}
 
 CMD=${1:-start}
 
@@ -28,6 +30,12 @@ case "$CMD" in
   shell)
     docker compose exec backend sh
     ;;
+  dev-stop)
+    # Kill any orphaned dev processes by port.
+    kill $(lsof -ti :8080 :5173 :5174 :5175 2>/dev/null) 2>/dev/null
+    pkill -f 'agent-task-editor/backend/server' 2>/dev/null
+    echo "dev processes stopped"
+    ;;
   dev)
     # Start backend and frontend as local processes (no Docker).
     # Requires: Go, Node.js/npm installed locally.
@@ -38,8 +46,11 @@ case "$CMD" in
     (cd "$SCRIPT_DIR/backend" && go build -o mcp-server ./cmd/mcp-server)
     MCP_SERVER_PATH="$SCRIPT_DIR/backend/mcp-server"
 
+    echo "Building backend..."
+    (cd "$SCRIPT_DIR/backend" && go build -o server ./cmd/server)
+
     echo "Starting backend on :8080..."
-    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" go run ./cmd/server) &
+    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" ./server) &
     BACKEND_PID=$!
 
     echo "Starting frontend on :5173..."

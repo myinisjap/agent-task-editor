@@ -12,7 +12,7 @@ RETURNING *;
 -- name: UpdateAgentConfig :one
 UPDATE agent_configs
 SET name = ?, provider = ?, model = ?, system_prompt = ?, labels = ?, env = ?,
-    max_tokens = ?, timeout_secs = ?, updated_at = CURRENT_TIMESTAMP
+    max_tokens = ?, timeout_secs = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 

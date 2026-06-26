@@ -1,5 +1,7 @@
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
+import { api } from '../../api/client'
+import { useTasksStore } from '../../stores/tasks'
 import TaskCard from './TaskCard'
 
 type Props = {
@@ -10,6 +12,7 @@ type Props = {
 }
 
 export default function TaskColumn({ label, tasks, runningTaskIds, onAddTask }: Props) {
+  const remove = useTasksStore((s) => s.remove)
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const isIgnored = label.agent_ignore === 1
 
@@ -42,6 +45,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, onAddTask }: 
             key={task.id}
             task={task}
             isRunning={runningTaskIds.has(task.id)}
+            onDelete={async () => { await api.tasks.delete(task.id); remove(task.id) }}
           />
         ))}
         {tasks.length === 0 && (

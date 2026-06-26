@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
@@ -10,7 +11,7 @@ const TYPE_COLORS: Record<string, string> = {
   spike:   'bg-purple-900 text-purple-300',
 }
 
-export default function TaskCard({ task, isRunning }: { task: Task; isRunning?: boolean }) {
+export default function TaskCard({ task, isRunning, onDelete }: { task: Task; isRunning?: boolean; onDelete?: () => void }) {
   const navigate = useNavigate()
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id })
 
@@ -19,6 +20,8 @@ export default function TaskCard({ task, isRunning }: { task: Task; isRunning?: 
     opacity: isDragging ? 0.4 : 1,
     cursor: isDragging ? 'grabbing' : 'grab',
   }
+
+  const [isExpanded, setIsExpanded] = useState(false)
 
   return (
     <div
@@ -30,13 +33,28 @@ export default function TaskCard({ task, isRunning }: { task: Task; isRunning?: 
         if (!isDragging) navigate(`/tasks/${task.id}`)
         e.stopPropagation()
       }}
-      className="bg-slate-800 border border-slate-700 rounded-lg p-3 hover:border-slate-500 transition-colors select-none"
+      className="group bg-slate-800 border border-slate-700 rounded-lg p-3 hover:border-slate-500 transition-colors select-none"
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
-        {isRunning && (
-          <span className="shrink-0 w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isRunning && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
+          )}
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                if (window.confirm('Delete this task?')) onDelete()
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none"
+              title="Delete task"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${TYPE_COLORS[task.type] ?? TYPE_COLORS.feature}`}>
@@ -44,6 +62,23 @@ export default function TaskCard({ task, isRunning }: { task: Task; isRunning?: 
         </span>
         <span className="text-xs text-slate-500 truncate">{task.id.slice(0, 8)}</span>
       </div>
+
+      {isExpanded && task.agent_notes && (
+        <div className="mt-3 pt-3 border-t border-slate-700">
+          <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Agent Notes</span>
+          <p className="text-xs text-slate-300 mt-1 whitespace-pre-wrap">{task.agent_notes}</p>
+        </div>
+      )}
+
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          setIsExpanded(!isExpanded)
+        }}
+        className="mt-2 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+      >
+        {isExpanded ? 'Hide Notes' : 'Show Notes'}
+      </button>
     </div>
   )
 }

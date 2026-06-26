@@ -20,6 +20,7 @@ type AgentConfig struct {
 	TimeoutSecs  int64     `json:"timeout_secs"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	Enabled      int64     `json:"enabled"`
 }
 
 type AgentLog struct {
@@ -33,9 +34,10 @@ type AgentLog struct {
 type AgentRun struct {
 	ID            string     `json:"id"`
 	TaskID        string     `json:"task_id"`
-	AgentConfigID string     `json:"agent_config_id"`
+	AgentConfigID *string    `json:"agent_config_id"`
 	Status        string     `json:"status"`
 	Feedback      *string    `json:"feedback"`
+	StoredInfo    *string    `json:"stored_info"`
 	StartedAt     *time.Time `json:"started_at"`
 	CompletedAt   *time.Time `json:"completed_at"`
 	CreatedAt     time.Time  `json:"created_at"`

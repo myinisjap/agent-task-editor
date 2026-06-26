@@ -2,7 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"os/exec"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -118,10 +122,26 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Env          string `json:"env"`
 		MaxTokens    int64  `json:"max_tokens"`
 		TimeoutSecs  int64  `json:"timeout_secs"`
+		Enabled      *bool  `json:"enabled"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+
+	// Read current to preserve enabled state if not sent
+	existing, err := h.q.GetAgentConfig(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "agent config not found")
+		return
+	}
+	enabled := existing.Enabled
+	if body.Enabled != nil {
+		if *body.Enabled {
+			enabled = 1
+		} else {
+			enabled = 0
+		}
 	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
@@ -133,13 +153,14 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Env:          body.Env,
 		MaxTokens:    body.MaxTokens,
 		TimeoutSecs:  body.TimeoutSecs,
+		Enabled:      enabled,
 		ID:           chi.URLParam(r, "id"),
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, cfg)
+	JSON(w, http.StatusOK, safeConfig(cfg))
 }
 
 func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -148,4 +169,53 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
+	providerModels := map[string][2]string{
+		"claude": {"claude-sonnet-4-6", "claude-opus-4"},
+	}
+	provider := r.URL.Query().Get("provider")
+	if provider == "" {
+		Err(w, http.StatusBadRequest, "provider query param is required")
+		return
+	}
+
+	var models []string
+	defaultModel := ""
+
+	if p, ok := providerModels[provider]; ok {
+		models = []string{p[0], p[1]}
+		defaultModel = p[0]
+	}
+
+	if provider == "opencode" {
+		out, err := exec.Command("opencode", "models").Output()
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			var filtered []string
+			for _, line := range lines {
+				if v := strings.TrimSpace(line); v != "" {
+					filtered = append(filtered, v)
+				}
+			}
+			models = filtered
+			if len(models) > 0 {
+				defaultModel = models[0]
+			}
+		} else {
+			slog.Warn("opencode models: failed to fetch model list", "err", err)
+		}
+	}
+
+	if models == nil {
+		Err(w, http.StatusNotFound, fmt.Sprintf("unknown provider: %s", provider))
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]any{
+		"provider":     provider,
+		"default_model": defaultModel,
+		"models":       models,
+	})
 }

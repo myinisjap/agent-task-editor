@@ -2,7 +2,15 @@ version: "2"
 sql:
   - engine: "sqlite"
     queries: "internal/storage/queries"
-    schema: "internal/storage/migrations/001_init.up.sql"
+    schema:
+      - "internal/storage/migrations/001_init.up.sql"
+      - "internal/storage/migrations/002_label_flags.up.sql"
+      - "internal/storage/migrations/003_task_active_run.up.sql"
+      - "internal/storage/migrations/004_task_agent_notes.up.sql"
+      - "internal/storage/migrations/005_transition_path.up.sql"
+      - "internal/storage/migrations/006_run_stored_info.up.sql"
+      - "internal/storage/migrations/007_agent_enabled.up.sql"
+      - "internal/storage/migrations/008_agent_runs_fk_set_null.up.sql"
     gen:
       go:
         package: "gen"

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -99,6 +101,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	setClaudeTrust(body.Path)
 	JSON(w, http.StatusCreated, repo)
 }
 
@@ -170,4 +173,45 @@ func (h *ReposHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		"head": head,
 		"diff": string(out),
 	})
+}
+
+// setClaudeTrust marks the given repo path as trust-dialog-accepted in ~/.claude.json
+// so headless Claude Code agents can use pre-approved permissions without prompting.
+func setClaudeTrust(repoPath string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	claudeJSON := filepath.Join(home, ".claude.json")
+
+	data, err := os.ReadFile(claudeJSON)
+	if err != nil {
+		return
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return
+	}
+
+	projects, _ := cfg["projects"].(map[string]any)
+	if projects == nil {
+		projects = map[string]any{}
+		cfg["projects"] = projects
+	}
+
+	entry, _ := projects[repoPath].(map[string]any)
+	if entry == nil {
+		entry = map[string]any{}
+		projects[repoPath] = entry
+	}
+	entry["hasTrustDialogAccepted"] = true
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(claudeJSON, out, 0o600); err != nil {
+		slog.Warn("failed to update claude trust dialog", "path", repoPath, "err", err)
+	}
 }

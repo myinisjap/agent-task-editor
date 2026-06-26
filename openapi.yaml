@@ -60,7 +60,7 @@ components:
       properties:
         id:            { type: string }
         name:          { type: string }
-        provider:      { type: string, enum: [claude_code, openai, anthropic, custom] }
+        provider:      { type: string, enum: [claude_code, openai, anthropic, custom, opencode] }
         model:         { type: string }
         system_prompt: { type: string }
         labels:        { type: string, description: "JSON array of label names" }
@@ -69,6 +69,13 @@ components:
         timeout_secs:  { type: integer }
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
+
+    ModelList:
+      type: object
+      properties:
+        provider:      { type: string }
+        default_model: { type: string }
+        models:        { type: array, items: { type: string } }
 
     Repo:
       type: object
@@ -430,6 +437,25 @@ paths:
       summary: Delete an agent config
       responses:
         "204": { description: Deleted }
+
+  /agents/models:
+    get:
+      summary: Get available models for a provider
+      parameters:
+        - name: provider
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Model list for the provider
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelList" }
+        "400":
+          description: Missing provider parameter
+        "404":
+          description: Unknown provider
 
   /repos:
     get:
