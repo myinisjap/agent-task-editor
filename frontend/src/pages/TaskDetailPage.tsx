@@ -4,14 +4,7 @@ import { api, type Task, type AgentRun, type AgentLog } from '../api/client'
 import { wsClient } from '../api/ws'
 import { parseDiff, type FileDiff } from '../lib/parseDiff'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
-
-const LOG_COLORS: Record<string, string> = {
-  stdout:      'text-slate-300',
-  stderr:      'text-red-400',
-  system:      'text-yellow-400',
-  tool_call:   'text-cyan-400',
-  tool_result: 'text-emerald-400',
-}
+import AgentLogEntry from '../components/board/AgentLogEntry'
 
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -178,6 +171,14 @@ export default function TaskDetailPage() {
               </span>
             </Row>
             <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+            {task.agent_notes && (
+              <div>
+                <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
+                <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-60 overflow-y-auto font-sans">
+                  {task.agent_notes}
+                </pre>
+              </div>
+            )}
             <Row label="Created">
               <span className="text-xs text-slate-400">{new Date(task.created_at).toLocaleDateString()}</span>
             </Row>
@@ -216,24 +217,22 @@ export default function TaskDetailPage() {
 
         {/* Center panel — agent log stream */}
         <div
-          className="flex-1 overflow-y-auto p-5 font-mono text-xs"
+          className="flex-1 overflow-y-auto py-3 px-2"
           onScroll={(e) => {
             const el = e.currentTarget
             autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
           }}
         >
-          <p className="text-slate-500 mb-3 font-sans">
-            {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse mr-2" />}
+          <p className="text-slate-500 text-xs mb-3 px-3 font-sans flex items-center gap-2">
+            {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
             {selectedRun ? `Run ${selectedRun.slice(0, 8)}` : 'No agent runs yet'}
+            {logs.length > 0 && <span className="text-slate-700">· {logs.length} events</span>}
           </p>
           {logs.length === 0 && selectedRun && (
-            <p className="text-slate-600">No log entries</p>
+            <p className="text-slate-600 text-xs px-3">No log entries</p>
           )}
           {logs.map((log, i) => (
-            <div key={log.id ?? i} className={`mb-0.5 break-all ${LOG_COLORS[log.type] ?? 'text-slate-400'}`}>
-              <span className="text-slate-600 mr-2 select-none">[{log.type.padEnd(11)}]</span>
-              {log.content}
-            </div>
+            <AgentLogEntry key={log.id ?? i} log={log} />
           ))}
           <div ref={logBottomRef} />
         </div>

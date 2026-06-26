@@ -63,7 +63,9 @@ export default function BoardPage() {
           No workflow configured. Add a repo and workflow first.
         </div>
       ) : (
-        <TaskBoard labels={labels} tasks={tasks} runningTaskIds={runningTaskIds} />
+        <div className="flex-1 min-h-0">
+          <TaskBoard labels={labels} tasks={tasks} runningTaskIds={runningTaskIds} onAddTask={() => setShowNewTask(true)} />
+        </div>
       )}
     </div>
   )

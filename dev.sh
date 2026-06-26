@@ -34,8 +34,12 @@ case "$CMD" in
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     trap 'kill 0' INT TERM EXIT
 
+    echo "Building MCP server..."
+    (cd "$SCRIPT_DIR/backend" && go build -o mcp-server ./cmd/mcp-server)
+    MCP_SERVER_PATH="$SCRIPT_DIR/backend/mcp-server"
+
     echo "Starting backend on :8080..."
-    (cd "$SCRIPT_DIR/backend" && go run ./cmd/server) &
+    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" go run ./cmd/server) &
     BACKEND_PID=$!
 
     echo "Starting frontend on :5173..."

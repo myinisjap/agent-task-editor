@@ -1,1 +1,2 @@
-ALTER TABLE tasks ADD COLUMN active_agent_run_id TEXT;
+-- no-op: active_agent_run_id is defined in 001_init
+SELECT 1;

@@ -55,6 +55,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Patch("/tasks/{id}/label", tasksH.MoveLabel)
 		r.Post("/tasks/{id}/approve", tasksH.Approve)
 		r.Post("/tasks/{id}/reject", tasksH.Reject)
+		r.Patch("/tasks/{id}/notes", tasksH.UpdateNotes)
 
 		// Agent runs
 		r.Get("/tasks/{id}/runs", tasksH.ListRuns)

@@ -9,9 +9,10 @@ type Props = {
   labels: WorkflowLabel[]
   tasks: Task[]
   runningTaskIds: Set<string>
+  onAddTask?: () => void
 }
 
-export default function TaskBoard({ labels, tasks, runningTaskIds }: Props) {
+export default function TaskBoard({ labels, tasks, runningTaskIds, onAddTask }: Props) {
   const { upsert } = useTasksStore()
 
   // Require 5px movement to start a drag so clicks still navigate
@@ -44,13 +45,14 @@ export default function TaskBoard({ labels, tasks, runningTaskIds }: Props) {
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="flex gap-5 overflow-x-auto pb-4">
-        {labels.map((label) => (
+      <div className="flex gap-5 overflow-x-auto h-full pb-4">
+        {labels.map((label, i) => (
           <TaskColumn
             key={label.id}
             label={label}
             tasks={byLabel(label.name)}
             runningTaskIds={runningTaskIds}
+            onAddTask={i === 0 ? onAddTask : undefined}
           />
         ))}
       </div>

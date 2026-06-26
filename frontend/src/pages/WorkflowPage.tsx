@@ -6,21 +6,43 @@ import {
   Handle,
   Position,
   MarkerType,
+  BaseEdge,
   useNodesState,
   useEdgesState,
   addEdge,
+  useStore,
 } from '@xyflow/react'
-import type { Node, Edge, NodeProps, Connection, EdgeMouseHandler } from '@xyflow/react'
+import type { Node, Edge, NodeProps, Connection, EdgeMouseHandler, EdgeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api } from '../api/client'
 import type { Workflow, WorkflowLabel } from '../api/client'
 
+const NODE_W = 160
+const NODE_H = 60
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const TRIGGER_STYLE: Record<string, { strokeDasharray?: string; stroke: string }> = {
-  agent: { stroke: '#6366F1' },
-  human: { stroke: '#EC4899', strokeDasharray: '5 3' },
-  both:  { stroke: '#F59E0B' },
+  agent:   { stroke: '#6366F1' },
+  human:   { stroke: '#EC4899', strokeDasharray: '6 3' },
+  both:    { stroke: '#F59E0B' },
+  success: { stroke: '#22C55E' },
+  failure: { stroke: '#EF4444' },
+  either:  { stroke: '#A855F7' },
+}
+
+// Handle IDs per edge type:
+//   failure → right/left (LR)
+//   success/either/agent/human/both → bottom/top (TB)
+function sourceHandle(trigger: string, path?: string | null) {
+  if (path === 'failure') return 'source-right'
+  if (trigger === 'human') return 'source-bottom-human'
+  return 'source-bottom-agent'
+}
+function targetHandle(trigger: string, path?: string | null) {
+  if (path === 'failure') return 'target-left'
+  if (trigger === 'human') return 'target-top-human'
+  return 'target-top-agent'
 }
 
 const TRIGGER_CYCLE: Record<string, 'agent' | 'human' | 'both'> = {
@@ -29,22 +51,58 @@ const TRIGGER_CYCLE: Record<string, 'agent' | 'human' | 'both'> = {
   both: 'agent',
 }
 
-// path cycles only for agent/both transitions
-const PATH_CYCLE: Record<string, 'success' | 'failure' | 'either' | null> = {
-  success: 'failure',
-  failure: 'either',
-  either: null,
-}
 
-const PATH_LABEL: Record<string, string> = {
-  success: '✓',
-  failure: '✗',
-  either: '~',
-}
 
-const COL_W = 200
-const ROW_H = 120
-const COLS = 4
+// ─── Ortho Edge ──────────────────────────────────────────────────────────────
+// Draws: source → horizontal to midpoint lane → vertical → horizontal to target
+// The lane x is the midpoint between the two nodes' column x-centres.
+// Since dagre places nodes left-to-right with gaps, this path never crosses a node.
+
+function OrthoEdge({ id, source, target, sourceHandleId, targetHandleId, style, markerEnd, data }: EdgeProps) {
+  const sourceNode = useStore((s) => s.nodeLookup.get(source))
+  const targetNode = useStore((s) => s.nodeLookup.get(target))
+
+  if (!sourceNode || !targetNode) return null
+
+  const sw = (sourceNode.measured?.width ?? NODE_W)
+  const sh = (sourceNode.measured?.height ?? NODE_H)
+  const tw = (targetNode.measured?.width ?? NODE_W)
+  const th = (targetNode.measured?.height ?? NODE_H)
+  const edgeData = data as { trigger?: string; path?: string | null } | undefined
+  const path = edgeData?.path ?? null
+
+  let d: string
+  if (path === 'failure') {
+    // Exits right side, runs down outside rail, enters right side of target
+    const sx = sourceNode.position.x + sw
+    const sy = sourceNode.position.y + sh * 0.5
+    const tx = targetNode.position.x + tw
+    const ty = targetNode.position.y + th * 0.5
+    const railX = Math.max(sx, tx) + 30
+    d = `M ${sx} ${sy} H ${railX} V ${ty} H ${tx}`
+  } else {
+    // Straight down: center-bottom → center-top (agent) or slight offset (human)
+    const srcIsHuman = sourceHandleId === 'source-bottom-human'
+    const tgtIsHuman = targetHandleId === 'target-top-human'
+    const sx = sourceNode.position.x + sw * (srcIsHuman ? 0.6 : 0.4)
+    const sy = sourceNode.position.y + sh
+    const tx = targetNode.position.x + tw * (tgtIsHuman ? 0.6 : 0.4)
+    const ty = targetNode.position.y
+    d = `M ${sx} ${sy} V ${ty}`
+  }
+
+  const edgeStyle = style as React.CSSProperties | undefined
+  const dasharray = edgeStyle?.strokeDasharray as string | undefined
+
+  return (
+    <BaseEdge
+      id={id}
+      path={d}
+      markerEnd={markerEnd as string}
+      style={{ stroke: edgeStyle?.stroke, strokeWidth: 2, strokeDasharray: dasharray, fill: 'none' }}
+    />
+  )
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -57,77 +115,62 @@ type LabelNodeData = WorkflowLabel & {
 
 function LabelNode({ data, selected }: NodeProps) {
   const label = data as unknown as LabelNodeData
-  const isIgnored = label.agent_ignore === 1
-  const isTerminal = label.is_terminal === 1
 
   return (
     <div
       onClick={() => label.onSelect?.(label.name)}
       className={`rounded-lg px-4 py-2.5 min-w-28 text-center border-2 shadow-md cursor-pointer transition-all ${
-        isIgnored ? 'opacity-60' : ''
+        label.agent_ignore === 1 ? 'opacity-60' : ''
       } ${selected ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-950' : ''}`}
       style={{ borderColor: label.color, backgroundColor: `${label.color}22` }}
     >
-      <Handle type="target" position={Position.Left} className="!bg-slate-600" />
+      {/* target: right-center for failure, top-center for agent/human */}
+      <Handle id="target-left"       type="target" position={Position.Right}  style={{ top: '50%' }}  className="!opacity-0" />
+      <Handle id="target-top-agent"  type="target" position={Position.Top}    style={{ left: '40%' }} className="!opacity-0" />
+      <Handle id="target-top-human"  type="target" position={Position.Top}    style={{ left: '60%' }} className="!opacity-0" />
+
       <div className="text-xs font-semibold text-white">{label.name}</div>
-      <div className="flex justify-center gap-1 mt-1">
-        {isIgnored && (
-          <span className="text-slate-400 text-xs" title="agent ignored">∅</span>
-        )}
-        {isTerminal && (
-          <span className="text-emerald-400 text-xs" title="terminal">✓</span>
-        )}
-      </div>
-      <Handle type="source" position={Position.Right} className="!bg-slate-600" />
+
+      {/* source: right-center for failure, bottom for agent/human */}
+      <Handle id="source-right"        type="source" position={Position.Right}  style={{ top: '50%' }}  className="!opacity-0" />
+      <Handle id="source-bottom-agent" type="source" position={Position.Bottom} style={{ left: '40%' }} className="!opacity-0" />
+      <Handle id="source-bottom-human" type="source" position={Position.Bottom} style={{ left: '60%' }} className="!opacity-0" />
     </div>
   )
 }
 
 const nodeTypes = { label: LabelNode }
+const edgeTypes = { ortho: OrthoEdge }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function labelsToNodes(
-  labels: WorkflowLabel[],
-  onSelect: (name: string) => void,
-  selectedName: string | null,
-): Node[] {
-  const sorted = [...labels].sort((a, b) => a.sort_order - b.sort_order)
-  return sorted.map((lbl, i) => ({
-    id: lbl.name,
-    type: 'label',
-    position: { x: (i % COLS) * COL_W, y: Math.floor(i / COLS) * ROW_H },
-    data: { ...lbl, onSelect, isSelected: lbl.name === selectedName } as unknown as Record<string, unknown>,
-    selected: lbl.name === selectedName,
-  }))
-}
-
-function edgeLabel(trigger: string, path?: string | null): string {
-  const pathSuffix = path ? ` ${PATH_LABEL[path] ?? path}` : ''
-  return `${trigger}${pathSuffix}`
+function edgeLabel(_trigger: string, _path?: string | null): string {
+  return ''
 }
 
 function transitionsToEdges(transitions: Array<{ from_label: string; to_label: string; trigger_type: string; agent_config_id?: string; path?: string | null }>, idPrefix = ''): Edge[] {
   return transitions.map((t, i) => {
     const tt = t.trigger_type as 'agent' | 'human' | 'both'
+    const sh = sourceHandle(tt, t.path)
+    const th = targetHandle(tt, t.path)
     return {
       id: idPrefix ? `${idPrefix}-${i}` : `${t.from_label}->${t.to_label}-${i}`,
       source: t.from_label,
       target: t.to_label,
+      sourceHandle: sh,
+      targetHandle: th,
+      type: 'ortho',
       label: edgeLabel(tt, t.path),
       data: { trigger: tt, path: t.path ?? null },
       markerEnd: { type: MarkerType.ArrowClosed },
-      style: TRIGGER_STYLE[tt] ?? { stroke: '#6B7280' },
+      style: (t.path ? TRIGGER_STYLE[t.path] : TRIGGER_STYLE[tt]) ?? { stroke: '#6B7280' },
       labelStyle: { fill: '#94A3B8', fontSize: 10 },
-      labelBgStyle: { fill: '#0F172A' },
+      labelBgStyle: { fill: '#0F172A', fillOpacity: 1 },
+      labelBgPadding: [3, 5] as [number, number],
+      labelBgBorderRadius: 3,
+      zIndex: 10,
     }
   })
-}
-
-function workflowToFlow(wf: Workflow, onSelect: (name: string) => void, selectedName: string | null): { nodes: Node[]; edges: Edge[] } {
-  const nodes = labelsToNodes(wf.labels, onSelect, selectedName)
-  const edges = transitionsToEdges(wf.transitions, wf.id)
-  return { nodes, edges }
 }
 
 // ─── Side Panel ──────────────────────────────────────────────────────────────
@@ -135,12 +178,14 @@ function workflowToFlow(wf: Workflow, onSelect: (name: string) => void, selected
 interface LabelPanelProps {
   label: WorkflowLabel
   allLabelNames: string[]
+  edges: Edge[]
   onUpdate: (updated: WorkflowLabel) => void
   onDelete: () => void
   onClose: () => void
+  onSetPath: (path: 'success' | 'failure' | 'either', toLabel: string | null) => void
 }
 
-function LabelPanel({ label, allLabelNames, onUpdate, onDelete, onClose }: LabelPanelProps) {
+function LabelPanel({ label, allLabelNames, edges, onUpdate, onDelete, onClose, onSetPath }: LabelPanelProps) {
   const [form, setForm] = useState<WorkflowLabel>({ ...label })
   const [nameError, setNameError] = useState<string | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -267,6 +312,41 @@ function LabelPanel({ label, allLabelNames, onUpdate, onDelete, onClose }: Label
             badgeClass="text-emerald-400"
           />
         </div>
+
+        {/* Agent outcome routing */}
+        {form.agent_ignore === 0 && (
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-2">Agent Outcome Routing</label>
+            <div className="space-y-2">
+              {(['success', 'failure', 'either'] as const).map((path) => {
+                const pathEdge = edges.find(
+                  (e) => e.source === label.name && (e.data as { path?: string | null })?.path === path,
+                )
+                const currentTarget = pathEdge?.target ?? ''
+                return (
+                  <div key={path} className="flex items-center gap-2">
+                    <span
+                      className="text-xs font-mono w-14 flex-shrink-0"
+                      style={{ color: path === 'success' ? '#22C55E' : path === 'failure' ? '#EF4444' : '#A855F7' }}
+                    >
+                      {path === 'success' ? '✓' : path === 'failure' ? '✗' : '~'} {path}
+                    </span>
+                    <select
+                      value={currentTarget}
+                      onChange={(e) => onSetPath(path, e.target.value || null)}
+                      className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="">— none —</option>
+                      {allLabelNames.filter((n) => n !== label.name).map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Color preview */}
         <div
@@ -424,17 +504,14 @@ export default function WorkflowPage() {
   // Rebuild nodes whenever labels or selection changes
   const rebuildNodes = useCallback(
     (lbls: WorkflowLabel[], sel: string | null) => {
-      setNodes((prev) => {
-        const posMap = new Map(prev.map((n) => [n.id, n.position]))
-        const sorted = [...lbls].sort((a, b) => a.sort_order - b.sort_order)
-        return sorted.map((lbl, i) => ({
-          id: lbl.name,
-          type: 'label',
-          position: posMap.get(lbl.name) ?? { x: (i % COLS) * COL_W, y: Math.floor(i / COLS) * ROW_H },
-          data: { ...lbl, onSelect: stableOnSelect, isSelected: lbl.name === sel } as unknown as Record<string, unknown>,
-          selected: lbl.name === sel,
-        }))
-      })
+      const sorted = [...lbls].sort((a, b) => a.sort_order - b.sort_order)
+      setNodes(sorted.map((lbl, i) => ({
+        id: lbl.name,
+        type: 'label',
+        position: { x: 0, y: i * (NODE_H + 80) },
+        data: { ...lbl, onSelect: stableOnSelect, isSelected: lbl.name === sel } as unknown as Record<string, unknown>,
+        selected: lbl.name === sel,
+      })))
     },
     [setNodes, stableOnSelect],
   )
@@ -448,12 +525,11 @@ export default function WorkflowPage() {
         setWfName(wf.name)
         setWfDesc(wf.description ?? '')
         setLabels(wf.labels)
-        const { nodes: n, edges: e } = workflowToFlow(wf, stableOnSelect, null)
-        setNodes(n)
-        setEdges(e)
+        rebuildNodes(wf.labels, null)
+        setEdges(transitionsToEdges(wf.transitions, wf.id))
       }
     })
-  }, [setNodes, setEdges, stableOnSelect])
+  }, [setEdges, stableOnSelect, rebuildNodes])
 
   // Sync nodes when labels or selection changes (after initial load)
   const isFirstRender = useRef(true)
@@ -465,51 +541,43 @@ export default function WorkflowPage() {
   // ── Connections ──
   const onConnect = useCallback(
     (connection: Connection) => {
+      // Infer trigger from which handle was dragged
+      const trigger = connection.sourceHandle === 'source-bottom-human' ? 'human' : 'agent'
       const newEdge: Edge = {
         ...connection,
         id: `${connection.source}->${connection.target}-${Date.now()}`,
-        label: edgeLabel('agent', null),
-        data: { trigger: 'agent', path: null },
+        type: 'ortho',
+        label: edgeLabel(trigger, null),
+        data: { trigger, path: null },
         markerEnd: { type: MarkerType.ArrowClosed },
-        style: TRIGGER_STYLE.agent,
+        style: TRIGGER_STYLE[trigger],
         labelStyle: { fill: '#94A3B8', fontSize: 10 },
         labelBgStyle: { fill: '#0F172A' },
+        zIndex: 10,
       } as Edge
       setEdges((eds) => addEdge(newEdge, eds))
     },
     [setEdges],
   )
 
-  // ── Edge click → cycle trigger_type; shift+click → cycle path (agent/both only) ──
+  // ── Edge click → cycle trigger_type (agent↔human↔both), update handles ──
   const onEdgeClick: EdgeMouseHandler = useCallback(
-    (evt, edge) => {
+    (_evt, edge) => {
       const d = (edge.data ?? {}) as { trigger?: string; path?: string | null }
       const trigger = d.trigger ?? 'agent'
       const path = d.path ?? null
-
-      if (evt.shiftKey && trigger !== 'human') {
-        // Cycle path: null → success → failure → either → null
-        const nextPath = path === null ? 'success' : (PATH_CYCLE[path] ?? null)
-        setEdges((eds) =>
-          eds.map((e) =>
-            e.id === edge.id
-              ? { ...e, label: edgeLabel(trigger, nextPath), data: { trigger, path: nextPath } }
-              : e,
-          ),
-        )
-      } else {
-        // Cycle trigger
-        const nextTrigger = TRIGGER_CYCLE[trigger] ?? 'agent'
-        // Reset path if switching to human (no path on human transitions)
-        const nextPath = nextTrigger === 'human' ? null : path
-        setEdges((eds) =>
-          eds.map((e) =>
-            e.id === edge.id
-              ? { ...e, label: edgeLabel(nextTrigger, nextPath), style: TRIGGER_STYLE[nextTrigger], data: { trigger: nextTrigger, path: nextPath } }
-              : e,
-          ),
-        )
-      }
+      // Path edges are managed via the label panel; only cycle non-path edges
+      if (path) return
+      const nextTrigger = TRIGGER_CYCLE[trigger] ?? 'agent'
+      const sh = sourceHandle(nextTrigger, null)
+      const th = targetHandle(nextTrigger, null)
+      setEdges((eds) =>
+        eds.map((e) =>
+          e.id === edge.id
+            ? { ...e, sourceHandle: sh, targetHandle: th, label: edgeLabel(nextTrigger, null), style: TRIGGER_STYLE[nextTrigger], data: { trigger: nextTrigger, path: null } }
+            : e,
+        ),
+      )
     },
     [setEdges],
   )
@@ -540,6 +608,38 @@ export default function WorkflowPage() {
     [selectedLabel, setEdges],
   )
 
+  const handleSetPath = useCallback(
+    (path: 'success' | 'failure' | 'either', toLabel: string | null) => {
+      if (!selectedLabel) return
+      setEdges((eds) => {
+        // Remove existing edge with this path from this label
+        const filtered = eds.filter(
+          (e) => !(e.source === selectedLabel && (e.data as { path?: string | null })?.path === path),
+        )
+        if (!toLabel) return filtered
+        const newEdge: Edge = {
+          id: `${selectedLabel}->${toLabel}-${path}`,
+          source: selectedLabel,
+          target: toLabel,
+          sourceHandle: sourceHandle('agent', path),
+          targetHandle: targetHandle('agent', path),
+          type: 'ortho',
+          label: '',
+          data: { trigger: 'agent', path },
+          markerEnd: { type: MarkerType.ArrowClosed },
+          style: TRIGGER_STYLE[path],
+          labelStyle: { fill: '#94A3B8', fontSize: 10 },
+          labelBgStyle: { fill: '#0F172A', fillOpacity: 1 },
+          labelBgPadding: [3, 5] as [number, number],
+          labelBgBorderRadius: 3,
+          zIndex: 10,
+        }
+        return [...filtered, newEdge]
+      })
+    },
+    [selectedLabel, setEdges],
+  )
+
   const handleLabelDelete = useCallback(() => {
     if (!selectedLabel) return
     const name = selectedLabel
@@ -548,6 +648,10 @@ export default function WorkflowPage() {
     setEdges((prev) => prev.filter((e) => e.source !== name && e.target !== name))
     setSelectedLabel(null)
   }, [selectedLabel, setEdges])
+
+  const handleRelayout = useCallback(() => {
+    rebuildNodes(labels, selectedLabel)
+  }, [rebuildNodes, labels, selectedLabel])
 
   const handleAddLabel = useCallback(() => {
     const maxOrder = labels.reduce((m, l) => Math.max(m, l.sort_order), -1)
@@ -612,9 +716,11 @@ export default function WorkflowPage() {
 
   const legend = useMemo(
     () => [
-      { color: '#6366F1', label: 'agent trigger', dashed: false },
-      { color: '#EC4899', label: 'human gate', dashed: true },
+      { color: '#6366F1', label: 'agent', dashed: false },
       { color: '#F59E0B', label: 'both', dashed: false },
+      { color: '#22C55E', label: '✓ success', dashed: false },
+      { color: '#EF4444', label: '✗ failure', dashed: false },
+      { color: '#A855F7', label: '~ either', dashed: false },
     ],
     [],
   )
@@ -664,6 +770,16 @@ export default function WorkflowPage() {
             + Add Label
           </button>
 
+          {/* Re-layout */}
+          <button
+            onClick={handleRelayout}
+            disabled={!workflow}
+            className="px-3 py-1.5 text-sm font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-50 transition-colors"
+            title="Auto-arrange nodes"
+          >
+            ⬡ Layout
+          </button>
+
           {/* Export YAML */}
           {workflow && (
             <a
@@ -694,15 +810,6 @@ export default function WorkflowPage() {
         </div>
       )}
 
-      {/* ── Edge hint banner ── */}
-      <div className="px-6 py-1.5 border-b border-slate-800 bg-slate-950 text-xs text-slate-500 flex items-center gap-4">
-        <span>Click a node to edit its properties</span>
-        <span className="text-slate-700">·</span>
-        <span>Click an edge to cycle trigger type · Shift+click to cycle path (success ✓ / failure ✗ / either ~) · Select + Delete/Backspace to remove</span>
-        <span className="text-slate-700">·</span>
-        <span>Drag from a node handle to create a new transition</span>
-      </div>
-
       {/* ── Canvas + side panel ── */}
       <div className="flex flex-1 min-h-0">
         <div className="flex-1 relative">
@@ -710,10 +817,12 @@ export default function WorkflowPage() {
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onEdgeClick={onEdgeClick}
+            elevateEdgesOnSelect
             fitView
             proOptions={{ hideAttribution: true }}
             className="bg-slate-950"
@@ -729,9 +838,11 @@ export default function WorkflowPage() {
             key={selectedLabelObj.name}
             label={selectedLabelObj}
             allLabelNames={allLabelNames}
+            edges={edges}
             onUpdate={handleLabelUpdate}
             onDelete={handleLabelDelete}
             onClose={() => setSelectedLabel(null)}
+            onSetPath={handleSetPath}
           />
         )}
       </div>

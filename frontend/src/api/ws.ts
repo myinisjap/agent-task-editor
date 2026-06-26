@@ -18,8 +18,19 @@ class WSClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   connect() {
+    // Already connected or connecting — don't double-connect
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    this.ws = new WebSocket(`${proto}//${window.location.host}/ws`)
+    const token = import.meta.env.VITE_API_TOKEN
+    const url = `${proto}//${window.location.host}/ws${token ? `?token=${token}` : ''}`
+    this.ws = new WebSocket(url)
 
     this.ws.onmessage = (e) => {
       try {

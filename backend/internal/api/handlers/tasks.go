@@ -228,6 +228,39 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, updated)
 }
 
+func (h *TasksHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Notes  string `json:"notes"`
+		Append bool   `json:"append"`
+	}
+	if err := decode(r, &body); err != nil {
+		Err(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	taskID := chi.URLParam(r, "id")
+	if body.Append {
+		existing, err := h.q.GetTask(r.Context(), taskID)
+		if err != nil {
+			Err(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if existing.AgentNotes != "" {
+			body.Notes = existing.AgentNotes + "\n\n" + body.Notes
+		}
+	}
+
+	task, err := h.q.UpdateTaskNotes(r.Context(), gen.UpdateTaskNotesParams{
+		AgentNotes: body.Notes,
+		ID:         taskID,
+	})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, task)
+}
+
 func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	runs, err := h.q.ListAgentRuns(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {

@@ -122,10 +122,10 @@ func TestTransition_GateRequired(t *testing.T) {
 	wfID := defaultWorkflowID(t, db)
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
-	// plan→todo is human-only
-	task := createTestTask(t, db, "plan", wfID)
+	// review→done is human-only
+	task := createTestTask(t, db, "review", wfID)
 
-	err := engine.Transition(context.Background(), task.ID, "todo", workflow.TriggerAgent, "", "")
+	err := engine.Transition(context.Background(), task.ID, "done", workflow.TriggerAgent, "", "")
 	if err != workflow.ErrGateRequired {
 		t.Errorf("expected ErrGateRequired, got: %v", err)
 	}

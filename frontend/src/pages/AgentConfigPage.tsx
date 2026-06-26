@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type AgentConfig } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
+import { useWorkflowStore } from '../stores/workflow'
 
 const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> = {
   name: '',
@@ -15,14 +16,18 @@ const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> = {
 
 export default function AgentConfigPage() {
   const { configs: agents, fetch: fetchAgents } = useAgentsStore()
+  const { workflows, fetch: fetchWorkflows } = useWorkflowStore()
   const [selected, setSelected] = useState<AgentConfig | null>(null)
   const [form, setForm] = useState<typeof EMPTY>(EMPTY)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
+  const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
+
   useEffect(() => {
     fetchAgents()
-  }, [fetchAgents])
+    fetchWorkflows()
+  }, [fetchAgents, fetchWorkflows])
 
   function selectAgent(a: AgentConfig) {
     setSelected(a)
@@ -168,12 +173,11 @@ export default function AgentConfigPage() {
             />
           </Field>
 
-          <Field label="Labels (JSON array)">
-            <input
-              value={form.labels}
-              onChange={(e) => setForm((f) => ({ ...f, labels: e.target.value }))}
-              className="input font-mono text-xs"
-              placeholder='["plan","in-progress"]'
+          <Field label="Labels" className="col-span-2">
+            <LabelPicker
+              selected={(() => { try { return JSON.parse(form.labels) } catch { return [] } })()}
+              available={availableLabels}
+              onChange={(lbls) => setForm((f) => ({ ...f, labels: JSON.stringify(lbls) }))}
             />
           </Field>
 
@@ -226,6 +230,46 @@ function Field({ label, children, className = '' }: { label: string; children: R
     <div className={className}>
       <label className="block text-xs font-medium text-slate-400 mb-1.5">{label}</label>
       {children}
+    </div>
+  )
+}
+
+function LabelPicker({ selected, available, onChange }: {
+  selected: string[]
+  available: string[]
+  onChange: (labels: string[]) => void
+}) {
+  const toggle = (name: string) => {
+    if (selected.includes(name)) {
+      onChange(selected.filter((l) => l !== name))
+    } else {
+      onChange([...selected, name])
+    }
+  }
+
+  if (available.length === 0) {
+    return <p className="text-xs text-slate-500">No workflow labels found. Configure a workflow first.</p>
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {available.map((name) => {
+        const active = selected.includes(name)
+        return (
+          <button
+            key={name}
+            type="button"
+            onClick={() => toggle(name)}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+              active
+                ? 'bg-indigo-600 border-indigo-500 text-white'
+                : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+            }`}
+          >
+            {name}
+          </button>
+        )
+      })}
     </div>
   )
 }

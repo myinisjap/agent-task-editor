@@ -7,13 +7,14 @@ CREATE TABLE workflows (
 );
 
 CREATE TABLE workflow_labels (
-    id           TEXT PRIMARY KEY,
-    workflow_id  TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
-    name         TEXT NOT NULL,
-    color        TEXT NOT NULL DEFAULT '#6B7280',
-    sort_order   INTEGER NOT NULL DEFAULT 0,
-    agent_ignore INTEGER NOT NULL DEFAULT 0,
-    is_terminal  INTEGER NOT NULL DEFAULT 0,
+    id                   TEXT PRIMARY KEY,
+    workflow_id          TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+    name                 TEXT NOT NULL,
+    color                TEXT NOT NULL DEFAULT '#6B7280',
+    sort_order           INTEGER NOT NULL DEFAULT 0,
+    agent_ignore         INTEGER NOT NULL DEFAULT 0,
+    is_terminal          INTEGER NOT NULL DEFAULT 0,
+    is_rejection_target  INTEGER NOT NULL DEFAULT 0,
     UNIQUE(workflow_id, name)
 );
 
@@ -59,6 +60,8 @@ CREATE TABLE tasks (
     repo_id              TEXT NOT NULL REFERENCES repos(id),
     workflow_id          TEXT NOT NULL REFERENCES workflows(id),
     current_agent_run_id TEXT,
+    agent_notes          TEXT NOT NULL DEFAULT '',
+    active_agent_run_id  TEXT,
     created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -1,1 +1,2 @@
-ALTER TABLE workflow_labels ADD COLUMN is_rejection_target INTEGER NOT NULL DEFAULT 0;
+-- no-op: is_rejection_target is defined in 001_init
+SELECT 1;

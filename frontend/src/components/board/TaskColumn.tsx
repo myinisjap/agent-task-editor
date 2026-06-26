@@ -6,9 +6,10 @@ type Props = {
   label: WorkflowLabel
   tasks: Task[]
   runningTaskIds: Set<string>
+  onAddTask?: () => void
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, onAddTask }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const isIgnored = label.agent_ignore === 1
 
@@ -51,6 +52,15 @@ export default function TaskColumn({ label, tasks, runningTaskIds }: Props) {
           </div>
         )}
       </div>
+
+      {onAddTask && (
+        <button
+          onClick={onAddTask}
+          className="mt-3 w-full py-1.5 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-800 border border-dashed border-slate-700 hover:border-slate-600 rounded-lg transition-colors"
+        >
+          + New Task
+        </button>
+      )}
     </div>
   )
 }
