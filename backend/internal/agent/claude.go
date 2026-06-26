@@ -51,9 +51,11 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		"--verbose",
 		"--allowedTools", allowedTools,
 		"--max-turns", "50",
-		"--model", modelOrDefault(input.AgentConfig.Model),
 		"--bare",
 		"--settings", `{"enabledPlugins":{"oh-my-claudecode@omc":false}}`,
+	}
+	if input.AgentConfig.Model != "" {
+		args = append(args, "--model", input.AgentConfig.Model)
 	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
@@ -257,13 +259,6 @@ func buildSystemPrompt(input RunInput) string {
 	}
 	suffix := "\n\nIf the prompt contains a \"NOTES FROM PRIOR AGENT\" section, read it carefully before starting — it contains context, plans, and decisions from previous agents in this workflow.\n\nBefore calling mcp__task-editor__signal_complete, call mcp__task-editor__update_task_notes with a concise summary of what you did, what decisions you made, and any context the next agent will need. If prior notes exist (\"NOTES FROM PRIOR AGENT\" was present), use append:true to preserve them. This is how agents hand off state to each other — always do it.\n\nWhen your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"
 	return base + suffix
-}
-
-func modelOrDefault(m string) string {
-	if m != "" {
-		return m
-	}
-	return "claude-sonnet-4-6"
 }
 
 // dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.

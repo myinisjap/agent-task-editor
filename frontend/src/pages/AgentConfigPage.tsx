@@ -362,7 +362,7 @@ export default function AgentConfigPage() {
                 onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
                 className="input"
               >
-                <option value="">Select a model...</option>
+                <option value="">Use $MODEL env var</option>
                 {modelList.models.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
@@ -372,7 +372,7 @@ export default function AgentConfigPage() {
                 value={form.model}
                 onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
                 className="input"
-                placeholder={fetchingModels ? 'Loading models...' : 'e.g. claude-sonnet-4-6'}
+                placeholder={fetchingModels ? 'Loading models...' : 'e.g. claude-sonnet-4-6 (empty = use env var)'}
               />
             )}
           </Field>
