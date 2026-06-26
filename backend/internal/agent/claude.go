@@ -51,6 +51,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		"--verbose",
 		"--allowedTools", allowedTools,
 		"--max-turns", "50",
+		"--model", modelOrDefault(input.AgentConfig.Model),
 		"--bare",
 		"--settings", `{"enabledPlugins":{"oh-my-claudecode@omc":false}}`,
 	}
@@ -168,12 +169,20 @@ func classifyStreamJSON(line string) (LogEntry, string) {
 		// Claude SDK wraps tool results in a user message: {"type":"user","message":{"role":"user","content":[{"type":"tool_result",...}]}}
 		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, ""
 	case "result":
-		// Parse OUTCOME: success|failure from the result text
+		// Parse OUTCOME: success|failure from the result text; fall back to subtype.
 		var outcome string
 		if resultText, ok := raw["result"]; ok {
 			var text string
 			if err := json.Unmarshal(resultText, &text); err == nil {
 				outcome = extractOutcome(text)
+			}
+		}
+		if outcome == "" {
+			subtype := strings.Trim(string(raw["subtype"]), `"`)
+			if subtype == "success" {
+				outcome = "success"
+			} else if subtype == "error_max_turns" || subtype == "error" {
+				outcome = "failure"
 			}
 		}
 		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome
@@ -248,6 +257,13 @@ func buildSystemPrompt(input RunInput) string {
 	}
 	suffix := "\n\nIf the prompt contains a \"NOTES FROM PRIOR AGENT\" section, read it carefully before starting — it contains context, plans, and decisions from previous agents in this workflow.\n\nBefore calling mcp__task-editor__signal_complete, call mcp__task-editor__update_task_notes with a concise summary of what you did, what decisions you made, and any context the next agent will need. If prior notes exist (\"NOTES FROM PRIOR AGENT\" was present), use append:true to preserve them. This is how agents hand off state to each other — always do it.\n\nWhen your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"
 	return base + suffix
+}
+
+func modelOrDefault(m string) string {
+	if m != "" {
+		return m
+	}
+	return "claude-sonnet-4-6"
 }
 
 // dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.
