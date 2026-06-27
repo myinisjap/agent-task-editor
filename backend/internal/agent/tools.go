@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,51 @@ import (
 )
 
 const bashOutputLimit = 1 << 20 // 1 MB
+
+// runAccumulators holds the cross-turn state that both AnthropicRunner and
+// LLMRunner thread through their agentic loops: info stored via store_info and
+// notes written via update_task_notes.
+type runAccumulators struct {
+	storedInfo string
+	taskNotes  string
+}
+
+// applySpecialTool handles the two provider-agnostic tools (store_info,
+// update_task_notes) that mutate run state rather than touching the repo.
+// rawArgs is the unparsed argument JSON (needed to read the boolean "append"
+// flag). Returns (output, true) if it handled the tool, ("", false) otherwise.
+func (a *runAccumulators) applySpecialTool(name string, args map[string]string, rawArgs []byte) (string, bool) {
+	switch name {
+	case "store_info":
+		a.storedInfo = args["info"]
+		return "stored", true
+	case "update_task_notes":
+		var appendNote bool
+		var m map[string]json.RawMessage
+		_ = json.Unmarshal(rawArgs, &m)
+		if v, ok := m["append"]; ok {
+			_ = json.Unmarshal(v, &appendNote)
+		}
+		if appendNote && a.taskNotes != "" {
+			a.taskNotes = a.taskNotes + "\n\n" + args["notes"]
+		} else {
+			a.taskNotes = args["notes"]
+		}
+		return "Task notes updated", true
+	default:
+		return "", false
+	}
+}
+
+// attach copies any accumulated stored info / task notes onto a Result.
+func (a *runAccumulators) attach(res *Result) {
+	if a.storedInfo != "" {
+		res.StoredInfo = &a.storedInfo
+	}
+	if a.taskNotes != "" {
+		res.Notes = &a.taskNotes
+	}
+}
 
 // executeLLMTool runs a single tool call for LLMRunner and AnthropicRunner.
 // Returns (output, nil) for file/shell tools, or (output, *Result) for

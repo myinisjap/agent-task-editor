@@ -159,8 +159,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 		{Role: "user", Content: buildPrompt(input)},
 	}
 
-	var storedInfo string
-	var taskNotes string
+	var acc runAccumulators
 	const maxTurns = 50
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := r.messagesComplete(runCtx, input.AgentConfig.Model, buildSystemPrompt(input), maxTokens, messages)
@@ -185,12 +184,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 		// No tool calls — model finished
 		if len(toolUses) == 0 || resp.StopReason == "end_turn" {
 			res := Result{Status: "completed"}
-			if storedInfo != "" {
-				res.StoredInfo = &storedInfo
-			}
-			if taskNotes != "" {
-				res.Notes = &taskNotes
-			}
+			acc.attach(&res)
 			return res, nil
 		}
 
@@ -210,24 +204,9 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 				}
 			}
 
-			var output string
+			output, handled := acc.applySpecialTool(tu.Name, strArgs, tu.Input)
 			var signal *Result
-			switch tu.Name {
-			case "store_info":
-				storedInfo = strArgs["info"]
-				output = "stored"
-			case "update_task_notes":
-				var appendNote bool
-				if v, ok := args["append"]; ok {
-					_ = json.Unmarshal(v, &appendNote)
-				}
-				if appendNote && taskNotes != "" {
-					taskNotes = taskNotes + "\n\n" + strArgs["notes"]
-				} else {
-					taskNotes = strArgs["notes"]
-				}
-				output = "Task notes updated"
-			default:
+			if !handled {
 				output, signal = executeLLMTool(runCtx, input.RepoPath, tu.Name, strArgs)
 			}
 			logCh <- LogEntry{Type: LogToolResult, Content: output, At: time.Now()}
@@ -239,12 +218,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 			})
 
 			if signal != nil {
-				if storedInfo != "" {
-					signal.StoredInfo = &storedInfo
-				}
-				if taskNotes != "" {
-					signal.Notes = &taskNotes
-				}
+				acc.attach(signal)
 				return *signal, nil
 			}
 		}

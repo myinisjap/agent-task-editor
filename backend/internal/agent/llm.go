@@ -159,8 +159,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 		{Role: "user", Content: buildPrompt(input)},
 	}
 
-	var storedInfo string
-	var taskNotes string
+	var acc runAccumulators
 	const maxTurns = 50
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := r.chatComplete(runCtx, input.AgentConfig.Model, messages)
@@ -172,12 +171,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 			// No tool calls — treat as completion
 			logCh <- LogEntry{Type: LogStdout, Content: fmt.Sprintf("%v", resp.Content), At: time.Now()}
 			res := Result{Status: "completed"}
-			if storedInfo != "" {
-				res.StoredInfo = &storedInfo
-			}
-			if taskNotes != "" {
-				res.Notes = &taskNotes
-			}
+			acc.attach(&res)
 			return res, nil
 		}
 
@@ -191,26 +185,9 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 			var args map[string]string
 			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
-			var output string
+			output, handled := acc.applySpecialTool(tc.Function.Name, args, []byte(tc.Function.Arguments))
 			var signal *Result
-			switch tc.Function.Name {
-			case "store_info":
-				storedInfo = args["info"]
-				output = "stored"
-			case "update_task_notes":
-				var appendNote bool
-				var rawArgs map[string]json.RawMessage
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &rawArgs)
-				if v, ok := rawArgs["append"]; ok {
-					_ = json.Unmarshal(v, &appendNote)
-				}
-				if appendNote && taskNotes != "" {
-					taskNotes = taskNotes + "\n\n" + args["notes"]
-				} else {
-					taskNotes = args["notes"]
-				}
-				output = "Task notes updated"
-			default:
+			if !handled {
 				output, signal = r.executeTool(runCtx, input.RepoPath, tc)
 			}
 
@@ -223,12 +200,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 			})
 
 			if signal != nil {
-				if storedInfo != "" {
-					signal.StoredInfo = &storedInfo
-				}
-				if taskNotes != "" {
-					signal.Notes = &taskNotes
-				}
+				acc.attach(signal)
 				return *signal, nil
 			}
 		}
