@@ -11,9 +11,13 @@ export type ParsedLog =
   | { kind: 'tool_result'; toolName?: string; summary: string; isError: boolean; detail?: string; lineCount?: number }
   | { kind: 'assistant_text'; text: string }
   | { kind: 'system_event'; event: string; detail?: string }
+  | { kind: 'hidden' }  // ponytail: debug noise (thinking_tokens etc), show when debug flag added
   | { kind: 'raw'; text: string }
 
+const HIDDEN_SUBTYPES = new Set(['thinking_tokens', 'thinking'])
+
 /** Try to parse JSON, return null on failure */
+
 function tryJson(s: string): unknown {
   const t = s?.trimStart()
   if (!t || t[0] !== '{' && t[0] !== '[') return null
@@ -236,12 +240,14 @@ function parseResult(obj: Record<string, unknown>): ParsedLog | null {
   return { kind: 'system_event', event, detail }
 }
 
-export function parseLogContent(type: string, content: string): ParsedLog {
+export function parseLogContent(type: string, content: string, debug: boolean = false): ParsedLog {
   // Plain text types — no JSON expected
   if (type === 'stdout' || type === 'stderr') {
     // stdout might be raw SDK JSON blobs (e.g. {"type":"user",...}) — try to parse them
     const obj = tryJson(content) as Record<string, unknown> | null
     if (obj) {
+      // ponytail: hide all SDK system events (thinking_tokens, thinking, etc) — noise
+      if (obj.type === 'system' && !(debug || !HIDDEN_SUBTYPES.has(obj.subtype as string))) return { kind: 'hidden' }
       const msg = parseMessage(obj)
       if (msg) return msg
       const toolUse = parseToolUse(obj)
@@ -257,9 +263,13 @@ export function parseLogContent(type: string, content: string): ParsedLog {
   if (type === 'system') {
     // Could be plain text or JSON event
     const obj = tryJson(content) as Record<string, unknown> | null
-    if (obj?.type === 'result') {
-      const r = parseResult(obj)
-      if (r) return r
+    if (obj) {
+      // ponytail: hide all SDK system events — noise
+      if (obj.type === 'system' && !(debug || !HIDDEN_SUBTYPES.has(obj.subtype as string))) return { kind: 'hidden' }
+      if (obj.type === 'result') {
+        const r = parseResult(obj)
+        if (r) return r
+      }
     }
     return { kind: 'system_event', event: content }
   }
@@ -270,6 +280,11 @@ export function parseLogContent(type: string, content: string): ParsedLog {
   if (!obj) {
     // Not JSON — just show as text
     return { kind: 'text', text: content }
+  }
+
+  // Filter internal SDK noise regardless of log type
+  if (obj.type === 'system' && HIDDEN_SUBTYPES.has(obj.subtype as string) && !debug) {
+    return { kind: 'hidden' }
   }
 
   // Try tool_use extraction

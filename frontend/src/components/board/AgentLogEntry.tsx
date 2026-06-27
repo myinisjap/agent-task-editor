@@ -5,6 +5,7 @@ import { parseLogContent } from '../../lib/parseAgentLog'
 
 interface Props {
   log: AgentLog
+  debug?: boolean
 }
 
 const TOOL_ICONS: Record<string, string> = {
@@ -32,8 +33,8 @@ function Timestamp({ ts }: { ts: string | null }) {
   return <span className="text-slate-600 text-xs shrink-0">{ts}</span>
 }
 
-export default function AgentLogEntry({ log }: Props) {
-  const parsed = parseLogContent(log.type, log.content)
+export default function AgentLogEntry({ log, debug = false }: Props) {
+  const parsed = parseLogContent(log.type, log.content, debug)
   // Auto-expand errors so failures are visible without a click
   const [expanded, setExpanded] = useState(() =>
     parsed.kind === 'tool_result' && parsed.isError
@@ -42,6 +43,8 @@ export default function AgentLogEntry({ log }: Props) {
   const ts = log.timestamp
     ? new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : null
+
+  if (parsed.kind === 'hidden') return null
 
   switch (parsed.kind) {
     case 'assistant_text':

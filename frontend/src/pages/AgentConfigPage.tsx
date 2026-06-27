@@ -124,6 +124,9 @@ export default function AgentConfigPage() {
   const [fetchingModels, setFetchingModels] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [creatingTemplate, setCreatingTemplate] = useState(false)
+  const [multiMode, setMultiMode] = useState(false)
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set())
+  const [bulkSaving, setBulkSaving] = useState(false)
 
   const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
 
@@ -227,6 +230,35 @@ export default function AgentConfigPage() {
     }
   }
 
+  async function handleBulkToggle(enable: boolean) {
+    if (multiSelected.size === 0) return
+    setBulkSaving(true)
+    try {
+      const selected = agents.filter(a => multiSelected.has(a.id))
+      await Promise.all(
+        selected.map(a =>
+          api.agents.update(a.id, {
+            name: a.name,
+            provider: a.provider,
+            model: a.model,
+            system_prompt: a.system_prompt,
+            labels: a.labels,
+            env: a.env,
+            max_tokens: a.max_tokens,
+            timeout_secs: a.timeout_secs,
+            enabled: enable,
+          })
+        )
+      )
+      await fetchAgents()
+      setMultiSelected(new Set())
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setBulkSaving(false)
+    }
+  }
+
   async function handleDelete() {
     if (!selected) return
     if (!confirm(`Delete agent "${selected.name}"?`)) return
@@ -250,12 +282,22 @@ export default function AgentConfigPage() {
       <div className="w-56 shrink-0 border-r border-slate-800 overflow-y-auto flex flex-col">
         <div className="p-4 flex items-center justify-between border-b border-slate-800">
           <span className="text-sm font-medium text-slate-300">Agent Configs</span>
-          <button
-            onClick={newAgent}
-            className="text-xs px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600 text-white"
-          >
-            + New
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => { setMultiMode(v => !v); setMultiSelected(new Set()) }}
+              className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
+            >
+              {multiMode ? 'Done' : 'Select'}
+            </button>
+            {!multiMode && (
+              <button
+                onClick={newAgent}
+                className="text-xs px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600 text-white"
+              >
+                + New
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Templates section */}
@@ -286,29 +328,90 @@ export default function AgentConfigPage() {
 
         {/* Agent list */}
         <div className="flex flex-col gap-0.5 p-2">
-          {agents.map((a) => (
-            <button
-              key={a.id}
-              onClick={() => selectAgent(a)}
-              className={`text-left text-sm px-3 py-2 rounded ${
-                selected?.id === a.id
-                  ? 'bg-slate-700 text-slate-100'
-                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-              } ${(a.enabled === 0 || a.enabled === false) ? 'opacity-50' : ''}`}
-            >
-              <div className="truncate flex items-center gap-1.5">
-                {(a.enabled === 0 || a.enabled === false) && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-600 shrink-0" />
+          {agents.map((a) => {
+            const isChecked = multiSelected.has(a.id)
+            const isDisabled = a.enabled === 0 || a.enabled === false
+            return (
+              <button
+                key={a.id}
+                onClick={() => {
+                  if (multiMode) {
+                    setMultiSelected(prev => {
+                      const next = new Set(prev)
+                      if (next.has(a.id)) next.delete(a.id); else next.add(a.id)
+                      return next
+                    })
+                  } else {
+                    selectAgent(a)
+                  }
+                }}
+                className={`w-full text-left text-sm px-3 py-2 rounded flex items-start gap-2 ${
+                  !multiMode && selected?.id === a.id
+                    ? 'bg-slate-700 text-slate-100'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                } ${!multiMode && isDisabled ? 'opacity-50' : ''} ${
+                  multiMode && isChecked ? 'ring-1 ring-indigo-500 bg-slate-800' : ''
+                }`}
+              >
+                {multiMode && (
+                  <span className={`mt-0.5 w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center ${
+                    isChecked ? 'bg-indigo-600 border-indigo-500' : 'border-slate-600'
+                  }`}>
+                    {isChecked && <span className="text-white text-[10px] leading-none">✓</span>}
+                  </span>
                 )}
-                {a.name}
-              </div>
-              <div className="text-xs text-slate-500 mt-0.5">{a.provider}/{a.model.split('-').slice(0,2).join('-')}</div>
-            </button>
-          ))}
+                <span className="flex-1 min-w-0">
+                  <div className="truncate flex items-center gap-1.5">
+                    {!multiMode && isDisabled && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-600 shrink-0" />
+                    )}
+                    {multiMode && isDisabled && (
+                      <span className="text-slate-600 text-[10px]">[off]</span>
+                    )}
+                    {a.name}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">{a.provider}/{a.model.split('-').slice(0,2).join('-')}</div>
+                </span>
+              </button>
+            )
+          })}
           {agents.length === 0 && (
             <p className="text-xs text-slate-600 px-3 py-4">No agents configured</p>
           )}
         </div>
+
+        {/* Bulk action bar — shown only in multi mode */}
+        {multiMode && (
+          <div className="mt-auto p-2 border-t border-slate-800 flex flex-col gap-1.5">
+            <p className="text-xs text-slate-400 px-1">
+              {multiSelected.size > 0 ? `${multiSelected.size} selected` : 'Tap agents to select'}
+            </p>
+            {multiSelected.size > 0 && (
+              <>
+                <button
+                  onClick={() => handleBulkToggle(true)}
+                  disabled={bulkSaving}
+                  className="text-xs px-2 py-1.5 rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-50"
+                >
+                  {bulkSaving ? 'Saving…' : 'Enable All'}
+                </button>
+                <button
+                  onClick={() => handleBulkToggle(false)}
+                  disabled={bulkSaving}
+                  className="text-xs px-2 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-50"
+                >
+                  {bulkSaving ? 'Saving…' : 'Disable All'}
+                </button>
+                <button
+                  onClick={() => setMultiSelected(new Set(agents.map(a => a.id)))}
+                  className="text-xs px-2 py-1.5 rounded text-slate-500 hover:text-slate-300"
+                >
+                  Select All
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Editor */}

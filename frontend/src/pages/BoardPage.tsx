@@ -41,14 +41,6 @@ export default function BoardPage() {
           {workflow && (
             <span className="text-xs text-slate-500">Workflow: {workflow.name}</span>
           )}
-          {workflow && (
-            <button
-              onClick={() => setShowNewTask(true)}
-              className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
-            >
-              + New Task
-            </button>
-          )}
         </div>
       </div>
 

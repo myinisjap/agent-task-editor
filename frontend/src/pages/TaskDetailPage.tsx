@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { api, type Task, type AgentRun, type AgentLog } from '../api/client'
+import { api, type Task, type AgentRun, type AgentLog, type Workflow } from '../api/client'
 import { wsClient } from '../api/ws'
 import { parseDiff, type FileDiff } from '../lib/parseDiff'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
@@ -14,13 +14,14 @@ export default function TaskDetailPage() {
   const [task, setTask] = useState<Task | null>(null)
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [selectedRun, setSelectedRun] = useState<string | null>(null)
+  const [debug, setDebug] = useState(false)
   const [logs, setLogs] = useState<AgentLog[]>([])
-  const [loading, setLoading] = useState(true)
   const [rejectNote, setRejectNote] = useState('')
   const [actionPending, setActionPending] = useState(false)
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const logBottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
 
@@ -48,7 +49,6 @@ export default function TaskDetailPage() {
         setRuns(r ?? [])
         if (r && r.length > 0) setSelectedRun(r[0].id)
       })
-      .finally(() => setLoading(false))
   }, [id])
 
   // Load logs when selected run changes
@@ -59,6 +59,12 @@ export default function TaskDetailPage() {
       autoScrollRef.current = true
     }).catch(() => {})
   }, [id, selectedRun])
+
+  // Load workflow when task is available
+  useEffect(() => {
+    if (!task?.workflow_id) return
+    api.workflows.get(task.workflow_id).then(setWorkflow).catch(() => {})
+  }, [task?.workflow_id])
 
   // Load diff when task is available
   useEffect(() => {
@@ -117,6 +123,9 @@ export default function TaskDetailPage() {
   const isRunning = activeRun?.status === 'running'
   const latestRun = runs[0]
   const canRerun = latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed')
+  const isHumanGateLabel = task
+    ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
+    : false
 
   const handleRerun = async () => {
     if (!id) return
@@ -160,8 +169,7 @@ export default function TaskDetailPage() {
     }
   }
 
-  if (loading) return <div className="p-6 text-slate-400">Loading…</div>
-  if (!task) return <div className="p-6 text-slate-400">Task not found</div>
+  if (!task) return <div className="p-6 text-slate-400">Loading…</div>
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
@@ -172,12 +180,12 @@ export default function TaskDetailPage() {
   return (
     <div className="flex h-full overflow-hidden flex-col">
       {/* Tab bar */}
-      <div className="shrink-0 flex items-center gap-1 border-b border-slate-800 px-4 pt-3">
+      <div className="shrink-0 flex items-center border-b border-slate-800 px-4 pt-3 w-full overflow-x-hidden">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+            className={`flex-grow min-w-[100px] px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
               activeTab === t.id
                 ? 'bg-slate-800 text-slate-100 border-b-2 border-slate-400'
                 : 'text-slate-500 hover:text-slate-300'
@@ -192,7 +200,7 @@ export default function TaskDetailPage() {
       <div className="flex-1 overflow-hidden">
         {/* Overview tab */}
         {activeTab === 'overview' && (
-          <div className="h-full overflow-y-auto p-5 flex flex-col gap-4 max-w-2xl">
+          <div className="h-full overflow-y-auto p-5 flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <button
                 onClick={() => navigate('/board')}
@@ -297,12 +305,21 @@ export default function TaskDetailPage() {
               {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
               {selectedRun ? `Run ${selectedRun.slice(0, 8)}` : 'No agent runs yet'}
               {logs.length > 0 && <span className="text-slate-700">· {logs.length} events</span>}
+              <label className="ml-2 flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-slate-700 bg-slate-800 text-indigo-600 focus:ring-indigo-500"
+                  checked={debug}
+                  onChange={(e) => setDebug(e.target.checked)}
+                />
+                <span className="text-slate-400">Debug</span>
+              </label>
             </p>
             {logs.length === 0 && selectedRun && (
               <p className="text-slate-600 text-xs px-3">No log entries</p>
             )}
             {logs.map((log, i) => (
-              <AgentLogEntry key={log.id ?? i} log={log} />
+              <AgentLogEntry key={log.id ?? i} log={log} debug={debug} />
             ))}
             <div ref={logBottomRef} />
           </div>
@@ -332,8 +349,8 @@ export default function TaskDetailPage() {
         )}
       </div>
 
-      {/* Approval panel — shown when agent needs human or task is in review */}
-      {(needsHuman || task.label === 'review') && (
+      {/* Approval panel — shown when agent needs human or task is at a human-gate label */}
+      {(needsHuman || isHumanGateLabel) && (
         <div className="shrink-0 border-t border-slate-700 bg-slate-900 p-4">
           <p className="text-sm font-medium text-slate-200 mb-3">
             {needsHuman ? 'Agent is waiting for your input' : 'Human review required'}
