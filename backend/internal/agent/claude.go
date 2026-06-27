@@ -70,7 +70,11 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 
 	cmd := exec.CommandContext(runCtx, r.binary(), args...)
 	cmd.Dir = input.RepoPath
-	cmd.Env = mergeEnv(os.Environ(), input.AgentConfig.Env)
+	env := mergeEnv(os.Environ(), input.AgentConfig.Env)
+	if tok := claudeOAuthToken(); tok != "" {
+		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
+	}
+	cmd.Env = env
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -266,6 +270,27 @@ var dangerousEnvKeys = map[string]bool{
 	"PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true,
 	"HOME": true, "SHELL": true, "IFS": true,
 	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
+}
+
+// claudeOAuthToken reads the access token from ~/.claude/.credentials.json for --bare mode.
+func claudeOAuthToken() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(home + "/.claude/.credentials.json")
+	if err != nil {
+		return ""
+	}
+	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"accessToken"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return ""
+	}
+	return creds.ClaudeAiOauth.AccessToken
 }
 
 func mergeEnv(base []string, extra map[string]string) []string {
