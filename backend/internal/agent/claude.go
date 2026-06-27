@@ -145,6 +145,14 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		if r.Outcome == "" && outcome != "" {
 			r.Outcome = outcome
 		}
+		// A non-zero exit with no signalled outcome means the subprocess crashed
+		// before calling signal_complete (e.g. bad ANTHROPIC_BASE_URL, auth error).
+		// ReadResult defaults a missing result file to "completed", which would
+		// mask the failure and re-dispatch the broken config forever. Trust the
+		// exit code over the default.
+		if err != nil && r.Outcome == "" {
+			return Result{Status: "failed"}, nil
+		}
 		return r, nil
 	}
 
