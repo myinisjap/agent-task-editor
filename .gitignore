@@ -13,3 +13,7 @@ frontend/dist/
 .DS_Store
 .env
 .env.local
+
+# Go build artifacts
+backend/server
+backend/mcp-server
