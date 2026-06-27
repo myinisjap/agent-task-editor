@@ -154,8 +154,20 @@ export const api = {
   agents: {
     list: () => request<AgentConfig[]>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
-    create: (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>) =>
-      request<AgentConfig>('/agents', { method: 'POST', body: JSON.stringify(body) }),
+    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+      const res = await fetch(`${BASE}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        throw new Error(err.error ?? res.statusText)
+      }
+      const config: AgentConfig = await res.json()
+      const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
+      return { config, labelConflict }
+    },
     update: (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }) =>
       request<AgentConfig>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),

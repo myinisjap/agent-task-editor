@@ -13,6 +13,35 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
+// labelConflict returns the name of any enabled config (excluding excludeID) that shares a label.
+func (h *AgentsHandler) labelConflict(r *http.Request, labelsJSON string, excludeID string) (string, error) {
+	var newLabels []string
+	if err := json.Unmarshal([]byte(labelsJSON), &newLabels); err != nil || len(newLabels) == 0 {
+		return "", nil
+	}
+	active, err := h.q.ListAgentConfigs(r.Context())
+	if err != nil {
+		return "", err
+	}
+	for _, cfg := range active {
+		if cfg.ID == excludeID {
+			continue
+		}
+		var existing []string
+		if err := json.Unmarshal([]byte(cfg.Labels), &existing); err != nil {
+			continue
+		}
+		for _, el := range existing {
+			for _, nl := range newLabels {
+				if el == nl {
+					return cfg.Name, nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
 // redactEnv replaces env values with "***" so API keys are never returned to clients.
 func redactEnv(envJSON string) string {
 	var env map[string]string
@@ -94,6 +123,18 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		body.TimeoutSecs = 600
 	}
 
+	conflict, err := h.labelConflict(r, body.Labels, "")
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// ponytail: start disabled when labels conflict; client surfaces this
+	startEnabled := int64(1)
+	if conflict != "" {
+		startEnabled = 0
+	}
+
 	cfg, err := h.q.CreateAgentConfig(r.Context(), gen.CreateAgentConfigParams{
 		ID:           uuid.NewString(),
 		Name:         body.Name,
@@ -109,6 +150,24 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	if startEnabled == 0 {
+		// disable the freshly created config
+		cfg, err = h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
+			Name: cfg.Name, Provider: cfg.Provider, Model: cfg.Model,
+			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels, Env: cfg.Env,
+			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs,
+			Enabled: 0, ID: cfg.ID,
+		})
+		if err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("X-Label-Conflict", conflict)
+		JSON(w, http.StatusCreated, cfg)
+		return
+	}
+
 	JSON(w, http.StatusCreated, cfg)
 }
 
@@ -138,6 +197,20 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	enabled := existing.Enabled
 	if body.Enabled != nil {
 		if *body.Enabled {
+			// check for label conflicts before enabling
+			labelsToCheck := body.Labels
+			if labelsToCheck == "" {
+				labelsToCheck = existing.Labels
+			}
+			conflict, cerr := h.labelConflict(r, labelsToCheck, chi.URLParam(r, "id"))
+			if cerr != nil {
+				Err(w, http.StatusInternalServerError, cerr.Error())
+				return
+			}
+			if conflict != "" {
+				Err(w, http.StatusConflict, fmt.Sprintf("label conflict with active config %q — disable it first", conflict))
+				return
+			}
 			enabled = 1
 		} else {
 			enabled = 0

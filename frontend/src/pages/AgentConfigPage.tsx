@@ -175,9 +175,12 @@ export default function AgentConfigPage() {
     setCreatingTemplate(true)
     setShowTemplates(false)
     try {
-      const created = await api.agents.create(t)
+      const { config, labelConflict } = await api.agents.create(t)
       await fetchAgents()
-      selectAgent(created)
+      selectAgent(config)
+      if (labelConflict) {
+        alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
+      }
     } catch (e: any) {
       alert(e.message)
     } finally {
@@ -205,7 +208,10 @@ export default function AgentConfigPage() {
       if (selected) {
         await api.agents.update(selected.id, { ...payload, enabled: !!selected.enabled })
       } else {
-        await api.agents.create(payload)
+        const { labelConflict } = await api.agents.create(payload)
+        if (labelConflict) {
+          alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
+        }
       }
       fetchAgents()
       newAgent()
