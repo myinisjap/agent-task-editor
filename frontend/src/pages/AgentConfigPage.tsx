@@ -425,12 +425,12 @@ export default function AgentConfigPage() {
               <span className={`text-xs ${isEnabled ? 'text-green-400' : 'text-slate-500'}`}>
                 {isEnabled ? 'Active' : 'Disabled'}
               </span>
-<button
+              <button
                 onClick={handleToggleEnabled}
                 disabled={saving}
-                className={`relative z-10 w-9 h-5 rounded-full transition-colors ${isEnabled ? 'bg-green-600' : 'bg-slate-700'} disabled:opacity-50`}
+                className={`relative w-9 h-5 rounded-full transition-colors ${isEnabled ? 'bg-green-600' : 'bg-slate-700'} disabled:opacity-50`}
               >
-                <span className={`absolute top-1/2 w-4 h-4 rounded-full bg-white shadow transition-transform -translate-y-1/2 ${isEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                <span className={`absolute left-0 top-1/2 w-4 h-4 rounded-full bg-white shadow transition-transform -translate-y-1/2 ${isEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
               </button>
             </div>
           )}
