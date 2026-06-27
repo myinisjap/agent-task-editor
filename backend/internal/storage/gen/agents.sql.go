@@ -91,11 +91,51 @@ func (q *Queries) GetAgentConfig(ctx context.Context, id string) (AgentConfig, e
 }
 
 const listAgentConfigs = `-- name: ListAgentConfigs :many
-SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled FROM agent_configs ORDER BY created_at DESC
+SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled FROM agent_configs WHERE enabled = 1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
 	rows, err := q.db.QueryContext(ctx, listAgentConfigs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentConfig
+	for rows.Next() {
+		var i AgentConfig
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Provider,
+			&i.Model,
+			&i.SystemPrompt,
+			&i.Labels,
+			&i.Env,
+			&i.MaxTokens,
+			&i.TimeoutSecs,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Enabled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllAgentConfigs = `-- name: ListAllAgentConfigs :many
+SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled FROM agent_configs ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
+	rows, err := q.db.QueryContext(ctx, listAllAgentConfigs)
 	if err != nil {
 		return nil, err
 	}

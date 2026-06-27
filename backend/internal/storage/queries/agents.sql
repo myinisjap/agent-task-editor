@@ -1,4 +1,7 @@
 -- name: ListAgentConfigs :many
+SELECT * FROM agent_configs WHERE enabled = 1 ORDER BY created_at DESC;
+
+-- name: ListAllAgentConfigs :many
 SELECT * FROM agent_configs ORDER BY created_at DESC;
 
 -- name: GetAgentConfig :one

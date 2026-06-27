@@ -41,7 +41,7 @@ func NewAgentsHandler(q *gen.Queries) *AgentsHandler {
 }
 
 func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
-	configs, err := h.q.ListAgentConfigs(r.Context())
+	configs, err := h.q.ListAllAgentConfigs(r.Context())
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
