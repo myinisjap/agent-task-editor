@@ -42,22 +42,9 @@ func (h *AgentsHandler) labelConflict(r *http.Request, labelsJSON string, exclud
 	return "", nil
 }
 
-// redactEnv replaces env values with "***" so API keys are never returned to clients.
-func redactEnv(envJSON string) string {
-	var env map[string]string
-	if err := json.Unmarshal([]byte(envJSON), &env); err != nil || len(env) == 0 {
-		return envJSON
-	}
-	redacted := make(map[string]string, len(env))
-	for k := range env {
-		redacted[k] = "***"
-	}
-	out, _ := json.Marshal(redacted)
-	return string(out)
-}
+
 
 func safeConfig(cfg gen.AgentConfig) gen.AgentConfig {
-	cfg.Env = redactEnv(cfg.Env)
 	return cfg
 }
 
