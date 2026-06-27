@@ -17,3 +17,7 @@ frontend/dist/
 # Go build artifacts
 backend/server
 backend/mcp-server
+
+# Agent tooling state (OMC / Claude Code)
+.omc/
+.claude/

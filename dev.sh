@@ -50,7 +50,7 @@ case "$CMD" in
     (cd "$SCRIPT_DIR/backend" && go build -o server ./cmd/server)
 
     echo "Starting backend on :8080..."
-    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" ./server) &
+    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" LOG_LEVEL=DEBUG ./server) &
     BACKEND_PID=$!
 
     echo "Starting frontend on :5173..."

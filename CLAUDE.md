@@ -66,25 +66,36 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 
 ## Common API Calls
 
+All routes are under `/api/v1/`. Example base: `http://localhost:8080/api/v1`.
+
 ```bash
 # List all tasks
-curl http://localhost:8080/tasks
+curl http://localhost:8080/api/v1/tasks
+
+# Get a specific task
+curl http://localhost:8080/api/v1/tasks/<id>
 
 # Filter by label
-curl "http://localhost:8080/tasks?label=in-progress"
+curl "http://localhost:8080/api/v1/tasks?label=in-progress"
 
 # Filter by repo
-curl "http://localhost:8080/tasks?repo_id=<id>"
+curl "http://localhost:8080/api/v1/tasks?repo_id=<id>"
 
 # Move a task to a different label
-curl -X PATCH http://localhost:8080/tasks/<id>/label \
+curl -X PATCH http://localhost:8080/api/v1/tasks/<id>/label \
   -H "Content-Type: application/json" \
   -d '{"to_label": "review"}'
 
 # Move with a note
-curl -X PATCH http://localhost:8080/tasks/<id>/label \
+curl -X PATCH http://localhost:8080/api/v1/tasks/<id>/label \
   -H "Content-Type: application/json" \
   -d '{"to_label": "done", "note": "shipped"}'
+
+# List agent runs for a task
+curl http://localhost:8080/api/v1/tasks/<id>/runs
+
+# Get run logs
+curl http://localhost:8080/api/v1/tasks/<id>/runs/<run_id>/logs
 ```
 
 If `API_TOKEN` is set, add `-H "Authorization: Bearer <token>"` to every request.
