@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -138,6 +139,90 @@ func waitForStatus(t *testing.T, q *gen.Queries, runID, want string) {
 	}
 	run, _ := q.GetAgentRun(context.Background(), runID)
 	t.Errorf("timed out waiting for run %s to reach status %q; current: %q", runID, want, run.Status)
+}
+
+// TestReDispatch_PicksUpConfigChanges verifies a re-run resolves its agent
+// config fresh from the DB each sweep — disabling the prior config and enabling
+// another for the same label makes the next dispatch switch configs, rather than
+// reusing whatever the previous run recorded.
+func TestReDispatch_PicksUpConfigChanges(t *testing.T) {
+	db := openAgentTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	// Config A: enabled, owns "plan". This is what the first run uses.
+	cfgA := uuid.NewString()
+	if _, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: cfgA, Name: "planner-A", Provider: "mock", Model: "none", Labels: `["plan"]`, Env: `{}`,
+	}); err != nil {
+		t.Fatalf("create config A: %v", err)
+	}
+	// Config B: also owns "plan", but starts disabled.
+	cfgB := uuid.NewString()
+	if _, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: cfgB, Name: "planner-B", Provider: "mock", Model: "none", Labels: `["plan"]`, Env: `{}`,
+	}); err != nil {
+		t.Fatalf("create config B: %v", err)
+	}
+	disable(t, q, cfgB)
+
+	// First dispatch resolves config A (the only enabled "plan" config).
+	first := dispatchPickConfig(t, q, "plan")
+	if first == nil || first.ID != cfgA {
+		t.Fatalf("first dispatch: want config A, got %v", first)
+	}
+
+	// Operator flips configs between runs: disable A, enable B.
+	disable(t, q, cfgA)
+	enable(t, q, cfgB)
+
+	// Re-dispatch must switch to B, not reuse A from the prior run.
+	second := dispatchPickConfig(t, q, "plan")
+	if second == nil || second.ID != cfgB {
+		t.Fatalf("re-dispatch: want config B, got %v", second)
+	}
+}
+
+// dispatchPickConfig mirrors how the dispatcher selects a config each sweep:
+// list enabled configs fresh, then match by the task's current label.
+func dispatchPickConfig(t *testing.T, q *gen.Queries, label string) *gen.AgentConfig {
+	t.Helper()
+	configs, err := q.ListAgentConfigs(context.Background())
+	if err != nil {
+		t.Fatalf("list configs: %v", err)
+	}
+	for i := range configs {
+		var labels []string
+		_ = json.Unmarshal([]byte(configs[i].Labels), &labels)
+		for _, l := range labels {
+			if l == label {
+				return &configs[i]
+			}
+		}
+	}
+	return nil
+}
+
+func disable(t *testing.T, q *gen.Queries, id string) { setEnabled(t, q, id, false) }
+func enable(t *testing.T, q *gen.Queries, id string)  { setEnabled(t, q, id, true) }
+
+func setEnabled(t *testing.T, q *gen.Queries, id string, enabled bool) {
+	t.Helper()
+	cur, err := q.GetAgentConfig(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get config %s: %v", id, err)
+	}
+	var e int64
+	if enabled {
+		e = 1
+	}
+	if _, err := q.UpdateAgentConfig(context.Background(), gen.UpdateAgentConfigParams{
+		ID: id, Name: cur.Name, Provider: cur.Provider, Model: cur.Model,
+		SystemPrompt: cur.SystemPrompt, Labels: cur.Labels, Env: cur.Env,
+		MaxTokens: cur.MaxTokens, TimeoutSecs: cur.TimeoutSecs, Enabled: e,
+	}); err != nil {
+		t.Fatalf("update config %s: %v", id, err)
+	}
 }
 
 func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {

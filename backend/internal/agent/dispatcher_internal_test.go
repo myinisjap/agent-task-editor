@@ -7,7 +7,11 @@ import (
 )
 
 func cfg(name, labelsJSON string) gen.AgentConfig {
-	return gen.AgentConfig{ID: name, Name: name, Labels: labelsJSON}
+	return gen.AgentConfig{ID: name, Name: name, Labels: labelsJSON, Enabled: 1}
+}
+
+func disabledCfg(name, labelsJSON string) gen.AgentConfig {
+	return gen.AgentConfig{ID: name, Name: name, Labels: labelsJSON, Enabled: 0}
 }
 
 func TestMatchConfig(t *testing.T) {
@@ -24,6 +28,9 @@ func TestMatchConfig(t *testing.T) {
 		// unparseable labels are skipped, not fatal — the valid config still matches.
 		{"skips bad json", []gen.AgentConfig{cfg("broken", `not json`), cfg("good", `["review"]`)}, "review", "good"},
 		{"all bad json", []gen.AgentConfig{cfg("broken", `{`)}, "review", ""},
+		// disabled configs are skipped even if their label matches.
+		{"skips disabled", []gen.AgentConfig{disabledCfg("off", `["review"]`)}, "review", ""},
+		{"disabled then enabled", []gen.AgentConfig{disabledCfg("off", `["review"]`), cfg("on", `["review"]`)}, "review", "on"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

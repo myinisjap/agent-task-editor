@@ -173,6 +173,9 @@ func matchConfig(configs []gen.AgentConfig, label string) *gen.AgentConfig {
 	var matched *gen.AgentConfig
 	for i := range configs {
 		cfg := &configs[i]
+		if cfg.Enabled != 1 {
+			continue // ponytail: defense-in-depth; ListAgentConfigs already filters enabled=1
+		}
 		var labels []string
 		if err := json.Unmarshal([]byte(cfg.Labels), &labels); err != nil {
 			slog.Error("dispatcher: skipping config with unparseable labels", "component", "dispatcher", "config_id", cfg.ID, "config_name", cfg.Name, "err", err)
