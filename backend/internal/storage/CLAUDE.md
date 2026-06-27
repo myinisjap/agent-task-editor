@@ -22,8 +22,9 @@ Managed by `golang-migrate`. Files must follow the `NNN_description.up.sql` / `N
 
 Current migrations:
 - `001_initial_schema` — full initial schema
-- `002_label_flags` — adds `is_rejection_target` to `workflow_labels`
+- `002_label_flags` — no-op (column defined in 001; later dropped in 009)
 - `003_task_active_run` — adds `active_agent_run_id` to `tasks`
+- `009_drop_rejection_target` — drops `is_rejection_target`; Approve/Reject now route via transition `path`
 
 ## sqlc Code Generation
 
@@ -50,7 +51,7 @@ After editing any `.sql` file, run `sqlc generate` (or `go generate ./...` from 
 ```
 tasks               — title, description, type, label, repo_id, workflow_id,
                       current_agent_run_id, active_agent_run_id
-workflow_labels     — name, color, sort_order, agent_ignore, is_terminal, is_rejection_target
+workflow_labels     — name, color, sort_order, agent_ignore, is_terminal
 workflow_transitions — from_label, to_label, trigger_type (agent|human|both)
 agent_runs          — task_id, status, feedback, started_at, completed_at
 agent_logs          — agent_run_id, type, content, timestamp

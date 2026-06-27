@@ -11,7 +11,6 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 | `sort_order` | int | Column order on the board |
 | `agent_ignore` | bool | Agents cannot move tasks to this label; dispatcher skips tasks already here |
 | `is_terminal` | bool | No further transitions; task is complete |
-| `is_rejection_target` | bool | Default destination when a human clicks Reject (one per workflow) |
 
 ## Transitions
 
@@ -22,6 +21,7 @@ Each transition defines an allowed `from → to` move:
 | `from_label` | Source label name |
 | `to_label` | Destination label name |
 | `trigger_type` | `agent`, `human`, or `both` |
+| `path` | `success` or `failure` — which outcome this transition represents (used by Approve/Reject) |
 
 A task can only move to labels that have a matching transition from its current label. The workflow engine enforces this — any attempt to move outside the defined transitions returns `ErrNoTransition`.
 
@@ -58,15 +58,16 @@ All labels can also be moved to `not_ready` by a human (parking).
 **Label flags in the default workflow:**
 - `not_ready` — `agent_ignore = true` (nothing runs here)
 - `done` — `is_terminal = true`
-- `in-progress` — `is_rejection_target = true` (human Reject sends tasks back here)
 
 ## Approve and Reject
 
-The `/tasks/{id}/approve` and `/tasks/{id}/reject` endpoints move tasks along human-gated transitions.
+The `/tasks/{id}/approve` and `/tasks/{id}/reject` endpoints move tasks along human-gated transitions, following the transition's `path`.
 
-**Approve** — picks the first available human transition from the current label, skipping the rejection target label if multiple transitions exist. The optional `to_label` body field overrides the auto-pick.
+**Approve** — follows the `success` human transition defined from the current label.
 
-**Reject** — sends the task to the workflow's `is_rejection_target` label. If none is defined, falls back to `in-progress`. The `to_label` body field overrides.
+**Reject** — follows the `failure` human transition defined from the current label. The optional `to_label` body field overrides this.
+
+If no matching transition is defined for the current label, the endpoint returns `400`.
 
 ## Custom Workflows
 
@@ -107,7 +108,6 @@ labels:
   - name: in-progress
     color: "#F59E0B"
     sort_order: 1
-    is_rejection_target: true
   - name: done
     color: "#10B981"
     sort_order: 2

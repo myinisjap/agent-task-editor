@@ -46,14 +46,14 @@ Move the task to a different label directly (bypasses workflow validation — fo
 ```
 
 ### `POST /tasks/{id}/approve`
-Human approval — advances the task along the next available human-gated transition.
+Human approval — follows the `success` human transition from the task's current label.
 
 ```json
 { "to_label": "optional override" }
 ```
 
 ### `POST /tasks/{id}/reject`
-Human rejection — sends the task to the workflow's `is_rejection_target` label (or `in-progress` if none defined).
+Human rejection — follows the `failure` human transition from the task's current label (override with `to_label`).
 
 ```json
 { "to_label": "optional override", "feedback": "optional message for agent" }

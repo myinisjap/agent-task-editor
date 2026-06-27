@@ -17,7 +17,8 @@ A workflow is a directed state machine composed of **labels** (columns) and **tr
 Labels carry flags:
 - `agent_ignore` — agents may not send tasks here (useful for parking spots like `not_ready`)
 - `is_terminal` — the task is finished; no further transitions apply (e.g. `done`)
-- `is_rejection_target` — the workflow-defined destination when a human clicks Reject (e.g. `in-progress`)
+
+Human-gated transitions carry a `path` (`success` or `failure`); Approve follows `success` and Reject follows `failure`.
 
 ### Default Workflow
 The server seeds a default workflow on first run:

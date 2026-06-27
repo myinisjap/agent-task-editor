@@ -142,7 +142,7 @@ export const api = {
     list: () => request<Workflow[]>('/workflows'),
     get: (id: string) => request<Workflow>(`/workflows/${id}`),
     create: () => request<Workflow>('/workflows', { method: 'POST' }),
-    update: (id: string, body: { name: string; description: string; labels: { name: string; color: string; sort_order: number; agent_ignore: boolean; is_terminal: boolean; is_rejection_target: boolean }[]; transitions: { from_label: string; to_label: string; trigger_type: string; agent_config_id?: string; path?: string | null }[] }) =>
+    update: (id: string, body: { name: string; description: string; labels: { name: string; color: string; sort_order: number; agent_ignore: boolean; is_terminal: boolean }[]; transitions: { from_label: string; to_label: string; trigger_type: string; agent_config_id?: string; path?: string | null }[] }) =>
       request<Workflow>(`/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/workflows/${id}`, { method: 'DELETE' }),
     exportYaml: (id: string) => `${BASE}/workflows/${id}/export.yaml`,

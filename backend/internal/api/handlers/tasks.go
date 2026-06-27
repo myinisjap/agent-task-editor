@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -156,25 +158,11 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the workflow's designated rejection target so Approve can skip it.
-	rejectionTarget := ""
-	if rl, err := h.q.GetWorkflowRejectionLabel(r.Context(), task.WorkflowID); err == nil {
-		rejectionTarget = rl.Name
-	}
-
-	available, err := h.engine.AvailableTransitions(r.Context(), taskID, workflow.TriggerHuman)
-	if err != nil || len(available) == 0 {
-		Err(w, http.StatusBadRequest, "no available human transitions for this task")
+	// Approve follows the "success" human transition defined for the current label.
+	target, err := h.humanPathTarget(r.Context(), task, "success")
+	if err != nil {
+		Err(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	// Approve picks the first forward transition that isn't the rejection target.
-	target := available[0]
-	for _, t := range available {
-		if t != rejectionTarget {
-			target = t
-			break
-		}
 	}
 
 	if err := h.engine.Transition(r.Context(), taskID, target, workflow.TriggerHuman, "", body.Note); err != nil {
@@ -189,6 +177,21 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, updated)
 }
 
+// humanPathTarget returns the destination label of the human transition with the
+// given path (e.g. "success" or "failure") defined for the task's current label.
+func (h *TasksHandler) humanPathTarget(ctx context.Context, task gen.Task, path string) (string, error) {
+	transitions, err := h.q.ListWorkflowTransitions(ctx, task.WorkflowID)
+	if err != nil {
+		return "", fmt.Errorf("failed to load workflow transitions")
+	}
+	for _, t := range transitions {
+		if t.FromLabel == task.Label && t.TriggerType == "human" && t.Path != nil && *t.Path == path {
+			return t.ToLabel, nil
+		}
+	}
+	return "", fmt.Errorf("no %q human transition defined from %q", path, task.Label)
+}
+
 func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Note    string `json:"note"`
@@ -201,7 +204,8 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 
 	taskID := chi.URLParam(r, "id")
 
-	// Determine rejection target: explicit override, then workflow config, then "in-progress".
+	// Reject follows the "failure" human transition defined for the current label,
+	// unless the caller supplies an explicit target.
 	toLabel := body.ToLabel
 	if toLabel == "" {
 		task, err := h.q.GetTask(r.Context(), taskID)
@@ -209,10 +213,10 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusNotFound, "task not found")
 			return
 		}
-		if rl, err := h.q.GetWorkflowRejectionLabel(r.Context(), task.WorkflowID); err == nil {
-			toLabel = rl.Name
-		} else {
-			toLabel = "in-progress"
+		toLabel, err = h.humanPathTarget(r.Context(), task, "failure")
+		if err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
+			return
 		}
 	}
 

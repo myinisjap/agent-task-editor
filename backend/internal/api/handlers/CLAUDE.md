@@ -16,8 +16,8 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 
 ## Tasks Handler Notes
 
-- **Approve** (`POST /tasks/{id}/approve`) — uses `engine.AvailableTransitions` with `TriggerHuman`, skips the `is_rejection_target` label when picking the default destination, calls `engine.Transition`.
-- **Reject** (`POST /tasks/{id}/reject`) — looks up the workflow's `is_rejection_target` label via `GetWorkflowRejectionLabel`; falls back to `"in-progress"` if none defined; optional `feedback` field is stored on the current run.
+- **Approve** (`POST /tasks/{id}/approve`) — follows the `success` human transition from the task's current label (via `humanPathTarget`), then calls `engine.Transition`. Returns `400` if no such transition exists.
+- **Reject** (`POST /tasks/{id}/reject`) — follows the `failure` human transition from the current label; the optional `to_label` body field overrides it. Returns `400` if no `failure` transition exists and no override is given.
 - **MoveLabel** (`PATCH /tasks/{id}/label`) — direct move bypassing workflow transition validation; used by board drag-and-drop.
 
 ## Repos Handler Notes
