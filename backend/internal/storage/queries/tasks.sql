@@ -44,6 +44,11 @@ WHERE t.label IN (
     WHERE wt.workflow_id = t.workflow_id
       AND wt.trigger_type IN ('agent', 'both')
 )
+AND t.label NOT IN (
+    SELECT wl.name FROM workflow_labels wl
+    WHERE wl.workflow_id = t.workflow_id
+      AND wl.agent_ignore != 0
+)
 AND t.active_agent_run_id IS NULL;
 
 -- name: UpdateTaskNotes :one

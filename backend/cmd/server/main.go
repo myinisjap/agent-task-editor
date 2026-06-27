@@ -19,6 +19,13 @@ import (
 )
 
 func main() {
+	// Configure log level from LOG_LEVEL env var (default: INFO).
+	logLevel := slog.LevelInfo
+	if l := os.Getenv("LOG_LEVEL"); l != "" {
+		_ = logLevel.UnmarshalText([]byte(l))
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+
 	cfgPath := os.Getenv("CONFIG_FILE")
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

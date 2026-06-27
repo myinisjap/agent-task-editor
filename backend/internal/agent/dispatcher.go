@@ -51,19 +51,21 @@ func (d *Dispatcher) Run(ctx context.Context) {
 func (d *Dispatcher) sweep(ctx context.Context) {
 	tasks, err := d.q.ListAgentPickupTasks(ctx)
 	if err != nil {
-		slog.Error("dispatcher sweep", "err", err)
+		slog.Error("dispatcher sweep failed", "component", "dispatcher", "err", err)
 		return
 	}
+	slog.Debug("dispatcher sweep", "component", "dispatcher", "pending_tasks", len(tasks))
 	if len(tasks) == 0 {
 		return
 	}
 
-	// Fetch configs once per sweep, not once per task.
+	// Fetch active configs once per sweep, not once per task.
 	configs, err := d.q.ListAgentConfigs(ctx)
 	if err != nil {
-		slog.Error("list agent configs", "err", err)
+		slog.Error("dispatcher: list active agent configs", "component", "dispatcher", "err", err)
 		return
 	}
+	slog.Debug("dispatcher sweep: active configs", "component", "dispatcher", "config_count", len(configs))
 
 	for _, t := range tasks {
 		d.dispatch(ctx, t, configs)
@@ -71,34 +73,15 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig) {
-	var matched *gen.AgentConfig
-	for i, cfg := range configs {
-		if cfg.Enabled == 0 {
-			continue
-		}
-		var labels []string
-		if err := json.Unmarshal([]byte(cfg.Labels), &labels); err != nil {
-			continue
-		}
-		for _, l := range labels {
-			if l == t.Label {
-				matched = &configs[i]
-				break
-			}
-		}
-		if matched != nil {
-			break
-		}
-	}
-
+	matched := matchConfig(configs, t.Label)
 	if matched == nil {
-		// No agent configured for this label — skip silently
+		slog.Debug("dispatcher: no active config for label", "component", "dispatcher", "task_id", t.ID, "label", t.Label)
 		return
 	}
 
 	repo, err := d.q.GetRepo(ctx, t.RepoID)
 	if err != nil {
-		slog.Error("get repo", "task_id", t.ID, "err", err)
+		slog.Error("dispatcher: get repo", "component", "dispatcher", "task_id", t.ID, "err", err)
 		return
 	}
 
@@ -123,7 +106,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		Feedback:       feedback,
 	})
 	if err != nil {
-		slog.Error("create agent run", "task_id", t.ID, "err", err)
+		slog.Error("dispatcher: create agent run", "component", "dispatcher", "task_id", t.ID, "err", err)
 		return
 	}
 
@@ -133,7 +116,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		ActiveAgentRunID:  &runID,
 		ID:                t.ID,
 	}); err != nil {
-		slog.Error("set task active run", "task_id", t.ID, "err", err)
+		slog.Error("dispatcher: set task active run", "component", "dispatcher", "task_id", t.ID, "err", err)
 		return
 	}
 
@@ -154,7 +137,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		},
 	})
 	if !enqueued {
-		// Pool was full; mark the run failed and clear the active slot.
+		slog.Warn("dispatcher: pool full, dropping job", "component", "dispatcher", "task_id", t.ID, "run_id", runID)
 		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 			Status: "failed",
 			ID:     runID,
@@ -163,13 +146,13 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		return
 	}
 
-	slog.Info("dispatched agent", "task_id", t.ID, "label", t.Label, "run_id", runID, "agent", matched.Name)
+	slog.Info("dispatcher: agent dispatched", "component", "dispatcher", "task_id", t.ID, "label", t.Label, "run_id", runID, "agent", matched.Name, "provider", matched.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled)
 }
 
 func (d *Dispatcher) buildTransitionHints(ctx context.Context, workflowID, fromLabel string) []TransitionHint {
 	all, err := d.q.ListWorkflowTransitions(ctx, workflowID)
 	if err != nil {
-		slog.Warn("build transition hints: list transitions", "err", err)
+		slog.Warn("dispatcher: build transition hints", "component", "dispatcher", "workflow_id", workflowID, "err", err)
 		return nil
 	}
 	var hints []TransitionHint
@@ -180,6 +163,34 @@ func (d *Dispatcher) buildTransitionHints(ctx context.Context, workflowID, fromL
 		hints = append(hints, TransitionHint{ToLabel: t.ToLabel, Path: *t.Path})
 	}
 	return hints
+}
+
+// matchConfig returns the first enabled config whose labels include the task's
+// label. configs is ordered newest-first (created_at DESC), so the most recently
+// created config wins on a tie. A parse failure is logged and the config skipped;
+// a second match is logged as an ambiguity warning but does not change the winner.
+func matchConfig(configs []gen.AgentConfig, label string) *gen.AgentConfig {
+	var matched *gen.AgentConfig
+	for i := range configs {
+		cfg := &configs[i]
+		var labels []string
+		if err := json.Unmarshal([]byte(cfg.Labels), &labels); err != nil {
+			slog.Error("dispatcher: skipping config with unparseable labels", "component", "dispatcher", "config_id", cfg.ID, "config_name", cfg.Name, "err", err)
+			continue
+		}
+		for _, l := range labels {
+			if l != label {
+				continue
+			}
+			if matched == nil {
+				matched = cfg
+			} else {
+				slog.Warn("dispatcher: multiple configs match label, using newest", "component", "dispatcher", "label", label, "using", matched.Name, "also_matched", cfg.Name)
+			}
+			break
+		}
+	}
+	return matched
 }
 
 func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
@@ -199,6 +210,3 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 		Env:          env,
 	}
 }
-
-// used to silence unused import for sql package
-var _ = sql.ErrNoRows

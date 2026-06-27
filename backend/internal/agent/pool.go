@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -64,7 +64,7 @@ func (p *Pool) Submit(job Job) bool {
 	case p.jobs <- job:
 		return true
 	default:
-		slog.Warn("agent pool queue full, dropping job", "run_id", job.RunID)
+		slog.Warn("pool: queue full, dropping job", "component", "pool", "run_id", job.RunID)
 		return false
 	}
 }
@@ -76,17 +76,30 @@ func (p *Pool) worker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case job := <-p.jobs:
-			p.run(ctx, job)
+			p.runGuarded(ctx, job)
 		}
 	}
 }
 
+// runGuarded wraps run so a panic in a provider can't silently kill the worker
+// goroutine (which would permanently shrink the pool). It logs, marks the run
+// failed, and clears the lock so the dispatcher can re-pick the task.
+func (p *Pool) runGuarded(ctx context.Context, job Job) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("pool: agent run panicked", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "panic", r, "stack", string(debug.Stack()))
+			_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{Status: "failed", ID: job.RunID})
+			_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
+		}
+	}()
+	p.run(ctx, job)
+}
+
 func (p *Pool) run(ctx context.Context, job Job) {
-	slog.Info("agent run starting", "run_id", job.RunID, "task_id", job.Input.Task.ID)
+	slog.Info("pool: agent run starting", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "provider", job.Input.AgentConfig.Provider, "agent", job.Input.AgentConfig.Name)
 
 	if _, err := p.q.SetAgentRunStarted(ctx, job.RunID); err != nil {
-		slog.Error("set run started", "err", err)
-		// Mark as failed and clear the active slot so the task re-queues.
+		slog.Error("pool: set run started", "component", "pool", "run_id", job.RunID, "err", err)
 		_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
 			Status: "failed",
 			ID:     job.RunID,
@@ -108,6 +121,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// Persist log entries in the background
 	go func() {
 		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("pool: persist logs panicked", "component", "pool", "run_id", job.RunID, "panic", r, "stack", string(debug.Stack()))
+			}
+		}()
 		p.persistLogs(ctx, job.RunID, job.Input.Task.ID, logCh)
 	}()
 
@@ -116,7 +134,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	<-done
 
 	if err != nil {
-		slog.Error("agent run error", "run_id", job.RunID, "err", err)
+		slog.Error("pool: agent run error", "component", "pool", "run_id", job.RunID, "err", err)
 		result = Result{Status: "failed"}
 	}
 
@@ -134,7 +152,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		StoredInfo: result.StoredInfo,
 		ID:         job.RunID,
 	}); err != nil {
-		slog.Error("set run completed", "err", err)
+		slog.Error("pool: set run completed", "component", "pool", "run_id", job.RunID, "err", err)
 	}
 
 	if result.Notes != nil && *result.Notes != "" {
@@ -142,7 +160,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 			AgentNotes: *result.Notes,
 			ID:         job.Input.Task.ID,
 		}); err != nil {
-			slog.Error("persist agent notes", "err", err)
+			slog.Error("pool: persist agent notes", "component", "pool", "run_id", job.RunID, "err", err)
 		}
 	}
 
@@ -152,11 +170,9 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		resolvedLabel = p.resolveOutcome(ctx, job.Input.Task, result.Outcome)
 	}
 
-	// Clear the active-run slot so the dispatcher can pick up the task again.
-	// For waiting_human (or completed with no resolved label) we leave it set —
-	// the engine.Transition called by the human action will clear it via SQL.
-	clearActive := finalStatus == "failed" || (finalStatus == "completed" && resolvedLabel != "")
-	if clearActive {
+	// Clear the active-run slot so the dispatcher can re-pick the task.
+	// waiting_human intentionally stays locked until a human acts.
+	if finalStatus == "failed" || finalStatus == "completed" {
 		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 	}
 
@@ -176,7 +192,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 				note = *result.Message
 			}
 			if err := p.engine.Transition(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
-				slog.Warn("agent-requested transition rejected", "run_id", job.RunID, "to", resolvedLabel, "err", err)
+				slog.Warn("pool: agent-requested transition rejected", "component", "pool", "run_id", job.RunID, "to", resolvedLabel, "err", err)
 			}
 		} else {
 			// No resolved label — block re-dispatch until a human acts.
@@ -203,7 +219,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		}
 	}
 
-	slog.Info("agent run finished", "run_id", job.RunID, "status", finalStatus)
+	slog.Info("pool: agent run finished", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "status", finalStatus)
 }
 
 // hasLoginError scans the last 20 log entries for an auth/login error signal.
@@ -230,7 +246,7 @@ func (p *Pool) hasLoginError(ctx context.Context, runID string) bool {
 func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) string {
 	all, err := p.q.ListWorkflowTransitions(ctx, task.WorkflowID)
 	if err != nil {
-		slog.Error("resolve outcome: list transitions", "err", err)
+		slog.Error("pool: resolve outcome: list transitions", "component", "pool", "task_id", task.ID, "err", err)
 		return ""
 	}
 	var match string
@@ -245,7 +261,7 @@ func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) st
 			continue
 		}
 		if match != "" {
-			slog.Warn("resolve outcome: ambiguous transitions", "task", task.ID, "outcome", outcome)
+			slog.Warn("pool: resolve outcome: ambiguous transitions", "component", "pool", "task_id", task.ID, "outcome", outcome)
 			return ""
 		}
 		match = t.ToLabel
@@ -266,18 +282,18 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 		}
 		tx, err := p.db.BeginTx(flushCtx, nil)
 		if err != nil {
-			slog.Error("persist log begin tx", "err", err)
+			slog.Error("pool: persist log begin tx", "component", "pool", "err", err)
 			batch = batch[:0]
 			return
 		}
 		tq := gen.New(tx)
 		for _, entry := range batch {
 			if err := tq.CreateAgentLog(flushCtx, entry); err != nil {
-				slog.Error("persist log", "err", err)
+				slog.Error("pool: persist log entry", "component", "pool", "err", err)
 			}
 		}
 		if err := tx.Commit(); err != nil {
-			slog.Error("persist log commit", "err", err)
+			slog.Error("pool: persist log commit", "component", "pool", "err", err)
 			_ = tx.Rollback()
 		}
 		batch = batch[:0]
@@ -320,10 +336,3 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 	}
 }
 
-// newSystemLog is a convenience to emit a system log entry.
-func newSystemLog(msg string) LogEntry {
-	return LogEntry{Type: LogSystem, Content: msg, At: time.Now()}
-}
-
-var _ = fmt.Sprintf // suppress unused import
-var _ = newSystemLog
