@@ -338,9 +338,9 @@ export default function TaskDetailPage() {
                       .then((d) => window.open(d.url, '_blank', 'noopener'))
                       .catch((e) => alert(`Cannot open PR: ${e.message ?? e}`))
                   }}
-                  className="text-xs text-slate-400 hover:text-slate-200"
+                  className="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white"
                 >
-                  Open PR
+                  Open PR ↗
                 </button>
                 <button
                   onClick={() => {
