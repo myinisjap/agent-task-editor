@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,11 +17,25 @@ import (
 
 // testPub records published event types.
 type testPub struct {
+	mu     sync.Mutex
 	events []string
 }
 
 func (p *testPub) Publish(eventType string, _ map[string]any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
+}
+
+func (p *testPub) hasEvent(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, e := range p.events {
+		if e == name {
+			return true
+		}
+	}
+	return false
 }
 
 // mockProvider returns a pre-configured Result immediately.
@@ -252,19 +267,11 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 	}
 
 	// Events: agent_started + agent_done (label_changed also fired by engine)
-	hasEvent := func(name string) bool {
-		for _, e := range pub.events {
-			if e == name {
-				return true
-			}
-		}
-		return false
+	if !pub.hasEvent("task.agent_started") {
+		t.Errorf("expected task.agent_started event")
 	}
-	if !hasEvent("task.agent_started") {
-		t.Errorf("expected task.agent_started event; got %v", pub.events)
-	}
-	if !hasEvent("task.agent_done") {
-		t.Errorf("expected task.agent_done event; got %v", pub.events)
+	if !pub.hasEvent("task.agent_done") {
+		t.Errorf("expected task.agent_done event")
 	}
 }
 
@@ -315,14 +322,8 @@ func TestPool_WaitingHuman_PublishesEvent(t *testing.T) {
 	waitForStatus(t, q, runID, "waiting_human")
 	cancel()
 
-	hasNeedsHuman := false
-	for _, e := range pub.events {
-		if e == "task.needs_human" {
-			hasNeedsHuman = true
-		}
-	}
-	if !hasNeedsHuman {
-		t.Errorf("expected task.needs_human event; got %v", pub.events)
+	if !pub.hasEvent("task.needs_human") {
+		t.Errorf("expected task.needs_human event")
 	}
 }
 
