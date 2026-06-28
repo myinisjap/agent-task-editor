@@ -66,6 +66,13 @@ on its own branch (`ate-<slug>-<id>`), so concurrent agents on the same repo
 don't conflict. Returns `{ "branch": "...", "diff": "..." }`; `diff` is empty
 until the task has been dispatched and a branch provisioned.
 
+### `GET /tasks/{id}/pr-url`
+Returns `{ "url": "..." }` — a GitHub `compare` URL for the task's branch with the
+PR **title and body pre-filled** (task description, agent notes, and commit
+subjects). Open it to create a fully-described PR in one click; no GitHub auth or
+`gh` CLI needed. Requires the repo to have a GitHub remote and the task to have a
+provisioned branch (else `400`).
+
 ---
 
 ## Agent Runs

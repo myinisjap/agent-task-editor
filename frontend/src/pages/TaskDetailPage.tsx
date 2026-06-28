@@ -344,19 +344,32 @@ export default function TaskDetailPage() {
           <div className="h-full overflow-y-auto p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs text-slate-500">Changes on this task's branch</p>
-              <button
-                onClick={() => {
-                  if (!task?.id) return
-                  setDiffLoading(true)
-                  api.tasks.diff(task.id)
-                    .then((d) => setDiffFiles(parseDiff(d.diff)))
-                    .catch(() => setDiffFiles([]))
-                    .finally(() => setDiffLoading(false))
-                }}
-                className="text-xs text-slate-500 hover:text-slate-300"
-              >
-                ↻
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    if (!task?.id) return
+                    api.tasks.prUrl(task.id)
+                      .then((d) => window.open(d.url, '_blank', 'noopener'))
+                      .catch((e) => alert(`Cannot open PR: ${e.message ?? e}`))
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white"
+                >
+                  Open PR ↗
+                </button>
+                <button
+                  onClick={() => {
+                    if (!task?.id) return
+                    setDiffLoading(true)
+                    api.tasks.diff(task.id)
+                      .then((d) => setDiffFiles(parseDiff(d.diff)))
+                      .catch(() => setDiffFiles([]))
+                      .finally(() => setDiffLoading(false))
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-200"
+                >
+                  ↻ Refresh
+                </button>
+              </div>
             </div>
             <FileDiffViewer files={diffFiles} loading={diffLoading} />
           </div>

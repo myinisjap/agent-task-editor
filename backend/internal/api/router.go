@@ -69,6 +69,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Patch("/tasks/{id}/notes", tasksH.UpdateNotes)
 		r.Post("/tasks/{id}/rerun", tasksH.Rerun)
 		r.Get("/tasks/{id}/diff", tasksH.Diff)
+		r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 
 		// Agent runs
 		r.Get("/tasks/{id}/runs", tasksH.ListRuns)

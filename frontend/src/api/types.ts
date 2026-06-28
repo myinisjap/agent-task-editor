@@ -392,6 +392,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/pr-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Build a pre-filled GitHub compare/PR URL for the task's branch
+         * @description Returns a github.com/.../compare URL with the PR title and a markdown body (task description, agent notes, and commit subjects) pre-filled, so a human can open a fully-described PR in one click. Requires the repo to have a GitHub remote and the task to have a provisioned branch.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            url?: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs": {
         parameters: {
             query?: never;
