@@ -67,7 +67,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir())
 
 	r := chi.NewRouter()
 	r.Get("/tasks", h.List)

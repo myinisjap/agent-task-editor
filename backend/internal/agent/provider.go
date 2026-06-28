@@ -51,6 +51,8 @@ type RunInput struct {
 	Feedback  *string
 	// Output from the plan stage, injected for later stages
 	PriorPlan *string
+	// Absolute paths of attachment images on the server filesystem
+	AttachmentAbsPaths []string
 }
 
 // Task is a minimal copy of storage.Task to avoid import cycles.
@@ -62,6 +64,8 @@ type Task struct {
 	Label       string
 	WorkflowID  string
 	AgentNotes  string
+	// Attachments is a JSON array of relative paths (e.g. ["<task_id>/abc.png"])
+	Attachments []string
 }
 
 // AgentConfig is a minimal copy of storage.AgentConfig.

@@ -15,14 +15,15 @@ import (
 )
 
 // NewRouter builds and returns the application router.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string) http.Handler {
 	q := gen.New(db.SQL())
 
-	tasksH := handlers.NewTasksHandler(q, engine)
+	tasksH := handlers.NewTasksHandler(q, engine, uploadDir)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
 	reposH := handlers.NewReposHandler(q, repoBaseDir)
 	dashH := handlers.NewDashboardHandler(q)
+	uploadsH := handlers.NewUploadsHandler(uploadDir)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recover)
@@ -40,15 +41,25 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Limit request bodies to 1 MB to prevent memory exhaustion.
+		// The task create endpoint (POST /tasks) uses multipart and handles its own
+		// limit via ParseMultipartForm — we exclude it from the 1 MB cap.
 		r.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				req.Body = http.MaxBytesReader(w, req.Body, 1<<20)
+				if req.Method == http.MethodPost && req.URL.Path == "/api/v1/tasks" {
+					// Task create allows up to 50 MB for image uploads
+					req.Body = http.MaxBytesReader(w, req.Body, 50<<20)
+				} else {
+					req.Body = http.MaxBytesReader(w, req.Body, 1<<20)
+				}
 				next.ServeHTTP(w, req)
 			})
 		})
 		// Tasks
 		r.Get("/tasks", tasksH.List)
 		r.Post("/tasks", tasksH.Create)
+
+		// Uploads — serve attachment images
+		r.Get("/uploads/{task_id}/{filename}", uploadsH.ServeFile)
 		r.Get("/tasks/{id}", tasksH.Get)
 		r.Patch("/tasks/{id}", tasksH.Update)
 		r.Delete("/tasks/{id}", tasksH.Delete)
