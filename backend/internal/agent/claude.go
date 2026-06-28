@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,9 @@ type ClaudeRunner struct {
 	// Path to the claude binary. Defaults to "claude" (resolved via PATH).
 	BinaryPath string
 	MCP        *MCPManager
+	// UploadDir is the server-side directory where task attachments are stored.
+	// Used to resolve absolute paths when passing --image flags to the claude CLI.
+	UploadDir string
 }
 
 func (r *ClaudeRunner) binary() string {
@@ -59,6 +63,10 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
+	}
+	// Pass attachment images as --image flags so Claude can see them visually.
+	for _, absPath := range input.AttachmentAbsPaths {
+		args = append(args, "--image", absPath)
 	}
 
 	timeoutSecs := input.AgentConfig.TimeoutSecs
@@ -266,6 +274,12 @@ func buildPrompt(input RunInput) string {
 	b.WriteString(fmt.Sprintf("Task: %s\n\n", input.Task.Title))
 	if input.Task.Description != "" {
 		b.WriteString(input.Task.Description)
+	}
+	if len(input.Task.Attachments) > 0 {
+		b.WriteString("\n\nATTACHED IMAGES (available in .task_attachments/ within the repo):\n")
+		for _, rel := range input.Task.Attachments {
+			b.WriteString(fmt.Sprintf("- .task_attachments/%s\n", filepath.Base(rel)))
+		}
 	}
 	return b.String()
 }

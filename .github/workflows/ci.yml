@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      CGO_ENABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+      - run: go mod download
+      - run: go build ./...
+      - run: go test -v -race ./...
+
+  frontend:
+    name: Frontend (Node)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
