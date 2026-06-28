@@ -111,7 +111,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
   },
 ]
 
-const PROVIDERS = ['claude', 'opencode', 'openai', 'llm', 'anthropic']
+const PROVIDERS = ['claude', 'opencode', 'openai', 'llm', 'anthropic', 'qwen_code']
 
 export default function AgentConfigPage() {
   const { configs: agents, fetch: fetchAgents } = useAgentsStore()

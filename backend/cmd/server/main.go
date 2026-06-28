@@ -42,7 +42,7 @@ func main() {
 		slog.Info("repo base dir enforced", "path", cfg.RepoBaseDir)
 	}
 	if cfg.MCPBinary == "" {
-		slog.Warn("MCP_SERVER_PATH is not set; signal_complete/update_task_notes unavailable to claude agents")
+		slog.Warn("MCP_SERVER_PATH is not set; signal_complete/update_task_notes unavailable to claude/qwen agents")
 	} else {
 		slog.Info("MCP sidecar enabled", "binary", cfg.MCPBinary)
 	}
@@ -100,10 +100,17 @@ func main() {
 			return &agent.AnthropicRunner{APIKey: cfg.LLMAPIKey}
 		case "opencode":
 			return &agent.OpencodeRunner{}
+		case "qwen_code":
+			var mcp *agent.MCPManager
+			if cfg.MCPBinary != "" {
+				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
+			}
+			return &agent.QwenRunner{MCP: mcp}
 		default:
 			return &agent.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 		}
 	}
+
 
 	maxWorkers := cfg.MaxWorkers
 	if maxWorkers <= 0 {
