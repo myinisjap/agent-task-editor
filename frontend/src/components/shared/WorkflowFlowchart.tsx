@@ -19,6 +19,9 @@ import type { Workflow, WorkflowTransition } from '../../api/client'
 const NODE_WIDTH = 180
 const NODE_HEIGHT = 50
 
+// Handles must exist for edge routing but shouldn't render as visible dots.
+const HANDLE_HIDDEN = { opacity: 0, width: 1, height: 1, border: 'none', background: 'transparent' } as const
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function edgeColor(path: string | null | undefined): string {
@@ -120,68 +123,18 @@ function WorkflowLabelNode({ data }: NodeProps) {
         boxShadow: d.isTerminal ? `0 0 0 3px ${color}66` : undefined,
       }}
     >
-      {/* Handles */}
-      <Handle
-        type="target"
-        position={Position.Top}
-        id="top"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none' }}
-      />
-      <Handle
-        type="target"
-        position={Position.Top}
-        id="top-l"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none', left: '30%' }}
-      />
-      <Handle
-        type="target"
-        position={Position.Top}
-        id="top-r"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none', left: '70%' }}
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="bottom"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none' }}
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="bottom-l"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none', left: '30%' }}
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="bottom-r"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none', left: '70%' }}
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="right"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none' }}
-      />
-      <Handle
-        type="source"
-        position={Position.Left}
-        id="left"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none' }}
-      />
+      {/* Handles — kept functional but visually hidden */}
+      <Handle type="target" position={Position.Top} id="top" style={HANDLE_HIDDEN} />
+      <Handle type="target" position={Position.Top} id="top-l" style={{ ...HANDLE_HIDDEN, left: '30%' }} />
+      <Handle type="target" position={Position.Top} id="top-r" style={{ ...HANDLE_HIDDEN, left: '70%' }} />
+      <Handle type="source" position={Position.Bottom} id="bottom" style={HANDLE_HIDDEN} />
+      <Handle type="source" position={Position.Bottom} id="bottom-l" style={{ ...HANDLE_HIDDEN, left: '30%' }} />
+      <Handle type="source" position={Position.Bottom} id="bottom-r" style={{ ...HANDLE_HIDDEN, left: '70%' }} />
+      <Handle type="source" position={Position.Right} id="right" style={HANDLE_HIDDEN} />
+      <Handle type="source" position={Position.Left} id="left" style={HANDLE_HIDDEN} />
       {/* Target handles for failure edges that loop back on a side */}
-      <Handle
-        type="target"
-        position={Position.Right}
-        id="t-right"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none', top: '65%' }}
-      />
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="t-left"
-        style={{ background: '#64748b', width: 8, height: 8, border: 'none', top: '65%' }}
-      />
+      <Handle type="target" position={Position.Right} id="t-right" style={{ ...HANDLE_HIDDEN, top: '65%' }} />
+      <Handle type="target" position={Position.Left} id="t-left" style={{ ...HANDLE_HIDDEN, top: '65%' }} />
 
       {/* Label text */}
       <div style={{ textAlign: 'center', padding: '0 8px' }}>
@@ -219,9 +172,16 @@ export default function WorkflowFlowchart({ workflow }: Props) {
   const { nodes: layoutedNodes, edges } = useMemo(() => {
     if (!workflow?.labels?.length) return { nodes: [], edges: [] }
 
+    // Rank each label by its position in sort order (0,1,2,…) so failure edges
+    // can fan out by how far they span — wider jumps bow out farther.
+    const sorted = [...(workflow.labels ?? [])].sort(
+      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+    )
+    const rankOf = new Map<string, number>()
+    sorted.forEach((lbl, idx) => rankOf.set(lbl.name!, idx))
+
     // Build nodes sorted by sort_order
-    const rawNodes: Node[] = [...(workflow.labels ?? [])]
-      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    const rawNodes: Node[] = sorted
       .map((lbl) => ({
         id: lbl.name!,
         type: 'workflowLabel',
@@ -239,6 +199,17 @@ export default function WorkflowFlowchart({ workflow }: Props) {
       const color = edgeColor(t.path)
       const isAgent = t.trigger_type === 'agent'
       const isBoth = t.trigger_type === 'both'
+
+      // Failure edges travel along the side; bow each one out by how many ranks
+      // it spans so longer loop-backs sit in their own lane instead of stacking.
+      let pathOptions: { offset: number } | undefined
+      if (t.path === 'failure') {
+        const span = Math.abs(
+          (rankOf.get(t.to_label!) ?? 0) - (rankOf.get(t.from_label!) ?? 0),
+        )
+        pathOptions = { offset: 20 + span * 24 }
+      }
+
       return {
         id: `e-${t.from_label}-${t.to_label}-${i}`,
         source: t.from_label!,
@@ -246,6 +217,7 @@ export default function WorkflowFlowchart({ workflow }: Props) {
         sourceHandle: sourceHandle(t),
         targetHandle: targetHandle(t),
         type: 'smoothstep',
+        pathOptions,
         animated: false,
         style: {
           stroke: color,
