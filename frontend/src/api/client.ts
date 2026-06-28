@@ -1,8 +1,12 @@
 const BASE = '/api/v1'
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit & { isFormData?: boolean }): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (!init?.isFormData) {
+    headers['Content-Type'] = 'application/json'
+  }
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: { ...headers, ...init?.headers },
     ...init,
   })
   if (!res.ok) {
@@ -25,6 +29,7 @@ export type Task = {
   workflow_id: string
   current_agent_run_id?: string
   agent_notes?: string
+  attachments?: string[]
   created_at: string
   updated_at: string
 }
@@ -120,8 +125,12 @@ export const api = {
     list: (label?: string) =>
       request<Task[]>(`/tasks${label ? `?label=${label}` : ''}`),
     get: (id: string) => request<Task>(`/tasks/${id}`),
-    create: (body: { title: string; description?: string; type?: string; repo_id: string; workflow_id: string }) =>
-      request<Task>('/tasks', { method: 'POST', body: JSON.stringify(body) }),
+    create: (body: FormData | { title: string; description?: string; type?: string; repo_id: string; workflow_id: string }) => {
+      if (body instanceof FormData) {
+        return request<Task>('/tasks', { method: 'POST', body, isFormData: true })
+      }
+      return request<Task>('/tasks', { method: 'POST', body: JSON.stringify(body) })
+    },
     update: (id: string, body: { title?: string; description?: string; type?: string }) =>
       request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/tasks/${id}`, { method: 'DELETE' }),

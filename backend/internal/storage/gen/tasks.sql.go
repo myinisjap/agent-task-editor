@@ -21,9 +21,9 @@ func (q *Queries) ClearActiveAgentRun(ctx context.Context, id string) error {
 }
 
 const createTask = `-- name: CreateTask :one
-INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref
+INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id, attachments)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments
 `
 
 type CreateTaskParams struct {
@@ -34,6 +34,7 @@ type CreateTaskParams struct {
 	Label       string `json:"label"`
 	RepoID      string `json:"repo_id"`
 	WorkflowID  string `json:"workflow_id"`
+	Attachments string `json:"attachments"`
 }
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error) {
@@ -45,6 +46,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		arg.Label,
 		arg.RepoID,
 		arg.WorkflowID,
+		arg.Attachments,
 	)
 	var i Task
 	err := row.Scan(
@@ -63,6 +65,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.Branch,
 		&i.WorktreePath,
 		&i.BaseRef,
+		&i.Attachments,
 	)
 	return i, err
 }
@@ -77,7 +80,7 @@ func (q *Queries) DeleteTask(ctx context.Context, id string) error {
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref FROM tasks WHERE id = ?
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments FROM tasks WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
@@ -99,12 +102,13 @@ func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
 		&i.Branch,
 		&i.WorktreePath,
 		&i.BaseRef,
+		&i.Attachments,
 	)
 	return i, err
 }
 
 const listAgentPickupTasks = `-- name: ListAgentPickupTasks :many
-SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref FROM tasks t
+SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments FROM tasks t
 WHERE t.label IN (
     SELECT wt.from_label FROM workflow_transitions wt
     WHERE wt.workflow_id = t.workflow_id
@@ -143,6 +147,7 @@ func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 			&i.Branch,
 			&i.WorktreePath,
 			&i.BaseRef,
+			&i.Attachments,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +163,7 @@ func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref FROM tasks ORDER BY created_at DESC
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments FROM tasks ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
@@ -186,6 +191,7 @@ func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
 			&i.Branch,
 			&i.WorktreePath,
 			&i.BaseRef,
+			&i.Attachments,
 		); err != nil {
 			return nil, err
 		}
@@ -201,7 +207,7 @@ func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
 }
 
 const listTasksByLabel = `-- name: ListTasksByLabel :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref FROM tasks WHERE label = ? ORDER BY created_at DESC
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments FROM tasks WHERE label = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTasksByLabel(ctx context.Context, label string) ([]Task, error) {
@@ -229,6 +235,7 @@ func (q *Queries) ListTasksByLabel(ctx context.Context, label string) ([]Task, e
 			&i.Branch,
 			&i.WorktreePath,
 			&i.BaseRef,
+			&i.Attachments,
 		); err != nil {
 			return nil, err
 		}
@@ -287,7 +294,7 @@ const updateTask = `-- name: UpdateTask :one
 UPDATE tasks
 SET title = ?, description = ?, type = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments
 `
 
 type UpdateTaskParams struct {
@@ -321,6 +328,7 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		&i.Branch,
 		&i.WorktreePath,
 		&i.BaseRef,
+		&i.Attachments,
 	)
 	return i, err
 }
@@ -329,7 +337,7 @@ const updateTaskLabel = `-- name: UpdateTaskLabel :one
 UPDATE tasks
 SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments
 `
 
 type UpdateTaskLabelParams struct {
@@ -357,6 +365,7 @@ func (q *Queries) UpdateTaskLabel(ctx context.Context, arg UpdateTaskLabelParams
 		&i.Branch,
 		&i.WorktreePath,
 		&i.BaseRef,
+		&i.Attachments,
 	)
 	return i, err
 }
@@ -365,7 +374,7 @@ const updateTaskNotes = `-- name: UpdateTaskNotes :one
 UPDATE tasks
 SET agent_notes = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments
 `
 
 type UpdateTaskNotesParams struct {
@@ -392,6 +401,43 @@ func (q *Queries) UpdateTaskNotes(ctx context.Context, arg UpdateTaskNotesParams
 		&i.Branch,
 		&i.WorktreePath,
 		&i.BaseRef,
+		&i.Attachments,
+	)
+	return i, err
+}
+
+const updateTaskAttachments = `-- name: UpdateTaskAttachments :one
+UPDATE tasks
+SET attachments = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments
+`
+
+type UpdateTaskAttachmentsParams struct {
+	Attachments string `json:"attachments"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) UpdateTaskAttachments(ctx context.Context, arg UpdateTaskAttachmentsParams) (Task, error) {
+	row := q.db.QueryRowContext(ctx, updateTaskAttachments, arg.Attachments, arg.ID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.Type,
+		&i.Label,
+		&i.RepoID,
+		&i.WorkflowID,
+		&i.CurrentAgentRunID,
+		&i.AgentNotes,
+		&i.ActiveAgentRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Branch,
+		&i.WorktreePath,
+		&i.BaseRef,
+		&i.Attachments,
 	)
 	return i, err
 }

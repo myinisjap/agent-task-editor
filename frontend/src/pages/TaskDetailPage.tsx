@@ -224,6 +224,20 @@ export default function TaskDetailPage() {
               {task.description && (
                 <p className="text-sm text-slate-400 mt-2">{task.description}</p>
               )}
+              {task.attachments && task.attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {task.attachments.map((rel) => (
+                    <img
+                      key={rel}
+                      src={`/api/v1/uploads/${rel}`}
+                      alt="attachment"
+                      className="max-h-48 rounded border border-slate-700 cursor-pointer hover:border-slate-500 transition-colors"
+                      onClick={() => window.open(`/api/v1/uploads/${rel}`, '_blank')}
+                      title="Click to open full size"
+                    />
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">
