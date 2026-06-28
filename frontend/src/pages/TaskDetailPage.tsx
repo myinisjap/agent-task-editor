@@ -351,9 +351,9 @@ export default function TaskDetailPage() {
                       .catch(() => setDiffFiles([]))
                       .finally(() => setDiffLoading(false))
                   }}
-                  className="text-xs text-slate-500 hover:text-slate-300"
+                  className="px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-200"
                 >
-                  ↻
+                  ↻ Refresh
                 </button>
               </div>
             </div>
