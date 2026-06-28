@@ -47,6 +47,10 @@ type Engine struct {
 	db  *sql.DB
 	q   querier
 	pub Publisher
+	// OnTerminal, if set, is called after a task successfully transitions into a
+	// terminal label. Used to push the task's branch and tear down its worktree.
+	// Failures are the callback's concern; the transition has already committed.
+	OnTerminal func(ctx context.Context, task gen.Task)
 }
 
 // New creates a new Engine.
@@ -82,9 +86,13 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	if err != nil {
 		return fmt.Errorf("list labels: %w", err)
 	}
+	toIsTerminal := false
 	for _, l := range labels {
-		if l.Name == toLabel && l.AgentIgnore != 0 && trigger == TriggerAgent {
-			return ErrAgentIgnored
+		if l.Name == toLabel {
+			if l.AgentIgnore != 0 && trigger == TriggerAgent {
+				return ErrAgentIgnored
+			}
+			toIsTerminal = l.IsTerminal != 0
 		}
 	}
 
@@ -135,6 +143,11 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 			"to":      toLabel,
 			"note":    note,
 		})
+	}
+
+	if toIsTerminal && e.OnTerminal != nil {
+		task.Label = toLabel
+		e.OnTerminal(ctx, task)
 	}
 
 	return nil

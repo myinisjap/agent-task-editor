@@ -65,6 +65,9 @@ type Task struct {
 	ActiveAgentRunID  *string   `json:"active_agent_run_id"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	Branch            string    `json:"branch"`
+	WorktreePath      string    `json:"worktree_path"`
+	BaseRef           string    `json:"base_ref"`
 }
 
 type TaskLabelHistory struct {

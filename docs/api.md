@@ -59,6 +59,13 @@ Human rejection — follows the `failure` human transition from the task's curre
 { "to_label": "optional override", "feedback": "optional message for agent" }
 ```
 
+### `GET /tasks/{id}/diff`
+Get the task's accumulated changes — the diff of its per-task branch against the
+merge-base with the ref it forked from. Each task works in its own git worktree
+on its own branch (`ate-<slug>-<id>`), so concurrent agents on the same repo
+don't conflict. Returns `{ "branch": "...", "diff": "..." }`; `diff` is empty
+until the task has been dispatched and a branch provisioned.
+
 ---
 
 ## Agent Runs
@@ -170,9 +177,6 @@ Unregister a repository.
 
 ### `GET /repos/{id}/tree`
 List files in the repository (recursive, respects `.gitignore`).
-
-### `GET /repos/{id}/diff`
-Get the uncommitted diff (`git diff HEAD`) for the repository.
 
 ---
 

@@ -57,6 +57,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Post("/tasks/{id}/reject", tasksH.Reject)
 		r.Patch("/tasks/{id}/notes", tasksH.UpdateNotes)
 		r.Post("/tasks/{id}/rerun", tasksH.Rerun)
+		r.Get("/tasks/{id}/diff", tasksH.Diff)
 
 		// Agent runs
 		r.Get("/tasks/{id}/runs", tasksH.ListRuns)
@@ -87,7 +88,6 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Get("/repos/{id}", reposH.Get)
 		r.Delete("/repos/{id}", reposH.Delete)
 		r.Get("/repos/{id}/tree", reposH.Tree)
-		r.Get("/repos/{id}/diff", reposH.Diff)
 
 		// Dashboard
 		r.Get("/dashboard", dashH.Get)

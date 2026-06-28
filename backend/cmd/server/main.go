@@ -14,6 +14,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
@@ -84,6 +85,29 @@ func main() {
 
 	// Shared workflow engine with WS publisher
 	engine := workflow.New(db.SQL(), hub)
+
+	// On reaching a terminal label: push the task's branch (if the repo has a
+	// remote) and tear down its worktree to reclaim disk. The branch is kept for
+	// human review/PR. Best-effort — failures are logged, not fatal.
+	termQ := gen.New(db.SQL())
+	engine.OnTerminal = func(ctx context.Context, task gen.Task) {
+		if task.WorktreePath == "" {
+			return
+		}
+		repo, err := termQ.GetRepo(ctx, task.RepoID)
+		if err != nil {
+			slog.Warn("onTerminal: get repo", "task_id", task.ID, "err", err)
+			return
+		}
+		if repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
+			if err := agent.PushBranch(ctx, task.WorktreePath, task.Branch); err != nil {
+				slog.Warn("onTerminal: push branch", "task_id", task.ID, "branch", task.Branch, "err", err)
+			}
+		}
+		if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
+			slog.Warn("onTerminal: remove worktree", "task_id", task.ID, "err", err)
+		}
+	}
 
 	// Agent provider factory — selects backend based on AgentConfig.Provider
 	providerFactory := func(agentCfg agent.AgentConfig) agent.Provider {

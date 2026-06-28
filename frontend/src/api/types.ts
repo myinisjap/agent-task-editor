@@ -306,6 +306,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update agent notes on a task */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description Notes content (supports markdown) */
+                        notes: string;
+                        /** @description If true, append to existing notes */
+                        append?: boolean;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/tasks/{id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the task's branch diff against its base (this task's accumulated changes) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            branch?: string;
+                            diff?: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs": {
         parameters: {
             query?: never;
@@ -687,6 +773,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get available models for a provider */
+        get: {
+            parameters: {
+                query: {
+                    provider: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Model list for the provider */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelList"];
+                    };
+                };
+                /** @description Missing provider parameter */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown provider */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos": {
         parameters: {
             query?: never;
@@ -842,50 +980,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/repos/{id}/diff": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get git diff for a repo */
-        get: {
-            parameters: {
-                query?: {
-                    base?: string;
-                    head?: string;
-                };
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            base?: string;
-                            head?: string;
-                            diff?: string;
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/dashboard": {
         parameters: {
             query?: never;
@@ -935,6 +1029,14 @@ export interface components {
             repo_id?: string;
             workflow_id?: string;
             current_agent_run_id?: string | null;
+            active_agent_run_id?: string | null;
+            agent_notes?: string;
+            /** @description Per-task git branch (empty until first dispatch) */
+            branch?: string;
+            /** @description Path to the task's git worktree */
+            worktree_path?: string;
+            /** @description Ref the branch forked from */
+            base_ref?: string;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -973,7 +1075,7 @@ export interface components {
             id?: string;
             name?: string;
             /** @enum {string} */
-            provider?: "claude_code" | "openai" | "anthropic" | "custom";
+            provider?: "claude_code" | "openai" | "anthropic" | "custom" | "opencode";
             model?: string;
             system_prompt?: string;
             /** @description JSON array of label names */
@@ -986,6 +1088,11 @@ export interface components {
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        ModelList: {
+            provider?: string;
+            default_model?: string;
+            models?: string[];
         };
         Repo: {
             id?: string;

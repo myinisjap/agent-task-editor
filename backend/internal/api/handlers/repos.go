@@ -241,39 +241,6 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]any{"ref": ref, "files": files})
 }
 
-func (h *ReposHandler) Diff(w http.ResponseWriter, r *http.Request) {
-	repo, err := h.q.GetRepo(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		Err(w, http.StatusNotFound, "repo not found")
-		return
-	}
-
-	base := r.URL.Query().Get("base")
-	head := r.URL.Query().Get("head")
-	if base == "" {
-		base = "HEAD~1"
-	}
-	if head == "" {
-		head = "HEAD"
-	}
-	if !isValidGitRef(base) || !isValidGitRef(head) {
-		Err(w, http.StatusBadRequest, "invalid git ref")
-		return
-	}
-
-	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "diff", base, head, "--").Output()
-	if err != nil {
-		Err(w, http.StatusInternalServerError, "failed to compute diff")
-		return
-	}
-
-	JSON(w, http.StatusOK, map[string]any{
-		"base": base,
-		"head": head,
-		"diff": string(out),
-	})
-}
-
 // setClaudeTrust marks the given repo path as trust-dialog-accepted in ~/.claude.json
 // so headless Claude Code agents can use pre-approved permissions without prompting.
 func setClaudeTrust(repoPath string) {

@@ -68,13 +68,13 @@ export default function TaskDetailPage() {
 
   // Load diff when task is available
   useEffect(() => {
-    if (!task?.repo_id) return
+    if (!task?.id) return
     setDiffLoading(true)
-    api.repos.diff(task.repo_id)
+    api.tasks.diff(task.id)
       .then((d) => setDiffFiles(parseDiff(d.diff)))
       .catch(() => setDiffFiles([]))
       .finally(() => setDiffLoading(false))
-  }, [task?.repo_id])
+  }, [task?.id])
 
   // WS subscription
   useEffect(() => {
@@ -329,12 +329,12 @@ export default function TaskDetailPage() {
         {activeTab === 'diff' && (
           <div className="h-full overflow-y-auto p-4">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs text-slate-500">File changes (HEAD~1…HEAD)</p>
+              <p className="text-xs text-slate-500">Changes on this task's branch</p>
               <button
                 onClick={() => {
-                  if (!task?.repo_id) return
+                  if (!task?.id) return
                   setDiffLoading(true)
-                  api.repos.diff(task.repo_id)
+                  api.tasks.diff(task.id)
                     .then((d) => setDiffFiles(parseDiff(d.diff)))
                     .catch(() => setDiffFiles([]))
                     .finally(() => setDiffLoading(false))

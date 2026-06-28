@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"strings"
@@ -161,6 +162,15 @@ func (p *Pool) run(ctx context.Context, job Job) {
 			ID:         job.Input.Task.ID,
 		}); err != nil {
 			slog.Error("pool: persist agent notes", "component", "pool", "run_id", job.RunID, "err", err)
+		}
+	}
+
+	// Safety-net: capture any changes the agent left uncommitted in its worktree
+	// so the task's branch always reflects the run. No-op if the agent committed.
+	if finalStatus == "completed" && job.Input.RepoPath != "" {
+		msg := fmt.Sprintf("task %s: agent run %s", job.Input.Task.ID, job.RunID)
+		if err := commitIfDirty(ctx, job.Input.RepoPath, msg); err != nil {
+			slog.Warn("pool: safety-net commit failed", "component", "pool", "run_id", job.RunID, "err", err)
 		}
 	}
 

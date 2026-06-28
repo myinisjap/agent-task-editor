@@ -134,6 +134,7 @@ export const api = {
      updateNotes: (id: string, notes: string, append = false) =>
        request<Task>(`/tasks/${id}/notes`, { method: 'PATCH', body: JSON.stringify({ notes, append }) }),
      rerun: (id: string) => request<void>(`/tasks/${id}/rerun`, { method: 'POST' }),
+    diff: (id: string) => request<{ branch: string; diff: string }>(`/tasks/${id}/diff`),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),
@@ -180,8 +181,6 @@ export const api = {
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
-    diff: (id: string, base = 'HEAD~1', head = 'HEAD') =>
-      request<{ base: string; head: string; diff: string }>(`/repos/${id}/diff?base=${base}&head=${head}`),
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),

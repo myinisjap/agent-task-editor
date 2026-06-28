@@ -19,7 +19,11 @@ components:
         repo_id:     { type: string }
         workflow_id: { type: string }
         current_agent_run_id: { type: string, nullable: true }
+        active_agent_run_id:  { type: string, nullable: true }
         agent_notes: { type: string }
+        branch:        { type: string, description: "Per-task git branch (empty until first dispatch)" }
+        worktree_path: { type: string, description: "Path to the task's git worktree" }
+        base_ref:      { type: string, description: "Ref the branch forked from" }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
@@ -282,29 +286,47 @@ paths:
              application/json:
                schema: { $ref: "#/components/schemas/Task" }
 
-   /tasks/{id}/notes:
-     patch:
-       summary: Update agent notes on a task
-       parameters:
-         - name: id
-           in: path
-           required: true
-           schema: { type: string }
-       requestBody:
-         required: true
-         content:
-           application/json:
-             schema:
-               type: object
-               required: [notes]
-               properties:
-                 notes:  { type: string, description: "Notes content (supports markdown)" }
-                 append: { type: boolean, description: "If true, append to existing notes" }
-       responses:
-         "200":
-           content:
-             application/json:
-               schema: { $ref: "#/components/schemas/Task" }
+  /tasks/{id}/notes:
+    patch:
+      summary: Update agent notes on a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [notes]
+              properties:
+                notes:  { type: string, description: "Notes content (supports markdown)" }
+                append: { type: boolean, description: "If true, append to existing notes" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+
+  /tasks/{id}/diff:
+    get:
+      summary: Get the task's branch diff against its base (this task's accumulated changes)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  branch: { type: string }
+                  diff:   { type: string }
 
   /tasks/{id}/runs:
     get:
@@ -511,31 +533,6 @@ paths:
                 properties:
                   ref:   { type: string }
                   files: { type: array, items: { type: string } }
-
-  /repos/{id}/diff:
-    get:
-      summary: Get git diff for a repo
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-        - name: base
-          in: query
-          schema: { type: string, default: "HEAD~1" }
-        - name: head
-          in: query
-          schema: { type: string, default: HEAD }
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  base: { type: string }
-                  head: { type: string }
-                  diff: { type: string }
 
   /dashboard:
     get:

@@ -12,6 +12,7 @@ sql:
       - "internal/storage/migrations/007_agent_enabled.up.sql"
       - "internal/storage/migrations/008_agent_runs_fk_set_null.up.sql"
       - "internal/storage/migrations/009_drop_rejection_target.up.sql"
+      - "internal/storage/migrations/010_task_branch.up.sql"
     gen:
       go:
         package: "gen"

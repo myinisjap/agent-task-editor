@@ -85,6 +85,28 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		return
 	}
 
+	// Each task works in its own git worktree on its own branch so concurrent
+	// agents on the same repo don't conflict. Reuse the task's worktree across
+	// re-runs; provision it on first dispatch.
+	workDir := t.WorktreePath
+	if workDir == "" {
+		wtPath, branch, baseRef, perr := provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+		if perr != nil {
+			slog.Error("dispatcher: provision worktree", "component", "dispatcher", "task_id", t.ID, "err", perr)
+			return
+		}
+		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+			Branch:       branch,
+			WorktreePath: wtPath,
+			BaseRef:      baseRef,
+			ID:           t.ID,
+		}); err != nil {
+			slog.Error("dispatcher: persist worktree", "component", "dispatcher", "task_id", t.ID, "err", err)
+			return
+		}
+		workDir = wtPath
+	}
+
 	runID := uuid.NewString()
 	var feedback *string
 	if t.CurrentAgentRunID != nil {
@@ -130,7 +152,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 			RunID:       runID,
 			Task:        Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes},
 			AgentConfig: agentCfg,
-			RepoPath:    repo.Path,
+			RepoPath:    workDir,
 			Transitions: transitions,
 			Feedback:    feedback,
 			PriorPlan:   agentNotes,

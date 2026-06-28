@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -111,7 +115,17 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.q.DeleteTask(r.Context(), chi.URLParam(r, "id")); err != nil {
+	taskID := chi.URLParam(r, "id")
+	// Best-effort: tear down the task's worktree before deleting the row. The
+	// branch is kept for review. Look up the repo path for the worktree-remove.
+	if task, err := h.q.GetTask(r.Context(), taskID); err == nil && task.WorktreePath != "" {
+		if repo, rerr := h.q.GetRepo(r.Context(), task.RepoID); rerr == nil {
+			if out, gerr := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "worktree", "remove", "--force", task.WorktreePath).CombinedOutput(); gerr != nil {
+				slog.Warn("delete task: remove worktree", "task_id", taskID, "err", gerr, "out", strings.TrimSpace(string(out)))
+			}
+		}
+	}
+	if err := h.q.DeleteTask(r.Context(), taskID); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -289,6 +303,57 @@ func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Diff returns the task's accumulated changes: the diff of its branch against
+// the merge-base with the ref it forked from. Empty diff if not yet provisioned.
+func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
+	task, err := h.q.GetTask(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if task.Branch == "" {
+		JSON(w, http.StatusOK, map[string]any{"branch": task.Branch, "diff": ""})
+		return
+	}
+	if !isValidGitRef(task.BaseRef) || !isValidGitRef(task.Branch) {
+		Err(w, http.StatusBadRequest, "invalid git ref")
+		return
+	}
+
+	// Prefer the task's worktree, but once a task reaches a terminal label its
+	// worktree is torn down (the branch is kept). Fall back to the repo's main
+	// clone, which still has the branch ref.
+	gitDir := task.WorktreePath
+	if gitDir == "" || !dirExists(gitDir) {
+		repo, rerr := h.q.GetRepo(r.Context(), task.RepoID)
+		if rerr != nil {
+			Err(w, http.StatusInternalServerError, "failed to locate repo")
+			return
+		}
+		gitDir = repo.Path
+	}
+
+	mb, err := exec.CommandContext(r.Context(), "git", "-C", gitDir, "merge-base", task.BaseRef, task.Branch).Output()
+	base := task.BaseRef
+	if err == nil {
+		if s := strings.TrimSpace(string(mb)); s != "" {
+			base = s
+		}
+	}
+
+	out, err := exec.CommandContext(r.Context(), "git", "-C", gitDir, "diff", base, task.Branch, "--").Output()
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to compute diff")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{"branch": task.Branch, "diff": string(out)})
+}
+
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
