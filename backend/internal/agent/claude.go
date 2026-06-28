@@ -145,19 +145,25 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		if r.Outcome == "" && outcome != "" {
 			r.Outcome = outcome
 		}
-		// A non-zero exit with no signalled outcome means the subprocess crashed
-		// before calling signal_complete (e.g. bad ANTHROPIC_BASE_URL, auth error).
-		// ReadResult defaults a missing result file to "completed", which would
-		// mask the failure and re-dispatch the broken config forever. Trust the
-		// exit code over the default.
-		if err != nil && r.Outcome == "" {
+		// Any non-zero exit from the claude binary means something went wrong
+		// (e.g. auth error, crash, bad config). Even if a signal_complete outcome
+		// was recorded, a non-zero exit overrides it — the agent may have signalled
+		// before crashing, or the exit code may reflect an internal SDK error.
+		if err != nil {
+			if r.Outcome != "" {
+				logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited with error but had outcome %q — treating as failed", r.Outcome), At: time.Now()}
+			}
 			return Result{Status: "failed"}, nil
 		}
 		return r, nil
 	}
 
-	// Non-zero exit with no parsed outcome means the agent failed (e.g. error_max_turns).
-	if err != nil && outcome == "" {
+	// Non-zero exit means the agent failed regardless of any parsed outcome.
+	// For example, claude exits 1 on auth errors, crashes, or internal failures.
+	if err != nil {
+		if outcome != "" {
+			logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
+		}
 		return Result{Status: "failed"}, nil
 	}
 	return Result{Status: "completed", Outcome: outcome}, nil
@@ -269,8 +275,13 @@ func buildSystemPrompt(input RunInput) string {
 	if base == "" {
 		base = "You are an expert software engineer. Complete the assigned task thoroughly and carefully."
 	}
+	// Dynamically inject the repo working directory so the agent always knows where to work.
+	var dirLine string
+	if input.RepoPath != "" {
+		dirLine = fmt.Sprintf("\n\nThe repository you are working on is located at: %s\nAll file operations should be performed relative to this directory.", input.RepoPath)
+	}
 	suffix := "\n\nIf the prompt contains a \"NOTES FROM PRIOR AGENT\" section, read it carefully before starting — it contains context, plans, and decisions from previous agents in this workflow.\n\nBefore calling mcp__task-editor__signal_complete, call mcp__task-editor__update_task_notes with a concise summary of what you did, what decisions you made, and any context the next agent will need. If prior notes exist (\"NOTES FROM PRIOR AGENT\" was present), use append:true to preserve them. This is how agents hand off state to each other — always do it.\n\nWhen your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"
-	return base + suffix
+	return base + dirLine + suffix
 }
 
 // dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.
