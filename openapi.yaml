@@ -328,6 +328,28 @@ paths:
                   branch: { type: string }
                   diff:   { type: string }
 
+  /tasks/{id}/pr-url:
+    get:
+      summary: Build a pre-filled GitHub compare/PR URL for the task's branch
+      description: >
+        Returns a github.com/.../compare URL with the PR title and a markdown
+        body (task description, agent notes, and commit subjects) pre-filled, so
+        a human can open a fully-described PR in one click. Requires the repo to
+        have a GitHub remote and the task to have a provisioned branch.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+
   /tasks/{id}/runs:
     get:
       summary: List agent runs for a task

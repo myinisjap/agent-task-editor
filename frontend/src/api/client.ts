@@ -135,6 +135,7 @@ export const api = {
        request<Task>(`/tasks/${id}/notes`, { method: 'PATCH', body: JSON.stringify({ notes, append }) }),
      rerun: (id: string) => request<void>(`/tasks/${id}/rerun`, { method: 'POST' }),
     diff: (id: string) => request<{ branch: string; diff: string }>(`/tasks/${id}/diff`),
+    prUrl: (id: string) => request<{ url: string }>(`/tasks/${id}/pr-url`),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),

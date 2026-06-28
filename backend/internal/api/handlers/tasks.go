@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -354,6 +355,87 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 func dirExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+// PRURL builds a GitHub compare URL for the task's branch with a pre-filled PR
+// title and body, so a human can open a properly-described PR in one click
+// without us needing GitHub auth or the gh CLI.
+func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
+	task, err := h.q.GetTask(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if task.Branch == "" {
+		Err(w, http.StatusBadRequest, "task has no branch yet")
+		return
+	}
+	repo, err := h.q.GetRepo(r.Context(), task.RepoID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to locate repo")
+		return
+	}
+	if repo.RemoteUrl == nil {
+		Err(w, http.StatusBadRequest, "repo has no remote_url")
+		return
+	}
+	ghName, ok := parseGitHubName(*repo.RemoteUrl)
+	if !ok {
+		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
+		return
+	}
+
+	// GitHub compare wants branch names, not remote-tracking refs.
+	base := strings.TrimPrefix(task.BaseRef, "origin/")
+
+	// Collect commit subjects on the branch (best-effort; empty if it fails).
+	gitDir := task.WorktreePath
+	if gitDir == "" || !dirExists(gitDir) {
+		gitDir = repo.Path
+	}
+	var commits []string
+	if isValidGitRef(task.BaseRef) && isValidGitRef(task.Branch) {
+		out, lerr := exec.CommandContext(r.Context(), "git", "-C", gitDir, "log", "--format=%s", task.BaseRef+".."+task.Branch).Output()
+		if lerr == nil {
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if line != "" {
+					commits = append(commits, line)
+				}
+			}
+		}
+	}
+
+	body := buildPRBody(task, commits)
+	q := url.Values{}
+	q.Set("expand", "1")
+	q.Set("title", task.Title)
+	q.Set("body", body)
+	prURL := fmt.Sprintf("https://github.com/%s/compare/%s...%s?%s", ghName, base, task.Branch, q.Encode())
+
+	JSON(w, http.StatusOK, map[string]any{"url": prURL})
+}
+
+// buildPRBody assembles a markdown PR description from the task and its commits.
+func buildPRBody(task gen.Task, commits []string) string {
+	var b strings.Builder
+	if task.Description != "" {
+		b.WriteString(task.Description)
+		b.WriteString("\n\n")
+	}
+	if task.AgentNotes != "" {
+		b.WriteString("### What changed\n\n")
+		b.WriteString(task.AgentNotes)
+		b.WriteString("\n\n")
+	}
+	if len(commits) > 0 {
+		b.WriteString("### Commits\n\n")
+		for _, c := range commits {
+			b.WriteString("- ")
+			b.WriteString(c)
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
