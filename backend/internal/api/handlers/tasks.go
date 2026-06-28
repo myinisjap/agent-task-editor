@@ -19,6 +19,39 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
+// taskResponse is a JSON-serialization wrapper for gen.Task that ensures the
+// Attachments field is emitted as a JSON array ([]string) rather than a raw
+// JSON string.  gen.Task stores Attachments as a string column containing a
+// JSON-encoded array; embedding the struct and shadowing the field with
+// json.RawMessage lets us pass the stored JSON bytes through as-is.
+type taskResponse struct {
+	gen.Task
+	Attachments json.RawMessage `json:"attachments"`
+}
+
+// toTaskResponse converts a gen.Task to its wire representation.  If the
+// stored attachments string is not valid JSON it falls back to an empty array
+// so the frontend always receives a proper array.
+func toTaskResponse(t gen.Task) taskResponse {
+	raw := json.RawMessage(t.Attachments)
+	// Validate that the stored value is actually parseable JSON; fall back to
+	// an empty array if it is not (e.g. the column was never set).
+	var probe []string
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		raw = json.RawMessage("[]")
+	}
+	return taskResponse{Task: t, Attachments: raw}
+}
+
+// toTaskResponses converts a slice of gen.Task values.
+func toTaskResponses(tasks []gen.Task) []taskResponse {
+	out := make([]taskResponse, len(tasks))
+	for i, t := range tasks {
+		out[i] = toTaskResponse(t)
+	}
+	return out
+}
+
 // maxUploadSize is the maximum total multipart body size (50 MB).
 const maxUploadSize = 50 << 20
 
@@ -52,7 +85,7 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, tasks)
+	JSON(w, http.StatusOK, toTaskResponses(tasks))
 }
 
 func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +205,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		JSON(w, http.StatusCreated, task)
+		JSON(w, http.StatusCreated, toTaskResponse(task))
 		return
 	}
 
@@ -210,7 +243,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusCreated, task)
+	JSON(w, http.StatusCreated, toTaskResponse(task))
 }
 
 func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +252,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "task not found")
 		return
 	}
-	JSON(w, http.StatusOK, task)
+	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +276,7 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, task)
+	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 func (h *TasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +330,7 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
 		return
 	}
-	JSON(w, http.StatusOK, updated)
+	JSON(w, http.StatusOK, toTaskResponse(updated))
 }
 
 func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
@@ -329,7 +362,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
 		return
 	}
-	JSON(w, http.StatusOK, updated)
+	JSON(w, http.StatusOK, toTaskResponse(updated))
 }
 
 // humanPathTarget returns the destination label of the human transition with the
@@ -397,7 +430,7 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
 		return
 	}
-	JSON(w, http.StatusOK, updated)
+	JSON(w, http.StatusOK, toTaskResponse(updated))
 }
 
 func (h *TasksHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
@@ -430,7 +463,7 @@ func (h *TasksHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, task)
+	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {

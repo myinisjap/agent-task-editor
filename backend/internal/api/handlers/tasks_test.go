@@ -17,6 +17,21 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
+// apiTask mirrors the JSON wire format returned by the tasks handler.
+// The Attachments field is []string because the handler serialises the stored
+// JSON string as a proper JSON array, not a raw string.
+type apiTask struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Type        string   `json:"type"`
+	Label       string   `json:"label"`
+	RepoID      string   `json:"repo_id"`
+	WorkflowID  string   `json:"workflow_id"`
+	AgentNotes  string   `json:"agent_notes"`
+	Attachments []string `json:"attachments"`
+}
+
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
 type noopPub struct{}
 
@@ -109,7 +124,7 @@ func TestTasks_Create_OK(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
 	}
-	var task gen.Task
+	var task apiTask
 	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +136,9 @@ func TestTasks_Create_OK(t *testing.T) {
 	}
 	if task.Type != "feature" {
 		t.Errorf("default type: want 'feature', got %q", task.Type)
+	}
+	if task.Attachments == nil {
+		t.Errorf("attachments: expected empty array, got nil")
 	}
 }
 
@@ -164,7 +182,7 @@ func TestTasks_List_Empty(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	var tasks []gen.Task
+	var tasks []apiTask
 	if err := json.NewDecoder(w.Body).Decode(&tasks); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +214,7 @@ func TestTasks_List_WithLabel(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	var tasks []gen.Task
+	var tasks []apiTask
 	_ = json.NewDecoder(w.Body).Decode(&tasks)
 	for _, task := range tasks {
 		if task.Label != "todo" {
@@ -237,7 +255,7 @@ func TestTasks_Get_Found(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-	var got gen.Task
+	var got apiTask
 	_ = json.NewDecoder(w.Body).Decode(&got)
 	if got.ID != task.ID {
 		t.Errorf("expected task ID %s, got %s", task.ID, got.ID)
@@ -266,7 +284,7 @@ func TestTasks_Update_OK(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
 	}
-	var updated gen.Task
+	var updated apiTask
 	_ = json.NewDecoder(w.Body).Decode(&updated)
 	if updated.Title != "Updated Title" {
 		t.Errorf("expected title 'Updated Title', got %q", updated.Title)
@@ -329,7 +347,7 @@ func TestTasks_MoveLabel_ValidTransition(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
 	}
-	var updated gen.Task
+	var updated apiTask
 	_ = json.NewDecoder(w.Body).Decode(&updated)
 	if updated.Label != "plan" {
 		t.Errorf("expected label 'plan', got %q", updated.Label)
