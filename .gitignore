@@ -18,6 +18,7 @@ frontend/dist/
 backend/server
 backend/mcp-server
 
-# Agent tooling state (OMC / Claude Code)
+# Agent tooling state (OMC / Claude Code / Qwen)
 .omc/
 .claude/
+.qwen/
