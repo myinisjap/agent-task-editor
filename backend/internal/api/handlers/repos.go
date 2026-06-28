@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -61,8 +62,76 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.Name == "" || body.Path == "" {
-		Err(w, http.StatusBadRequest, "name and path are required")
+
+	remoteURL := ""
+	if body.RemoteURL != nil {
+		remoteURL = strings.TrimSpace(*body.RemoteURL)
+	}
+
+	// Auto-derive name from remote URL if not provided.
+	if body.Name == "" && remoteURL != "" {
+		if derived, ok := parseGitHubName(remoteURL); ok {
+			body.Name = derived
+		}
+	}
+
+	// Auto-clone when no local path is provided.
+	if body.Path == "" {
+		if remoteURL == "" {
+			Err(w, http.StatusBadRequest, "path or remote_url is required")
+			return
+		}
+		if h.repoBaseDir == "" {
+			Err(w, http.StatusBadRequest, "repo_base_dir must be configured on the server to enable auto-cloning")
+			return
+		}
+
+		// Derive the clone destination from the parsed name (org/repo) or fall back
+		// to the last path segment of the remote URL.
+		cloneSubdir := body.Name
+		if cloneSubdir == "" {
+			// Name not yet known; use last segment of URL as subdir.
+			seg := remoteURL[strings.LastIndex(remoteURL, "/")+1:]
+			cloneSubdir = strings.TrimSuffix(seg, ".git")
+		}
+		destPath := filepath.Join(h.repoBaseDir, cloneSubdir)
+
+		// Validate destPath is within repoBaseDir BEFORE any filesystem operations
+		// to prevent path traversal via a crafted name or URL segment (e.g. "../../etc").
+		{
+			cleanDest := filepath.Clean(destPath)
+			cleanBase := filepath.Clean(h.repoBaseDir)
+			sep := string(os.PathSeparator)
+			if cleanDest != cleanBase && !strings.HasPrefix(cleanDest+sep, cleanBase+sep) {
+				Err(w, http.StatusBadRequest, "derived clone path is outside the allowed base directory")
+				return
+			}
+		}
+
+		// Only allow https:// and git@ schemes to avoid unexpected behaviour.
+		if !strings.HasPrefix(remoteURL, "https://") && !strings.HasPrefix(remoteURL, "git@") {
+			Err(w, http.StatusBadRequest, "remote_url must use https:// or git@ scheme")
+			return
+		}
+
+		// Create parent directory structure (e.g. repoBaseDir/org/).
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+			Err(w, http.StatusInternalServerError, fmt.Sprintf("failed to create parent directory: %v", err))
+			return
+		}
+
+		cloneCmd := exec.CommandContext(r.Context(), "git", "clone", remoteURL, destPath)
+		if out, err := cloneCmd.CombinedOutput(); err != nil {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("git clone failed: %s", strings.TrimSpace(string(out))))
+			return
+		}
+
+		body.Path = destPath
+	}
+
+	// name must be known by now.
+	if body.Name == "" {
+		Err(w, http.StatusBadRequest, "name is required (or provide a GitHub remote_url for auto-detection)")
 		return
 	}
 
@@ -103,6 +172,36 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	setClaudeTrust(body.Path)
 	JSON(w, http.StatusCreated, repo)
+}
+
+// parseGitHubName extracts the "org/repo" name from a GitHub remote URL.
+// It handles both HTTPS (https://github.com/org/repo[.git]) and SSH
+// (git@github.com:org/repo[.git]) formats.
+// Returns ("", false) if the URL is not a recognised GitHub URL.
+func parseGitHubName(remoteURL string) (string, bool) {
+	remoteURL = strings.TrimSpace(remoteURL)
+
+	// HTTPS: https://github.com/org/repo or https://github.com/org/repo.git
+	if strings.HasPrefix(remoteURL, "https://github.com/") {
+		rest := strings.TrimPrefix(remoteURL, "https://github.com/")
+		rest = strings.TrimSuffix(rest, ".git")
+		parts := strings.SplitN(rest, "/", 3)
+		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+			return parts[0] + "/" + parts[1], true
+		}
+	}
+
+	// SSH: git@github.com:org/repo or git@github.com:org/repo.git
+	if strings.HasPrefix(remoteURL, "git@github.com:") {
+		rest := strings.TrimPrefix(remoteURL, "git@github.com:")
+		rest = strings.TrimSuffix(rest, ".git")
+		parts := strings.SplitN(rest, "/", 3)
+		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+			return parts[0] + "/" + parts[1], true
+		}
+	}
+
+	return "", false
 }
 
 func (h *ReposHandler) Delete(w http.ResponseWriter, r *http.Request) {

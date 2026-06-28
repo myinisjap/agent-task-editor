@@ -25,14 +25,39 @@ export default function ReposPage() {
     return workflows.find((w) => w.id === id)?.name ?? id
   }
 
+  /** Parse org/repo from a GitHub URL for auto-filling the Name field. */
+  function parseGitHubName(url: string): string {
+    const trimmed = url.trim()
+    // HTTPS: https://github.com/org/repo[.git]
+    const httpsMatch = trimmed.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/)
+    if (httpsMatch) return `${httpsMatch[1]}/${httpsMatch[2]}`
+    // SSH: git@github.com:org/repo[.git]
+    const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/)
+    if (sshMatch) return `${sshMatch[1]}/${sshMatch[2]}`
+    return ''
+  }
+
+  function handleRemoteUrlChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const url = e.target.value
+    setForm((f) => {
+      const parsed = parseGitHubName(url)
+      return {
+        ...f,
+        remote_url: url,
+        // Auto-fill name only when it hasn't been manually set
+        name: f.name === '' || f.name === parseGitHubName(f.remote_url) ? parsed : f.name,
+      }
+    })
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
     setError('')
     try {
       const repo = await api.repos.create({
-        name: form.name.trim(),
-        path: form.path.trim(),
+        name: form.name.trim() || undefined,
+        path: form.path.trim() || undefined,
         remote_url: form.remote_url.trim() || undefined,
         workflow_id: form.workflow_id || undefined,
       })
@@ -73,32 +98,34 @@ export default function ReposPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">Name</label>
+              <label className="text-xs font-medium text-slate-400">
+                Name <span className="text-slate-600">(auto-filled from GitHub URL)</span>
+              </label>
               <input
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                required
-                placeholder="my-project"
+                placeholder="org/repo"
                 className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">Local path</label>
+              <label className="text-xs font-medium text-slate-400">
+                Local path <span className="text-slate-600">(optional — leave blank to auto-clone)</span>
+              </label>
               <input
                 value={form.path}
                 onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))}
-                required
-                placeholder="/home/user/projects/my-project"
+                placeholder="Leave blank to auto-clone via Remote URL"
                 className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">Remote URL (optional)</label>
+              <label className="text-xs font-medium text-slate-400">Remote URL</label>
               <input
                 value={form.remote_url}
-                onChange={(e) => setForm((f) => ({ ...f, remote_url: e.target.value }))}
+                onChange={handleRemoteUrlChange}
                 placeholder="https://github.com/org/repo"
                 className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
@@ -124,7 +151,7 @@ export default function ReposPage() {
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={saving || !form.name.trim() || !form.path.trim()}
+              disabled={saving || (!form.name.trim() && !form.remote_url.trim()) || (!form.path.trim() && !form.remote_url.trim())}
               className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
             >
               {saving ? 'Adding…' : 'Add Repo'}
