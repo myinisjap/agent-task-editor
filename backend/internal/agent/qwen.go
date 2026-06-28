@@ -20,6 +20,9 @@ type QwenRunner struct {
 	// Path to the qwen binary. Defaults to "qwen" (resolved via PATH).
 	BinaryPath string
 	MCP        *MCPManager
+	// UploadDir is the server-side directory where task attachments are stored.
+	// Reserved for future use if Qwen CLI gains an --image flag.
+	UploadDir string
 }
 
 func (r *QwenRunner) binary() string {

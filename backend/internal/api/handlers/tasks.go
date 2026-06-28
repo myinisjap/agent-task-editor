@@ -2,13 +2,16 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -17,13 +20,53 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
-type TasksHandler struct {
-	q      *gen.Queries
-	engine *workflow.Engine
+// taskResponse is a JSON-serialization wrapper for gen.Task that ensures the
+// Attachments field is emitted as a JSON array ([]string) rather than a raw
+// JSON string.  gen.Task stores Attachments as a string column containing a
+// JSON-encoded array; embedding the struct and shadowing the field with
+// json.RawMessage lets us pass the stored JSON bytes through as-is.
+type taskResponse struct {
+	gen.Task
+	Attachments json.RawMessage `json:"attachments"`
 }
 
-func NewTasksHandler(q *gen.Queries, engine *workflow.Engine) *TasksHandler {
-	return &TasksHandler{q: q, engine: engine}
+// toTaskResponse converts a gen.Task to its wire representation.  If the
+// stored attachments string is not valid JSON it falls back to an empty array
+// so the frontend always receives a proper array.
+func toTaskResponse(t gen.Task) taskResponse {
+	raw := json.RawMessage(t.Attachments)
+	// Validate that the stored value is actually parseable JSON; fall back to
+	// an empty array if it is not (e.g. the column was never set).
+	var probe []string
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		raw = json.RawMessage("[]")
+	}
+	return taskResponse{Task: t, Attachments: raw}
+}
+
+// toTaskResponses converts a slice of gen.Task values.
+func toTaskResponses(tasks []gen.Task) []taskResponse {
+	out := make([]taskResponse, len(tasks))
+	for i, t := range tasks {
+		out[i] = toTaskResponse(t)
+	}
+	return out
+}
+
+// maxUploadSize is the maximum total multipart body size (50 MB).
+const maxUploadSize = 50 << 20
+
+// maxSingleFile is the maximum size per image file (10 MB).
+const maxSingleFile = 10 << 20
+
+type TasksHandler struct {
+	q         *gen.Queries
+	engine    *workflow.Engine
+	uploadDir string
+}
+
+func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string) *TasksHandler {
+	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir}
 }
 
 func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -43,10 +86,131 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, tasks)
+	JSON(w, http.StatusOK, toTaskResponses(tasks))
 }
 
 func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
+	contentType := r.Header.Get("Content-Type")
+
+	var title, description, taskType, repoID, workflowID string
+	var attachmentPaths []string
+
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		// Parse multipart form (max 50 MB total)
+		if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+			Err(w, http.StatusBadRequest, "failed to parse multipart form: "+err.Error())
+			return
+		}
+		title = r.FormValue("title")
+		description = r.FormValue("description")
+		taskType = r.FormValue("type")
+		repoID = r.FormValue("repo_id")
+		workflowID = r.FormValue("workflow_id")
+
+		// We need a task ID before saving files
+		taskID := uuid.NewString()
+
+		// Handle uploaded image files
+		if r.MultipartForm != nil && r.MultipartForm.File != nil {
+			files := r.MultipartForm.File["attachments"]
+			for _, fh := range files {
+				// Validate size
+				if fh.Size > maxSingleFile {
+					Err(w, http.StatusBadRequest, fmt.Sprintf("file %q exceeds 10 MB limit", fh.Filename))
+					return
+				}
+				// Validate MIME type
+				f, err := fh.Open()
+				if err != nil {
+					Err(w, http.StatusInternalServerError, "failed to open uploaded file")
+					return
+				}
+				defer f.Close() //nolint:errcheck
+
+				// Read first 512 bytes for content sniffing
+				buf := make([]byte, 512)
+				n, _ := f.Read(buf)
+				detectedType := http.DetectContentType(buf[:n])
+				if !strings.HasPrefix(detectedType, "image/") {
+					Err(w, http.StatusBadRequest, fmt.Sprintf("file %q is not an image (detected: %s)", fh.Filename, detectedType))
+					return
+				}
+				// Seek back to start for full copy
+				if _, err := f.(io.Seeker).Seek(0, io.SeekStart); err != nil {
+					Err(w, http.StatusInternalServerError, "failed to seek uploaded file")
+					return
+				}
+
+				// Build safe filename: UUID + original extension
+				ext := filepath.Ext(fh.Filename)
+				if ext == "" {
+					ext = ".bin"
+				}
+				safeFilename := uuid.NewString() + ext
+
+				// Ensure upload directory exists
+				uploadDir := h.uploadDir
+				if uploadDir == "" {
+					uploadDir = "uploads"
+				}
+				taskUploadDir := filepath.Join(uploadDir, taskID)
+				if err := os.MkdirAll(taskUploadDir, 0o755); err != nil {
+					Err(w, http.StatusInternalServerError, "failed to create upload directory")
+					return
+				}
+
+				dstPath := filepath.Join(taskUploadDir, safeFilename)
+				dst, err := os.Create(dstPath)
+				if err != nil {
+					Err(w, http.StatusInternalServerError, "failed to create upload file")
+					return
+				}
+				if _, err := io.Copy(dst, f); err != nil {
+					dst.Close() //nolint:errcheck
+					Err(w, http.StatusInternalServerError, "failed to write upload file")
+					return
+				}
+				dst.Close() //nolint:errcheck
+
+				// Store as relative path: "<task_id>/<filename>"
+				attachmentPaths = append(attachmentPaths, filepath.Join(taskID, safeFilename))
+			}
+		}
+
+		// Marshal attachments to JSON
+		attachmentsJSON, err := json.Marshal(attachmentPaths)
+		if err != nil {
+			Err(w, http.StatusInternalServerError, "failed to marshal attachments")
+			return
+		}
+
+		if title == "" || repoID == "" || workflowID == "" {
+			Err(w, http.StatusBadRequest, "title, repo_id, and workflow_id are required")
+			return
+		}
+		if taskType == "" {
+			taskType = "feature"
+		}
+
+		task, err := h.q.CreateTask(r.Context(), gen.CreateTaskParams{
+			ID:          taskID,
+			Title:       title,
+			Description: description,
+			Type:        taskType,
+			Label:       "not_ready",
+			RepoID:      repoID,
+			WorkflowID:  workflowID,
+			Attachments: string(attachmentsJSON),
+		})
+		if err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		JSON(w, http.StatusCreated, toTaskResponse(task))
+		return
+	}
+
+	// Fallback: JSON body (no attachments)
 	var body struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
@@ -74,12 +238,13 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Label:       "not_ready",
 		RepoID:      body.RepoID,
 		WorkflowID:  body.WorkflowID,
+		Attachments: "[]",
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusCreated, task)
+	JSON(w, http.StatusCreated, toTaskResponse(task))
 }
 
 func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +253,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "task not found")
 		return
 	}
-	JSON(w, http.StatusOK, task)
+	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -112,17 +277,26 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, task)
+	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 func (h *TasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	// Best-effort: tear down the task's worktree before deleting the row. The
 	// branch is kept for review. Look up the repo path for the worktree-remove.
-	if task, err := h.q.GetTask(r.Context(), taskID); err == nil && task.WorktreePath != "" {
-		if repo, rerr := h.q.GetRepo(r.Context(), task.RepoID); rerr == nil {
-			if out, gerr := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "worktree", "remove", "--force", task.WorktreePath).CombinedOutput(); gerr != nil {
-				slog.Warn("delete task: remove worktree", "task_id", taskID, "err", gerr, "out", strings.TrimSpace(string(out)))
+	if task, err := h.q.GetTask(r.Context(), taskID); err == nil {
+		if task.WorktreePath != "" {
+			if repo, rerr := h.q.GetRepo(r.Context(), task.RepoID); rerr == nil {
+				if out, gerr := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "worktree", "remove", "--force", task.WorktreePath).CombinedOutput(); gerr != nil {
+					slog.Warn("delete task: remove worktree", "task_id", taskID, "err", gerr, "out", strings.TrimSpace(string(out)))
+				}
+			}
+		}
+		// Best-effort: remove uploaded attachments for this task.
+		if h.uploadDir != "" {
+			taskUploadDir := filepath.Join(h.uploadDir, taskID)
+			if err := os.RemoveAll(taskUploadDir); err != nil {
+				slog.Warn("delete task: remove uploads", "task_id", taskID, "err", err)
 			}
 		}
 	}
@@ -157,7 +331,7 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
 		return
 	}
-	JSON(w, http.StatusOK, updated)
+	JSON(w, http.StatusOK, toTaskResponse(updated))
 }
 
 func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +363,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
 		return
 	}
-	JSON(w, http.StatusOK, updated)
+	JSON(w, http.StatusOK, toTaskResponse(updated))
 }
 
 // humanPathTarget returns the destination label of the human transition with the
@@ -257,7 +431,7 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, "failed to fetch updated task")
 		return
 	}
-	JSON(w, http.StatusOK, updated)
+	JSON(w, http.StatusOK, toTaskResponse(updated))
 }
 
 func (h *TasksHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +464,7 @@ func (h *TasksHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, task)
+	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {

@@ -42,6 +42,16 @@ func main() {
 	} else {
 		slog.Info("repo base dir enforced", "path", cfg.RepoBaseDir)
 	}
+	// Resolve upload directory — defaults to "uploads" next to the database.
+	uploadDir := cfg.UploadDir
+	if uploadDir == "" {
+		uploadDir = "uploads"
+	}
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		slog.Error("failed to create upload directory", "path", uploadDir, "err", err)
+		os.Exit(1)
+	}
+	slog.Info("upload directory ready", "path", uploadDir)
 	if cfg.MCPBinary == "" {
 		slog.Warn("MCP_SERVER_PATH is not set; signal_complete/update_task_notes unavailable to claude/qwen agents")
 	} else {
@@ -117,7 +127,7 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &agent.ClaudeRunner{MCP: mcp}
+			return &agent.ClaudeRunner{MCP: mcp, UploadDir: uploadDir}
 		case "anthropic":
 			// Calls the Anthropic Messages API directly — no CLI binary needed.
 			// Requires LLM_API_KEY to be set. Billed per-token (not Claude Max).
@@ -129,7 +139,7 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &agent.QwenRunner{MCP: mcp}
+			return &agent.QwenRunner{MCP: mcp, UploadDir: uploadDir}
 		default:
 			return &agent.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 		}
@@ -142,8 +152,9 @@ func main() {
 	}
 	pool := agent.NewPool(maxWorkers, db.SQL(), engine, hub)
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
+	dispatcher.SetUploadDir(uploadDir)
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
