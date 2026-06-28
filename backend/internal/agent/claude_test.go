@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -158,4 +159,18 @@ func logContents(logs []LogEntry) []string {
 		out[i] = fmt.Sprintf("[%s] %s @ %s", l.Type, l.Content, l.At.Format(time.RFC3339))
 	}
 	return out
+}
+
+// TestBuildPrompt_FeedbackInjected verifies a human rejection note (carried as
+// RunInput.Feedback) is rendered at the top of the agent prompt — the read side
+// of the reject-feedback round-trip.
+func TestBuildPrompt_FeedbackInjected(t *testing.T) {
+	fb := "needs more tests"
+	out := buildPrompt(RunInput{
+		Task:     Task{Title: "Do the thing"},
+		Feedback: &fb,
+	})
+	if !strings.HasPrefix(out, "FEEDBACK FROM PRIOR REVIEW:\n"+fb) {
+		t.Fatalf("feedback not at top of prompt; got:\n%s", out)
+	}
 }

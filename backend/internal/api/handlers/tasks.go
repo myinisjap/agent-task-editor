@@ -204,18 +204,31 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 
 	taskID := chi.URLParam(r, "id")
 
+	task, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+
 	// Reject follows the "failure" human transition defined for the current label,
 	// unless the caller supplies an explicit target.
 	toLabel := body.ToLabel
 	if toLabel == "" {
-		task, err := h.q.GetTask(r.Context(), taskID)
-		if err != nil {
-			Err(w, http.StatusNotFound, "task not found")
-			return
-		}
 		toLabel, err = h.humanPathTarget(r.Context(), task, "failure")
 		if err != nil {
 			Err(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	// Persist the rejection note as feedback on the prior run so the next dispatch
+	// injects it at the top of the agent's prompt.
+	if body.Note != "" && task.CurrentAgentRunID != nil {
+		if err := h.q.SetAgentRunFeedback(r.Context(), gen.SetAgentRunFeedbackParams{
+			Feedback: &body.Note,
+			ID:       *task.CurrentAgentRunID,
+		}); err != nil {
+			Err(w, http.StatusInternalServerError, "failed to save feedback")
 			return
 		}
 	}

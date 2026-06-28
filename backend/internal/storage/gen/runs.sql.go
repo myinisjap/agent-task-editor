@@ -367,6 +367,20 @@ func (q *Queries) SetAgentRunCompleted(ctx context.Context, arg SetAgentRunCompl
 	return i, err
 }
 
+const setAgentRunFeedback = `-- name: SetAgentRunFeedback :exec
+UPDATE agent_runs SET feedback = ? WHERE id = ?
+`
+
+type SetAgentRunFeedbackParams struct {
+	Feedback *string `json:"feedback"`
+	ID       string  `json:"id"`
+}
+
+func (q *Queries) SetAgentRunFeedback(ctx context.Context, arg SetAgentRunFeedbackParams) error {
+	_, err := q.db.ExecContext(ctx, setAgentRunFeedback, arg.Feedback, arg.ID)
+	return err
+}
+
 const setAgentRunStarted = `-- name: SetAgentRunStarted :one
 UPDATE agent_runs
 SET status = 'running', started_at = CURRENT_TIMESTAMP

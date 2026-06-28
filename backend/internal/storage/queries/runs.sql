@@ -9,6 +9,9 @@ INSERT INTO agent_runs (id, task_id, agent_config_id, status, feedback)
 VALUES (?, ?, ?, 'pending', ?)
 RETURNING *;
 
+-- name: SetAgentRunFeedback :exec
+UPDATE agent_runs SET feedback = ? WHERE id = ?;
+
 -- name: UpdateAgentRunStatus :one
 UPDATE agent_runs
 SET status = ?
