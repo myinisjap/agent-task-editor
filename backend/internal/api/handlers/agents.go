@@ -48,6 +48,10 @@ func safeConfig(cfg gen.AgentConfig) gen.AgentConfig {
 	return cfg
 }
 
+var knownProviders = map[string]bool{
+	"claude": true, "anthropic": true, "llm": true, "opencode": true, "qwen_code": true,
+}
+
 type AgentsHandler struct {
 	q *gen.Queries
 }
@@ -95,6 +99,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Name == "" || body.Provider == "" || body.Model == "" {
 		Err(w, http.StatusBadRequest, "name, provider, and model are required")
+		return
+	}
+	if !knownProviders[body.Provider] {
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code", body.Provider))
 		return
 	}
 	if body.Labels == "" {
@@ -172,6 +180,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Provider != "" && !knownProviders[body.Provider] {
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code", body.Provider))
 		return
 	}
 
