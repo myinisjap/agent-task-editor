@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -70,7 +71,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-derive name from remote URL if not provided.
 	if body.Name == "" && remoteURL != "" {
-		if derived, ok := parseGitHubName(remoteURL); ok {
+		if derived, ok := ghclient.ParseGitHubName(remoteURL); ok {
 			body.Name = derived
 		}
 	}
@@ -174,35 +175,6 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusCreated, repo)
 }
 
-// parseGitHubName extracts the "org/repo" name from a GitHub remote URL.
-// It handles both HTTPS (https://github.com/org/repo[.git]) and SSH
-// (git@github.com:org/repo[.git]) formats.
-// Returns ("", false) if the URL is not a recognised GitHub URL.
-func parseGitHubName(remoteURL string) (string, bool) {
-	remoteURL = strings.TrimSpace(remoteURL)
-
-	// HTTPS: https://github.com/org/repo or https://github.com/org/repo.git
-	if strings.HasPrefix(remoteURL, "https://github.com/") {
-		rest := strings.TrimPrefix(remoteURL, "https://github.com/")
-		rest = strings.TrimSuffix(rest, ".git")
-		parts := strings.SplitN(rest, "/", 3)
-		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
-			return parts[0] + "/" + parts[1], true
-		}
-	}
-
-	// SSH: git@github.com:org/repo or git@github.com:org/repo.git
-	if strings.HasPrefix(remoteURL, "git@github.com:") {
-		rest := strings.TrimPrefix(remoteURL, "git@github.com:")
-		rest = strings.TrimSuffix(rest, ".git")
-		parts := strings.SplitN(rest, "/", 3)
-		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
-			return parts[0] + "/" + parts[1], true
-		}
-	}
-
-	return "", false
-}
 
 func (h *ReposHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.q.DeleteRepo(r.Context(), chi.URLParam(r, "id")); err != nil {

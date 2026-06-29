@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities'
 import type { Task } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
+import { useReposStore } from '../../stores/repos'
 import GitStateBadge from './GitStateBadge'
 
 const TYPE_COLORS: Record<string, string> = {
@@ -22,15 +23,19 @@ export default function TaskCard({
   rateLimitedUntil,
   onDelete,
   isEditable,
+  showColumnLabel,
 }: {
   task: Task
   isRunning?: boolean
   rateLimitedUntil?: string
   onDelete?: () => void
   isEditable?: boolean
+  /** When set, renders a muted column-name badge on the card (used in condensed view) */
+  showColumnLabel?: string
 }) {
   const navigate = useNavigate()
   const { upsert } = useTasksStore()
+  const repoName = useReposStore((s) => s.byId(task.repo_id))?.name
   const [isExpanded, setIsExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(task.title)
@@ -203,12 +208,24 @@ export default function TaskCard({
           )}
         </div>
       </div>
+      {showColumnLabel && (
+        <div className="mb-1.5">
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-medium tracking-wide">
+            {showColumnLabel}
+          </span>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${TYPE_COLORS[task.type] ?? TYPE_COLORS.feature}`}>
           {task.type}
         </span>
         <span className="text-xs text-slate-500 truncate">{task.id.slice(0, 8)}</span>
         <GitStateBadge branch={task.branch} gitState={task.git_state} />
+        {repoName && (
+          <span className="text-xs text-slate-400 truncate max-w-[80px] ml-auto" title={repoName}>
+            {repoName}
+          </span>
+        )}
       </div>
 
       {isExpanded && task.agent_notes && (

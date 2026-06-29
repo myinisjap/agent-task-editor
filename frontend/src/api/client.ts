@@ -46,6 +46,7 @@ export type AgentRun = {
   status: string
   feedback?: string
   stored_info?: string
+  notes?: string | null
   started_at?: string
   completed_at?: string
   created_at: string
@@ -136,7 +137,7 @@ export const api = {
       }
       return request<Task>('/tasks', { method: 'POST', body: JSON.stringify(body) })
     },
-    update: (id: string, body: { title?: string; description?: string; type?: string }) =>
+    update: (id: string, body: { title?: string; description?: string; type?: string; repo_id?: string }) =>
       request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/tasks/${id}`, { method: 'DELETE' }),
     moveLabel: (id: string, to_label: string, note?: string) =>

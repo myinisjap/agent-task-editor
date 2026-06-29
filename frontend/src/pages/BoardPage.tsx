@@ -1,22 +1,46 @@
 import { useEffect, useState } from 'react'
 import { useTasksStore } from '../stores/tasks'
 import { useWorkflowStore } from '../stores/workflow'
+import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
 import { api } from '../api/client'
 import { wsClient } from '../api/ws'
 
+const CONDENSED_STORAGE_KEY = 'board.condensed'
+
 export default function BoardPage() {
   const { tasks, loading, fetch: fetchTasks, upsert } = useTasksStore()
   const { workflows, fetch: fetchWorkflows } = useWorkflowStore()
+  const { fetch: fetchRepos } = useReposStore()
   const [runningTaskIds] = useState(() => new Set<string>())
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
   const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
   const [showNewTask, setShowNewTask] = useState(false)
+  const [condensed, setCondensed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(CONDENSED_STORAGE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const toggleCondensed = () => {
+    setCondensed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(CONDENSED_STORAGE_KEY, String(next))
+      } catch {
+        // ignore storage errors
+      }
+      return next
+    })
+  }
 
   useEffect(() => {
     fetchTasks()
     fetchWorkflows()
+    fetchRepos()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -49,6 +73,7 @@ export default function BoardPage() {
 
   const workflow = workflows[0]
   const labels = workflow?.labels ?? []
+  const transitions = workflow?.transitions ?? []
 
   return (
     <div className="p-6 h-full flex flex-col">
@@ -58,6 +83,18 @@ export default function BoardPage() {
           {workflow && (
             <span className="text-xs text-slate-500">Workflow: {workflow.name}</span>
           )}
+          <button
+            onClick={toggleCondensed}
+            title={condensed ? 'Switch to expanded view' : 'Switch to condensed view'}
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
+              condensed
+                ? 'bg-indigo-700 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
+                : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+            }`}
+          >
+            <span>{condensed ? '⊟' : '⊞'}</span>
+            <span>{condensed ? 'Expanded' : 'Condensed'}</span>
+          </button>
         </div>
       </div>
 
@@ -73,7 +110,15 @@ export default function BoardPage() {
         </div>
       ) : (
         <div className="flex-1 min-h-0">
-          <TaskBoard labels={labels} tasks={tasks} runningTaskIds={runningTaskIds} rateLimitedTaskIds={rateLimitedTaskIds} onAddTask={() => setShowNewTask(true)} />
+          <TaskBoard
+            labels={labels}
+            tasks={tasks}
+            runningTaskIds={runningTaskIds}
+            rateLimitedTaskIds={rateLimitedTaskIds}
+            onAddTask={() => setShowNewTask(true)}
+            condensed={condensed}
+            transitions={transitions}
+          />
         </div>
       )}
     </div>

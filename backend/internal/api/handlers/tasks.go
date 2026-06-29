@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -261,17 +262,39 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		Type        string `json:"type"`
+		RepoID      string `json:"repo_id"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
+	taskID := chi.URLParam(r, "id")
+
+	// Fetch the existing task so we can preserve the repo_id if the caller
+	// didn't supply a new one.
+	existing, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	repoID := existing.RepoID
+	if body.RepoID != "" {
+		// Validate the supplied repo actually exists.
+		if _, rerr := h.q.GetRepo(r.Context(), body.RepoID); rerr != nil {
+			Err(w, http.StatusBadRequest, "repo not found")
+			return
+		}
+		repoID = body.RepoID
+	}
+
 	task, err := h.q.UpdateTask(r.Context(), gen.UpdateTaskParams{
 		Title:       body.Title,
 		Description: body.Description,
 		Type:        body.Type,
-		ID:          chi.URLParam(r, "id"),
+		RepoID:      repoID,
+		ID:          taskID,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -553,7 +576,7 @@ func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "repo has no remote_url")
 		return
 	}
-	ghName, ok := parseGitHubName(*repo.RemoteUrl)
+	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
 	if !ok {
 		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
 		return
@@ -637,13 +660,13 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "repo has no remote_url")
 		return
 	}
-	ghName, ok := parseGitHubName(*repo.RemoteUrl)
+	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
 	if !ok {
 		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
 		return
 	}
 
-	state, prURL, _, ghErr := getPRForBranch(r.Context(), ghName, task.Branch)
+	state, prURL, _, ghErr := ghclient.GetPRForBranch(r.Context(), ghName, task.Branch)
 	if ghErr != nil {
 		// Don't fail hard — return what we have stored plus the error detail
 		JSON(w, http.StatusOK, map[string]any{
