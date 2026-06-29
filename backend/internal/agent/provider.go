@@ -44,7 +44,8 @@ type RunInput struct {
 	RunID       string
 	Task        Task
 	AgentConfig AgentConfig
-	RepoPath    string
+	RepoPath      string
+	RepoRemoteURL string // empty if no remote configured
 	// Available transitions from the task's current label, passed to the MCP sidecar.
 	Transitions []TransitionHint
 	// Human rejection note from a prior run, injected at the top of the prompt
@@ -64,6 +65,7 @@ type Task struct {
 	Label       string
 	WorkflowID  string
 	AgentNotes  string
+	Branch      string
 	// Attachments is a JSON array of relative paths (e.g. ["<task_id>/abc.png"])
 	Attachments []string
 }

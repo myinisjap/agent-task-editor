@@ -39,6 +39,9 @@ type Pool struct {
 	wg         sync.WaitGroup
 	// RateLimits tracks per-agent-config rate-limit blocks. Optional — no-op when nil.
 	RateLimits *RateLimitRegistry
+	// GitName/GitEmail are used for safety-net commits when the container has no git identity.
+	GitName  string
+	GitEmail string
 }
 
 // NewPool creates a new pool. Call Start to begin accepting jobs.
@@ -204,8 +207,13 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// so the task's branch always reflects the run. No-op if the agent committed.
 	if finalStatus == "completed" && job.Input.RepoPath != "" {
 		msg := fmt.Sprintf("task %s: agent run %s", job.Input.Task.ID, job.RunID)
-		if err := commitIfDirty(ctx, job.Input.RepoPath, msg); err != nil {
+		if err := commitIfDirty(ctx, job.Input.RepoPath, msg, p.GitName, p.GitEmail); err != nil {
 			slog.Warn("pool: safety-net commit failed", "component", "pool", "run_id", job.RunID, "err", err)
+		}
+		if job.Input.RepoRemoteURL != "" && job.Input.Task.Branch != "" {
+			if err := PushBranch(ctx, job.Input.RepoPath, job.Input.Task.Branch); err != nil {
+				slog.Warn("pool: push branch failed", "component", "pool", "run_id", job.RunID, "branch", job.Input.Task.Branch, "err", err)
+			}
 		}
 	}
 

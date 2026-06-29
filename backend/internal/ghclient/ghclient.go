@@ -52,7 +52,11 @@ func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL 
 	}
 
 	if len(prs) == 0 {
-		// Branch exists but no PR yet
+		// No PR yet — verify the branch actually exists on the remote.
+		chk := exec.CommandContext(ctx, "gh", "api", "repos/"+repoName+"/branches/"+branch, "--silent")
+		if chk.Run() != nil {
+			return "", "", 0, nil // branch not on remote yet
+		}
 		return "pushed", "", 0, nil
 	}
 

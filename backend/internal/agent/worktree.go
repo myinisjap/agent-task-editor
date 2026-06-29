@@ -91,7 +91,7 @@ func defaultBaseRef(ctx context.Context, repoPath string) (string, error) {
 // commitIfDirty stages and commits any uncommitted changes in the worktree.
 // No-op (nil) when the tree is clean. This is the safety-net: agents may commit
 // their own work, but anything left dirty is captured here.
-func commitIfDirty(ctx context.Context, wtPath, msg string) error {
+func commitIfDirty(ctx context.Context, wtPath, msg, gitName, gitEmail string) error {
 	out, err := git(ctx, wtPath, "status", "--porcelain")
 	if err != nil {
 		return fmt.Errorf("git status: %w: %s", err, strings.TrimSpace(string(out)))
@@ -102,7 +102,7 @@ func commitIfDirty(ctx context.Context, wtPath, msg string) error {
 	if out, err := git(ctx, wtPath, "add", "-A"); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	if out, err := git(ctx, wtPath, "commit", "-m", msg); err != nil {
+	if out, err := git(ctx, wtPath, "-c", "user.name="+gitName, "-c", "user.email="+gitEmail, "commit", "-m", msg); err != nil {
 		return fmt.Errorf("git commit: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
