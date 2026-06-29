@@ -63,7 +63,7 @@ An agent run began.
 ```
 
 ### `task.agent_done`
-An agent run completed.
+An agent run completed (any terminal run status).
 
 ```json
 {
@@ -86,6 +86,34 @@ The agent called `request_human` and is waiting for input.
     "task_id": "uuid",
     "run_id": "uuid",
     "message": "Please review the schema changes before I continue."
+  }
+}
+```
+
+### `task.rate_limited`
+An agent run was rate-limited by the provider and will be retried automatically.
+
+```json
+{
+  "type": "task.rate_limited",
+  "payload": {
+    "task_id": "uuid",
+    "run_id": "uuid",
+    "agent_config_id": "uuid",
+    "unblocked_at": "RFC3339 timestamp when retries resume"
+  }
+}
+```
+
+### `task.git_state_changed`
+The task's GitHub PR state changed (fired by the background GitHub sync).
+
+```json
+{
+  "type": "task.git_state_changed",
+  "payload": {
+    "task_id": "uuid",
+    "git_state": "pr_open | pr_merged | pr_closed | pushed | \"\""
   }
 }
 ```
@@ -120,3 +148,5 @@ The frontend `WSClient` (`frontend/src/api/ws.ts`) handles:
 ## Hub Architecture
 
 The server-side hub broadcasts to all connected clients that are subscribed to the relevant task. Events published by the pool (agent logs, status changes) and the workflow engine (label changes) flow through a single in-process channel. Each client has a 256-message send buffer; slow clients that fill their buffer have their connection dropped gracefully.
+
+`agent.log` events with a `task_id` are only delivered to clients subscribed to that task. All other events (label changes, agent started/done, rate limited, etc.) are broadcast to all connected clients.
