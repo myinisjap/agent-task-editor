@@ -32,6 +32,7 @@ services:
       # then this mount shares that session with the container.
       # appuser home is /home/appuser, so mount there (not /root).
       - ${HOME}/.claude:/home/node/.claude
+      - ${HOME}/.claude.json:/home/node/.claude.json
       # GitHub CLI auth — run 'gh auth login' on your host machine first,
       # then this mount shares that credential with the container.
       # The :ro flag makes it read-only (the container never writes new auth).
