@@ -177,6 +177,113 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 
+func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// Fetch existing repo so we can fall back to its values for omitted fields.
+	existing, err := h.q.GetRepo(r.Context(), id)
+	if err != nil {
+		Err(w, http.StatusNotFound, "repo not found")
+		return
+	}
+
+	var body struct {
+		Name       *string `json:"name"`
+		Path       *string `json:"path"`
+		RemoteURL  *string `json:"remote_url"`
+		WorkflowID *string `json:"workflow_id"`
+	}
+	if err := decode(r, &body); err != nil {
+		Err(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Merge: use provided value or fall back to existing.
+	name := existing.Name
+	if body.Name != nil {
+		name = strings.TrimSpace(*body.Name)
+	}
+
+	path := existing.Path
+	if body.Path != nil {
+		path = strings.TrimSpace(*body.Path)
+	}
+
+	remoteURL := existing.RemoteUrl
+	if body.RemoteURL != nil {
+		trimmed := strings.TrimSpace(*body.RemoteURL)
+		if trimmed == "" {
+			remoteURL = nil
+		} else {
+			remoteURL = &trimmed
+		}
+	}
+
+	workflowID := existing.WorkflowID
+	if body.WorkflowID != nil {
+		trimmed := strings.TrimSpace(*body.WorkflowID)
+		if trimmed == "" {
+			workflowID = nil
+		} else {
+			workflowID = &trimmed
+		}
+	}
+
+	// Validate required fields.
+	if name == "" {
+		Err(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if path == "" {
+		Err(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	// Expand ~ to the home directory.
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+
+	// Enforce base-dir restriction when configured.
+	if h.repoBaseDir != "" {
+		realPath, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			realPath = filepath.Clean(path)
+		}
+		realBase, err := filepath.EvalSymlinks(h.repoBaseDir)
+		if err != nil {
+			realBase = filepath.Clean(h.repoBaseDir)
+		}
+		sep := string(os.PathSeparator)
+		if realPath != realBase && !strings.HasPrefix(realPath+sep, realBase+sep) {
+			Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
+			return
+		}
+	}
+
+	// Verify the path is still a valid git repository.
+	if err := exec.CommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+		Err(w, http.StatusBadRequest, "path is not a git repository")
+		return
+	}
+
+	repo, err := h.q.UpdateRepo(r.Context(), gen.UpdateRepoParams{
+		ID:         id,
+		Name:       name,
+		Path:       path,
+		RemoteUrl:  remoteURL,
+		WorkflowID: workflowID,
+	})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	setClaudeTrust(path)
+	JSON(w, http.StatusOK, repo)
+}
+
 func (h *ReposHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.q.DeleteRepo(r.Context(), chi.URLParam(r, "id")); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

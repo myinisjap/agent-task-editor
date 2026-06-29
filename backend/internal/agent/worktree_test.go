@@ -66,11 +66,11 @@ func TestProvisionIsIdempotentAndDiffsTaskWork(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt1, "new.txt"), []byte("work\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := commitIfDirty(ctx, wt1, "task work"); err != nil {
+	if err := commitIfDirty(ctx, wt1, "task work", "Test User", "test@example.com"); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 	// Clean tree → no-op, no error.
-	if err := commitIfDirty(ctx, wt1, "noop"); err != nil {
+	if err := commitIfDirty(ctx, wt1, "noop", "Test User", "test@example.com"); err != nil {
 		t.Fatalf("commit on clean tree: %v", err)
 	}
 

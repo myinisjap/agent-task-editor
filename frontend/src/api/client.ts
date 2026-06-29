@@ -200,6 +200,8 @@ export const api = {
     get: (id: string) => request<Repo>(`/repos/${id}`),
     create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null }) =>
+      request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
   },
