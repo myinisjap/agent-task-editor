@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -575,7 +576,7 @@ func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "repo has no remote_url")
 		return
 	}
-	ghName, ok := parseGitHubName(*repo.RemoteUrl)
+	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
 	if !ok {
 		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
 		return
@@ -659,13 +660,13 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "repo has no remote_url")
 		return
 	}
-	ghName, ok := parseGitHubName(*repo.RemoteUrl)
+	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
 	if !ok {
 		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
 		return
 	}
 
-	state, prURL, _, ghErr := getPRForBranch(r.Context(), ghName, task.Branch)
+	state, prURL, _, ghErr := ghclient.GetPRForBranch(r.Context(), ghName, task.Branch)
 	if ghErr != nil {
 		// Don't fail hard — return what we have stored plus the error detail
 		JSON(w, http.StatusOK, map[string]any{
