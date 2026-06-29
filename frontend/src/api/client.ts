@@ -46,6 +46,7 @@ export type AgentRun = {
   status: string
   feedback?: string
   stored_info?: string
+  notes?: string | null
   started_at?: string
   completed_at?: string
   created_at: string
