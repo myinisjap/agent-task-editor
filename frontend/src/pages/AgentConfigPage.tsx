@@ -150,7 +150,7 @@ export default function AgentConfigPage() {
     } else {
       setModelList(null)
     }
-  }, [form.provider])
+  }, [form.provider]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectAgent(a: AgentConfig) {
     setSelected(a)

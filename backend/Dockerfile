@@ -36,6 +36,7 @@ COPY --from=builder /app/bin/mcp-server .
 RUN chown -R node:node /app
 
 USER node
+# bind-mounted repos are owned by the host UID, not node — allow git to read them
 RUN git config --global safe.directory '*'
 
 EXPOSE 8080

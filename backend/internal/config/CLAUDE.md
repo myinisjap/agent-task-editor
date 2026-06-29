@@ -15,6 +15,8 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `LLMAPIKey` | `LLM_API_KEY` | `llm_api_key` | _(empty)_ |
 | `MaxWorkers` | `MAX_WORKERS` | `max_workers` | `5` |
 | `RepoBaseDir` | `REPO_BASE_DIR` | `repo_base_dir` | _(empty)_ |
+| `UploadDir` | `UPLOAD_DIR` | `upload_dir` | `uploads` (next to DB) |
+| `GitHubSyncInterval` | `GITHUB_SYNC_INTERVAL` | `github_sync_interval` | `30s` |
 
 ## Loading Order
 
