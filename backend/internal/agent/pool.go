@@ -185,6 +185,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 		Status:     finalStatus,
 		StoredInfo: result.StoredInfo,
+		Notes:      result.Notes,
 		ID:         job.RunID,
 	}); err != nil {
 		slog.Error("pool: set run completed", "component", "pool", "run_id", job.RunID, "err", err)

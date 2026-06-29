@@ -440,6 +440,9 @@ export default function TaskDetailPage() {
                       {run.stored_info && (
                         <StoredInfoPanel runId={run.id} info={run.stored_info} />
                       )}
+                      {run.notes && (
+                        <NotesPanel notes={run.notes} />
+                      )}
                     </Fragment>
                   ))}
                 </div>
@@ -575,6 +578,26 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div className="flex items-center gap-2">
       <span className="text-xs text-slate-500 w-16">{label}</span>
       {children}
+    </div>
+  )
+}
+
+function NotesPanel({ notes }: { notes: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="ml-2 border-l border-slate-700 pl-2">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 w-full text-left py-0.5"
+      >
+        <span>{open ? '▾' : '▸'}</span>
+        <span>agent notes</span>
+      </button>
+      {open && (
+        <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 mt-1 whitespace-pre-wrap max-h-48 overflow-y-auto font-sans">
+          {notes}
+        </pre>
+      )}
     </div>
   )
 }

@@ -41,6 +41,7 @@ type AgentRun struct {
 	StartedAt     *time.Time `json:"started_at"`
 	CompletedAt   *time.Time `json:"completed_at"`
 	CreatedAt     time.Time  `json:"created_at"`
+	Notes         *string    `json:"notes"`
 }
 
 type Repo struct {

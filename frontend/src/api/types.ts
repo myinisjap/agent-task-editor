@@ -1152,6 +1152,8 @@ export interface components {
             /** @enum {string} */
             status?: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled";
             feedback?: string | null;
+            stored_info?: string | null;
+            notes?: string | null;
             /** Format: date-time */
             started_at?: string | null;
             /** Format: date-time */

@@ -339,6 +339,80 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 	return i, err
 }
 
+const updateTaskAttachments = `-- name: UpdateTaskAttachments :one
+UPDATE tasks
+SET attachments = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state
+`
+
+type UpdateTaskAttachmentsParams struct {
+	Attachments string `json:"attachments"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) UpdateTaskAttachments(ctx context.Context, arg UpdateTaskAttachmentsParams) (Task, error) {
+	row := q.db.QueryRowContext(ctx, updateTaskAttachments, arg.Attachments, arg.ID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.Type,
+		&i.Label,
+		&i.RepoID,
+		&i.WorkflowID,
+		&i.CurrentAgentRunID,
+		&i.AgentNotes,
+		&i.ActiveAgentRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Branch,
+		&i.WorktreePath,
+		&i.BaseRef,
+		&i.Attachments,
+		&i.GitState,
+	)
+	return i, err
+}
+
+const updateTaskGitState = `-- name: UpdateTaskGitState :one
+UPDATE tasks
+SET git_state = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state
+`
+
+type UpdateTaskGitStateParams struct {
+	GitState string `json:"git_state"`
+	ID       string `json:"id"`
+}
+
+func (q *Queries) UpdateTaskGitState(ctx context.Context, arg UpdateTaskGitStateParams) (Task, error) {
+	row := q.db.QueryRowContext(ctx, updateTaskGitState, arg.GitState, arg.ID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.Type,
+		&i.Label,
+		&i.RepoID,
+		&i.WorkflowID,
+		&i.CurrentAgentRunID,
+		&i.AgentNotes,
+		&i.ActiveAgentRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Branch,
+		&i.WorktreePath,
+		&i.BaseRef,
+		&i.Attachments,
+		&i.GitState,
+	)
+	return i, err
+}
+
 const updateTaskLabel = `-- name: UpdateTaskLabel :one
 UPDATE tasks
 SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
@@ -391,80 +465,6 @@ type UpdateTaskNotesParams struct {
 
 func (q *Queries) UpdateTaskNotes(ctx context.Context, arg UpdateTaskNotesParams) (Task, error) {
 	row := q.db.QueryRowContext(ctx, updateTaskNotes, arg.AgentNotes, arg.ID)
-	var i Task
-	err := row.Scan(
-		&i.ID,
-		&i.Title,
-		&i.Description,
-		&i.Type,
-		&i.Label,
-		&i.RepoID,
-		&i.WorkflowID,
-		&i.CurrentAgentRunID,
-		&i.AgentNotes,
-		&i.ActiveAgentRunID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Branch,
-		&i.WorktreePath,
-		&i.BaseRef,
-		&i.Attachments,
-		&i.GitState,
-	)
-	return i, err
-}
-
-const updateTaskAttachments = `-- name: UpdateTaskAttachments :one
-UPDATE tasks
-SET attachments = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state
-`
-
-type UpdateTaskAttachmentsParams struct {
-	Attachments string `json:"attachments"`
-	ID          string `json:"id"`
-}
-
-func (q *Queries) UpdateTaskAttachments(ctx context.Context, arg UpdateTaskAttachmentsParams) (Task, error) {
-	row := q.db.QueryRowContext(ctx, updateTaskAttachments, arg.Attachments, arg.ID)
-	var i Task
-	err := row.Scan(
-		&i.ID,
-		&i.Title,
-		&i.Description,
-		&i.Type,
-		&i.Label,
-		&i.RepoID,
-		&i.WorkflowID,
-		&i.CurrentAgentRunID,
-		&i.AgentNotes,
-		&i.ActiveAgentRunID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Branch,
-		&i.WorktreePath,
-		&i.BaseRef,
-		&i.Attachments,
-		&i.GitState,
-	)
-	return i, err
-}
-
-const updateTaskGitState = `-- name: UpdateTaskGitState :one
-UPDATE tasks
-SET git_state = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state
-`
-
-type UpdateTaskGitStateParams struct {
-	GitState string `json:"git_state"`
-	ID       string `json:"id"`
-}
-
-func (q *Queries) UpdateTaskGitState(ctx context.Context, arg UpdateTaskGitStateParams) (Task, error) {
-	row := q.db.QueryRowContext(ctx, updateTaskGitState, arg.GitState, arg.ID)
 	var i Task
 	err := row.Scan(
 		&i.ID,
