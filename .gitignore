@@ -4,6 +4,7 @@ backend/bin/
 *.db
 *.db-shm
 *.db-wal
+*.db.backup
 
 # Node
 frontend/node_modules/

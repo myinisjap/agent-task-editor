@@ -1,5 +1,11 @@
 # Getting Started
 
+## Security Notice
+
+> **Agent Task Editor executes arbitrary shell commands.** AI agents run with full shell access as the server user. The defaults are permissive and intended for localhost use only.
+>
+> For any non-localhost deployment, set `API_TOKEN`, `REPO_BASE_DIR`, and a tight `CORS_ORIGINS` before starting the stack. Run behind a reverse proxy or VPN. See the [Security section in the README](../README.md#security) for the full checklist.
+
 ## Prerequisites
 
 - Docker and Docker Compose (recommended)

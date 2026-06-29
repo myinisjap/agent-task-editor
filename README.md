@@ -86,6 +86,21 @@ Three providers are available. Choose based on your auth setup, billing preferen
 
 ---
 
+## Security
+
+> **This tool executes arbitrary shell commands by design.** AI agents run `Bash` (claude provider) or `run_bash` (anthropic/llm providers) with full shell access as the server user. The security boundary is the container and the `REPO_BASE_DIR` mount — not the application itself.
+
+**Default settings are for localhost only.** Before exposing this to any non-localhost network:
+
+- [ ] Set `API_TOKEN` — without it, anyone who can reach port 8080 can create repos, dispatch agents, and run shell commands
+- [ ] Set `REPO_BASE_DIR` — without it, agents can be pointed at any path on the host
+- [ ] Set `CORS_ORIGINS` to your actual origin instead of `*`
+- [ ] Run behind a reverse proxy or VPN; do not expose port 8080 directly to the internet
+
+The server binds to all interfaces (`:8080`) by default. In Docker, map it to `127.0.0.1:8080` if you don't need external access.
+
+---
+
 ## Key Environment Variables
 
 | Variable | Default | Description |
