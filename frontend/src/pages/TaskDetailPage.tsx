@@ -125,6 +125,8 @@ export default function TaskDetailPage() {
       } else if (event.type === 'task.needs_human' && event.payload.task_id === id) {
         refreshRuns()
         refreshTask()
+      } else if (event.type === 'task.git_state_changed' && event.payload.task_id === id) {
+        setTask((t) => t ? { ...t, git_state: event.payload.git_state } : t)
       }
     })
 
