@@ -77,6 +77,8 @@ Three providers are available. Choose based on your auth setup, billing preferen
 | **`claude`** | Claude Max subscription (authenticated via `~/.claude`) | ✅ `claude` CLI must be installed & authenticated on the host/container | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Without MCP, runs always complete with no label transition. Dangerous env vars (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, etc.) are blocked for security. |
 | **`anthropic`** | Anthropic API key (`LLM_API_KEY`) | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Billed per-token — separate from a Claude Max subscription. No `Glob`/`Grep` tools. |
 | **`llm`** | API key (`LLM_API_KEY`) + `LLM_BASE_URL` | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Works with OpenAI, Azure OpenAI, Ollama, LM Studio, and any OpenAI-compatible endpoint. Same tool set as `anthropic`. Output quality varies by model/endpoint. |
+| **`opencode`** | Provider-specific (configured in `opencode` CLI) | ✅ `opencode` binary must be installed | Depends on opencode config | ❌ MCP tools not available | Label transitions require MCP, which opencode does not support. Runs complete without transitioning the task label. |
+| **`qwen_code`** | Qwen auth (configured in `qwen` CLI) | ✅ `qwen` binary must be installed | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Same MCP setup as the `claude` provider. |
 
 ### Key limitations to be aware of
 
