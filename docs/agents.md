@@ -9,8 +9,8 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | Field | Description |
 |---|---|
 | `name` | Human-readable name |
-| `provider` | `claude`, `anthropic`, or `llm` |
-| `model` | Model identifier (e.g. `claude-sonnet-4-5`, `gpt-4o`) |
+| `provider` | Provider string — see [Providers](#providers) below |
+| `model` | Model identifier (e.g. `claude-sonnet-4-6`, `gpt-4o`) |
 | `labels` | JSON array of label names this agent handles (e.g. `["todo","in-progress"]`) |
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
@@ -19,34 +19,15 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 
 ## Providers
 
-### `claude` — Claude CLI subprocess
+| Provider string | Description | MCP Tools | Details |
+|---|---|---|---|
+| `claude` | Claude CLI subprocess (`claude -p ...`) | ✅ All 5 | [providers/claude.md](providers/claude.md) |
+| `anthropic` | Anthropic Messages API (direct HTTP) | ❌ Native tools | [providers/anthropic.md](providers/anthropic.md) |
+| `opencode` | Opencode CLI (`opencode run --format json`) | ❌ None | [providers/opencode.md](providers/opencode.md) |
+| `qwen_code` | Qwen Code CLI (`qwen -p ...`) | ✅ All 5 | [providers/qwen_code.md](providers/qwen_code.md) |
+| _(any other value)_ | OpenAI-compatible API at `LLM_BASE_URL` | ❌ Native tools | [providers/llm.md](providers/llm.md) |
 
-Runs the `claude` CLI in headless mode using `claude -p <prompt> --output-format stream-json`. The CLI must be installed and authenticated on the host (or container). Auth is shared via the `~/.claude` directory.
-
-**MCP sidecar:** When `MCP_SERVER_PATH` is set, the runner launches the `mcp-server` sidecar alongside the `claude` process. The sidecar exposes two tools over stdio JSON-RPC:
-
-- `signal_complete(next_label, summary)` — tells the system the agent is done and which label to move to
-- `request_human(message)` — pauses the run and surfaces a message for human review
-
-Without MCP, the run always completes with status `completed` (no label transition is attempted).
-
-**Allowed tools:** `Edit, Write, Read, Bash, Glob, Grep` plus the two MCP tools when configured.
-
-**Environment variable security:** The `env` field in agent configs passes additional env vars to the subprocess. Keys that could hijack process execution (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, etc.) are blocked and logged as warnings.
-
-### `anthropic` — Anthropic Messages API
-
-Calls the Anthropic Messages API directly — no CLI binary needed. Requires `LLM_API_KEY` to be set to an Anthropic API key. Billed per-token (separate from Claude Max subscriptions).
-
-Built-in tools: `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human`. The runner handles tool use natively in a multi-turn loop.
-
-Use this provider when you want direct API access without the Claude CLI overhead, or when running in environments where the CLI isn't available.
-
-### `llm` — OpenAI-compatible API
-
-Calls any OpenAI-compatible endpoint (OpenAI, Azure OpenAI, Ollama, LM Studio, etc.) at `LLM_BASE_URL`. Requires `LLM_API_KEY`.
-
-Same built-in tool set as the `anthropic` provider.
+For per-provider deep-dives (credentials, tool availability, limitations, setup), see the [providers/](providers/) directory.
 
 ## Dispatcher
 
@@ -97,7 +78,7 @@ running
 | `tool_call` | Tool invocation (Edit, Bash, signal_complete, etc.) |
 | `tool_result` | Result returned to the agent after a tool call |
 
-## Prompt Construction (ClaudeRunner)
+## Prompt Construction
 
 The user prompt sent to the agent is assembled as:
 
@@ -107,16 +88,47 @@ The user prompt sent to the agent is assembled as:
 
 ---]
 
-[IMPLEMENTATION PLAN:
-<prior plan content, if any>
+[NOTES FROM PRIOR AGENT:
+<agent_notes from the task, if any>
 
 ---]
 
 Task: <title>
 
 <description>
+
+[ATTACHED IMAGES (available in .task_attachments/ within the repo):
+- .task_attachments/<filename>
+...]
 ```
 
-The system prompt is the agent config's `system_prompt` field, with this suffix always appended:
+The `"NOTES FROM PRIOR AGENT:"` section contains the task's `agent_notes` field — content that prior agents wrote via `update_task_notes`. This is the primary handoff mechanism between agents in a multi-step workflow.
 
-> When your work is complete, call the signal_complete tool with the next workflow label and a summary. If you need human input before continuing, call request_human.
+### System Prompt Construction
+
+The system prompt is the agent config's `system_prompt` field (defaults to a generic software engineer instruction if empty), with the following always appended:
+
+1. **Repo path injection:** `"The repository you are working on is located at: <path>"`
+2. **Notes handling instruction:** tells the agent to read the NOTES FROM PRIOR AGENT section carefully
+3. **Notes writing instruction:** tells the agent to call `update_task_notes` before `signal_complete`, using `append:true` if prior notes were present
+4. **Completion instruction:** `"When your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"`
+
+## MCP Tools (claude and qwen_code providers)
+
+When `MCP_SERVER_PATH` is set, the `claude` and `qwen_code` providers launch an MCP sidecar that exposes 5 tools:
+
+| Tool | Description |
+|---|---|
+| `get_task_transitions` | Call first — returns available transitions for the current label |
+| `signal_complete(outcome, summary)` | Mark the run done; outcome must be `"success"` or `"failure"` |
+| `request_human(message)` | Pause for human input |
+| `update_task_notes(notes, append?)` | Write notes for subsequent agents |
+| `store_info(info)` | Store run summary visible in the task UI |
+
+See [mcp-tools.md](mcp-tools.md) for the full tool reference including parameters, return values, and behaviour details.
+
+## Environment Variable Security
+
+The `env` field in agent configs passes additional env vars to the subprocess. Keys that could hijack process execution are blocked and logged as warnings:
+
+`PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`
