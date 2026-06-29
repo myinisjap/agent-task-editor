@@ -22,12 +22,15 @@ export default function TaskCard({
   rateLimitedUntil,
   onDelete,
   isEditable,
+  showColumnLabel,
 }: {
   task: Task
   isRunning?: boolean
   rateLimitedUntil?: string
   onDelete?: () => void
   isEditable?: boolean
+  /** When set, renders a muted column-name badge on the card (used in condensed view) */
+  showColumnLabel?: string
 }) {
   const navigate = useNavigate()
   const { upsert } = useTasksStore()
@@ -203,6 +206,13 @@ export default function TaskCard({
           )}
         </div>
       </div>
+      {showColumnLabel && (
+        <div className="mb-1.5">
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-medium tracking-wide">
+            {showColumnLabel}
+          </span>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${TYPE_COLORS[task.type] ?? TYPE_COLORS.feature}`}>
           {task.type}
