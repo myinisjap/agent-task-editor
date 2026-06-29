@@ -22,10 +22,10 @@ services:
       # Optional: GitHub token as a fallback if ~/.config/gh isn't mounted.
       # gh CLI picks this up automatically; set it here to enable PR state sync
       # without mounting the gh config directory.
-      # - GITHUB_TOKEN=ghp_...
+      - GITHUB_TOKEN=${GH_TOKEN:-}
       # Set to the host directory containing your repos. The backend rewrites
       # paths under this directory to /repos inside the container automatically.
-      - REPO_BASE_DIR=${HOME}/code_projects
+      - REPO_BASE_DIR=${REPO_BASE_DIR:-/tmp/repos}
     volumes:
       - db_data:/data
       # Claude Max auth — run 'claude login' on your host machine first,

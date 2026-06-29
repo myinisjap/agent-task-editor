@@ -29,6 +29,11 @@ unset _prefix _UNSAFE_PREFIXES
 export REPO_BASE_DIR
 export UID=${UID:-$(id -u)} GID=${GID:-$(id -g)}
 
+# Extract GH token from gh CLI (keyring or hosts.yml) if not already set.
+if [[ -z "$GH_TOKEN" ]] && command -v gh &>/dev/null; then
+  GH_TOKEN=$(gh auth token 2>/dev/null) && export GH_TOKEN
+fi
+
 CMD=${1:-start}
 
 case "$CMD" in
