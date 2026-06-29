@@ -134,3 +134,9 @@ cd backend && go build -o mcp-server ./cmd/mcp-server
 | [docs/agents.md](docs/agents.md) | Providers, dispatcher, worker pool, run lifecycle, prompt construction |
 | [docs/api.md](docs/api.md) | Full REST API endpoint reference |
 | [docs/websocket.md](docs/websocket.md) | Live log streaming WebSocket protocol |
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
