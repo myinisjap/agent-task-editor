@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { api, type Task, type AgentRun, type AgentLog, type Workflow } from '../api/client'
+import { api, type Task, type AgentRun, type AgentLog, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { parseDiff, type FileDiff } from '../lib/parseDiff'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
@@ -29,6 +29,8 @@ export default function TaskDetailPage() {
   const [editTitle, setEditTitle] = useState('')
   const [editDesc, setEditDesc] = useState('')
   const [editType, setEditType] = useState('')
+  const [editRepoId, setEditRepoId] = useState('')
+  const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
   const logBottomRef = useRef<HTMLDivElement>(null)
@@ -54,6 +56,11 @@ export default function TaskDetailPage() {
   useEffect(() => {
     fetchAgents()
   }, [fetchAgents])
+
+  // Load repos list for the edit form
+  useEffect(() => {
+    api.repos.list().then(setRepos).catch(() => {})
+  }, [])
 
   // Initial load
   useEffect(() => {
@@ -152,6 +159,7 @@ export default function TaskDetailPage() {
     setEditTitle(task.title)
     setEditDesc(task.description ?? '')
     setEditType(task.type)
+    setEditRepoId(task.repo_id)
     setTaskSaveError('')
     setEditingTask(true)
   }
@@ -170,6 +178,7 @@ export default function TaskDetailPage() {
         title: editTitle.trim(),
         description: editDesc.trim(),
         type: editType,
+        repo_id: editRepoId,
       })
       setTask(updated)
       setEditingTask(false)
@@ -318,6 +327,20 @@ export default function TaskDetailPage() {
                     ))}
                   </select>
                 </div>
+                {repos.length > 0 && (
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">Repo</label>
+                    <select
+                      value={editRepoId}
+                      onChange={(e) => setEditRepoId(e.target.value)}
+                      className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-400"
+                    >
+                      {repos.map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {taskSaveError && (
                   <p className="text-xs text-red-400">{taskSaveError}</p>
                 )}

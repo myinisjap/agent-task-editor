@@ -262,17 +262,39 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		Type        string `json:"type"`
+		RepoID      string `json:"repo_id"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
+	taskID := chi.URLParam(r, "id")
+
+	// Fetch the existing task so we can preserve the repo_id if the caller
+	// didn't supply a new one.
+	existing, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	repoID := existing.RepoID
+	if body.RepoID != "" {
+		// Validate the supplied repo actually exists.
+		if _, rerr := h.q.GetRepo(r.Context(), body.RepoID); rerr != nil {
+			Err(w, http.StatusBadRequest, "repo not found")
+			return
+		}
+		repoID = body.RepoID
+	}
+
 	task, err := h.q.UpdateTask(r.Context(), gen.UpdateTaskParams{
 		Title:       body.Title,
 		Description: body.Description,
 		Type:        body.Type,
-		ID:          chi.URLParam(r, "id"),
+		RepoID:      repoID,
+		ID:          taskID,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
