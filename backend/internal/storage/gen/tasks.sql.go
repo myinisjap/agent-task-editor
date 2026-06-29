@@ -297,7 +297,7 @@ func (q *Queries) SetTaskWorktree(ctx context.Context, arg SetTaskWorktreeParams
 
 const updateTask = `-- name: UpdateTask :one
 UPDATE tasks
-SET title = ?, description = ?, type = ?, updated_at = CURRENT_TIMESTAMP
+SET title = ?, description = ?, type = ?, repo_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state
 `
@@ -306,6 +306,7 @@ type UpdateTaskParams struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Type        string `json:"type"`
+	RepoID      string `json:"repo_id"`
 	ID          string `json:"id"`
 }
 
@@ -314,6 +315,7 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		arg.Title,
 		arg.Description,
 		arg.Type,
+		arg.RepoID,
 		arg.ID,
 	)
 	var i Task

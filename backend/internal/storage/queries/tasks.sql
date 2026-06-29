@@ -11,7 +11,7 @@ RETURNING id, title, description, type, label, repo_id, workflow_id, current_age
 
 -- name: UpdateTask :one
 UPDATE tasks
-SET title = ?, description = ?, type = ?, updated_at = CURRENT_TIMESTAMP
+SET title = ?, description = ?, type = ?, repo_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state;
 
