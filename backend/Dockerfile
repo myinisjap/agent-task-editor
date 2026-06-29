@@ -16,6 +16,7 @@ RUN apk add --no-cache ca-certificates git github-cli
 
 # Install Claude Code CLI globally so 'claude' is on PATH
 RUN npm install -g @anthropic-ai/claude-code
+ENV SHELL=/bin/sh
 
 # Remap the existing node user to match the host user's UID/GID so bind-mounted
 # repo files are writable. Defaults to 1000:1000 if not passed at build time.
