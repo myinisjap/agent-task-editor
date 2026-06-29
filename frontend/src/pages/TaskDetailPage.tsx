@@ -6,6 +6,8 @@ import { parseDiff, type FileDiff } from '../lib/parseDiff'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
 import AgentLogEntry from '../components/board/AgentLogEntry'
 import { useAgentsStore } from '../stores/agents'
+import GitStateBadge from '../components/board/GitStateBadge'
+import GitHubAuthWarning from '../components/shared/GitHubAuthWarning'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -23,6 +25,12 @@ export default function TaskDetailPage() {
   const [diffLoading, setDiffLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
+  const [editingTask, setEditingTask] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDesc, setEditDesc] = useState('')
+  const [editType, setEditType] = useState('')
+  const [taskSaving, setTaskSaving] = useState(false)
+  const [taskSaveError, setTaskSaveError] = useState('')
   const logBottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
@@ -95,6 +103,7 @@ export default function TaskDetailPage() {
           setLogs((prev) => [...prev, { ...entry, id: entry.id ?? crypto.randomUUID() }])
         }
       } else if (event.type === 'task.label_changed' && event.payload.task_id === id) {
+        setEditingTask(false)
         refreshTask()
       } else if (event.type === 'task.agent_started' && event.payload.task_id === id) {
         refreshRuns()
@@ -133,6 +142,43 @@ export default function TaskDetailPage() {
   const isHumanGateLabel = task
     ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
     : false
+
+  const isStartingColumn = task && workflow
+    ? [...(workflow.labels ?? [])].sort((a, b) => a.sort_order - b.sort_order)[0]?.name === task.label
+    : false
+
+  const handleStartEdit = () => {
+    if (!task) return
+    setEditTitle(task.title)
+    setEditDesc(task.description ?? '')
+    setEditType(task.type)
+    setTaskSaveError('')
+    setEditingTask(true)
+  }
+
+  const handleCancelEdit = () => {
+    setEditingTask(false)
+    setTaskSaveError('')
+  }
+
+  const handleTaskSave = async () => {
+    if (!id || !editTitle.trim()) return
+    setTaskSaving(true)
+    setTaskSaveError('')
+    try {
+      const updated = await api.tasks.update(id, {
+        title: editTitle.trim(),
+        description: editDesc.trim(),
+        type: editType,
+      })
+      setTask(updated)
+      setEditingTask(false)
+    } catch (e: any) {
+      setTaskSaveError(e.message ?? String(e))
+    } finally {
+      setTaskSaving(false)
+    }
+  }
 
   const handleRerun = async () => {
     if (!id) return
@@ -215,37 +261,105 @@ export default function TaskDetailPage() {
               >
                 ← Board
               </button>
-              <button
-                onClick={async () => {
-                  if (!id || !window.confirm('Delete this task?')) return
-                  await api.tasks.delete(id)
-                  navigate('/board')
-                }}
-                className="text-xs text-red-700 hover:text-red-400"
-              >
-                Delete
-              </button>
+              <div className="flex items-center gap-3">
+                {isStartingColumn && !editingTask && (
+                  <button
+                    onClick={handleStartEdit}
+                    className="text-xs text-indigo-400 hover:text-indigo-300"
+                    title="Edit task"
+                  >
+                    ✎ Edit
+                  </button>
+                )}
+                <button
+                  onClick={async () => {
+                    if (!id || !window.confirm('Delete this task?')) return
+                    await api.tasks.delete(id)
+                    navigate('/board')
+                  }}
+                  className="text-xs text-red-700 hover:text-red-400"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
-            <div>
-              <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
-              {task.description && (
-                <p className="text-sm text-slate-400 mt-2">{task.description}</p>
-              )}
-              {task.attachments && task.attachments.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-3">
-                  {task.attachments.map((rel) => (
-                    <img
-                      key={rel}
-                      src={`/api/v1/uploads/${rel}`}
-                      alt="attachment"
-                      className="max-h-48 rounded border border-slate-700 cursor-pointer hover:border-slate-500 transition-colors"
-                      onClick={() => window.open(`/api/v1/uploads/${rel}`, '_blank')}
-                      title="Click to open full size"
-                    />
-                  ))}
+
+            {editingTask ? (
+              <div className="flex flex-col gap-3">
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">Title</label>
+                  <input
+                    autoFocus
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400"
+                    placeholder="Task title"
+                  />
                 </div>
-              )}
-            </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">Description</label>
+                  <textarea
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)}
+                    rows={4}
+                    className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400 resize-none"
+                    placeholder="Description (optional)"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">Type</label>
+                  <select
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value)}
+                    className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-400"
+                  >
+                    {['feature', 'bug', 'chore', 'spike'].map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+                {taskSaveError && (
+                  <p className="text-xs text-red-400">{taskSaveError}</p>
+                )}
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={handleCancelEdit}
+                    disabled={taskSaving}
+                    className="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleTaskSave}
+                    disabled={taskSaving || !editTitle.trim()}
+                    className="px-3 py-1.5 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors"
+                  >
+                    {taskSaving ? 'Saving…' : 'Save changes'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
+                {task.description && (
+                  <p className="text-sm text-slate-400 mt-2">{task.description}</p>
+                )}
+                {task.attachments && task.attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {task.attachments.map((rel) => (
+                      <img
+                        key={rel}
+                        src={`/api/v1/uploads/${rel}`}
+                        alt="attachment"
+                        className="max-h-48 rounded border border-slate-700 cursor-pointer hover:border-slate-500 transition-colors"
+                        onClick={() => window.open(`/api/v1/uploads/${rel}`, '_blank')}
+                        title="Click to open full size"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex flex-col gap-2">
               <Row label="Label">
@@ -254,6 +368,32 @@ export default function TaskDetailPage() {
                 </span>
               </Row>
               <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+              {task.branch && (
+                <>
+                  <Row label="Branch">
+                    <span className="text-xs font-mono text-slate-300">{task.branch}</span>
+                  </Row>
+                  <Row label="Git">
+                    <div className="flex items-center gap-2">
+                      <GitStateBadge branch={task.branch} gitState={task.git_state} />
+                      <span className="text-xs text-slate-400">{task.git_state || 'branched'}</span>
+                      <button
+                        onClick={() => {
+                          if (!id) return
+                          api.tasks.githubStatus(id)
+                            .then((s) => setTask((t) => t ? { ...t, git_state: s.git_state } : t))
+                            .catch(() => {})
+                        }}
+                        className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                        title="Sync PR state from GitHub"
+                      >
+                        ↻ Sync
+                      </button>
+                    </div>
+                  </Row>
+                  <GitHubAuthWarning />
+                </>
+              )}
               {task.agent_notes && (
                 <div>
                   <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>

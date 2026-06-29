@@ -612,6 +612,90 @@ func buildPRBody(task gen.Task, commits []string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// GitHubStatus fetches live GitHub PR state for the task's branch using the gh
+// CLI. It updates the stored git_state and returns the current state plus the
+// PR URL (if any).
+func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
+	task, err := h.q.GetTask(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if task.Branch == "" {
+		JSON(w, http.StatusOK, map[string]any{
+			"git_state": "none",
+			"pr_url":    "",
+		})
+		return
+	}
+	repo, err := h.q.GetRepo(r.Context(), task.RepoID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "repo not found")
+		return
+	}
+	if repo.RemoteUrl == nil {
+		Err(w, http.StatusBadRequest, "repo has no remote_url")
+		return
+	}
+	ghName, ok := parseGitHubName(*repo.RemoteUrl)
+	if !ok {
+		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
+		return
+	}
+
+	state, prURL, _, ghErr := getPRForBranch(r.Context(), ghName, task.Branch)
+	if ghErr != nil {
+		// Don't fail hard — return what we have stored plus the error detail
+		JSON(w, http.StatusOK, map[string]any{
+			"git_state": task.GitState,
+			"pr_url":    "",
+			"error":     ghErr.Error(),
+		})
+		return
+	}
+
+	// Persist the refreshed state
+	updated, err := h.q.UpdateTaskGitState(r.Context(), gen.UpdateTaskGitStateParams{
+		GitState: state,
+		ID:       task.ID,
+	})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, map[string]any{
+		"git_state": updated.GitState,
+		"pr_url":    prURL,
+	})
+}
+
+// UpdateGitState allows humans or agents to manually set the git state of a task.
+func (h *TasksHandler) UpdateGitState(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		GitState string `json:"git_state"`
+	}
+	if err := decode(r, &body); err != nil {
+		Err(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	validStates := map[string]bool{
+		"": true, "pushed": true, "pr_open": true, "pr_merged": true, "pr_closed": true,
+	}
+	if !validStates[body.GitState] {
+		Err(w, http.StatusBadRequest, "invalid git_state value")
+		return
+	}
+	task, err := h.q.UpdateTaskGitState(r.Context(), gen.UpdateTaskGitStateParams{
+		GitState: body.GitState,
+		ID:       chi.URLParam(r, "id"),
+	})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, toTaskResponse(task))
+}
+
 func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	runs, err := h.q.ListAgentRuns(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {

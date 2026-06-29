@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN git_state TEXT NOT NULL DEFAULT '';

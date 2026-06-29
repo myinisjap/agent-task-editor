@@ -32,6 +32,11 @@ export type Task = {
   attachments?: string[]
   created_at: string
   updated_at: string
+  // git / PR tracking fields
+  branch?: string
+  worktree_path?: string
+  base_ref?: string
+  git_state?: string
 }
 
 export type AgentRun = {
@@ -145,6 +150,10 @@ export const api = {
      rerun: (id: string) => request<void>(`/tasks/${id}/rerun`, { method: 'POST' }),
     diff: (id: string) => request<{ branch: string; diff: string }>(`/tasks/${id}/diff`),
     prUrl: (id: string) => request<{ url: string }>(`/tasks/${id}/pr-url`),
+    githubStatus: (id: string) =>
+      request<{ git_state: string; pr_url: string; error?: string }>(`/tasks/${id}/github-status`),
+    updateGitState: (id: string, git_state: string) =>
+      request<Task>(`/tasks/${id}/git-state`, { method: 'PATCH', body: JSON.stringify({ git_state }) }),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),
@@ -194,5 +203,8 @@ export const api = {
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),
+  },
+  github: {
+    authStatus: () => request<{ authed: boolean; note: string }>('/github/auth-status'),
   },
 }
