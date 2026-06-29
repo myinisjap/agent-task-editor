@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -154,6 +156,7 @@ func main() {
 	rateLimits := agent.NewRateLimitRegistry()
 	pool := agent.NewPool(maxWorkers, db.SQL(), engine, hub)
 	pool.RateLimits = rateLimits
+	pool.GitName, pool.GitEmail = resolveGitIdentity()
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 	dispatcher.RateLimits = rateLimits
 	dispatcher.SetUploadDir(uploadDir)
@@ -202,4 +205,50 @@ func main() {
 	if err := srv.Shutdown(shutCtx); err != nil {
 		slog.Error("shutdown error", "err", err)
 	}
+}
+
+// resolveGitIdentity returns (name, email) for safety-net commits.
+// Tries `git config` first (covers local dev), then `gh api user` (covers containers with gh auth).
+// Falls back to ("ate", "ate") if neither works.
+func resolveGitIdentity() (string, string) {
+	name := strings.TrimSpace(runOutput("git", "config", "user.name"))
+	email := strings.TrimSpace(runOutput("git", "config", "user.email"))
+	if name != "" && email != "" {
+		slog.Info("git identity resolved from git config", "name", name, "email", email)
+		return name, email
+	}
+	// gh api user returns JSON; parse with simple prefix matching to avoid import churn.
+	out := runOutput("gh", "api", "user", "--jq", "[.name,.email,.login] | @tsv")
+	parts := strings.Split(strings.TrimSpace(out), "\t")
+	if len(parts) == 3 {
+		ghName, ghEmail, ghLogin := parts[0], parts[1], parts[2]
+		if name == "" && ghName != "" && ghName != "null" {
+			name = ghName
+		}
+		if email == "" && ghEmail != "" && ghEmail != "null" {
+			email = ghEmail
+		}
+		if email == "" && ghLogin != "" && ghLogin != "null" {
+			email = ghLogin + "@users.noreply.github.com"
+		}
+		if name == "" {
+			name = ghLogin
+		}
+	}
+	if name == "" {
+		name = "ate"
+	}
+	if email == "" {
+		email = "ate"
+	}
+	slog.Info("git identity resolved", "name", name, "email", email)
+	return name, email
+}
+
+func runOutput(name string, args ...string) string {
+	out, err := exec.Command(name, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }

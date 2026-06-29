@@ -190,9 +190,10 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		Provider: provider,
 		Input: RunInput{
 			RunID:              runID,
-			Task:               Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Attachments: attachmentRels},
+			Task:               Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, Attachments: attachmentRels},
 			AgentConfig:        agentCfg,
 			RepoPath:           workDir,
+			RepoRemoteURL:      derefStr(repo.RemoteUrl),
 			Transitions:        transitions,
 			Feedback:           feedback,
 			PriorPlan:          agentNotes,
@@ -289,6 +290,13 @@ func copyFile(src, dst string) error {
 	defer out.Close() //nolint:errcheck
 	_, err = io.Copy(out, in)
 	return err
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
