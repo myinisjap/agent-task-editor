@@ -38,7 +38,7 @@ The default `docker-compose.yml` shares your existing Claude auth with the conta
 
 ```yaml
 volumes:
-  - ${HOME}/.claude:/home/appuser/.claude   # auth credentials
+  - ${HOME}/.claude:/home/node/.claude   # auth credentials
 ```
 
 The `claude` CLI binary itself is baked into the backend image — you don't need to mount it from the host. You do need to authenticate on your host machine (`claude login`) so the credentials are present at `~/.claude` before starting the stack.
