@@ -45,6 +45,10 @@ func provisionWorktree(ctx context.Context, repoPath, taskID, title string) (wtP
 		return wtPath, branch, base, nil
 	}
 
+	// Fetch latest before branching so the task starts from current main.
+	// Best-effort: if there's no remote or no connectivity, proceed with local state.
+	_, _ = git(ctx, repoPath, "fetch", "--prune")
+
 	baseRef, err = defaultBaseRef(ctx, repoPath)
 	if err != nil {
 		return "", "", "", err
