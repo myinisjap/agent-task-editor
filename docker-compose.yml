@@ -16,12 +16,20 @@ services:
       # Optional: use provider=anthropic in agent configs to call the API directly
       # instead of the CLI (different billing — pay-per-token vs Claude Max)
       # - LLM_API_KEY=sk-ant-...
+      # Optional: GitHub token as a fallback if ~/.config/gh isn't mounted.
+      # gh CLI picks this up automatically; set it here to enable PR state sync
+      # without mounting the gh config directory.
+      # - GITHUB_TOKEN=ghp_...
     volumes:
       - db_data:/data
       # Claude Max auth — run 'claude login' on your host machine first,
       # then this mount shares that session with the container.
       # appuser home is /home/appuser, so mount there (not /root).
       - ${HOME}/.claude:/home/appuser/.claude
+      # GitHub CLI auth — run 'gh auth login' on your host machine first,
+      # then this mount shares that credential with the container.
+      # The :ro flag makes it read-only (the container never writes new auth).
+      - ${HOME}/.config/gh:/home/appuser/.config/gh:ro
       # Mount your code repositories here.
       # Register them in the UI using the container path (e.g. /repos/myproject).
       # - ${HOME}/code:/repos
