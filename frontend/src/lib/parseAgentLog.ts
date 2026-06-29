@@ -228,6 +228,23 @@ function parseToolUse(obj: Record<string, unknown>): ParsedLog | null {
   return { kind: 'tool_call', toolName, input, summary }
 }
 
+/** Parse a system/init event into a human-readable summary */
+function parseSystemInit(obj: Record<string, unknown>): ParsedLog {
+  const model = (obj.model ?? '') as string
+  const tools = (Array.isArray(obj.tools) ? obj.tools : []) as string[]
+  const mcpServers = (Array.isArray(obj.mcp_servers) ? obj.mcp_servers : []) as { name: string; status?: string }[]
+  const sessionId = (obj.session_id ?? '') as string
+
+  const parts: string[] = []
+  if (model) parts.push(`model: ${model}`)
+  if (tools.length > 0) parts.push(`tools: ${tools.join(', ')}`)
+  if (mcpServers.length > 0) parts.push(`MCP: ${mcpServers.map((s) => s.name).join(', ')}`)
+
+  const event = `Session started · ${parts.join(' · ')}`
+  const detail = sessionId ? `session: ${sessionId}` : undefined
+  return { kind: 'system_event', event, detail }
+}
+
 /** Parse a result/completion event */
 function parseResult(obj: Record<string, unknown>): ParsedLog | null {
   if (obj.type !== 'result') return null
@@ -248,6 +265,7 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
     if (obj) {
       // ponytail: hide all SDK system events (thinking_tokens, thinking, etc) — noise
       if (obj.type === 'system' && !(debug || !HIDDEN_SUBTYPES.has(obj.subtype as string))) return { kind: 'hidden' }
+      if (obj.type === 'system' && obj.subtype === 'init') return parseSystemInit(obj)
       const msg = parseMessage(obj)
       if (msg) return msg
       const toolUse = parseToolUse(obj)
@@ -266,6 +284,7 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
     if (obj) {
       // ponytail: hide all SDK system events — noise
       if (obj.type === 'system' && !(debug || !HIDDEN_SUBTYPES.has(obj.subtype as string))) return { kind: 'hidden' }
+      if (obj.type === 'system' && obj.subtype === 'init') return parseSystemInit(obj)
       if (obj.type === 'result') {
         const r = parseResult(obj)
         if (r) return r
