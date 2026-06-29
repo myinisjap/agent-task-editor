@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities'
 import type { Task } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
+import { useReposStore } from '../../stores/repos'
 import GitStateBadge from './GitStateBadge'
 
 const TYPE_COLORS: Record<string, string> = {
@@ -31,6 +32,7 @@ export default function TaskCard({
 }) {
   const navigate = useNavigate()
   const { upsert } = useTasksStore()
+  const repoName = useReposStore((s) => s.byId(task.repo_id))?.name
   const [isExpanded, setIsExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(task.title)
@@ -209,6 +211,11 @@ export default function TaskCard({
         </span>
         <span className="text-xs text-slate-500 truncate">{task.id.slice(0, 8)}</span>
         <GitStateBadge branch={task.branch} gitState={task.git_state} />
+        {repoName && (
+          <span className="text-xs text-slate-400 truncate max-w-[80px] ml-auto" title={repoName}>
+            {repoName}
+          </span>
+        )}
       </div>
 
       {isExpanded && task.agent_notes && (

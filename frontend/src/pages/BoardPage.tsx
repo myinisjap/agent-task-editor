@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTasksStore } from '../stores/tasks'
 import { useWorkflowStore } from '../stores/workflow'
+import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
 import { api } from '../api/client'
@@ -9,6 +10,7 @@ import { wsClient } from '../api/ws'
 export default function BoardPage() {
   const { tasks, loading, fetch: fetchTasks, upsert } = useTasksStore()
   const { workflows, fetch: fetchWorkflows } = useWorkflowStore()
+  const { fetch: fetchRepos } = useReposStore()
   const [runningTaskIds] = useState(() => new Set<string>())
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
   const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
@@ -17,6 +19,7 @@ export default function BoardPage() {
   useEffect(() => {
     fetchTasks()
     fetchWorkflows()
+    fetchRepos()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
