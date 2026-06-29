@@ -17,15 +17,25 @@ RUN apk add --no-cache ca-certificates git github-cli
 # Install Claude Code CLI globally so 'claude' is on PATH
 RUN npm install -g @anthropic-ai/claude-code
 
-RUN addgroup -S appuser && adduser -S appuser -G appuser && \
-    mkdir -p /data && chown appuser:appuser /data
+# Remap the existing node user to match the host user's UID/GID so bind-mounted
+# repo files are writable. Defaults to 1000:1000 if not passed at build time.
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+RUN if [ "$HOST_GID" != "1000" ]; then \
+      delgroup node 2>/dev/null; addgroup -g "$HOST_GID" node; \
+    fi && \
+    if [ "$HOST_UID" != "1000" ]; then \
+      deluser node 2>/dev/null; adduser -D -u "$HOST_UID" -G node node; \
+    fi && \
+    mkdir -p /data && chown node:node /data
 
 WORKDIR /app
 COPY --from=builder /app/bin/server .
 COPY --from=builder /app/bin/mcp-server .
-RUN chown -R appuser:appuser /app
+RUN chown -R node:node /app
 
-USER appuser
+USER node
+RUN git config --global safe.directory '*'
 
 EXPOSE 8080
 CMD ["./server"]

@@ -16,12 +16,12 @@ const worktreeDir = ".ate-worktrees"
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 // branchName builds a concise, [a-z0-9-]-only branch name from a task's title
-// and ID, e.g. "ate-fix-login-redirect-3f9a1c2b".
+// and ID, e.g. "ate-fix-log-3f9a1c2b".
 func branchName(taskID, title string) string {
 	slug := slugRe.ReplaceAllString(strings.ToLower(title), "-")
 	slug = strings.Trim(slug, "-")
-	if len(slug) > 30 {
-		slug = strings.Trim(slug[:30], "-")
+	if len(slug) > 7 {
+		slug = strings.Trim(slug[:7], "-")
 	}
 	if slug == "" {
 		slug = "task"
