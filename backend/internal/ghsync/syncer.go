@@ -21,7 +21,6 @@ type Publisher interface {
 // GitHub PR state via the `gh` CLI. Eligible tasks are those that:
 //   - have a branch set
 //   - are not already in state "pr_merged"
-//   - are not in a terminal workflow label
 type Syncer struct {
 	q        *gen.Queries
 	hub      Publisher
@@ -60,11 +59,6 @@ func (s *Syncer) sweep(ctx context.Context) {
 		return
 	}
 
-	// Build a per-workflow cache of label terminal status to avoid repeated DB
-	// queries for the same workflow.
-	// map[workflowID][labelName] = isTerminal
-	terminalCache := map[string]map[string]bool{}
-
 	// Build a per-repo cache of ghName ("org/repo") to avoid repeated DB queries.
 	repoCache := map[string]string{} // repoID -> ghName (empty = not a GitHub repo)
 
@@ -78,11 +72,6 @@ func (s *Syncer) sweep(ctx context.Context) {
 		if task.GitState == "pr_merged" {
 			continue
 		}
-		// Skip tasks in a terminal label.
-		if s.isTerminalLabel(ctx, task.WorkflowID, task.Label, terminalCache) {
-			continue
-		}
-
 		// Resolve org/repo for this task's repo (cached).
 		ghName, ok := repoCache[task.RepoID]
 		if !ok {
@@ -97,24 +86,6 @@ func (s *Syncer) sweep(ctx context.Context) {
 		s.syncTask(ctx, task, ghName)
 	}
 	slog.Info("ghsync: sweep done", "total_tasks", len(tasks), "checked", checked)
-}
-
-// isTerminalLabel returns true if the given label is terminal in the workflow.
-func (s *Syncer) isTerminalLabel(ctx context.Context, workflowID, label string, cache map[string]map[string]bool) bool {
-	if _, loaded := cache[workflowID]; !loaded {
-		labels, err := s.q.ListWorkflowLabels(ctx, workflowID)
-		if err != nil {
-			slog.Warn("ghsync: list workflow labels", "workflow_id", workflowID, "err", err)
-			cache[workflowID] = map[string]bool{} // empty — don't re-query
-			return false
-		}
-		m := make(map[string]bool, len(labels))
-		for _, l := range labels {
-			m[l.Name] = l.IsTerminal != 0
-		}
-		cache[workflowID] = m
-	}
-	return cache[workflowID][label]
 }
 
 // resolveGHName fetches the repo from DB and extracts the "org/repo" name.
