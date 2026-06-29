@@ -27,7 +27,7 @@ func isValidGitRef(ref string) bool {
 
 type ReposHandler struct {
 	q           *gen.Queries
-	repoBaseDir string
+	repoBaseDir string // host-side base dir; paths under it are rewritten to /repos inside the container
 }
 
 func NewReposHandler(q *gen.Queries, repoBaseDir string) *ReposHandler {
@@ -143,19 +143,13 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If a host-to-container path mapping is configured, transparently rewrite host paths.
 	// Enforce base-dir restriction when configured.
 	if h.repoBaseDir != "" {
-		realPath, err := filepath.EvalSymlinks(body.Path)
-		if err != nil {
-			// Path may not exist yet; fall back to clean path for the prefix check.
-			realPath = filepath.Clean(body.Path)
-		}
-		realBase, err := filepath.EvalSymlinks(h.repoBaseDir)
-		if err != nil {
-			realBase = filepath.Clean(h.repoBaseDir)
-		}
 		sep := string(os.PathSeparator)
-		if realPath != realBase && !strings.HasPrefix(realPath+sep, realBase+sep) {
+		base := filepath.Clean(h.repoBaseDir)
+		clean := filepath.Clean(body.Path)
+		if clean != base && !strings.HasPrefix(clean+sep, base+sep) {
 			Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
 			return
 		}

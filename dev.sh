@@ -3,6 +3,32 @@ export LLM_API_KEY=${LLM_API_KEY:-"your_api_key_here"}
 export LLM_BASE_URL=${LLM_BASE_URL:-"http://localhost:8081/v1"}
 export LLM_MODEL=${LLM_MODEL:-"gemma-4-12B-it-qat-UD-Q4_K_XL"}
 
+# Parse optional --repo-dir <path> before the command.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo-dir) REPO_BASE_DIR="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
+if [[ -z "$REPO_BASE_DIR" ]]; then
+  echo "Error: REPO_BASE_DIR must be set (pass --repo-dir <path> or export REPO_BASE_DIR)"
+  exit 1
+fi
+
+# Reject paths that would shadow critical system directories inside the container.
+_UNSAFE_PREFIXES=("/" "/app" "/bin" "/boot" "/data" "/dev" "/etc" "/home" "/lib" "/lib64" "/proc" "/root" "/run" "/sbin" "/sys" "/tmp" "/usr" "/var")
+for _prefix in "${_UNSAFE_PREFIXES[@]}"; do
+  if [[ "$REPO_BASE_DIR" == "$_prefix" ]]; then
+    echo "Error: REPO_BASE_DIR='$REPO_BASE_DIR' is a system path and cannot be used as a repo base"
+    exit 1
+  fi
+done
+unset _prefix _UNSAFE_PREFIXES
+
+export REPO_BASE_DIR
+export UID=${UID:-$(id -u)} GID=${GID:-$(id -g)}
+
 CMD=${1:-start}
 
 case "$CMD" in
@@ -65,7 +91,7 @@ case "$CMD" in
     wait $BACKEND_PID $FRONTEND_PID
     ;;
   *)
-    echo "Usage: $0 [start|stop|restart|logs|login|shell|dev]"
+    echo "Usage: $0 [--repo-dir <path>] [start|stop|restart|logs|login|shell|dev]"
     exit 1
     ;;
 esac
