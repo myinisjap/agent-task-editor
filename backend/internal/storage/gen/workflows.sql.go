@@ -167,6 +167,23 @@ func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) 
 	return i, err
 }
 
+const getWorkflowByName = `-- name: GetWorkflowByName :one
+SELECT id, name, description, created_at, updated_at FROM workflows WHERE name = ?
+`
+
+func (q *Queries) GetWorkflowByName(ctx context.Context, name string) (Workflow, error) {
+	row := q.db.QueryRowContext(ctx, getWorkflowByName, name)
+	var i Workflow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getWorkflowTransition = `-- name: GetWorkflowTransition :one
 SELECT id, workflow_id, from_label, to_label, trigger_type, agent_config_id, path FROM workflow_transitions
 WHERE workflow_id = ? AND from_label = ? AND to_label = ?

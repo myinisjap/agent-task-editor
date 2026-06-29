@@ -11,7 +11,7 @@ const CONDENSED_STORAGE_KEY = 'board.condensed'
 
 export default function BoardPage() {
   const { tasks, loading, fetch: fetchTasks, upsert } = useTasksStore()
-  const { workflows, fetch: fetchWorkflows } = useWorkflowStore()
+  const { workflows, fetch: fetchWorkflows, setSelectedId, active } = useWorkflowStore()
   const { fetch: fetchRepos } = useReposStore()
   const [runningTaskIds] = useState(() => new Set<string>())
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
@@ -71,17 +71,32 @@ export default function BoardPage() {
     return off
   }, [upsert])
 
-  const workflow = workflows[0]
+  const workflow = active()
   const labels = workflow?.labels ?? []
   const transitions = workflow?.transitions ?? []
+  // Filter tasks to only those belonging to the active workflow
+  const filteredTasks = workflow ? tasks.filter((t) => t.workflow_id === workflow.id) : tasks
 
   return (
     <div className="p-6 h-full flex flex-col">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-slate-100">Board</h1>
         <div className="flex items-center gap-3">
-          {workflow && (
-            <span className="text-xs text-slate-500">Workflow: {workflow.name}</span>
+          {workflows.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-slate-500">Workflow:</span>
+              <select
+                value={workflow?.id ?? ''}
+                onChange={(e) => setSelectedId(e.target.value)}
+                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+              >
+                {workflows.map((wf) => (
+                  <option key={wf.id} value={wf.id}>
+                    {wf.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
           <button
             onClick={toggleCondensed}
@@ -112,7 +127,7 @@ export default function BoardPage() {
         <div className="flex-1 min-h-0">
           <TaskBoard
             labels={labels}
-            tasks={tasks}
+            tasks={filteredTasks}
             runningTaskIds={runningTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
             onAddTask={() => setShowNewTask(true)}

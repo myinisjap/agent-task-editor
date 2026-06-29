@@ -44,5 +44,8 @@ RETURNING *;
 -- name: DeleteWorkflowTransitions :exec
 DELETE FROM workflow_transitions WHERE workflow_id = ?;
 
+-- name: GetWorkflowByName :one
+SELECT * FROM workflows WHERE name = ?;
+
 -- name: CountWorkflows :one
 SELECT COUNT(*) FROM workflows;
