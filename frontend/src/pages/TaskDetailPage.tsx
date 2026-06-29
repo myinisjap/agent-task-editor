@@ -5,6 +5,9 @@ import { wsClient } from '../api/ws'
 import { parseDiff, type FileDiff } from '../lib/parseDiff'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
 import AgentLogEntry from '../components/board/AgentLogEntry'
+import { useAgentsStore } from '../stores/agents'
+import GitStateBadge from '../components/board/GitStateBadge'
+import GitHubAuthWarning from '../components/shared/GitHubAuthWarning'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -30,6 +33,7 @@ export default function TaskDetailPage() {
   const [taskSaveError, setTaskSaveError] = useState('')
   const logBottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
+  const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
 
   const refreshTask = useCallback(() => {
     if (!id) return
@@ -45,6 +49,11 @@ export default function TaskDetailPage() {
       }
     }).catch(() => {})
   }, [id])
+
+  // Fetch agent configs for name lookup
+  useEffect(() => {
+    fetchAgents()
+  }, [fetchAgents])
 
   // Initial load
   useEffect(() => {
@@ -359,6 +368,32 @@ export default function TaskDetailPage() {
                 </span>
               </Row>
               <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+              {task.branch && (
+                <>
+                  <Row label="Branch">
+                    <span className="text-xs font-mono text-slate-300">{task.branch}</span>
+                  </Row>
+                  <Row label="Git">
+                    <div className="flex items-center gap-2">
+                      <GitStateBadge branch={task.branch} gitState={task.git_state} />
+                      <span className="text-xs text-slate-400">{task.git_state || 'branched'}</span>
+                      <button
+                        onClick={() => {
+                          if (!id) return
+                          api.tasks.githubStatus(id)
+                            .then((s) => setTask((t) => t ? { ...t, git_state: s.git_state } : t))
+                            .catch(() => {})
+                        }}
+                        className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                        title="Sync PR state from GitHub"
+                      >
+                        ↻ Sync
+                      </button>
+                    </div>
+                  </Row>
+                  <GitHubAuthWarning />
+                </>
+              )}
               {task.agent_notes && (
                 <div>
                   <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
@@ -388,6 +423,11 @@ export default function TaskDetailPage() {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-mono truncate">{run.id.slice(0, 8)}</span>
+                          {agentConfigs.find((a) => a.id === run.agent_config_id)?.name && (
+                            <span className="text-slate-400 truncate text-xs">
+                              {agentConfigs.find((a) => a.id === run.agent_config_id)?.name}
+                            </span>
+                          )}
                           <span className={`shrink-0 ${
                             run.status === 'completed'     ? 'text-emerald-400' :
                             run.status === 'running'       ? 'text-yellow-400 animate-pulse' :

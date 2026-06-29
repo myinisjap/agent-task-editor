@@ -69,6 +69,7 @@ type Task struct {
 	WorktreePath      string    `json:"worktree_path"`
 	BaseRef           string    `json:"base_ref"`
 	Attachments       string    `json:"attachments"`
+	GitState          string    `json:"git_state"`
 }
 
 type TaskLabelHistory struct {
