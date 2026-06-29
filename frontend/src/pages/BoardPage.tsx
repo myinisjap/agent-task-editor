@@ -10,6 +10,8 @@ export default function BoardPage() {
   const { tasks, loading, fetch: fetchTasks, upsert } = useTasksStore()
   const { workflows, fetch: fetchWorkflows } = useWorkflowStore()
   const [runningTaskIds] = useState(() => new Set<string>())
+  // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
+  const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
   const [showNewTask, setShowNewTask] = useState(false)
 
   useEffect(() => {
@@ -25,6 +27,21 @@ export default function BoardPage() {
         const taskId = event.type === 'task.created' ? event.payload.id :
                        event.type === 'task.updated' ? event.payload.id : event.payload.task_id
         api.tasks.get(taskId).then(upsert).catch(() => {})
+      }
+      if (event.type === 'task.rate_limited') {
+        setRateLimitedTaskIds(prev => {
+          const next = new Map(prev)
+          next.set(event.payload.task_id, event.payload.unblocked_at)
+          return next
+        })
+      }
+      if (event.type === 'task.agent_started') {
+        // Clear rate-limit badge when the agent successfully starts again
+        setRateLimitedTaskIds(prev => {
+          const next = new Map(prev)
+          next.delete(event.payload.task_id)
+          return next
+        })
       }
     })
     return off
@@ -56,7 +73,7 @@ export default function BoardPage() {
         </div>
       ) : (
         <div className="flex-1 min-h-0">
-          <TaskBoard labels={labels} tasks={tasks} runningTaskIds={runningTaskIds} onAddTask={() => setShowNewTask(true)} />
+          <TaskBoard labels={labels} tasks={tasks} runningTaskIds={runningTaskIds} rateLimitedTaskIds={rateLimitedTaskIds} onAddTask={() => setShowNewTask(true)} />
         </div>
       )}
     </div>

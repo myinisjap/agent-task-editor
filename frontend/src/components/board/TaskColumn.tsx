@@ -8,11 +8,12 @@ type Props = {
   label: WorkflowLabel
   tasks: Task[]
   runningTaskIds: Set<string>
+  rateLimitedTaskIds?: Map<string, string>
   onAddTask?: () => void
   isStartingColumn?: boolean
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, onAddTask, isStartingColumn }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const { remove } = useTasksStore()
 
@@ -40,6 +41,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, onAddTask, is
             key={task.id}
             task={task}
             isRunning={runningTaskIds.has(task.id)}
+            rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
             onDelete={() => handleDelete(task.id)}
             isEditable={isStartingColumn}
           />

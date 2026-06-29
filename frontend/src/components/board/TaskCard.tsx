@@ -19,11 +19,13 @@ const TASK_TYPES = ['feature', 'bug', 'chore', 'spike']
 export default function TaskCard({
   task,
   isRunning,
+  rateLimitedUntil,
   onDelete,
   isEditable,
 }: {
   task: Task
   isRunning?: boolean
+  rateLimitedUntil?: string
   onDelete?: () => void
   isEditable?: boolean
 }) {
@@ -167,6 +169,14 @@ export default function TaskCard({
         <div className="flex items-center gap-1.5 shrink-0">
           {isRunning && (
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
+          )}
+          {rateLimitedUntil && !isRunning && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
+              title={`Rate limited by API. Retrying after ${new Date(rateLimitedUntil).toLocaleTimeString()}`}
+            >
+              ⏸ API limit
+            </span>
           )}
           {isEditable && (
             <button

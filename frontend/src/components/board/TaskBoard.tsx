@@ -9,10 +9,11 @@ type Props = {
   labels: WorkflowLabel[]
   tasks: Task[]
   runningTaskIds: Set<string>
+  rateLimitedTaskIds?: Map<string, string>
   onAddTask?: () => void
 }
 
-export default function TaskBoard({ labels, tasks, runningTaskIds, onAddTask }: Props) {
+export default function TaskBoard({ labels, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask }: Props) {
   const { upsert } = useTasksStore()
 
   // Require 5px movement to start a drag so clicks still navigate
@@ -52,6 +53,7 @@ export default function TaskBoard({ labels, tasks, runningTaskIds, onAddTask }: 
             label={label}
             tasks={byLabel(label.name)}
             runningTaskIds={runningTaskIds}
+            rateLimitedTaskIds={rateLimitedTaskIds}
             onAddTask={i === 0 ? onAddTask : undefined}
             isStartingColumn={i === 0}
           />

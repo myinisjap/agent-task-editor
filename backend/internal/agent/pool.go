@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -36,6 +37,8 @@ type Pool struct {
 	engine     *workflow.Engine
 	pub        Publisher
 	wg         sync.WaitGroup
+	// RateLimits tracks per-agent-config rate-limit blocks. Optional — no-op when nil.
+	RateLimits *RateLimitRegistry
 }
 
 // NewPool creates a new pool. Call Start to begin accepting jobs.
@@ -135,6 +138,37 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	<-done
 
 	if err != nil {
+		var rl *ErrRateLimit
+		if errors.As(err, &rl) {
+			slog.Warn("pool: agent run rate limited", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "reset_at", rl.ResetAt, "msg", rl.Message)
+			// Register the block in the rate-limit registry.
+			if p.RateLimits != nil {
+				if !rl.ResetAt.IsZero() && rl.ResetAt.After(time.Now()) {
+					p.RateLimits.Block(job.Input.AgentConfig.ID, rl.ResetAt)
+				} else {
+					p.RateLimits.BlockWithBackoff(job.Input.AgentConfig.ID)
+				}
+			}
+			// Mark the run failed and clear the active slot.
+			_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{Status: "failed", ID: job.RunID})
+			_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
+			// Notify the frontend so the task card can show a rate-limit hint.
+			if p.pub != nil {
+				var unblockStr string
+				if p.RateLimits != nil {
+					if until := p.RateLimits.BlockedUntil(job.Input.AgentConfig.ID); !until.IsZero() {
+						unblockStr = until.Format(time.RFC3339)
+					}
+				}
+				p.pub.Publish("task.rate_limited", map[string]any{
+					"task_id":         job.Input.Task.ID,
+					"run_id":          job.RunID,
+					"agent_config_id": job.Input.AgentConfig.ID,
+					"unblocked_at":    unblockStr,
+				})
+			}
+			return
+		}
 		slog.Error("pool: agent run error", "component", "pool", "run_id", job.RunID, "err", err)
 		result = Result{Status: "failed"}
 	}
@@ -227,6 +261,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 				"message": msg,
 			})
 		}
+	}
+
+	// Clear rate-limit backoff on any non-rate-limited completion (success or normal failure).
+	if p.RateLimits != nil {
+		p.RateLimits.Unblock(job.Input.AgentConfig.ID)
 	}
 
 	slog.Info("pool: agent run finished", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "status", finalStatus)

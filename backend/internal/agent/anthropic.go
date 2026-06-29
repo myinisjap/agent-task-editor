@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -164,6 +167,10 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := r.messagesComplete(runCtx, input.AgentConfig.Model, buildSystemPrompt(input), maxTokens, messages)
 		if err != nil {
+			var rl *ErrRateLimit
+			if errors.As(err, &rl) {
+				return Result{Status: "failed"}, rl
+			}
 			return Result{Status: "failed"}, fmt.Errorf("anthropic messages turn %d: %w", turn, err)
 		}
 
@@ -229,6 +236,33 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 	return Result{Status: "failed"}, fmt.Errorf("exceeded max turns (%d)", maxTurns)
 }
 
+// parseAnthropicRateLimitReset tries to read a reset time from Anthropic rate-limit headers.
+// It checks anthropic-ratelimit-requests-reset, anthropic-ratelimit-tokens-reset, and retry-after.
+// Returns zero time if none are usable.
+func parseAnthropicRateLimitReset(h http.Header) time.Time {
+	for _, key := range []string{
+		"anthropic-ratelimit-requests-reset",
+		"anthropic-ratelimit-tokens-reset",
+	} {
+		if v := h.Get(key); v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				return t
+			}
+		}
+	}
+	if v := h.Get("retry-after"); v != "" {
+		// Try seconds integer first
+		if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return time.Now().Add(time.Duration(secs) * time.Second)
+		}
+		// Try HTTP date
+		if t, err := http.ParseTime(v); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 func (r *AnthropicRunner) messagesComplete(ctx context.Context, model, system string, maxTokens int, messages []anthropicMessage) (anthropicResponse, error) {
 	if model == "" {
 		model = "claude-sonnet-4-6"
@@ -256,6 +290,13 @@ func (r *AnthropicRunner) messagesComplete(ctx context.Context, model, system st
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == 429 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return anthropicResponse{}, &ErrRateLimit{
+			ResetAt: parseAnthropicRateLimitReset(resp.Header),
+			Message: strings.TrimSpace(fmt.Sprintf("http 429: %s", body)),
+		}
+	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return anthropicResponse{}, fmt.Errorf("http %d: %s", resp.StatusCode, body)
