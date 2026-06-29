@@ -10,16 +10,17 @@ import (
 )
 
 // ghAuthStatus returns whether gh CLI has valid auth.
-// Primary: checks GITHUB_TOKEN env var (gh picks it up automatically).
-// Fallback: runs `gh auth status` to check for a stored credential.
+// Primary: runs `gh auth status` to check for stored credentials (e.g. from the
+// ~/.config/gh volume mount).
+// Fallback: checks the GITHUB_TOKEN env var (gh picks it up automatically).
 func ghAuthStatus() (authed bool, note string) {
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		return true, "GITHUB_TOKEN env var"
-	}
 	cmd := exec.Command("gh", "auth", "status")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return true, "gh auth"
+	}
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		return true, "GITHUB_TOKEN env var"
 	}
 	return false, strings.TrimSpace(string(out))
 }
