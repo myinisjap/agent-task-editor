@@ -10,9 +10,10 @@ type Props = {
   runningTaskIds: Set<string>
   rateLimitedTaskIds?: Map<string, string>
   onAddTask?: () => void
+  isStartingColumn?: boolean
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const { remove } = useTasksStore()
 
@@ -36,7 +37,14 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
         className={`flex-1 flex flex-col gap-3 p-2 rounded-lg min-h-[100px] transition-colors ${isOver ? 'bg-slate-700/50' : 'bg-slate-800/30'}`}
       >
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} isRunning={runningTaskIds.has(task.id)} rateLimitedUntil={rateLimitedTaskIds?.get(task.id)} onDelete={() => handleDelete(task.id)} />
+          <TaskCard
+            key={task.id}
+            task={task}
+            isRunning={runningTaskIds.has(task.id)}
+            rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
+            onDelete={() => handleDelete(task.id)}
+            isEditable={isStartingColumn}
+          />
         ))}
         {tasks.length === 0 && (
           <div className="text-center text-slate-600 text-sm py-8">No tasks</div>

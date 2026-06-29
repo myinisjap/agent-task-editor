@@ -70,9 +70,20 @@ export default function WorkflowPage() {
         </div>
       </div>
 
-      {/* Split pane: YAML editor left, flowchart right */}
+      {/* Split pane: flowchart left, YAML editor right */}
       <div className="flex-1 p-4 min-h-0 flex gap-4 overflow-hidden">
-        {/* Left: YAML Editor */}
+        {/* Left: Flowchart */}
+        <div className="flex-1 min-w-0 flex flex-col gap-1">
+          <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">
+            Visual Preview
+            <span className="ml-1 normal-case font-normal">(reflects last saved state)</span>
+          </span>
+          <div className="flex-1 rounded border border-slate-700 overflow-hidden bg-slate-950">
+            <WorkflowFlowchart workflow={workflow} />
+          </div>
+        </div>
+
+        {/* Right: YAML Editor */}
         <div className="flex-1 min-w-0 flex flex-col gap-1">
           <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">YAML Editor</span>
           <textarea
@@ -82,17 +93,6 @@ export default function WorkflowPage() {
             className="flex-1 bg-slate-900 border border-slate-700 rounded p-4 text-sm text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
             placeholder="Loading workflow…"
           />
-        </div>
-
-        {/* Right: Flowchart */}
-        <div className="flex-1 min-w-0 flex flex-col gap-1">
-          <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">
-            Visual Preview
-            <span className="ml-1 normal-case font-normal">(reflects last saved state)</span>
-          </span>
-          <div className="flex-1 rounded border border-slate-700 overflow-hidden bg-slate-950">
-            <WorkflowFlowchart workflow={workflow} />
-          </div>
         </div>
       </div>
 

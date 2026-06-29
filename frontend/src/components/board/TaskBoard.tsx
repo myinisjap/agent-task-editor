@@ -55,6 +55,7 @@ export default function TaskBoard({ labels, tasks, runningTaskIds, rateLimitedTa
             runningTaskIds={runningTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
             onAddTask={i === 0 ? onAddTask : undefined}
+            isStartingColumn={i === 0}
           />
         ))}
       </div>
