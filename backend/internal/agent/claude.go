@@ -79,9 +79,6 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	cmd := exec.CommandContext(runCtx, r.binary(), args...)
 	cmd.Dir = input.RepoPath
 	env := mergeEnv(os.Environ(), input.AgentConfig.Env)
-	if os.Getenv("SHELL") == "" {
-		env = append(env, "SHELL=/bin/sh")
-	}
 	if tok := claudeOAuthToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
 	}
