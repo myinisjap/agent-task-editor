@@ -13,6 +13,8 @@ sql:
       - "internal/storage/migrations/008_agent_runs_fk_set_null.up.sql"
       - "internal/storage/migrations/009_drop_rejection_target.up.sql"
       - "internal/storage/migrations/010_task_branch.up.sql"
+      - "internal/storage/migrations/011_task_attachments.up.sql"
+      - "internal/storage/migrations/012_task_git_state.up.sql"
     gen:
       go:
         package: "gen"

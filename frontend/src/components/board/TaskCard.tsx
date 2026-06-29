@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import type { Task } from '../../api/client'
+import GitStateBadge from './GitStateBadge'
 
 const TYPE_COLORS: Record<string, string> = {
   feature: 'bg-blue-900 text-blue-300',
@@ -61,6 +62,7 @@ export default function TaskCard({ task, isRunning, onDelete }: { task: Task; is
           {task.type}
         </span>
         <span className="text-xs text-slate-500 truncate">{task.id.slice(0, 8)}</span>
+        <GitStateBadge branch={task.branch} gitState={task.git_state} />
       </div>
 
       {isExpanded && task.agent_notes && (

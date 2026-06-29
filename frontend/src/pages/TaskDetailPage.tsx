@@ -5,6 +5,8 @@ import { wsClient } from '../api/ws'
 import { parseDiff, type FileDiff } from '../lib/parseDiff'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
 import AgentLogEntry from '../components/board/AgentLogEntry'
+import GitStateBadge from '../components/board/GitStateBadge'
+import GitHubAuthWarning from '../components/shared/GitHubAuthWarning'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -247,6 +249,32 @@ export default function TaskDetailPage() {
                 </span>
               </Row>
               <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+              {task.branch && (
+                <>
+                  <Row label="Branch">
+                    <span className="text-xs font-mono text-slate-300">{task.branch}</span>
+                  </Row>
+                  <Row label="Git">
+                    <div className="flex items-center gap-2">
+                      <GitStateBadge branch={task.branch} gitState={task.git_state} />
+                      <span className="text-xs text-slate-400">{task.git_state || 'branched'}</span>
+                      <button
+                        onClick={() => {
+                          if (!id) return
+                          api.tasks.githubStatus(id)
+                            .then((s) => setTask((t) => t ? { ...t, git_state: s.git_state } : t))
+                            .catch(() => {})
+                        }}
+                        className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                        title="Sync PR state from GitHub"
+                      >
+                        ↻ Sync
+                      </button>
+                    </div>
+                  </Row>
+                  <GitHubAuthWarning />
+                </>
+              )}
               {task.agent_notes && (
                 <div>
                   <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
