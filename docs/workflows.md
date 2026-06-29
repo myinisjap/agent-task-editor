@@ -61,11 +61,22 @@ All labels can also be moved to `not_ready` by a human (parking).
 
 ## Approve and Reject
 
-The `/tasks/{id}/approve` and `/tasks/{id}/reject` endpoints move tasks along human-gated transitions, following the transition's `path`.
+The `/tasks/{id}/approve` and `/tasks/{id}/reject` endpoints move tasks along human-gated transitions.
 
-**Approve** — follows the `success` human transition defined from the current label.
+**Approve** (`POST /tasks/{id}/approve`) — follows the `success` human transition defined for the current label. Optional body:
 
-**Reject** — follows the `failure` human transition defined from the current label. The optional `to_label` body field overrides this.
+```json
+{ "note": "optional note recorded in label history" }
+```
+
+**Reject** (`POST /tasks/{id}/reject`) — follows the `failure` human transition defined for the current label. The `to_label` field overrides the auto-resolved target. The `note` is stored as feedback on the prior agent run and injected at the top of the next run's prompt under `"FEEDBACK FROM PRIOR REVIEW:"`.
+
+```json
+{
+  "note": "Please fix the edge cases in the payment flow",
+  "to_label": "optional override label"
+}
+```
 
 If no matching transition is defined for the current label, the endpoint returns `400`.
 
@@ -76,9 +87,6 @@ Create additional workflows via Settings → Workflows in the UI, or via the RES
 ```http
 POST /api/v1/workflows
 { "name": "My Workflow", "description": "..." }
-
-POST /api/v1/workflows/{id}/labels  # (via workflow editor)
-POST /api/v1/workflows/{id}/transitions
 ```
 
 ### Import / Export
