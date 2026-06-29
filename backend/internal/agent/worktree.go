@@ -20,8 +20,8 @@ var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 func branchName(taskID, title string) string {
 	slug := slugRe.ReplaceAllString(strings.ToLower(title), "-")
 	slug = strings.Trim(slug, "-")
-	if len(slug) > 30 {
-		slug = strings.Trim(slug[:30], "-")
+	if len(slug) > 7 {
+		slug = strings.Trim(slug[:7], "-")
 	}
 	if slug == "" {
 		slug = "task"

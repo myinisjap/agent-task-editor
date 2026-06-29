@@ -34,11 +34,14 @@ func TestBranchNameIsSlugOnly(t *testing.T) {
 	if strings.ContainsAny(got, " /:_!") {
 		t.Fatalf("branch name has illegal chars: %q", got)
 	}
-	if !strings.HasPrefix(got, "ate-fix-login-redirect") {
+	if !strings.HasPrefix(got, "ate-fix-log") {
 		t.Fatalf("unexpected branch name: %q", got)
 	}
 	if !strings.HasSuffix(got, "-3f9a1c2b") {
 		t.Fatalf("short id missing: %q", got)
+	}
+	if len(got) > 20 {
+		t.Fatalf("branch name too long (%d > 20): %q", len(got), got)
 	}
 }
 
