@@ -13,6 +13,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -171,8 +172,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// GitHub PR status auto-sync: polls all eligible tasks on a configurable
+	// interval and pushes "task.git_state_changed" WebSocket events so the
+	// board refreshes automatically without a page reload.
+	ghSyncer := ghsync.New(db.SQL(), hub, cfg.GitHubSyncInterval)
+	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
+
 	go pool.Start(ctx)
 	go dispatcher.Run(ctx)
+	go ghSyncer.Run(ctx)
 
 	go func() {
 		slog.Info("server starting", "port", cfg.Port)
