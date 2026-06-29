@@ -53,6 +53,7 @@ func (s *Syncer) Run(ctx context.Context) {
 
 // sweep iterates all tasks and refreshes GitHub PR state for eligible ones.
 func (s *Syncer) sweep(ctx context.Context) {
+	slog.Info("ghsync: sweep start")
 	tasks, err := s.q.ListTasks(ctx)
 	if err != nil {
 		slog.Warn("ghsync: list tasks failed", "err", err)
@@ -67,6 +68,7 @@ func (s *Syncer) sweep(ctx context.Context) {
 	// Build a per-repo cache of ghName ("org/repo") to avoid repeated DB queries.
 	repoCache := map[string]string{} // repoID -> ghName (empty = not a GitHub repo)
 
+	checked := 0
 	for _, task := range tasks {
 		// Skip tasks with no branch — nothing to check.
 		if task.Branch == "" {
@@ -91,8 +93,10 @@ func (s *Syncer) sweep(ctx context.Context) {
 			continue // not a GitHub repo
 		}
 
+		checked++
 		s.syncTask(ctx, task, ghName)
 	}
+	slog.Info("ghsync: sweep done", "total_tasks", len(tasks), "checked", checked)
 }
 
 // isTerminalLabel returns true if the given label is terminal in the workflow.
