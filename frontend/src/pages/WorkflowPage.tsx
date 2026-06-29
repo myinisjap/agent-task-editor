@@ -112,15 +112,23 @@ export default function WorkflowPage() {
     setError(null)
     setSaved(false)
 
-    api.workflows.get(id).then(setWorkflow)
+    api.workflows.get(id).then(setWorkflow).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : 'Failed to load workflow')
+    })
 
     fetch(api.workflows.exportYaml(id), {
       headers: import.meta.env.VITE_API_TOKEN
         ? { Authorization: `Bearer ${import.meta.env.VITE_API_TOKEN}` }
         : {},
     })
-      .then((r) => r.text())
+      .then((r) => {
+        if (!r.ok) throw new Error(`Failed to load YAML (${r.status})`)
+        return r.text()
+      })
       .then(setYaml)
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Failed to load workflow YAML')
+      })
   }
 
   // Initial load

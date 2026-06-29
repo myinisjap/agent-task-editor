@@ -247,5 +247,10 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	JSON(w, http.StatusCreated, wf)
+	resp, err := h.buildResponse(r, wf)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusCreated, resp)
 }
