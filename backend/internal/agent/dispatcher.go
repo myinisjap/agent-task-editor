@@ -25,6 +25,8 @@ type Dispatcher struct {
 	uploadDir string
 	// ProviderFactory builds a Provider for a given AgentConfig.
 	ProviderFactory func(cfg AgentConfig) Provider
+	// RateLimits is the shared rate-limit registry (optional — no-op when nil).
+	RateLimits *RateLimitRegistry
 }
 
 // NewDispatcher creates a Dispatcher with a 5-second sweep interval.
@@ -86,6 +88,14 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	if matched == nil {
 		slog.Debug("dispatcher: no active config for label", "component", "dispatcher", "task_id", t.ID, "label", t.Label)
 		return
+	}
+
+	// Skip dispatch if the agent config is currently rate-limited.
+	if d.RateLimits != nil {
+		if blocked, until := d.RateLimits.IsBlocked(matched.ID); blocked {
+			slog.Info("dispatcher: skipping rate-limited agent config", "component", "dispatcher", "task_id", t.ID, "agent_config_id", matched.ID, "unblocked_at", until)
+			return
+		}
 	}
 
 	repo, err := d.q.GetRepo(ctx, t.RepoID)

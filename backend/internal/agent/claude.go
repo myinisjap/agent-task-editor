@@ -100,9 +100,10 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("started claude pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg      sync.WaitGroup
-		outcome string
-		mu      sync.Mutex
+		wg           sync.WaitGroup
+		outcome      string
+		rateLimited  bool
+		mu           sync.Mutex
 	)
 	wg.Add(2)
 
@@ -123,6 +124,12 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 				outcome = parsed
 				mu.Unlock()
 			}
+			// Also scan stdout JSON lines for 429 indicators
+			if is429Line(line) {
+				mu.Lock()
+				rateLimited = true
+				mu.Unlock()
+			}
 		}
 	}()
 
@@ -131,7 +138,13 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		defer wg.Done()
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
-			logCh <- LogEntry{Type: LogStderr, Content: scanner.Text(), At: time.Now()}
+			line := scanner.Text()
+			logCh <- LogEntry{Type: LogStderr, Content: line, At: time.Now()}
+			if is429Line(line) {
+				mu.Lock()
+				rateLimited = true
+				mu.Unlock()
+			}
 		}
 	}()
 
@@ -144,6 +157,12 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	}
 	if err != nil {
 		logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited: %v", err), At: time.Now()}
+		mu.Lock()
+		rl := rateLimited
+		mu.Unlock()
+		if rl {
+			return Result{Status: "failed"}, &ErrRateLimit{Message: "claude CLI 429: Request rejected by API rate limit"}
+		}
 	}
 
 	// MCP result takes priority; fall back to OUTCOME text parsing if the
@@ -175,6 +194,14 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		return Result{Status: "failed"}, nil
 	}
 	return Result{Status: "completed", Outcome: outcome}, nil
+}
+
+// is429Line returns true if the log line indicates an API rate-limit rejection.
+func is429Line(line string) bool {
+	return strings.Contains(line, "429") ||
+		strings.Contains(line, "Request rejected") ||
+		strings.Contains(line, "rate limit") ||
+		strings.Contains(line, "rate_limit")
 }
 
 // classifyStreamJSON parses one NDJSON line from claude --output-format stream-json.

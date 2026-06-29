@@ -11,7 +11,7 @@ const TYPE_COLORS: Record<string, string> = {
   spike:   'bg-purple-900 text-purple-300',
 }
 
-export default function TaskCard({ task, isRunning, onDelete }: { task: Task; isRunning?: boolean; onDelete?: () => void }) {
+export default function TaskCard({ task, isRunning, rateLimitedUntil, onDelete }: { task: Task; isRunning?: boolean; rateLimitedUntil?: string; onDelete?: () => void }) {
   const navigate = useNavigate()
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id })
 
@@ -40,6 +40,14 @@ export default function TaskCard({ task, isRunning, onDelete }: { task: Task; is
         <div className="flex items-center gap-1.5 shrink-0">
           {isRunning && (
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
+          )}
+          {rateLimitedUntil && !isRunning && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
+              title={`Rate limited by API. Retrying after ${new Date(rateLimitedUntil).toLocaleTimeString()}`}
+            >
+              ⏸ API limit
+            </span>
           )}
           {onDelete && (
             <button

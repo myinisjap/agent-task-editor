@@ -5,6 +5,7 @@ export type WSEvent =
   | { type: 'task.agent_started'; payload: { task_id: string; run_id: string; agent_name: string } }
   | { type: 'task.agent_done'; payload: { task_id: string; run_id: string; status: string } }
   | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string } }
+  | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
   | { type: 'agent.log'; payload: { task_id: string; run_id: string; entry: AgentLog } }
   | { type: 'task.created'; payload: Task }
   | { type: 'task.updated'; payload: Task }

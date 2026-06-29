@@ -150,8 +150,11 @@ func main() {
 	if maxWorkers <= 0 {
 		maxWorkers = 5
 	}
+	rateLimits := agent.NewRateLimitRegistry()
 	pool := agent.NewPool(maxWorkers, db.SQL(), engine, hub)
+	pool.RateLimits = rateLimits
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
+	dispatcher.RateLimits = rateLimits
 	dispatcher.SetUploadDir(uploadDir)
 
 	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir)

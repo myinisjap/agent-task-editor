@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -164,6 +167,10 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := r.chatComplete(runCtx, input.AgentConfig.Model, messages)
 		if err != nil {
+			var rl *ErrRateLimit
+			if errors.As(err, &rl) {
+				return Result{Status: "failed"}, rl
+			}
 			return Result{Status: "failed"}, fmt.Errorf("chat complete turn %d: %w", turn, err)
 		}
 
@@ -220,6 +227,30 @@ type completionResponse struct {
 	ToolCalls []toolCall
 }
 
+// parseLLMRateLimitReset reads rate-limit reset info from standard retry-after and
+// x-ratelimit-reset-requests / x-ratelimit-reset-tokens headers (OpenAI convention).
+func parseLLMRateLimitReset(h http.Header) time.Time {
+	for _, key := range []string{
+		"x-ratelimit-reset-requests",
+		"x-ratelimit-reset-tokens",
+	} {
+		if v := h.Get(key); v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				return t
+			}
+		}
+	}
+	if v := h.Get("retry-after"); v != "" {
+		if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return time.Now().Add(time.Duration(secs) * time.Second)
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 func (r *LLMRunner) chatComplete(ctx context.Context, model string, messages []chatMessage) (completionResponse, error) {
 	body, _ := json.Marshal(map[string]any{
 		"model":    model,
@@ -240,6 +271,13 @@ func (r *LLMRunner) chatComplete(ctx context.Context, model string, messages []c
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == 429 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return completionResponse{}, &ErrRateLimit{
+			ResetAt: parseLLMRateLimitReset(resp.Header),
+			Message: strings.TrimSpace(fmt.Sprintf("http 429: %s", body)),
+		}
+	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return completionResponse{}, fmt.Errorf("http %d: %s", resp.StatusCode, body)
