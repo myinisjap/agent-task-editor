@@ -69,6 +69,13 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		remoteURL = strings.TrimSpace(*body.RemoteURL)
 	}
 
+	// Expand ~ to the home directory so users can type ~/foo paths.
+	if strings.HasPrefix(body.Path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			body.Path = filepath.Join(home, body.Path[2:])
+		}
+	}
+
 	// Auto-derive name from remote URL if not provided.
 	if body.Name == "" && remoteURL != "" {
 		if derived, ok := ghclient.ParseGitHubName(remoteURL); ok {
