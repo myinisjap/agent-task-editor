@@ -96,6 +96,12 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 	ctx := r.Context()
 	wfID := chi.URLParam(r, "id")
 
+	// Enforce name uniqueness — allow keeping the same name for the same workflow
+	if existing, err := h.q.GetWorkflowByName(ctx, in.Name); err == nil && existing.ID != wfID {
+		Err(w, http.StatusBadRequest, "a workflow with that name already exists")
+		return
+	}
+
 	wf, err := h.q.UpdateWorkflow(ctx, gen.UpdateWorkflowParams{
 		ID:          wfID,
 		Name:        in.Name,
@@ -185,6 +191,13 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 	}
 
 	ctx := r.Context()
+
+	// Enforce name uniqueness on import
+	if _, err := h.q.GetWorkflowByName(ctx, in.Name); err == nil {
+		Err(w, http.StatusBadRequest, "a workflow with that name already exists")
+		return
+	}
+
 	wfID := uuid.NewString()
 	wf, err := h.q.CreateWorkflow(ctx, gen.CreateWorkflowParams{
 		ID:          wfID,
@@ -234,5 +247,10 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	JSON(w, http.StatusCreated, wf)
+	resp, err := h.buildResponse(r, wf)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusCreated, resp)
 }

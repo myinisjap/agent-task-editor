@@ -162,7 +162,8 @@ export const api = {
   workflows: {
     list: () => request<Workflow[]>('/workflows'),
     get: (id: string) => request<Workflow>(`/workflows/${id}`),
-    create: () => request<Workflow>('/workflows', { method: 'POST' }),
+    create: (body: { name: string; description?: string }) =>
+      request<Workflow>('/workflows', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: { name: string; description: string; labels: { name: string; color: string; sort_order: number; agent_ignore: boolean; is_terminal: boolean }[]; transitions: { from_label: string; to_label: string; trigger_type: string; agent_config_id?: string; path?: string | null }[] }) =>
       request<Workflow>(`/workflows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/workflows/${id}`, { method: 'DELETE' }),

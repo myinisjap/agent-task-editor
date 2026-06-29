@@ -78,6 +78,12 @@ func (h *WorkflowsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce name uniqueness
+	if _, err := h.q.GetWorkflowByName(r.Context(), body.Name); err == nil {
+		Err(w, http.StatusBadRequest, "a workflow with that name already exists")
+		return
+	}
+
 	wf, err := h.q.CreateWorkflow(r.Context(), gen.CreateWorkflowParams{
 		ID:          uuid.NewString(),
 		Name:        body.Name,
@@ -87,7 +93,12 @@ func (h *WorkflowsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusCreated, wf)
+	resp, err := h.buildResponse(r, wf)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusCreated, resp)
 }
 
 func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +126,15 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wfID := chi.URLParam(r, "id")
+
+	// Enforce name uniqueness — allow keeping the same name for the same workflow
+	if body.Name != "" {
+		if existing, err := h.q.GetWorkflowByName(r.Context(), body.Name); err == nil && existing.ID != wfID {
+			Err(w, http.StatusBadRequest, "a workflow with that name already exists")
+			return
+		}
+	}
+
 	wf, err := h.q.UpdateWorkflow(r.Context(), gen.UpdateWorkflowParams{
 		Name:        body.Name,
 		Description: body.Description,
