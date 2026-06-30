@@ -1,8 +1,11 @@
+import { useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import TaskCard from './TaskCard'
+
+const MAX_VISIBLE = 5
 
 type Props = {
   label: WorkflowLabel
@@ -11,11 +14,16 @@ type Props = {
   rateLimitedTaskIds?: Map<string, string>
   onAddTask?: () => void
   isStartingColumn?: boolean
+  isTerminal?: boolean
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn, isTerminal }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const { remove } = useTasksStore()
+  const [expanded, setExpanded] = useState(false)
+
+  const shouldCollapse = !!isTerminal && tasks.length > MAX_VISIBLE
+  const visibleTasks = shouldCollapse && !expanded ? tasks.slice(0, MAX_VISIBLE) : tasks
 
   const handleDelete = async (taskId: string) => {
     try {
@@ -36,7 +44,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
         ref={setNodeRef}
         className={`flex-1 flex flex-col gap-3 p-2 rounded-lg min-h-[100px] transition-colors ${isOver ? 'bg-slate-700/50' : 'bg-slate-800/30'}`}
       >
-        {tasks.map((task) => (
+        {visibleTasks.map((task) => (
           <TaskCard
             key={task.id}
             task={task}
@@ -48,6 +56,14 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
         ))}
         {tasks.length === 0 && (
           <div className="text-center text-slate-600 text-sm py-8">No tasks</div>
+        )}
+        {shouldCollapse && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="w-full text-xs text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-500 rounded-lg py-2 mt-1 transition-colors"
+          >
+            {expanded ? '▲ Show less' : `▼ Show ${tasks.length - MAX_VISIBLE} more`}
+          </button>
         )}
         {onAddTask && (
           <button
