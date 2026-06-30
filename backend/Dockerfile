@@ -12,7 +12,7 @@ RUN go build -o bin/server ./cmd/server && \
 
 # Use node:22-alpine as the runtime so the claude CLI is available
 FROM node:22-alpine
-RUN apk add --no-cache ca-certificates git github-cli
+RUN apk add --no-cache ca-certificates git github-cli bash
 
 # Install Claude Code CLI globally so 'claude' is on PATH
 RUN npm install -g @anthropic-ai/claude-code

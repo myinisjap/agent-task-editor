@@ -76,6 +76,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   onAddTask={i === 0 ? onAddTask : undefined}
                   isStartingColumn={i === 0}
+                  isTerminal={!!group.label.is_terminal}
                 />
               )
             } else {
@@ -111,6 +112,7 @@ export default function TaskBoard({
             rateLimitedTaskIds={rateLimitedTaskIds}
             onAddTask={i === 0 ? onAddTask : undefined}
             isStartingColumn={i === 0}
+            isTerminal={!!label.is_terminal}
           />
         ))}
       </div>
