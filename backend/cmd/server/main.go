@@ -156,6 +156,13 @@ func main() {
 	rateLimits := agent.NewRateLimitRegistry()
 	pool := agent.NewPool(maxWorkers, db.SQL(), engine, hub)
 	pool.RateLimits = rateLimits
+	// Register gh as git's credential helper for github.com so push/fetch over
+	// HTTPS authenticate with GITHUB_TOKEN/gh auth instead of failing with
+	// "could not read Username". Best-effort — no-op if gh isn't authenticated.
+	if out, err := exec.Command("gh", "auth", "setup-git").CombinedOutput(); err != nil {
+		slog.Warn("gh auth setup-git failed; git push to github.com will not be authenticated", "err", err, "out", strings.TrimSpace(string(out)))
+	}
+
 	pool.GitName, pool.GitEmail = resolveGitIdentity()
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 	dispatcher.RateLimits = rateLimits
