@@ -147,6 +147,54 @@ volumes:
 
 Then register repos using paths under `/repos` in the UI (or via the API), and set `REPO_BASE_DIR=/repos` to prevent agents from escaping that subtree.
 
+## Supported Languages & Extending the Toolchain
+
+Agent `Bash`/`run_bash` tool calls execute *inside the backend container*, against your bind-mounted repos (see [Mounting Repositories](#mounting-repositories) above). That means any compiler, runtime, or build tool an agent needs to build, lint, or test a repo must be installed in `backend/Dockerfile`'s final runtime image — not just available on your host machine.
+
+> **Note:** `frontend/Dockerfile` only builds and serves Agent Task Editor's own UI in production. It is not involved in running agent commands against your repos, so it doesn't need any of this.
+
+### Currently supported out of the box
+
+The backend image (`backend/Dockerfile`) ships with:
+
+- **Go 1.24** — the same toolchain version used to build this project's own `server`/`mcp-server` binaries, copied from the Dockerfile's `golang:1.24-alpine` builder stage into the final image (rather than installed via `apk`) so the agent-visible `go version` always matches exactly. `GOPATH`/`GOCACHE`/`GOMODCACHE` are set to writable locations under `/home/node` for the non-root `node` user.
+- **Node.js 22 / npm** — inherited from the `node:22-alpine` base image. Covers Vite, React, TypeScript projects and their usual workflows out of the box: `npm ci`, `npm run build`, `npm test`, `npx vitest`, etc.
+- **`build-base`** (gcc, g++, make, musl-dev) — needed for `cgo` builds (this repo's own backend depends on `mattn/go-sqlite3`, which is cgo) and for any npm packages with native addons that need `node-gyp` compilation.
+- **`git`, `bash`, `github-cli` (`gh`)** — for cloning, diffing, committing, and interacting with GitHub from inside agent runs.
+
+### Adding more languages/compilers
+
+To give agents the ability to build/test repos in another language, edit the **final stage** of `backend/Dockerfile` (the `FROM node:22-alpine` stage — don't touch the builder stage, which only compiles this project's own Go binaries) and add one of:
+
+- **Alpine packages**, e.g.:
+  ```dockerfile
+  RUN apk add --no-cache python3 py3-pip   # Python
+  RUN apk add --no-cache openjdk17         # Java
+  RUN apk add --no-cache ruby ruby-dev     # Ruby
+  RUN apk add --no-cache rustup            # Rust (then `rustup-init -y` as the node user)
+  ```
+- **Multi-stage `COPY --from=`**, the same technique used for Go above — pull a toolchain from an upstream image without bloating the final image with its own build dependencies:
+  ```dockerfile
+  FROM rust:1-alpine AS rust-builder
+  ...
+  FROM node:22-alpine
+  COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+  COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
+  ENV PATH="/usr/local/cargo/bin:${PATH}"
+  ```
+
+After editing the Dockerfile, rebuild with:
+
+```bash
+docker compose build backend
+# or
+./dev.sh restart
+```
+
+**Caveat — Alpine vs glibc:** Alpine uses `musl libc`, not `glibc`. Some toolchains/prebuilt binaries (certain Rust crates, precompiled CLI tools, some Python wheels) expect `glibc` and may fail to run or compile. Workarounds include installing `gcompat` (`apk add --no-cache gcompat`) for partial compatibility, or building from source instead of using a prebuilt glibc binary. If a toolchain is fundamentally incompatible with Alpine, consider whether it's worth switching `backend/Dockerfile`'s final stage to a Debian/Ubuntu-based Node image instead — this is a larger change with broader image-size and security tradeoffs, not something to do for a one-off need.
+
+Remember to make sure any new tool's cache/config directories are writable by the remapped `node` user (see the `chown` step in the Dockerfile, applied to `/data` and the Go cache dirs) — otherwise agents will hit permission errors the first time they invoke the tool.
+
 ## Local Development
 
 ### Backend

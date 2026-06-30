@@ -88,6 +88,12 @@ Three providers are available. Choose based on your auth setup, billing preferen
 
 ---
 
+## Supported Languages
+
+Agent shell commands run inside the **backend** Docker container, against your bind-mounted repos — so the languages agents can build/test are whatever's installed in `backend/Dockerfile`'s runtime image. Out of the box that's **Go 1.24** and **Node.js 22 / npm** (covering Vite/React/TypeScript projects), plus `git`, `gh`, `bash`, and `build-base` for cgo/native-module compilation. To add another language/compiler (Python, Rust, Java, Ruby, etc.), edit the final stage of `backend/Dockerfile` and rebuild — see [docs/getting-started.md](docs/getting-started.md#supported-languages--extending-the-toolchain) for step-by-step instructions and caveats.
+
+---
+
 ## Security
 
 > **This tool executes arbitrary shell commands by design.** AI agents run `Bash` (claude provider) or `run_bash` (anthropic/llm providers) with full shell access as the server user. The security boundary is the container and the `REPO_BASE_DIR` mount — not the application itself.
