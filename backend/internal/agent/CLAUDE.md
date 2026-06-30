@@ -32,8 +32,17 @@ never the main clone.
   commits anything the agent left uncommitted. Agents may also commit themselves.
 - **Diff** (`GET /tasks/{id}/diff`): `git diff merge-base(base, branch)..branch`.
 - **Terminal label** (`engine.OnTerminal`, wired in `main.go`): push the branch to
-  origin if the repo has a remote, then remove the worktree (branch kept for review).
+  origin if the repo has a remote, then remove the worktree. The branch itself is
+  kept at this point so it remains available for review (diffing, manual
+  inspection) even after the worktree is gone.
 - **Task delete** (`tasks.go`): removes the worktree; branch kept.
+- **Post-merge cleanup** (`ghsync.Syncer`, `worktree.go#DeleteLocalBranch`): the
+  background GitHub sync polls open PRs and, once it observes a task's PR has
+  been merged (`git_state` transitions to `pr_merged`), removes any leftover
+  worktree and force-deletes the task's *local* branch from the main clone. This
+  is the only place local branches get cleaned up automatically — closed-without-
+  merge PRs are left untouched so a human can still inspect/reopen them. Only the
+  local branch is deleted; any remote branch (e.g. on `origin`) is left as-is.
 
 ## Provider Interface
 

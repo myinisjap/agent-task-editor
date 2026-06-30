@@ -61,3 +61,13 @@ Tests are in `*_test.go` files alongside the packages. The storage tests use an 
 go test ./internal/workflow/...
 go test -v ./internal/api/handlers/...
 ```
+
+## Container Toolchain
+
+`Dockerfile`'s final stage (`FROM node:22-alpine`) is what executes agent `Bash`/`run_bash` commands against bind-mounted repos in production — not just this project's own build. It currently includes:
+
+- **Go 1.24**, copied from this same Dockerfile's `golang:1.24-alpine` builder stage (`COPY --from=builder /usr/local/go /usr/local/go`) so the Go version agents see always matches what builds `bin/server`/`bin/mcp-server`. `GOPATH`/`GOCACHE`/`GOMODCACHE` point at writable dirs under `/home/node`.
+- **Node 22 / npm**, inherited from the base image — covers Vite/React/TS repos (`npm ci`, `npm run build`, `npm test`).
+- **`build-base`** (gcc/g++/make/musl-dev) for cgo (this backend's `mattn/go-sqlite3` dependency) and native npm addon compilation.
+
+To add another language for agents to use, edit the *final* stage of `Dockerfile` (not the builder stage — that only compiles this repo's own Go binaries) and rebuild with `docker compose build backend`. See `../docs/getting-started.md#supported-languages--extending-the-toolchain` for the full guide and Alpine/glibc caveats.

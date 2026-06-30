@@ -106,14 +106,18 @@ An agent run was rate-limited by the provider and will be retried automatically.
 ```
 
 ### `task.git_state_changed`
-The task's GitHub PR state changed (fired by the background GitHub sync).
+The task's GitHub PR state changed (fired by the background GitHub sync). When
+`git_state` transitions to `pr_merged`, the sync also removes any leftover
+worktree and deletes the task's local branch from the repo's main clone
+(best-effort; the remote branch on `origin` is left untouched).
 
 ```json
 {
   "type": "task.git_state_changed",
   "payload": {
     "task_id": "uuid",
-    "git_state": "pr_open | pr_merged | pr_closed | pushed | \"\""
+    "git_state": "pr_open | pr_merged | pr_closed | pushed | \"\"",
+    "pr_url": "https://github.com/org/repo/pull/123"
   }
 }
 ```

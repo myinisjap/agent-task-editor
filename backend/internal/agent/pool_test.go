@@ -156,6 +156,24 @@ func waitForStatus(t *testing.T, q *gen.Queries, runID, want string) {
 	t.Errorf("timed out waiting for run %s to reach status %q; current: %q", runID, want, run.Status)
 }
 
+// waitForLabel polls until the task has the expected label or times out.
+// The run row flips to "completed" before the pool resolves the outcome and
+// transitions the label, so callers must wait on the label itself rather
+// than the run status to avoid racing the pool's post-completion work.
+func waitForLabel(t *testing.T, q *gen.Queries, taskID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		task, err := q.GetTask(context.Background(), taskID)
+		if err == nil && task.Label == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	task, _ := q.GetTask(context.Background(), taskID)
+	t.Errorf("timed out waiting for task %s to reach label %q; current: %q", taskID, want, task.Label)
+}
+
 // TestReDispatch_PicksUpConfigChanges verifies a re-run resolves its agent
 // config fresh from the DB each sweep — disabling the prior config and enabling
 // another for the same label makes the next dispatch switch configs, rather than
@@ -257,7 +275,7 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
-	waitForStatus(t, q, runID, "completed")
+	waitForLabel(t, q, taskID, "in-progress")
 	cancel()
 
 	// Task label should have been transitioned
