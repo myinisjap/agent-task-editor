@@ -94,7 +94,9 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 - **Agent config UI** — manage multiple AI configs each targeting different workflow stages
 - **Git diff viewer** — per-task branch diff against the base ref
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
-- **GitHub Issues sync** — auto-sync task labels with GitHub PR state
+- **GitHub Issues sync** — auto-sync task labels with GitHub PR state; once a PR
+  is detected as merged, the task's local branch (and any leftover worktree) are
+  automatically cleaned up (remote branches are left untouched)
 - **Dashboard** — run counts, completion rate, recent activity
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — single `docker compose up` to run everything
