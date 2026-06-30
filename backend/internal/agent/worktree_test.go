@@ -99,3 +99,57 @@ func TestProvisionIsIdempotentAndDiffsTaskWork(t *testing.T) {
 		t.Fatalf("post-teardown diff missing task work:\n%s", diff2)
 	}
 }
+
+func branchExists(t *testing.T, repo, branch string) bool {
+	t.Helper()
+	out, err := exec.Command("git", "-C", repo, "branch", "--list", branch).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --list: %v: %s", err, out)
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
+func TestDeleteLocalBranch(t *testing.T) {
+	ctx := context.Background()
+	repo := initRepo(t)
+
+	wt, branch, _, err := provisionWorktree(ctx, repo, "task-5678abcd", "Some change")
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	if !branchExists(t, repo, branch) {
+		t.Fatalf("expected branch %q to exist after provisioning", branch)
+	}
+
+	// Branch is still checked out in the worktree — deleting it now should fail
+	// because git refuses to delete a branch attached to a live worktree.
+	if err := DeleteLocalBranch(ctx, repo, branch); err == nil {
+		t.Fatalf("expected error deleting branch while worktree still attached")
+	}
+
+	if err := RemoveWorktree(ctx, repo, wt); err != nil {
+		t.Fatalf("remove worktree: %v", err)
+	}
+
+	if err := DeleteLocalBranch(ctx, repo, branch); err != nil {
+		t.Fatalf("delete local branch: %v", err)
+	}
+	if branchExists(t, repo, branch) {
+		t.Fatalf("expected branch %q to be deleted", branch)
+	}
+
+	// Idempotent: deleting again (branch already gone) is not an error.
+	if err := DeleteLocalBranch(ctx, repo, branch); err != nil {
+		t.Fatalf("delete already-deleted branch should be a no-op: %v", err)
+	}
+
+	// Deleting a branch that never existed is also not an error.
+	if err := DeleteLocalBranch(ctx, repo, "never-existed-branch"); err != nil {
+		t.Fatalf("delete nonexistent branch should be a no-op: %v", err)
+	}
+
+	// Empty branch name is a no-op.
+	if err := DeleteLocalBranch(ctx, repo, ""); err != nil {
+		t.Fatalf("delete empty branch name should be a no-op: %v", err)
+	}
+}

@@ -148,6 +148,28 @@ func RemoveWorktree(ctx context.Context, repoPath, wtPath string) error {
 	return nil
 }
 
+// DeleteLocalBranch removes the task's local branch from the main clone at
+// repoPath. Intended to be called once a task's PR has been confirmed merged
+// on GitHub — at that point the branch's work is preserved upstream and the
+// branch is no longer needed for local review. Only the local branch is
+// deleted; any remote branch (e.g. on origin) is left untouched.
+//
+// Safe to call even if the branch doesn't exist (treated as success), so
+// callers don't need to track whether cleanup already ran.
+func DeleteLocalBranch(ctx context.Context, repoPath, branch string) error {
+	if branch == "" {
+		return nil
+	}
+	out, err := git(ctx, repoPath, "branch", "-D", branch)
+	if err != nil {
+		if strings.Contains(string(out), "not found") {
+			return nil // already gone — fine
+		}
+		return fmt.Errorf("git branch -D: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // excludeWorktreeDir appends the worktree dir to the repo's .git/info/exclude so
 // it never shows up as untracked in the main working tree. Best-effort.
 func excludeWorktreeDir(repoPath string) {
