@@ -36,7 +36,6 @@ export default function TaskCard({
   const navigate = useNavigate()
   const { upsert } = useTasksStore()
   const repoName = useReposStore((s) => s.byId(task.repo_id))?.name
-  const [isExpanded, setIsExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(task.title)
   const [editDesc, setEditDesc] = useState(task.description ?? '')
@@ -227,23 +226,6 @@ export default function TaskCard({
           </span>
         )}
       </div>
-
-      {isExpanded && task.agent_notes && (
-        <div className="mt-3 pt-3 border-t border-slate-700">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Agent Notes</span>
-          <p className="text-xs text-slate-300 mt-1 whitespace-pre-wrap">{task.agent_notes}</p>
-        </div>
-      )}
-
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          setIsExpanded(!isExpanded)
-        }}
-        className="mt-2 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
-      >
-        {isExpanded ? 'Hide Notes' : 'Show Notes'}
-      </button>
     </div>
   )
 }
