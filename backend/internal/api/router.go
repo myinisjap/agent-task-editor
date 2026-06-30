@@ -72,6 +72,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 		r.Get("/tasks/{id}/github-status", tasksH.GitHubStatus)
 		r.Patch("/tasks/{id}/git-state", tasksH.UpdateGitState)
+		r.Patch("/tasks/{id}/pause", tasksH.SetPaused)
 
 		// GitHub auth status (used by the frontend to warn when gh credentials are absent)
 		r.Get("/github/auth-status", handlers.GitHubAuthStatus)

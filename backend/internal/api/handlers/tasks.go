@@ -29,11 +29,14 @@ import (
 type taskResponse struct {
 	gen.Task
 	Attachments json.RawMessage `json:"attachments"`
+	Paused      bool            `json:"paused"`
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the
 // stored attachments string is not valid JSON it falls back to an empty array
-// so the frontend always receives a proper array.
+// so the frontend always receives a proper array. Paused is stored as a
+// SQLite INTEGER (0/1) but shadowed here as a real JSON boolean since it is a
+// primary, user-facing flag.
 func toTaskResponse(t gen.Task) taskResponse {
 	raw := json.RawMessage(t.Attachments)
 	// Validate that the stored value is actually parseable JSON; fall back to
@@ -42,7 +45,7 @@ func toTaskResponse(t gen.Task) taskResponse {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		raw = json.RawMessage("[]")
 	}
-	return taskResponse{Task: t, Attachments: raw}
+	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0}
 }
 
 // toTaskResponses converts a slice of gen.Task values.
@@ -711,6 +714,34 @@ func (h *TasksHandler) UpdateGitState(w http.ResponseWriter, r *http.Request) {
 	task, err := h.q.UpdateTaskGitState(r.Context(), gen.UpdateTaskGitStateParams{
 		GitState: body.GitState,
 		ID:       chi.URLParam(r, "id"),
+	})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, toTaskResponse(task))
+}
+
+// SetPaused toggles whether a task is paused. A paused task is never picked
+// up by the dispatcher (enforced at the SQL level in ListAgentPickupTasks),
+// regardless of its current label. Pausing does not change the task's label
+// and does not cancel any in-flight agent run; it only blocks future
+// dispatch.
+func (h *TasksHandler) SetPaused(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Paused bool `json:"paused"`
+	}
+	if err := decode(r, &body); err != nil {
+		Err(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	pausedVal := int64(0)
+	if body.Paused {
+		pausedVal = 1
+	}
+	task, err := h.q.SetTaskPaused(r.Context(), gen.SetTaskPausedParams{
+		Paused: pausedVal,
+		ID:     chi.URLParam(r, "id"),
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

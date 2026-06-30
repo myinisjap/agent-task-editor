@@ -43,8 +43,10 @@ After editing any `.sql` file, run `sqlc generate` (or `go generate ./...` from 
 
 - `UpdateTaskLabel` always sets `active_agent_run_id = NULL` — every label transition implicitly clears the dispatch lock.
 - `ListAgentPickupTasks` filters on `active_agent_run_id IS NULL` — only unlocked tasks are dispatched.
+- `ListAgentPickupTasks` also filters on `paused = 0` — a manually paused task is never dispatched, regardless of label.
 - `SetTaskActiveRun` sets both `current_agent_run_id` and `active_agent_run_id` atomically — used by dispatcher when creating a new run.
 - `ClearActiveAgentRun` sets only `active_agent_run_id = NULL` — used by pool on run completion.
+- `015_task_paused` adds `tasks.paused INTEGER NOT NULL DEFAULT 0`, toggled via `SetTaskPaused` / `PATCH /tasks/{id}/pause`. It's independent of `label` and `active_agent_run_id`, and persists across restarts (it's a column, not in-memory state).
 
 ## Schema Key Tables
 

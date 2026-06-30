@@ -71,6 +71,7 @@ type Task struct {
 	BaseRef           string    `json:"base_ref"`
 	Attachments       string    `json:"attachments"`
 	GitState          string    `json:"git_state"`
+	Paused            int64     `json:"paused"`
 }
 
 type TaskLabelHistory struct {

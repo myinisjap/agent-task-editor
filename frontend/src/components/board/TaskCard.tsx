@@ -171,6 +171,14 @@ export default function TaskCard({
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
         <div className="flex items-center gap-1.5 shrink-0">
+          {task.paused && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/70 text-amber-300 font-semibold"
+              title="Task is paused — will not be picked up by an agent"
+            >
+              ⏸ Paused
+            </span>
+          )}
           {isRunning && (
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
           )}
@@ -182,6 +190,22 @@ export default function TaskCard({
               ⏸ API limit
             </span>
           )}
+          <button
+            onClick={async (e) => {
+              e.stopPropagation()
+              try {
+                const updated = await api.tasks.setPaused(task.id, !task.paused)
+                upsert(updated)
+              } catch (err) {
+                alert(String(err))
+              }
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none"
+            title={task.paused ? 'Resume task' : 'Pause task'}
+          >
+            {task.paused ? '▶' : '⏸'}
+          </button>
           {isEditable && (
             <button
               onClick={handleEditClick}

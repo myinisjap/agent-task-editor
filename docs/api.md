@@ -132,6 +132,19 @@ Manually set the git state. Valid values: `""`, `pushed`, `pr_open`, `pr_merged`
 { "git_state": "pr_merged" }
 ```
 
+### `PATCH /tasks/{id}/pause`
+Pause or unpause a task. A paused task is never picked up by the dispatcher
+(enforced in `ListAgentPickupTasks`), regardless of its current label. Pausing
+does not change the task's `label` and does not cancel an in-flight agent run —
+it only blocks future dispatch. The flag persists across server restarts (it's
+a DB column, not in-memory state).
+
+```json
+{ "paused": true }
+```
+
+Returns the updated `Task` object (with `paused: true`/`false`).
+
 ---
 
 ## Agent Runs
