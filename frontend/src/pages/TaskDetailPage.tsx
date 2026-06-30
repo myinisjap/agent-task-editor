@@ -233,6 +233,19 @@ export default function TaskDetailPage() {
     }
   }
 
+  const handleTogglePause = async () => {
+    if (!id || !task) return
+    setActionPending(true)
+    try {
+      const updated = await api.tasks.setPaused(id, !task.paused)
+      setTask(updated)
+    } catch (e: any) {
+      alert(e.message ?? String(e))
+    } finally {
+      setActionPending(false)
+    }
+  }
+
   if (!task) return <div className="p-6 text-slate-400">Loading…</div>
 
   const tabs: { id: Tab; label: string }[] = [
@@ -273,6 +286,14 @@ export default function TaskDetailPage() {
                 ← Board
               </button>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={handleTogglePause}
+                  disabled={actionPending}
+                  className={`text-xs disabled:opacity-50 ${task.paused ? 'text-emerald-400 hover:text-emerald-300' : 'text-amber-400 hover:text-amber-300'}`}
+                  title={task.paused ? 'Resume task' : 'Pause task'}
+                >
+                  {task.paused ? '▶ Resume' : '⏸ Pause'}
+                </button>
                 {isStartingColumn && !editingTask && (
                   <button
                     onClick={handleStartEdit}
@@ -366,6 +387,11 @@ export default function TaskDetailPage() {
             ) : (
               <div>
                 <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
+                {task.paused && (
+                  <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-900/70 text-amber-300 mt-2">
+                    ⏸ Paused — agents will not pick up this task
+                  </span>
+                )}
                 {task.description && (
                   <p className="text-sm text-slate-400 mt-2">{task.description}</p>
                 )}

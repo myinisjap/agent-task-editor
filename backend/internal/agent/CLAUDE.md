@@ -68,6 +68,13 @@ Providers stream log entries on `logCh` as they run. The pool drains this channe
 - Pool leaves it set on `waiting_human`
 - `UpdateTaskLabel` (any workflow transition) always clears it via SQL
 
+A task's `paused` flag (a persisted DB column, set via `PATCH
+/tasks/{id}/pause`) is filtered out at the SQL level in
+`ListAgentPickupTasks` (`AND t.paused = 0`), regardless of label or
+`active_agent_run_id`. `dispatch()` also re-checks `t.Paused` as
+defense-in-depth. Pausing does not cancel an already-running agent run; it
+only prevents the dispatcher from starting a new one.
+
 ## Environment Variable Security
 
 `mergeEnv` (in `claude.go`) blocks keys that could hijack the subprocess: `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`. Blocked keys are logged as warnings, not silently dropped.

@@ -16,6 +16,8 @@ sql:
       - "internal/storage/migrations/011_task_attachments.up.sql"
       - "internal/storage/migrations/012_task_git_state.up.sql"
       - "internal/storage/migrations/013_agent_run_notes.up.sql"
+      - "internal/storage/migrations/014_workflow_name_unique.up.sql"
+      - "internal/storage/migrations/015_task_paused.up.sql"
     gen:
       go:
         package: "gen"

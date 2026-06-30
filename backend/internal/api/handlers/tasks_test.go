@@ -30,6 +30,7 @@ type apiTask struct {
 	WorkflowID  string   `json:"workflow_id"`
 	AgentNotes  string   `json:"agent_notes"`
 	Attachments []string `json:"attachments"`
+	Paused      bool     `json:"paused"`
 }
 
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
@@ -92,6 +93,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Delete("/tasks/{id}", h.Delete)
 	r.Patch("/tasks/{id}/label", h.MoveLabel)
 	r.Get("/tasks/{id}/runs", h.ListRuns)
+	r.Patch("/tasks/{id}/pause", h.SetPaused)
 
 	return r, q, wfID, repoID
 }
@@ -410,5 +412,129 @@ func TestTasks_ListRuns_Empty(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// ---------- Pause ----------
+
+func TestTasks_SetPaused_OK(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Pausable",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "todo",
+	})
+
+	body := map[string]bool{"paused": true}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/pause", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if !updated.Paused {
+		t.Errorf("expected paused=true in response")
+	}
+	if updated.Label != "todo" {
+		t.Errorf("expected label to remain unchanged, got %q", updated.Label)
+	}
+
+	// Confirm persisted via a separate GET.
+	getReq := httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID, nil)
+	getW := httptest.NewRecorder()
+	r.ServeHTTP(getW, getReq)
+	var fetched apiTask
+	_ = json.NewDecoder(getW.Body).Decode(&fetched)
+	if !fetched.Paused {
+		t.Errorf("expected paused to persist, got %+v", fetched)
+	}
+}
+
+func TestTasks_SetPaused_Unpause(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Resumable",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "todo",
+	})
+
+	if _, err := q.SetTaskPaused(context.Background(), gen.SetTaskPausedParams{Paused: 1, ID: task.ID}); err != nil {
+		t.Fatalf("seed paused: %v", err)
+	}
+
+	body := map[string]bool{"paused": false}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/pause", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Paused {
+		t.Errorf("expected paused=false in response")
+	}
+}
+
+// TestTasks_Paused_ExcludedFromAgentPickup confirms the dispatcher's
+// ListAgentPickupTasks query never returns a paused task, even when its
+// label is otherwise eligible for agent pickup.
+func TestTasks_Paused_ExcludedFromAgentPickup(t *testing.T) {
+	_, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	// "in-progress" is an agent-trigger label in the seeded default workflow.
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Eligible for pickup",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "todo",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if _, err := q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "in-progress", ID: task.ID}); err != nil {
+		t.Fatalf("move label: %v", err)
+	}
+
+	pickup, err := q.ListAgentPickupTasks(ctx)
+	if err != nil {
+		t.Fatalf("list pickup: %v", err)
+	}
+	found := false
+	for _, p := range pickup {
+		if p.ID == task.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unpaused eligible task to be returned by ListAgentPickupTasks")
+	}
+
+	if _, err := q.SetTaskPaused(ctx, gen.SetTaskPausedParams{Paused: 1, ID: task.ID}); err != nil {
+		t.Fatalf("pause task: %v", err)
+	}
+
+	pickup, err = q.ListAgentPickupTasks(ctx)
+	if err != nil {
+		t.Fatalf("list pickup after pause: %v", err)
+	}
+	for _, p := range pickup {
+		if p.ID == task.ID {
+			t.Fatalf("expected paused task to be excluded from ListAgentPickupTasks")
+		}
 	}
 }

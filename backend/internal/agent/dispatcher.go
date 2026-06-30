@@ -84,6 +84,11 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig) {
+	if t.Paused != 0 { // defense-in-depth; ListAgentPickupTasks already filters paused tasks
+		slog.Debug("dispatcher: skipping paused task", "component", "dispatcher", "task_id", t.ID)
+		return
+	}
+
 	matched := matchConfig(configs, t.Label)
 	if matched == nil {
 		slog.Debug("dispatcher: no active config for label", "component", "dispatcher", "task_id", t.ID, "label", t.Label)

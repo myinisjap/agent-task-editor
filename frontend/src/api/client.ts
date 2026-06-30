@@ -37,6 +37,7 @@ export type Task = {
   worktree_path?: string
   base_ref?: string
   git_state?: string
+  paused?: boolean
 }
 
 export type AgentRun = {
@@ -155,6 +156,8 @@ export const api = {
       request<{ git_state: string; pr_url: string; error?: string }>(`/tasks/${id}/github-status`),
     updateGitState: (id: string, git_state: string) =>
       request<Task>(`/tasks/${id}/git-state`, { method: 'PATCH', body: JSON.stringify({ git_state }) }),
+    setPaused: (id: string, paused: boolean) =>
+      request<Task>(`/tasks/${id}/pause`, { method: 'PATCH', body: JSON.stringify({ paused }) }),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),
