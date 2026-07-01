@@ -35,7 +35,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
   }
 
   return (
-    <div className={`flex flex-col w-72 shrink-0${className ? ` ${className}` : ''}`}>
+    <div className={`flex flex-col shrink-0${className ? ` ${className}` : ' w-72'}`}>
       {/* Minimal header — no label name */}
       <div className="flex items-center justify-between px-3 py-2 mb-2">
         <span className="text-xs text-slate-600 flex items-center gap-1.5">

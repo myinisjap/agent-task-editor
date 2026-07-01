@@ -9,6 +9,60 @@ import AgentGroupColumn from './AgentGroupColumn'
 import { computeCondensedGroups } from '../../lib/condensedBoard'
 import { useIsMobile } from '../../lib/useIsMobile'
 
+// Extracted to module level so React sees a stable component type across renders.
+// If defined inside TaskBoard's function body, React would create a new type on
+// every parent render, causing it to unmount/remount and destroy child state.
+function MobileColumnNav({
+  currentIndex,
+  total,
+  label,
+  onPrev,
+  onNext,
+  onDotClick,
+}: {
+  currentIndex: number
+  total: number
+  label: string
+  onPrev: () => void
+  onNext: () => void
+  onDotClick: (i: number) => void
+}) {
+  return (
+    <div className="mb-3">
+      <div className="flex items-center justify-between mb-2">
+        <button
+          disabled={currentIndex === 0}
+          onClick={onPrev}
+          className="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 disabled:opacity-30 active:bg-slate-700"
+        >
+          ◀
+        </button>
+        <span className="text-sm font-semibold text-slate-200">
+          {label} ({currentIndex + 1}/{total})
+        </span>
+        <button
+          disabled={currentIndex === total - 1}
+          onClick={onNext}
+          className="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 disabled:opacity-30 active:bg-slate-700"
+        >
+          ▶
+        </button>
+      </div>
+      <div className="flex justify-center gap-1.5">
+        {Array.from({ length: total }).map((_, i) => (
+          <button
+            key={i}
+            onClick={() => onDotClick(i)}
+            className={`w-2 h-2 rounded-full transition-colors ${
+              i === currentIndex ? 'bg-indigo-400' : 'bg-slate-600'
+            }`}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 type Props = {
   labels: WorkflowLabel[]
   tasks: Task[]
@@ -79,58 +133,6 @@ export default function TaskBoard({
   useEffect(() => {
     if (clampedCondensed !== mobileCondensedIndex) setMobileCondensedIndex(clampedCondensed)
   }, [clampedCondensed, mobileCondensedIndex])
-
-  // Mobile column navigator UI
-  function MobileColumnNav({
-    currentIndex,
-    total,
-    label,
-    onPrev,
-    onNext,
-    onDotClick,
-  }: {
-    currentIndex: number
-    total: number
-    label: string
-    onPrev: () => void
-    onNext: () => void
-    onDotClick: (i: number) => void
-  }) {
-    return (
-      <div className="mb-3">
-        <div className="flex items-center justify-between mb-2">
-          <button
-            disabled={currentIndex === 0}
-            onClick={onPrev}
-            className="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 disabled:opacity-30 active:bg-slate-700"
-          >
-            ◀
-          </button>
-          <span className="text-sm font-semibold text-slate-200">
-            {label} ({currentIndex + 1}/{total})
-          </span>
-          <button
-            disabled={currentIndex === total - 1}
-            onClick={onNext}
-            className="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 disabled:opacity-30 active:bg-slate-700"
-          >
-            ▶
-          </button>
-        </div>
-        <div className="flex justify-center gap-1.5">
-          {Array.from({ length: total }).map((_, i) => (
-            <button
-              key={i}
-              onClick={() => onDotClick(i)}
-              className={`w-2 h-2 rounded-full transition-colors ${
-                i === currentIndex ? 'bg-indigo-400' : 'bg-slate-600'
-              }`}
-            />
-          ))}
-        </div>
-      </div>
-    )
-  }
 
   if (condensed && transitions.length > 0) {
     if (isMobile && groups.length > 0) {
