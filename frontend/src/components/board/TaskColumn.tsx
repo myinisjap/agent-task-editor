@@ -15,9 +15,10 @@ type Props = {
   onAddTask?: () => void
   isStartingColumn?: boolean
   isTerminal?: boolean
+  className?: string
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn, isTerminal }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn, isTerminal, className }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const { remove } = useTasksStore()
   const [expanded, setExpanded] = useState(false)
@@ -35,7 +36,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
   }
 
   return (
-    <div className="flex flex-col w-72 shrink-0">
+    <div className={`flex flex-col w-72 shrink-0${className ? ` ${className}` : ''}`}>
       <div className="flex items-center justify-between px-3 py-2 mb-2">
         <span className="text-sm font-semibold text-slate-300 uppercase tracking-wide">{label.name}</span>
         <span className="text-xs text-slate-500 bg-slate-800 rounded-full px-2 py-0.5">{tasks.length}</span>

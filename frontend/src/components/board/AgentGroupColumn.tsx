@@ -9,6 +9,7 @@ type Props = {
   tasks: Task[]
   runningTaskIds: Set<string>
   rateLimitedTaskIds?: Map<string, string>
+  className?: string
 }
 
 /**
@@ -18,7 +19,7 @@ type Props = {
  * - Tasks show a small label badge indicating which actual column they're in.
  * - Dropping a task onto this column moves it to the first label in the group.
  */
-export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLimitedTaskIds }: Props) {
+export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLimitedTaskIds, className }: Props) {
   // Use the first label's name as the droppable id so DnD moves tasks here
   const dropId = labels[0]?.name ?? '__agent-group__'
   const { setNodeRef, isOver } = useDroppable({ id: dropId })
@@ -34,7 +35,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
   }
 
   return (
-    <div className="flex flex-col w-72 shrink-0">
+    <div className={`flex flex-col w-72 shrink-0${className ? ` ${className}` : ''}`}>
       {/* Minimal header — no label name */}
       <div className="flex items-center justify-between px-3 py-2 mb-2">
         <span className="text-xs text-slate-600 flex items-center gap-1.5">

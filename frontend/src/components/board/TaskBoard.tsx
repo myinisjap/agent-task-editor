@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { DndContext, MouseSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core'
 import type { DragEndEvent } from '@dnd-kit/core'
 import type { Task, WorkflowLabel, WorkflowTransition } from '../../api/client'
@@ -6,6 +7,7 @@ import { useTasksStore } from '../../stores/tasks'
 import TaskColumn from './TaskColumn'
 import AgentGroupColumn from './AgentGroupColumn'
 import { computeCondensedGroups } from '../../lib/condensedBoard'
+import { useIsMobile } from '../../lib/useIsMobile'
 
 type Props = {
   labels: WorkflowLabel[]
@@ -27,6 +29,7 @@ export default function TaskBoard({
   transitions = [],
 }: Props) {
   const { upsert } = useTasksStore()
+  const isMobile = useIsMobile()
 
   // Require 5px movement to start a drag so clicks still navigate
   const sensors = useSensors(
@@ -59,9 +62,123 @@ export default function TaskBoard({
 
   const sortedLabels = [...labels].sort((a, b) => a.sort_order - b.sort_order)
 
-  if (condensed && transitions.length > 0) {
-    const groups = computeCondensedGroups(labels, transitions)
+  // Mobile column index state — separate for normal and condensed views
+  const [mobileNormalIndex, setMobileNormalIndex] = useState(0)
+  const [mobileCondensedIndex, setMobileCondensedIndex] = useState(0)
 
+  // Clamp indices when label list changes
+  const groups = condensed && transitions.length > 0 ? computeCondensedGroups(labels, transitions) : []
+  const clampedNormal = Math.min(mobileNormalIndex, Math.max(0, sortedLabels.length - 1))
+  const clampedCondensed = Math.min(mobileCondensedIndex, Math.max(0, groups.length - 1))
+
+  // Keep state in sync after clamping
+  useEffect(() => {
+    if (clampedNormal !== mobileNormalIndex) setMobileNormalIndex(clampedNormal)
+  }, [clampedNormal, mobileNormalIndex])
+
+  useEffect(() => {
+    if (clampedCondensed !== mobileCondensedIndex) setMobileCondensedIndex(clampedCondensed)
+  }, [clampedCondensed, mobileCondensedIndex])
+
+  // Mobile column navigator UI
+  function MobileColumnNav({
+    currentIndex,
+    total,
+    label,
+    onPrev,
+    onNext,
+    onDotClick,
+  }: {
+    currentIndex: number
+    total: number
+    label: string
+    onPrev: () => void
+    onNext: () => void
+    onDotClick: (i: number) => void
+  }) {
+    return (
+      <div className="mb-3">
+        <div className="flex items-center justify-between mb-2">
+          <button
+            disabled={currentIndex === 0}
+            onClick={onPrev}
+            className="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 disabled:opacity-30 active:bg-slate-700"
+          >
+            ◀
+          </button>
+          <span className="text-sm font-semibold text-slate-200">
+            {label} ({currentIndex + 1}/{total})
+          </span>
+          <button
+            disabled={currentIndex === total - 1}
+            onClick={onNext}
+            className="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 disabled:opacity-30 active:bg-slate-700"
+          >
+            ▶
+          </button>
+        </div>
+        <div className="flex justify-center gap-1.5">
+          {Array.from({ length: total }).map((_, i) => (
+            <button
+              key={i}
+              onClick={() => onDotClick(i)}
+              className={`w-2 h-2 rounded-full transition-colors ${
+                i === currentIndex ? 'bg-indigo-400' : 'bg-slate-600'
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (condensed && transitions.length > 0) {
+    if (isMobile && groups.length > 0) {
+      const currentGroup = groups[clampedCondensed]
+      const currentLabel =
+        currentGroup.kind === 'single'
+          ? currentGroup.label.name
+          : 'Agent'
+
+      return (
+        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+          <div className="flex flex-col h-full">
+            <MobileColumnNav
+              currentIndex={clampedCondensed}
+              total={groups.length}
+              label={currentLabel}
+              onPrev={() => setMobileCondensedIndex((i) => i - 1)}
+              onNext={() => setMobileCondensedIndex((i) => i + 1)}
+              onDotClick={setMobileCondensedIndex}
+            />
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {currentGroup.kind === 'single' ? (
+                <TaskColumn
+                  label={currentGroup.label}
+                  tasks={byLabel(currentGroup.label.name)}
+                  runningTaskIds={runningTaskIds}
+                  rateLimitedTaskIds={rateLimitedTaskIds}
+                  onAddTask={clampedCondensed === 0 ? onAddTask : undefined}
+                  isStartingColumn={clampedCondensed === 0}
+                  isTerminal={!!currentGroup.label.is_terminal}
+                  className="w-full"
+                />
+              ) : (
+                <AgentGroupColumn
+                  labels={currentGroup.labels}
+                  tasks={byLabels(currentGroup.labels.map((l) => l.name))}
+                  runningTaskIds={runningTaskIds}
+                  rateLimitedTaskIds={rateLimitedTaskIds}
+                  className="w-full"
+                />
+              )}
+            </div>
+          </div>
+        </DndContext>
+      )
+    }
+
+    // Desktop condensed view
     return (
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
         <div className="flex gap-5 overflow-x-auto h-full pb-4">
@@ -99,7 +216,38 @@ export default function TaskBoard({
     )
   }
 
-  // Normal (expanded) view
+  // Mobile normal (expanded) view
+  if (isMobile && sortedLabels.length > 0) {
+    const currentLabel = sortedLabels[clampedNormal]
+    return (
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <div className="flex flex-col h-full">
+          <MobileColumnNav
+            currentIndex={clampedNormal}
+            total={sortedLabels.length}
+            label={currentLabel.name}
+            onPrev={() => setMobileNormalIndex((i) => i - 1)}
+            onNext={() => setMobileNormalIndex((i) => i + 1)}
+            onDotClick={setMobileNormalIndex}
+          />
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <TaskColumn
+              label={currentLabel}
+              tasks={byLabel(currentLabel.name)}
+              runningTaskIds={runningTaskIds}
+              rateLimitedTaskIds={rateLimitedTaskIds}
+              onAddTask={clampedNormal === 0 ? onAddTask : undefined}
+              isStartingColumn={clampedNormal === 0}
+              isTerminal={!!currentLabel.is_terminal}
+              className="w-full"
+            />
+          </div>
+        </div>
+      </DndContext>
+    )
+  }
+
+  // Desktop normal (expanded) view
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className="flex gap-5 overflow-x-auto h-full pb-4">
