@@ -19,8 +19,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$REPO_BASE_DIR" ]]; then
-  echo "Error: REPO_BASE_DIR must be set (pass --repo-dir <path> or export REPO_BASE_DIR)"
-  exit 1
+  REPO_BASE_DIR="/tmp/repos"
+  echo "Warning: REPO_BASE_DIR not set — defaulting to $REPO_BASE_DIR (pass --repo-dir <path> or export REPO_BASE_DIR to override)"
 fi
 
 # Reject paths that would shadow critical system directories inside the container.
@@ -34,7 +34,8 @@ done
 unset _prefix _UNSAFE_PREFIXES
 
 export REPO_BASE_DIR
-export UID=${UID:-$(id -u)} GID=${GID:-$(id -g)}
+# UID is readonly in zsh/bash and not automatically exported — pass via HOST_UID/HOST_GID.
+export HOST_UID=$(id -u) HOST_GID=$(id -g)
 
 COMPOSE="docker compose"
 if [[ -n "$TRAEFIK_HOST" ]]; then
@@ -44,6 +45,16 @@ fi
 # Extract GH token from gh CLI (keyring or hosts.yml) if not already set.
 if [[ -z "$GH_TOKEN" ]] && command -v gh &>/dev/null; then
   GH_TOKEN=$(gh auth token 2>/dev/null) && export GH_TOKEN
+fi
+
+# On macOS, Claude Code stores OAuth credentials in the Keychain rather than a
+# file, so the container can't read them. Sync to ~/.claude/.credentials.json
+# (which is inside the already-mounted ~/.claude volume) before starting.
+if [[ "$(uname)" == "Darwin" ]] && command -v security &>/dev/null; then
+  if security find-generic-password -s "Claude Code-credentials" -w \
+      > "$HOME/.claude/.credentials.json" 2>/dev/null; then
+    echo "Claude credentials synced from macOS Keychain → ~/.claude/.credentials.json"
+  fi
 fi
 
 CMD=${1:-start}

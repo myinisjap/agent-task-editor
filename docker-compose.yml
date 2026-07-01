@@ -4,8 +4,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       args:
-        HOST_UID: ${UID:-1000}
-        HOST_GID: ${GID:-1000}
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+        # Set INSECURE_SKIP_SSL_VERIFY=true in your environment or .env file to
+        # disable SSL certificate verification — required behind corporate
+        # TLS-inspecting proxies (affects npm install of claude-code at build time
+        # and git clone / npm / claude CLI at runtime).
+        INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
     ports:
       - "8080:8080"
     environment:
@@ -23,6 +28,10 @@ services:
       # gh CLI picks this up automatically; set it here to enable PR state sync
       # without mounting the gh config directory.
       - GITHUB_TOKEN=${GH_TOKEN:-}
+      # SSL bypass — active when INSECURE_SKIP_SSL_VERIFY=true (see build args above)
+      - GIT_SSL_NO_VERIFY=${INSECURE_SKIP_SSL_VERIFY:-}
+      - NPM_CONFIG_STRICT_SSL=${INSECURE_SKIP_SSL_VERIFY:+false}
+      - NODE_TLS_REJECT_UNAUTHORIZED=${INSECURE_SKIP_SSL_VERIFY:+0}
       # Set to the host directory containing your repos. The backend rewrites
       # paths under this directory to /repos inside the container automatically.
       - REPO_BASE_DIR=${REPO_BASE_DIR:-/tmp/repos}
@@ -43,6 +52,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
     ports:
       - "5173:80"
     depends_on:
