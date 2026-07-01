@@ -46,6 +46,10 @@ func TestLoad_MissingFile_ReturnsDefaults(t *testing.T) {
 }
 
 func TestLoad_FromYAML(t *testing.T) {
+	// Clear env vars that would override YAML values
+	t.Setenv("PORT", "")
+	t.Setenv("DB_PATH", "")
+
 	f, err := os.CreateTemp("", "config-*.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +111,9 @@ func TestLoad_EnvVarsOverrideDefaults(t *testing.T) {
 }
 
 func TestLoad_EnvVarsOverrideYAML(t *testing.T) {
+	// Clear DB_PATH so YAML value is used for non-overridden field check
+	t.Setenv("DB_PATH", "")
+
 	f, err := os.CreateTemp("", "config-*.yaml")
 	if err != nil {
 		t.Fatal(err)
