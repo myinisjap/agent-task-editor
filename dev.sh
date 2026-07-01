@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Load .env if present (without overriding existing shell vars)
+if [[ -f "$(dirname "$0")/.env" ]]; then
+  set -o allexport
+  source "$(dirname "$0")/.env"
+  set +o allexport
+fi
+
 export LLM_API_KEY=${LLM_API_KEY:-"your_api_key_here"}
 export LLM_BASE_URL=${LLM_BASE_URL:-"http://localhost:8081/v1"}
 export LLM_MODEL=${LLM_MODEL:-"gemma-4-12B-it-qat-UD-Q4_K_XL"}
@@ -29,6 +36,11 @@ unset _prefix _UNSAFE_PREFIXES
 export REPO_BASE_DIR
 export UID=${UID:-$(id -u)} GID=${GID:-$(id -g)}
 
+COMPOSE="docker compose"
+if [[ -n "$TRAEFIK_HOST" ]]; then
+  COMPOSE="docker compose -f docker-compose.yml -f docker-compose.traefik.yml"
+fi
+
 # Extract GH token from gh CLI (keyring or hosts.yml) if not already set.
 if [[ -z "$GH_TOKEN" ]] && command -v gh &>/dev/null; then
   GH_TOKEN=$(gh auth token 2>/dev/null) && export GH_TOKEN
@@ -38,28 +50,28 @@ CMD=${1:-start}
 
 case "$CMD" in
   start)
-    docker compose up -d --build
+    $COMPOSE up -d --build
     echo ""
     echo "  Board:   http://localhost:5173"
     echo "  API:     http://localhost:8080"
     echo ""
     ;;
   stop)
-    docker compose down
+    $COMPOSE down
     ;;
   restart)
-    docker compose down
-    docker compose up -d --build
+    $COMPOSE down
+    $COMPOSE up -d --build
     ;;
   logs)
-    docker compose logs -f backend
+    $COMPOSE logs -f backend
     ;;
   login)
     # Authenticate Claude CLI inside the running backend container.
-    docker compose exec backend claude login
+    $COMPOSE exec backend claude login
     ;;
   shell)
-    docker compose exec backend sh
+    $COMPOSE exec backend sh
     ;;
   dev-stop)
     # Kill any orphaned dev processes by port.

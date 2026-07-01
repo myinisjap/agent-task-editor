@@ -9,7 +9,7 @@ import ReposPage from './pages/ReposPage'
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <div className="flex h-screen overflow-hidden">
         <NavSidebar />
         <main className="flex-1 overflow-auto bg-slate-950">

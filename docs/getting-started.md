@@ -37,6 +37,34 @@ The backend starts on `:8080`, the frontend nginx on `:5173`.
 | `./dev.sh dev` | Start backend and frontend as local processes (no Docker); builds MCP server automatically |
 | `./dev.sh dev-stop` | Kill any orphaned dev processes from `dev` mode |
 
+## Deploying Behind Traefik
+
+A `docker-compose.traefik.yml` override is included for running the app behind a Traefik reverse proxy. It removes the host port bindings and adds the Traefik labels needed to route traffic.
+
+Create a `.env` file in the project root (gitignored) with your hostname:
+
+```
+TRAEFIK_HOST=your.domain.com
+```
+
+Then start with both compose files:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
+```
+
+Or use `dev.sh` — it picks up the override automatically when `TRAEFIK_HOST` is set:
+
+```bash
+TRAEFIK_HOST=your.domain.com ./dev.sh start
+# or export it / set it in .env first, then:
+./dev.sh start
+```
+
+The app is served at `https://your.domain.com/tasks`. TLS is handled by Traefik via Let's Encrypt. The `forward-auth` middleware (Google OAuth) is applied by default — remove that label from `docker-compose.traefik.yml` if you want the app public or use a different auth mechanism.
+
+> **Note:** The frontend nginx is the only container exposed to Traefik. It proxies `/tasks/api/` and `/tasks/ws` to the backend internally, so the backend container has no public port.
+
 ## Environment Variables
 
 All variables can also be set via a YAML config file pointed to by `CONFIG_FILE` (env vars always take precedence over file values).

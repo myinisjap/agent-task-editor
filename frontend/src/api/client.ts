@@ -1,4 +1,4 @@
-const BASE = '/api/v1'
+const BASE = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/v1`
 
 async function request<T>(path: string, init?: RequestInit & { isFormData?: boolean }): Promise<T> {
   const headers: Record<string, string> = {}

@@ -31,7 +31,8 @@ class WSClient {
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const token = import.meta.env.VITE_API_TOKEN
-    const url = `${proto}//${window.location.host}/ws${token ? `?token=${token}` : ''}`
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+    const url = `${proto}//${window.location.host}${base}/ws${token ? `?token=${token}` : ''}`
     this.ws = new WebSocket(url)
 
     this.ws.onmessage = (e) => {
