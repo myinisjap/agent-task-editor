@@ -28,10 +28,12 @@ services:
       # gh CLI picks this up automatically; set it here to enable PR state sync
       # without mounting the gh config directory.
       - GITHUB_TOKEN=${GH_TOKEN:-}
-      # SSL bypass — active when INSECURE_SKIP_SSL_VERIFY=true (see build args above)
-      - GIT_SSL_NO_VERIFY=${INSECURE_SKIP_SSL_VERIFY:-}
-      - NPM_CONFIG_STRICT_SSL=${INSECURE_SKIP_SSL_VERIFY:+false}
-      - NODE_TLS_REJECT_UNAUTHORIZED=${INSECURE_SKIP_SSL_VERIFY:+0}
+      # SSL bypass — active when INSECURE_SKIP_SSL_VERIFY=true (see build args above).
+      # These vars are pre-computed by dev.sh so that setting INSECURE_SKIP_SSL_VERIFY=false
+      # never accidentally disables SSL (compose's :+ expansion fires on any non-empty value).
+      - GIT_SSL_NO_VERIFY=${GIT_SSL_NO_VERIFY:-}
+      - NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL:-}
+      - NODE_TLS_REJECT_UNAUTHORIZED=${NODE_TLS_REJECT_UNAUTHORIZED:-}
       # Set to the host directory containing your repos. The backend rewrites
       # paths under this directory to /repos inside the container automatically.
       - REPO_BASE_DIR=${REPO_BASE_DIR:-/tmp/repos}

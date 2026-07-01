@@ -37,6 +37,20 @@ export REPO_BASE_DIR
 # UID is readonly in zsh/bash and not automatically exported — pass via HOST_UID/HOST_GID.
 export HOST_UID=$(id -u) HOST_GID=$(id -g)
 
+# Compute SSL-bypass env vars here rather than in docker-compose.yml, because
+# compose's ${VAR:+word} expansion fires on any non-empty string (including
+# "false"), which would silently disable SSL when a user sets
+# INSECURE_SKIP_SSL_VERIFY=false in their shell or .env file.
+if [[ "${INSECURE_SKIP_SSL_VERIFY:-}" == "true" ]]; then
+  export GIT_SSL_NO_VERIFY=true
+  export NPM_CONFIG_STRICT_SSL=false
+  export NODE_TLS_REJECT_UNAUTHORIZED=0
+else
+  export GIT_SSL_NO_VERIFY=
+  export NPM_CONFIG_STRICT_SSL=
+  export NODE_TLS_REJECT_UNAUTHORIZED=
+fi
+
 COMPOSE="docker compose"
 if [[ -n "$TRAEFIK_HOST" ]]; then
   COMPOSE="docker compose -f docker-compose.yml -f docker-compose.traefik.yml"
