@@ -312,10 +312,12 @@ func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) st
 		if t.FromLabel != task.Label {
 			continue
 		}
-		if t.Path == nil {
+		// Only consider transitions that an agent can trigger.
+		if t.TriggerType == "human" {
 			continue
 		}
-		if *t.Path != outcome && *t.Path != "either" {
+		// nil Path means the transition fires on any outcome.
+		if t.Path != nil && *t.Path != outcome && *t.Path != "either" {
 			continue
 		}
 		if match != "" {

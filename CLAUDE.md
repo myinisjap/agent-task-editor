@@ -40,6 +40,9 @@ agent-task-editor/
 # Docker (recommended)
 ./dev.sh start   # or: docker compose up -d
 # Open http://localhost:5173
+# Note: on macOS, dev.sh automatically syncs Claude OAuth credentials from the
+# macOS Keychain to ~/.claude/.credentials.json before starting, so the container
+# can authenticate. Re-run dev.sh start after token expiry (~8 hours).
 
 # Local dev (builds MCP server + backend + frontend, all in one)
 ./dev.sh dev
@@ -56,6 +59,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
 | `LLM_API_KEY` | _(none)_ | API key for `anthropic` or `llm` provider |
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
+| `INSECURE_SKIP_SSL_VERIFY` | `false` | Set to `true` behind corporate TLS-inspecting proxies. Disables SSL verification for git clone, npm, and the claude CLI (Node.js). Set in your shell or a `.env` file — docker compose passes it as a build arg (npm install of claude-code) and runtime env vars (`GIT_SSL_NO_VERIFY`, `NPM_CONFIG_STRICT_SSL`, `NODE_TLS_REJECT_UNAUTHORIZED`). |
 
 ## Development Workflow
 
