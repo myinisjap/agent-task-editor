@@ -99,6 +99,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Put("/agents/{id}", agentsH.Update)
 		r.Delete("/agents/{id}", agentsH.Delete)
 		r.Get("/agents/models", agentsH.GetModels)
+		r.Get("/agents/claude-options", agentsH.GetClaudeOptions)
 
 		// Repos
 		r.Get("/repos", reposH.List)

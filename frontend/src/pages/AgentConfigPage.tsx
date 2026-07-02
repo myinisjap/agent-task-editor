@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type AgentConfig, type ModelList } from '../api/client'
+import { api, type AgentConfig, type ModelList, type ClaudeOptions } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
 
@@ -19,6 +19,8 @@ const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'> =
   env: '{}',
   max_tokens: 8192,
   timeout_secs: 600,
+  enabled_plugins: '[]',
+  enabled_mcp_servers: '[]',
 }
 
 const PLAN_PROMPT = `You are a planning agent. Your ONLY job is to write an implementation plan.
@@ -71,6 +73,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
+    enabled_plugins: '[]',
+    enabled_mcp_servers: '[]',
   },
   {
     name: 'Tester',
@@ -81,6 +85,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
+    enabled_plugins: '[]',
+    enabled_mcp_servers: '[]',
   },
   {
     name: 'Reviewer',
@@ -91,6 +97,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
+    enabled_plugins: '[]',
+    enabled_mcp_servers: '[]',
   },
   {
     name: 'Worker',
@@ -101,6 +109,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
+    enabled_plugins: '[]',
+    enabled_mcp_servers: '[]',
   },
 ]
 
@@ -115,6 +125,7 @@ export default function AgentConfigPage() {
   const [deleting, setDeleting] = useState(false)
   const [modelList, setModelList] = useState<ModelList | null>(null)
   const [fetchingModels, setFetchingModels] = useState(false)
+  const [claudeOptions, setClaudeOptions] = useState<ClaudeOptions | null>(null)
   const [showTemplates, setShowTemplates] = useState(false)
   const [creatingTemplate, setCreatingTemplate] = useState(false)
   const [multiMode, setMultiMode] = useState(false)
@@ -150,6 +161,16 @@ export default function AgentConfigPage() {
     }
   }, [form.provider]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (form.provider !== 'claude') {
+      setClaudeOptions(null)
+      return
+    }
+    api.agents.claudeOptions()
+      .then(setClaudeOptions)
+      .catch(() => setClaudeOptions(null))
+  }, [form.provider])
+
   function selectAgent(a: AgentConfig) {
     setSelected(a)
     setForm({
@@ -161,6 +182,8 @@ export default function AgentConfigPage() {
       env: a.env,
       max_tokens: a.max_tokens,
       timeout_secs: a.timeout_secs,
+      enabled_plugins: a.enabled_plugins ?? '[]',
+      enabled_mcp_servers: a.enabled_mcp_servers ?? '[]',
     })
   }
 
@@ -250,6 +273,8 @@ export default function AgentConfigPage() {
             env: a.env,
             max_tokens: a.max_tokens,
             timeout_secs: a.timeout_secs,
+            enabled_plugins: a.enabled_plugins ?? '[]',
+            enabled_mcp_servers: a.enabled_mcp_servers ?? '[]',
             enabled: enable,
           })
         )
@@ -524,6 +549,30 @@ export default function AgentConfigPage() {
             />
           </Field>
 
+          {form.provider === 'claude' && (
+            <>
+              <Field label="Plugins" className="col-span-2">
+                <ChipPicker
+                  selected={(() => { try { return JSON.parse(form.enabled_plugins ?? '[]') } catch { return [] } })()}
+                  available={(claudeOptions?.plugins ?? []).map((p) => ({ value: p.id, label: p.marketplace ? `${p.name} (${p.marketplace})` : p.name }))}
+                  onChange={(ids) => setForm((f) => ({ ...f, enabled_plugins: JSON.stringify(ids) }))}
+                  emptyMessage="No plugins found in ~/.claude/plugins/installed_plugins.json."
+                />
+                <p className="mt-1 text-xs text-slate-500">Discovered from your Claude home dir. Off by default — toggle to enable per agent.</p>
+              </Field>
+
+              <Field label="MCP servers" className="col-span-2">
+                <ChipPicker
+                  selected={(() => { try { return JSON.parse(form.enabled_mcp_servers ?? '[]') } catch { return [] } })()}
+                  available={(claudeOptions?.mcp_servers ?? []).map((name) => ({ value: name, label: name }))}
+                  onChange={(names) => setForm((f) => ({ ...f, enabled_mcp_servers: JSON.stringify(names) }))}
+                  emptyMessage="No user-level MCP servers found in ~/.claude.json."
+                />
+                <p className="mt-1 text-xs text-slate-500">Only global (user-level) MCP servers are listed; project-scoped servers aren't included.</p>
+              </Field>
+            </>
+          )}
+
           <Field label="System prompt" className="col-span-2">
             <textarea
               value={form.system_prompt}
@@ -585,34 +634,52 @@ function LabelPicker({ selected, available, onChange }: {
   available: string[]
   onChange: (labels: string[]) => void
 }) {
-  const toggle = (name: string) => {
-    if (selected.includes(name)) {
-      onChange(selected.filter((l) => l !== name))
+  return (
+    <ChipPicker
+      selected={selected}
+      available={available.map((name) => ({ value: name, label: name }))}
+      onChange={onChange}
+      emptyMessage="No workflow labels found. Configure a workflow first."
+    />
+  )
+}
+
+// ChipPicker is a generic toggle-chip multi-select, used for workflow labels,
+// Claude plugins, and Claude MCP servers.
+function ChipPicker({ selected, available, onChange, emptyMessage }: {
+  selected: string[]
+  available: { value: string; label: string }[]
+  onChange: (values: string[]) => void
+  emptyMessage: string
+}) {
+  const toggle = (value: string) => {
+    if (selected.includes(value)) {
+      onChange(selected.filter((v) => v !== value))
     } else {
-      onChange([...selected, name])
+      onChange([...selected, value])
     }
   }
 
   if (available.length === 0) {
-    return <p className="text-xs text-slate-500">No workflow labels found. Configure a workflow first.</p>
+    return <p className="text-xs text-slate-500">{emptyMessage}</p>
   }
 
   return (
     <div className="flex flex-wrap gap-2">
-      {available.map((name) => {
-        const active = selected.includes(name)
+      {available.map(({ value, label }) => {
+        const active = selected.includes(value)
         return (
           <button
-            key={name}
+            key={value}
             type="button"
-            onClick={() => toggle(name)}
+            onClick={() => toggle(value)}
             className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
               active
                 ? 'bg-indigo-600 border-indigo-500 text-white'
                 : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
             }`}
           >
-            {name}
+            {label}
           </button>
         )
       })}

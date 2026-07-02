@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -172,5 +173,47 @@ func TestBuildPrompt_FeedbackInjected(t *testing.T) {
 	})
 	if !strings.HasPrefix(out, "FEEDBACK FROM PRIOR REVIEW:\n"+fb) {
 		t.Fatalf("feedback not at top of prompt; got:\n%s", out)
+	}
+}
+
+// TestBuildClaudeSettingsJSON_FallbackNoInventory verifies that a selected
+// plugin is explicitly enabled even when it isn't present in the discovered
+// inventory (or discovery finds nothing at all). HOME is pointed at an empty
+// temp dir so this is deterministic regardless of the host's real
+// ~/.claude/plugins/installed_plugins.json contents.
+func TestBuildClaudeSettingsJSON_FallbackNoInventory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	got, err := buildClaudeSettingsJSON([]string{"some-plugin@marketplace"})
+	if err != nil {
+		t.Fatalf("buildClaudeSettingsJSON: %v", err)
+	}
+	var parsed struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("unmarshal settings json: %v", err)
+	}
+	if !parsed.EnabledPlugins["some-plugin@marketplace"] {
+		t.Fatalf("want selected plugin enabled, got %+v", parsed.EnabledPlugins)
+	}
+}
+
+func TestBuildClaudeSettingsJSON_NoSelection_EmptyMap(t *testing.T) {
+	// Isolate from the real user's ~/.claude/plugins/installed_plugins.json:
+	// point HOME at an empty temp dir so plugin discovery finds nothing and
+	// the fallback (empty map) path is exercised deterministically.
+	t.Setenv("HOME", t.TempDir())
+	got, err := buildClaudeSettingsJSON(nil)
+	if err != nil {
+		t.Fatalf("buildClaudeSettingsJSON: %v", err)
+	}
+	var parsed struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("unmarshal settings json: %v", err)
+	}
+	if len(parsed.EnabledPlugins) != 0 {
+		t.Fatalf("want empty enabledPlugins map, got %+v", parsed.EnabledPlugins)
 	}
 }

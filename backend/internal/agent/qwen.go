@@ -37,7 +37,7 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 	var mcpCfg *MCPRunConfig
 	if r.MCP != nil && r.MCP.ServerBinary != "" {
 		var err error
-		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions)
+		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, nil)
 		if err != nil {
 			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
 		}

@@ -56,6 +56,24 @@ mcp__task-editor__update_task_notes
 mcp__task-editor__store_info
 ```
 
+For each MCP server name in the agent config's `enabled_mcp_servers`, a bare `mcp__<server>` entry is also appended so that server's tools aren't blocked by the allowlist (server-level wildcarding, inferred from CLI docs — worth re-verifying against a live run if tool calls from a selected MCP server are unexpectedly denied).
+
+## Plugins & User MCP Servers (per-agent-config selection)
+
+Each `claude`-provider agent config can select which locally-installed Claude plugins and user-level MCP servers are enabled, via the `enabled_plugins` and `enabled_mcp_servers` fields. **Both default to empty (all off).** Options are discovered dynamically — not hardcoded — from:
+
+- `~/.claude/plugins/installed_plugins.json` for plugins
+- the global `mcpServers` key in `~/.claude.json` for MCP servers (project-scoped servers are not included)
+
+`GET /agents/claude-options` exposes the current discovery snapshot for the frontend to render as selectable options.
+
+At run time:
+
+- **Plugins** are enabled/disabled via `--settings '{"enabledPlugins": {...}}'`. This replaces the previous hardcoded `--settings '{"enabledPlugins":{"oh-my-claudecode@omc":false}}'` — the settings payload is now built dynamically: every plugin discovered on the machine defaults to `false`, and only IDs present in `enabled_plugins` are set to `true`.
+- **MCP servers** selected in `enabled_mcp_servers` have their raw config entries copied from `~/.claude.json`'s global `mcpServers` map into the same `--mcp-config` temp file used for the task-editor sidecar (an MCP config file is generated even if the task-editor sidecar itself is disabled, as long as at least one user MCP server is selected). The reserved name `task-editor` is always skipped to avoid colliding with the sidecar entry.
+
+See [agents.md § Claude Plugins & MCP Servers](../agents.md#claude-plugins--mcp-servers) for more detail. This feature is `claude`-provider-only for now.
+
 ## Image Attachments
 
 Supported. Files uploaded to a task are passed via `--image <path>` flags. The server resolves absolute paths from the `UPLOAD_DIR`.

@@ -32,11 +32,32 @@ func (r *ClaudeRunner) binary() string {
 }
 
 func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error) {
-	// Set up MCP sidecar if manager is configured
+	// Set up MCP sidecar if manager is configured. Additionally, if the agent
+	// config has user-selected Claude MCP servers (from ~/.claude.json), merge
+	// their raw config entries into the same --mcp-config file — even if the
+	// task-editor sidecar itself is disabled — so selections still take effect.
 	var mcpCfg *MCPRunConfig
-	if r.MCP != nil && r.MCP.ServerBinary != "" {
+	var extraServerNames []string
+	for _, name := range input.AgentConfig.EnabledMCPServers {
+		if name == "" || name == "task-editor" {
+			continue
+		}
+		extraServerNames = append(extraServerNames, name)
+	}
+
+	sidecarEnabled := r.MCP != nil && r.MCP.ServerBinary != ""
+	if sidecarEnabled || len(extraServerNames) > 0 {
+		home, _ := os.UserHomeDir()
+		extraServers := rawMCPServerConfigsFrom(home, extraServerNames)
+
+		mgr := r.MCP
+		if mgr == nil {
+			// No task-editor sidecar configured, but the user selected MCP
+			// servers — still produce an --mcp-config file with just those.
+			mgr = &MCPManager{}
+		}
 		var err error
-		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions)
+		mcpCfg, err = mgr.Prepare(input.RunID, input.Transitions, extraServers)
 		if err != nil {
 			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
 		}
@@ -44,8 +65,20 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	}
 
 	allowedTools := "Edit,Write,Read,Bash,Glob,Grep"
-	if mcpCfg != nil {
+	if sidecarEnabled {
 		allowedTools += ",mcp__task-editor__get_task_transitions,mcp__task-editor__signal_complete,mcp__task-editor__request_human,mcp__task-editor__update_task_notes,mcp__task-editor__store_info"
+	}
+	// Allow tools from each selected MCP server. Claude Code supports
+	// server-level wildcarding via the bare "mcp__<server>" entry; this has
+	// not been independently verified against a live CLI run and should be
+	// double-checked if MCP tool calls are unexpectedly blocked.
+	for _, name := range extraServerNames {
+		allowedTools += ",mcp__" + name
+	}
+
+	settingsJSON, err := buildClaudeSettingsJSON(input.AgentConfig.EnabledPlugins)
+	if err != nil {
+		return Result{Status: "failed"}, fmt.Errorf("build claude settings: %w", err)
 	}
 
 	args := []string{
@@ -56,7 +89,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		"--allowedTools", allowedTools,
 		"--max-turns", "50",
 		"--bare",
-		"--settings", `{"enabledPlugins":{"oh-my-claudecode@omc":false}}`,
+		"--settings", settingsJSON,
 	}
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
@@ -330,6 +363,49 @@ var dangerousEnvKeys = map[string]bool{
 	"PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true,
 	"HOME": true, "SHELL": true, "IFS": true,
 	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
+}
+
+// buildClaudeSettingsJSON builds the JSON payload passed via --settings,
+// defaulting every plugin installed on this machine to disabled and then
+// enabling only those explicitly selected in enabledPlugins. If plugin
+// discovery fails or returns nothing, falls back to a minimal settings
+// object that just enables the selected plugins, so explicit selections
+// still take effect even without a full inventory.
+func buildClaudeSettingsJSON(enabledPlugins []string) (string, error) {
+	selected := make(map[string]bool, len(enabledPlugins))
+	for _, id := range enabledPlugins {
+		if id != "" {
+			selected[id] = true
+		}
+	}
+
+	enabled := map[string]bool{}
+	installed, err := ListInstalledClaudePlugins()
+	if err == nil && len(installed) > 0 {
+		for _, p := range installed {
+			enabled[p.ID] = selected[p.ID]
+		}
+		// In case a selected plugin isn't in the discovered inventory (e.g. installed
+		// after last discovery, or discovery is stale), still explicitly enable it.
+		for id, on := range selected {
+			if on {
+				enabled[id] = true
+			}
+		}
+	} else {
+		for id, on := range selected {
+			if on {
+				enabled[id] = true
+			}
+		}
+	}
+
+	payload := map[string]any{"enabledPlugins": enabled}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // claudeOAuthToken reads the access token from ~/.claude/.credentials.json for --bare mode.
