@@ -265,7 +265,7 @@ func parseAnthropicRateLimitReset(h http.Header) time.Time {
 
 func (r *AnthropicRunner) messagesComplete(ctx context.Context, model, system string, maxTokens int, messages []anthropicMessage) (anthropicResponse, error) {
 	if model == "" {
-		model = "claude-sonnet-latest"
+		model = "claude-sonnet-5"
 	}
 
 	body, _ := json.Marshal(map[string]any{

@@ -245,7 +245,7 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 	providerModels := map[string][]string{
-		"claude": {"claude-sonnet-latest", "claude-opus-latest", "claude-haiku-latest"},
+		"claude": {"sonnet", "opus", "haiku"},
 	}
 	provider := r.URL.Query().Get("provider")
 	if provider == "" {
