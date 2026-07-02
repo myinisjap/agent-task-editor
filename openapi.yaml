@@ -72,6 +72,17 @@ components:
         max_tokens:    { type: integer }
         timeout_secs:  { type: integer }
         max_turns:     { type: integer }
+        enabled_plugins:
+          type: string
+          description: >
+            JSON array of Claude plugin IDs ("<name>@<marketplace>") enabled for this
+            agent config. Claude-provider only; defaults to "[]" (all plugins off).
+        enabled_mcp_servers:
+          type: string
+          description: >
+            JSON array of Claude user-level MCP server names (from ~/.claude.json's
+            global mcpServers) enabled for this agent config. Claude-provider only;
+            defaults to "[]" (all MCP servers off).
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
 
@@ -81,6 +92,25 @@ components:
         provider:      { type: string }
         default_model: { type: string }
         models:        { type: array, items: { type: string } }
+
+    ClaudeOptions:
+      type: object
+      description: >
+        Claude plugins and user-level MCP servers discovered on the server's
+        Claude home directory (~/.claude/plugins/installed_plugins.json and the
+        global mcpServers key in ~/.claude.json), for per-agent-config selection.
+      properties:
+        plugins:
+          type: array
+          items:
+            type: object
+            properties:
+              id:          { type: string, description: "\"<name>@<marketplace>\"" }
+              name:        { type: string }
+              marketplace: { type: string }
+        mcp_servers:
+          type: array
+          items: { type: string }
 
     Repo:
       type: object
@@ -501,6 +531,20 @@ paths:
           description: Missing provider parameter
         "404":
           description: Unknown provider
+
+  /agents/claude-options:
+    get:
+      summary: Get available Claude plugins and MCP servers for agent config selection
+      description: >
+        Claude-provider-specific. Discovers plugins from
+        ~/.claude/plugins/installed_plugins.json and user-level MCP servers from
+        ~/.claude.json's global mcpServers key on the server.
+      responses:
+        "200":
+          description: Discovered Claude plugins and MCP servers
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClaudeOptions" }
 
   /repos:
     get:

@@ -43,41 +43,6 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 	return i, err
 }
 
-const updateRepo = `-- name: UpdateRepo :one
-UPDATE repos
-SET name = ?, path = ?, remote_url = ?, workflow_id = ?
-WHERE id = ?
-RETURNING id, name, path, remote_url, workflow_id, created_at
-`
-
-type UpdateRepoParams struct {
-	Name       string  `json:"name"`
-	Path       string  `json:"path"`
-	RemoteUrl  *string `json:"remote_url"`
-	WorkflowID *string `json:"workflow_id"`
-	ID         string  `json:"id"`
-}
-
-func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, error) {
-	row := q.db.QueryRowContext(ctx, updateRepo,
-		arg.Name,
-		arg.Path,
-		arg.RemoteUrl,
-		arg.WorkflowID,
-		arg.ID,
-	)
-	var i Repo
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Path,
-		&i.RemoteUrl,
-		&i.WorkflowID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const deleteRepo = `-- name: DeleteRepo :exec
 DELETE FROM repos WHERE id = ?
 `
@@ -137,4 +102,39 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateRepo = `-- name: UpdateRepo :one
+UPDATE repos
+SET name = ?, path = ?, remote_url = ?, workflow_id = ?
+WHERE id = ?
+RETURNING id, name, path, remote_url, workflow_id, created_at
+`
+
+type UpdateRepoParams struct {
+	Name       string  `json:"name"`
+	Path       string  `json:"path"`
+	RemoteUrl  *string `json:"remote_url"`
+	WorkflowID *string `json:"workflow_id"`
+	ID         string  `json:"id"`
+}
+
+func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, error) {
+	row := q.db.QueryRowContext(ctx, updateRepo,
+		arg.Name,
+		arg.Path,
+		arg.RemoteUrl,
+		arg.WorkflowID,
+		arg.ID,
+	)
+	var i Repo
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Path,
+		&i.RemoteUrl,
+		&i.WorkflowID,
+		&i.CreatedAt,
+	)
+	return i, err
 }

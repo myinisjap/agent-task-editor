@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -190,10 +191,13 @@ func findFlagValue(args []string, flag string) string {
 // is unset (zero), the constructed args default --max-turns to 50 (today's
 // previously-hardcoded behavior).
 func TestBuildClaudeArgs_MaxTurnsDefault(t *testing.T) {
-	args := buildClaudeArgs(RunInput{
+	args, err := buildClaudeArgs(RunInput{
 		Task:        Task{Title: "t"},
 		AgentConfig: AgentConfig{},
-	}, nil)
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("buildClaudeArgs: %v", err)
+	}
 	if got := findFlagValue(args, "--max-turns"); got != "50" {
 		t.Fatalf("expected default --max-turns 50, got %q (args=%v)", got, args)
 	}
@@ -203,11 +207,56 @@ func TestBuildClaudeArgs_MaxTurnsDefault(t *testing.T) {
 // AgentConfig.MaxTurns value is passed through to the --max-turns flag
 // instead of the hardcoded default.
 func TestBuildClaudeArgs_MaxTurnsConfigured(t *testing.T) {
-	args := buildClaudeArgs(RunInput{
+	args, err := buildClaudeArgs(RunInput{
 		Task:        Task{Title: "t"},
 		AgentConfig: AgentConfig{MaxTurns: 12},
-	}, nil)
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("buildClaudeArgs: %v", err)
+	}
 	if got := findFlagValue(args, "--max-turns"); got != "12" {
 		t.Fatalf("expected --max-turns 12, got %q (args=%v)", got, args)
+	}
+}
+
+// TestBuildClaudeSettingsJSON_FallbackNoInventory verifies that a selected
+// plugin is explicitly enabled even when it isn't present in the discovered
+// inventory (or discovery finds nothing at all). HOME is pointed at an empty
+// temp dir so this is deterministic regardless of the host's real
+// ~/.claude/plugins/installed_plugins.json contents.
+func TestBuildClaudeSettingsJSON_FallbackNoInventory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	got, err := buildClaudeSettingsJSON([]string{"some-plugin@marketplace"})
+	if err != nil {
+		t.Fatalf("buildClaudeSettingsJSON: %v", err)
+	}
+	var parsed struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("unmarshal settings json: %v", err)
+	}
+	if !parsed.EnabledPlugins["some-plugin@marketplace"] {
+		t.Fatalf("want selected plugin enabled, got %+v", parsed.EnabledPlugins)
+	}
+}
+
+func TestBuildClaudeSettingsJSON_NoSelection_EmptyMap(t *testing.T) {
+	// Isolate from the real user's ~/.claude/plugins/installed_plugins.json:
+	// point HOME at an empty temp dir so plugin discovery finds nothing and
+	// the fallback (empty map) path is exercised deterministically.
+	t.Setenv("HOME", t.TempDir())
+	got, err := buildClaudeSettingsJSON(nil)
+	if err != nil {
+		t.Fatalf("buildClaudeSettingsJSON: %v", err)
+	}
+	var parsed struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("unmarshal settings json: %v", err)
+	}
+	if len(parsed.EnabledPlugins) != 0 {
+		t.Fatalf("want empty enabledPlugins map, got %+v", parsed.EnabledPlugins)
 	}
 }

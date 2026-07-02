@@ -310,15 +310,21 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 	if env == nil {
 		env = map[string]string{}
 	}
+	var enabledPlugins []string
+	_ = json.Unmarshal([]byte(cfg.EnabledPlugins), &enabledPlugins)
+	var enabledMCPServers []string
+	_ = json.Unmarshal([]byte(cfg.EnabledMcpServers), &enabledMCPServers)
 	return AgentConfig{
-		ID:           cfg.ID,
-		Name:         cfg.Name,
-		Provider:     cfg.Provider,
-		Model:        cfg.Model,
-		SystemPrompt: cfg.SystemPrompt,
-		MaxTokens:    cfg.MaxTokens,
-		TimeoutSecs:  cfg.TimeoutSecs,
-		MaxTurns:     cfg.MaxTurns,
-		Env:          env,
+		ID:                cfg.ID,
+		Name:              cfg.Name,
+		Provider:          cfg.Provider,
+		Model:             cfg.Model,
+		SystemPrompt:      cfg.SystemPrompt,
+		MaxTokens:         cfg.MaxTokens,
+		TimeoutSecs:       cfg.TimeoutSecs,
+		MaxTurns:          cfg.MaxTurns,
+		Env:               env,
+		EnabledPlugins:    enabledPlugins,
+		EnabledMCPServers: enabledMCPServers,
 	}
 }

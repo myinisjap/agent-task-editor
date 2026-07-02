@@ -867,6 +867,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/claude-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get available Claude plugins and MCP servers for agent config selection
+         * @description Claude-provider-specific. Discovers plugins from ~/.claude/plugins/installed_plugins.json and user-level MCP servers from ~/.claude.json's global mcpServers key on the server.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Discovered Claude plugins and MCP servers */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ClaudeOptions"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos": {
         parameters: {
             query?: never;
@@ -1127,6 +1166,10 @@ export interface components {
             max_tokens?: number;
             timeout_secs?: number;
             max_turns?: number;
+            /** @description JSON array of Claude plugin IDs ("<name>@<marketplace>") enabled for this agent config. Claude-provider only; defaults to "[]" (all plugins off). */
+            enabled_plugins?: string;
+            /** @description JSON array of Claude user-level MCP server names (from ~/.claude.json's global mcpServers) enabled for this agent config. Claude-provider only; defaults to "[]" (all MCP servers off). */
+            enabled_mcp_servers?: string;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -1136,6 +1179,16 @@ export interface components {
             provider?: string;
             default_model?: string;
             models?: string[];
+        };
+        /** @description Claude plugins and user-level MCP servers discovered on the server's Claude home directory (~/.claude/plugins/installed_plugins.json and the global mcpServers key in ~/.claude.json), for per-agent-config selection. */
+        ClaudeOptions: {
+            plugins?: {
+                /** @description "<name>@<marketplace>" */
+                id?: string;
+                name?: string;
+                marketplace?: string;
+            }[];
+            mcp_servers?: string[];
         };
         Repo: {
             id?: string;
@@ -1153,8 +1206,6 @@ export interface components {
             /** @enum {string} */
             status?: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled";
             feedback?: string | null;
-            stored_info?: string | null;
-            notes?: string | null;
             /** Format: date-time */
             started_at?: string | null;
             /** Format: date-time */

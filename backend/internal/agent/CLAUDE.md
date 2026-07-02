@@ -8,6 +8,7 @@ The agent package owns everything to do with running AI agents: the provider abs
 |---|---|
 | `provider.go` | `Provider` interface, `RunInput`, `Result`, `LogEntry`, `LogEntryType` |
 | `claude.go` | `ClaudeRunner` — runs `claude` CLI subprocess with stream-json output |
+| `claude_discovery.go` | Discovers Claude plugins (`~/.claude/plugins/installed_plugins.json`) and user-level MCP servers (`~/.claude.json`'s global `mcpServers`) installed/configured on the machine, for per-agent-config selection (`enabled_plugins`/`enabled_mcp_servers`); `claude`-provider only |
 | `anthropic.go` | `AnthropicRunner` — calls Anthropic Messages API directly |
 | `llm.go` | `LLMRunner` — calls any OpenAI-compatible API |
 | `tools.go` | Shared tool implementations for `anthropic` and `llm` providers (read_file, write_file, run_bash) |

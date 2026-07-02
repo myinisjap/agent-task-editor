@@ -103,6 +103,11 @@ export type AgentConfig = {
   timeout_secs: number
   max_turns: number
   enabled: number | boolean
+  // JSON-string-encoded arrays, consistent with how `labels`/`env` are stored.
+  // enabled_plugins: Claude plugin IDs ("<name>@<marketplace>"), claude-provider only.
+  // enabled_mcp_servers: Claude MCP server names (from ~/.claude.json), claude-provider only.
+  enabled_plugins?: string
+  enabled_mcp_servers?: string
   created_at: string
   updated_at: string
 }
@@ -120,6 +125,11 @@ export type ModelList = {
   provider: string
   default_model: string
   models: string[]
+}
+
+export type ClaudeOptions = {
+  plugins: { id: string; name: string; marketplace: string }[]
+  mcp_servers: string[]
 }
 
 export type Dashboard = {
@@ -198,6 +208,7 @@ export const api = {
       request<AgentConfig>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
     models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),
+    claudeOptions: () => request<ClaudeOptions>('/agents/claude-options'),
   },
   repos: {
     list: () => request<Repo[]>('/repos'),

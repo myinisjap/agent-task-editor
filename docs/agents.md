@@ -17,6 +17,8 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `timeout_secs` | Maximum run duration in seconds (0 = 600s default) |
 | `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default) |
 | `env` | JSON object of additional environment variables for the agent process |
+| `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
+| `enabled_mcp_servers` | JSON array of Claude user-level MCP server names enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 
 ## Providers
 
@@ -127,6 +129,19 @@ When `MCP_SERVER_PATH` is set, the `claude` and `qwen_code` providers launch an 
 | `store_info(info)` | Store run summary visible in the task UI |
 
 See [mcp-tools.md](mcp-tools.md) for the full tool reference including parameters, return values, and behaviour details.
+
+## Claude Plugins & MCP Servers
+
+For the `claude` provider only, each agent config can select which Claude Code plugins and user-level MCP servers are enabled for its runs. **Everything defaults to off** — nothing is enabled unless explicitly selected.
+
+- **Discovery source:** options are read dynamically from the server's own Claude home directory, not hardcoded:
+  - Plugins: `~/.claude/plugins/installed_plugins.json` (the `plugins` object's keys, `"<name>@<marketplace>"`).
+  - MCP servers: the **global/user-level** `mcpServers` key in `~/.claude.json`. Project-scoped servers under `projects["<path>"].mcpServers` are **not** included — only servers configured at the user level.
+- **API:** `GET /agents/claude-options` returns the currently discovered `{ plugins: [{id, name, marketplace}], mcp_servers: [name] }` for the frontend to render as selection chips.
+- **Enforcement at run time (`claude.go`):**
+  - Plugins: the `claude` CLI is invoked with `--settings '{"enabledPlugins": {...}}'`, built by defaulting every discovered plugin to `false` and then setting `true` only for IDs present in `enabled_plugins`. A plugin selected but not present in the current discovery snapshot is still explicitly enabled (stale-inventory fallback).
+  - MCP servers: for each name in `enabled_mcp_servers` (skipping the reserved `task-editor` name), its raw config entry is read from `~/.claude.json`'s global `mcpServers` map and merged into the `--mcp-config` file alongside the task-editor sidecar entry. A bare `mcp__<server>` entry is appended to `--allowedTools` per selected server so its tools aren't blocked — this wildcarding behavior is inferred from CLI docs and worth re-verifying against a live run if MCP tool calls are unexpectedly denied.
+- **Scope:** this is currently `claude`-provider-only. Other providers (`anthropic`, `opencode`, `qwen_code`, generic `llm`) have the same DB columns available but ignore them entirely.
 
 ## Environment Variable Security
 

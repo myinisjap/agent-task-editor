@@ -63,6 +63,20 @@ func postJSON(t *testing.T, router http.Handler, path string, body any) *httptes
 	return w
 }
 
+// putJSON is a small helper that sends a JSON PUT to the given router.
+func putJSON(t *testing.T, router http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPut, path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
 // ---------------------------------------------------------------------------
 // parseGitHubName is package-private, so we test it indirectly via the Create
 // handler's auto-name behaviour.  These tests exercise every URL format that

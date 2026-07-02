@@ -15,6 +15,12 @@ type mcpServerEntry struct {
 	Env     map[string]string `json:"env"`
 }
 
+// rawMCPConfig is used when merging in externally-defined server entries
+// (e.g. from ~/.claude.json) whose shape we don't fully control/model.
+type rawMCPConfig struct {
+	MCPServers map[string]json.RawMessage `json:"mcpServers"`
+}
+
 type mcpConfig struct {
 	MCPServers map[string]mcpServerEntry `json:"mcpServers"`
 }
@@ -39,8 +45,11 @@ type TransitionHint struct {
 
 // Prepare creates temp files for one agent run and returns the config.
 // transitions is the list of agent-available transitions from the task's current label.
+// extraServers, if non-nil, is merged into the mcpServers map as raw JSON entries
+// (e.g. user-selected Claude MCP servers read from ~/.claude.json). A server named
+// "task-editor" in extraServers is ignored to avoid colliding with the sidecar entry.
 // The caller must call Cleanup when the run ends.
-func (m *MCPManager) Prepare(runID string, transitions []TransitionHint) (*MCPRunConfig, error) {
+func (m *MCPManager) Prepare(runID string, transitions []TransitionHint, extraServers map[string]json.RawMessage) (*MCPRunConfig, error) {
 	dir := os.TempDir()
 
 	resultFile := filepath.Join(dir, fmt.Sprintf("ate-result-%s.json", runID))
@@ -66,7 +75,7 @@ func (m *MCPManager) Prepare(runID string, transitions []TransitionHint) (*MCPRu
 		},
 	}
 
-	data, err := json.Marshal(cfg)
+	data, err := marshalMCPConfigWithExtras(cfg, extraServers)
 	if err != nil {
 		return nil, fmt.Errorf("marshal mcp config: %w", err)
 	}
@@ -75,6 +84,30 @@ func (m *MCPManager) Prepare(runID string, transitions []TransitionHint) (*MCPRu
 	}
 
 	return &MCPRunConfig{ConfigFile: configFile, ResultFile: resultFile}, nil
+}
+
+// marshalMCPConfigWithExtras marshals cfg to JSON and merges in extraServers
+// (raw JSON entries) under mcpServers, skipping any name that collides with
+// a server already present in cfg (e.g. "task-editor").
+func marshalMCPConfigWithExtras(cfg mcpConfig, extraServers map[string]json.RawMessage) ([]byte, error) {
+	if len(extraServers) == 0 {
+		return json.Marshal(cfg)
+	}
+	merged := map[string]json.RawMessage{}
+	for name, entry := range cfg.MCPServers {
+		raw, err := json.Marshal(entry)
+		if err != nil {
+			return nil, err
+		}
+		merged[name] = raw
+	}
+	for name, raw := range extraServers {
+		if _, exists := merged[name]; exists {
+			continue
+		}
+		merged[name] = raw
+	}
+	return json.Marshal(rawMCPConfig{MCPServers: merged})
 }
 
 // Cleanup removes the temp files created by Prepare.

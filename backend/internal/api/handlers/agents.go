@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -84,15 +85,17 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name         string `json:"name"`
-		Provider     string `json:"provider"`
-		Model        string `json:"model"`
-		SystemPrompt string `json:"system_prompt"`
-		Labels       string `json:"labels"`
-		Env          string `json:"env"`
-		MaxTokens    int64  `json:"max_tokens"`
-		TimeoutSecs  int64  `json:"timeout_secs"`
-		MaxTurns     int64  `json:"max_turns"`
+		Name              string   `json:"name"`
+		Provider          string   `json:"provider"`
+		Model             string   `json:"model"`
+		SystemPrompt      string   `json:"system_prompt"`
+		Labels            string   `json:"labels"`
+		Env               string   `json:"env"`
+		MaxTokens         int64    `json:"max_tokens"`
+		TimeoutSecs       int64    `json:"timeout_secs"`
+		MaxTurns          int64    `json:"max_turns"`
+		EnabledPlugins    []string `json:"enabled_plugins"`
+		EnabledMCPServers []string `json:"enabled_mcp_servers"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -121,6 +124,16 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.MaxTurns == 0 {
 		body.MaxTurns = 50
 	}
+	enabledPluginsJSON, err := marshalStringSlice(body.EnabledPlugins)
+	if err != nil {
+		Err(w, http.StatusBadRequest, "invalid enabled_plugins")
+		return
+	}
+	enabledMCPServersJSON, err := marshalStringSlice(body.EnabledMCPServers)
+	if err != nil {
+		Err(w, http.StatusBadRequest, "invalid enabled_mcp_servers")
+		return
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -135,16 +148,18 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg, err := h.q.CreateAgentConfig(r.Context(), gen.CreateAgentConfigParams{
-		ID:           uuid.NewString(),
-		Name:         body.Name,
-		Provider:     body.Provider,
-		Model:        body.Model,
-		SystemPrompt: body.SystemPrompt,
-		Labels:       body.Labels,
-		Env:          body.Env,
-		MaxTokens:    body.MaxTokens,
-		TimeoutSecs:  body.TimeoutSecs,
-		MaxTurns:     body.MaxTurns,
+		ID:                uuid.NewString(),
+		Name:              body.Name,
+		Provider:          body.Provider,
+		Model:             body.Model,
+		SystemPrompt:      body.SystemPrompt,
+		Labels:            body.Labels,
+		Env:               body.Env,
+		MaxTokens:         body.MaxTokens,
+		TimeoutSecs:       body.TimeoutSecs,
+		MaxTurns:          body.MaxTurns,
+		EnabledPlugins:    enabledPluginsJSON,
+		EnabledMcpServers: enabledMCPServersJSON,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -157,6 +172,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Name: cfg.Name, Provider: cfg.Provider, Model: cfg.Model,
 			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels, Env: cfg.Env,
 			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
+			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
 			Enabled: 0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -171,18 +187,33 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusCreated, cfg)
 }
 
+// marshalStringSlice marshals a possibly-nil string slice to a JSON array
+// string, defaulting to "[]" for a nil/empty slice.
+func marshalStringSlice(vals []string) (string, error) {
+	if len(vals) == 0 {
+		return "[]", nil
+	}
+	data, err := json.Marshal(vals)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name         string `json:"name"`
-		Provider     string `json:"provider"`
-		Model        string `json:"model"`
-		SystemPrompt string `json:"system_prompt"`
-		Labels       string `json:"labels"`
-		Env          string `json:"env"`
-		MaxTokens    int64  `json:"max_tokens"`
-		TimeoutSecs  int64  `json:"timeout_secs"`
-		MaxTurns     int64  `json:"max_turns"`
-		Enabled      *bool  `json:"enabled"`
+		Name              string   `json:"name"`
+		Provider          string   `json:"provider"`
+		Model             string   `json:"model"`
+		SystemPrompt      string   `json:"system_prompt"`
+		Labels            string   `json:"labels"`
+		Env               string   `json:"env"`
+		MaxTokens         int64    `json:"max_tokens"`
+		TimeoutSecs       int64    `json:"timeout_secs"`
+		MaxTurns          int64    `json:"max_turns"`
+		Enabled           *bool    `json:"enabled"`
+		EnabledPlugins    []string `json:"enabled_plugins"`
+		EnabledMCPServers []string `json:"enabled_mcp_servers"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -222,18 +253,31 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	enabledPluginsJSON, err := marshalStringSlice(body.EnabledPlugins)
+	if err != nil {
+		Err(w, http.StatusBadRequest, "invalid enabled_plugins")
+		return
+	}
+	enabledMCPServersJSON, err := marshalStringSlice(body.EnabledMCPServers)
+	if err != nil {
+		Err(w, http.StatusBadRequest, "invalid enabled_mcp_servers")
+		return
+	}
+
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
-		Name:         body.Name,
-		Provider:     body.Provider,
-		Model:        body.Model,
-		SystemPrompt: body.SystemPrompt,
-		Labels:       body.Labels,
-		Env:          body.Env,
-		MaxTokens:    body.MaxTokens,
-		TimeoutSecs:  body.TimeoutSecs,
-		MaxTurns:     body.MaxTurns,
-		Enabled:      enabled,
-		ID:           chi.URLParam(r, "id"),
+		Name:              body.Name,
+		Provider:          body.Provider,
+		Model:             body.Model,
+		SystemPrompt:      body.SystemPrompt,
+		Labels:            body.Labels,
+		Env:               body.Env,
+		MaxTokens:         body.MaxTokens,
+		TimeoutSecs:       body.TimeoutSecs,
+		MaxTurns:          body.MaxTurns,
+		Enabled:           enabled,
+		EnabledPlugins:    enabledPluginsJSON,
+		EnabledMcpServers: enabledMCPServersJSON,
+		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -296,5 +340,44 @@ func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 		"provider":     provider,
 		"default_model": defaultModel,
 		"models":       models,
+	})
+}
+
+// claudePluginOption is the JSON shape for a single discovered plugin,
+// exposed to the frontend for per-agent-config selection.
+type claudePluginOption struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Marketplace string `json:"marketplace"`
+}
+
+// GetClaudeOptions returns the Claude plugins and user-level MCP servers
+// discovered on this machine (from ~/.claude/plugins/installed_plugins.json
+// and the global mcpServers key in ~/.claude.json), for the frontend to
+// present as per-agent-config selection options. This endpoint is
+// claude-provider-specific for now; other providers have no equivalent.
+func (h *AgentsHandler) GetClaudeOptions(w http.ResponseWriter, r *http.Request) {
+	plugins, err := agent.ListInstalledClaudePlugins()
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	mcpServers, err := agent.ListAvailableClaudeMCPServers()
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	pluginOptions := make([]claudePluginOption, len(plugins))
+	for i, p := range plugins {
+		pluginOptions[i] = claudePluginOption{ID: p.ID, Name: p.Name, Marketplace: p.Marketplace}
+	}
+	if mcpServers == nil {
+		mcpServers = []string{}
+	}
+
+	JSON(w, http.StatusOK, map[string]any{
+		"plugins":     pluginOptions,
+		"mcp_servers": mcpServers,
 	})
 }
