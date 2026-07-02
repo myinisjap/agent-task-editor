@@ -61,9 +61,9 @@ See [docs/getting-started.md](docs/getting-started.md) for the full setup guide,
 ## First Steps After Startup
 
 1. **Register a repository** — Settings → Repos → Add Repo. Enter the local filesystem path agents should work in.
-2. **Create an agent config** — Settings → Agents → New Agent. Select a provider, enter a model, set target labels (e.g. `["todo", "in-progress"]`), and optionally write a system prompt.
+2. **Create an agent config** — Settings → Agents → New Agent. Select a provider, enter a model, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
 3. **Create a task** — Board → New Task. Select the repo and fill in the title and description.
-4. **Move it to `todo`** — drag it or use the label selector. The dispatcher picks it up within 5 seconds.
+4. **Move it to `plan`** — drag it or use the label selector. The dispatcher picks it up within 5 seconds.
 5. **Watch the logs** — click the task to open the detail view; logs stream live as the agent works.
 
 ---

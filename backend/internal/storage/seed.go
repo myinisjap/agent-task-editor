@@ -39,8 +39,8 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 	}{
 		{"not_ready", "#6B7280", 0, true, false},
 		{"plan", "#8B5CF6", 1, false, false},
-		{"todo", "#3B82F6", 2, false, false},
-		{"in-progress", "#F59E0B", 3, false, false},
+		{"review-plan", "#3B82F6", 2, false, false},
+		{"work", "#F59E0B", 3, false, false},
 		{"testing", "#F97316", 4, false, false},
 		{"agent-review", "#6366F1", 5, false, false},
 		{"review", "#EC4899", 6, false, false},
@@ -77,26 +77,17 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 		triggerType string
 		path        *string
 	}{
-		// Forward flow (success path)
-		{"plan", "todo", "both", sp("success")},
-		{"todo", "in-progress", "agent", sp("success")},
-		{"in-progress", "testing", "agent", sp("success")},
-		{"testing", "agent-review", "agent", sp("success")},
 		{"agent-review", "review", "agent", sp("success")},
-		{"review", "done", "human", nil},
-		// Feedback loops (failure path)
-		{"testing", "in-progress", "agent", sp("failure")},
-		{"agent-review", "in-progress", "agent", sp("failure")},
-		{"review", "in-progress", "human", nil},
-		// Park anything back to not_ready (human only, no path)
-		{"plan", "not_ready", "human", nil},
-		{"todo", "not_ready", "human", nil},
-		{"in-progress", "not_ready", "human", nil},
-		{"testing", "not_ready", "human", nil},
-		{"agent-review", "not_ready", "human", nil},
-		{"review", "not_ready", "human", nil},
-		// not_ready can go to plan
+		{"agent-review", "work", "agent", sp("failure")},
 		{"not_ready", "plan", "human", nil},
+		{"plan", "review-plan", "agent", sp("success")},
+		{"review", "done", "human", sp("success")},
+		{"review", "work", "human", sp("failure")},
+		{"review-plan", "plan", "human", sp("failure")},
+		{"review-plan", "work", "human", sp("success")},
+		{"testing", "agent-review", "agent", sp("success")},
+		{"testing", "work", "agent", sp("failure")},
+		{"work", "testing", "agent", sp("success")},
 	}
 
 	for _, t := range transitions {

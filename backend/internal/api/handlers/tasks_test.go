@@ -199,7 +199,7 @@ func TestTasks_List_WithLabel(t *testing.T) {
 		Title:      "Task A",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "work",
 	})
 	_, _ = q.CreateTask(context.Background(), gen.CreateTaskParams{
 		ID:         uuid.NewString(),
@@ -209,7 +209,7 @@ func TestTasks_List_WithLabel(t *testing.T) {
 		Label:      "done",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/tasks?label=todo", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tasks?label=work", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -219,7 +219,7 @@ func TestTasks_List_WithLabel(t *testing.T) {
 	var tasks []apiTask
 	_ = json.NewDecoder(w.Body).Decode(&tasks)
 	for _, task := range tasks {
-		if task.Label != "todo" {
+		if task.Label != "work" {
 			t.Errorf("label filter returned task with label %q", task.Label)
 		}
 	}
@@ -247,7 +247,7 @@ func TestTasks_Get_Found(t *testing.T) {
 		Title:      "Fetched",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "work",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID, nil)
@@ -274,7 +274,7 @@ func TestTasks_Update_OK(t *testing.T) {
 		Title:      "Original",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "work",
 	})
 
 	body := map[string]string{"title": "Updated Title", "description": "new desc", "type": "bug"}
@@ -306,7 +306,7 @@ func TestTasks_Delete_OK(t *testing.T) {
 		Title:      "To Delete",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "work",
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/tasks/"+task.ID, nil)
@@ -378,10 +378,10 @@ func TestTasks_MoveLabel_InvalidTransition_Returns400(t *testing.T) {
 		Title:      "No jump",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "work",
 	})
 
-	// todo → done has no direct transition defined
+	// work → done has no direct transition defined
 	body := map[string]string{"to_label": "done"}
 	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/label", jsonBody(t, body))
 	req.Header.Set("Content-Type", "application/json")
@@ -403,7 +403,7 @@ func TestTasks_ListRuns_Empty(t *testing.T) {
 		Title:      "No runs yet",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "work",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID+"/runs", nil)
@@ -425,7 +425,7 @@ func TestTasks_SetPaused_OK(t *testing.T) {
 		Title:      "Pausable",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "work",
 	})
 
 	body := map[string]bool{"paused": true}
@@ -442,7 +442,7 @@ func TestTasks_SetPaused_OK(t *testing.T) {
 	if !updated.Paused {
 		t.Errorf("expected paused=true in response")
 	}
-	if updated.Label != "todo" {
+	if updated.Label != "work" {
 		t.Errorf("expected label to remain unchanged, got %q", updated.Label)
 	}
 
@@ -465,7 +465,7 @@ func TestTasks_SetPaused_Unpause(t *testing.T) {
 		Title:      "Resumable",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "work",
 	})
 
 	if _, err := q.SetTaskPaused(context.Background(), gen.SetTaskPausedParams{Paused: 1, ID: task.ID}); err != nil {
@@ -495,18 +495,18 @@ func TestTasks_Paused_ExcludedFromAgentPickup(t *testing.T) {
 	_, q, wfID, repoID := setupTaskRouter(t)
 	ctx := context.Background()
 
-	// "in-progress" is an agent-trigger label in the seeded default workflow.
+	// "work" is an agent-trigger label in the seeded default workflow.
 	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
 		ID:         uuid.NewString(),
 		Title:      "Eligible for pickup",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "plan",
 	})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	if _, err := q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "in-progress", ID: task.ID}); err != nil {
+	if _, err := q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "work", ID: task.ID}); err != nil {
 		t.Fatalf("move label: %v", err)
 	}
 

@@ -21,8 +21,8 @@ func TestMatchConfig(t *testing.T) {
 		label   string
 		want    string // matched config name, "" for nil
 	}{
-		{"no match", []gen.AgentConfig{cfg("a", `["todo"]`)}, "review", ""},
-		{"single match", []gen.AgentConfig{cfg("a", `["todo","review"]`)}, "review", "a"},
+		{"no match", []gen.AgentConfig{cfg("a", `["plan"]`)}, "review", ""},
+		{"single match", []gen.AgentConfig{cfg("a", `["plan","review"]`)}, "review", "a"},
 		// configs are newest-first; first match wins on ambiguity.
 		{"ambiguous picks first", []gen.AgentConfig{cfg("new", `["review"]`), cfg("old", `["review"]`)}, "review", "new"},
 		// unparseable labels are skipped, not fatal — the valid config still matches.

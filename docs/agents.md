@@ -11,7 +11,7 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `name` | Human-readable name |
 | `provider` | Provider string — see [Providers](#providers) below |
 | `model` | Model identifier (e.g. `claude-sonnet-4-6`, `gpt-4o`) |
-| `labels` | JSON array of label names this agent handles (e.g. `["todo","in-progress"]`) |
+| `labels` | JSON array of label names this agent handles (e.g. `["plan","work"]`) |
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
 | `timeout_secs` | Maximum run duration in seconds (0 = 600s default) |

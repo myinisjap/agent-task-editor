@@ -80,7 +80,7 @@ curl http://localhost:8080/api/v1/tasks
 curl http://localhost:8080/api/v1/tasks/<id>
 
 # Filter by label
-curl "http://localhost:8080/api/v1/tasks?label=in-progress"
+curl "http://localhost:8080/api/v1/tasks?label=work"
 
 # Filter by repo
 curl "http://localhost:8080/api/v1/tasks?repo_id=<id>"

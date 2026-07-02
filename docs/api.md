@@ -313,7 +313,7 @@ Returns aggregated statistics:
 ```json
 {
   "total_tasks": 42,
-  "tasks_by_label": { "todo": 5, "in-progress": 3 },
+  "tasks_by_label": { "plan": 5, "work": 3 },
   "total_runs": 120,
   "runs_by_status": { "completed": 100, "failed": 8, "running": 2 },
   "recent_runs": [ ... ]
