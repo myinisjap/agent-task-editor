@@ -36,8 +36,8 @@ Returns the available workflow transitions from the task's current label. Call t
 **Returns:** JSON array of transition objects:
 ```json
 [
-  { "to_label": "testing", "path": "success" },
-  { "to_label": "in-progress", "path": "failure" }
+  { "to_label": "agent-review", "path": "success" },
+  { "to_label": "work", "path": "failure" }
 ]
 ```
 

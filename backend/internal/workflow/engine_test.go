@@ -85,9 +85,9 @@ func TestTransition_HappyPath(t *testing.T) {
 	pub := &noopPublisher{}
 	engine := workflow.New(db.SQL(), pub)
 
-	task := createTestTask(t, db, "todo", wfID)
+	task := createTestTask(t, db, "work", wfID)
 
-	err := engine.Transition(context.Background(), task.ID, "in-progress", workflow.TriggerAgent, "", "")
+	err := engine.Transition(context.Background(), task.ID, "testing", workflow.TriggerAgent, "", "")
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
@@ -99,8 +99,8 @@ func TestTransition_HappyPath(t *testing.T) {
 	// Verify label was updated in DB
 	q := gen.New(db.SQL())
 	updated, _ := q.GetTask(context.Background(), task.ID)
-	if updated.Label != "in-progress" {
-		t.Errorf("expected label in-progress, got %s", updated.Label)
+	if updated.Label != "testing" {
+		t.Errorf("expected label testing, got %s", updated.Label)
 	}
 }
 
@@ -109,7 +109,7 @@ func TestTransition_NoTransitionDefined(t *testing.T) {
 	wfID := defaultWorkflowID(t, db)
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
-	task := createTestTask(t, db, "todo", wfID)
+	task := createTestTask(t, db, "work", wfID)
 
 	err := engine.Transition(context.Background(), task.ID, "done", workflow.TriggerAgent, "", "")
 	if err != workflow.ErrNoTransition {
@@ -136,9 +136,9 @@ func TestTransition_HumanCanBypassGate(t *testing.T) {
 	wfID := defaultWorkflowID(t, db)
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
-	task := createTestTask(t, db, "plan", wfID)
+	task := createTestTask(t, db, "review-plan", wfID)
 
-	err := engine.Transition(context.Background(), task.ID, "todo", workflow.TriggerHuman, "user-1", "approved")
+	err := engine.Transition(context.Background(), task.ID, "work", workflow.TriggerHuman, "user-1", "approved")
 	if err != nil {
 		t.Fatalf("human should be able to trigger human-only transition, got: %v", err)
 	}
@@ -149,11 +149,11 @@ func TestTransition_AgentCannotMoveToAgentIgnoredLabel(t *testing.T) {
 	wfID := defaultWorkflowID(t, db)
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
-	// not_ready has agent_ignore=true; add a transition to test this
-	// (already exists: plan→not_ready is human; but let's test via direct check)
+	// not_ready has agent_ignore=true and no transition targets it in the
+	// default workflow, so an agent attempting to move a task there always
+	// fails (with ErrNoTransition, since no from→not_ready transition exists).
 	task := createTestTask(t, db, "plan", wfID)
 
-	// plan→not_ready is a human transition, so agent gets ErrGateRequired first
 	err := engine.Transition(context.Background(), task.ID, "not_ready", workflow.TriggerAgent, "", "")
 	if err == nil {
 		t.Error("expected error moving agent to not_ready, got nil")
@@ -165,14 +165,14 @@ func TestAvailableTransitions_Agent(t *testing.T) {
 	wfID := defaultWorkflowID(t, db)
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
-	task := createTestTask(t, db, "in-progress", wfID)
+	task := createTestTask(t, db, "work", wfID)
 
 	transitions, err := engine.AvailableTransitions(context.Background(), task.ID, workflow.TriggerAgent)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// in-progress→testing (agent) and in-progress→not_ready (human, excluded)
+	// work→testing (agent) is the only transition from work
 	if len(transitions) != 1 || transitions[0] != "testing" {
 		t.Errorf("expected [testing], got %v", transitions)
 	}
@@ -190,7 +190,7 @@ func TestAvailableTransitions_Human(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// review→done (human), review→in-progress (human), review→not_ready (human)
+	// review→done (human), review→work (human)
 	if len(transitions) < 2 {
 		t.Errorf("expected multiple human transitions from review, got %v", transitions)
 	}
@@ -213,8 +213,9 @@ func TestAgentPickupLabels(t *testing.T) {
 		}
 	}
 
-	// todo, in-progress, testing, agent-review must be present
-	expected := map[string]bool{"todo": true, "in-progress": true, "testing": true, "agent-review": true}
+	// plan, work, testing, agent-review must be present (labels with an
+	// agent-triggerable outgoing transition)
+	expected := map[string]bool{"plan": true, "work": true, "testing": true, "agent-review": true}
 	for _, l := range labels {
 		delete(expected, l)
 	}
@@ -223,21 +224,21 @@ func TestAgentPickupLabels(t *testing.T) {
 	}
 }
 
-func TestFeedbackLoop_ReviewToInProgress(t *testing.T) {
+func TestFeedbackLoop_ReviewToWork(t *testing.T) {
 	db := setupTestDB(t)
 	wfID := defaultWorkflowID(t, db)
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	task := createTestTask(t, db, "review", wfID)
 
-	err := engine.Transition(context.Background(), task.ID, "in-progress", workflow.TriggerHuman, "reviewer-1", "needs more tests")
+	err := engine.Transition(context.Background(), task.ID, "work", workflow.TriggerHuman, "reviewer-1", "needs more tests")
 	if err != nil {
 		t.Fatalf("feedback loop transition failed: %v", err)
 	}
 
 	q := gen.New(db.SQL())
 	updated, _ := q.GetTask(context.Background(), task.ID)
-	if updated.Label != "in-progress" {
-		t.Errorf("expected in-progress after rejection, got %s", updated.Label)
+	if updated.Label != "work" {
+		t.Errorf("expected work after rejection, got %s", updated.Label)
 	}
 }

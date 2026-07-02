@@ -93,7 +93,7 @@ func seedJobFixtures(t *testing.T, q *gen.Queries, wfID string) (taskID, agCfgID
 		Title:      "Pool test task",
 		WorkflowID: wfID,
 		RepoID:     repoID,
-		Label:      "todo",
+		Label:      "plan",
 	})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
@@ -105,7 +105,7 @@ func seedJobFixtures(t *testing.T, q *gen.Queries, wfID string) (taskID, agCfgID
 		Name:     "mock-agent",
 		Provider: "mock",
 		Model:    "none",
-		Labels:   `["todo"]`,
+		Labels:   `["plan"]`,
 		Env:      `{}`,
 	})
 	if err != nil {
@@ -130,7 +130,7 @@ func buildJob(runID, taskID, agCfgID, wfID, repoPath string, provider agent.Prov
 		Provider: provider,
 		Input: agent.RunInput{
 			RunID: runID,
-			Task:  agent.Task{ID: taskID, Title: "Pool test task", Label: "todo", WorkflowID: wfID},
+			Task:  agent.Task{ID: taskID, Title: "Pool test task", Label: "plan", WorkflowID: wfID},
 			AgentConfig: agent.AgentConfig{
 				ID:       agCfgID,
 				Name:     "mock-agent",
@@ -275,13 +275,13 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
-	waitForLabel(t, q, taskID, "in-progress")
+	waitForLabel(t, q, taskID, "review-plan")
 	cancel()
 
 	// Task label should have been transitioned
 	task, _ := q.GetTask(context.Background(), taskID)
-	if task.Label != "in-progress" {
-		t.Errorf("expected label 'in-progress', got %q", task.Label)
+	if task.Label != "review-plan" {
+		t.Errorf("expected label 'review-plan', got %q", task.Label)
 	}
 
 	// Events: agent_started + agent_done (label_changed also fired by engine)

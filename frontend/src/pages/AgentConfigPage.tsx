@@ -33,14 +33,6 @@ Steps:
 
 Do not implement anything. Stop after calling signal_complete.`
 
-const CODE_PROMPT = `You are an implementation agent. Your job is to implement the plan written by the planning agent.
-
-Steps:
-1. Read the "NOTES FROM PRIOR AGENT" section carefully — it contains your implementation plan.
-2. Implement the plan exactly as described.
-3. Before finishing, call mcp__task-editor__update_task_notes with a summary of what you changed (use append:true).
-4. Call mcp__task-editor__signal_complete with outcome='success' if done, 'failure' if you hit a blocker.`
-
 const TEST_PROMPT = `You are a testing agent. Your job is to verify the implementation is correct.
 
 Steps:
@@ -72,16 +64,6 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     model: 'sonnet',
     system_prompt: PLAN_PROMPT,
     labels: '["plan"]',
-    env: '{}',
-    max_tokens: 8192,
-    timeout_secs: 600,
-  },
-  {
-    name: 'Coder',
-    provider: 'claude',
-    model: 'sonnet',
-    system_prompt: CODE_PROMPT,
-    labels: '["todo"]',
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,

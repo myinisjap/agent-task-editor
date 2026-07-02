@@ -41,8 +41,8 @@ A task moved to a new label.
   "type": "task.label_changed",
   "payload": {
     "task_id": "uuid",
-    "from": "todo",
-    "to": "in-progress",
+    "from": "plan",
+    "to": "review-plan",
     "note": "optional note"
   }
 }

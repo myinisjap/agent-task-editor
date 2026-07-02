@@ -6,8 +6,8 @@ import { wsClient } from '../api/ws'
 const LABEL_COLORS: Record<string, string> = {
   not_ready:    '#6B7280',
   plan:         '#8B5CF6',
-  todo:         '#3B82F6',
-  'in-progress': '#F59E0B',
+  'review-plan': '#3B82F6',
+  work:         '#F59E0B',
   testing:      '#F97316',
   'agent-review': '#6366F1',
   review:       '#EC4899',

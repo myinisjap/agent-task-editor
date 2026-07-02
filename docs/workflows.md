@@ -30,30 +30,34 @@ A task can only move to labels that have a matching transition from its current 
 Seeded automatically on first startup:
 
 ```
-not_ready ──(human)──▶ plan ──(human)──▶ todo
-                                           │
-                                        (agent)
-                                           ▼
-                                      in-progress ◀──────┐
-                                           │              │ (agent/human)
-                                        (agent)           │
-                                           ▼              │
-                                        testing ──────────┤
-                                           │              │
-                                        (agent)           │
-                                           ▼              │
-                                      agent-review ────────┤
-                                           │              │
-                                        (agent)           │
-                                           ▼
-                                        review ──(human)──▶ done
-                                           │
-                                        (human)
-                                           ▼
-                                      in-progress
+not_ready ──(human)──▶ plan ──(agent, success)──▶ review-plan
+                                                        │
+                                    ┌───────────────────┴───────────────────┐
+                                    │ (human, failure)                      │ (human, success)
+                                    ▼                                       ▼
+                                  plan                                    work
+                                                                            │
+                                                                       (agent, success)
+                                                                            ▼
+                                                                         testing
+                                                                            │
+                                              ┌─────────────────────────────┤
+                                              │ (agent, failure)            │ (agent, success)
+                                              ▼                             ▼
+                                             work                    agent-review
+                                                                            │
+                                              ┌─────────────────────────────┤
+                                              │ (agent, failure)            │ (agent, success)
+                                              ▼                             ▼
+                                             work                        review
+                                                                            │
+                                              ┌─────────────────────────────┤
+                                              │ (human, failure)            │ (human, success)
+                                              ▼                             ▼
+                                             work                         done
 ```
 
-All labels can also be moved to `not_ready` by a human (parking).
+`not_ready` has no incoming transitions in the default workflow — tasks start there and move forward via `not_ready → plan`, but nothing routes back to it automatically.
 
 **Label flags in the default workflow:**
 - `not_ready` — `agent_ignore = true` (nothing runs here)

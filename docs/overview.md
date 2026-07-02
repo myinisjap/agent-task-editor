@@ -30,15 +30,16 @@ Human-gated transitions carry a `path` (`success` or `failure`); Approve follows
 The server seeds a default workflow on first run:
 
 ```
-not_ready → plan → todo → in-progress → testing → agent-review → review → done
+not_ready → plan → review-plan → work → testing → agent-review → review → done
 ```
 
 Key behaviour:
-- `plan → todo` requires human approval
-- `todo → in-progress` is agent-triggered (dispatch kicks off automatically)
-- `review → done` requires human approval
-- Feedback loops exist: any stage can move back to `in-progress` (agents or humans)
-- `not_ready` has `agent_ignore = true` — nothing runs while a task is parked there
+- `not_ready → plan` requires human approval
+- `plan → review-plan` is agent-triggered (dispatch kicks off automatically)
+- `review-plan → work` (approved) and `review-plan → plan` (rejected) require human approval
+- `review → done` (approved) and `review → work` (rejected) require human approval
+- Feedback loops exist: `testing`, `agent-review`, and `review` can all move a task back to `work` on failure
+- `not_ready` has `agent_ignore = true` — nothing runs while a task is parked there, and no transition routes back into it automatically
 
 ### Agent Configs
 An agent config binds a set of labels to a specific AI provider with its settings (model, system prompt, token limits, timeout, extra env vars). When the dispatcher finds a task on one of those labels it creates an agent run using that config.
