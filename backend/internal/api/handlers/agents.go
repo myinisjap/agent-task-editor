@@ -97,8 +97,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.Name == "" || body.Provider == "" || body.Model == "" {
-		Err(w, http.StatusBadRequest, "name, provider, and model are required")
+	if body.Name == "" || body.Provider == "" {
+		Err(w, http.StatusBadRequest, "name and provider are required")
 		return
 	}
 	if !knownProviders[body.Provider] {
@@ -244,8 +244,8 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
-	providerModels := map[string][2]string{
-		"claude": {"claude-sonnet-4-6", "claude-opus-4"},
+	providerModels := map[string][]string{
+		"claude": {"claude-sonnet-latest", "claude-opus-latest", "claude-haiku-latest"},
 	}
 	provider := r.URL.Query().Get("provider")
 	if provider == "" {
@@ -257,7 +257,7 @@ func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 	defaultModel := ""
 
 	if p, ok := providerModels[provider]; ok {
-		models = []string{p[0], p[1]}
+		models = p
 		defaultModel = p[0]
 	}
 
