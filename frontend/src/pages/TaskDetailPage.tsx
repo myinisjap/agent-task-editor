@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type AgentLog, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { parseDiff, type FileDiff } from '../lib/parseDiff'
+import { buildRejectionNote, type DiffComment } from '../lib/diffComments'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
 import AgentLogEntry from '../components/board/AgentLogEntry'
 import { useAgentsStore } from '../stores/agents'
@@ -23,6 +24,7 @@ export default function TaskDetailPage() {
   const [actionPending, setActionPending] = useState(false)
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
+  const [diffComments, setDiffComments] = useState<DiffComment[]>([])
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [editingTask, setEditingTask] = useState(false)
@@ -92,6 +94,7 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (!task?.id) return
     setDiffLoading(true)
+    setDiffComments([])
     api.tasks.diff(task.id)
       .then((d) => setDiffFiles(parseDiff(d.diff)))
       .catch(() => setDiffFiles([]))
@@ -210,6 +213,7 @@ export default function TaskDetailPage() {
     try {
       const updated = await api.tasks.approve(id)
       setTask(updated)
+      setDiffComments([])
       refreshRuns()
     } catch (e: any) {
       alert(e.message)
@@ -219,12 +223,14 @@ export default function TaskDetailPage() {
   }
 
   const handleReject = async () => {
-    if (!id || !rejectNote.trim()) return
+    if (!id || (!rejectNote.trim() && diffComments.length === 0)) return
     setActionPending(true)
     try {
-      const updated = await api.tasks.reject(id, rejectNote)
+      const note = buildRejectionNote(rejectNote, diffComments)
+      const updated = await api.tasks.reject(id, note)
       setTask(updated)
       setRejectNote('')
+      setDiffComments([])
       refreshRuns()
     } catch (e: any) {
       alert(e.message)
@@ -577,7 +583,13 @@ export default function TaskDetailPage() {
                 </button>
               </div>
             </div>
-            <FileDiffViewer files={diffFiles} loading={diffLoading} />
+            <FileDiffViewer
+              files={diffFiles}
+              loading={diffLoading}
+              comments={diffComments}
+              onAddComment={(c) => setDiffComments((prev) => [...prev, c])}
+              onRemoveComment={(cid) => setDiffComments((prev) => prev.filter((c) => c.id !== cid))}
+            />
           </div>
         )}
       </div>
@@ -593,11 +605,27 @@ export default function TaskDetailPage() {
               {activeRun.feedback}
             </p>
           )}
+          {diffComments.length > 0 && (
+            <p className="text-xs text-amber-400 mb-2">
+              💬 {diffComments.length} inline diff comment{diffComments.length !== 1 ? 's' : ''} attached
+              {' '}
+              <button
+                onClick={() => setActiveTab('diff')}
+                className="underline hover:text-amber-300"
+              >
+                review in Diff tab
+              </button>
+            </p>
+          )}
           <div className="flex gap-3 items-start">
             <textarea
               value={rejectNote}
               onChange={(e) => setRejectNote(e.target.value)}
-              placeholder="Rejection note (required to reject)…"
+              placeholder={
+                diffComments.length > 0
+                  ? 'Additional rejection note (optional — inline comments will be included)…'
+                  : 'Rejection note (required to reject)…'
+              }
               rows={2}
               className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500"
             />
@@ -611,7 +639,7 @@ export default function TaskDetailPage() {
               </button>
               <button
                 onClick={handleReject}
-                disabled={actionPending || !rejectNote.trim()}
+                disabled={actionPending || (!rejectNote.trim() && diffComments.length === 0)}
                 className="px-4 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
               >
                 Reject
