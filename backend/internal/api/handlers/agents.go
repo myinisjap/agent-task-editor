@@ -93,6 +93,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Env               string   `json:"env"`
 		MaxTokens         int64    `json:"max_tokens"`
 		TimeoutSecs       int64    `json:"timeout_secs"`
+		MaxTurns          int64    `json:"max_turns"`
 		EnabledPlugins    []string `json:"enabled_plugins"`
 		EnabledMCPServers []string `json:"enabled_mcp_servers"`
 	}
@@ -119,6 +120,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.TimeoutSecs == 0 {
 		body.TimeoutSecs = 600
+	}
+	if body.MaxTurns == 0 {
+		body.MaxTurns = 50
 	}
 	enabledPluginsJSON, err := marshalStringSlice(body.EnabledPlugins)
 	if err != nil {
@@ -153,6 +157,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Env:               body.Env,
 		MaxTokens:         body.MaxTokens,
 		TimeoutSecs:       body.TimeoutSecs,
+		MaxTurns:          body.MaxTurns,
 		EnabledPlugins:    enabledPluginsJSON,
 		EnabledMcpServers: enabledMCPServersJSON,
 	})
@@ -166,7 +171,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		cfg, err = h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 			Name: cfg.Name, Provider: cfg.Provider, Model: cfg.Model,
 			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels, Env: cfg.Env,
-			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs,
+			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
 			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
 			Enabled: 0, ID: cfg.ID,
 		})
@@ -205,6 +210,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Env               string   `json:"env"`
 		MaxTokens         int64    `json:"max_tokens"`
 		TimeoutSecs       int64    `json:"timeout_secs"`
+		MaxTurns          int64    `json:"max_turns"`
 		Enabled           *bool    `json:"enabled"`
 		EnabledPlugins    []string `json:"enabled_plugins"`
 		EnabledMCPServers []string `json:"enabled_mcp_servers"`
@@ -267,6 +273,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Env:               body.Env,
 		MaxTokens:         body.MaxTokens,
 		TimeoutSecs:       body.TimeoutSecs,
+		MaxTurns:          body.MaxTurns,
 		Enabled:           enabled,
 		EnabledPlugins:    enabledPluginsJSON,
 		EnabledMcpServers: enabledMCPServersJSON,

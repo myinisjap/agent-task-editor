@@ -52,6 +52,10 @@ To see available models: `opencode models` (the UI calls `GET /api/v1/agents/mod
 
 Not supported.
 
+## Max Turns
+
+The `max_turns` agent config field is accepted but **not currently enforced** by this provider — the opencode CLI's `run` command has no documented turn-limit flag equivalent to `claude`'s `--max-turns`. The field is stored and available for a future opencode CLI feature, but has no effect today.
+
 ## Limitations
 
 | Feature | Status |

@@ -176,6 +176,49 @@ func TestBuildPrompt_FeedbackInjected(t *testing.T) {
 	}
 }
 
+// findFlagValue returns the argument immediately following the given flag
+// name in args, or "" if not found.
+func findFlagValue(args []string, flag string) string {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// TestBuildClaudeArgs_MaxTurnsDefault verifies that when AgentConfig.MaxTurns
+// is unset (zero), the constructed args default --max-turns to 50 (today's
+// previously-hardcoded behavior).
+func TestBuildClaudeArgs_MaxTurnsDefault(t *testing.T) {
+	args, err := buildClaudeArgs(RunInput{
+		Task:        Task{Title: "t"},
+		AgentConfig: AgentConfig{},
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("buildClaudeArgs: %v", err)
+	}
+	if got := findFlagValue(args, "--max-turns"); got != "50" {
+		t.Fatalf("expected default --max-turns 50, got %q (args=%v)", got, args)
+	}
+}
+
+// TestBuildClaudeArgs_MaxTurnsConfigured verifies that a custom
+// AgentConfig.MaxTurns value is passed through to the --max-turns flag
+// instead of the hardcoded default.
+func TestBuildClaudeArgs_MaxTurnsConfigured(t *testing.T) {
+	args, err := buildClaudeArgs(RunInput{
+		Task:        Task{Title: "t"},
+		AgentConfig: AgentConfig{MaxTurns: 12},
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("buildClaudeArgs: %v", err)
+	}
+	if got := findFlagValue(args, "--max-turns"); got != "12" {
+		t.Fatalf("expected --max-turns 12, got %q (args=%v)", got, args)
+	}
+}
+
 // TestBuildClaudeSettingsJSON_FallbackNoInventory verifies that a selected
 // plugin is explicitly enabled even when it isn't present in the discovered
 // inventory (or discovery finds nothing at all). HOME is pointed at an empty

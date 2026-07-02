@@ -79,6 +79,7 @@ type AgentConfig struct {
 	SystemPrompt string
 	MaxTokens    int64
 	TimeoutSecs  int64
+	MaxTurns     int64
 	Env          map[string]string
 	// EnabledPlugins is the list of Claude plugin IDs ("<name>@<marketplace>")
 	// the user has explicitly enabled for this agent config. Claude-provider only.

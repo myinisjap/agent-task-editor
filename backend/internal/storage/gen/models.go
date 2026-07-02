@@ -23,6 +23,7 @@ type AgentConfig struct {
 	Enabled           int64     `json:"enabled"`
 	EnabledPlugins    string    `json:"enabled_plugins"`
 	EnabledMcpServers string    `json:"enabled_mcp_servers"`
+	MaxTurns          int64     `json:"max_turns"`
 }
 
 type AgentLog struct {

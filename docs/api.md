@@ -242,6 +242,7 @@ Create an agent config.
   "system_prompt": "string",
   "max_tokens": 0,
   "timeout_secs": 600,
+  "max_turns": 50,
   "env": { "KEY": "value" }
 }
 ```

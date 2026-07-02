@@ -71,6 +71,7 @@ components:
         env:           { type: string, description: "JSON object of env vars" }
         max_tokens:    { type: integer }
         timeout_secs:  { type: integer }
+        max_turns:     { type: integer }
         enabled_plugins:
           type: string
           description: >

@@ -10,7 +10,7 @@ The `anthropic` provider calls the Anthropic Messages API directly — no CLI bi
 
 ## How It Works
 
-Makes direct HTTP calls to `https://api.anthropic.com/v1/messages` in a multi-turn tool-use loop (up to 50 turns). Tool calls are executed server-side in Go; the model is sent tool results and continues until it calls `signal_complete` or `request_human`, or runs out of turns.
+Makes direct HTTP calls to `https://api.anthropic.com/v1/messages` in a multi-turn tool-use loop (up to `max_turns` turns, default `50`). Tool calls are executed server-side in Go; the model is sent tool results and continues until it calls `signal_complete` or `request_human`, or runs out of turns. The turn limit is configurable per agent config via the `max_turns` field (`0`/unset falls back to `50`).
 
 ## Credentials
 

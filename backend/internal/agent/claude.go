@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,65 @@ func (r *ClaudeRunner) binary() string {
 		return r.BinaryPath
 	}
 	return "claude"
+}
+
+// buildClaudeArgs constructs the CLI argument list for the claude binary
+// given the run input, whether the task-editor MCP sidecar is enabled, and
+// the (optional) prepared MCP config. Extracted as a standalone function so
+// the arg-construction logic (in particular the --max-turns default/override
+// behavior) can be unit tested without spawning a subprocess.
+func buildClaudeArgs(input RunInput, sidecarEnabled bool, mcpCfg *MCPRunConfig) ([]string, error) {
+	var extraServerNames []string
+	for _, name := range input.AgentConfig.EnabledMCPServers {
+		if name == "" || name == "task-editor" {
+			continue
+		}
+		extraServerNames = append(extraServerNames, name)
+	}
+
+	allowedTools := "Edit,Write,Read,Bash,Glob,Grep"
+	if sidecarEnabled {
+		allowedTools += ",mcp__task-editor__get_task_transitions,mcp__task-editor__signal_complete,mcp__task-editor__request_human,mcp__task-editor__update_task_notes,mcp__task-editor__store_info"
+	}
+	// Allow tools from each selected MCP server. Claude Code supports
+	// server-level wildcarding via the bare "mcp__<server>" entry; this has
+	// not been independently verified against a live CLI run and should be
+	// double-checked if MCP tool calls are unexpectedly blocked.
+	for _, name := range extraServerNames {
+		allowedTools += ",mcp__" + name
+	}
+
+	settingsJSON, err := buildClaudeSettingsJSON(input.AgentConfig.EnabledPlugins)
+	if err != nil {
+		return nil, fmt.Errorf("build claude settings: %w", err)
+	}
+
+	maxTurns := input.AgentConfig.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 50
+	}
+
+	args := []string{
+		"-p", buildPrompt(input),
+		"--system-prompt", buildSystemPrompt(input),
+		"--output-format", "stream-json",
+		"--verbose",
+		"--allowedTools", allowedTools,
+		"--max-turns", strconv.FormatInt(maxTurns, 10),
+		"--bare",
+		"--settings", settingsJSON,
+	}
+	if input.AgentConfig.Model != "" {
+		args = append(args, "--model", input.AgentConfig.Model)
+	}
+	if mcpCfg != nil {
+		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
+	}
+	// Pass attachment images as --image flags so Claude can see them visually.
+	for _, absPath := range input.AttachmentAbsPaths {
+		args = append(args, "--image", absPath)
+	}
+	return args, nil
 }
 
 func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error) {
@@ -64,42 +124,9 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		defer mcpCfg.Cleanup()
 	}
 
-	allowedTools := "Edit,Write,Read,Bash,Glob,Grep"
-	if sidecarEnabled {
-		allowedTools += ",mcp__task-editor__get_task_transitions,mcp__task-editor__signal_complete,mcp__task-editor__request_human,mcp__task-editor__update_task_notes,mcp__task-editor__store_info"
-	}
-	// Allow tools from each selected MCP server. Claude Code supports
-	// server-level wildcarding via the bare "mcp__<server>" entry; this has
-	// not been independently verified against a live CLI run and should be
-	// double-checked if MCP tool calls are unexpectedly blocked.
-	for _, name := range extraServerNames {
-		allowedTools += ",mcp__" + name
-	}
-
-	settingsJSON, err := buildClaudeSettingsJSON(input.AgentConfig.EnabledPlugins)
+	args, err := buildClaudeArgs(input, sidecarEnabled, mcpCfg)
 	if err != nil {
-		return Result{Status: "failed"}, fmt.Errorf("build claude settings: %w", err)
-	}
-
-	args := []string{
-		"-p", buildPrompt(input),
-		"--system-prompt", buildSystemPrompt(input),
-		"--output-format", "stream-json",
-		"--verbose",
-		"--allowedTools", allowedTools,
-		"--max-turns", "50",
-		"--bare",
-		"--settings", settingsJSON,
-	}
-	if input.AgentConfig.Model != "" {
-		args = append(args, "--model", input.AgentConfig.Model)
-	}
-	if mcpCfg != nil {
-		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
-	}
-	// Pass attachment images as --image flags so Claude can see them visually.
-	for _, absPath := range input.AttachmentAbsPaths {
-		args = append(args, "--image", absPath)
+		return Result{Status: "failed"}, err
 	}
 
 	timeoutSecs := input.AgentConfig.TimeoutSecs

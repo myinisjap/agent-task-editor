@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -32,16 +33,15 @@ func (r *QwenRunner) binary() string {
 	return "qwen"
 }
 
-func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error) {
-	// Set up MCP sidecar if manager is configured.
-	var mcpCfg *MCPRunConfig
-	if r.MCP != nil && r.MCP.ServerBinary != "" {
-		var err error
-		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, nil)
-		if err != nil {
-			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
-		}
-		defer mcpCfg.Cleanup()
+// buildQwenArgs constructs the CLI argument list for the qwen binary given
+// the run input and (optional) prepared MCP config. Extracted as a
+// standalone function so the arg-construction logic (in particular the
+// --max-turns default/override behavior) can be unit tested without
+// spawning a subprocess — mirrors buildClaudeArgs in claude.go.
+func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
+	maxTurns := input.AgentConfig.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 50
 	}
 
 	args := []string{
@@ -49,6 +49,7 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 		"--system-prompt", buildSystemPrompt(input),
 		"--output-format", "stream-json",
 		"--approval-mode", "yolo",
+		"--max-turns", strconv.FormatInt(maxTurns, 10),
 	}
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
@@ -64,6 +65,22 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 			"mcp__task-editor__store_info",
 		)
 	}
+	return args
+}
+
+func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error) {
+	// Set up MCP sidecar if manager is configured.
+	var mcpCfg *MCPRunConfig
+	if r.MCP != nil && r.MCP.ServerBinary != "" {
+		var err error
+		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, nil)
+		if err != nil {
+			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
+		}
+		defer mcpCfg.Cleanup()
+	}
+
+	args := buildQwenArgs(input, mcpCfg)
 
 	timeoutSecs := input.AgentConfig.TimeoutSecs
 	if timeoutSecs <= 0 {

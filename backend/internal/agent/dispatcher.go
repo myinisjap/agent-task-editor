@@ -322,6 +322,7 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 		SystemPrompt:      cfg.SystemPrompt,
 		MaxTokens:         cfg.MaxTokens,
 		TimeoutSecs:       cfg.TimeoutSecs,
+		MaxTurns:          cfg.MaxTurns,
 		Env:               env,
 		EnabledPlugins:    enabledPlugins,
 		EnabledMCPServers: enabledMCPServers,

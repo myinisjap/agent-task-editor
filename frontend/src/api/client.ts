@@ -101,6 +101,7 @@ export type AgentConfig = {
   env: string
   max_tokens: number
   timeout_secs: number
+  max_turns: number
   enabled: number | boolean
   // JSON-string-encoded arrays, consistent with how `labels`/`env` are stored.
   // enabled_plugins: Claude plugin IDs ("<name>@<marketplace>"), claude-provider only.
