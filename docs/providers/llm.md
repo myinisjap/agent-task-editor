@@ -14,7 +14,7 @@ Any string that doesn't match the specific provider names — convention is to u
 
 ## How It Works
 
-Makes HTTP calls to `POST <LLM_BASE_URL>/chat/completions` using the OpenAI chat completions format. Runs a tool-use loop (up to 50 turns) until the model calls `signal_complete` or `request_human`, or runs out of turns.
+Makes HTTP calls to `POST <LLM_BASE_URL>/chat/completions` using the OpenAI chat completions format. Runs a tool-use loop (up to `max_turns` turns, default `50`) until the model calls `signal_complete` or `request_human`, or runs out of turns. The turn limit is configurable per agent config via the `max_turns` field (`0`/unset falls back to `50`).
 
 ## Credentials
 

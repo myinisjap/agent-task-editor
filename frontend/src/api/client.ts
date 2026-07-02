@@ -101,6 +101,7 @@ export type AgentConfig = {
   env: string
   max_tokens: number
   timeout_secs: number
+  max_turns: number
   enabled: number | boolean
   created_at: string
   updated_at: string

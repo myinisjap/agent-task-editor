@@ -19,6 +19,7 @@ const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'> =
   env: '{}',
   max_tokens: 8192,
   timeout_secs: 600,
+  max_turns: 50,
 }
 
 const PLAN_PROMPT = `You are a planning agent. Your ONLY job is to write an implementation plan.
@@ -71,6 +72,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
+    max_turns: 50,
   },
   {
     name: 'Tester',
@@ -81,6 +83,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
+    max_turns: 50,
   },
   {
     name: 'Reviewer',
@@ -91,6 +94,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
+    max_turns: 50,
   },
   {
     name: 'Worker',
@@ -101,6 +105,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
+    max_turns: 50,
   },
 ]
 
@@ -161,6 +166,7 @@ export default function AgentConfigPage() {
       env: a.env,
       max_tokens: a.max_tokens,
       timeout_secs: a.timeout_secs,
+      max_turns: a.max_turns,
     })
   }
 
@@ -250,6 +256,7 @@ export default function AgentConfigPage() {
             env: a.env,
             max_tokens: a.max_tokens,
             timeout_secs: a.timeout_secs,
+            max_turns: a.max_turns,
             enabled: enable,
           })
         )
@@ -513,6 +520,17 @@ export default function AgentConfigPage() {
               className="input"
               min={256}
               max={200000}
+            />
+          </Field>
+
+          <Field label="Max turns">
+            <input
+              type="number"
+              value={form.max_turns}
+              onChange={(e) => setForm((f) => ({ ...f, max_turns: Number(e.target.value) }))}
+              className="input"
+              min={1}
+              max={200}
             />
           </Field>
 

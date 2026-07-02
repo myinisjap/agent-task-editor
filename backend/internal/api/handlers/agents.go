@@ -92,6 +92,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Env          string `json:"env"`
 		MaxTokens    int64  `json:"max_tokens"`
 		TimeoutSecs  int64  `json:"timeout_secs"`
+		MaxTurns     int64  `json:"max_turns"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -117,6 +118,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.TimeoutSecs == 0 {
 		body.TimeoutSecs = 600
 	}
+	if body.MaxTurns == 0 {
+		body.MaxTurns = 50
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -140,6 +144,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Env:          body.Env,
 		MaxTokens:    body.MaxTokens,
 		TimeoutSecs:  body.TimeoutSecs,
+		MaxTurns:     body.MaxTurns,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -151,7 +156,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		cfg, err = h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 			Name: cfg.Name, Provider: cfg.Provider, Model: cfg.Model,
 			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels, Env: cfg.Env,
-			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs,
+			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
 			Enabled: 0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -176,6 +181,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Env          string `json:"env"`
 		MaxTokens    int64  `json:"max_tokens"`
 		TimeoutSecs  int64  `json:"timeout_secs"`
+		MaxTurns     int64  `json:"max_turns"`
 		Enabled      *bool  `json:"enabled"`
 	}
 	if err := decode(r, &body); err != nil {
@@ -225,6 +231,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Env:          body.Env,
 		MaxTokens:    body.MaxTokens,
 		TimeoutSecs:  body.TimeoutSecs,
+		MaxTurns:     body.MaxTurns,
 		Enabled:      enabled,
 		ID:           chi.URLParam(r, "id"),
 	})

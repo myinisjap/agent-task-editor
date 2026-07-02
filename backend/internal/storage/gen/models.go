@@ -21,6 +21,7 @@ type AgentConfig struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	Enabled      int64     `json:"enabled"`
+	MaxTurns     int64     `json:"max_turns"`
 }
 
 type AgentLog struct {

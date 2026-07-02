@@ -10,9 +10,9 @@ import (
 )
 
 const createAgentConfig = `-- name: CreateAgentConfig :one
-INSERT INTO agent_configs (id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled
+INSERT INTO agent_configs (id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, max_turns)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, max_turns
 `
 
 type CreateAgentConfigParams struct {
@@ -25,6 +25,7 @@ type CreateAgentConfigParams struct {
 	Env          string `json:"env"`
 	MaxTokens    int64  `json:"max_tokens"`
 	TimeoutSecs  int64  `json:"timeout_secs"`
+	MaxTurns     int64  `json:"max_turns"`
 }
 
 func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigParams) (AgentConfig, error) {
@@ -38,6 +39,7 @@ func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigPa
 		arg.Env,
 		arg.MaxTokens,
 		arg.TimeoutSecs,
+		arg.MaxTurns,
 	)
 	var i AgentConfig
 	err := row.Scan(
@@ -53,6 +55,7 @@ func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Enabled,
+		&i.MaxTurns,
 	)
 	return i, err
 }
@@ -67,7 +70,7 @@ func (q *Queries) DeleteAgentConfig(ctx context.Context, id string) error {
 }
 
 const getAgentConfig = `-- name: GetAgentConfig :one
-SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled FROM agent_configs WHERE id = ?
+SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, max_turns FROM agent_configs WHERE id = ?
 `
 
 func (q *Queries) GetAgentConfig(ctx context.Context, id string) (AgentConfig, error) {
@@ -86,12 +89,13 @@ func (q *Queries) GetAgentConfig(ctx context.Context, id string) (AgentConfig, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Enabled,
+		&i.MaxTurns,
 	)
 	return i, err
 }
 
 const listAgentConfigs = `-- name: ListAgentConfigs :many
-SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled FROM agent_configs WHERE enabled = 1 ORDER BY created_at DESC
+SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, max_turns FROM agent_configs WHERE enabled = 1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
@@ -116,6 +120,7 @@ func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Enabled,
+			&i.MaxTurns,
 		); err != nil {
 			return nil, err
 		}
@@ -131,7 +136,7 @@ func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
 }
 
 const listAllAgentConfigs = `-- name: ListAllAgentConfigs :many
-SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled FROM agent_configs ORDER BY created_at DESC
+SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, max_turns FROM agent_configs ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
@@ -156,6 +161,7 @@ func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Enabled,
+			&i.MaxTurns,
 		); err != nil {
 			return nil, err
 		}
@@ -173,9 +179,9 @@ func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error
 const updateAgentConfig = `-- name: UpdateAgentConfig :one
 UPDATE agent_configs
 SET name = ?, provider = ?, model = ?, system_prompt = ?, labels = ?, env = ?,
-    max_tokens = ?, timeout_secs = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+    max_tokens = ?, timeout_secs = ?, max_turns = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled
+RETURNING id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, max_turns
 `
 
 type UpdateAgentConfigParams struct {
@@ -187,6 +193,7 @@ type UpdateAgentConfigParams struct {
 	Env          string `json:"env"`
 	MaxTokens    int64  `json:"max_tokens"`
 	TimeoutSecs  int64  `json:"timeout_secs"`
+	MaxTurns     int64  `json:"max_turns"`
 	Enabled      int64  `json:"enabled"`
 	ID           string `json:"id"`
 }
@@ -201,6 +208,7 @@ func (q *Queries) UpdateAgentConfig(ctx context.Context, arg UpdateAgentConfigPa
 		arg.Env,
 		arg.MaxTokens,
 		arg.TimeoutSecs,
+		arg.MaxTurns,
 		arg.Enabled,
 		arg.ID,
 	)
@@ -218,6 +226,7 @@ func (q *Queries) UpdateAgentConfig(ctx context.Context, arg UpdateAgentConfigPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Enabled,
+		&i.MaxTurns,
 	)
 	return i, err
 }

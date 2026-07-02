@@ -163,7 +163,10 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 	}
 
 	var acc runAccumulators
-	const maxTurns = 50
+	maxTurns := int(input.AgentConfig.MaxTurns)
+	if maxTurns <= 0 {
+		maxTurns = 50
+	}
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := r.chatComplete(runCtx, input.AgentConfig.Model, messages)
 		if err != nil {

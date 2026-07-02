@@ -15,6 +15,7 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
 | `timeout_secs` | Maximum run duration in seconds (0 = 600s default) |
+| `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default) |
 | `env` | JSON object of additional environment variables for the agent process |
 
 ## Providers

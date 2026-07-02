@@ -18,6 +18,7 @@ sql:
       - "internal/storage/migrations/013_agent_run_notes.up.sql"
       - "internal/storage/migrations/014_workflow_name_unique.up.sql"
       - "internal/storage/migrations/015_task_paused.up.sql"
+      - "internal/storage/migrations/016_agent_max_turns.up.sql"
     gen:
       go:
         package: "gen"

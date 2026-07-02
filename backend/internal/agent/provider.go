@@ -79,6 +79,7 @@ type AgentConfig struct {
 	SystemPrompt string
 	MaxTokens    int64
 	TimeoutSecs  int64
+	MaxTurns     int64
 	Env          map[string]string
 }
 

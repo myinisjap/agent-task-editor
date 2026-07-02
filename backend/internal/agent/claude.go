@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,21 +32,20 @@ func (r *ClaudeRunner) binary() string {
 	return "claude"
 }
 
-func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error) {
-	// Set up MCP sidecar if manager is configured
-	var mcpCfg *MCPRunConfig
-	if r.MCP != nil && r.MCP.ServerBinary != "" {
-		var err error
-		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions)
-		if err != nil {
-			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
-		}
-		defer mcpCfg.Cleanup()
-	}
-
+// buildClaudeArgs constructs the CLI argument list for the claude binary
+// given the run input and (optional) prepared MCP config. Extracted as a
+// standalone function so the arg-construction logic (in particular the
+// --max-turns default/override behavior) can be unit tested without
+// spawning a subprocess.
+func buildClaudeArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 	allowedTools := "Edit,Write,Read,Bash,Glob,Grep"
 	if mcpCfg != nil {
 		allowedTools += ",mcp__task-editor__get_task_transitions,mcp__task-editor__signal_complete,mcp__task-editor__request_human,mcp__task-editor__update_task_notes,mcp__task-editor__store_info"
+	}
+
+	maxTurns := input.AgentConfig.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 50
 	}
 
 	args := []string{
@@ -54,7 +54,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		"--output-format", "stream-json",
 		"--verbose",
 		"--allowedTools", allowedTools,
-		"--max-turns", "50",
+		"--max-turns", strconv.FormatInt(maxTurns, 10),
 		"--bare",
 		"--settings", `{"enabledPlugins":{"oh-my-claudecode@omc":false}}`,
 	}
@@ -68,6 +68,22 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	for _, absPath := range input.AttachmentAbsPaths {
 		args = append(args, "--image", absPath)
 	}
+	return args
+}
+
+func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error) {
+	// Set up MCP sidecar if manager is configured
+	var mcpCfg *MCPRunConfig
+	if r.MCP != nil && r.MCP.ServerBinary != "" {
+		var err error
+		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions)
+		if err != nil {
+			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
+		}
+		defer mcpCfg.Cleanup()
+	}
+
+	args := buildClaudeArgs(input, mcpCfg)
 
 	timeoutSecs := input.AgentConfig.TimeoutSecs
 	if timeoutSecs <= 0 {

@@ -10,7 +10,9 @@ The `claude` provider runs the Claude CLI in headless mode and is the most featu
 
 ## How It Works
 
-Runs: `claude -p <prompt> --system-prompt <system> --output-format stream-json --verbose --allowedTools <tools> --max-turns 50 --bare`
+Runs: `claude -p <prompt> --system-prompt <system> --output-format stream-json --verbose --allowedTools <tools> --max-turns <max_turns> --bare`
+
+`<max_turns>` comes from the agent config's `max_turns` field (defaults to `50` when unset or `0`).
 
 Output is parsed as NDJSON (stream-json format). The MCP sidecar is launched as a subprocess alongside `claude` and connected via `--mcp-config <tempfile>`.
 

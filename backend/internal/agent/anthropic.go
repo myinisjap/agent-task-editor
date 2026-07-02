@@ -163,7 +163,10 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 	}
 
 	var acc runAccumulators
-	const maxTurns = 50
+	maxTurns := int(input.AgentConfig.MaxTurns)
+	if maxTurns <= 0 {
+		maxTurns = 50
+	}
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := r.messagesComplete(runCtx, input.AgentConfig.Model, buildSystemPrompt(input), maxTokens, messages)
 		if err != nil {

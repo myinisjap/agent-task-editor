@@ -1126,6 +1126,7 @@ export interface components {
             env?: string;
             max_tokens?: number;
             timeout_secs?: number;
+            max_turns?: number;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
