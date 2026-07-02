@@ -56,8 +56,8 @@ VITE_API_TOKEN=                          # bearer token if API_TOKEN is set
 npm install
 npm run dev       # Vite dev server with HMR
 npm run build     # Production build to dist/
-npm run lint      # ESLint
-npm run type-check  # tsc --noEmit
+npm run lint      # oxlint
+npx tsc --noEmit  # Type-check (no dedicated script)
 ```
 
 ## Adding a New Page
