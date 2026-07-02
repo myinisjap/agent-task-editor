@@ -3,10 +3,17 @@ import { api, type AgentConfig, type ModelList } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
 
+const CLAUDE_MODELS = [
+  { label: 'Sonnet (latest)', value: 'claude-sonnet-latest' },
+  { label: 'Opus (latest)',   value: 'claude-opus-latest' },
+  { label: 'Haiku (latest)',  value: 'claude-haiku-latest' },
+  { label: 'Model from env',  value: '' },
+]
+
 const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'> = {
   name: '',
   provider: 'claude',
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-latest',
   system_prompt: '',
   labels: '[]',
   env: '{}',
@@ -62,7 +69,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
   {
     name: 'Planner',
     provider: 'claude',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-latest',
     system_prompt: PLAN_PROMPT,
     labels: '["plan"]',
     env: '{}',
@@ -72,7 +79,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
   {
     name: 'Coder',
     provider: 'claude',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-latest',
     system_prompt: CODE_PROMPT,
     labels: '["todo"]',
     env: '{}',
@@ -82,7 +89,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
   {
     name: 'Tester',
     provider: 'claude',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-latest',
     system_prompt: TEST_PROMPT,
     labels: '["testing"]',
     env: '{}',
@@ -92,7 +99,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
   {
     name: 'Reviewer',
     provider: 'claude',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-latest',
     system_prompt: REVIEW_PROMPT,
     labels: '["agent-review"]',
     env: '{}',
@@ -102,7 +109,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
   {
     name: 'Worker',
     provider: 'claude',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-latest',
     system_prompt: WORK_PROMPT,
     labels: '["work"]',
     env: '{}',
@@ -136,6 +143,11 @@ export default function AgentConfigPage() {
   }, [fetchAgents, fetchWorkflows])
 
   useEffect(() => {
+    if (form.provider === 'claude') {
+      setModelList(null)
+      setFetchingModels(false)
+      return
+    }
     if (PROVIDERS.includes(form.provider)) {
       setFetchingModels(true)
       api.agents.models(form.provider)
@@ -465,7 +477,17 @@ export default function AgentConfigPage() {
           </Field>
 
           <Field label="Model">
-            {modelList && modelList.models.length > 0 ? (
+            {form.provider === 'claude' ? (
+              <select
+                value={form.model}
+                onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+                className="input"
+              >
+                {CLAUDE_MODELS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            ) : modelList && modelList.models.length > 0 ? (
               <select
                 value={form.model}
                 onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
@@ -481,7 +503,7 @@ export default function AgentConfigPage() {
                 value={form.model}
                 onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
                 className="input"
-                placeholder={fetchingModels ? 'Loading models...' : 'e.g. claude-sonnet-4-6 (empty = use env var)'}
+                placeholder={fetchingModels ? 'Loading models...' : 'e.g. claude-sonnet-latest (empty = use env var)'}
               />
             )}
           </Field>
