@@ -9,18 +9,20 @@ import (
 )
 
 type AgentConfig struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Provider     string    `json:"provider"`
-	Model        string    `json:"model"`
-	SystemPrompt string    `json:"system_prompt"`
-	Labels       string    `json:"labels"`
-	Env          string    `json:"env"`
-	MaxTokens    int64     `json:"max_tokens"`
-	TimeoutSecs  int64     `json:"timeout_secs"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Enabled      int64     `json:"enabled"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	Provider          string    `json:"provider"`
+	Model             string    `json:"model"`
+	SystemPrompt      string    `json:"system_prompt"`
+	Labels            string    `json:"labels"`
+	Env               string    `json:"env"`
+	MaxTokens         int64     `json:"max_tokens"`
+	TimeoutSecs       int64     `json:"timeout_secs"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	Enabled           int64     `json:"enabled"`
+	EnabledPlugins    string    `json:"enabled_plugins"`
+	EnabledMcpServers string    `json:"enabled_mcp_servers"`
 }
 
 type AgentLog struct {
