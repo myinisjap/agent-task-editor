@@ -12,7 +12,7 @@ export default function App() {
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <div className="flex h-screen overflow-hidden">
         <NavSidebar />
-        <main className="flex-1 overflow-auto bg-slate-950">
+        <main className="flex-1 overflow-auto bg-slate-950 pt-12 md:pt-0">
           <Routes>
             <Route path="/"            element={<DashboardPage />} />
             <Route path="/board"       element={<BoardPage />} />
