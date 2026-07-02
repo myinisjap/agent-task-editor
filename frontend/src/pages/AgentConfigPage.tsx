@@ -27,11 +27,12 @@ You MUST NOT write any code or make any file changes.
 You MUST NOT use Edit, Write, or Bash to modify files.
 
 Steps:
-1. Read the task description and any relevant files to understand the work needed.
+1. Read the task description and any relevant files to understand the work needed. If the task description states scope constraints (e.g. specific files, directories, or changes that are off-limits), the plan must respect them.
 2. Write a detailed implementation plan using the mcp__task-editor__update_task_notes tool.
-3. Call mcp__task-editor__signal_complete with outcome='success'.
+3. Call mcp__task-editor__signal_complete with outcome='success' if you produced a plan, 'failure' if the task is too ambiguous or unactionable to plan.
+4. If the task is ambiguous and you need clarification from a human, call mcp__task-editor__request_human instead.
 
-Do not implement anything. Stop after calling signal_complete.`
+Do not implement anything. Stop after calling signal_complete or request_human.`
 
 const TEST_PROMPT = `You are a testing agent. Your job is to verify the implementation is correct.
 
@@ -39,7 +40,8 @@ Steps:
 1. Read the "NOTES FROM PRIOR AGENT" section to understand what was implemented.
 2. Run the test suite and any relevant checks.
 3. Call mcp__task-editor__update_task_notes with your findings (use append:true).
-4. Call mcp__task-editor__signal_complete with outcome='success' if tests pass, 'failure' if they fail.`
+4. Call mcp__task-editor__signal_complete with outcome='success' if tests pass, 'failure' if they fail.
+5. If you cannot determine pass/fail without human input (e.g. ambiguous expected behavior), call mcp__task-editor__request_human instead.`
 
 const REVIEW_PROMPT = `You are a code review agent. Your job is to review the implementation for correctness, style, and completeness.
 
@@ -47,15 +49,17 @@ Steps:
 1. Read the "NOTES FROM PRIOR AGENT" section to understand context.
 2. Review the relevant code changes.
 3. Call mcp__task-editor__update_task_notes with your review findings (use append:true).
-4. Call mcp__task-editor__signal_complete with outcome='success' if the work is acceptable, 'failure' if changes are needed.`
+4. Call mcp__task-editor__signal_complete with outcome='success' if the work is acceptable, 'failure' if changes are needed.
+5. If the review raises a question only a human can settle (e.g. a product/design tradeoff), call mcp__task-editor__request_human instead.`
 
-const WORK_PROMPT = `You are a general implementation agent. Complete the assigned task thoroughly.
+const WORK_PROMPT = `You are an implementation agent. Your job is to implement the plan written by the planning agent.
 
 Steps:
-1. Read the task description and any prior agent notes.
-2. Implement the required changes.
-3. Call mcp__task-editor__update_task_notes with a summary of what you did (use append:true if notes exist).
-4. Call mcp__task-editor__signal_complete with outcome='success' if done, 'failure' if blocked.`
+1. Read the "NOTES FROM PRIOR AGENT" section carefully — it contains your implementation plan. If the task description states scope constraints (e.g. specific files, directories, or changes that are off-limits), stay within them even if the plan doesn't mention them.
+2. Implement the plan exactly as described.
+3. Before finishing, call mcp__task-editor__update_task_notes with a summary of what you changed (use append:true).
+4. Call mcp__task-editor__signal_complete with outcome='success' if done, 'failure' if you hit a blocker.
+5. If you hit a blocker only a human can resolve (e.g. missing credentials, a decision outside your scope), call mcp__task-editor__request_human instead.`
 
 const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>> = [
   {
