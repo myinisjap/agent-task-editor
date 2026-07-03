@@ -62,9 +62,11 @@ func (r *OpencodeRunner) Run(ctx context.Context, input RunInput, logCh chan<- L
 	logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("started opencode pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg      sync.WaitGroup
-		outcome string
-		mu      sync.Mutex
+		wg          sync.WaitGroup
+		outcome     string
+		rateLimited bool
+		transient   bool
+		mu          sync.Mutex
 	)
 	wg.Add(2)
 
@@ -84,6 +86,15 @@ func (r *OpencodeRunner) Run(ctx context.Context, input RunInput, logCh chan<- L
 				outcome = parsed
 				mu.Unlock()
 			}
+			if is429Line(line) {
+				mu.Lock()
+				rateLimited = true
+				mu.Unlock()
+			} else if isTransientLine(line) {
+				mu.Lock()
+				transient = true
+				mu.Unlock()
+			}
 		}
 	}()
 
@@ -91,7 +102,17 @@ func (r *OpencodeRunner) Run(ctx context.Context, input RunInput, logCh chan<- L
 		defer wg.Done()
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
-			logCh <- LogEntry{Type: LogStderr, Content: scanner.Text(), At: time.Now()}
+			line := scanner.Text()
+			logCh <- LogEntry{Type: LogStderr, Content: line, At: time.Now()}
+			if is429Line(line) {
+				mu.Lock()
+				rateLimited = true
+				mu.Unlock()
+			} else if isTransientLine(line) {
+				mu.Lock()
+				transient = true
+				mu.Unlock()
+			}
 		}
 	}()
 
@@ -100,10 +121,20 @@ func (r *OpencodeRunner) Run(ctx context.Context, input RunInput, logCh chan<- L
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- LogEntry{Type: LogSystem, Content: "agent timed out", At: time.Now()}
-		return Result{Status: "failed"}, nil
+		return Result{Status: "failed"}, &ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
 	}
 	if err != nil {
 		logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("opencode exited: %v", err), At: time.Now()}
+		mu.Lock()
+		rl := rateLimited
+		tr := transient
+		mu.Unlock()
+		if rl {
+			return Result{Status: "failed"}, &ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
+		}
+		if tr {
+			return Result{Status: "failed"}, &ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
+		}
 	}
 
 	return Result{Status: "completed", Outcome: outcome}, nil

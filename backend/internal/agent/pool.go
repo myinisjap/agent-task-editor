@@ -144,7 +144,10 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		var rl *ErrRateLimit
 		if errors.As(err, &rl) {
 			slog.Warn("pool: agent run rate limited", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "reset_at", rl.ResetAt, "msg", rl.Message)
-			// Register the block in the rate-limit registry.
+			// Register the block in the rate-limit registry. This blocks the
+			// whole agent config (not just this task) from further dispatch
+			// for a while — separate from, and complementary to, the
+			// per-task retry-budget bookkeeping below.
 			if p.RateLimits != nil {
 				if !rl.ResetAt.IsZero() && rl.ResetAt.After(time.Now()) {
 					p.RateLimits.Block(job.Input.AgentConfig.ID, rl.ResetAt)
@@ -152,9 +155,6 @@ func (p *Pool) run(ctx context.Context, job Job) {
 					p.RateLimits.BlockWithBackoff(job.Input.AgentConfig.ID)
 				}
 			}
-			// Mark the run failed and clear the active slot.
-			_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{Status: "failed", ID: job.RunID})
-			_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
 			// Notify the frontend so the task card can show a rate-limit hint.
 			if p.pub != nil {
 				var unblockStr string
@@ -170,8 +170,17 @@ func (p *Pool) run(ctx context.Context, job Job) {
 					"unblocked_at":    unblockStr,
 				})
 			}
+			p.handleTransientFailure(ctx, job, "rate limited: "+rl.Message)
 			return
 		}
+
+		var te transientErr
+		if errors.As(err, &te) {
+			slog.Warn("pool: agent run transient error", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
+			p.handleTransientFailure(ctx, job, err.Error())
+			return
+		}
+
 		slog.Error("pool: agent run error", "component", "pool", "run_id", job.RunID, "err", err)
 		result = Result{Status: "failed"}
 	}
@@ -183,6 +192,15 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		finalStatus = "waiting_human"
 		msg := "Agent failed: not logged in. Please re-authenticate and re-run."
 		result.Message = &msg
+	}
+
+	// A genuine (non-transient) failure or a successful completion resets the
+	// task's transient-retry budget so a later unrelated transient blip
+	// starts counting fresh.
+	if finalStatus == "failed" || finalStatus == "completed" {
+		if _, err := p.q.ResetTaskTransientRetry(ctx, job.Input.Task.ID); err != nil {
+			slog.Warn("pool: reset transient retry count", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
+		}
 	}
 
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
@@ -278,6 +296,96 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	slog.Info("pool: agent run finished", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "status", finalStatus)
+}
+
+// handleTransientFailure marks the run failed and either schedules a bounded,
+// backed-off auto-retry of the task or — once the configured retry budget is
+// exhausted — escalates to waiting_human so a human isn't left guessing
+// whether the task is quietly retrying or stuck. Always clears the active
+// run slot so the dispatcher can re-pick the task once eligible (either on
+// the next sweep, if no retry budget was consumed, or once next_retry_at
+// elapses).
+func (p *Pool) handleTransientFailure(ctx context.Context, job Job, reason string) {
+	bg := context.Background()
+
+	maxRetries := job.Input.AgentConfig.MaxRetries
+	task, terr := p.q.GetTask(bg, job.Input.Task.ID)
+	var count int64
+	if terr == nil {
+		count = task.TransientRetryCount
+	} else {
+		slog.Warn("pool: handleTransientFailure: get task", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", terr)
+	}
+
+	finalStatus := "failed"
+	var message *string
+
+	if maxRetries > 0 && count < maxRetries {
+		// Still within budget — bump the counter and schedule a backed-off retry.
+		newCount := count + 1
+		backoffBase := time.Duration(job.Input.AgentConfig.RetryBackoffSecs) * time.Second
+		delay := BackoffDurationWithBase(int(newCount-1), backoffBase)
+		nextRetryAt := time.Now().Add(delay)
+		if _, err := p.q.SetTaskTransientRetry(bg, gen.SetTaskTransientRetryParams{
+			TransientRetryCount: newCount,
+			NextRetryAt:         &nextRetryAt,
+			ID:                  job.Input.Task.ID,
+		}); err != nil {
+			slog.Warn("pool: set transient retry", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
+		}
+		slog.Info("pool: transient failure, scheduling auto-retry", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "attempt", newCount, "max_retries", maxRetries, "next_retry_at", nextRetryAt, "reason", reason)
+	} else if maxRetries > 0 {
+		// Budget exhausted — escalate to waiting_human rather than retrying forever.
+		// Reset the counter so a human-triggered re-dispatch starts a fresh budget.
+		finalStatus = "waiting_human"
+		msg := fmt.Sprintf("Agent failed after %d transient retries (%s). Manual re-dispatch or intervention required.", count, reason)
+		message = &msg
+		if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
+			slog.Warn("pool: reset transient retry (escalation)", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
+		}
+		slog.Warn("pool: transient retry budget exhausted, escalating to waiting_human", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "count", count, "max_retries", maxRetries)
+	} else {
+		// max_retries == 0 — auto-retry disabled for this config; behaves like
+		// today's plain failed-and-immediately-re-dispatchable behavior.
+		if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
+			slog.Warn("pool: reset transient retry (disabled)", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
+		}
+		slog.Info("pool: transient failure, auto-retry disabled (max_retries=0)", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "reason", reason)
+	}
+
+	runParams := gen.SetAgentRunCompletedParams{Status: finalStatus, ID: job.RunID}
+	if message != nil {
+		runParams.Notes = message
+	}
+	if _, err := p.q.SetAgentRunCompleted(bg, runParams); err != nil {
+		slog.Warn("pool: set run completed (transient)", "component", "pool", "run_id", job.RunID, "err", err)
+	}
+
+	if finalStatus == "waiting_human" {
+		// waiting_human intentionally stays locked (active run not cleared)
+		// until a human acts, consistent with the login-error escalation path.
+		if p.pub != nil {
+			msg := ""
+			if message != nil {
+				msg = *message
+			}
+			p.pub.Publish("task.needs_human", map[string]any{
+				"task_id": job.Input.Task.ID,
+				"run_id":  job.RunID,
+				"message": msg,
+			})
+		}
+	} else {
+		_ = p.q.ClearActiveAgentRun(bg, job.Input.Task.ID)
+	}
+
+	if p.pub != nil {
+		p.pub.Publish("task.agent_done", map[string]any{
+			"task_id": job.Input.Task.ID,
+			"run_id":  job.RunID,
+			"status":  finalStatus,
+		})
+	}
 }
 
 // hasLoginError scans the last 20 log entries for an auth/login error signal.

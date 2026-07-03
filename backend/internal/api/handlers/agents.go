@@ -94,6 +94,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxTurns          int64  `json:"max_turns"`
 		EnabledPlugins    string `json:"enabled_plugins"`
 		EnabledMCPServers string `json:"enabled_mcp_servers"`
+		MaxRetries        *int64 `json:"max_retries"`
+		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -128,6 +130,14 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.EnabledMCPServers == "" {
 		body.EnabledMCPServers = "[]"
 	}
+	maxRetries := int64(3)
+	if body.MaxRetries != nil {
+		maxRetries = *body.MaxRetries
+	}
+	retryBackoffSecs := int64(30)
+	if body.RetryBackoffSecs != nil {
+		retryBackoffSecs = *body.RetryBackoffSecs
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -154,6 +164,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxTurns:          body.MaxTurns,
 		EnabledPlugins:    body.EnabledPlugins,
 		EnabledMcpServers: body.EnabledMCPServers,
+		MaxRetries:        maxRetries,
+		RetryBackoffSecs:  retryBackoffSecs,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -167,6 +179,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels, Env: cfg.Env,
 			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
 			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
+			MaxRetries: cfg.MaxRetries, RetryBackoffSecs: cfg.RetryBackoffSecs,
 			Enabled: 0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -195,6 +208,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled           *bool  `json:"enabled"`
 		EnabledPlugins    string `json:"enabled_plugins"`
 		EnabledMCPServers string `json:"enabled_mcp_servers"`
+		MaxRetries        *int64 `json:"max_retries"`
+		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -240,6 +255,14 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.EnabledMCPServers == "" {
 		body.EnabledMCPServers = existing.EnabledMcpServers
 	}
+	maxRetries := existing.MaxRetries
+	if body.MaxRetries != nil {
+		maxRetries = *body.MaxRetries
+	}
+	retryBackoffSecs := existing.RetryBackoffSecs
+	if body.RetryBackoffSecs != nil {
+		retryBackoffSecs = *body.RetryBackoffSecs
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -254,6 +277,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled:           enabled,
 		EnabledPlugins:    body.EnabledPlugins,
 		EnabledMcpServers: body.EnabledMCPServers,
+		MaxRetries:        maxRetries,
+		RetryBackoffSecs:  retryBackoffSecs,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {

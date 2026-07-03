@@ -1118,6 +1118,15 @@ export interface components {
             worktree_path?: string;
             /** @description Ref the branch forked from */
             base_ref?: string;
+            /** @description If true, the task is never auto-picked-up by the dispatcher */
+            paused?: boolean;
+            /** @description Number of consecutive automatic retries this task has had for transient provider errors (rate limits, network blips, upstream 5xx). Reset to 0 on a genuine failure or a successful run. */
+            transient_retry_count?: number;
+            /**
+             * Format: date-time
+             * @description If set, the task is in a backed-off auto-retry state and will not be picked up by the dispatcher again until this time.
+             */
+            next_retry_at?: string | null;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -1166,6 +1175,10 @@ export interface components {
             max_tokens?: number;
             timeout_secs?: number;
             max_turns?: number;
+            /** @description Number of automatic consecutive retries allowed for a task after a transient provider error (rate limit, network blip, upstream 5xx) before it is left failed / escalated to waiting_human for a human to intervene. 0 disables auto-retry. Default 3. */
+            max_retries?: number;
+            /** @description Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (base * 2^attempt, capped at 10 minutes) is applied on top of this base. Default 30. */
+            retry_backoff_secs?: number;
             /** @description JSON array of Claude plugin IDs ("<name>@<marketplace>") enabled for this agent config. Claude-provider only; defaults to "[]" (all plugins off). */
             enabled_plugins?: string;
             /** @description JSON array of Claude user-level MCP server names (from ~/.claude.json's global mcpServers) enabled for this agent config. Claude-provider only; defaults to "[]" (all MCP servers off). */

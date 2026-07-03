@@ -1,25 +1,25 @@
 -- name: ListTasks :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused FROM tasks ORDER BY created_at DESC;
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at FROM tasks ORDER BY created_at DESC;
 
 -- name: GetTask :one
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused FROM tasks WHERE id = ?;
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at FROM tasks WHERE id = ?;
 
 -- name: CreateTask :one
 INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id, attachments)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused;
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;
 
 -- name: UpdateTask :one
 UPDATE tasks
 SET title = ?, description = ?, type = ?, repo_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused;
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;
 
 -- name: UpdateTaskLabel :one
 UPDATE tasks
 SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused;
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;
 
 -- name: SetTaskActiveRun :exec
 UPDATE tasks
@@ -40,10 +40,10 @@ WHERE id = ?;
 DELETE FROM tasks WHERE id = ?;
 
 -- name: ListTasksByLabel :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused FROM tasks WHERE label = ? ORDER BY created_at DESC;
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at FROM tasks WHERE label = ? ORDER BY created_at DESC;
 
 -- name: ListAgentPickupTasks :many
-SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused FROM tasks t
+SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at FROM tasks t
 WHERE t.label IN (
     SELECT wt.from_label FROM workflow_transitions wt
     WHERE wt.workflow_id = t.workflow_id
@@ -55,28 +55,41 @@ AND t.label NOT IN (
       AND wl.agent_ignore != 0
 )
 AND t.active_agent_run_id IS NULL
-AND t.paused = 0;
+AND t.paused = 0
+AND (t.next_retry_at IS NULL OR t.next_retry_at <= CURRENT_TIMESTAMP);
+
+-- name: SetTaskTransientRetry :one
+UPDATE tasks
+SET transient_retry_count = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;
+
+-- name: ResetTaskTransientRetry :one
+UPDATE tasks
+SET transient_retry_count = 0, next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;
 
 -- name: UpdateTaskNotes :one
 UPDATE tasks
 SET agent_notes = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused;
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;
 
 -- name: UpdateTaskAttachments :one
 UPDATE tasks
 SET attachments = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused;
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;
 
 -- name: UpdateTaskGitState :one
 UPDATE tasks
 SET git_state = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused;
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;
 
 -- name: SetTaskPaused :one
 UPDATE tasks
 SET paused = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused;
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at;

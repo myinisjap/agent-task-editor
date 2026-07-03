@@ -17,11 +17,25 @@ func (e *ErrRateLimit) Error() string {
 	return fmt.Sprintf("rate limited: %s", e.Message)
 }
 
+// Transient implements the transientErr marker interface — rate limits are
+// always treated as transient for retry-budget purposes.
+func (e *ErrRateLimit) Transient() bool { return true }
+
 // BackoffDuration returns an exponential backoff for consecutive 429s:
 // 30s * 2^attempt, capped at 10 minutes.
 func BackoffDuration(attempt int) time.Duration {
-	const base = 30 * time.Second
+	return BackoffDurationWithBase(attempt, 30*time.Second)
+}
+
+// BackoffDurationWithBase returns an exponential backoff of base * 2^attempt,
+// capped at 10 minutes. Used by the per-task transient-retry policy, where
+// the base is configurable per agent config (AgentConfig.RetryBackoffSecs),
+// as well as by BackoffDuration for the fixed 30s rate-limit case.
+func BackoffDurationWithBase(attempt int, base time.Duration) time.Duration {
 	const cap = 10 * time.Minute
+	if base <= 0 {
+		base = 30 * time.Second
+	}
 	d := base
 	for i := 0; i < attempt; i++ {
 		d *= 2

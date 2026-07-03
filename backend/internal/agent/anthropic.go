@@ -289,7 +289,10 @@ func (r *AnthropicRunner) messagesComplete(ctx context.Context, model, system st
 
 	resp, err := anthropicHTTPClient.Do(req)
 	if err != nil {
-		return anthropicResponse{}, err
+		// Network-level failure (DNS, connection refused, TLS, transport
+		// timeout) — treat as transient so the pool can auto-retry rather
+		// than surfacing it as a genuine task failure.
+		return anthropicResponse{}, &ErrTransient{Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -299,6 +302,10 @@ func (r *AnthropicRunner) messagesComplete(ctx context.Context, model, system st
 			ResetAt: parseAnthropicRateLimitReset(resp.Header),
 			Message: strings.TrimSpace(fmt.Sprintf("http 429: %s", body)),
 		}
+	}
+	if resp.StatusCode >= 500 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return anthropicResponse{}, &ErrTransient{Cause: fmt.Errorf("http %d: %s", resp.StatusCode, body)}
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

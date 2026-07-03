@@ -13,9 +13,11 @@ The agent package owns everything to do with running AI agents: the provider abs
 | `llm.go` | `LLMRunner` — calls any OpenAI-compatible API |
 | `tools.go` | Shared tool implementations for `anthropic` and `llm` providers (read_file, write_file, run_bash) |
 | `mcp.go` | `MCPManager` — prepares/cleans up the MCP sidecar config and result file |
-| `pool.go` | `Pool` — bounded goroutine pool; persists logs, publishes WS events |
+| `pool.go` | `Pool` — bounded goroutine pool; persists logs, publishes WS events; classifies transient vs genuine failures and drives the per-task retry budget |
 | `dispatcher.go` | `Dispatcher` — periodic DB sweep; matches tasks to configs; submits jobs |
 | `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown |
+| `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure |
+| `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers |
 
 ## Branch-per-task / Worktrees
 
@@ -58,8 +60,41 @@ Providers stream log entries on `logCh` as they run. The pool drains this channe
 ## Result Status Values
 
 - `completed` — agent finished; `NextLabel` optionally specifies where to move the task
-- `failed` — something went wrong; task stays on current label (re-dispatch will retry)
-- `waiting_human` — agent called `request_human`; `Message` surfaces to the UI
+- `failed` — something went wrong; task stays on current label. What happens next depends on *why* it failed:
+  - **Genuine failure** (the agent ran and the work itself failed, e.g. a plain `Result{Status:"failed"}` with no underlying transport/provider error): re-dispatch is immediate and unbounded, same as before this feature — the next 5s sweep picks the task straight back up.
+  - **Transient infra failure** (rate limit, network blip, upstream 5xx, ambiguous timeout — see "Retry Policy" below): auto-retried up to `AgentConfig.MaxRetries` times with exponential backoff, then escalated to `waiting_human` so a human doesn't have to guess whether it's quietly retrying or stuck.
+- `waiting_human` — agent called `request_human`, hit a login/auth error, or exhausted its transient-retry budget; `Message` surfaces to the UI
+
+## Retry Policy (Transient vs Genuine Failures)
+
+Per-`AgentConfig` fields `max_retries` (default 3, 0 disables auto-retry) and
+`retry_backoff_secs` (default 30, base for exponential backoff capped at 10m)
+govern automatic retries for **transient** provider errors only:
+
+- **Classification** (`errors.go`, `ratelimit.go`): any error implementing
+  `Transient() bool` (both `ErrRateLimit` and `ErrTransient`) is treated as
+  transient. HTTP providers (`anthropic.go`, `llm.go`) wrap network-level
+  `Do()` errors and `5xx` responses as `ErrTransient`; `429` stays
+  `ErrRateLimit`. CLI providers (`claude.go`, `qwen.go`, `opencode.go`)
+  best-effort sniff stdout/stderr text (`isTransientLine`) for signals like
+  connection resets, `502/503/504`, or "timeout", and also treat an ambiguous
+  run-timeout (context deadline exceeded) as transient. A plain non-zero CLI
+  exit with no such signal, or a `Result{Status:"failed"}` with no error at
+  all, is a **genuine** failure and does not consume retry budget.
+- **Budget tracking** (`tasks.transient_retry_count`, `tasks.next_retry_at`):
+  `pool.go#handleTransientFailure` increments the task's counter and sets
+  `next_retry_at` (via `BackoffDurationWithBase(count, RetryBackoffSecs)`)
+  when under budget, clearing the active-run lock so the dispatcher can
+  re-pick it once eligible. `ListAgentPickupTasks` filters out tasks whose
+  `next_retry_at` is still in the future. Once the budget is exhausted the
+  task escalates to `waiting_human` (and the counter resets, so a
+  human-triggered re-dispatch starts a fresh budget). A successful run or a
+  genuine (non-transient) failure also resets the counter to 0.
+- **Complementary, not a replacement, for `RateLimitRegistry`**: a 429 both
+  blocks the *whole agent config* for a backed-off period (existing
+  behavior, unrelated to any specific task) **and** consumes that task's
+  transient-retry budget — the two mechanisms operate independently on
+  different scopes (config-wide throttle vs per-task retry cap).
 
 ## Dispatch / Active Run Locking
 

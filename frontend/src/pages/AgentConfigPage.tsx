@@ -20,6 +20,8 @@ const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'> =
   max_tokens: 8192,
   timeout_secs: 600,
   max_turns: 50,
+  max_retries: 3,
+  retry_backoff_secs: 30,
   enabled_plugins: '[]',
   enabled_mcp_servers: '[]',
 }
@@ -75,6 +77,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_tokens: 8192,
     timeout_secs: 600,
     max_turns: 50,
+    max_retries: 3,
+    retry_backoff_secs: 30,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
   },
@@ -88,6 +92,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_tokens: 8192,
     timeout_secs: 600,
     max_turns: 50,
+    max_retries: 3,
+    retry_backoff_secs: 30,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
   },
@@ -101,6 +107,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_tokens: 8192,
     timeout_secs: 600,
     max_turns: 50,
+    max_retries: 3,
+    retry_backoff_secs: 30,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
   },
@@ -114,6 +122,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_tokens: 8192,
     timeout_secs: 600,
     max_turns: 50,
+    max_retries: 3,
+    retry_backoff_secs: 30,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
   },
@@ -188,6 +198,8 @@ export default function AgentConfigPage() {
       max_tokens: a.max_tokens,
       timeout_secs: a.timeout_secs,
       max_turns: a.max_turns,
+      max_retries: a.max_retries,
+      retry_backoff_secs: a.retry_backoff_secs,
       enabled_plugins: a.enabled_plugins ?? '[]',
       enabled_mcp_servers: a.enabled_mcp_servers ?? '[]',
     })
@@ -280,6 +292,8 @@ export default function AgentConfigPage() {
             max_tokens: a.max_tokens,
             timeout_secs: a.timeout_secs,
             max_turns: a.max_turns,
+            max_retries: a.max_retries,
+            retry_backoff_secs: a.retry_backoff_secs,
             enabled_plugins: a.enabled_plugins ?? '[]',
             enabled_mcp_servers: a.enabled_mcp_servers ?? '[]',
             enabled: enable,
@@ -559,6 +573,28 @@ export default function AgentConfigPage() {
             />
           </Field>
 
+          <Field label="Max retries" hint="Auto-retries for transient errors (rate limits, network blips). 0 disables auto-retry.">
+            <input
+              type="number"
+              value={form.max_retries}
+              onChange={(e) => setForm((f) => ({ ...f, max_retries: Number(e.target.value) }))}
+              className="input"
+              min={0}
+              max={10}
+            />
+          </Field>
+
+          <Field label="Retry backoff (secs)" hint="Base backoff before a retry is re-dispatched; doubles each attempt, capped at 10 min.">
+            <input
+              type="number"
+              value={form.retry_backoff_secs}
+              onChange={(e) => setForm((f) => ({ ...f, retry_backoff_secs: Number(e.target.value) }))}
+              className="input"
+              min={1}
+              max={600}
+            />
+          </Field>
+
           <Field label="Labels" className="col-span-2">
             <LabelPicker
               selected={(() => { try { return JSON.parse(form.labels) } catch { return [] } })()}
@@ -638,11 +674,12 @@ export default function AgentConfigPage() {
   )
 }
 
-function Field({ label, children, className = '' }: { label: string; children: React.ReactNode; className?: string }) {
+function Field({ label, children, className = '', hint }: { label: string; children: React.ReactNode; className?: string; hint?: string }) {
   return (
     <div className={className}>
       <label className="block text-xs font-medium text-slate-400 mb-1.5">{label}</label>
       {children}
+      {hint && <p className="mt-1 text-[11px] text-slate-500">{hint}</p>}
     </div>
   )
 }

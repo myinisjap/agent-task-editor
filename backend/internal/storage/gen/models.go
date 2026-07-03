@@ -24,6 +24,8 @@ type AgentConfig struct {
 	EnabledPlugins    string    `json:"enabled_plugins"`
 	EnabledMcpServers string    `json:"enabled_mcp_servers"`
 	MaxTurns          int64     `json:"max_turns"`
+	MaxRetries        int64     `json:"max_retries"`
+	RetryBackoffSecs  int64     `json:"retry_backoff_secs"`
 }
 
 type AgentLog struct {
@@ -57,24 +59,26 @@ type Repo struct {
 }
 
 type Task struct {
-	ID                string    `json:"id"`
-	Title             string    `json:"title"`
-	Description       string    `json:"description"`
-	Type              string    `json:"type"`
-	Label             string    `json:"label"`
-	RepoID            string    `json:"repo_id"`
-	WorkflowID        string    `json:"workflow_id"`
-	CurrentAgentRunID *string   `json:"current_agent_run_id"`
-	AgentNotes        string    `json:"agent_notes"`
-	ActiveAgentRunID  *string   `json:"active_agent_run_id"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	Branch            string    `json:"branch"`
-	WorktreePath      string    `json:"worktree_path"`
-	BaseRef           string    `json:"base_ref"`
-	Attachments       string    `json:"attachments"`
-	GitState          string    `json:"git_state"`
-	Paused            int64     `json:"paused"`
+	ID                  string     `json:"id"`
+	Title               string     `json:"title"`
+	Description         string     `json:"description"`
+	Type                string     `json:"type"`
+	Label               string     `json:"label"`
+	RepoID              string     `json:"repo_id"`
+	WorkflowID          string     `json:"workflow_id"`
+	CurrentAgentRunID   *string    `json:"current_agent_run_id"`
+	AgentNotes          string     `json:"agent_notes"`
+	ActiveAgentRunID    *string    `json:"active_agent_run_id"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	Branch              string     `json:"branch"`
+	WorktreePath        string     `json:"worktree_path"`
+	BaseRef             string     `json:"base_ref"`
+	Attachments         string     `json:"attachments"`
+	GitState            string     `json:"git_state"`
+	Paused              int64      `json:"paused"`
+	TransientRetryCount int64      `json:"transient_retry_count"`
+	NextRetryAt         *time.Time `json:"next_retry_at"`
 }
 
 type TaskLabelHistory struct {

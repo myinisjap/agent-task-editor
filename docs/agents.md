@@ -16,6 +16,8 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
 | `timeout_secs` | Maximum run duration in seconds (0 = 600s default) |
 | `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default) |
+| `max_retries` | Number of automatic consecutive retries allowed for a task after a **transient** provider error (rate limit, network blip, upstream 5xx) before it's left `failed`/escalated to `waiting_human`. `0` disables auto-retry. Default `3`. See [Retry Policy](#retry-policy) below. |
+| `retry_backoff_secs` | Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (`base * 2^attempt`, capped at 10 minutes) is applied on top. Default `30`. |
 | `env` | JSON object of additional environment variables for the agent process |
 | `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 | `enabled_mcp_servers` | JSON array of Claude user-level MCP server names enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
@@ -142,6 +144,35 @@ For the `claude` provider only, each agent config can select which Claude Code p
   - Plugins: the `claude` CLI is invoked with `--settings '{"enabledPlugins": {...}}'`, built by defaulting every discovered plugin to `false` and then setting `true` only for IDs present in `enabled_plugins`. A plugin selected but not present in the current discovery snapshot is still explicitly enabled (stale-inventory fallback).
   - MCP servers: for each name in `enabled_mcp_servers` (skipping the reserved `task-editor` name), its raw config entry is read from `~/.claude.json`'s global `mcpServers` map and merged into the `--mcp-config` file alongside the task-editor sidecar entry. A bare `mcp__<server>` entry is appended to `--allowedTools` per selected server so its tools aren't blocked — this wildcarding behavior is inferred from CLI docs and worth re-verifying against a live run if MCP tool calls are unexpectedly denied.
 - **Scope:** this is currently `claude`-provider-only. Other providers (`anthropic`, `opencode`, `qwen_code`, generic `llm`) have the same DB columns available but ignore them entirely.
+
+## Retry Policy
+
+Not every `failed` run means the agent's work actually failed — sometimes
+it's a transient infrastructure hiccup (an API rate limit, a network blip, an
+upstream `5xx`, an ambiguous timeout). The retry policy distinguishes the two
+so humans aren't paged for problems that will resolve themselves:
+
+- **Genuine failure** — the agent ran and the work itself failed (e.g. tests
+  didn't pass, the agent gave up). Behaves as before: the task stays on its
+  current label and the next dispatcher sweep (~5s) re-picks it up
+  immediately, with no retry limit.
+- **Transient failure** — a rate limit (`429`), a network-level error,
+  upstream `5xx`, or (for CLI providers) a best-effort text match on
+  stdout/stderr for signals like connection resets or `502/503/504`. These
+  are auto-retried up to `max_retries` times with exponential backoff
+  (`retry_backoff_secs * 2^attempt`, capped at 10 minutes) before the task is
+  escalated to `waiting_human` — so a human only gets involved once the
+  automatic retries have been exhausted, not on every blip.
+- The task board shows a **"↻ Retrying (n)"** badge while a task is in a
+  backed-off auto-retry window, so it's clear at a glance that no action is
+  needed yet.
+- Setting `max_retries` to `0` disables auto-retry for that config entirely,
+  reverting to the old behavior (immediate, unbounded re-dispatch) for
+  transient errors too.
+- This is separate from, and complementary to, the existing per-agent-config
+  rate-limit block: a `429` still blocks the *whole config* from new
+  dispatches for a backoff window (protects shared credentials/quota) **and**
+  counts against the *specific task's* retry budget.
 
 ## Environment Variable Security
 

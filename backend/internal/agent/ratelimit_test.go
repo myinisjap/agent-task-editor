@@ -26,6 +26,28 @@ func TestBackoffDuration(t *testing.T) {
 	}
 }
 
+func TestBackoffDurationWithBase(t *testing.T) {
+	cases := []struct {
+		attempt int
+		base    time.Duration
+		want    time.Duration
+	}{
+		{0, 10 * time.Second, 10 * time.Second},
+		{1, 10 * time.Second, 20 * time.Second},
+		{2, 10 * time.Second, 40 * time.Second},
+		{0, 5 * time.Minute, 5 * time.Minute},
+		{1, 5 * time.Minute, 10 * time.Minute}, // capped
+		{5, 5 * time.Minute, 10 * time.Minute}, // still capped
+		{0, 0, 30 * time.Second},               // non-positive base falls back to 30s default
+	}
+	for _, tc := range cases {
+		got := BackoffDurationWithBase(tc.attempt, tc.base)
+		if got != tc.want {
+			t.Errorf("BackoffDurationWithBase(%d, %v) = %v, want %v", tc.attempt, tc.base, got, tc.want)
+		}
+	}
+}
+
 func TestRateLimitRegistry_NotBlocked(t *testing.T) {
 	r := NewRateLimitRegistry()
 	blocked, _ := r.IsBlocked("cfg-1")

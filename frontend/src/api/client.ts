@@ -38,6 +38,12 @@ export type Task = {
   base_ref?: string
   git_state?: string
   paused?: boolean
+  // Transient-error auto-retry state (see AgentConfig.max_retries /
+  // retry_backoff_secs). next_retry_at is set while the task is in a
+  // backed-off auto-retry window and cleared on success, genuine failure, or
+  // once the retry budget is exhausted.
+  transient_retry_count?: number
+  next_retry_at?: string | null
 }
 
 export type AgentRun = {
@@ -102,6 +108,11 @@ export type AgentConfig = {
   max_tokens: number
   timeout_secs: number
   max_turns: number
+  // Retry policy for transient provider errors (rate limits, network blips,
+  // upstream 5xx) — distinct from genuine task failures. max_retries=0
+  // disables auto-retry (today's unbounded-immediate-redispatch behavior).
+  max_retries: number
+  retry_backoff_secs: number
   enabled: number | boolean
   // JSON-string-encoded arrays, consistent with how `labels`/`env` are stored.
   // enabled_plugins: Claude plugin IDs ("<name>@<marketplace>"), claude-provider only.
