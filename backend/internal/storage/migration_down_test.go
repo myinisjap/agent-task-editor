@@ -20,7 +20,7 @@ func TestMigration018DownStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	driver, err := sqlite3.WithInstance(db.SQL(), &sqlite3.Config{})
 	if err != nil {
@@ -44,7 +44,7 @@ func TestMigration018DownStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pragma: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var (
 			cid       int
