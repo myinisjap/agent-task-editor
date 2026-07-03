@@ -294,9 +294,10 @@ func classifyStreamJSON(line string) (LogEntry, string) {
 		}
 		if outcome == "" {
 			subtype := strings.Trim(string(raw["subtype"]), `"`)
-			if subtype == "success" {
+			switch subtype {
+			case "success":
 				outcome = "success"
-			} else if subtype == "error_max_turns" || subtype == "error" {
+			case "error_max_turns", "error":
 				outcome = "failure"
 			}
 		}
@@ -358,14 +359,14 @@ func buildPrompt(input RunInput) string {
 		b.WriteString(*input.PriorPlan)
 		b.WriteString("\n\n---\n\n")
 	}
-	b.WriteString(fmt.Sprintf("Task: %s\n\n", input.Task.Title))
+	fmt.Fprintf(&b, "Task: %s\n\n", input.Task.Title)
 	if input.Task.Description != "" {
 		b.WriteString(input.Task.Description)
 	}
 	if len(input.Task.Attachments) > 0 {
 		b.WriteString("\n\nATTACHED IMAGES (available in .task_attachments/ within the repo):\n")
 		for _, rel := range input.Task.Attachments {
-			b.WriteString(fmt.Sprintf("- .task_attachments/%s\n", filepath.Base(rel)))
+			fmt.Fprintf(&b, "- .task_attachments/%s\n", filepath.Base(rel))
 		}
 	}
 	return b.String()

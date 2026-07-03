@@ -182,7 +182,7 @@ func excludeWorktreeDir(repoPath string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, _ = f.WriteString("\n" + worktreeDir + "/\n")
 }
 
