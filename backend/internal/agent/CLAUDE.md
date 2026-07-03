@@ -85,3 +85,34 @@ only prevents the dispatcher from starting a new one.
 1. Implement `Provider` in a new file (e.g. `gemini.go`)
 2. Add a new case to `providerFactory` in `cmd/server/main.go`
 3. Add the provider string to the `AgentConfig.Provider` validation if any
+
+## Logging Conventions
+
+This package uses stdlib `log/slog` exclusively (no third-party logging
+libraries). Every log line carries a `component` field (`"dispatcher"` or
+`"pool"`) plus whichever of `task_id`/`run_id` are known at that point, so
+logs for a given task/run can be grepped/aggregated across both the
+dispatcher and the pool.
+
+Rather than repeating `"component", "dispatcher", "task_id", t.ID, ...` on
+every call, build a scoped logger once with `slog.With(...)` at the top of a
+function (or as soon as the relevant ID becomes known) and reuse it:
+
+```go
+log := slog.With("component", "dispatcher", "task_id", t.ID)
+...
+runID := uuid.NewString()
+log = log.With("run_id", runID) // rebind once run_id is known
+...
+log.Info("dispatcher: agent dispatched", "label", t.Label)
+```
+
+- `dispatch()` and `run()` (pool) build their scoped logger at the top of the
+  function; `resolveOutcome()` and `persistLogs()` do the same for the fields
+  they have available.
+- Sweep-level logs (before a task is picked) and other call sites without a
+  task/run in scope use the package-level `slog.Xxx(...)` functions directly
+  with an explicit `"component"` field.
+- Keep the existing `"dispatcher: ..."` / `"pool: ..."` message-string
+  prefixes — they're a codebase-wide convention (see also `ghsync`) and
+  should not be removed when consolidating fields.
