@@ -26,7 +26,7 @@ RETURNING *;
 
 -- name: SetAgentRunCompleted :one
 UPDATE agent_runs
-SET status = ?, stored_info = ?, notes = ?, completed_at = CURRENT_TIMESTAMP
+SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 
@@ -58,3 +58,22 @@ FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
 ORDER BY ar.created_at DESC;
+
+-- name: SumUsageTotal :one
+SELECT CAST(COALESCE(SUM(input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs
+WHERE status IN ('completed','failed','waiting_human');
+
+-- name: SumUsageByProvider :many
+SELECT ac.provider AS provider,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
+       COUNT(*) AS run_count
+FROM agent_runs ar
+JOIN agent_configs ac ON ac.id = ar.agent_config_id
+WHERE ar.status IN ('completed','failed','waiting_human')
+GROUP BY ac.provider
+ORDER BY cost_usd DESC;
