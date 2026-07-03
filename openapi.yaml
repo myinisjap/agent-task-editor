@@ -255,6 +255,19 @@ components:
               output_tokens: { type: integer }
               cost_usd:      { type: number, format: double }
               run_count:     { type: integer }
+        claude_usage:
+          type: object
+          description: >-
+            Live Claude account rate-limit usage from Anthropic's OAuth usage
+            endpoint (5-hour rolling window + weekly window). `available` is
+            false when the server has no Claude OAuth credentials or the fetch
+            failed; other fields are zero/absent in that case.
+          properties:
+            available:           { type: boolean }
+            five_hour_percent:   { type: number, format: double }
+            five_hour_resets_at: { type: string, format: date-time, nullable: true }
+            weekly_percent:      { type: number, format: double }
+            weekly_resets_at:    { type: string, format: date-time, nullable: true }
 
     Error:
       type: object

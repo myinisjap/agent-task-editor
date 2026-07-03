@@ -130,6 +130,28 @@ Token usage and cost are parsed from the CLI's `result` stream-json message (`us
 
 The runner detects 429 responses in stdout/stderr (looks for `429`, `Request rejected`, `rate limit`) and returns `ErrRateLimit`. The dispatcher will back off and retry.
 
+## Dashboard: Live Claude Usage Widget
+
+The Dashboard page shows a "Claude usage" widget with the current account's
+rate-limit utilization for the rolling 5-hour window and the weekly (7-day)
+window, plus each window's reset time — the same numbers `claude`/the OMC
+HUD plugin show. This is fetched live from Anthropic's OAuth usage endpoint
+(`GET https://api.anthropic.com/api/oauth/usage`) using the OAuth access
+token from `~/.claude/.credentials.json` (i.e. it requires a Claude Max/Pro
+account authenticated via `claude login` — a bare `ANTHROPIC_API_KEY`, or
+the `anthropic`/`llm` providers, do not produce this file).
+
+It is unrelated to the "Cost & usage" section further down the Dashboard,
+which aggregates token/cost totals from this app's own `agent_runs` table.
+
+The widget degrades silently: if `~/.claude/.credentials.json` is missing
+(no `claude login`, Docker deployment without `~/.claude` mounted, CI/test
+environment, or an API-key-only setup) or the live fetch to Anthropic fails
+for any reason, `/dashboard`'s `claude_usage.available` is `false` and the
+widget is simply omitted — it never causes the Dashboard to error or hang.
+The server also caches the result for ~45s to avoid calling Anthropic's
+usage endpoint on every WS-triggered dashboard refresh.
+
 ## Environment Variable Security
 
 The `env` field in agent configs passes extra vars to the subprocess. Dangerous keys (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`) are blocked and logged as warnings.

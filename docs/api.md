@@ -323,13 +323,42 @@ Returns aggregated statistics:
 
 ```json
 {
-  "total_tasks": 42,
-  "tasks_by_label": { "plan": 5, "work": 3 },
-  "total_runs": 120,
-  "runs_by_status": { "completed": 100, "failed": 8, "running": 2 },
-  "recent_runs": [ ... ]
+  "label_counts": { "plan": 5, "work": 3 },
+  "active_agents": [
+    { "run_id": "...", "task_id": "...", "task_title": "...", "agent_name": "...", "started_at": "..." }
+  ],
+  "intervention_queue": [
+    { "run_id": "...", "task_id": "...", "task_title": "...", "message": null, "created_at": "..." }
+  ],
+  "cost_total": { "input_tokens": 12345, "output_tokens": 6789, "cost_usd": 0.42 },
+  "cost_by_provider": [
+    { "provider": "claude", "input_tokens": 12345, "output_tokens": 6789, "cost_usd": 0.42, "run_count": 10 }
+  ],
+  "claude_usage": {
+    "available": true,
+    "five_hour_percent": 42.5,
+    "five_hour_resets_at": "2026-07-03T18:00:00Z",
+    "weekly_percent": 12.0,
+    "weekly_resets_at": "2026-07-10T00:00:00Z"
+  }
 }
 ```
+
+- `label_counts` — number of tasks currently in each workflow label.
+- `active_agents` — agent runs currently in progress.
+- `intervention_queue` — runs in `waiting_human`, awaiting approve/reject.
+- `cost_total` / `cost_by_provider` — aggregate token/cost usage across all
+  runs in a terminal state (completed, failed, waiting_human), computed
+  from data already recorded in this app's own database.
+- `claude_usage` — **live** rate-limit utilization for the current Claude
+  account, fetched directly from Anthropic's OAuth usage endpoint (distinct
+  from `cost_total`, which is derived from local run records). `available`
+  is `false` (with other fields zeroed/omitted) when the server has no
+  Claude OAuth credentials (`~/.claude/.credentials.json`, from `claude
+  login`) or the live fetch failed for any reason — this never causes the
+  `/dashboard` request itself to fail. See
+  [`docs/providers/claude.md`](providers/claude.md) for details on the
+  credential requirement.
 
 ---
 

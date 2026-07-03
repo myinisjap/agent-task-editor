@@ -172,6 +172,17 @@ export type Dashboard = {
   // agent_config was later deleted are excluded (agent_config_id is set
   // NULL on delete, so they can no longer be attributed to a provider).
   cost_by_provider?: { provider: string; input_tokens: number; output_tokens: number; cost_usd: number; run_count: number }[]
+  // Live Claude account rate-limit usage from Anthropic's OAuth usage
+  // endpoint (5-hour rolling window + weekly window). `available` is false
+  // when the server has no Claude OAuth credentials or the fetch failed;
+  // other fields are zero/absent in that case.
+  claude_usage?: {
+    available: boolean
+    five_hour_percent?: number
+    five_hour_resets_at?: string | null
+    weekly_percent?: number
+    weekly_resets_at?: string | null
+  }
 }
 
 export const api = {
