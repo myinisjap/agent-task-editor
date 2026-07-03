@@ -14,11 +14,25 @@ import (
 const bashOutputLimit = 1 << 20 // 1 MB
 
 // runAccumulators holds the cross-turn state that both AnthropicRunner and
-// LLMRunner thread through their agentic loops: info stored via store_info and
-// notes written via update_task_notes.
+// LLMRunner thread through their agentic loops: info stored via store_info,
+// notes written via update_task_notes, and token usage summed across every
+// turn (each turn is a separate API call with its own usage).
 type runAccumulators struct {
 	storedInfo string
 	taskNotes  string
+
+	// model is the model ID used for this run, set once at Run() start so
+	// attach() can compute an estimated cost from accumulated tokens.
+	model string
+
+	inputTokens  int64
+	outputTokens int64
+}
+
+// addUsage accumulates per-turn token usage.
+func (a *runAccumulators) addUsage(inputTokens, outputTokens int64) {
+	a.inputTokens += inputTokens
+	a.outputTokens += outputTokens
 }
 
 // applySpecialTool handles the two provider-agnostic tools (store_info,
@@ -48,7 +62,9 @@ func (a *runAccumulators) applySpecialTool(name string, args map[string]string, 
 	}
 }
 
-// attach copies any accumulated stored info / task notes onto a Result.
+// attach copies any accumulated stored info / task notes / token usage onto
+// a Result, computing an estimated cost from the accumulated tokens and the
+// model set on the accumulator.
 func (a *runAccumulators) attach(res *Result) {
 	if a.storedInfo != "" {
 		res.StoredInfo = &a.storedInfo
@@ -56,6 +72,9 @@ func (a *runAccumulators) attach(res *Result) {
 	if a.taskNotes != "" {
 		res.Notes = &a.taskNotes
 	}
+	res.InputTokens = a.inputTokens
+	res.OutputTokens = a.outputTokens
+	res.CostUSD = estimateCostUSD(a.model, a.inputTokens, a.outputTokens)
 }
 
 // executeLLMTool runs a single tool call for LLMRunner and AnthropicRunner.

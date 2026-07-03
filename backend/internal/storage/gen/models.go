@@ -45,6 +45,9 @@ type AgentRun struct {
 	CompletedAt   *time.Time `json:"completed_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	Notes         *string    `json:"notes"`
+	InputTokens   int64      `json:"input_tokens"`
+	OutputTokens  int64      `json:"output_tokens"`
+	CostUsd       float64    `json:"cost_usd"`
 }
 
 type Repo struct {

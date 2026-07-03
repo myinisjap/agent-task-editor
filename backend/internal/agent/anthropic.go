@@ -50,7 +50,7 @@ var anthropicTools = []map[string]any{
 		"name":        "write_file",
 		"description": "Write or overwrite a file in the repository.",
 		"input_schema": map[string]any{
-			"type":       "object",
+			"type": "object",
 			"properties": map[string]any{
 				"path":    map[string]any{"type": "string"},
 				"content": map[string]any{"type": "string"},
@@ -89,7 +89,7 @@ var anthropicTools = []map[string]any{
 		"name":        "update_task_notes",
 		"description": "Write structured notes to the task for subsequent agents to read. Use this to record plans, analysis, review findings, or any context that the next agent in the workflow should have.",
 		"input_schema": map[string]any{
-			"type":       "object",
+			"type": "object",
 			"properties": map[string]any{
 				"notes":  map[string]any{"type": "string", "description": "The notes content (supports markdown)"},
 				"append": map[string]any{"type": "boolean", "description": "If true, append to existing notes instead of replacing"},
@@ -101,7 +101,7 @@ var anthropicTools = []map[string]any{
 		"name":        "signal_complete",
 		"description": "Call when your work is done. Advances the task to the next workflow stage.",
 		"input_schema": map[string]any{
-			"type":       "object",
+			"type": "object",
 			"properties": map[string]any{
 				"next_label": map[string]any{"type": "string", "description": "The workflow label to move the task to"},
 				"summary":    map[string]any{"type": "string", "description": "Brief summary of what was done"},
@@ -127,19 +127,23 @@ type anthropicMessage struct {
 }
 
 type anthropicContent struct {
-	Type       string          `json:"type"`
-	Text       string          `json:"text,omitempty"`
-	ID         string          `json:"id,omitempty"`          // tool_use
-	Name       string          `json:"name,omitempty"`        // tool_use
-	Input      json.RawMessage `json:"input,omitempty"`       // tool_use
-	ToolUseID  string          `json:"tool_use_id,omitempty"` // tool_result
-	Content    string          `json:"content,omitempty"`     // tool_result
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`          // tool_use
+	Name      string          `json:"name,omitempty"`        // tool_use
+	Input     json.RawMessage `json:"input,omitempty"`       // tool_use
+	ToolUseID string          `json:"tool_use_id,omitempty"` // tool_result
+	Content   string          `json:"content,omitempty"`     // tool_result
 }
 
 type anthropicResponse struct {
 	Content    []anthropicContent `json:"content"`
 	StopReason string             `json:"stop_reason"`
-	Error      *struct {
+	Usage      *struct {
+		InputTokens  int64 `json:"input_tokens"`
+		OutputTokens int64 `json:"output_tokens"`
+	} `json:"usage"`
+	Error *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
@@ -163,6 +167,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 	}
 
 	var acc runAccumulators
+	acc.model = input.AgentConfig.Model
 	maxTurns := int(input.AgentConfig.MaxTurns)
 	if maxTurns <= 0 {
 		maxTurns = 50
@@ -175,6 +180,9 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 				return Result{Status: "failed"}, rl
 			}
 			return Result{Status: "failed"}, fmt.Errorf("anthropic messages turn %d: %w", turn, err)
+		}
+		if resp.Usage != nil {
+			acc.addUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens)
 		}
 
 		// Collect text output and tool use blocks

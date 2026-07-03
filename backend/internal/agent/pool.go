@@ -189,10 +189,13 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status:     finalStatus,
-		StoredInfo: result.StoredInfo,
-		Notes:      result.Notes,
-		ID:         job.RunID,
+		Status:       finalStatus,
+		StoredInfo:   result.StoredInfo,
+		Notes:        result.Notes,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		ID:           job.RunID,
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)
 	}

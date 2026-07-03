@@ -67,6 +67,7 @@ The `max_turns` agent config field is accepted but **not currently enforced** by
 | Image attachments | ❌ Not supported |
 | Outcome signalling | ⚠️ Text-based only (`OUTCOME: success/failure`) |
 | Rate limit detection | ❌ Not implemented |
+| Cost & usage reporting | ❌ Not available — `opencode run --format json` does not currently expose a token/usage field in any observed message shape, so `input_tokens`/`output_tokens`/`cost_usd` are left at `0` (not estimated) for this provider. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking). |
 
 ## Setup Checklist
 

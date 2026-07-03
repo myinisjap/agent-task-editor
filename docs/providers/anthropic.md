@@ -56,6 +56,10 @@ Not yet supported.
 
 Pass `model` in the agent config (e.g. `claude-sonnet-4-6`, `claude-opus-4`). Defaults to `claude-sonnet-4-6` if not set.
 
+## Cost & Usage Reporting
+
+Token usage (`input_tokens`/`output_tokens`) is summed from the Messages API's `usage` field across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens via the internal pricing table (`internal/agent/pricing.go`). See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
 ## When to Use
 
 - Direct API access without the Claude CLI installed
