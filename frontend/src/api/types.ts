@@ -1183,6 +1183,10 @@ export interface components {
             enabled_plugins?: string;
             /** @description JSON array of Claude user-level MCP server names (from ~/.claude.json's global mcpServers) enabled for this agent config. Claude-provider only; defaults to "[]" (all MCP servers off). */
             enabled_mcp_servers?: string;
+            /** @description JSON array of shell-command glob patterns ("*" wildcard). If non-empty, only commands matching at least one pattern may run via run_bash/Bash. Fully enforced for anthropic, llm, and qwen_code. NOT an effective restriction for claude (the CLI only auto-approves matches; non-matching commands still run — see docs/providers/claude.md). Not enforced for opencode. Defaults to "[]" (no restriction). */
+            command_allowlist?: string;
+            /** @description JSON array of shell-command glob patterns ("*" wildcard). Commands matching any pattern here are always denied, regardless of command_allowlist. Checked first. Fully enforced for anthropic, llm, and claude. NOT enforced for qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]" (no restriction). */
+            command_denylist?: string;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */

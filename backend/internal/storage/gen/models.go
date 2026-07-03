@@ -24,6 +24,8 @@ type AgentConfig struct {
 	EnabledPlugins    string    `json:"enabled_plugins"`
 	EnabledMcpServers string    `json:"enabled_mcp_servers"`
 	MaxTurns          int64     `json:"max_turns"`
+	CommandAllowlist  string    `json:"command_allowlist"`
+	CommandDenylist   string    `json:"command_denylist"`
 	MaxRetries        int64     `json:"max_retries"`
 	RetryBackoffSecs  int64     `json:"retry_backoff_secs"`
 }

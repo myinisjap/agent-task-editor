@@ -65,6 +65,20 @@ func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 			"mcp__task-editor__store_info",
 		)
 	}
+	// Command allowlist: qwen reuses the same Bash(pattern) tool-restriction
+	// syntax as the claude CLI's --allowedTools. Append entries to
+	// --allowed-tools so only matching commands are permitted.
+	//
+	// NOTE: there is no confirmed qwen CLI flag for a command *denylist*
+	// (unlike claude's --disallowedTools / permissions.deny in --settings).
+	// AgentConfig.CommandDenylist is therefore NOT enforced for this
+	// provider today — see docs/providers/qwen_code.md for this known gap.
+	for _, pat := range input.AgentConfig.CommandAllowlist {
+		if pat == "" {
+			continue
+		}
+		args = append(args, "--allowed-tools", "Bash("+pat+")")
+	}
 	return args
 }
 

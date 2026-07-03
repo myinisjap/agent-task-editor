@@ -76,6 +76,44 @@ At run time:
 
 See [agents.md § Claude Plugins & MCP Servers](../agents.md#claude-plugins--mcp-servers) for more detail. This feature is `claude`-provider-only for now.
 
+## Command Allowlist / Denylist
+
+`command_allowlist` and `command_denylist` (both JSON arrays of `"*"`-wildcard glob
+patterns, defaulting to `[]`/no restriction) are translated into Claude Code's native
+`permissions.allow` / `permissions.deny` settings keys, passed via the same
+`--settings` JSON blob used for `enabledPlugins`. Each pattern is wrapped as
+`Bash(pattern)` — identical to the syntax Claude Code's `--allowedTools` /
+`--disallowedTools` flags accept.
+
+**`command_denylist` is fully enforced and reliable.** This was smoke-tested against a
+live `claude` binary (v2.1.198): a `permissions.deny` entry matching a requested Bash
+command caused the CLI to refuse the tool call (`permission_denials` in the result
+JSON), both via the `--settings` JSON route and the equivalent `--disallowedTools`
+flag. Denylist is checked by the Claude CLI before any allow entries and always wins.
+
+**`command_allowlist` is *not* an effective restriction for this provider — known
+gap.** Live testing showed that `permissions.allow` / `--allowedTools` entries for
+`Bash(pattern)` only *auto-approve* matching commands (skip the confirmation
+prompt); they do not make Bash default-deny for non-matching commands. Because the
+bare `Bash` tool is already granted (required so the agent can run any command at
+all), a command that matches no `command_allowlist` pattern is still executed — it is
+simply not silently auto-approved. This was verified with both the `--settings`
+JSON `permissions.allow` route and the `--allowedTools "Bash(pattern)"` flag route,
+with and without bare `Bash` present in `--allowedTools`; in every case a
+non-matching command still ran without any permission denial. There is currently no
+known `claude` CLI mechanism to make Bash itself default-deny while allowing only
+specific patterns (short of `--disallowedTools "Bash"` plus enumerating every
+allowed exact command via denylist-of-everything-else, which isn't practical for
+glob-style allowlisting). **If you need to restrict which commands an agent can run,
+rely on `command_denylist` for the `claude` provider; `command_allowlist` is
+currently a no-op here** (the field/UI still exists for forward-compatibility and
+for parity with the `anthropic`/`llm` providers, where it is fully enforced).
+
+Denylist enforcement here is done by the Claude CLI itself (not task-editor's own
+process), so it is somewhat more robust than the generic `run_bash` string-match
+enforcement used by the `anthropic`/`llm` providers — but it is still glob-pattern
+matching on the command string, not a sandbox.
+
 ## Image Attachments
 
 Supported. Files uploaded to a task are passed via `--image <path>` flags. The server resolves absolute paths from the `UPLOAD_DIR`.

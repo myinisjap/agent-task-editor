@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
 // Recover catches panics, logs the stack trace, and returns a 500.
@@ -11,7 +13,11 @@ func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				slog.Error("panic recovered", "err", err, "stack", string(debug.Stack()))
+				slog.Error("panic recovered",
+					"err", err,
+					"stack", string(debug.Stack()),
+					"request_id", chimiddleware.GetReqID(r.Context()),
+				)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			}
 		}()

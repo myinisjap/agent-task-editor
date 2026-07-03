@@ -58,7 +58,7 @@ func buildClaudeArgs(input RunInput, sidecarEnabled bool, mcpCfg *MCPRunConfig) 
 		allowedTools += ",mcp__" + name
 	}
 
-	settingsJSON, err := buildClaudeSettingsJSON(input.AgentConfig.EnabledPlugins)
+	settingsJSON, err := buildClaudeSettingsJSON(input.AgentConfig.EnabledPlugins, input.AgentConfig.CommandAllowlist, input.AgentConfig.CommandDenylist)
 	if err != nil {
 		return nil, fmt.Errorf("build claude settings: %w", err)
 	}
@@ -380,9 +380,10 @@ func classifyStreamJSON(line string) (LogEntry, string, *runUsage) {
 		}
 		if outcome == "" {
 			subtype := strings.Trim(string(raw["subtype"]), `"`)
-			if subtype == "success" {
+			switch subtype {
+			case "success":
 				outcome = "success"
-			} else if subtype == "error_max_turns" || subtype == "error" {
+			case "error_max_turns", "error":
 				outcome = "failure"
 			}
 		}
@@ -477,14 +478,14 @@ func buildPrompt(input RunInput) string {
 		b.WriteString(*input.PriorPlan)
 		b.WriteString("\n\n---\n\n")
 	}
-	b.WriteString(fmt.Sprintf("Task: %s\n\n", input.Task.Title))
+	fmt.Fprintf(&b, "Task: %s\n\n", input.Task.Title)
 	if input.Task.Description != "" {
 		b.WriteString(input.Task.Description)
 	}
 	if len(input.Task.Attachments) > 0 {
 		b.WriteString("\n\nATTACHED IMAGES (available in .task_attachments/ within the repo):\n")
 		for _, rel := range input.Task.Attachments {
-			b.WriteString(fmt.Sprintf("- .task_attachments/%s\n", filepath.Base(rel)))
+			fmt.Fprintf(&b, "- .task_attachments/%s\n", filepath.Base(rel))
 		}
 	}
 	return b.String()
@@ -517,7 +518,26 @@ var dangerousEnvKeys = map[string]bool{
 // discovery fails or returns nothing, falls back to a minimal settings
 // object that just enables the selected plugins, so explicit selections
 // still take effect even without a full inventory.
-func buildClaudeSettingsJSON(enabledPlugins []string) (string, error) {
+//
+// commandAllowlist/commandDenylist, if non-empty, are translated into
+// Claude Code's native "permissions.allow"/"permissions.deny" settings keys
+// using "Bash(pattern)" entries — the same syntax Claude Code's
+// --allowedTools/--disallowedTools flags accept. This is best-effort
+// defense-in-depth (matched by the Claude CLI itself, not by this codebase),
+// not a full sandbox.
+//
+// IMPORTANT (verified against a live claude binary, v2.1.198): "permissions.deny"
+// reliably blocks matching Bash commands — commandDenylist is fully enforced.
+// However "permissions.allow" only *auto-approves* matching commands and does
+// NOT act as an exclusive allowlist: because the bare "Bash" tool is already
+// granted via --allowedTools (required for the agent to run any command at
+// all), a command that matches no commandAllowlist pattern is still permitted
+// to run under permission-mode "default"/bypassPermissions — it is simply not
+// auto-approved. There is currently no known claude CLI mechanism to make Bash
+// itself default-deny while allowing only specific patterns. commandAllowlist
+// is therefore NOT an effective restriction for the claude provider today; only
+// commandDenylist should be relied on. See docs/providers/claude.md for detail.
+func buildClaudeSettingsJSON(enabledPlugins, commandAllowlist, commandDenylist []string) (string, error) {
 	selected := make(map[string]bool, len(enabledPlugins))
 	for _, id := range enabledPlugins {
 		if id != "" {
@@ -547,6 +567,38 @@ func buildClaudeSettingsJSON(enabledPlugins []string) (string, error) {
 	}
 
 	payload := map[string]any{"enabledPlugins": enabled}
+
+	if len(commandAllowlist) > 0 || len(commandDenylist) > 0 {
+		permissions := map[string]any{}
+		if len(commandAllowlist) > 0 {
+			allow := make([]string, 0, len(commandAllowlist))
+			for _, p := range commandAllowlist {
+				if p == "" {
+					continue
+				}
+				allow = append(allow, "Bash("+p+")")
+			}
+			if len(allow) > 0 {
+				permissions["allow"] = allow
+			}
+		}
+		if len(commandDenylist) > 0 {
+			deny := make([]string, 0, len(commandDenylist))
+			for _, p := range commandDenylist {
+				if p == "" {
+					continue
+				}
+				deny = append(deny, "Bash("+p+")")
+			}
+			if len(deny) > 0 {
+				permissions["deny"] = deny
+			}
+		}
+		if len(permissions) > 0 {
+			payload["permissions"] = permissions
+		}
+	}
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", err

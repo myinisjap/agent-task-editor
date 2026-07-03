@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -94,6 +94,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxTurns          int64  `json:"max_turns"`
 		EnabledPlugins    string `json:"enabled_plugins"`
 		EnabledMCPServers string `json:"enabled_mcp_servers"`
+		CommandAllowlist  string `json:"command_allowlist"`
+		CommandDenylist   string `json:"command_denylist"`
 		MaxRetries        *int64 `json:"max_retries"`
 		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
 	}
@@ -138,6 +140,12 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.EnabledMCPServers == "" {
 		body.EnabledMCPServers = "[]"
 	}
+	if body.CommandAllowlist == "" {
+		body.CommandAllowlist = "[]"
+	}
+	if body.CommandDenylist == "" {
+		body.CommandDenylist = "[]"
+	}
 	maxRetries := int64(3)
 	if body.MaxRetries != nil {
 		maxRetries = *body.MaxRetries
@@ -172,6 +180,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxTurns:          body.MaxTurns,
 		EnabledPlugins:    body.EnabledPlugins,
 		EnabledMcpServers: body.EnabledMCPServers,
+		CommandAllowlist:  body.CommandAllowlist,
+		CommandDenylist:   body.CommandDenylist,
 		MaxRetries:        maxRetries,
 		RetryBackoffSecs:  retryBackoffSecs,
 	})
@@ -187,6 +197,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels, Env: cfg.Env,
 			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
 			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
+			CommandAllowlist: cfg.CommandAllowlist, CommandDenylist: cfg.CommandDenylist,
 			MaxRetries: cfg.MaxRetries, RetryBackoffSecs: cfg.RetryBackoffSecs,
 			Enabled: 0, ID: cfg.ID,
 		})
@@ -216,6 +227,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled           *bool  `json:"enabled"`
 		EnabledPlugins    string `json:"enabled_plugins"`
 		EnabledMCPServers string `json:"enabled_mcp_servers"`
+		CommandAllowlist  string `json:"command_allowlist"`
+		CommandDenylist   string `json:"command_denylist"`
 		MaxRetries        *int64 `json:"max_retries"`
 		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
 	}
@@ -271,6 +284,12 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.EnabledMCPServers == "" {
 		body.EnabledMCPServers = existing.EnabledMcpServers
 	}
+	if body.CommandAllowlist == "" {
+		body.CommandAllowlist = existing.CommandAllowlist
+	}
+	if body.CommandDenylist == "" {
+		body.CommandDenylist = existing.CommandDenylist
+	}
 	maxRetries := existing.MaxRetries
 	if body.MaxRetries != nil {
 		maxRetries = *body.MaxRetries
@@ -293,6 +312,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled:           enabled,
 		EnabledPlugins:    body.EnabledPlugins,
 		EnabledMcpServers: body.EnabledMCPServers,
+		CommandAllowlist:  body.CommandAllowlist,
+		CommandDenylist:   body.CommandDenylist,
 		MaxRetries:        maxRetries,
 		RetryBackoffSecs:  retryBackoffSecs,
 		ID:                chi.URLParam(r, "id"),
@@ -345,7 +366,7 @@ func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 				defaultModel = models[0]
 			}
 		} else {
-			slog.Warn("opencode models: failed to fetch model list", "err", err)
+			middleware.LoggerFromContext(r.Context()).Warn("opencode models: failed to fetch model list", "err", err)
 		}
 	}
 

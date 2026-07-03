@@ -77,10 +77,73 @@ func (a *runAccumulators) attach(res *Result) {
 	res.CostUSD = estimateCostUSD(a.model, a.inputTokens, a.outputTokens)
 }
 
+// CommandPolicy holds the optional per-agent-config command allow/deny patterns
+// enforced before executing a run_bash tool call. Patterns support "*" as a
+// wildcard matching any substring; matching is against the full command string.
+// This is best-effort defense-in-depth, not a sandbox — it does not prevent
+// e.g. shell metacharacter tricks that construct a denied command indirectly.
+type CommandPolicy struct {
+	Allowlist []string
+	Denylist  []string
+}
+
+// Allowed reports whether cmd may run under this policy: denylist match => false
+// (denylist always wins); if Allowlist is non-empty, cmd must match at least one
+// allow pattern; empty Allowlist + no denylist match => allowed.
+func (p CommandPolicy) Allowed(cmd string) (bool, string) {
+	cmd = strings.TrimSpace(cmd)
+	for _, pat := range p.Denylist {
+		if matchCommandPattern(pat, cmd) {
+			return false, fmt.Sprintf("command denied by policy: matches denylist pattern %q", pat)
+		}
+	}
+	if len(p.Allowlist) == 0 {
+		return true, ""
+	}
+	for _, pat := range p.Allowlist {
+		if matchCommandPattern(pat, cmd) {
+			return true, ""
+		}
+	}
+	return false, "command denied by policy: does not match any allowlist pattern"
+}
+
+// matchCommandPattern does simple "*"-wildcard matching of pattern against the
+// full string s (case-sensitive, no regex, no anchoring quirks from path.Match).
+func matchCommandPattern(pattern, s string) bool {
+	// Split pattern on "*", require each segment to appear in order; first/last
+	// segments must anchor to start/end unless pattern starts/ends with "*".
+	if pattern == "" {
+		return false
+	}
+	if !strings.Contains(pattern, "*") {
+		return pattern == s
+	}
+	segs := strings.Split(pattern, "*")
+	pos := 0
+	for i, seg := range segs {
+		if seg == "" {
+			continue
+		}
+		idx := strings.Index(s[pos:], seg)
+		if idx == -1 {
+			return false
+		}
+		if i == 0 && !strings.HasPrefix(pattern, "*") && idx != 0 {
+			return false
+		}
+		pos += idx + len(seg)
+	}
+	if !strings.HasSuffix(pattern, "*") && !strings.HasSuffix(s, segs[len(segs)-1]) && segs[len(segs)-1] != "" {
+		return false
+	}
+	return true
+}
+
 // executeLLMTool runs a single tool call for LLMRunner and AnthropicRunner.
 // Returns (output, nil) for file/shell tools, or (output, *Result) for
 // signal_complete and request_human which terminate the run.
-func executeLLMTool(ctx context.Context, repoPath, name string, args map[string]string) (string, *Result) {
+func executeLLMTool(ctx context.Context, repoPath string, policy CommandPolicy, name string, args map[string]string) (string, *Result) {
 	switch name {
 	case "read_file":
 		path, err := safeRepoPath(repoPath, args["path"])
@@ -107,7 +170,11 @@ func executeLLMTool(ctx context.Context, repoPath, name string, args map[string]
 		return "ok", nil
 
 	case "run_bash":
-		cmd := exec.CommandContext(ctx, "sh", "-c", args["command"])
+		command := args["command"]
+		if ok, reason := policy.Allowed(command); !ok {
+			return fmt.Sprintf("error: %s", reason), nil
+		}
+		cmd := exec.CommandContext(ctx, "sh", "-c", command)
 		cmd.Dir = repoPath
 		pipe, err := cmd.StdoutPipe()
 		if err != nil {

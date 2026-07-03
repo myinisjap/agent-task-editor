@@ -84,28 +84,30 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig) {
+	log := slog.With("component", "dispatcher", "task_id", t.ID)
+
 	if t.Paused != 0 { // defense-in-depth; ListAgentPickupTasks already filters paused tasks
-		slog.Debug("dispatcher: skipping paused task", "component", "dispatcher", "task_id", t.ID)
+		log.Debug("dispatcher: skipping paused task")
 		return
 	}
 
 	matched := matchConfig(configs, t.Label)
 	if matched == nil {
-		slog.Debug("dispatcher: no active config for label", "component", "dispatcher", "task_id", t.ID, "label", t.Label)
+		log.Debug("dispatcher: no active config for label", "label", t.Label)
 		return
 	}
 
 	// Skip dispatch if the agent config is currently rate-limited.
 	if d.RateLimits != nil {
 		if blocked, until := d.RateLimits.IsBlocked(matched.ID); blocked {
-			slog.Info("dispatcher: skipping rate-limited agent config", "component", "dispatcher", "task_id", t.ID, "agent_config_id", matched.ID, "unblocked_at", until)
+			log.Info("dispatcher: skipping rate-limited agent config", "agent_config_id", matched.ID, "unblocked_at", until)
 			return
 		}
 	}
 
 	repo, err := d.q.GetRepo(ctx, t.RepoID)
 	if err != nil {
-		slog.Error("dispatcher: get repo", "component", "dispatcher", "task_id", t.ID, "err", err)
+		log.Error("dispatcher: get repo", "err", err)
 		return
 	}
 
@@ -116,7 +118,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	if workDir == "" {
 		wtPath, branch, baseRef, perr := provisionWorktree(ctx, repo.Path, t.ID, t.Title)
 		if perr != nil {
-			slog.Error("dispatcher: provision worktree", "component", "dispatcher", "task_id", t.ID, "err", perr)
+			log.Error("dispatcher: provision worktree", "err", perr)
 			return
 		}
 		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
@@ -125,13 +127,14 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 			BaseRef:      baseRef,
 			ID:           t.ID,
 		}); err != nil {
-			slog.Error("dispatcher: persist worktree", "component", "dispatcher", "task_id", t.ID, "err", err)
+			log.Error("dispatcher: persist worktree", "err", err)
 			return
 		}
 		workDir = wtPath
 	}
 
 	runID := uuid.NewString()
+	log = log.With("run_id", runID)
 	var feedback *string
 	if t.CurrentAgentRunID != nil {
 		prior, _ := d.q.GetAgentRun(ctx, *t.CurrentAgentRunID)
@@ -146,13 +149,13 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	agentCfg := toAgentConfig(*matched)
 
 	_, err = d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
-		ID:             runID,
-		TaskID:         t.ID,
-		AgentConfigID:  &matched.ID,
-		Feedback:       feedback,
+		ID:            runID,
+		TaskID:        t.ID,
+		AgentConfigID: &matched.ID,
+		Feedback:      feedback,
 	})
 	if err != nil {
-		slog.Error("dispatcher: create agent run", "component", "dispatcher", "task_id", t.ID, "err", err)
+		log.Error("dispatcher: create agent run", "err", err)
 		return
 	}
 
@@ -162,7 +165,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		ActiveAgentRunID:  &runID,
 		ID:                t.ID,
 	}); err != nil {
-		slog.Error("dispatcher: set task active run", "component", "dispatcher", "task_id", t.ID, "err", err)
+		log.Error("dispatcher: set task active run", "err", err)
 		return
 	}
 
@@ -183,11 +186,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// Copy attachment images into the worktree so the agent can read them via file tools.
 	if len(attachmentAbsPaths) > 0 && workDir != "" {
 		if err := copyAttachmentsToWorktree(workDir, attachmentAbsPaths); err != nil {
-			slog.Warn("dispatcher: copy attachments to worktree", "component", "dispatcher", "task_id", t.ID, "err", err)
+			log.Warn("dispatcher: copy attachments to worktree", "err", err)
 		}
 	}
 
-	transitions := d.buildTransitionHints(ctx, t.WorkflowID, t.Label)
+	transitions := d.buildTransitionHints(ctx, t.ID, t.WorkflowID, t.Label)
 	provider := d.ProviderFactory(agentCfg)
 
 	enqueued := d.pool.Submit(Job{
@@ -206,7 +209,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		},
 	})
 	if !enqueued {
-		slog.Warn("dispatcher: pool full, dropping job", "component", "dispatcher", "task_id", t.ID, "run_id", runID)
+		log.Warn("dispatcher: pool full, dropping job")
 		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 			Status: "failed",
 			ID:     runID,
@@ -215,13 +218,13 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		return
 	}
 
-	slog.Info("dispatcher: agent dispatched", "component", "dispatcher", "task_id", t.ID, "label", t.Label, "run_id", runID, "agent", matched.Name, "provider", matched.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled)
+	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", matched.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled)
 }
 
-func (d *Dispatcher) buildTransitionHints(ctx context.Context, workflowID, fromLabel string) []TransitionHint {
+func (d *Dispatcher) buildTransitionHints(ctx context.Context, taskID, workflowID, fromLabel string) []TransitionHint {
 	all, err := d.q.ListWorkflowTransitions(ctx, workflowID)
 	if err != nil {
-		slog.Warn("dispatcher: build transition hints", "component", "dispatcher", "workflow_id", workflowID, "err", err)
+		slog.Warn("dispatcher: build transition hints", "component", "dispatcher", "task_id", taskID, "workflow_id", workflowID, "err", err)
 		return nil
 	}
 	var hints []TransitionHint
@@ -276,7 +279,7 @@ func copyAttachmentsToWorktree(worktreePath string, absPaths []string) error {
 		filename := filepath.Base(src)
 		dstFile := filepath.Join(dst, filename)
 		if err := copyFile(src, dstFile); err != nil {
-			slog.Warn("copyAttachmentsToWorktree: skip file", "src", src, "err", err)
+			slog.Warn("copyAttachmentsToWorktree: skip file", "component", "dispatcher", "src", src, "err", err)
 		}
 	}
 	return nil
@@ -314,6 +317,10 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 	_ = json.Unmarshal([]byte(cfg.EnabledPlugins), &enabledPlugins)
 	var enabledMCPServers []string
 	_ = json.Unmarshal([]byte(cfg.EnabledMcpServers), &enabledMCPServers)
+	var commandAllowlist []string
+	_ = json.Unmarshal([]byte(cfg.CommandAllowlist), &commandAllowlist)
+	var commandDenylist []string
+	_ = json.Unmarshal([]byte(cfg.CommandDenylist), &commandDenylist)
 	return AgentConfig{
 		ID:                cfg.ID,
 		Name:              cfg.Name,
@@ -328,5 +335,7 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 		Env:               env,
 		EnabledPlugins:    enabledPlugins,
 		EnabledMCPServers: enabledMCPServers,
+		CommandAllowlist:  commandAllowlist,
+		CommandDenylist:   commandDenylist,
 	}
 }

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type Workflow } from '../api/client'
 import { useWorkflowStore } from '../stores/workflow'
 import WorkflowFlowchart from '../components/shared/WorkflowFlowchart'
+import { parseWorkflowYaml } from '../lib/parseWorkflowYaml'
+import { validateWorkflow, type WorkflowValidationError } from '../lib/validateWorkflow'
 
 // ── New-workflow modal ──────────────────────────────────────────────────────
 
@@ -103,6 +105,7 @@ export default function WorkflowPage() {
   const [showNewModal, setShowNewModal] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [validationErrors, setValidationErrors] = useState<WorkflowValidationError[]>([])
 
   // Load a specific workflow's YAML + full data
   const loadWorkflow = (id: string) => {
@@ -111,6 +114,7 @@ export default function WorkflowPage() {
     setYaml('')
     setError(null)
     setSaved(false)
+    setValidationErrors([])
 
     api.workflows.get(id).then(setWorkflow).catch((err: unknown) => {
       setError(err instanceof Error ? err.message : 'Failed to load workflow')
@@ -156,11 +160,32 @@ export default function WorkflowPage() {
 
   const handleSave = async () => {
     if (!selectedWorkflowId) return
-    setSaving(true)
+
     setError(null)
+    setValidationErrors([])
+
+    // Validate the YAML client-side before sending it to the backend: every
+    // label must be reachable from the start label, and terminal labels must
+    // have no outgoing transitions.
+    let parsed
+    try {
+      parsed = parseWorkflowYaml(yaml)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not parse YAML')
+      return
+    }
+    const errs = validateWorkflow(parsed)
+    if (errs.length > 0) {
+      setValidationErrors(errs)
+      setError(`Workflow has ${errs.length} validation error${errs.length > 1 ? 's' : ''} — fix before saving.`)
+      return
+    }
+
+    setSaving(true)
     setSaved(false)
     try {
       await api.workflows.updateYaml(selectedWorkflowId, yaml)
+      setValidationErrors([])
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
       // Re-fetch the workflow to update the flowchart + store
@@ -306,11 +331,20 @@ export default function WorkflowPage() {
               <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">YAML Editor</span>
               <textarea
                 value={yaml}
-                onChange={(e) => { setYaml(e.target.value); setError(null) }}
+                onChange={(e) => { setYaml(e.target.value); setError(null); setValidationErrors([]) }}
                 spellCheck={false}
                 className="flex-1 bg-slate-900 border border-slate-700 rounded p-4 text-sm text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
                 placeholder={selectedWorkflowId ? 'Enter YAML…' : 'Select a workflow to edit'}
               />
+              {validationErrors.length > 0 && (
+                <div className="mt-1 flex flex-col gap-0.5 rounded border border-red-800 bg-red-950/40 px-3 py-2 max-h-32 overflow-y-auto">
+                  {validationErrors.map((e, i) => (
+                    <p key={i} className="text-xs text-red-400">
+                      {e.label ? `[${e.label}] ` : ''}{e.message}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

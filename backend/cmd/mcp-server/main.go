@@ -41,12 +41,20 @@ type rpcError struct {
 }
 
 func main() {
+	// Configure log level from LOG_LEVEL env var (default: INFO), consistent with cmd/server.
+	logLevel := slog.LevelInfo
+	if l := os.Getenv("LOG_LEVEL"); l != "" {
+		_ = logLevel.UnmarshalText([]byte(l))
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+
 	runID := os.Getenv("RUN_ID")
 	resultFile := os.Getenv("RESULT_FILE")
 	if runID == "" || resultFile == "" {
 		slog.Error("RUN_ID and RESULT_FILE env vars required")
 		os.Exit(1)
 	}
+	log := slog.With("run_id", runID)
 
 	// Parse available transitions from env (set by MCPManager.Prepare).
 	var transitions []transitionHint
@@ -79,12 +87,12 @@ func main() {
 
 		respond := func(res any) {
 			if err := enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: res}); err != nil {
-				slog.Error("mcp encode response", "err", err)
+				log.Error("mcp encode response", "err", err)
 			}
 		}
 		respondErr := func(code int, msg string) {
 			if err := enc.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: code, Message: msg}}); err != nil {
-				slog.Error("mcp encode error response", "err", err)
+				log.Error("mcp encode error response", "err", err)
 			}
 		}
 
@@ -170,7 +178,7 @@ func main() {
 			if r != nil {
 				if data, err := json.Marshal(r); err == nil {
 					if err := os.WriteFile(resultFile, data, 0600); err != nil {
-						slog.Error("write result file", "err", err)
+						log.Error("write result file", "err", err)
 					}
 				}
 			}

@@ -225,7 +225,8 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 			output, handled := acc.applySpecialTool(tu.Name, strArgs, tu.Input)
 			var signal *Result
 			if !handled {
-				output, signal = executeLLMTool(runCtx, input.RepoPath, tu.Name, strArgs)
+				policy := CommandPolicy{Allowlist: input.AgentConfig.CommandAllowlist, Denylist: input.AgentConfig.CommandDenylist}
+				output, signal = executeLLMTool(runCtx, input.RepoPath, policy, tu.Name, strArgs)
 			}
 			logCh <- LogEntry{Type: LogToolResult, Content: output, At: time.Now()}
 
