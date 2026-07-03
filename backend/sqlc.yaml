@@ -21,6 +21,7 @@ sql:
       - "internal/storage/migrations/016_agent_plugins_mcp.up.sql"
       - "internal/storage/migrations/017_agent_max_turns.up.sql"
       - "internal/storage/migrations/018_agent_run_usage.up.sql"
+      - "internal/storage/migrations/019_agent_command_filters.up.sql"
     gen:
       go:
         package: "gen"

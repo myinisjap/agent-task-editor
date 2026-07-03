@@ -317,6 +317,10 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 	_ = json.Unmarshal([]byte(cfg.EnabledPlugins), &enabledPlugins)
 	var enabledMCPServers []string
 	_ = json.Unmarshal([]byte(cfg.EnabledMcpServers), &enabledMCPServers)
+	var commandAllowlist []string
+	_ = json.Unmarshal([]byte(cfg.CommandAllowlist), &commandAllowlist)
+	var commandDenylist []string
+	_ = json.Unmarshal([]byte(cfg.CommandDenylist), &commandDenylist)
 	return AgentConfig{
 		ID:                cfg.ID,
 		Name:              cfg.Name,
@@ -329,5 +333,7 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 		Env:               env,
 		EnabledPlugins:    enabledPlugins,
 		EnabledMCPServers: enabledMCPServers,
+		CommandAllowlist:  commandAllowlist,
+		CommandDenylist:   commandDenylist,
 	}
 }

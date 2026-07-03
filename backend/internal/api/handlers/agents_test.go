@@ -134,3 +134,112 @@ func TestAgentsUpdate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 		t.Errorf("expected [github], got %+v", mcpServers)
 	}
 }
+
+// TestAgentsCreate_CommandFilters_DefaultOff verifies that omitting
+// command_allowlist/command_denylist on create defaults both to an empty
+// JSON array (i.e. no restriction by default).
+func TestAgentsCreate_CommandFilters_DefaultOff(t *testing.T) {
+	router := setupAgentsRouter(t)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":     "claude-cmd-default",
+		"provider": "claude",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var cfg gen.AgentConfig
+	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if cfg.CommandAllowlist != "[]" {
+		t.Errorf("expected command_allowlist to default to '[]', got %q", cfg.CommandAllowlist)
+	}
+	if cfg.CommandDenylist != "[]" {
+		t.Errorf("expected command_denylist to default to '[]', got %q", cfg.CommandDenylist)
+	}
+}
+
+// TestAgentsCreate_CommandFilters_RoundTrip verifies that explicitly set
+// command allow/deny lists are persisted and returned as-is.
+func TestAgentsCreate_CommandFilters_RoundTrip(t *testing.T) {
+	router := setupAgentsRouter(t)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":              "claude-with-cmd-filters",
+		"provider":          "claude",
+		"command_allowlist": `["git *", "npm test"]`,
+		"command_denylist":  `["rm -rf *"]`,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var cfg gen.AgentConfig
+	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	var allow []string
+	if err := json.Unmarshal([]byte(cfg.CommandAllowlist), &allow); err != nil {
+		t.Fatalf("unmarshal command_allowlist: %v", err)
+	}
+	if len(allow) != 2 || allow[0] != "git *" || allow[1] != "npm test" {
+		t.Errorf("expected [git *, npm test], got %+v", allow)
+	}
+
+	var deny []string
+	if err := json.Unmarshal([]byte(cfg.CommandDenylist), &deny); err != nil {
+		t.Fatalf("unmarshal command_denylist: %v", err)
+	}
+	if len(deny) != 1 || deny[0] != "rm -rf *" {
+		t.Errorf("expected [rm -rf *], got %+v", deny)
+	}
+}
+
+// TestAgentsUpdate_CommandFilters_RoundTrip verifies that updating an
+// existing config's command allow/deny lists persists correctly.
+func TestAgentsUpdate_CommandFilters_RoundTrip(t *testing.T) {
+	router := setupAgentsRouter(t)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":     "claude-cmd-to-update",
+		"provider": "claude",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created gen.AgentConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":              created.Name,
+		"provider":          created.Provider,
+		"command_allowlist": `["go *"]`,
+		"command_denylist":  `["curl *", "sudo *"]`,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated gen.AgentConfig
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+
+	var allow []string
+	if err := json.Unmarshal([]byte(updated.CommandAllowlist), &allow); err != nil {
+		t.Fatalf("unmarshal command_allowlist: %v", err)
+	}
+	if len(allow) != 1 || allow[0] != "go *" {
+		t.Errorf("expected [go *], got %+v", allow)
+	}
+
+	var deny []string
+	if err := json.Unmarshal([]byte(updated.CommandDenylist), &deny); err != nil {
+		t.Fatalf("unmarshal command_denylist: %v", err)
+	}
+	if len(deny) != 2 || deny[0] != "curl *" || deny[1] != "sudo *" {
+		t.Errorf("expected [curl *, sudo *], got %+v", deny)
+	}
+}

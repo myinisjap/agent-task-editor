@@ -14,6 +14,7 @@ import (
 // driver/version, since older SQLite versions require a table-rebuild
 // pattern for DROP COLUMN rather than a direct ALTER TABLE.
 func TestMigration018DownStep(t *testing.T) {
+	const targetVersion = 17
 	dbPath := t.TempDir() + "/migtest.db"
 	db, err := Open(dbPath)
 	if err != nil {
@@ -34,8 +35,8 @@ func TestMigration018DownStep(t *testing.T) {
 		t.Fatalf("migrator: %v", err)
 	}
 
-	if err := m.Steps(-1); err != nil {
-		t.Fatalf("down one step (018 rollback): %v", err)
+	if err := m.Migrate(targetVersion); err != nil {
+		t.Fatalf("down to version %d (018 rollback): %v", targetVersion, err)
 	}
 
 	// Verify the columns are actually gone.
