@@ -50,6 +50,17 @@ See [mcp-tools.md](../mcp-tools.md) for full tool reference.
 
 Not yet supported. Reserved for when the `qwen` CLI gains an `--image` flag.
 
+## Command Allowlist / Denylist
+
+`command_allowlist` patterns are enforced natively by the `qwen` CLI: each pattern is
+appended as a `Bash(pattern)` entry to `--allowed-tools`, the same tool-restriction
+syntax the `claude` CLI's `--allowedTools` accepts.
+
+`command_denylist` is **not currently enforced** for this provider — there is no
+confirmed `qwen` CLI flag equivalent to claude's `--disallowedTools` /
+`permissions.deny` settings key. If you need denylist enforcement, prefer the
+`claude`, `anthropic`, or `llm` providers, or rely solely on `command_allowlist` here.
+
 ## Model Selection
 
 Pass `model` in the agent config. It is passed via `--model <model>` to the CLI.

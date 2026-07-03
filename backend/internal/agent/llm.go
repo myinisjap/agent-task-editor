@@ -200,7 +200,8 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 			output, handled := acc.applySpecialTool(tc.Function.Name, args, []byte(tc.Function.Arguments))
 			var signal *Result
 			if !handled {
-				output, signal = r.executeTool(runCtx, input.RepoPath, tc)
+				policy := CommandPolicy{Allowlist: input.AgentConfig.CommandAllowlist, Denylist: input.AgentConfig.CommandDenylist}
+				output, signal = r.executeTool(runCtx, input.RepoPath, policy, tc)
 			}
 
 			logCh <- LogEntry{Type: LogToolResult, Content: output, At: time.Now()}
@@ -221,10 +222,10 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 	return Result{Status: "failed"}, fmt.Errorf("exceeded max turns (%d)", maxTurns)
 }
 
-func (r *LLMRunner) executeTool(ctx context.Context, repoPath string, tc toolCall) (string, *Result) {
+func (r *LLMRunner) executeTool(ctx context.Context, repoPath string, policy CommandPolicy, tc toolCall) (string, *Result) {
 	var args map[string]string
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-	return executeLLMTool(ctx, repoPath, tc.Function.Name, args)
+	return executeLLMTool(ctx, repoPath, policy, tc.Function.Name, args)
 }
 
 type completionResponse struct {

@@ -116,6 +116,16 @@ export type AgentConfig = {
   // enabled_mcp_servers: Claude MCP server names (from ~/.claude.json), claude-provider only.
   enabled_plugins?: string
   enabled_mcp_servers?: string
+  // command_allowlist / command_denylist: JSON array of shell-command glob patterns
+  // ("*" wildcard). Both default to "[]" (no restriction). Best-effort string
+  // matching, not a sandbox. Denylist is always checked first.
+  // Allowlist: fully enforced for anthropic, llm, qwen_code. NOT an effective
+  // restriction for claude (CLI only auto-approves matches; see docs). Not enforced
+  // for opencode.
+  // Denylist: fully enforced for anthropic, llm, claude. NOT enforced for qwen_code
+  // (no confirmed CLI flag) or opencode.
+  command_allowlist?: string
+  command_denylist?: string
   created_at: string
   updated_at: string
 }
