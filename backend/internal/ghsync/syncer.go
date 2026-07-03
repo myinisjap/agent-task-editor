@@ -100,9 +100,10 @@ type repoInfo struct {
 // plus local path. ghName is "" if the repo has no remote URL or is not a
 // GitHub URL.
 func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
+	log := slog.With("component", "ghsync", "repo_id", repoID)
 	repo, err := s.q.GetRepo(ctx, repoID)
 	if err != nil {
-		slog.Warn("ghsync: get repo", "component", "ghsync", "repo_id", repoID, "err", err)
+		log.Warn("ghsync: get repo", "err", err)
 		return repoInfo{}
 	}
 	if repo.RemoteUrl == nil || *repo.RemoteUrl == "" {
