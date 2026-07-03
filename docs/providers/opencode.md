@@ -56,6 +56,14 @@ Not supported.
 
 The `max_turns` agent config field is accepted but **not currently enforced** by this provider — the opencode CLI's `run` command has no documented turn-limit flag equivalent to `claude`'s `--max-turns`. The field is stored and available for a future opencode CLI feature, but has no effect today.
 
+## Command Allowlist / Denylist
+
+**Not enforced.** The `command_allowlist`/`command_denylist` agent config fields have
+no effect for this provider — opencode has no Bash tool wired up server-side (it
+manages its own tool permissions via its own global config, outside task-editor's
+control). If you need to restrict shell command execution for an agent config, use
+the `claude`, `qwen_code`, `anthropic`, or `llm` providers instead.
+
 ## Limitations
 
 | Feature | Status |
@@ -67,6 +75,7 @@ The `max_turns` agent config field is accepted but **not currently enforced** by
 | Image attachments | ❌ Not supported |
 | Outcome signalling | ⚠️ Text-based only (`OUTCOME: success/failure`) |
 | Rate limit detection | ❌ Not implemented |
+| Command allowlist/denylist | ❌ Not enforced |
 
 ## Setup Checklist
 

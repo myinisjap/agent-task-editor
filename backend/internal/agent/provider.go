@@ -88,6 +88,13 @@ type AgentConfig struct {
 	// (from ~/.claude.json's global mcpServers) enabled for this agent config.
 	// Claude-provider only.
 	EnabledMCPServers []string
+	// CommandAllowlist, if non-empty, restricts run_bash/Bash commands to those
+	// matching at least one glob pattern (see agent.matchCommandPattern). Denylist
+	// is still checked and always wins. Best-effort string matching, not a sandbox.
+	CommandAllowlist []string
+	// CommandDenylist blocks any run_bash/Bash command matching a pattern here,
+	// regardless of CommandAllowlist. Checked before the allowlist.
+	CommandDenylist []string
 }
 
 // Provider is the interface all agent backends must satisfy.

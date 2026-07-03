@@ -226,7 +226,7 @@ func TestBuildClaudeArgs_MaxTurnsConfigured(t *testing.T) {
 // ~/.claude/plugins/installed_plugins.json contents.
 func TestBuildClaudeSettingsJSON_FallbackNoInventory(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	got, err := buildClaudeSettingsJSON([]string{"some-plugin@marketplace"})
+	got, err := buildClaudeSettingsJSON([]string{"some-plugin@marketplace"}, nil, nil)
 	if err != nil {
 		t.Fatalf("buildClaudeSettingsJSON: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestBuildClaudeSettingsJSON_NoSelection_EmptyMap(t *testing.T) {
 	// point HOME at an empty temp dir so plugin discovery finds nothing and
 	// the fallback (empty map) path is exercised deterministically.
 	t.Setenv("HOME", t.TempDir())
-	got, err := buildClaudeSettingsJSON(nil)
+	got, err := buildClaudeSettingsJSON(nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildClaudeSettingsJSON: %v", err)
 	}
@@ -258,5 +258,105 @@ func TestBuildClaudeSettingsJSON_NoSelection_EmptyMap(t *testing.T) {
 	}
 	if len(parsed.EnabledPlugins) != 0 {
 		t.Fatalf("want empty enabledPlugins map, got %+v", parsed.EnabledPlugins)
+	}
+}
+
+// TestBuildClaudeSettingsJSON_CommandPermissions verifies that non-empty
+// command allow/deny lists are translated into Bash(pattern) entries under
+// the "permissions" key of the settings JSON, and that an empty pair of
+// lists produces no "permissions" key at all (backward compatible).
+func TestBuildClaudeSettingsJSON_CommandPermissions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("both lists populated", func(t *testing.T) {
+		got, err := buildClaudeSettingsJSON(nil, []string{"git *", "npm test"}, []string{"rm -rf *"})
+		if err != nil {
+			t.Fatalf("buildClaudeSettingsJSON: %v", err)
+		}
+		var parsed struct {
+			Permissions struct {
+				Allow []string `json:"allow"`
+				Deny  []string `json:"deny"`
+			} `json:"permissions"`
+		}
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Fatalf("unmarshal settings json: %v", err)
+		}
+		wantAllow := []string{"Bash(git *)", "Bash(npm test)"}
+		if len(parsed.Permissions.Allow) != len(wantAllow) {
+			t.Fatalf("allow = %+v, want %+v", parsed.Permissions.Allow, wantAllow)
+		}
+		for i, w := range wantAllow {
+			if parsed.Permissions.Allow[i] != w {
+				t.Fatalf("allow[%d] = %q, want %q", i, parsed.Permissions.Allow[i], w)
+			}
+		}
+		wantDeny := []string{"Bash(rm -rf *)"}
+		if len(parsed.Permissions.Deny) != len(wantDeny) || parsed.Permissions.Deny[0] != wantDeny[0] {
+			t.Fatalf("deny = %+v, want %+v", parsed.Permissions.Deny, wantDeny)
+		}
+	})
+
+	t.Run("denylist only", func(t *testing.T) {
+		got, err := buildClaudeSettingsJSON(nil, nil, []string{"sudo *"})
+		if err != nil {
+			t.Fatalf("buildClaudeSettingsJSON: %v", err)
+		}
+		var parsed struct {
+			Permissions struct {
+				Allow []string `json:"allow"`
+				Deny  []string `json:"deny"`
+			} `json:"permissions"`
+		}
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Fatalf("unmarshal settings json: %v", err)
+		}
+		if len(parsed.Permissions.Allow) != 0 {
+			t.Fatalf("expected no allow entries, got %+v", parsed.Permissions.Allow)
+		}
+		if len(parsed.Permissions.Deny) != 1 || parsed.Permissions.Deny[0] != "Bash(sudo *)" {
+			t.Fatalf("deny = %+v, want [Bash(sudo *)]", parsed.Permissions.Deny)
+		}
+	})
+
+	t.Run("empty lists omit permissions key entirely", func(t *testing.T) {
+		got, err := buildClaudeSettingsJSON(nil, nil, nil)
+		if err != nil {
+			t.Fatalf("buildClaudeSettingsJSON: %v", err)
+		}
+		var parsed map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Fatalf("unmarshal settings json: %v", err)
+		}
+		if _, ok := parsed["permissions"]; ok {
+			t.Fatalf("expected no permissions key when both lists are empty, got %s", got)
+		}
+	})
+}
+
+// TestBuildClaudeArgs_CommandPermissions verifies buildClaudeArgs threads the
+// agent config's command allow/deny lists through into the --settings JSON
+// payload passed to the claude CLI.
+func TestBuildClaudeArgs_CommandPermissions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	args, err := buildClaudeArgs(RunInput{
+		Task: Task{Title: "t"},
+		AgentConfig: AgentConfig{
+			CommandAllowlist: []string{"git *"},
+			CommandDenylist:  []string{"rm -rf *"},
+		},
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("buildClaudeArgs: %v", err)
+	}
+	settingsJSON := findFlagValue(args, "--settings")
+	if settingsJSON == "" {
+		t.Fatalf("expected --settings flag in args: %v", args)
+	}
+	if !strings.Contains(settingsJSON, `"Bash(git *)"`) {
+		t.Fatalf("expected allow entry in settings JSON, got %s", settingsJSON)
+	}
+	if !strings.Contains(settingsJSON, `"Bash(rm -rf *)"`) {
+		t.Fatalf("expected deny entry in settings JSON, got %s", settingsJSON)
 	}
 }

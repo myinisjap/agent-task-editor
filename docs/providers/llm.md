@@ -56,6 +56,20 @@ LLM_API_KEY=sk-...
 
 **Note:** `signal_complete` here takes `next_label` (the exact label name), unlike the MCP version which takes `outcome: "success"|"failure"`.
 
+## Command Allowlist / Denylist
+
+`command_allowlist` and `command_denylist` (JSON arrays of `"*"`-wildcard glob
+patterns on the agent config, both defaulting to `[]`/no restriction) are enforced
+server-side, in Go, immediately before a `run_bash` call is executed: the denylist is
+checked first and always wins; if the allowlist is non-empty, the command must also
+match at least one allow pattern. A denied command returns an `error: ...` string to
+the model instead of running.
+
+This is **best-effort string matching against the full command line, not a sandbox**
+— it does not prevent constructing a denied command indirectly (e.g. via `$()`,
+backticks, string concatenation, or encoded payloads). It reduces the blast radius of
+a straightforwardly misbehaving or prompt-injected agent, not a determined one.
+
 ## Image Attachments
 
 Not supported.

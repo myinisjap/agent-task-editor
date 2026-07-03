@@ -19,6 +19,8 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `env` | JSON object of additional environment variables for the agent process |
 | `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 | `enabled_mcp_servers` | JSON array of Claude user-level MCP server names enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
+| `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
+| `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `opencode`; not enforced for `qwen_code`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
 
 ## Providers
 
@@ -142,6 +144,38 @@ For the `claude` provider only, each agent config can select which Claude Code p
   - Plugins: the `claude` CLI is invoked with `--settings '{"enabledPlugins": {...}}'`, built by defaulting every discovered plugin to `false` and then setting `true` only for IDs present in `enabled_plugins`. A plugin selected but not present in the current discovery snapshot is still explicitly enabled (stale-inventory fallback).
   - MCP servers: for each name in `enabled_mcp_servers` (skipping the reserved `task-editor` name), its raw config entry is read from `~/.claude.json`'s global `mcpServers` map and merged into the `--mcp-config` file alongside the task-editor sidecar entry. A bare `mcp__<server>` entry is appended to `--allowedTools` per selected server so its tools aren't blocked — this wildcarding behavior is inferred from CLI docs and worth re-verifying against a live run if MCP tool calls are unexpectedly denied.
 - **Scope:** this is currently `claude`-provider-only. Other providers (`anthropic`, `opencode`, `qwen_code`, generic `llm`) have the same DB columns available but ignore them entirely.
+
+## Command Allowlist / Denylist
+
+Every agent config has an optional `command_allowlist` and `command_denylist` — JSON
+arrays of shell-command glob patterns (`"*"` wildcard), both defaulting to `[]` (no
+restriction, i.e. today's existing behavior for all pre-existing configs). These let
+you limit which shell commands a given agent config's Bash/`run_bash` tool may run,
+reducing the blast radius of a misbehaving or prompt-injected agent — **this is
+best-effort string matching, not a sandbox.** It does not prevent an agent from
+constructing a denied command indirectly (via `$()`, backticks, string
+concatenation, base64-decoded payloads, etc).
+
+- **Denylist always wins:** if a command matches any `command_denylist` pattern, it
+  is refused regardless of `command_allowlist`.
+- **Allowlist, if non-empty, is exclusive:** a command must match at least one
+  `command_allowlist` pattern to run. An empty allowlist means "no allowlist
+  restriction" (any command not denylisted may run).
+- **Pattern syntax:** `*` matches any sequence of characters (including empty).
+  Matching is case-sensitive and applied to the whole, trimmed command string (e.g.
+  `"git *"` matches `"git status"` but not `"echo git status"`; `"* --force"`
+  matches any command ending in `--force`).
+
+**Enforcement differs by provider:**
+
+| Provider | Enforcement |
+|---|---|
+| `anthropic`, `llm` | Enforced in Go, in `executeLLMTool`, immediately before spawning the `run_bash` subprocess. Both allowlist and denylist fully supported. |
+| `claude` | Enforced natively by the `claude` CLI via `permissions.allow`/`permissions.deny` in the `--settings` JSON (same `Bash(pattern)` syntax as `--allowedTools`/`--disallowedTools`). Both allowlist and denylist supported; smoke-tested against a live `claude` binary. |
+| `qwen_code` | `command_allowlist` is enforced natively via `--allowed-tools Bash(pattern)` entries. `command_denylist` is **not enforced** — no confirmed `qwen` CLI denylist flag exists. |
+| `opencode` | **Not enforced at all** — opencode has no Bash tool wired up server-side; it manages tool permissions via its own global config. |
+
+See the corresponding [provider docs](#providers) for details on each provider's mechanism.
 
 ## Environment Variable Security
 
