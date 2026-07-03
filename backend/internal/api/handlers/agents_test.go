@@ -185,6 +185,67 @@ func TestAgentsCreate_RetryPolicy_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestAgentsCreate_RetryPolicy_RejectsNegative verifies the API rejects
+// negative max_retries/retry_backoff_secs on create, since the frontend's
+// min-bound enforcement can be bypassed by a direct API client.
+func TestAgentsCreate_RetryPolicy_RejectsNegative(t *testing.T) {
+	router := setupAgentsRouter(t)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":        "claude-negative-max-retries",
+		"provider":    "claude",
+		"max_retries": -1,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for negative max_retries, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-negative-backoff",
+		"provider":           "claude",
+		"retry_backoff_secs": -5,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for negative retry_backoff_secs, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentsUpdate_RetryPolicy_RejectsNegative verifies the API rejects
+// negative max_retries/retry_backoff_secs on update.
+func TestAgentsUpdate_RetryPolicy_RejectsNegative(t *testing.T) {
+	router := setupAgentsRouter(t)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":     "claude-retry-update-negative",
+		"provider": "claude",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created gen.AgentConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":        created.Name,
+		"provider":    created.Provider,
+		"max_retries": -1,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for negative max_retries, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":               created.Name,
+		"provider":           created.Provider,
+		"retry_backoff_secs": -5,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for negative retry_backoff_secs, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestAgentsUpdate_RetryPolicy_RoundTrip verifies updating retry policy
 // fields persists, and omitting them on update preserves existing values.
 func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {

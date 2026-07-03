@@ -64,6 +64,10 @@ Not supported.
 
 Pass `model` in the agent config (e.g. `gpt-4o`, `gpt-4o-mini`, `llama3.2`). Passed directly to the API.
 
+## Cost & Usage Reporting
+
+Token usage (`input_tokens`/`output_tokens`) is summed from the response's OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`) across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens via the internal pricing table (`internal/agent/pricing.go`) — accuracy depends on the model ID matching an entry in that table. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
 ## Rate Limit Handling
 
 Detects HTTP 429 responses. Reads `x-ratelimit-reset-requests`, `x-ratelimit-reset-tokens`, and `retry-after` headers to determine when to retry.

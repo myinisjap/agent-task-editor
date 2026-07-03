@@ -21,7 +21,7 @@ type LLMRunner struct {
 	// BaseURL for the API (e.g. "https://api.openai.com/v1" or Anthropic endpoint).
 	BaseURL string
 	// APIKey is sent as Bearer token.
-	APIKey  string
+	APIKey string
 }
 
 // tool definitions sent to the LLM
@@ -44,7 +44,7 @@ var llmTools = []map[string]any{
 			"name":        "write_file",
 			"description": "Write or overwrite a file in the repository.",
 			"parameters": map[string]any{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]any{
 					"path":    map[string]any{"type": "string"},
 					"content": map[string]any{"type": "string"},
@@ -95,7 +95,7 @@ var llmTools = []map[string]any{
 			"name":        "update_task_notes",
 			"description": "Write structured notes to the task for subsequent agents to read. Use this to record plans, analysis, review findings, or any context that the next agent in the workflow should have.",
 			"parameters": map[string]any{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]any{
 					"notes":  map[string]any{"type": "string", "description": "The notes content (supports markdown)"},
 					"append": map[string]any{"type": "boolean", "description": "If true, append to existing notes instead of replacing"},
@@ -110,7 +110,7 @@ var llmTools = []map[string]any{
 			"name":        "signal_complete",
 			"description": "Call when your work is done. Advances the task to the next workflow stage.",
 			"parameters": map[string]any{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]any{
 					"next_label": map[string]any{"type": "string", "description": "The workflow label to move the task to"},
 					"summary":    map[string]any{"type": "string", "description": "Brief summary of what was done"},
@@ -163,6 +163,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 	}
 
 	var acc runAccumulators
+	acc.model = input.AgentConfig.Model
 	maxTurns := int(input.AgentConfig.MaxTurns)
 	if maxTurns <= 0 {
 		maxTurns = 50
@@ -176,6 +177,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 			}
 			return Result{Status: "failed"}, fmt.Errorf("chat complete turn %d: %w", turn, err)
 		}
+		acc.addUsage(resp.InputTokens, resp.OutputTokens)
 
 		if len(resp.ToolCalls) == 0 {
 			// No tool calls — treat as completion
@@ -226,8 +228,10 @@ func (r *LLMRunner) executeTool(ctx context.Context, repoPath string, tc toolCal
 }
 
 type completionResponse struct {
-	Content   string
-	ToolCalls []toolCall
+	Content      string
+	ToolCalls    []toolCall
+	InputTokens  int64
+	OutputTokens int64
 }
 
 // parseLLMRateLimitReset reads rate-limit reset info from standard retry-after and
@@ -300,6 +304,10 @@ func (r *LLMRunner) chatComplete(ctx context.Context, model string, messages []c
 				ToolCalls []toolCall `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+		} `json:"usage"`
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -315,5 +323,10 @@ func (r *LLMRunner) chatComplete(ctx context.Context, model string, messages []c
 	}
 
 	msg := result.Choices[0].Message
-	return completionResponse{Content: msg.Content, ToolCalls: msg.ToolCalls}, nil
+	out := completionResponse{Content: msg.Content, ToolCalls: msg.ToolCalls}
+	if result.Usage != nil {
+		out.InputTokens = result.Usage.PromptTokens
+		out.OutputTokens = result.Usage.CompletionTokens
+	}
+	return out, nil
 }

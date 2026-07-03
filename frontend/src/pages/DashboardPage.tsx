@@ -92,6 +92,68 @@ export default function DashboardPage() {
         </section>
       )}
 
+      {/* Cost & usage */}
+      {dash && dash.cost_total && (dash.cost_total.input_tokens > 0 || dash.cost_total.output_tokens > 0 || (dash.cost_by_provider?.length ?? 0) > 0) && (
+        <section className="mb-8">
+          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Cost &amp; usage</h2>
+          <div className="bg-slate-900 rounded-lg border border-slate-800 p-4 mb-3">
+            <div className="flex flex-wrap gap-6">
+              <div>
+                <div className="text-xs text-slate-500">Total cost</div>
+                <div className="text-lg font-semibold text-slate-100">
+                  {dash.cost_total.cost_usd > 0 ? `$${dash.cost_total.cost_usd.toFixed(4)}` : '$0.00'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Input tokens</div>
+                <div className="text-lg font-semibold text-slate-100">
+                  {dash.cost_total.input_tokens.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">Output tokens</div>
+                <div className="text-lg font-semibold text-slate-100">
+                  {dash.cost_total.output_tokens.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 mt-3">
+              Estimated cost, computed from a token-based pricing table for anthropic/llm providers; the claude
+              CLI reports its own authoritative cost (which may be $0 under a Claude Max subscription).
+            </p>
+          </div>
+
+          {dash.cost_by_provider && dash.cost_by_provider.length > 0 && (
+            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 border-b border-slate-800">
+                    <th className="text-left px-4 py-2">Provider</th>
+                    <th className="text-right px-4 py-2">Runs</th>
+                    <th className="text-right px-4 py-2">Input tok</th>
+                    <th className="text-right px-4 py-2">Output tok</th>
+                    <th className="text-right px-4 py-2">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dash.cost_by_provider.map((p) => (
+                    <tr key={p.provider} className="border-b border-slate-800 last:border-0">
+                      <td className="px-4 py-2.5 text-slate-200">{p.provider}</td>
+                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{p.run_count.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{p.input_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{p.output_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
+                        {p.cost_usd > 0 ? `$${p.cost_usd.toFixed(4)}` : '$0.00'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Active agents */}
       {dash && dash.active_agents.length > 0 && (
         <section className="mb-8">

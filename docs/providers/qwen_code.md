@@ -58,6 +58,10 @@ Pass `model` in the agent config. It is passed via `--model <model>` to the CLI.
 
 Like the `claude` provider, if the agent completes without calling `signal_complete`, the runner scans the final result text for `OUTCOME: success` or `OUTCOME: failure` as a fallback.
 
+## Cost & Usage Reporting
+
+Like the `claude` provider, token usage and cost are parsed from the CLI's `result` stream-json message (`usage` + `total_cost_usd`) via the same `classifyStreamJSON` parser, and are used as-is (not estimated) — assuming the `qwen` CLI's stream-json output stays compatible with `claude`'s. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
 ## Setup Checklist
 
 1. Install the `qwen` CLI and add it to `PATH` (or mount it into the container)

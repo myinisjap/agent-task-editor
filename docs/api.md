@@ -162,6 +162,9 @@ Returns the updated `Task` object (with `paused: true`/`false`).
 | `created_at` | RFC3339 | When the run was created |
 | `started_at` | RFC3339? | When the run started executing |
 | `completed_at` | RFC3339? | When the run finished |
+| `input_tokens` | integer | Total input/prompt tokens consumed across the run (summed across all turns); `0` if the provider doesn't report usage |
+| `output_tokens` | integer | Total output/completion tokens consumed across the run |
+| `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`qwen_code`; estimated from tokens via an internal pricing table for `anthropic`/`llm`; always `0` for `opencode`. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
 
 ### `GET /tasks/{id}/runs`
 List all agent runs for a task (newest first).

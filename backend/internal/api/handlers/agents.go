@@ -109,6 +109,14 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code", body.Provider))
 		return
 	}
+	if body.MaxRetries != nil && *body.MaxRetries < 0 {
+		Err(w, http.StatusBadRequest, "max_retries must be >= 0")
+		return
+	}
+	if body.RetryBackoffSecs != nil && *body.RetryBackoffSecs < 0 {
+		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
+		return
+	}
 	if body.Labels == "" {
 		body.Labels = "[]"
 	}
@@ -217,6 +225,14 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Provider != "" && !knownProviders[body.Provider] {
 		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code", body.Provider))
+		return
+	}
+	if body.MaxRetries != nil && *body.MaxRetries < 0 {
+		Err(w, http.StatusBadRequest, "max_retries must be >= 0")
+		return
+	}
+	if body.RetryBackoffSecs != nil && *body.RetryBackoffSecs < 0 {
+		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
 		return
 	}
 
