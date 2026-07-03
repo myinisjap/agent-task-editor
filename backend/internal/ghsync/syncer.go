@@ -53,10 +53,11 @@ func (s *Syncer) Run(ctx context.Context) {
 
 // sweep iterates all tasks and refreshes GitHub PR state for eligible ones.
 func (s *Syncer) sweep(ctx context.Context) {
-	slog.Info("ghsync: sweep start")
+	log := slog.With("component", "ghsync")
+	log.Info("ghsync: sweep start")
 	tasks, err := s.q.ListTasks(ctx)
 	if err != nil {
-		slog.Warn("ghsync: list tasks failed", "err", err)
+		log.Warn("ghsync: list tasks failed", "err", err)
 		return
 	}
 
@@ -86,7 +87,7 @@ func (s *Syncer) sweep(ctx context.Context) {
 		checked++
 		s.syncTask(ctx, task, info)
 	}
-	slog.Info("ghsync: sweep done", "total_tasks", len(tasks), "checked", checked)
+	log.Info("ghsync: sweep done", "total_tasks", len(tasks), "checked", checked)
 }
 
 // repoInfo holds the resolved details for a task's repo needed during a sweep.
@@ -101,7 +102,7 @@ type repoInfo struct {
 func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 	repo, err := s.q.GetRepo(ctx, repoID)
 	if err != nil {
-		slog.Warn("ghsync: get repo", "repo_id", repoID, "err", err)
+		slog.Warn("ghsync: get repo", "component", "ghsync", "repo_id", repoID, "err", err)
 		return repoInfo{}
 	}
 	if repo.RemoteUrl == nil || *repo.RemoteUrl == "" {
@@ -116,9 +117,10 @@ func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 
 // syncTask checks the PR state for a single task and updates it if changed.
 func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
+	log := slog.With("component", "ghsync", "task_id", task.ID)
 	state, prURL, _, err := ghclient.GetPRForBranch(ctx, repo.ghName, task.Branch)
 	if err != nil {
-		slog.Warn("ghsync: get PR for branch", "task_id", task.ID, "branch", task.Branch, "err", err)
+		log.Warn("ghsync: get PR for branch", "branch", task.Branch, "err", err)
 		return
 	}
 
@@ -130,11 +132,11 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 		GitState: state,
 		ID:       task.ID,
 	}); err != nil {
-		slog.Warn("ghsync: update git state", "task_id", task.ID, "err", err)
+		log.Warn("ghsync: update git state", "err", err)
 		return
 	}
 
-	slog.Info("ghsync: git state updated", "task_id", task.ID, "old_state", task.GitState, "new_state", state)
+	log.Info("ghsync: git state updated", "old_state", task.GitState, "new_state", state)
 
 	s.hub.Publish("task.git_state_changed", map[string]any{
 		"task_id":   task.ID,
@@ -159,19 +161,20 @@ func (s *Syncer) cleanupMergedBranch(ctx context.Context, task gen.Task, repoPat
 	if task.Branch == "" || repoPath == "" {
 		return
 	}
+	log := slog.With("component", "ghsync", "task_id", task.ID)
 	// The worktree is normally already removed by the workflow engine's
 	// OnTerminal hook by the time a PR is confirmed merged, but ghsync runs
 	// independently of the workflow engine, so don't assume that happened.
 	if task.WorktreePath != "" {
 		if err := agent.RemoveWorktree(ctx, repoPath, task.WorktreePath); err != nil {
-			slog.Warn("ghsync: remove worktree before branch delete", "task_id", task.ID, "err", err)
+			log.Warn("ghsync: remove worktree before branch delete", "err", err)
 			// Continue anyway — branch delete below will fail loudly (and be
 			// logged) if the worktree is in fact still attached.
 		}
 	}
 	if err := agent.DeleteLocalBranch(ctx, repoPath, task.Branch); err != nil {
-		slog.Warn("ghsync: delete local branch", "task_id", task.ID, "branch", task.Branch, "err", err)
+		log.Warn("ghsync: delete local branch", "branch", task.Branch, "err", err)
 		return
 	}
-	slog.Info("ghsync: deleted local branch after merge", "task_id", task.ID, "branch", task.Branch)
+	log.Info("ghsync: deleted local branch after merge", "branch", task.Branch)
 }
