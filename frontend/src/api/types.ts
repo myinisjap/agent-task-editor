@@ -1212,6 +1212,15 @@ export interface components {
             completed_at?: string | null;
             /** Format: date-time */
             created_at?: string;
+            /** @description Total input/prompt tokens consumed across the run (summed across all turns of a multi-turn agentic loop). 0 if the provider does not report usage (e.g. opencode currently). */
+            input_tokens?: number;
+            /** @description Total output/completion tokens consumed across the run. */
+            output_tokens?: number;
+            /**
+             * Format: double
+             * @description Estimated USD cost of the run. For the `claude` CLI provider this is the CLI's own authoritative total_cost_usd figure (which may legitimately be 0 under a Claude Max subscription); for anthropic/llm providers it is computed from input/output tokens via an internal, approximate pricing table. 0 if unknown/unreported.
+             */
+            cost_usd?: number;
         };
         AgentLog: {
             id?: string;
@@ -1239,6 +1248,22 @@ export interface components {
                 task_title?: string;
                 message?: string | null;
                 created_at?: string;
+            }[];
+            /** @description Aggregate token/cost usage across all runs in a terminal state (completed, failed, waiting_human). */
+            cost_total?: {
+                input_tokens?: number;
+                output_tokens?: number;
+                /** Format: double */
+                cost_usd?: number;
+            };
+            /** @description Per-provider breakdown of token/cost usage, sorted by cost descending. Runs whose agent_config was later deleted are excluded (agent_config_id is set NULL on delete, so they can no longer be attributed to a provider). */
+            cost_by_provider?: {
+                provider?: string;
+                input_tokens?: number;
+                output_tokens?: number;
+                /** Format: double */
+                cost_usd?: number;
+                run_count?: number;
             }[];
         };
         Error: {

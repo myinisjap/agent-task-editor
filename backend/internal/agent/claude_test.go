@@ -31,6 +31,13 @@ func TestMain(m *testing.M) {
 	case "exit0_no_outcome":
 		// Simulate: claude exits cleanly with no outcome (empty result).
 		os.Exit(0)
+	case "exit0_success_with_usage":
+		// Simulate: claude exits cleanly with a success outcome and a
+		// result message carrying usage/total_cost_usd, as the real CLI
+		// does — total_cost_usd here is authoritative and should be used
+		// as-is rather than re-estimated.
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":111,"output_tokens":222},"total_cost_usd":0.05}`)
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -139,6 +146,88 @@ func TestClaudeExitCode0_NoOutcome(t *testing.T) {
 	result, _ := runWithHelper(t, "exit0_no_outcome")
 	if result.Status != "completed" {
 		t.Errorf("want Status=%q, got %q", "completed", result.Status)
+	}
+}
+
+// TestClassifyStreamJSON_ResultUsage verifies that a "result" message
+// containing both a usage object and total_cost_usd is parsed into a
+// runUsage with the expected fields, and that the outcome is still parsed
+// correctly from the accompanying OUTCOME marker.
+func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
+	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"total_cost_usd":0.0789,"duration_ms":1500}`
+
+	entry, outcome, usage := classifyStreamJSON(line)
+
+	if entry.Type != LogSystem {
+		t.Errorf("want LogSystem entry, got %v", entry.Type)
+	}
+	if outcome != "success" {
+		t.Errorf("want outcome=success, got %q", outcome)
+	}
+	if usage == nil {
+		t.Fatalf("want non-nil usage, got nil")
+	}
+	if usage.InputTokens != 123 {
+		t.Errorf("want InputTokens=123, got %d", usage.InputTokens)
+	}
+	if usage.OutputTokens != 456 {
+		t.Errorf("want OutputTokens=456, got %d", usage.OutputTokens)
+	}
+	if usage.CostUSD != 0.0789 {
+		t.Errorf("want CostUSD=0.0789, got %v", usage.CostUSD)
+	}
+}
+
+// TestClassifyStreamJSON_ResultNoUsage verifies a "result" message with no
+// usage/total_cost_usd fields (e.g. an older CLI version) returns a nil
+// usage rather than a zero-valued struct, so callers don't overwrite a
+// previously-seen usage with zeros.
+func TestClassifyStreamJSON_ResultNoUsage(t *testing.T) {
+	line := `{"type":"result","subtype":"success","result":"OUTCOME: success"}`
+
+	_, outcome, usage := classifyStreamJSON(line)
+
+	if outcome != "success" {
+		t.Errorf("want outcome=success, got %q", outcome)
+	}
+	if usage != nil {
+		t.Errorf("want nil usage, got %+v", usage)
+	}
+}
+
+// TestClassifyStreamJSON_NonResultMessagesReturnNilUsage verifies that
+// non-"result" message types never populate usage.
+func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
+	for _, line := range []string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
+		`{"type":"tool_use"}`,
+		`{"type":"tool_result"}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result"}]}}`,
+	} {
+		_, _, usage := classifyStreamJSON(line)
+		if usage != nil {
+			t.Errorf("line %q: want nil usage, got %+v", line, usage)
+		}
+	}
+}
+
+// TestClaudeRunner_PropagatesUsageFromResultMessage verifies that a full
+// Run() invocation propagates the token usage and CLI-authoritative
+// total_cost_usd parsed from the stream-json "result" message onto the
+// returned Result (the non-MCP code path).
+func TestClaudeRunner_PropagatesUsageFromResultMessage(t *testing.T) {
+	result, _ := runWithHelper(t, "exit0_success_with_usage")
+	if result.Status != "completed" {
+		t.Fatalf("want Status=completed, got %q", result.Status)
+	}
+	if result.InputTokens != 111 {
+		t.Errorf("want InputTokens=111, got %d", result.InputTokens)
+	}
+	if result.OutputTokens != 222 {
+		t.Errorf("want OutputTokens=222, got %d", result.OutputTokens)
+	}
+	if result.CostUSD != 0.05 {
+		t.Errorf("want CostUSD=0.05, got %v", result.CostUSD)
 	}
 }
 

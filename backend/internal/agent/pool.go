@@ -186,10 +186,13 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status:     finalStatus,
-		StoredInfo: result.StoredInfo,
-		Notes:      result.Notes,
-		ID:         job.RunID,
+		Status:       finalStatus,
+		StoredInfo:   result.StoredInfo,
+		Notes:        result.Notes,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		ID:           job.RunID,
 	}); err != nil {
 		slog.Error("pool: set run completed", "component", "pool", "run_id", job.RunID, "err", err)
 	}
@@ -395,4 +398,3 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 		}
 	}
 }
-

@@ -37,7 +37,7 @@ func (q *Queries) CreateAgentLog(ctx context.Context, arg CreateAgentLogParams) 
 const createAgentRun = `-- name: CreateAgentRun :one
 INSERT INTO agent_runs (id, task_id, agent_config_id, status, feedback)
 VALUES (?, ?, ?, 'pending', ?)
-RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes
+RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd
 `
 
 type CreateAgentRunParams struct {
@@ -66,6 +66,9 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.Notes,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.CostUsd,
 	)
 	return i, err
 }
@@ -99,7 +102,7 @@ func (q *Queries) CreateTaskLabelHistory(ctx context.Context, arg CreateTaskLabe
 }
 
 const getAgentRun = `-- name: GetAgentRun :one
-SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes FROM agent_runs WHERE id = ?
+SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd FROM agent_runs WHERE id = ?
 `
 
 func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) {
@@ -116,12 +119,15 @@ func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) 
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.Notes,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.CostUsd,
 	)
 	return i, err
 }
 
 const listActiveAgentRuns = `-- name: ListActiveAgentRuns :many
-SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, t.title as task_title, ac.name as agent_name
+SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, ar.input_tokens, ar.output_tokens, ar.cost_usd, t.title as task_title, ac.name as agent_name
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 JOIN agent_configs ac ON ac.id = ar.agent_config_id
@@ -140,6 +146,9 @@ type ListActiveAgentRunsRow struct {
 	CompletedAt   *time.Time `json:"completed_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	Notes         *string    `json:"notes"`
+	InputTokens   int64      `json:"input_tokens"`
+	OutputTokens  int64      `json:"output_tokens"`
+	CostUsd       float64    `json:"cost_usd"`
 	TaskTitle     string     `json:"task_title"`
 	AgentName     string     `json:"agent_name"`
 }
@@ -164,6 +173,9 @@ func (q *Queries) ListActiveAgentRuns(ctx context.Context) ([]ListActiveAgentRun
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.Notes,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
 			&i.TaskTitle,
 			&i.AgentName,
 		); err != nil {
@@ -214,7 +226,7 @@ func (q *Queries) ListAgentLogs(ctx context.Context, agentRunID string) ([]Agent
 }
 
 const listAgentRuns = `-- name: ListAgentRuns :many
-SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes FROM agent_runs WHERE task_id = ? ORDER BY created_at DESC
+SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd FROM agent_runs WHERE task_id = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAgentRuns(ctx context.Context, taskID string) ([]AgentRun, error) {
@@ -237,6 +249,9 @@ func (q *Queries) ListAgentRuns(ctx context.Context, taskID string) ([]AgentRun,
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.Notes,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
 		); err != nil {
 			return nil, err
 		}
@@ -288,7 +303,7 @@ func (q *Queries) ListTaskLabelHistory(ctx context.Context, taskID string) ([]Ta
 }
 
 const listWaitingHumanRuns = `-- name: ListWaitingHumanRuns :many
-SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, t.title as task_title
+SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, ar.input_tokens, ar.output_tokens, ar.cost_usd, t.title as task_title
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
@@ -306,6 +321,9 @@ type ListWaitingHumanRunsRow struct {
 	CompletedAt   *time.Time `json:"completed_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	Notes         *string    `json:"notes"`
+	InputTokens   int64      `json:"input_tokens"`
+	OutputTokens  int64      `json:"output_tokens"`
+	CostUsd       float64    `json:"cost_usd"`
 	TaskTitle     string     `json:"task_title"`
 }
 
@@ -329,6 +347,9 @@ func (q *Queries) ListWaitingHumanRuns(ctx context.Context) ([]ListWaitingHumanR
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.Notes,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
 			&i.TaskTitle,
 		); err != nil {
 			return nil, err
@@ -346,16 +367,19 @@ func (q *Queries) ListWaitingHumanRuns(ctx context.Context) ([]ListWaitingHumanR
 
 const setAgentRunCompleted = `-- name: SetAgentRunCompleted :one
 UPDATE agent_runs
-SET status = ?, stored_info = ?, notes = ?, completed_at = CURRENT_TIMESTAMP
+SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes
+RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd
 `
 
 type SetAgentRunCompletedParams struct {
-	Status     string  `json:"status"`
-	StoredInfo *string `json:"stored_info"`
-	Notes      *string `json:"notes"`
-	ID         string  `json:"id"`
+	Status       string  `json:"status"`
+	StoredInfo   *string `json:"stored_info"`
+	Notes        *string `json:"notes"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUsd      float64 `json:"cost_usd"`
+	ID           string  `json:"id"`
 }
 
 func (q *Queries) SetAgentRunCompleted(ctx context.Context, arg SetAgentRunCompletedParams) (AgentRun, error) {
@@ -363,6 +387,9 @@ func (q *Queries) SetAgentRunCompleted(ctx context.Context, arg SetAgentRunCompl
 		arg.Status,
 		arg.StoredInfo,
 		arg.Notes,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.CostUsd,
 		arg.ID,
 	)
 	var i AgentRun
@@ -377,6 +404,9 @@ func (q *Queries) SetAgentRunCompleted(ctx context.Context, arg SetAgentRunCompl
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.Notes,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.CostUsd,
 	)
 	return i, err
 }
@@ -399,7 +429,7 @@ const setAgentRunStarted = `-- name: SetAgentRunStarted :one
 UPDATE agent_runs
 SET status = 'running', started_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes
+RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd
 `
 
 func (q *Queries) SetAgentRunStarted(ctx context.Context, id string) (AgentRun, error) {
@@ -416,7 +446,81 @@ func (q *Queries) SetAgentRunStarted(ctx context.Context, id string) (AgentRun, 
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.Notes,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.CostUsd,
 	)
+	return i, err
+}
+
+const sumUsageByProvider = `-- name: SumUsageByProvider :many
+SELECT ac.provider AS provider,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
+       COUNT(*) AS run_count
+FROM agent_runs ar
+JOIN agent_configs ac ON ac.id = ar.agent_config_id
+WHERE ar.status IN ('completed','failed','waiting_human')
+GROUP BY ac.provider
+ORDER BY cost_usd DESC
+`
+
+type SumUsageByProviderRow struct {
+	Provider     string  `json:"provider"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUsd      float64 `json:"cost_usd"`
+	RunCount     int64   `json:"run_count"`
+}
+
+func (q *Queries) SumUsageByProvider(ctx context.Context) ([]SumUsageByProviderRow, error) {
+	rows, err := q.db.QueryContext(ctx, sumUsageByProvider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SumUsageByProviderRow
+	for rows.Next() {
+		var i SumUsageByProviderRow
+		if err := rows.Scan(
+			&i.Provider,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
+			&i.RunCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sumUsageTotal = `-- name: SumUsageTotal :one
+SELECT CAST(COALESCE(SUM(input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs
+WHERE status IN ('completed','failed','waiting_human')
+`
+
+type SumUsageTotalRow struct {
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUsd      float64 `json:"cost_usd"`
+}
+
+func (q *Queries) SumUsageTotal(ctx context.Context) (SumUsageTotalRow, error) {
+	row := q.db.QueryRowContext(ctx, sumUsageTotal)
+	var i SumUsageTotalRow
+	err := row.Scan(&i.InputTokens, &i.OutputTokens, &i.CostUsd)
 	return i, err
 }
 
@@ -424,7 +528,7 @@ const updateAgentRunStatus = `-- name: UpdateAgentRunStatus :one
 UPDATE agent_runs
 SET status = ?
 WHERE id = ?
-RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes
+RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd
 `
 
 type UpdateAgentRunStatusParams struct {
@@ -446,6 +550,9 @@ func (q *Queries) UpdateAgentRunStatus(ctx context.Context, arg UpdateAgentRunSt
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.Notes,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.CostUsd,
 	)
 	return i, err
 }

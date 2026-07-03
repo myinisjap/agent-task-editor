@@ -110,6 +110,14 @@ func (r *OpencodeRunner) Run(ctx context.Context, input RunInput, logCh chan<- L
 }
 
 // classifyOpencodeJSON parses one NDJSON line from opencode run --format json.
+//
+// Known gap: opencode's `run --format json` NDJSON output (text/tool_use/
+// tool_result/step_finish/step_start message types) does not currently
+// include a token usage or cost field in any of the shapes we've observed,
+// so InputTokens/OutputTokens/CostUSD are left at zero (not estimated) for
+// this provider rather than guessing. If a future opencode version adds
+// usage reporting to one of these message types, wire it up the same way
+// claude.go's classifyStreamJSON does for the "result" message.
 func classifyOpencodeJSON(line string) (LogEntry, string) {
 	var raw struct {
 		Type string `json:"type"`
@@ -148,4 +156,3 @@ func classifyOpencodeJSON(line string) (LogEntry, string) {
 		return LogEntry{Type: LogStdout, Content: text, At: time.Now()}, ""
 	}
 }
-
