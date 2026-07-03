@@ -59,8 +59,8 @@ func TestAgentsCreate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 	w := postJSON(t, router, "/agents", map[string]any{
 		"name":                "claude-with-selections",
 		"provider":            "claude",
-		"enabled_plugins":     []string{"frontend-design@claude-plugins-official"},
-		"enabled_mcp_servers": []string{"context7"},
+		"enabled_plugins":     `["frontend-design@claude-plugins-official"]`,
+		"enabled_mcp_servers": `["context7"]`,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -107,8 +107,8 @@ func TestAgentsUpdate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
 		"name":                created.Name,
 		"provider":            created.Provider,
-		"enabled_plugins":     []string{"oh-my-claudecode@omc", "superpowers@claude-plugins-official"},
-		"enabled_mcp_servers": []string{"github"},
+		"enabled_plugins":     `["oh-my-claudecode@omc","superpowers@claude-plugins-official"]`,
+		"enabled_mcp_servers": `["github"]`,
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
