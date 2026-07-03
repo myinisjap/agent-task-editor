@@ -2,10 +2,13 @@ package middleware
 
 import (
 	"bufio"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
 	"time"
+
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
 type responseWriter struct {
@@ -24,7 +27,7 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return rw.ResponseWriter.(http.Hijacker).Hijack()
 }
 
-// Logger logs each request with method, path, status, and duration.
+// Logger logs each request with method, path, status, duration, and request ID.
 func Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -35,6 +38,16 @@ func Logger(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"status", rw.status,
 			"duration", time.Since(start).String(),
+			"request_id", chimiddleware.GetReqID(r.Context()),
 		)
 	})
+}
+
+// LoggerFromContext returns a logger scoped with the request ID found in ctx,
+// falling back to the default logger if no request ID is present.
+func LoggerFromContext(ctx context.Context) *slog.Logger {
+	if id := chimiddleware.GetReqID(ctx); id != "" {
+		return slog.With("request_id", id)
+	}
+	return slog.Default()
 }

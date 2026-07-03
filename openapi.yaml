@@ -83,6 +83,23 @@ components:
             JSON array of Claude user-level MCP server names (from ~/.claude.json's
             global mcpServers) enabled for this agent config. Claude-provider only;
             defaults to "[]" (all MCP servers off).
+        command_allowlist:
+          type: string
+          description: >
+            JSON array of shell-command glob patterns ("*" wildcard). If non-empty, only
+            commands matching at least one pattern may run via run_bash/Bash. Fully
+            enforced for anthropic, llm, and qwen_code. NOT an effective restriction for
+            claude (the CLI only auto-approves matches; non-matching commands still run
+            — see docs/providers/claude.md). Not enforced for opencode. Defaults to "[]"
+            (no restriction).
+        command_denylist:
+          type: string
+          description: >
+            JSON array of shell-command glob patterns ("*" wildcard). Commands matching
+            any pattern here are always denied, regardless of command_allowlist. Checked
+            first. Fully enforced for anthropic, llm, and claude. NOT enforced for
+            qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]"
+            (no restriction).
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
 
@@ -133,6 +150,24 @@ components:
         started_at:       { type: string, format: date-time, nullable: true }
         completed_at:     { type: string, format: date-time, nullable: true }
         created_at:       { type: string, format: date-time }
+        input_tokens:
+          type: integer
+          description: >-
+            Total input/prompt tokens consumed across the run (summed across
+            all turns of a multi-turn agentic loop). 0 if the provider does
+            not report usage (e.g. opencode currently).
+        output_tokens:
+          type: integer
+          description: Total output/completion tokens consumed across the run.
+        cost_usd:
+          type: number
+          format: double
+          description: >-
+            Estimated USD cost of the run. For the `claude` CLI provider this
+            is the CLI's own authoritative total_cost_usd figure (which may
+            legitimately be 0 under a Claude Max subscription); for
+            anthropic/llm providers it is computed from input/output tokens
+            via an internal, approximate pricing table. 0 if unknown/unreported.
 
     AgentLog:
       type: object
@@ -169,6 +204,30 @@ components:
               task_title: { type: string }
               message:    { type: string, nullable: true }
               created_at: { type: string }
+        cost_total:
+          type: object
+          description: >-
+            Aggregate token/cost usage across all runs in a terminal state
+            (completed, failed, waiting_human).
+          properties:
+            input_tokens:  { type: integer }
+            output_tokens: { type: integer }
+            cost_usd:      { type: number, format: double }
+        cost_by_provider:
+          type: array
+          description: >-
+            Per-provider breakdown of token/cost usage, sorted by cost
+            descending. Runs whose agent_config was later deleted are
+            excluded (agent_config_id is set NULL on delete, so they can no
+            longer be attributed to a provider).
+          items:
+            type: object
+            properties:
+              provider:      { type: string }
+              input_tokens:  { type: integer }
+              output_tokens: { type: integer }
+              cost_usd:      { type: number, format: double }
+              run_count:     { type: integer }
 
     Error:
       type: object

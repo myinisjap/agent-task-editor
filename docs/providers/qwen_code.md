@@ -50,6 +50,17 @@ See [mcp-tools.md](../mcp-tools.md) for full tool reference.
 
 Not yet supported. Reserved for when the `qwen` CLI gains an `--image` flag.
 
+## Command Allowlist / Denylist
+
+`command_allowlist` patterns are enforced natively by the `qwen` CLI: each pattern is
+appended as a `Bash(pattern)` entry to `--allowed-tools`, the same tool-restriction
+syntax the `claude` CLI's `--allowedTools` accepts.
+
+`command_denylist` is **not currently enforced** for this provider — there is no
+confirmed `qwen` CLI flag equivalent to claude's `--disallowedTools` /
+`permissions.deny` settings key. If you need denylist enforcement, prefer the
+`claude`, `anthropic`, or `llm` providers, or rely solely on `command_allowlist` here.
+
 ## Model Selection
 
 Pass `model` in the agent config. It is passed via `--model <model>` to the CLI.
@@ -57,6 +68,10 @@ Pass `model` in the agent config. It is passed via `--model <model>` to the CLI.
 ## Fallback Outcome Parsing
 
 Like the `claude` provider, if the agent completes without calling `signal_complete`, the runner scans the final result text for `OUTCOME: success` or `OUTCOME: failure` as a fallback.
+
+## Cost & Usage Reporting
+
+Like the `claude` provider, token usage and cost are parsed from the CLI's `result` stream-json message (`usage` + `total_cost_usd`) via the same `classifyStreamJSON` parser, and are used as-is (not estimated) — assuming the `qwen` CLI's stream-json output stays compatible with `claude`'s. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
 ## Setup Checklist
 

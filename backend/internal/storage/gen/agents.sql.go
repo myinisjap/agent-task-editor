@@ -10,9 +10,9 @@ import (
 )
 
 const createAgentConfig = `-- name: CreateAgentConfig :one
-INSERT INTO agent_configs (id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, max_turns, enabled_plugins, enabled_mcp_servers)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns
+INSERT INTO agent_configs (id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, max_turns, enabled_plugins, enabled_mcp_servers, command_allowlist, command_denylist)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist
 `
 
 type CreateAgentConfigParams struct {
@@ -28,6 +28,8 @@ type CreateAgentConfigParams struct {
 	MaxTurns          int64  `json:"max_turns"`
 	EnabledPlugins    string `json:"enabled_plugins"`
 	EnabledMcpServers string `json:"enabled_mcp_servers"`
+	CommandAllowlist  string `json:"command_allowlist"`
+	CommandDenylist   string `json:"command_denylist"`
 }
 
 func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigParams) (AgentConfig, error) {
@@ -44,6 +46,8 @@ func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigPa
 		arg.MaxTurns,
 		arg.EnabledPlugins,
 		arg.EnabledMcpServers,
+		arg.CommandAllowlist,
+		arg.CommandDenylist,
 	)
 	var i AgentConfig
 	err := row.Scan(
@@ -62,6 +66,8 @@ func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigPa
 		&i.EnabledPlugins,
 		&i.EnabledMcpServers,
 		&i.MaxTurns,
+		&i.CommandAllowlist,
+		&i.CommandDenylist,
 	)
 	return i, err
 }
@@ -76,7 +82,7 @@ func (q *Queries) DeleteAgentConfig(ctx context.Context, id string) error {
 }
 
 const getAgentConfig = `-- name: GetAgentConfig :one
-SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns FROM agent_configs WHERE id = ?
+SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist FROM agent_configs WHERE id = ?
 `
 
 func (q *Queries) GetAgentConfig(ctx context.Context, id string) (AgentConfig, error) {
@@ -98,12 +104,14 @@ func (q *Queries) GetAgentConfig(ctx context.Context, id string) (AgentConfig, e
 		&i.EnabledPlugins,
 		&i.EnabledMcpServers,
 		&i.MaxTurns,
+		&i.CommandAllowlist,
+		&i.CommandDenylist,
 	)
 	return i, err
 }
 
 const listAgentConfigs = `-- name: ListAgentConfigs :many
-SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns FROM agent_configs WHERE enabled = 1 ORDER BY created_at DESC
+SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist FROM agent_configs WHERE enabled = 1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
@@ -131,6 +139,8 @@ func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
 			&i.EnabledPlugins,
 			&i.EnabledMcpServers,
 			&i.MaxTurns,
+			&i.CommandAllowlist,
+			&i.CommandDenylist,
 		); err != nil {
 			return nil, err
 		}
@@ -146,7 +156,7 @@ func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
 }
 
 const listAllAgentConfigs = `-- name: ListAllAgentConfigs :many
-SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns FROM agent_configs ORDER BY created_at DESC
+SELECT id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist FROM agent_configs ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
@@ -174,6 +184,8 @@ func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error
 			&i.EnabledPlugins,
 			&i.EnabledMcpServers,
 			&i.MaxTurns,
+			&i.CommandAllowlist,
+			&i.CommandDenylist,
 		); err != nil {
 			return nil, err
 		}
@@ -192,9 +204,10 @@ const updateAgentConfig = `-- name: UpdateAgentConfig :one
 UPDATE agent_configs
 SET name = ?, provider = ?, model = ?, system_prompt = ?, labels = ?, env = ?,
     max_tokens = ?, timeout_secs = ?, max_turns = ?, enabled = ?, enabled_plugins = ?, enabled_mcp_servers = ?,
+    command_allowlist = ?, command_denylist = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns
+RETURNING id, name, provider, model, system_prompt, labels, env, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist
 `
 
 type UpdateAgentConfigParams struct {
@@ -210,6 +223,8 @@ type UpdateAgentConfigParams struct {
 	Enabled           int64  `json:"enabled"`
 	EnabledPlugins    string `json:"enabled_plugins"`
 	EnabledMcpServers string `json:"enabled_mcp_servers"`
+	CommandAllowlist  string `json:"command_allowlist"`
+	CommandDenylist   string `json:"command_denylist"`
 	ID                string `json:"id"`
 }
 
@@ -227,6 +242,8 @@ func (q *Queries) UpdateAgentConfig(ctx context.Context, arg UpdateAgentConfigPa
 		arg.Enabled,
 		arg.EnabledPlugins,
 		arg.EnabledMcpServers,
+		arg.CommandAllowlist,
+		arg.CommandDenylist,
 		arg.ID,
 	)
 	var i AgentConfig
@@ -246,6 +263,8 @@ func (q *Queries) UpdateAgentConfig(ctx context.Context, arg UpdateAgentConfigPa
 		&i.EnabledPlugins,
 		&i.EnabledMcpServers,
 		&i.MaxTurns,
+		&i.CommandAllowlist,
+		&i.CommandDenylist,
 	)
 	return i, err
 }

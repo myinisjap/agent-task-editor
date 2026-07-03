@@ -56,6 +56,20 @@ LLM_API_KEY=sk-...
 
 **Note:** `signal_complete` here takes `next_label` (the exact label name), unlike the MCP version which takes `outcome: "success"|"failure"`.
 
+## Command Allowlist / Denylist
+
+`command_allowlist` and `command_denylist` (JSON arrays of `"*"`-wildcard glob
+patterns on the agent config, both defaulting to `[]`/no restriction) are enforced
+server-side, in Go, immediately before a `run_bash` call is executed: the denylist is
+checked first and always wins; if the allowlist is non-empty, the command must also
+match at least one allow pattern. A denied command returns an `error: ...` string to
+the model instead of running.
+
+This is **best-effort string matching against the full command line, not a sandbox**
+— it does not prevent constructing a denied command indirectly (e.g. via `$()`,
+backticks, string concatenation, or encoded payloads). It reduces the blast radius of
+a straightforwardly misbehaving or prompt-injected agent, not a determined one.
+
 ## Image Attachments
 
 Not supported.
@@ -63,6 +77,10 @@ Not supported.
 ## Model Selection
 
 Pass `model` in the agent config (e.g. `gpt-4o`, `gpt-4o-mini`, `llama3.2`). Passed directly to the API.
+
+## Cost & Usage Reporting
+
+Token usage (`input_tokens`/`output_tokens`) is summed from the response's OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`) across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens via the internal pricing table (`internal/agent/pricing.go`) — accuracy depends on the model ID matching an entry in that table. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
 ## Rate Limit Handling
 

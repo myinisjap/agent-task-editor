@@ -37,19 +37,39 @@ type Result struct {
 	Notes *string
 	// Structured info stored on the run for later inspection
 	StoredInfo *string
+	// InputTokens/OutputTokens are the total tokens consumed across the run
+	// (summed across every turn of a multi-turn agentic loop, where
+	// applicable). Zero if the provider does not report usage.
+	InputTokens int64
+	// OutputTokens is the total output/completion tokens for the run.
+	OutputTokens int64
+	// CostUSD is the (estimated, unless otherwise noted) USD cost of the
+	// run. For the `claude` CLI provider this is the CLI's own authoritative
+	// total_cost_usd figure; for anthropic/llm providers it is computed from
+	// InputTokens/OutputTokens via the internal pricing table. Zero if
+	// unknown/unreported — not necessarily a free run.
+	CostUSD float64
+}
+
+// runUsage carries token usage and cost parsed from a single provider
+// message (e.g. the claude/qwen CLI stream-json "result" envelope).
+type runUsage struct {
+	InputTokens  int64
+	OutputTokens int64
+	CostUSD      float64
 }
 
 // RunInput carries everything an agent needs to start work.
 type RunInput struct {
-	RunID       string
-	Task        Task
-	AgentConfig AgentConfig
+	RunID         string
+	Task          Task
+	AgentConfig   AgentConfig
 	RepoPath      string
 	RepoRemoteURL string // empty if no remote configured
 	// Available transitions from the task's current label, passed to the MCP sidecar.
 	Transitions []TransitionHint
 	// Human rejection note from a prior run, injected at the top of the prompt
-	Feedback  *string
+	Feedback *string
 	// Output from the plan stage, injected for later stages
 	PriorPlan *string
 	// Absolute paths of attachment images on the server filesystem
@@ -88,6 +108,13 @@ type AgentConfig struct {
 	// (from ~/.claude.json's global mcpServers) enabled for this agent config.
 	// Claude-provider only.
 	EnabledMCPServers []string
+	// CommandAllowlist, if non-empty, restricts run_bash/Bash commands to those
+	// matching at least one glob pattern (see agent.matchCommandPattern). Denylist
+	// is still checked and always wins. Best-effort string matching, not a sandbox.
+	CommandAllowlist []string
+	// CommandDenylist blocks any run_bash/Bash command matching a pattern here,
+	// regardless of CommandAllowlist. Checked before the allowlist.
+	CommandDenylist []string
 }
 
 // Provider is the interface all agent backends must satisfy.

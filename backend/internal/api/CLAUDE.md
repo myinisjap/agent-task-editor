@@ -18,12 +18,25 @@ GET  /ws                   (auth via ?token= query param)
 
 ## Middleware Chain (in order)
 
-1. `middleware.Recover` — catches panics, returns 500
-2. `middleware.Logger` — structured slog request logging
-3. `chimiddleware.RequestID` — injects `X-Request-Id`
+1. `chimiddleware.RequestID` — generates a request ID and injects it into the
+   request context (must run first so every downstream middleware/handler can
+   read it) and sets the `X-Request-Id` response header
+2. `middleware.Recover` — catches panics, logs the stack trace + `request_id`, returns 500
+3. `middleware.Logger` — structured slog request logging (method, path, status,
+   duration, `request_id`)
 4. `middleware.CORS` — sets CORS headers; configured from `CORS_ORIGINS`
 5. `middleware.BearerAuth` — validates `Authorization: Bearer <token>` (skips if token empty)
 6. Per-route 1 MB body limit on `/api/v1/*`
+
+### Logging conventions
+
+- All request-level logs (`middleware.Logger`, `middleware.Recover`) include a
+  `request_id` field (from `chimiddleware.GetReqID`), so a single request can be
+  traced across log lines.
+- Handlers that need to log something tied to the in-flight request (instead of
+  using the bare `slog` package functions) should call
+  `middleware.LoggerFromContext(r.Context())` to get a `*slog.Logger` pre-scoped
+  with `request_id`, then use `logger.Warn(...)`/`logger.Error(...)` etc.
 
 ## Handler Conventions
 

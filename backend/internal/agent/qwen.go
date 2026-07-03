@@ -65,6 +65,20 @@ func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 			"mcp__task-editor__store_info",
 		)
 	}
+	// Command allowlist: qwen reuses the same Bash(pattern) tool-restriction
+	// syntax as the claude CLI's --allowedTools. Append entries to
+	// --allowed-tools so only matching commands are permitted.
+	//
+	// NOTE: there is no confirmed qwen CLI flag for a command *denylist*
+	// (unlike claude's --disallowedTools / permissions.deny in --settings).
+	// AgentConfig.CommandDenylist is therefore NOT enforced for this
+	// provider today — see docs/providers/qwen_code.md for this known gap.
+	for _, pat := range input.AgentConfig.CommandAllowlist {
+		if pat == "" {
+			continue
+		}
+		args = append(args, "--allowed-tools", "Bash("+pat+")")
+	}
 	return args
 }
 
@@ -113,6 +127,7 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 	var (
 		wg      sync.WaitGroup
 		outcome string
+		usage   *runUsage
 		mu      sync.Mutex
 	)
 	wg.Add(2)
@@ -127,11 +142,16 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 			if line == "" {
 				continue
 			}
-			entry, parsed := classifyStreamJSON(line)
+			entry, parsed, u := classifyStreamJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
 				outcome = parsed
+				mu.Unlock()
+			}
+			if u != nil {
+				mu.Lock()
+				usage = u
 				mu.Unlock()
 			}
 		}
@@ -156,6 +176,10 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 		logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("qwen exited: %v", err), At: time.Now()}
 	}
 
+	mu.Lock()
+	finalUsage := usage
+	mu.Unlock()
+
 	// MCP result takes priority; fall back to OUTCOME text parsing if the
 	// agent completed without calling signal_complete.
 	if mcpCfg != nil {
@@ -163,18 +187,28 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 		if res.Outcome == "" && outcome != "" {
 			res.Outcome = outcome
 		}
+		// ReadResult() (the MCP sidecar result file) has no knowledge of
+		// token usage/cost — that only comes from the CLI's stream-json
+		// "result" message — so merge it in here.
+		applyUsage(&res, finalUsage)
 		// Non-zero exit with no signalled outcome means the subprocess crashed
 		// before signal_complete. ReadResult defaults to "completed", which would
 		// mask the failure and re-dispatch forever. Trust the exit code.
 		if err != nil && res.Outcome == "" {
-			return Result{Status: "failed"}, nil
+			failed := Result{Status: "failed"}
+			applyUsage(&failed, finalUsage)
+			return failed, nil
 		}
 		return res, nil
 	}
 
 	// Non-zero exit with no parsed outcome means the agent failed.
 	if err != nil && outcome == "" {
-		return Result{Status: "failed"}, nil
+		failed := Result{Status: "failed"}
+		applyUsage(&failed, finalUsage)
+		return failed, nil
 	}
-	return Result{Status: "completed", Outcome: outcome}, nil
+	res := Result{Status: "completed", Outcome: outcome}
+	applyUsage(&res, finalUsage)
+	return res, nil
 }

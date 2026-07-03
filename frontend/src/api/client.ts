@@ -51,6 +51,14 @@ export type AgentRun = {
   started_at?: string
   completed_at?: string
   created_at: string
+  // Token usage / estimated cost for this run. 0 if the provider does not
+  // report usage (e.g. opencode currently). For the `claude` CLI provider,
+  // cost_usd is the CLI's own authoritative total_cost_usd figure (which may
+  // legitimately be 0 under a Claude Max subscription); for anthropic/llm
+  // providers it's computed from tokens via an internal pricing table.
+  input_tokens?: number
+  output_tokens?: number
+  cost_usd?: number
 }
 
 export type AgentLog = {
@@ -108,6 +116,16 @@ export type AgentConfig = {
   // enabled_mcp_servers: Claude MCP server names (from ~/.claude.json), claude-provider only.
   enabled_plugins?: string
   enabled_mcp_servers?: string
+  // command_allowlist / command_denylist: JSON array of shell-command glob patterns
+  // ("*" wildcard). Both default to "[]" (no restriction). Best-effort string
+  // matching, not a sandbox. Denylist is always checked first.
+  // Allowlist: fully enforced for anthropic, llm, qwen_code. NOT an effective
+  // restriction for claude (CLI only auto-approves matches; see docs). Not enforced
+  // for opencode.
+  // Denylist: fully enforced for anthropic, llm, claude. NOT enforced for qwen_code
+  // (no confirmed CLI flag) or opencode.
+  command_allowlist?: string
+  command_denylist?: string
   created_at: string
   updated_at: string
 }
@@ -136,6 +154,13 @@ export type Dashboard = {
   label_counts: Record<string, number>
   active_agents: { run_id: string; task_id: string; task_title: string; agent_name: string; started_at: string }[]
   intervention_queue: { run_id: string; task_id: string; task_title: string; message?: string; created_at: string }[]
+  // Aggregate token/cost usage across all runs in a terminal state
+  // (completed, failed, waiting_human).
+  cost_total?: { input_tokens: number; output_tokens: number; cost_usd: number }
+  // Per-provider breakdown, sorted by cost descending. Runs whose
+  // agent_config was later deleted are excluded (agent_config_id is set
+  // NULL on delete, so they can no longer be attributed to a provider).
+  cost_by_provider?: { provider: string; input_tokens: number; output_tokens: number; cost_usd: number; run_count: number }[]
 }
 
 export const api = {

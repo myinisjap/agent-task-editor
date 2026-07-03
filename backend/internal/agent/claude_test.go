@@ -31,6 +31,13 @@ func TestMain(m *testing.M) {
 	case "exit0_no_outcome":
 		// Simulate: claude exits cleanly with no outcome (empty result).
 		os.Exit(0)
+	case "exit0_success_with_usage":
+		// Simulate: claude exits cleanly with a success outcome and a
+		// result message carrying usage/total_cost_usd, as the real CLI
+		// does — total_cost_usd here is authoritative and should be used
+		// as-is rather than re-estimated.
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":111,"output_tokens":222},"total_cost_usd":0.05}`)
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -142,6 +149,88 @@ func TestClaudeExitCode0_NoOutcome(t *testing.T) {
 	}
 }
 
+// TestClassifyStreamJSON_ResultUsage verifies that a "result" message
+// containing both a usage object and total_cost_usd is parsed into a
+// runUsage with the expected fields, and that the outcome is still parsed
+// correctly from the accompanying OUTCOME marker.
+func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
+	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"total_cost_usd":0.0789,"duration_ms":1500}`
+
+	entry, outcome, usage := classifyStreamJSON(line)
+
+	if entry.Type != LogSystem {
+		t.Errorf("want LogSystem entry, got %v", entry.Type)
+	}
+	if outcome != "success" {
+		t.Errorf("want outcome=success, got %q", outcome)
+	}
+	if usage == nil {
+		t.Fatalf("want non-nil usage, got nil")
+	}
+	if usage.InputTokens != 123 {
+		t.Errorf("want InputTokens=123, got %d", usage.InputTokens)
+	}
+	if usage.OutputTokens != 456 {
+		t.Errorf("want OutputTokens=456, got %d", usage.OutputTokens)
+	}
+	if usage.CostUSD != 0.0789 {
+		t.Errorf("want CostUSD=0.0789, got %v", usage.CostUSD)
+	}
+}
+
+// TestClassifyStreamJSON_ResultNoUsage verifies a "result" message with no
+// usage/total_cost_usd fields (e.g. an older CLI version) returns a nil
+// usage rather than a zero-valued struct, so callers don't overwrite a
+// previously-seen usage with zeros.
+func TestClassifyStreamJSON_ResultNoUsage(t *testing.T) {
+	line := `{"type":"result","subtype":"success","result":"OUTCOME: success"}`
+
+	_, outcome, usage := classifyStreamJSON(line)
+
+	if outcome != "success" {
+		t.Errorf("want outcome=success, got %q", outcome)
+	}
+	if usage != nil {
+		t.Errorf("want nil usage, got %+v", usage)
+	}
+}
+
+// TestClassifyStreamJSON_NonResultMessagesReturnNilUsage verifies that
+// non-"result" message types never populate usage.
+func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
+	for _, line := range []string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
+		`{"type":"tool_use"}`,
+		`{"type":"tool_result"}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result"}]}}`,
+	} {
+		_, _, usage := classifyStreamJSON(line)
+		if usage != nil {
+			t.Errorf("line %q: want nil usage, got %+v", line, usage)
+		}
+	}
+}
+
+// TestClaudeRunner_PropagatesUsageFromResultMessage verifies that a full
+// Run() invocation propagates the token usage and CLI-authoritative
+// total_cost_usd parsed from the stream-json "result" message onto the
+// returned Result (the non-MCP code path).
+func TestClaudeRunner_PropagatesUsageFromResultMessage(t *testing.T) {
+	result, _ := runWithHelper(t, "exit0_success_with_usage")
+	if result.Status != "completed" {
+		t.Fatalf("want Status=completed, got %q", result.Status)
+	}
+	if result.InputTokens != 111 {
+		t.Errorf("want InputTokens=111, got %d", result.InputTokens)
+	}
+	if result.OutputTokens != 222 {
+		t.Errorf("want OutputTokens=222, got %d", result.OutputTokens)
+	}
+	if result.CostUSD != 0.05 {
+		t.Errorf("want CostUSD=0.05, got %v", result.CostUSD)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
 		func() bool {
@@ -226,7 +315,7 @@ func TestBuildClaudeArgs_MaxTurnsConfigured(t *testing.T) {
 // ~/.claude/plugins/installed_plugins.json contents.
 func TestBuildClaudeSettingsJSON_FallbackNoInventory(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	got, err := buildClaudeSettingsJSON([]string{"some-plugin@marketplace"})
+	got, err := buildClaudeSettingsJSON([]string{"some-plugin@marketplace"}, nil, nil)
 	if err != nil {
 		t.Fatalf("buildClaudeSettingsJSON: %v", err)
 	}
@@ -246,7 +335,7 @@ func TestBuildClaudeSettingsJSON_NoSelection_EmptyMap(t *testing.T) {
 	// point HOME at an empty temp dir so plugin discovery finds nothing and
 	// the fallback (empty map) path is exercised deterministically.
 	t.Setenv("HOME", t.TempDir())
-	got, err := buildClaudeSettingsJSON(nil)
+	got, err := buildClaudeSettingsJSON(nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildClaudeSettingsJSON: %v", err)
 	}
@@ -258,5 +347,105 @@ func TestBuildClaudeSettingsJSON_NoSelection_EmptyMap(t *testing.T) {
 	}
 	if len(parsed.EnabledPlugins) != 0 {
 		t.Fatalf("want empty enabledPlugins map, got %+v", parsed.EnabledPlugins)
+	}
+}
+
+// TestBuildClaudeSettingsJSON_CommandPermissions verifies that non-empty
+// command allow/deny lists are translated into Bash(pattern) entries under
+// the "permissions" key of the settings JSON, and that an empty pair of
+// lists produces no "permissions" key at all (backward compatible).
+func TestBuildClaudeSettingsJSON_CommandPermissions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("both lists populated", func(t *testing.T) {
+		got, err := buildClaudeSettingsJSON(nil, []string{"git *", "npm test"}, []string{"rm -rf *"})
+		if err != nil {
+			t.Fatalf("buildClaudeSettingsJSON: %v", err)
+		}
+		var parsed struct {
+			Permissions struct {
+				Allow []string `json:"allow"`
+				Deny  []string `json:"deny"`
+			} `json:"permissions"`
+		}
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Fatalf("unmarshal settings json: %v", err)
+		}
+		wantAllow := []string{"Bash(git *)", "Bash(npm test)"}
+		if len(parsed.Permissions.Allow) != len(wantAllow) {
+			t.Fatalf("allow = %+v, want %+v", parsed.Permissions.Allow, wantAllow)
+		}
+		for i, w := range wantAllow {
+			if parsed.Permissions.Allow[i] != w {
+				t.Fatalf("allow[%d] = %q, want %q", i, parsed.Permissions.Allow[i], w)
+			}
+		}
+		wantDeny := []string{"Bash(rm -rf *)"}
+		if len(parsed.Permissions.Deny) != len(wantDeny) || parsed.Permissions.Deny[0] != wantDeny[0] {
+			t.Fatalf("deny = %+v, want %+v", parsed.Permissions.Deny, wantDeny)
+		}
+	})
+
+	t.Run("denylist only", func(t *testing.T) {
+		got, err := buildClaudeSettingsJSON(nil, nil, []string{"sudo *"})
+		if err != nil {
+			t.Fatalf("buildClaudeSettingsJSON: %v", err)
+		}
+		var parsed struct {
+			Permissions struct {
+				Allow []string `json:"allow"`
+				Deny  []string `json:"deny"`
+			} `json:"permissions"`
+		}
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Fatalf("unmarshal settings json: %v", err)
+		}
+		if len(parsed.Permissions.Allow) != 0 {
+			t.Fatalf("expected no allow entries, got %+v", parsed.Permissions.Allow)
+		}
+		if len(parsed.Permissions.Deny) != 1 || parsed.Permissions.Deny[0] != "Bash(sudo *)" {
+			t.Fatalf("deny = %+v, want [Bash(sudo *)]", parsed.Permissions.Deny)
+		}
+	})
+
+	t.Run("empty lists omit permissions key entirely", func(t *testing.T) {
+		got, err := buildClaudeSettingsJSON(nil, nil, nil)
+		if err != nil {
+			t.Fatalf("buildClaudeSettingsJSON: %v", err)
+		}
+		var parsed map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Fatalf("unmarshal settings json: %v", err)
+		}
+		if _, ok := parsed["permissions"]; ok {
+			t.Fatalf("expected no permissions key when both lists are empty, got %s", got)
+		}
+	})
+}
+
+// TestBuildClaudeArgs_CommandPermissions verifies buildClaudeArgs threads the
+// agent config's command allow/deny lists through into the --settings JSON
+// payload passed to the claude CLI.
+func TestBuildClaudeArgs_CommandPermissions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	args, err := buildClaudeArgs(RunInput{
+		Task: Task{Title: "t"},
+		AgentConfig: AgentConfig{
+			CommandAllowlist: []string{"git *"},
+			CommandDenylist:  []string{"rm -rf *"},
+		},
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("buildClaudeArgs: %v", err)
+	}
+	settingsJSON := findFlagValue(args, "--settings")
+	if settingsJSON == "" {
+		t.Fatalf("expected --settings flag in args: %v", args)
+	}
+	if !strings.Contains(settingsJSON, `"Bash(git *)"`) {
+		t.Fatalf("expected allow entry in settings JSON, got %s", settingsJSON)
+	}
+	if !strings.Contains(settingsJSON, `"Bash(rm -rf *)"`) {
+		t.Fatalf("expected deny entry in settings JSON, got %s", settingsJSON)
 	}
 }

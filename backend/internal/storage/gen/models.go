@@ -24,6 +24,8 @@ type AgentConfig struct {
 	EnabledPlugins    string    `json:"enabled_plugins"`
 	EnabledMcpServers string    `json:"enabled_mcp_servers"`
 	MaxTurns          int64     `json:"max_turns"`
+	CommandAllowlist  string    `json:"command_allowlist"`
+	CommandDenylist   string    `json:"command_denylist"`
 }
 
 type AgentLog struct {
@@ -45,6 +47,9 @@ type AgentRun struct {
 	CompletedAt   *time.Time `json:"completed_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	Notes         *string    `json:"notes"`
+	InputTokens   int64      `json:"input_tokens"`
+	OutputTokens  int64      `json:"output_tokens"`
+	CostUsd       float64    `json:"cost_usd"`
 }
 
 type Repo struct {

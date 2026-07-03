@@ -92,9 +92,10 @@ func (p *Pool) worker(ctx context.Context) {
 // goroutine (which would permanently shrink the pool). It logs, marks the run
 // failed, and clears the lock so the dispatcher can re-pick the task.
 func (p *Pool) runGuarded(ctx context.Context, job Job) {
+	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("pool: agent run panicked", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "panic", r, "stack", string(debug.Stack()))
+			log.Error("pool: agent run panicked", "panic", r, "stack", string(debug.Stack()))
 			_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{Status: "failed", ID: job.RunID})
 			_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
 		}
@@ -103,10 +104,12 @@ func (p *Pool) runGuarded(ctx context.Context, job Job) {
 }
 
 func (p *Pool) run(ctx context.Context, job Job) {
-	slog.Info("pool: agent run starting", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "provider", job.Input.AgentConfig.Provider, "agent", job.Input.AgentConfig.Name)
+	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
+
+	log.Info("pool: agent run starting", "provider", job.Input.AgentConfig.Provider, "agent", job.Input.AgentConfig.Name)
 
 	if _, err := p.q.SetAgentRunStarted(ctx, job.RunID); err != nil {
-		slog.Error("pool: set run started", "component", "pool", "run_id", job.RunID, "err", err)
+		log.Error("pool: set run started", "err", err)
 		_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
 			Status: "failed",
 			ID:     job.RunID,
@@ -130,7 +133,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
-				slog.Error("pool: persist logs panicked", "component", "pool", "run_id", job.RunID, "panic", r, "stack", string(debug.Stack()))
+				log.Error("pool: persist logs panicked", "panic", r, "stack", string(debug.Stack()))
 			}
 		}()
 		p.persistLogs(ctx, job.RunID, job.Input.Task.ID, logCh)
@@ -143,7 +146,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	if err != nil {
 		var rl *ErrRateLimit
 		if errors.As(err, &rl) {
-			slog.Warn("pool: agent run rate limited", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "reset_at", rl.ResetAt, "msg", rl.Message)
+			log.Warn("pool: agent run rate limited", "reset_at", rl.ResetAt, "msg", rl.Message)
 			// Register the block in the rate-limit registry.
 			if p.RateLimits != nil {
 				if !rl.ResetAt.IsZero() && rl.ResetAt.After(time.Now()) {
@@ -172,7 +175,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 			}
 			return
 		}
-		slog.Error("pool: agent run error", "component", "pool", "run_id", job.RunID, "err", err)
+		log.Error("pool: agent run error", "err", err)
 		result = Result{Status: "failed"}
 	}
 
@@ -186,12 +189,15 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status:     finalStatus,
-		StoredInfo: result.StoredInfo,
-		Notes:      result.Notes,
-		ID:         job.RunID,
+		Status:       finalStatus,
+		StoredInfo:   result.StoredInfo,
+		Notes:        result.Notes,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		ID:           job.RunID,
 	}); err != nil {
-		slog.Error("pool: set run completed", "component", "pool", "run_id", job.RunID, "err", err)
+		log.Error("pool: set run completed", "err", err)
 	}
 
 	if result.Notes != nil && *result.Notes != "" {
@@ -199,7 +205,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 			AgentNotes: *result.Notes,
 			ID:         job.Input.Task.ID,
 		}); err != nil {
-			slog.Error("pool: persist agent notes", "component", "pool", "run_id", job.RunID, "err", err)
+			log.Error("pool: persist agent notes", "err", err)
 		}
 	}
 
@@ -208,11 +214,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	if finalStatus == "completed" && job.Input.RepoPath != "" {
 		msg := fmt.Sprintf("task %s: agent run %s", job.Input.Task.ID, job.RunID)
 		if err := commitIfDirty(ctx, job.Input.RepoPath, msg, p.GitName, p.GitEmail); err != nil {
-			slog.Warn("pool: safety-net commit failed", "component", "pool", "run_id", job.RunID, "err", err)
+			log.Warn("pool: safety-net commit failed", "err", err)
 		}
 		if job.Input.RepoRemoteURL != "" && job.Input.Task.Branch != "" {
 			if err := PushBranch(ctx, job.Input.RepoPath, job.Input.Task.Branch); err != nil {
-				slog.Warn("pool: push branch failed", "component", "pool", "run_id", job.RunID, "branch", job.Input.Task.Branch, "err", err)
+				log.Warn("pool: push branch failed", "branch", job.Input.Task.Branch, "err", err)
 			}
 		}
 	}
@@ -245,7 +251,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 				note = *result.Message
 			}
 			if err := p.engine.Transition(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
-				slog.Warn("pool: agent-requested transition rejected", "component", "pool", "run_id", job.RunID, "to", resolvedLabel, "err", err)
+				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
 			}
 		} else {
 			// No resolved label — block re-dispatch until a human acts.
@@ -277,7 +283,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		p.RateLimits.Unblock(job.Input.AgentConfig.ID)
 	}
 
-	slog.Info("pool: agent run finished", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "status", finalStatus)
+	log.Info("pool: agent run finished", "status", finalStatus)
 }
 
 // hasLoginError scans the last 20 log entries for an auth/login error signal.
@@ -302,9 +308,10 @@ func (p *Pool) hasLoginError(ctx context.Context, runID string) bool {
 // resolveOutcome finds the to_label for a given outcome ("success"|"failure") from the task's current label.
 // Returns empty string if no unambiguous match is found.
 func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) string {
+	log := slog.With("component", "pool", "task_id", task.ID)
 	all, err := p.q.ListWorkflowTransitions(ctx, task.WorkflowID)
 	if err != nil {
-		slog.Error("pool: resolve outcome: list transitions", "component", "pool", "task_id", task.ID, "err", err)
+		log.Error("pool: resolve outcome: list transitions", "err", err)
 		return ""
 	}
 	var match string
@@ -321,7 +328,7 @@ func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) st
 			continue
 		}
 		if match != "" {
-			slog.Warn("pool: resolve outcome: ambiguous transitions", "component", "pool", "task_id", task.ID, "outcome", outcome)
+			log.Warn("pool: resolve outcome: ambiguous transitions", "outcome", outcome)
 			return ""
 		}
 		match = t.ToLabel
@@ -331,6 +338,7 @@ func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) st
 
 // persistLogs drains logCh and writes to SQLite in batches wrapped in a transaction.
 func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-chan LogEntry) {
+	log := slog.With("component", "pool", "run_id", runID, "task_id", taskID)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -342,18 +350,18 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 		}
 		tx, err := p.db.BeginTx(flushCtx, nil)
 		if err != nil {
-			slog.Error("pool: persist log begin tx", "component", "pool", "err", err)
+			log.Error("pool: persist log begin tx", "err", err)
 			batch = batch[:0]
 			return
 		}
 		tq := gen.New(tx)
 		for _, entry := range batch {
 			if err := tq.CreateAgentLog(flushCtx, entry); err != nil {
-				slog.Error("pool: persist log entry", "component", "pool", "err", err)
+				log.Error("pool: persist log entry", "err", err)
 			}
 		}
 		if err := tx.Commit(); err != nil {
-			slog.Error("pool: persist log commit", "component", "pool", "err", err)
+			log.Error("pool: persist log commit", "err", err)
 			_ = tx.Rollback()
 		}
 		batch = batch[:0]
@@ -395,4 +403,3 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 		}
 	}
 }
-

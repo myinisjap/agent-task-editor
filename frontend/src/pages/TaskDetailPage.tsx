@@ -493,6 +493,11 @@ export default function TaskDetailPage() {
                             'text-slate-500'
                           }`}>{run.status}</span>
                         </div>
+                        {((run.cost_usd ?? 0) > 0 || (run.input_tokens ?? 0) > 0 || (run.output_tokens ?? 0) > 0) && (
+                          <div className="text-slate-500 text-[11px] mt-0.5">
+                            ${(run.cost_usd ?? 0).toFixed(4)} · {formatTokenCount(run.input_tokens ?? 0)}/{formatTokenCount(run.output_tokens ?? 0)} tok
+                          </div>
+                        )}
                       </button>
                       {run.stored_info && (
                         <StoredInfoPanel runId={run.id} info={run.stored_info} />
@@ -650,6 +655,13 @@ export default function TaskDetailPage() {
       )}
     </div>
   )
+}
+
+// formatTokenCount renders a token count compactly (e.g. "1.2k") for the
+// per-run cost/usage badge, falling back to the plain number for small counts.
+function formatTokenCount(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return `${n}`
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {

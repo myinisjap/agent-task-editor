@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -94,6 +94,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxTurns          int64  `json:"max_turns"`
 		EnabledPlugins    string `json:"enabled_plugins"`
 		EnabledMCPServers string `json:"enabled_mcp_servers"`
+		CommandAllowlist  string `json:"command_allowlist"`
+		CommandDenylist   string `json:"command_denylist"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -128,6 +130,12 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.EnabledMCPServers == "" {
 		body.EnabledMCPServers = "[]"
 	}
+	if body.CommandAllowlist == "" {
+		body.CommandAllowlist = "[]"
+	}
+	if body.CommandDenylist == "" {
+		body.CommandDenylist = "[]"
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -154,6 +162,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxTurns:          body.MaxTurns,
 		EnabledPlugins:    body.EnabledPlugins,
 		EnabledMcpServers: body.EnabledMCPServers,
+		CommandAllowlist:  body.CommandAllowlist,
+		CommandDenylist:   body.CommandDenylist,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -167,6 +177,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels, Env: cfg.Env,
 			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
 			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
+			CommandAllowlist: cfg.CommandAllowlist, CommandDenylist: cfg.CommandDenylist,
 			Enabled: 0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -195,6 +206,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled           *bool  `json:"enabled"`
 		EnabledPlugins    string `json:"enabled_plugins"`
 		EnabledMCPServers string `json:"enabled_mcp_servers"`
+		CommandAllowlist  string `json:"command_allowlist"`
+		CommandDenylist   string `json:"command_denylist"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -240,6 +253,12 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.EnabledMCPServers == "" {
 		body.EnabledMCPServers = existing.EnabledMcpServers
 	}
+	if body.CommandAllowlist == "" {
+		body.CommandAllowlist = existing.CommandAllowlist
+	}
+	if body.CommandDenylist == "" {
+		body.CommandDenylist = existing.CommandDenylist
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -254,6 +273,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled:           enabled,
 		EnabledPlugins:    body.EnabledPlugins,
 		EnabledMcpServers: body.EnabledMCPServers,
+		CommandAllowlist:  body.CommandAllowlist,
+		CommandDenylist:   body.CommandDenylist,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {
@@ -304,7 +325,7 @@ func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 				defaultModel = models[0]
 			}
 		} else {
-			slog.Warn("opencode models: failed to fetch model list", "err", err)
+			middleware.LoggerFromContext(r.Context()).Warn("opencode models: failed to fetch model list", "err", err)
 		}
 	}
 
