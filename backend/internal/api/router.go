@@ -26,9 +26,9 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 
 	r := chi.NewRouter()
+	r.Use(chimiddleware.RequestID)
 	r.Use(middleware.Recover)
 	r.Use(middleware.Logger)
-	r.Use(chimiddleware.RequestID)
 	r.Use(middleware.CORS(corsOrigins))
 	r.Use(middleware.BearerAuth(bearerToken))
 

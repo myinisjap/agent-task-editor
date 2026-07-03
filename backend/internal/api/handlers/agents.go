@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -304,7 +304,7 @@ func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 				defaultModel = models[0]
 			}
 		} else {
-			slog.Warn("opencode models: failed to fetch model list", "err", err)
+			middleware.LoggerFromContext(r.Context()).Warn("opencode models: failed to fetch model list", "err", err)
 		}
 	}
 

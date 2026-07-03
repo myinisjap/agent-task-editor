@@ -84,6 +84,10 @@ Supported. Files uploaded to a task are passed via `--image <path>` flags. The s
 
 Pass `model` in the agent config (e.g. `claude-sonnet-4-6`, `claude-opus-4`). If empty, the Claude CLI uses its own default.
 
+## Cost & Usage Reporting
+
+Token usage and cost are parsed from the CLI's `result` stream-json message (`usage` + `total_cost_usd`) and are **authoritative** — the CLI itself knows whether it's running under a Claude Max subscription (often `$0`) or metered API billing, so no estimation is applied. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
 ## Rate Limit Handling
 
 The runner detects 429 responses in stdout/stderr (looks for `429`, `Request rejected`, `rate limit`) and returns `ErrRateLimit`. The dispatcher will back off and retry.

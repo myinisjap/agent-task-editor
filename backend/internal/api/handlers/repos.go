@@ -1,9 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -172,10 +173,9 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	setClaudeTrust(body.Path)
+	setClaudeTrust(r.Context(), body.Path)
 	JSON(w, http.StatusCreated, repo)
 }
-
 
 func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -280,7 +280,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	setClaudeTrust(path)
+	setClaudeTrust(r.Context(), path)
 	JSON(w, http.StatusOK, repo)
 }
 
@@ -323,7 +323,7 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 
 // setClaudeTrust marks the given repo path as trust-dialog-accepted in ~/.claude.json
 // so headless Claude Code agents can use pre-approved permissions without prompting.
-func setClaudeTrust(repoPath string) {
+func setClaudeTrust(ctx context.Context, repoPath string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -358,6 +358,6 @@ func setClaudeTrust(repoPath string) {
 		return
 	}
 	if err := os.WriteFile(claudeJSON, out, 0o600); err != nil {
-		slog.Warn("failed to update claude trust dialog", "path", repoPath, "err", err)
+		middleware.LoggerFromContext(ctx).Warn("failed to update claude trust dialog", "path", repoPath, "err", err)
 	}
 }

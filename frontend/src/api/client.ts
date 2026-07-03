@@ -51,6 +51,14 @@ export type AgentRun = {
   started_at?: string
   completed_at?: string
   created_at: string
+  // Token usage / estimated cost for this run. 0 if the provider does not
+  // report usage (e.g. opencode currently). For the `claude` CLI provider,
+  // cost_usd is the CLI's own authoritative total_cost_usd figure (which may
+  // legitimately be 0 under a Claude Max subscription); for anthropic/llm
+  // providers it's computed from tokens via an internal pricing table.
+  input_tokens?: number
+  output_tokens?: number
+  cost_usd?: number
 }
 
 export type AgentLog = {
@@ -136,6 +144,13 @@ export type Dashboard = {
   label_counts: Record<string, number>
   active_agents: { run_id: string; task_id: string; task_title: string; agent_name: string; started_at: string }[]
   intervention_queue: { run_id: string; task_id: string; task_title: string; message?: string; created_at: string }[]
+  // Aggregate token/cost usage across all runs in a terminal state
+  // (completed, failed, waiting_human).
+  cost_total?: { input_tokens: number; output_tokens: number; cost_usd: number }
+  // Per-provider breakdown, sorted by cost descending. Runs whose
+  // agent_config was later deleted are excluded (agent_config_id is set
+  // NULL on delete, so they can no longer be attributed to a provider).
+  cost_by_provider?: { provider: string; input_tokens: number; output_tokens: number; cost_usd: number; run_count: number }[]
 }
 
 export const api = {

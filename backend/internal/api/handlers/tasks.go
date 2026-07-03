@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -308,13 +308,14 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 func (h *TasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
+	logger := middleware.LoggerFromContext(r.Context()).With("task_id", taskID)
 	// Best-effort: tear down the task's worktree before deleting the row. The
 	// branch is kept for review. Look up the repo path for the worktree-remove.
 	if task, err := h.q.GetTask(r.Context(), taskID); err == nil {
 		if task.WorktreePath != "" {
 			if repo, rerr := h.q.GetRepo(r.Context(), task.RepoID); rerr == nil {
 				if out, gerr := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "worktree", "remove", "--force", task.WorktreePath).CombinedOutput(); gerr != nil {
-					slog.Warn("delete task: remove worktree", "task_id", taskID, "err", gerr, "out", strings.TrimSpace(string(out)))
+					logger.Warn("delete task: remove worktree", "err", gerr, "out", strings.TrimSpace(string(out)))
 				}
 			}
 		}
@@ -322,7 +323,7 @@ func (h *TasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		if h.uploadDir != "" {
 			taskUploadDir := filepath.Join(h.uploadDir, taskID)
 			if err := os.RemoveAll(taskUploadDir); err != nil {
-				slog.Warn("delete task: remove uploads", "task_id", taskID, "err", err)
+				logger.Warn("delete task: remove uploads", "err", err)
 			}
 		}
 	}

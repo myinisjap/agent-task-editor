@@ -160,10 +160,11 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("started claude pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg           sync.WaitGroup
-		outcome      string
-		rateLimited  bool
-		mu           sync.Mutex
+		wg          sync.WaitGroup
+		outcome     string
+		rateLimited bool
+		usage       *runUsage
+		mu          sync.Mutex
 	)
 	wg.Add(2)
 
@@ -177,11 +178,16 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			if line == "" {
 				continue
 			}
-			entry, parsed := classifyStreamJSON(line)
+			entry, parsed, u := classifyStreamJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
 				outcome = parsed
+				mu.Unlock()
+			}
+			if u != nil {
+				mu.Lock()
+				usage = u
 				mu.Unlock()
 			}
 			// Also scan stdout JSON lines for 429 indicators
@@ -225,6 +231,10 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		}
 	}
 
+	mu.Lock()
+	finalUsage := usage
+	mu.Unlock()
+
 	// MCP result takes priority; fall back to OUTCOME text parsing if the
 	// agent completed without calling signal_complete.
 	if mcpCfg != nil {
@@ -232,6 +242,10 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		if r.Outcome == "" && outcome != "" {
 			r.Outcome = outcome
 		}
+		// ReadResult() (the MCP sidecar result file) has no knowledge of
+		// token usage/cost — that only comes from the CLI's stream-json
+		// "result" message — so merge it in here.
+		applyUsage(&r, finalUsage)
 		// Any non-zero exit from the claude binary means something went wrong
 		// (e.g. auth error, crash, bad config). Even if a signal_complete outcome
 		// was recorded, a non-zero exit overrides it — the agent may have signalled
@@ -240,7 +254,9 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			if r.Outcome != "" {
 				logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited with error but had outcome %q — treating as failed", r.Outcome), At: time.Now()}
 			}
-			return Result{Status: "failed"}, nil
+			failed := Result{Status: "failed"}
+			applyUsage(&failed, finalUsage)
+			return failed, nil
 		}
 		return r, nil
 	}
@@ -251,9 +267,23 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		if outcome != "" {
 			logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
 		}
-		return Result{Status: "failed"}, nil
+		failed := Result{Status: "failed"}
+		applyUsage(&failed, finalUsage)
+		return failed, nil
 	}
-	return Result{Status: "completed", Outcome: outcome}, nil
+	res := Result{Status: "completed", Outcome: outcome}
+	applyUsage(&res, finalUsage)
+	return res, nil
+}
+
+// applyUsage copies token/cost usage from u onto res, if u is non-nil.
+func applyUsage(res *Result, u *runUsage) {
+	if u == nil {
+		return
+	}
+	res.InputTokens = u.InputTokens
+	res.OutputTokens = u.OutputTokens
+	res.CostUSD = u.CostUSD
 }
 
 // is429Line returns true if the log line indicates an API rate-limit rejection.
@@ -265,24 +295,27 @@ func is429Line(line string) bool {
 }
 
 // classifyStreamJSON parses one NDJSON line from claude --output-format stream-json.
-// Returns the log entry and an optional next label parsed from a NEXT_LABEL marker.
-func classifyStreamJSON(line string) (LogEntry, string) {
+// Returns the log entry, an optional outcome ("success"/"failure") parsed
+// from an OUTCOME marker or the result subtype, and — for "result" messages
+// only — the token usage / cost reported by the CLI (nil for all other
+// message types, or if the result message has no usage data).
+func classifyStreamJSON(line string) (LogEntry, string, *runUsage) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, ""
+		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil
 	}
 
 	msgType := strings.Trim(string(raw["type"]), `"`)
 	switch msgType {
 	case "assistant":
-		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, ""
+		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, "", nil
 	case "tool_use":
-		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, ""
+		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, "", nil
 	case "tool_result":
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, ""
+		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil
 	case "user":
 		// Claude SDK wraps tool results in a user message: {"type":"user","message":{"role":"user","content":[{"type":"tool_result",...}]}}
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, ""
+		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil
 	case "result":
 		// Parse OUTCOME: success|failure from the result text; fall back to subtype.
 		var outcome string
@@ -300,10 +333,43 @@ func classifyStreamJSON(line string) (LogEntry, string) {
 				outcome = "failure"
 			}
 		}
-		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome
+		usage := extractResultUsage(raw)
+		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome, usage
 	default:
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, ""
+		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil
 	}
+}
+
+// extractResultUsage parses the usage/total_cost_usd fields from a claude/qwen
+// CLI stream-json "result" message. Returns nil if neither field is present.
+func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
+	var parsed struct {
+		Usage *struct {
+			InputTokens  int64 `json:"input_tokens"`
+			OutputTokens int64 `json:"output_tokens"`
+		} `json:"usage"`
+		TotalCostUSD *float64 `json:"total_cost_usd"`
+	}
+	// usage/total_cost_usd live at the top level of the result envelope,
+	// alongside type/subtype/result.
+	if v, ok := raw["usage"]; ok {
+		_ = json.Unmarshal(v, &parsed.Usage)
+	}
+	if v, ok := raw["total_cost_usd"]; ok {
+		_ = json.Unmarshal(v, &parsed.TotalCostUSD)
+	}
+	if parsed.Usage == nil && parsed.TotalCostUSD == nil {
+		return nil
+	}
+	u := &runUsage{}
+	if parsed.Usage != nil {
+		u.InputTokens = parsed.Usage.InputTokens
+		u.OutputTokens = parsed.Usage.OutputTokens
+	}
+	if parsed.TotalCostUSD != nil {
+		u.CostUSD = *parsed.TotalCostUSD
+	}
+	return u
 }
 
 // extractOutcome looks for "OUTCOME: success|failure" anywhere in the text.
