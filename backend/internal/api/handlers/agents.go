@@ -96,6 +96,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		EnabledMCPServers string `json:"enabled_mcp_servers"`
 		CommandAllowlist  string `json:"command_allowlist"`
 		CommandDenylist   string `json:"command_denylist"`
+		MaxRetries        *int64 `json:"max_retries"`
+		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -107,6 +109,14 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if !knownProviders[body.Provider] {
 		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code", body.Provider))
+		return
+	}
+	if body.MaxRetries != nil && *body.MaxRetries < 0 {
+		Err(w, http.StatusBadRequest, "max_retries must be >= 0")
+		return
+	}
+	if body.RetryBackoffSecs != nil && *body.RetryBackoffSecs < 0 {
+		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
 		return
 	}
 	if body.Labels == "" {
@@ -136,6 +146,14 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.CommandDenylist == "" {
 		body.CommandDenylist = "[]"
 	}
+	maxRetries := int64(3)
+	if body.MaxRetries != nil {
+		maxRetries = *body.MaxRetries
+	}
+	retryBackoffSecs := int64(30)
+	if body.RetryBackoffSecs != nil {
+		retryBackoffSecs = *body.RetryBackoffSecs
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -164,6 +182,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		EnabledMcpServers: body.EnabledMCPServers,
 		CommandAllowlist:  body.CommandAllowlist,
 		CommandDenylist:   body.CommandDenylist,
+		MaxRetries:        maxRetries,
+		RetryBackoffSecs:  retryBackoffSecs,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -178,6 +198,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
 			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
 			CommandAllowlist: cfg.CommandAllowlist, CommandDenylist: cfg.CommandDenylist,
+			MaxRetries: cfg.MaxRetries, RetryBackoffSecs: cfg.RetryBackoffSecs,
 			Enabled: 0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -208,6 +229,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		EnabledMCPServers string `json:"enabled_mcp_servers"`
 		CommandAllowlist  string `json:"command_allowlist"`
 		CommandDenylist   string `json:"command_denylist"`
+		MaxRetries        *int64 `json:"max_retries"`
+		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -215,6 +238,14 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Provider != "" && !knownProviders[body.Provider] {
 		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code", body.Provider))
+		return
+	}
+	if body.MaxRetries != nil && *body.MaxRetries < 0 {
+		Err(w, http.StatusBadRequest, "max_retries must be >= 0")
+		return
+	}
+	if body.RetryBackoffSecs != nil && *body.RetryBackoffSecs < 0 {
+		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
 		return
 	}
 
@@ -259,6 +290,14 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.CommandDenylist == "" {
 		body.CommandDenylist = existing.CommandDenylist
 	}
+	maxRetries := existing.MaxRetries
+	if body.MaxRetries != nil {
+		maxRetries = *body.MaxRetries
+	}
+	retryBackoffSecs := existing.RetryBackoffSecs
+	if body.RetryBackoffSecs != nil {
+		retryBackoffSecs = *body.RetryBackoffSecs
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -275,6 +314,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		EnabledMcpServers: body.EnabledMCPServers,
 		CommandAllowlist:  body.CommandAllowlist,
 		CommandDenylist:   body.CommandDenylist,
+		MaxRetries:        maxRetries,
+		RetryBackoffSecs:  retryBackoffSecs,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {

@@ -125,6 +125,12 @@ func seedJobFixtures(t *testing.T, q *gen.Queries, wfID string) (taskID, agCfgID
 }
 
 func buildJob(runID, taskID, agCfgID, wfID, repoPath string, provider agent.Provider) agent.Job {
+	return buildJobWithRetry(runID, taskID, agCfgID, wfID, repoPath, provider, 0, 0)
+}
+
+// buildJobWithRetry is like buildJob but lets tests configure the agent
+// config's retry policy fields carried on the job's AgentConfig.
+func buildJobWithRetry(runID, taskID, agCfgID, wfID, repoPath string, provider agent.Provider, maxRetries, retryBackoffSecs int64) agent.Job {
 	return agent.Job{
 		RunID:    runID,
 		Provider: provider,
@@ -132,9 +138,11 @@ func buildJob(runID, taskID, agCfgID, wfID, repoPath string, provider agent.Prov
 			RunID: runID,
 			Task:  agent.Task{ID: taskID, Title: "Pool test task", Label: "plan", WorkflowID: wfID},
 			AgentConfig: agent.AgentConfig{
-				ID:       agCfgID,
-				Name:     "mock-agent",
-				Provider: "mock",
+				ID:               agCfgID,
+				Name:             "mock-agent",
+				Provider:         "mock",
+				MaxRetries:       maxRetries,
+				RetryBackoffSecs: retryBackoffSecs,
 			},
 			RepoPath: repoPath,
 		},
@@ -172,6 +180,21 @@ func waitForLabel(t *testing.T, q *gen.Queries, taskID, want string) {
 	}
 	task, _ := q.GetTask(context.Background(), taskID)
 	t.Errorf("timed out waiting for task %s to reach label %q; current: %q", taskID, want, task.Label)
+}
+
+// waitForTaskRetryCount polls until the task's transient_retry_count matches want.
+func waitForTaskRetryCount(t *testing.T, q *gen.Queries, taskID string, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		task, err := q.GetTask(context.Background(), taskID)
+		if err == nil && task.TransientRetryCount == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	task, _ := q.GetTask(context.Background(), taskID)
+	t.Errorf("timed out waiting for task %s transient_retry_count to reach %d; current: %d", taskID, want, task.TransientRetryCount)
 }
 
 // TestReDispatch_PicksUpConfigChanges verifies a re-run resolves its agent
@@ -375,4 +398,251 @@ func TestPool_Submit_DoesNotBlockWhenFull(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Error("Submit blocked when pool queue was full")
 	}
+}
+
+func TestPool_TransientFailure_RetriesUnderCap(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	provider := &mockProvider{err: &agent.ErrTransient{Cause: context.DeadlineExceeded}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+
+	// max_retries=3, base backoff 30s — well within the budget on the first failure.
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	waitForTaskRetryCount(t, q, taskID, 1)
+	cancel()
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.TransientRetryCount != 1 {
+		t.Errorf("expected transient_retry_count=1, got %d", task.TransientRetryCount)
+	}
+	if task.NextRetryAt == nil {
+		t.Error("expected next_retry_at to be set")
+	} else if !task.NextRetryAt.After(time.Now()) {
+		t.Errorf("expected next_retry_at in the future, got %v", *task.NextRetryAt)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Error("expected active_agent_run_id cleared so the task can be re-picked once eligible")
+	}
+	run, _ := q.GetAgentRun(context.Background(), runID)
+	if run.Status != "failed" {
+		t.Errorf("expected run status 'failed', got %q", run.Status)
+	}
+}
+
+func TestPool_TransientFailure_EscalatesAfterMaxRetries(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// Pre-seed the task at the retry cap (max_retries=1) so this run should escalate.
+	if _, err := q.SetTaskTransientRetry(context.Background(), gen.SetTaskTransientRetryParams{
+		TransientRetryCount: 1,
+		ID:                  taskID,
+	}); err != nil {
+		t.Fatalf("seed retry count: %v", err)
+	}
+	// Mirror a real dispatch: the dispatcher sets active_agent_run_id before
+	// handing the job to the pool. seedJobFixtures doesn't do this, so set it
+	// explicitly to verify handleTransientFailure leaves it locked on escalation.
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ActiveAgentRunID: &runID,
+		ID:               taskID,
+	}); err != nil {
+		t.Fatalf("seed active run: %v", err)
+	}
+
+	provider := &mockProvider{err: &agent.ErrTransient{Cause: context.DeadlineExceeded}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 1, 1))
+
+	waitForStatus(t, q, runID, "waiting_human")
+	cancel()
+
+	if !pub.hasEvent("task.needs_human") {
+		t.Error("expected task.needs_human event on retry-budget exhaustion")
+	}
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	// The counter resets on escalation so a human-triggered re-dispatch starts fresh.
+	if task.TransientRetryCount != 0 {
+		t.Errorf("expected transient_retry_count reset to 0 after escalation, got %d", task.TransientRetryCount)
+	}
+	if task.ActiveAgentRunID == nil {
+		t.Error("expected active_agent_run_id to remain set (locked) while waiting_human")
+	}
+}
+
+func TestPool_GenuineFailure_DoesNotConsumeRetryBudget(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// A plain Result{Status:"failed"} with no error — the agent ran and decided
+	// the task itself failed. This must not touch the retry counter.
+	provider := &mockProvider{result: agent.Result{Status: "failed"}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	cancel()
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.TransientRetryCount != 0 {
+		t.Errorf("expected transient_retry_count to stay 0 for a genuine failure, got %d", task.TransientRetryCount)
+	}
+	if task.NextRetryAt != nil {
+		t.Errorf("expected next_retry_at to stay nil for a genuine failure, got %v", *task.NextRetryAt)
+	}
+}
+
+func TestPool_Success_ResetsRetryCount(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// Simulate prior transient failures having bumped the counter.
+	if _, err := q.SetTaskTransientRetry(context.Background(), gen.SetTaskTransientRetryParams{
+		TransientRetryCount: 2,
+		ID:                  taskID,
+	}); err != nil {
+		t.Fatalf("seed retry count: %v", err)
+	}
+
+	provider := &mockProvider{result: agent.Result{Status: "completed"}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "completed")
+	cancel()
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.TransientRetryCount != 0 {
+		t.Errorf("expected transient_retry_count reset to 0 after a successful run, got %d", task.TransientRetryCount)
+	}
+}
+
+// TestListAgentPickupTasks_ExcludesFutureNextRetryAt verifies the dispatcher's
+// pickup query skips tasks that are in a backed-off transient-retry window
+// (next_retry_at in the future), and picks them back up once that time has
+// passed or been cleared.
+func TestListAgentPickupTasks_ExcludesFutureNextRetryAt(t *testing.T) {
+	db := openAgentTestDB(t)
+	q := gen.New(db.SQL())
+
+	wfs, err := q.ListWorkflows(context.Background())
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	taskID, _, _ := seedJobFixtures(t, q, wfs[0].ID)
+
+	// No active run and no next_retry_at — task should be pickup-eligible.
+	tasks, err := q.ListAgentPickupTasks(context.Background())
+	if err != nil {
+		t.Fatalf("list pickup tasks: %v", err)
+	}
+	if !containsTaskID(tasks, taskID) {
+		t.Fatalf("expected task %s to be pickup-eligible before any retry scheduling", taskID)
+	}
+
+	// Schedule a future retry — task should now be excluded.
+	future := time.Now().Add(1 * time.Hour)
+	if _, err := q.SetTaskTransientRetry(context.Background(), gen.SetTaskTransientRetryParams{
+		TransientRetryCount: 1,
+		NextRetryAt:         &future,
+		ID:                  taskID,
+	}); err != nil {
+		t.Fatalf("set transient retry: %v", err)
+	}
+	tasks, err = q.ListAgentPickupTasks(context.Background())
+	if err != nil {
+		t.Fatalf("list pickup tasks: %v", err)
+	}
+	if containsTaskID(tasks, taskID) {
+		t.Fatalf("expected task %s to be excluded while next_retry_at is in the future", taskID)
+	}
+
+	// A past next_retry_at should make it eligible again.
+	past := time.Now().Add(-1 * time.Minute)
+	if _, err := q.SetTaskTransientRetry(context.Background(), gen.SetTaskTransientRetryParams{
+		TransientRetryCount: 1,
+		NextRetryAt:         &past,
+		ID:                  taskID,
+	}); err != nil {
+		t.Fatalf("set transient retry: %v", err)
+	}
+	tasks, err = q.ListAgentPickupTasks(context.Background())
+	if err != nil {
+		t.Fatalf("list pickup tasks: %v", err)
+	}
+	if !containsTaskID(tasks, taskID) {
+		t.Fatalf("expected task %s to be pickup-eligible once next_retry_at has passed", taskID)
+	}
+
+	// Resetting clears next_retry_at entirely — also eligible.
+	if _, err := q.ResetTaskTransientRetry(context.Background(), taskID); err != nil {
+		t.Fatalf("reset transient retry: %v", err)
+	}
+	tasks, err = q.ListAgentPickupTasks(context.Background())
+	if err != nil {
+		t.Fatalf("list pickup tasks: %v", err)
+	}
+	if !containsTaskID(tasks, taskID) {
+		t.Fatalf("expected task %s to be pickup-eligible after reset", taskID)
+	}
+}
+
+func containsTaskID(tasks []gen.Task, taskID string) bool {
+	for _, t := range tasks {
+		if t.ID == taskID {
+			return true
+		}
+	}
+	return false
 }

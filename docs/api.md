@@ -246,9 +246,16 @@ Create an agent config.
   "max_tokens": 0,
   "timeout_secs": 600,
   "max_turns": 50,
+  "max_retries": 3,
+  "retry_backoff_secs": 30,
   "env": { "KEY": "value" }
 }
 ```
+
+`max_retries`/`retry_backoff_secs` configure auto-retry for *transient*
+provider errors (rate limits, network blips, upstream 5xx) — see
+[agents.md#retry-policy](agents.md#retry-policy). Both are optional on
+create/update and default to `3`/`30`.
 
 If a label conflict exists with an already-enabled config, the new config is created in disabled state. The response includes an `X-Label-Conflict` header with the conflicting config name.
 

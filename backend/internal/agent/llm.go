@@ -275,7 +275,10 @@ func (r *LLMRunner) chatComplete(ctx context.Context, model string, messages []c
 
 	resp, err := llmHTTPClient.Do(req)
 	if err != nil {
-		return completionResponse{}, err
+		// Network-level failure (DNS, connection refused, TLS, transport
+		// timeout) — treat as transient so the pool can auto-retry rather
+		// than surfacing it as a genuine task failure.
+		return completionResponse{}, &ErrTransient{Cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -285,6 +288,10 @@ func (r *LLMRunner) chatComplete(ctx context.Context, model string, messages []c
 			ResetAt: parseLLMRateLimitReset(resp.Header),
 			Message: strings.TrimSpace(fmt.Sprintf("http 429: %s", body)),
 		}
+	}
+	if resp.StatusCode >= 500 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return completionResponse{}, &ErrTransient{Cause: fmt.Errorf("http %d: %s", resp.StatusCode, body)}
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

@@ -330,6 +330,8 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 		MaxTokens:         cfg.MaxTokens,
 		TimeoutSecs:       cfg.TimeoutSecs,
 		MaxTurns:          cfg.MaxTurns,
+		MaxRetries:        cfg.MaxRetries,
+		RetryBackoffSecs:  cfg.RetryBackoffSecs,
 		Env:               env,
 		EnabledPlugins:    enabledPlugins,
 		EnabledMCPServers: enabledMCPServers,

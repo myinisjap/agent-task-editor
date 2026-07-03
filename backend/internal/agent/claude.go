@@ -163,6 +163,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		wg          sync.WaitGroup
 		outcome     string
 		rateLimited bool
+		transient   bool
 		usage       *runUsage
 		mu          sync.Mutex
 	)
@@ -190,10 +191,14 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 				usage = u
 				mu.Unlock()
 			}
-			// Also scan stdout JSON lines for 429 indicators
+			// Also scan stdout JSON lines for 429/transient-infra indicators
 			if is429Line(line) {
 				mu.Lock()
 				rateLimited = true
+				mu.Unlock()
+			} else if isTransientLine(line) {
+				mu.Lock()
+				transient = true
 				mu.Unlock()
 			}
 		}
@@ -210,6 +215,10 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 				mu.Lock()
 				rateLimited = true
 				mu.Unlock()
+			} else if isTransientLine(line) {
+				mu.Lock()
+				transient = true
+				mu.Unlock()
 			}
 		}
 	}()
@@ -219,15 +228,24 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- LogEntry{Type: LogSystem, Content: "agent timed out", At: time.Now()}
-		return Result{Status: "failed"}, nil
+		// A timeout is ambiguous — it could be a genuinely stuck/looping agent
+		// or a transient hang (e.g. network stall). Treat it as transient so
+		// it counts against the task's bounded retry budget instead of
+		// retrying forever unconditionally, but don't require an infra
+		// signal to have been seen in the logs.
+		return Result{Status: "failed"}, &ErrTransient{Cause: fmt.Errorf("claude run timed out")}
 	}
 	if err != nil {
 		logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited: %v", err), At: time.Now()}
 		mu.Lock()
 		rl := rateLimited
+		tr := transient
 		mu.Unlock()
 		if rl {
 			return Result{Status: "failed"}, &ErrRateLimit{Message: "claude CLI 429: Request rejected by API rate limit"}
+		}
+		if tr {
+			return Result{Status: "failed"}, &ErrTransient{Cause: fmt.Errorf("claude CLI exited with transient infra error: %w", err)}
 		}
 	}
 
@@ -292,6 +310,41 @@ func is429Line(line string) bool {
 		strings.Contains(line, "Request rejected") ||
 		strings.Contains(line, "rate limit") ||
 		strings.Contains(line, "rate_limit")
+}
+
+// isTransientLine returns true if the log line indicates a transient
+// infrastructure problem (network blip, upstream 5xx, connection reset,
+// timeout) rather than a genuine task/agent failure. Best-effort text
+// sniffing — the claude CLI doesn't expose structured error classification,
+// only free-form stdout/stderr text and an exit code.
+func isTransientLine(line string) bool {
+	lower := strings.ToLower(line)
+	for _, marker := range []string{
+		"connection reset",
+		"econnreset",
+		"econnrefused",
+		"etimedout",
+		"enotfound",
+		"eai_again",
+		"timeout",
+		"timed out",
+		"temporary failure",
+		"network error",
+		"network is unreachable",
+		"socket hang up",
+		"eof",
+		"502",
+		"503",
+		"504",
+		"bad gateway",
+		"service unavailable",
+		"gateway timeout",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // classifyStreamJSON parses one NDJSON line from claude --output-format stream-json.

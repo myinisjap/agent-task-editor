@@ -100,7 +100,15 @@ type AgentConfig struct {
 	MaxTokens    int64
 	TimeoutSecs  int64
 	MaxTurns     int64
-	Env          map[string]string
+	// MaxRetries is the number of automatic consecutive transient-error
+	// retries allowed for a task before it is left failed (or escalated to
+	// waiting_human) for a human to intervene. 0 disables auto-retry.
+	MaxRetries int64
+	// RetryBackoffSecs is the base backoff (in seconds) before a
+	// transient-error retry is eligible for re-dispatch; exponential backoff
+	// is applied on top of this base (see BackoffDurationWithBase).
+	RetryBackoffSecs int64
+	Env              map[string]string
 	// EnabledPlugins is the list of Claude plugin IDs ("<name>@<marketplace>")
 	// the user has explicitly enabled for this agent config. Claude-provider only.
 	EnabledPlugins []string

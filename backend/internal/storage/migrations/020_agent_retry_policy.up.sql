@@ -1,0 +1,4 @@
+ALTER TABLE agent_configs ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE agent_configs ADD COLUMN retry_backoff_secs INTEGER NOT NULL DEFAULT 30;
+ALTER TABLE tasks ADD COLUMN transient_retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN next_retry_at DATETIME;
