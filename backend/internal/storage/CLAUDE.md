@@ -51,6 +51,7 @@ After editing any `.sql` file, run `sqlc generate` (or `go generate ./...` from 
 - `023_task_archived` adds `tasks.archived INTEGER NOT NULL DEFAULT 0`, toggled via `SetTaskArchived` / `PATCH /tasks/{id}/archive`. Archived tasks are excluded from `ListAgentPickupTasks` (never dispatched), skipped by the ghsync sweep, and hidden from `GET /tasks` unless `archived=all|only` is passed. Like `paused`, it's independent of `label`.
 - `SearchTasks` is the filterable listing behind `GET /tasks` — every param (`@query` free-text over title/description, `@label`, `@repo_id`, `@type`, `@git_state`, tri-state `@archived`) treats `''` as "no filter". sqlc types these params `interface{}` (it can't infer types from the `@x = '' OR col = @x` pattern); pass strings.
 - `024_task_templates` adds the `task_templates` table (unique `name`; pre-filled `title`/`description`/`type` for the new-task form). CRUD queries live in `queries/templates.sql`.
+- `025_task_pr_url` adds `tasks.pr_url TEXT NOT NULL DEFAULT ''` — the GitHub PR URL for the task's branch. Written by `SetTaskPR` (which sets `git_state` + `pr_url` together) from `POST /tasks/{id}/pr`, the `GET /tasks/{id}/github-status` refresh, and the ghsync sweep. Those callers preserve any existing URL when the live query surfaces none, so a valid link is never blanked out.
 
 ## Schema Key Tables
 

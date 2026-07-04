@@ -33,6 +33,12 @@ components:
             status sweep, and never picked up by the dispatcher. Independent of
             the task's label.
         git_state:     { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
+        pr_url:
+          type: string
+          description: >
+            URL of the GitHub pull request opened for this task's branch (via
+            POST /tasks/{id}/pr, or discovered by the GitHub PR status sweep).
+            Empty until a PR exists.
         transient_retry_count:
           type: integer
           description: >
@@ -717,6 +723,34 @@ paths:
                 type: object
                 properties:
                   url: { type: string }
+
+  /tasks/{id}/pr:
+    post:
+      summary: Push the task's branch and open a GitHub pull request via the gh CLI
+      description: >
+        Pushes the task's branch to origin, then runs `gh pr create` with the
+        title from the task and a body assembled from the description, agent
+        notes, and commit subjects. The resulting PR URL and git state are
+        stored on the task. Idempotent: if a PR already exists for the branch,
+        that PR is returned instead of erroring. Requires the repo to have a
+        GitHub remote, the task to have a provisioned branch, and the gh CLI to
+        be authenticated.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pr_url: { type: string }
+                  git_state: { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
+        "400": { description: Task has no branch, or repo has no/invalid GitHub remote }
+        "502": { description: gh pr create failed (e.g. not authenticated) }
 
   /tasks/{id}/runs:
     get:

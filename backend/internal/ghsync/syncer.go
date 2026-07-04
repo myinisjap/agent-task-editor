@@ -134,8 +134,16 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 		return // no change — nothing to do
 	}
 
-	if _, err := s.q.UpdateTaskGitState(ctx, gen.UpdateTaskGitStateParams{
+	// Persist the new state, and the PR URL when the live query surfaced one.
+	// Keep any previously stored URL if it didn't (e.g. state regressed to a
+	// plain "pushed" branch), so we never blank out a valid link.
+	storeURL := prURL
+	if storeURL == "" {
+		storeURL = task.PrUrl
+	}
+	if _, err := s.q.SetTaskPR(ctx, gen.SetTaskPRParams{
 		GitState: state,
+		PrUrl:    storeURL,
 		ID:       task.ID,
 	}); err != nil {
 		log.Warn("ghsync: update git state", "err", err)
@@ -147,7 +155,7 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 	s.hub.Publish("task.git_state_changed", map[string]any{
 		"task_id":   task.ID,
 		"git_state": state,
-		"pr_url":    prURL,
+		"pr_url":    storeURL,
 	})
 
 	// Once GitHub confirms the PR is merged, the branch's work is preserved

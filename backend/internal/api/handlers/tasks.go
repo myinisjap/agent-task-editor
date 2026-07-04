@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -606,17 +607,7 @@ func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 	if gitDir == "" || !dirExists(gitDir) {
 		gitDir = repo.Path
 	}
-	var commits []string
-	if isValidGitRef(task.BaseRef) && isValidGitRef(task.Branch) {
-		out, lerr := exec.CommandContext(r.Context(), "git", "-C", gitDir, "log", "--format=%s", task.BaseRef+".."+task.Branch).Output()
-		if lerr == nil {
-			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				if line != "" {
-					commits = append(commits, line)
-				}
-			}
-		}
-	}
+	commits := collectBranchCommits(r.Context(), gitDir, task.BaseRef, task.Branch)
 
 	body := buildPRBody(task, commits)
 	q := url.Values{}
@@ -626,6 +617,94 @@ func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 	prURL := fmt.Sprintf("https://github.com/%s/compare/%s...%s?%s", ghName, base, task.Branch, q.Encode())
 
 	JSON(w, http.StatusOK, map[string]any{"url": prURL})
+}
+
+// collectBranchCommits returns the commit subjects unique to the task's branch
+// relative to its base ref (best-effort — empty slice if the git log fails or
+// either ref is invalid).
+func collectBranchCommits(ctx context.Context, gitDir, baseRef, branch string) []string {
+	if !isValidGitRef(baseRef) || !isValidGitRef(branch) {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", gitDir, "log", "--format=%s", baseRef+".."+branch).Output()
+	if err != nil {
+		return nil
+	}
+	var commits []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			commits = append(commits, line)
+		}
+	}
+	return commits
+}
+
+// CreatePR pushes the task's branch to origin and opens a GitHub pull request
+// via the gh CLI, then stores the resulting PR URL and git state on the task.
+// It is idempotent: if a PR already exists for the branch, that PR is returned
+// instead of erroring. Requires the repo to have a GitHub remote, the task to
+// have a provisioned branch, and gh to be authenticated.
+func (h *TasksHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
+	task, err := h.q.GetTask(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if task.Branch == "" {
+		Err(w, http.StatusBadRequest, "task has no branch yet")
+		return
+	}
+	repo, err := h.q.GetRepo(r.Context(), task.RepoID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to locate repo")
+		return
+	}
+	if repo.RemoteUrl == nil {
+		Err(w, http.StatusBadRequest, "repo has no remote_url")
+		return
+	}
+	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
+	if !ok {
+		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
+		return
+	}
+
+	// Push the branch first. Push from the worktree if it still exists,
+	// otherwise from the main clone — the branch ref lives there too once the
+	// worktree has been torn down on a terminal transition.
+	gitDir := task.WorktreePath
+	if gitDir == "" || !dirExists(gitDir) {
+		gitDir = repo.Path
+	}
+	if err := agent.PushBranch(r.Context(), gitDir, task.Branch); err != nil {
+		Err(w, http.StatusInternalServerError, "failed to push branch: "+err.Error())
+		return
+	}
+
+	// gh compare/PR base wants a branch name, not a remote-tracking ref.
+	base := strings.TrimPrefix(task.BaseRef, "origin/")
+	body := buildPRBody(task, collectBranchCommits(r.Context(), gitDir, task.BaseRef, task.Branch))
+
+	state, prURL, err := ghclient.CreatePR(r.Context(), ghName, task.Branch, base, task.Title, body)
+	if err != nil {
+		Err(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	updated, err := h.q.SetTaskPR(r.Context(), gen.SetTaskPRParams{
+		GitState: state,
+		PrUrl:    prURL,
+		ID:       task.ID,
+	})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]any{
+		"pr_url":    prURL,
+		"git_state": updated.GitState,
+	})
 }
 
 // buildPRBody assembles a markdown PR description from the task and its commits.
@@ -687,15 +766,21 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 		// Don't fail hard — return what we have stored plus the error detail
 		JSON(w, http.StatusOK, map[string]any{
 			"git_state": task.GitState,
-			"pr_url":    "",
+			"pr_url":    task.PrUrl,
 			"error":     ghErr.Error(),
 		})
 		return
 	}
 
-	// Persist the refreshed state
-	updated, err := h.q.UpdateTaskGitState(r.Context(), gen.UpdateTaskGitStateParams{
+	// Persist the refreshed state. Keep any previously stored PR URL if the
+	// live query didn't surface one (e.g. a branch that's pushed but has no PR).
+	storeURL := prURL
+	if storeURL == "" {
+		storeURL = task.PrUrl
+	}
+	updated, err := h.q.SetTaskPR(r.Context(), gen.SetTaskPRParams{
 		GitState: state,
+		PrUrl:    storeURL,
 		ID:       task.ID,
 	})
 	if err != nil {
@@ -704,7 +789,7 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	JSON(w, http.StatusOK, map[string]any{
 		"git_state": updated.GitState,
-		"pr_url":    prURL,
+		"pr_url":    updated.PrUrl,
 	})
 }
 

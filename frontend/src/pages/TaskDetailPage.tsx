@@ -25,6 +25,7 @@ export default function TaskDetailPage() {
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffComments, setDiffComments] = useState<DiffComment[]>([])
+  const [creatingPR, setCreatingPR] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [editingTask, setEditingTask] = useState(false)
@@ -143,7 +144,7 @@ export default function TaskDetailPage() {
         refreshRuns()
         refreshTask()
       } else if (event.type === 'task.git_state_changed' && event.payload.task_id === id) {
-        setTask((t) => t ? { ...t, git_state: event.payload.git_state } : t)
+        setTask((t) => t ? { ...t, git_state: event.payload.git_state, pr_url: event.payload.pr_url || t.pr_url } : t)
       }
     })
 
@@ -292,6 +293,22 @@ export default function TaskDetailPage() {
       setDiffComments((prev) => prev.map((c) => (c.id === commentId ? fromApiComment(updated) : c)))
     } catch (e: any) {
       alert(`Failed to reopen comment: ${e.message ?? e}`)
+    }
+  }
+
+  // Pushes the branch and opens a GitHub PR in one click (idempotent — returns
+  // the existing PR if one already exists), then opens it in a new tab.
+  const handleCreatePR = async () => {
+    if (!id) return
+    setCreatingPR(true)
+    try {
+      const res = await api.tasks.createPR(id)
+      setTask((t) => t ? { ...t, pr_url: res.pr_url, git_state: res.git_state } : t)
+      if (res.pr_url) window.open(res.pr_url, '_blank', 'noopener')
+    } catch (e: any) {
+      alert(`Cannot create PR: ${e.message ?? e}`)
+    } finally {
+      setCreatingPR(false)
     }
   }
 
@@ -494,7 +511,7 @@ export default function TaskDetailPage() {
                         onClick={() => {
                           if (!id) return
                           api.tasks.githubStatus(id)
-                            .then((s) => setTask((t) => t ? { ...t, git_state: s.git_state } : t))
+                            .then((s) => setTask((t) => t ? { ...t, git_state: s.git_state, pr_url: s.pr_url || t.pr_url } : t))
                             .catch(() => {})
                         }}
                         className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
@@ -503,6 +520,27 @@ export default function TaskDetailPage() {
                         ↻ Sync
                       </button>
                     </div>
+                  </Row>
+                  <Row label="PR">
+                    {task.pr_url ? (
+                      <a
+                        href={task.pr_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors truncate"
+                      >
+                        {task.pr_url.replace('https://github.com/', '')} ↗
+                      </a>
+                    ) : (
+                      <button
+                        onClick={handleCreatePR}
+                        disabled={creatingPR}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors disabled:opacity-50"
+                        title="Push the branch and open a GitHub pull request"
+                      >
+                        {creatingPR ? 'Creating PR…' : '+ Create PR'}
+                      </button>
+                    )}
                   </Row>
                   <GitHubAuthWarning />
                 </>
@@ -630,17 +668,25 @@ export default function TaskDetailPage() {
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs text-slate-500">Changes on this task's branch</p>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    if (!task?.id) return
-                    api.tasks.prUrl(task.id)
-                      .then((d) => window.open(d.url, '_blank', 'noopener'))
-                      .catch((e) => alert(`Cannot open PR: ${e.message ?? e}`))
-                  }}
-                  className="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white"
-                >
-                  Open PR ↗
-                </button>
+                {task?.pr_url ? (
+                  <a
+                    href={task.pr_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white"
+                  >
+                    View PR ↗
+                  </a>
+                ) : (
+                  <button
+                    onClick={handleCreatePR}
+                    disabled={creatingPR}
+                    className="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+                    title="Push the branch and open a GitHub pull request"
+                  >
+                    {creatingPR ? 'Creating PR…' : 'Create PR'}
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     if (!task?.id) return

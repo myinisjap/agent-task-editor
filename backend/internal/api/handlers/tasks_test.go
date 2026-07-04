@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -97,6 +98,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Get("/tasks/{id}/runs", h.ListRuns)
 	r.Patch("/tasks/{id}/pause", h.SetPaused)
 	r.Patch("/tasks/{id}/archive", h.SetArchived)
+	r.Post("/tasks/{id}/pr", h.CreatePR)
 
 	return r, q, wfID, repoID
 }
@@ -856,5 +858,74 @@ func TestTasks_Paused_ExcludedFromAgentPickup(t *testing.T) {
 		if p.ID == task.ID {
 			t.Fatalf("expected paused task to be excluded from ListAgentPickupTasks")
 		}
+	}
+}
+
+// ---------- CreatePR (POST /tasks/{id}/pr) ----------
+
+func TestCreatePR_TaskNotFound_Returns404(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/does-not-exist/pr", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestCreatePR_NoBranch_Returns400(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Needs a branch",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+task.ID+"/pr", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "no branch") {
+		t.Errorf("expected 'no branch' error, got %s", w.Body)
+	}
+}
+
+func TestCreatePR_RepoWithoutRemote_Returns400(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	// The test repo is created without a remote_url, so a branched task is
+	// rejected before any push/gh invocation.
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Has a branch",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+	if err := q.SetTaskWorktree(context.Background(), gen.SetTaskWorktreeParams{
+		Branch:  "ate-has-a-branch-1234",
+		BaseRef: "origin/main",
+		ID:      task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+task.ID+"/pr", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "remote_url") {
+		t.Errorf("expected 'remote_url' error, got %s", w.Body)
 	}
 }

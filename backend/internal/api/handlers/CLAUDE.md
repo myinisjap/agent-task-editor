@@ -24,6 +24,7 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 - **List** (`GET /tasks`) — backed by the `SearchTasks` query; supports `q` (title/description substring), `label`, `repo_id`, `type`, `git_state`, and tri-state `archived` (`''` hides archived, `only`, `all`). Invalid `archived` values return `400`.
 - **SetArchived** (`PATCH /tasks/{id}/archive`) — toggles the `archived` flag; does not touch `label`. Archived tasks are hidden from the default list, skipped by ghsync, and never dispatched.
 - **Bulk** (`POST /tasks/bulk`) — applies `move`/`pause`/`resume`/`archive`/`unarchive` to a list of ids; per-task results, `207` when any task fails. `move` goes through `engine.Transition` per task.
+- **CreatePR** (`POST /tasks/{id}/pr`) — one-click PR creation: pushes the branch (from the worktree if present, else the main clone), then `ghclient.CreatePR` runs `gh pr create` (title from the task, body from `buildPRBody`). Idempotent — an existing PR for the branch is returned instead of erroring. The resulting URL + `git_state` are persisted via `SetTaskPR`. `400` for no branch / non-GitHub remote, `502` when `gh pr create` fails. Contrast with **PRURL** (`GET /tasks/{id}/pr-url`), which only builds a pre-filled compare URL and needs no `gh` auth.
 
 ## Review Comments Handler Notes
 

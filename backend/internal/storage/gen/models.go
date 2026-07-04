@@ -89,6 +89,7 @@ type Task struct {
 	Source              string     `json:"source"`
 	SourceRef           string     `json:"source_ref"`
 	Archived            int64      `json:"archived"`
+	PrUrl               string     `json:"pr_url"`
 }
 
 type TaskLabelHistory struct {

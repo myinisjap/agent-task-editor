@@ -37,6 +37,9 @@ export type Task = {
   worktree_path?: string
   base_ref?: string
   git_state?: string
+  // URL of the GitHub PR opened for this task's branch (via POST /tasks/{id}/pr
+  // or discovered by the ghsync sweep). Empty until a PR exists.
+  pr_url?: string
   paused?: boolean
   // Archived tasks are hidden from the board by default (GET /tasks excludes
   // them unless archived=all|only), skipped by the ghsync sweep, and never
@@ -276,6 +279,8 @@ export const api = {
      rerun: (id: string) => request<void>(`/tasks/${id}/rerun`, { method: 'POST' }),
     diff: (id: string) => request<{ branch: string; diff: string }>(`/tasks/${id}/diff`),
     prUrl: (id: string) => request<{ url: string }>(`/tasks/${id}/pr-url`),
+    createPR: (id: string) =>
+      request<{ pr_url: string; git_state: string }>(`/tasks/${id}/pr`, { method: 'POST' }),
     githubStatus: (id: string) =>
       request<{ git_state: string; pr_url: string; error?: string }>(`/tasks/${id}/github-status`),
     updateGitState: (id: string, git_state: string) =>

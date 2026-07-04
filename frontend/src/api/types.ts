@@ -15,8 +15,14 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Case-insensitive substring search over title and description */
+                    q?: string;
                     label?: string;
                     repo_id?: string;
+                    type?: string;
+                    git_state?: "pushed" | "pr_open" | "pr_merged" | "pr_closed";
+                    /** @description Archived-task visibility. Omitted (default) hides archived tasks; "only" returns just archived tasks; "all" returns everything. */
+                    archived?: "all" | "only";
                 };
                 header?: never;
                 path?: never;
@@ -64,6 +70,77 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["Task"];
                     };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply one action to many tasks
+         * @description Applies a single action to every task in ids. Each task is processed independently — one failure doesn't abort the rest. Returns 200 if every task succeeded, 207 if any failed; the per-task results array reports each outcome either way. "move" transitions are validated through the workflow engine exactly like PATCH /tasks/{id}/label.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        ids: string[];
+                        /** @enum {string} */
+                        action: "move" | "pause" | "resume" | "archive" | "unarchive";
+                        /** @description Required when action is move */
+                        to_label?: string;
+                        /** @description Optional transition note (move only) */
+                        note?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description All tasks processed successfully */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            results?: {
+                                id?: string;
+                                ok?: boolean;
+                                error?: string;
+                            }[];
+                        };
+                    };
+                };
+                /** @description Some tasks failed; see per-task results */
+                207: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing ids */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -210,6 +287,59 @@ export interface paths {
                 };
                 /** @description Gate required */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/tasks/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Archive or unarchive a task
+         * @description Archived tasks are hidden from the default board view, excluded from the GitHub PR status sweep, and never dispatched to agents. Archiving does not change the task's label.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        archived: boolean;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -586,6 +716,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/pr": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push the task's branch and open a GitHub pull request via the gh CLI
+         * @description Pushes the task's branch to origin, then runs `gh pr create` with the title from the task and a body assembled from the description, agent notes, and commit subjects. The resulting PR URL and git state are stored on the task. Idempotent: if a PR already exists for the branch, that PR is returned instead of erroring. Requires the repo to have a GitHub remote, the task to have a provisioned branch, and the gh CLI to be authenticated.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            pr_url?: string;
+                            /** @enum {string} */
+                            git_state?: "" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
+                        };
+                    };
+                };
+                /** @description Task has no branch */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description gh pr create failed (e.g. not authenticated) */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs": {
         parameters: {
             query?: never;
@@ -694,6 +882,187 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List task templates */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplate"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a task template */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        title?: string;
+                        description?: string;
+                        /** @default feature */
+                        type?: string;
+                    };
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplate"];
+                    };
+                };
+                /** @description A template with that name already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a task template */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplate"];
+                    };
+                };
+                /** @description Template not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /** Update a task template */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        title?: string;
+                        description?: string;
+                        type?: string;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskTemplate"];
+                    };
+                };
+                /** @description Template not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A template with that name already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /** Delete a task template */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -1272,6 +1641,12 @@ export interface components {
             base_ref?: string;
             /** @description If true, the task is never auto-picked-up by the dispatcher */
             paused?: boolean;
+            /** @description If true, the task is hidden from the default board view (GET /tasks excludes it unless archived=all|only), skipped by the GitHub PR status sweep, and never picked up by the dispatcher. Independent of the task's label. */
+            archived?: boolean;
+            /** @enum {string} */
+            git_state?: "" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
+            /** @description URL of the GitHub pull request opened for this task's branch (via POST /tasks/{id}/pr, or discovered by the GitHub PR status sweep). Empty until a PR exists. */
+            pr_url?: string;
             /** @description Number of consecutive automatic retries this task has had for transient provider errors (rate limits, network blips, upstream 5xx). Reset to 0 on a genuine failure or a successful run. */
             transient_retry_count?: number;
             /**
@@ -1283,6 +1658,20 @@ export interface components {
             source?: string;
             /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
             source_ref?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        /** @description Reusable pre-filled title/description/type for recurring shapes of work (e.g. "upgrade dependency X", "fix flaky test"). Applied in the new-task form; creating a task from a template just pre-fills fields. */
+        TaskTemplate: {
+            id?: string;
+            /** @description Unique display name */
+            name?: string;
+            title?: string;
+            description?: string;
+            /** @enum {string} */
+            type?: "feature" | "bug" | "chore" | "spike";
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
