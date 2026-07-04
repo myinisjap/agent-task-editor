@@ -26,6 +26,7 @@ type Config struct {
 	RepoBaseDir        string        `yaml:"repo_base_dir"`
 	UploadDir          string        `yaml:"upload_dir"`
 	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
+	IssueSyncInterval  time.Duration `yaml:"issue_sync_interval"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -37,6 +38,7 @@ func Defaults() Config {
 		LLMBaseURL:         "https://api.openai.com/v1",
 		MaxWorkers:         5,
 		GitHubSyncInterval: 30 * time.Second,
+		IssueSyncInterval:  60 * time.Second,
 	}
 }
 
@@ -96,6 +98,13 @@ func Load(path string) (Config, error) {
 			cfg.GitHubSyncInterval = d
 		} else {
 			slog.Warn("invalid GITHUB_SYNC_INTERVAL; using default", "value", v, "default", cfg.GitHubSyncInterval)
+		}
+	}
+	if v := os.Getenv("ISSUE_SYNC_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.IssueSyncInterval = d
+		} else {
+			slog.Warn("invalid ISSUE_SYNC_INTERVAL; using default", "value", v, "default", cfg.IssueSyncInterval)
 		}
 	}
 

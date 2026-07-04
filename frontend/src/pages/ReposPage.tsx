@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react'
 import { api, type Repo, type Workflow } from '../api/client'
 
-type EditForm = { name: string; path: string; remote_url: string; workflow_id: string }
+type EditForm = { name: string; path: string; remote_url: string; workflow_id: string; issue_sync_enabled: boolean; issue_sync_label: string }
 
 export default function ReposPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', path: '', remote_url: '', workflow_id: '' })
+  const [form, setForm] = useState({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState<EditForm>({ name: '', path: '', remote_url: '', workflow_id: '' })
+  const [editForm, setEditForm] = useState<EditForm>({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '' })
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
 
@@ -68,10 +68,12 @@ export default function ReposPage() {
         path: form.path.trim() || undefined,
         remote_url: form.remote_url.trim() || undefined,
         workflow_id: form.workflow_id || undefined,
+        issue_sync_enabled: form.issue_sync_enabled,
+        issue_sync_label: form.issue_sync_label.trim(),
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
-      setForm({ name: '', path: '', remote_url: '', workflow_id: '' })
+      setForm({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '' })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -86,13 +88,15 @@ export default function ReposPage() {
       path: repo.path,
       remote_url: repo.remote_url ?? '',
       workflow_id: repo.workflow_id ?? '',
+      issue_sync_enabled: !!repo.issue_sync_enabled,
+      issue_sync_label: repo.issue_sync_label ?? '',
     })
     setEditError('')
   }
 
   function cancelEdit() {
     setEditingId(null)
-    setEditForm({ name: '', path: '', remote_url: '', workflow_id: '' })
+    setEditForm({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '' })
     setEditError('')
   }
 
@@ -107,6 +111,8 @@ export default function ReposPage() {
         path: editForm.path.trim() || undefined,
         remote_url: editForm.remote_url.trim() || null,
         workflow_id: editForm.workflow_id || null,
+        issue_sync_enabled: editForm.issue_sync_enabled,
+        issue_sync_label: editForm.issue_sync_label.trim(),
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -193,6 +199,31 @@ export default function ReposPage() {
                 ))}
               </select>
             </div>
+
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.issue_sync_enabled}
+                onChange={(e) => setForm((f) => ({ ...f, issue_sync_enabled: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              Import GitHub Issues as tasks
+              <span className="text-slate-600">(requires remote URL + workflow)</span>
+            </label>
+
+            {form.issue_sync_enabled && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-slate-400">
+                  Issue label filter <span className="text-slate-600">(empty = all open issues)</span>
+                </label>
+                <input
+                  value={form.issue_sync_label}
+                  onChange={(e) => setForm((f) => ({ ...f, issue_sync_label: e.target.value }))}
+                  placeholder="agent-ok"
+                  className={inputCls}
+                />
+              </div>
+            )}
           </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -228,6 +259,14 @@ export default function ReposPage() {
                     <div className="text-xs text-slate-600 mt-0.5 truncate">{repo.remote_url}</div>
                   )}
                 </div>
+                {!!repo.issue_sync_enabled && (
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 shrink-0"
+                    title={`Importing open GitHub issues${repo.issue_sync_label ? ` labeled "${repo.issue_sync_label}"` : ''} as tasks`}
+                  >
+                    Issue sync{repo.issue_sync_label ? `: ${repo.issue_sync_label}` : ''}
+                  </span>
+                )}
                 <div className="text-xs text-slate-500 shrink-0">
                   {workflowName(repo.workflow_id)}
                 </div>
@@ -297,6 +336,31 @@ export default function ReposPage() {
                         ))}
                       </select>
                     </div>
+
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editForm.issue_sync_enabled}
+                        onChange={(e) => setEditForm((f) => ({ ...f, issue_sync_enabled: e.target.checked }))}
+                        className="accent-indigo-500"
+                      />
+                      Import GitHub Issues as tasks
+                      <span className="text-slate-600">(requires remote URL + workflow)</span>
+                    </label>
+
+                    {editForm.issue_sync_enabled && (
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-medium text-slate-400">
+                          Issue label filter <span className="text-slate-600">(empty = all open issues)</span>
+                        </label>
+                        <input
+                          value={editForm.issue_sync_label}
+                          onChange={(e) => setEditForm((f) => ({ ...f, issue_sync_label: e.target.value }))}
+                          placeholder="agent-ok"
+                          className={inputCls}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {editError && <p className="text-xs text-red-400">{editError}</p>}

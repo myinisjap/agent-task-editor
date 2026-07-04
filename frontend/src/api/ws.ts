@@ -9,7 +9,9 @@ export type WSEvent =
   | { type: 'agent.log'; payload: { task_id: string; run_id: string; entry: AgentLog } }
   | { type: 'task.git_state_changed'; payload: { task_id: string; git_state: string; pr_url: string } }
   | { type: 'task.review_comments_changed'; payload: { task_id: string; run_id: string; resolved: number } }
-  | { type: 'task.created'; payload: Task }
+  // task.created payloads carry a subset of Task fields (always includes id);
+  // consumers should refetch the task for full data.
+  | { type: 'task.created'; payload: Pick<Task, 'id' | 'title' | 'label' | 'repo_id' | 'source' | 'source_ref'> }
   | { type: 'task.updated'; payload: Task }
 
 type Handler = (event: WSEvent) => void

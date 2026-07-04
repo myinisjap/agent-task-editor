@@ -155,6 +155,7 @@ cd backend && go build -o mcp-server ./cmd/mcp-server
 | [docs/getting-started.md](docs/getting-started.md) | Installation, environment variables, local dev setup |
 | [docs/workflows.md](docs/workflows.md) | State machine format, labels, transitions, YAML import/export |
 | [docs/agents.md](docs/agents.md) | Providers, dispatcher, worker pool, run lifecycle, prompt construction |
+| [docs/task-sources.md](docs/task-sources.md) | Importing GitHub Issues as tasks |
 | [docs/api.md](docs/api.md) | Full REST API endpoint reference |
 | [docs/websocket.md](docs/websocket.md) | Live log streaming WebSocket protocol |
 

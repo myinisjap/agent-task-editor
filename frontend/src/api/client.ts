@@ -44,6 +44,10 @@ export type Task = {
   // once the retry budget is exhausted.
   transient_retry_count?: number
   next_retry_at?: string | null
+  // Where this task was imported from ("github") and the external item it
+  // came from ("owner/repo#123"). Both empty for manually created tasks.
+  source?: string
+  source_ref?: string
 }
 
 export type AgentRun = {
@@ -167,6 +171,10 @@ export type Repo = {
   remote_url?: string
   workflow_id?: string
   created_at: string
+  // GitHub Issues import: when enabled (1), open issues matching
+  // issue_sync_label (empty = all open issues) are imported as tasks.
+  issue_sync_enabled?: number
+  issue_sync_label?: string
 }
 
 export type ModelList = {
@@ -286,9 +294,9 @@ export const api = {
   repos: {
     list: () => request<Repo[]>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string }) =>
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),

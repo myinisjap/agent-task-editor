@@ -17,6 +17,7 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `RepoBaseDir` | `REPO_BASE_DIR` | `repo_base_dir` | _(empty)_ |
 | `UploadDir` | `UPLOAD_DIR` | `upload_dir` | `uploads` (next to DB) |
 | `GitHubSyncInterval` | `GITHUB_SYNC_INTERVAL` | `github_sync_interval` | `30s` |
+| `IssueSyncInterval` | `ISSUE_SYNC_INTERVAL` | `issue_sync_interval` | `60s` |
 
 ## Loading Order
 

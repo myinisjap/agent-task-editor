@@ -403,6 +403,133 @@ func TestReposCreate_HappyPathWithExplicitPath(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Issue sync settings
+// ---------------------------------------------------------------------------
+
+// patchJSON is a small helper that sends a JSON PATCH to the given router.
+func patchJSON(t *testing.T, router http.Handler, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+// TestReposCreate_IssueSyncRequiresRemoteAndWorkflow verifies that enabling
+// issue sync without a remote URL or without a workflow is rejected.
+func TestReposCreate_IssueSyncRequiresRemoteAndWorkflow(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	// No remote_url → 400.
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":               "myorg/myrepo",
+		"path":               repoDir,
+		"issue_sync_enabled": true,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 without remote_url, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Remote but no workflow → 400.
+	w = postJSON(t, router, "/repos", map[string]any{
+		"name":               "myorg/myrepo",
+		"path":               repoDir,
+		"remote_url":         "https://github.com/myorg/myrepo",
+		"issue_sync_enabled": true,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 without workflow, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "workflow") {
+		t.Errorf("unexpected error body: %s", w.Body.String())
+	}
+}
+
+// TestReposUpdate_IssueSyncRoundTrip enables issue sync via PATCH and checks
+// the settings persist (and survive a PATCH that doesn't mention them).
+func TestReposUpdate_IssueSyncRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	// Need a workflow to point at.
+	wf, err := q.CreateWorkflow(t.Context(), gen.CreateWorkflowParams{
+		ID: "wf-1", Name: "wf", Description: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":       "myorg/myrepo",
+		"path":       repoDir,
+		"remote_url": "https://github.com/myorg/myrepo",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	// Enable issue sync.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{
+		"workflow_id":        wf.ID,
+		"issue_sync_enabled": true,
+		"issue_sync_label":   " agent-ok ",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_sync_enabled"]; got != float64(1) {
+		t.Errorf("issue_sync_enabled = %v, want 1", got)
+	}
+	if got := repo["issue_sync_label"]; got != "agent-ok" {
+		t.Errorf("issue_sync_label = %q, want trimmed 'agent-ok'", got)
+	}
+
+	// A PATCH that doesn't mention the fields must not reset them.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch 2: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_sync_enabled"]; got != float64(1) {
+		t.Errorf("issue_sync_enabled after unrelated patch = %v, want 1", got)
+	}
+	if got := repo["issue_sync_label"]; got != "agent-ok" {
+		t.Errorf("issue_sync_label after unrelated patch = %q, want 'agent-ok'", got)
+	}
+
+	// Disabling requires no remote/workflow and clears the flag.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"issue_sync_enabled": false})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch 3: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_sync_enabled"]; got != float64(0) {
+		t.Errorf("issue_sync_enabled after disable = %v, want 0", got)
+	}
+}
+
 // TestReposList_Empty verifies a 200 with an empty array when no repos exist.
 func TestReposList_Empty(t *testing.T) {
 	router, _ := setupReposRouter(t, "")

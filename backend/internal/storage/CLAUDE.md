@@ -47,6 +47,7 @@ After editing any `.sql` file, run `sqlc generate` (or `go generate ./...` from 
 - `SetTaskActiveRun` sets both `current_agent_run_id` and `active_agent_run_id` atomically — used by dispatcher when creating a new run.
 - `ClearActiveAgentRun` sets only `active_agent_run_id = NULL` — used by pool on run completion.
 - `015_task_paused` adds `tasks.paused INTEGER NOT NULL DEFAULT 0`, toggled via `SetTaskPaused` / `PATCH /tasks/{id}/pause`. It's independent of `label` and `active_agent_run_id`, and persists across restarts (it's a column, not in-memory state).
+- `022_task_source` adds `tasks.source`/`tasks.source_ref` plus a partial unique index on `(source, source_ref) WHERE source != ''` — the GitHub Issues importer (`internal/tasksource`) checks `CountTasksBySource` before `CreateSourcedTask`, and the index guards against concurrent-insert races. Manually created tasks keep both fields `''`.
 
 ## Schema Key Tables
 

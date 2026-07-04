@@ -14,6 +14,7 @@ agent-task-editor/
 │   ├── workflows.md
 │   ├── agents.md
 │   ├── api.md
+│   ├── task-sources.md
 │   └── websocket.md
 ├── backend/                  # Go 1.24 server
 │   ├── cmd/server/           # Main entrypoint
@@ -23,7 +24,7 @@ agent-task-editor/
 │       ├── api/              # Chi router, handlers, middleware
 │       ├── config/           # YAML + env var config
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
-│       ├── tasksource/       # (task source abstraction)
+│       ├── tasksource/       # Task import from external trackers (GitHub Issues)
 │       ├── workflow/         # State machine engine
 │       └── ws/               # WebSocket hub and client management
 └── frontend/                 # React + TypeScript + Vite + Tailwind
@@ -59,6 +60,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
 | `LLM_API_KEY` | _(none)_ | API key for `anthropic` or `llm` provider |
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
+| `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer (see `docs/task-sources.md`) |
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set to `true` behind corporate TLS-inspecting proxies. Disables SSL verification for git clone, npm, and the claude CLI (Node.js). Set in your shell or a `.env` file — docker compose passes it as a build arg (npm install of claude-code) and runtime env vars (`GIT_SSL_NO_VERIFY`, `NPM_CONFIG_STRICT_SSL`, `NODE_TLS_REJECT_UNAUTHORIZED`). |
 
 ## Development Workflow

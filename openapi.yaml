@@ -38,6 +38,16 @@ components:
           description: >
             If set, the task is in a backed-off auto-retry state and will not
             be picked up by the dispatcher again until this time.
+        source:
+          type: string
+          description: >
+            Where the task was imported from ("github" for the GitHub Issues
+            importer). Empty for manually created tasks.
+        source_ref:
+          type: string
+          description: >
+            External item the task was imported from, unique within source
+            (e.g. "owner/repo#123"). Empty for manually created tasks.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
@@ -164,6 +174,15 @@ components:
         path:        { type: string }
         remote_url:  { type: string, nullable: true }
         workflow_id: { type: string, nullable: true }
+        issue_sync_enabled:
+          type: integer
+          description: >
+            1 = open GitHub issues matching issue_sync_label are periodically
+            imported as tasks (requires remote_url and workflow_id). 0 = off.
+        issue_sync_label:
+          type: string
+          description: >
+            Only import issues carrying this label (empty = all open issues).
         created_at:  { type: string, format: date-time }
 
     ReviewComment:

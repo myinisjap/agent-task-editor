@@ -515,6 +515,18 @@ export default function TaskDetailPage() {
                   </pre>
                 </div>
               )}
+              {task.source === 'github' && task.source_ref && (
+                <Row label="Source">
+                  <a
+                    href={`https://github.com/${task.source_ref.replace('#', '/issues/')}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                  >
+                    {task.source_ref}
+                  </a>
+                </Row>
+              )}
               <Row label="Created">
                 <span className="text-xs text-slate-400">{new Date(task.created_at).toLocaleDateString()}</span>
               </Row>

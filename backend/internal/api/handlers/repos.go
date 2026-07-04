@@ -55,10 +55,12 @@ func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name       string  `json:"name"`
-		Path       string  `json:"path"`
-		RemoteURL  *string `json:"remote_url"`
-		WorkflowID *string `json:"workflow_id"`
+		Name             string  `json:"name"`
+		Path             string  `json:"path"`
+		RemoteURL        *string `json:"remote_url"`
+		WorkflowID       *string `json:"workflow_id"`
+		IssueSyncEnabled bool    `json:"issue_sync_enabled"`
+		IssueSyncLabel   string  `json:"issue_sync_label"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -162,12 +164,26 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	issueSyncEnabled := int64(0)
+	if body.IssueSyncEnabled {
+		if remoteURL == "" {
+			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
+			return
+		}
+		if body.WorkflowID == nil || *body.WorkflowID == "" {
+			Err(w, http.StatusBadRequest, "issue sync requires a workflow (imported issues become tasks in that workflow)")
+			return
+		}
+		issueSyncEnabled = 1
+	}
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
-		ID:         uuid.NewString(),
-		Name:       body.Name,
-		Path:       body.Path,
-		RemoteUrl:  body.RemoteURL,
-		WorkflowID: body.WorkflowID,
+		ID:               uuid.NewString(),
+		Name:             body.Name,
+		Path:             body.Path,
+		RemoteUrl:        body.RemoteURL,
+		WorkflowID:       body.WorkflowID,
+		IssueSyncEnabled: issueSyncEnabled,
+		IssueSyncLabel:   strings.TrimSpace(body.IssueSyncLabel),
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -188,10 +204,12 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name       *string `json:"name"`
-		Path       *string `json:"path"`
-		RemoteURL  *string `json:"remote_url"`
-		WorkflowID *string `json:"workflow_id"`
+		Name             *string `json:"name"`
+		Path             *string `json:"path"`
+		RemoteURL        *string `json:"remote_url"`
+		WorkflowID       *string `json:"workflow_id"`
+		IssueSyncEnabled *bool   `json:"issue_sync_enabled"`
+		IssueSyncLabel   *string `json:"issue_sync_label"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -226,6 +244,30 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 			workflowID = nil
 		} else {
 			workflowID = &trimmed
+		}
+	}
+
+	issueSyncEnabled := existing.IssueSyncEnabled
+	if body.IssueSyncEnabled != nil {
+		issueSyncEnabled = 0
+		if *body.IssueSyncEnabled {
+			issueSyncEnabled = 1
+		}
+	}
+
+	issueSyncLabel := existing.IssueSyncLabel
+	if body.IssueSyncLabel != nil {
+		issueSyncLabel = strings.TrimSpace(*body.IssueSyncLabel)
+	}
+
+	if issueSyncEnabled != 0 {
+		if remoteURL == nil || *remoteURL == "" {
+			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
+			return
+		}
+		if workflowID == nil || *workflowID == "" {
+			Err(w, http.StatusBadRequest, "issue sync requires a workflow (imported issues become tasks in that workflow)")
+			return
 		}
 	}
 
@@ -270,11 +312,13 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo, err := h.q.UpdateRepo(r.Context(), gen.UpdateRepoParams{
-		ID:         id,
-		Name:       name,
-		Path:       path,
-		RemoteUrl:  remoteURL,
-		WorkflowID: workflowID,
+		ID:               id,
+		Name:             name,
+		Path:             path,
+		RemoteUrl:        remoteURL,
+		WorkflowID:       workflowID,
+		IssueSyncEnabled: issueSyncEnabled,
+		IssueSyncLabel:   issueSyncLabel,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

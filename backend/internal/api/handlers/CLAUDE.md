@@ -29,6 +29,8 @@ Persistent inline diff review comments (`task_review_comments`). Open comments a
 
 When `repoBaseDir` is non-empty, the `Create` handler rejects paths outside that directory. It resolves symlinks via `filepath.EvalSymlinks` (falls back to `filepath.Clean` if the path doesn't exist yet) before comparing.
 
+Issue sync (`issue_sync_enabled` / `issue_sync_label`): enabling requires both a `remote_url` and a `workflow_id` (Create returns `400` otherwise; Update validates the merged result). `PATCH` merges — omitted fields keep their existing values.
+
 ## Workflow YAML Handler Notes
 
 `ExportWorkflowYAML` and `ImportWorkflowYAML` live in `workflow_yaml.go`. Import wraps all inserts in a single transaction to keep the workflow consistent on partial failure.
