@@ -139,7 +139,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	cmd := exec.CommandContext(runCtx, r.binary(), args...)
 	cmd.Dir = input.RepoPath
 	env := mergeEnv(os.Environ(), input.AgentConfig.Env)
-	if tok := claudeOAuthToken(); tok != "" {
+	if tok := ClaudeOAuthAccessToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
 	}
 	cmd.Env = env
@@ -606,8 +606,13 @@ func buildClaudeSettingsJSON(enabledPlugins, commandAllowlist, commandDenylist [
 	return string(data), nil
 }
 
-// claudeOAuthToken reads the access token from ~/.claude/.credentials.json for --bare mode.
-func claudeOAuthToken() string {
+// ClaudeOAuthAccessToken reads the access token from
+// ~/.claude/.credentials.json (written by `claude login` for Claude
+// Max/Pro OAuth accounts). Returns "" on any read/parse failure or if the
+// file/field is absent — never errors, since the caller (--bare mode, or
+// the dashboard usage widget) should just treat that as "no OAuth
+// credentials available" and fall back gracefully.
+func ClaudeOAuthAccessToken() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""

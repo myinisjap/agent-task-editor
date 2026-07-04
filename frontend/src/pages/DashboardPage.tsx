@@ -92,6 +92,25 @@ export default function DashboardPage() {
         </section>
       )}
 
+      {/* Claude usage (live 5-hour / weekly rate-limit utilization) */}
+      {dash && dash.claude_usage?.available && (
+        <section className="mb-8">
+          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Claude usage</h2>
+          <div className="bg-slate-900 rounded-lg border border-slate-800 p-4 flex flex-col gap-4">
+            <UsageBar
+              label="5-hour window"
+              percent={dash.claude_usage.five_hour_percent ?? 0}
+              resetsAt={dash.claude_usage.five_hour_resets_at}
+            />
+            <UsageBar
+              label="Weekly window"
+              percent={dash.claude_usage.weekly_percent ?? 0}
+              resetsAt={dash.claude_usage.weekly_resets_at}
+            />
+          </div>
+        </section>
+      )}
+
       {/* Cost & usage */}
       {dash && dash.cost_total && (dash.cost_total.input_tokens > 0 || dash.cost_total.output_tokens > 0 || (dash.cost_by_provider?.length ?? 0) > 0) && (
         <section className="mb-8">
@@ -261,6 +280,33 @@ export default function DashboardPage() {
 
       {!dash && (
         <p className="text-sm text-slate-400">Loading…</p>
+      )}
+    </div>
+  )
+}
+
+/** A single 5h/weekly Claude usage row: label, percentage, progress bar, reset time. */
+function UsageBar({ label, percent, resetsAt }: { label: string; percent: number; resetsAt?: string | null }) {
+  const clamped = Math.min(100, Math.max(0, percent))
+  const barColor = clamped >= 95 ? 'bg-red-500' : clamped >= 80 ? 'bg-amber-500' : 'bg-emerald-500'
+  const textColor = clamped >= 95 ? 'text-red-400' : clamped >= 80 ? 'text-amber-400' : 'text-slate-300'
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-sm text-slate-300">{label}</span>
+        <span className={`text-sm font-semibold ${textColor}`}>{clamped.toFixed(0)}%</span>
+      </div>
+      <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+        <div
+          className={`h-full rounded-full ${barColor}`}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      {resetsAt && (
+        <div className="text-xs text-slate-500 mt-1">
+          Resets {new Date(resetsAt).toLocaleString()}
+        </div>
       )}
     </div>
   )
