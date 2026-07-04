@@ -45,11 +45,11 @@ Prefer plain Compose? `ATE_VERSION=v0.1.0 docker compose -f docker-compose.relea
 
 Open **http://localhost:5173** in your browser.
 
-> **Building from source instead?** The prebuilt images ship with a default
-> `1000:1000` UID/GID. If your host user differs and you hit permission errors on
-> bind-mounted repos, use `./dev.sh start` (or `docker compose up -d --build`),
-> which rebuilds the backend image remapped to your host UID/GID. See
-> [Local Development](#local-development).
+> **Repo file ownership.** The backend container remaps its runtime user to your
+> host user (`PUID`/`PGID`) at startup, so files agents write to bind-mounted
+> repos are owned by you, not root. `run.sh` and `dev.sh` set these from
+> `id -u`/`id -g` automatically; with plain Compose, export `PUID`/`PGID` or
+> accept the `1000:1000` default. No rebuild needed.
 
 Releases and their notes are on the
 [Releases page](https://github.com/myinisjap/agent-task-editor/releases); see

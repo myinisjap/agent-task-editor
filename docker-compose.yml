@@ -4,8 +4,6 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       args:
-        HOST_UID: ${HOST_UID:-1000}
-        HOST_GID: ${HOST_GID:-1000}
         # Set INSECURE_SKIP_SSL_VERIFY=true in your environment or .env file to
         # disable SSL certificate verification — required behind corporate
         # TLS-inspecting proxies (affects npm install of claude-code at build time
@@ -27,6 +25,10 @@ services:
       - PORT=8080
       - DB_PATH=/data/agent-task-editor.db
       - CORS_ORIGINS=http://localhost:5173
+      # Run agents as your host user so files they write to bind-mounted repos
+      # are owned by you, not root. dev.sh sets these from `id -u`/`id -g`.
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       # Path to the MCP sidecar binary built into the image
       - MCP_SERVER_PATH=/app/mcp-server
       # Optional: set API_TOKEN to require a Bearer token on all API requests

@@ -5,10 +5,9 @@
 # Or use ./run.sh, which injects the required env vars for you (repo mount,
 # GitHub token, Claude auth) and defaults ATE_VERSION to "latest".
 #
-# Note: the published images are built with the default 1000:1000 UID/GID. If
-# your host user differs and you hit permission errors on bind-mounted repos,
-# build from source with the main docker-compose.yml (which remaps the UID) or
-# chown the repo/data directories to 1000:1000.
+# The container remaps its runtime user to PUID/PGID at startup, so files agents
+# write to bind-mounted repos are owned by your host user. run.sh sets these from
+# `id -u`/`id -g`; they default to 1000:1000.
 services:
   backend:
     image: ghcr.io/myinisjap/agent-task-editor-backend:${ATE_VERSION:-latest}
@@ -29,6 +28,10 @@ services:
       - PORT=8080
       - DB_PATH=/data/agent-task-editor.db
       - CORS_ORIGINS=http://localhost:5173
+      # Run agents as your host user so files they write to bind-mounted repos
+      # are owned by you, not root. run.sh sets these from `id -u`/`id -g`.
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       # Path to the MCP sidecar binary built into the image
       - MCP_SERVER_PATH=/app/mcp-server
       # Optional: set API_TOKEN to require a Bearer token on all API requests

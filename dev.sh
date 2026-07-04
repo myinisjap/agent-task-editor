@@ -34,8 +34,10 @@ done
 unset _prefix _UNSAFE_PREFIXES
 
 export REPO_BASE_DIR
-# UID is readonly in zsh/bash and not automatically exported — pass via HOST_UID/HOST_GID.
-export HOST_UID=$(id -u) HOST_GID=$(id -g)
+# Passed to the backend container, which remaps its runtime user to these so
+# files agents write to bind-mounted repos are owned by the host user rather
+# than root (see backend/entrypoint.sh).
+export PUID=$(id -u) PGID=$(id -g)
 
 # Compute SSL-bypass env vars here rather than in docker-compose.yml, because
 # compose's ${VAR:+word} expansion fires on any non-empty string (including
@@ -92,11 +94,13 @@ case "$CMD" in
     $COMPOSE logs -f backend
     ;;
   login)
-    # Authenticate Claude CLI inside the running backend container.
-    $COMPOSE exec backend claude login
+    # Authenticate Claude CLI inside the running backend container. Run as the
+    # node user (the container's PID 1 drops to node via su-exec) so credentials
+    # land in the mounted /home/node/.claude, not root's home.
+    $COMPOSE exec --user node backend claude login
     ;;
   shell)
-    $COMPOSE exec backend sh
+    $COMPOSE exec --user node backend sh
     ;;
   dev-stop)
     # Kill any orphaned dev processes by port.

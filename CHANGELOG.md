@@ -19,4 +19,12 @@ this file's section for that version as the release notes.
   building from source.
 - `run.sh` helper that injects the runtime env vars (repo mount, GitHub token,
   Claude auth, SSL bypass) and starts the stack from published images.
+- Runtime `PUID`/`PGID` remap in the backend container: it steps down to the
+  host user at startup (via an entrypoint + `su-exec`) so files agents write to
+  bind-mounted repos are owned by you. Works for prebuilt images with no rebuild.
 - This changelog.
+
+### Changed
+- Backend image runs as the host user at runtime via `PUID`/`PGID` instead of a
+  build-time `HOST_UID`/`HOST_GID` remap. `dev.sh`/`run.sh` set these from
+  `id -u`/`id -g`; the build no longer bakes in a UID.
