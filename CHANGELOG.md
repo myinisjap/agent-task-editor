@@ -22,6 +22,9 @@ this file's section for that version as the release notes.
 - Runtime `PUID`/`PGID` remap in the backend container: it steps down to the
   host user at startup (via an entrypoint + `su-exec`) so files agents write to
   bind-mounted repos are owned by you. Works for prebuilt images with no rebuild.
+- Frontend unit tests (vitest) for the `src/lib` parsers — `parseAgentLog`,
+  `parseWorkflowYaml`/`validateWorkflow`, `parseDiff`, `condensedBoard`, and
+  `diffComments` — with real captured fixtures, wired into the frontend CI job.
 - This changelog.
 
 ### Changed
