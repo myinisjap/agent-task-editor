@@ -190,6 +190,25 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		}
 	}
 
+	// Open inline diff review comments are injected into the prompt on every
+	// run until an agent (or a human) resolves them.
+	var reviewComments []ReviewComment
+	if rows, err := d.q.ListOpenTaskReviewComments(ctx, t.ID); err != nil {
+		log.Warn("dispatcher: list open review comments", "err", err)
+	} else {
+		for _, c := range rows {
+			reviewComments = append(reviewComments, ReviewComment{
+				ID:         c.ID,
+				FilePath:   c.FilePath,
+				Side:       c.Side,
+				StartLine:  c.StartLine,
+				EndLine:    c.EndLine,
+				QuotedText: c.QuotedText,
+				Body:       c.Body,
+			})
+		}
+	}
+
 	transitions := d.buildTransitionHints(ctx, t.ID, t.WorkflowID, t.Label)
 	provider := d.ProviderFactory(agentCfg)
 
@@ -205,6 +224,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 			Transitions:        transitions,
 			Feedback:           feedback,
 			PriorPlan:          agentNotes,
+			OpenReviewComments: reviewComments,
 			AttachmentAbsPaths: attachmentAbsPaths,
 		},
 	})

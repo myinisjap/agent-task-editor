@@ -37,6 +37,10 @@ type Result struct {
 	Notes *string
 	// Structured info stored on the run for later inspection
 	StoredInfo *string
+	// ResolvedComments lists review comments the agent claims to have addressed
+	// (via the MCP sidecar's resolve_comment tool). The pool marks them resolved
+	// in the database only when the run completes successfully.
+	ResolvedComments []ResolvedComment
 	// InputTokens/OutputTokens are the total tokens consumed across the run
 	// (summed across every turn of a multi-turn agentic loop, where
 	// applicable). Zero if the provider does not report usage.
@@ -72,8 +76,30 @@ type RunInput struct {
 	Feedback *string
 	// Output from the plan stage, injected for later stages
 	PriorPlan *string
+	// Open inline diff review comments on the task, injected into the prompt
+	// so the agent addresses (and resolves) each one.
+	OpenReviewComments []ReviewComment
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
+}
+
+// ReviewComment is a minimal copy of storage's task_review_comments row —
+// an inline, file/line-anchored comment left by a human on the task's diff.
+type ReviewComment struct {
+	ID         string `json:"id"`
+	FilePath   string `json:"file_path"`
+	Side       string `json:"side"` // old | new
+	StartLine  int64  `json:"start_line"`
+	EndLine    int64  `json:"end_line"`
+	QuotedText string `json:"quoted_text"`
+	Body       string `json:"body"`
+}
+
+// ResolvedComment records an agent's claim (via the resolve_comment MCP tool)
+// that a specific review comment has been addressed.
+type ResolvedComment struct {
+	ID   string `json:"id"`
+	Note string `json:"note"`
 }
 
 // Task is a minimal copy of storage.Task to avoid import cycles.

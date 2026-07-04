@@ -218,6 +218,34 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		log.Error("pool: set run completed", "err", err)
 	}
 
+	// Mark review comments the agent resolved via the MCP resolve_comment tool.
+	// Only applied on a completed run — a failed run's claimed fixes never made
+	// it onto the branch (the safety-net commit only runs on completion).
+	if finalStatus == "completed" && len(result.ResolvedComments) > 0 {
+		applied := 0
+		for _, rc := range result.ResolvedComments {
+			note := rc.Note
+			if _, err := p.q.ResolveTaskReviewComment(ctx, gen.ResolveTaskReviewCommentParams{
+				ResolutionNote:  &note,
+				ResolvedByRunID: &job.RunID,
+				ID:              rc.ID,
+				TaskID:          job.Input.Task.ID,
+			}); err != nil {
+				// sql.ErrNoRows here means an unknown/already-resolved comment ID.
+				log.Warn("pool: resolve review comment", "comment_id", rc.ID, "err", err)
+				continue
+			}
+			applied++
+		}
+		if applied > 0 && p.pub != nil {
+			p.pub.Publish("task.review_comments_changed", map[string]any{
+				"task_id":  job.Input.Task.ID,
+				"run_id":   job.RunID,
+				"resolved": applied,
+			})
+		}
+	}
+
 	if result.Notes != nil && *result.Notes != "" {
 		if _, err := p.q.UpdateTaskNotes(ctx, gen.UpdateTaskNotesParams{
 			AgentNotes: *result.Notes,

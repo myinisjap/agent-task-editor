@@ -116,6 +116,37 @@ Get the task's accumulated changes — the diff of its per-task branch against t
 
 Returns `{ "branch": "...", "diff": "..." }`. `diff` is empty until an agent has been dispatched and a branch provisioned. When the task reaches a terminal label and the worktree is torn down, the diff is computed against the main repo clone (branch is preserved).
 
+### `GET /tasks/{id}/review-comments`
+List all inline diff review comments on the task (open and resolved), ordered oldest-first.
+
+### `POST /tasks/{id}/review-comments`
+Add a persistent, file/line-anchored review comment to the task's diff:
+
+```json
+{
+  "file_path": "src/main.go",
+  "side": "new",
+  "start_line": 10,
+  "end_line": 12,
+  "quoted_text": "x := 1",
+  "body": "use the existing helper here"
+}
+```
+
+While a comment is **open**, it is injected into every subsequent agent run's prompt under `"OPEN REVIEW COMMENTS"` with its `comment_id`. Agents address the comment and resolve it via the MCP sidecar's `resolve_comment` tool; the server applies resolutions only when the run completes successfully. Humans can resolve/reopen via `PATCH`.
+
+### `PATCH /tasks/{id}/review-comments/{comment_id}`
+Resolve or reopen a comment:
+
+```json
+{ "status": "resolved", "resolution_note": "renamed in abc123" }
+```
+
+`{"status": "open"}` reopens a resolved comment (clears the resolution note and resolving run). Resolving an already-resolved comment returns `404`.
+
+### `DELETE /tasks/{id}/review-comments/{comment_id}`
+Delete a comment entirely. Returns `204 No Content`.
+
 ### `GET /tasks/{id}/pr-url`
 Returns `{ "url": "..." }` — a GitHub `compare` URL with the PR **title and body pre-filled** (task title, description, agent notes, and commit subjects). Open it to create a fully-described PR in one click; no GitHub auth or `gh` CLI needed. Requires the repo to have a GitHub remote and the task to have a provisioned branch (else `400`).
 

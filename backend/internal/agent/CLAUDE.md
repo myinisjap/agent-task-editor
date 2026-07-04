@@ -96,6 +96,20 @@ govern automatic retries for **transient** provider errors only:
   transient-retry budget — the two mechanisms operate independently on
   different scopes (config-wide throttle vs per-task retry cap).
 
+## Review Comment Feedback Loop
+
+Humans leave persistent, file/line-anchored review comments on a task's diff
+(`task_review_comments`, managed via `/tasks/{id}/review-comments`). The
+dispatcher loads the task's **open** comments into
+`RunInput.OpenReviewComments`; `buildPrompt` renders them (with `comment_id`s)
+under `"OPEN REVIEW COMMENTS"`, so every provider sees them on every run until
+resolved. CLI providers with the MCP sidecar (`claude`, `qwen_code`) expose a
+`resolve_comment(comment_id, note)` tool; the sidecar accumulates resolutions
+in the result file and the pool applies them to the DB **only when the run
+completes successfully** (a failed run's claimed fixes never reached the
+branch), then publishes `task.review_comments_changed`. Humans can also
+resolve/reopen comments directly in the UI.
+
 ## Dispatch / Active Run Locking
 
 `active_agent_run_id` prevents double-dispatch:

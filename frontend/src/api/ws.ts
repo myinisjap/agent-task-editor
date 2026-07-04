@@ -8,6 +8,7 @@ export type WSEvent =
   | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
   | { type: 'agent.log'; payload: { task_id: string; run_id: string; entry: AgentLog } }
   | { type: 'task.git_state_changed'; payload: { task_id: string; git_state: string; pr_url: string } }
+  | { type: 'task.review_comments_changed'; payload: { task_id: string; run_id: string; resolved: number } }
   | { type: 'task.created'; payload: Task }
   | { type: 'task.updated'; payload: Task }
 

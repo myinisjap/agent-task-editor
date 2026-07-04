@@ -9,16 +9,41 @@ import (
 
 // result mirrors agent.Result for JSON serialisation.
 type result struct {
-	Status     string  `json:"Status"`
-	Outcome    string  `json:"Outcome,omitempty"`
-	Message    *string `json:"Message,omitempty"`
-	Notes      *string `json:"Notes,omitempty"`
-	StoredInfo *string `json:"StoredInfo,omitempty"`
+	Status           string            `json:"Status"`
+	Outcome          string            `json:"Outcome,omitempty"`
+	Message          *string           `json:"Message,omitempty"`
+	Notes            *string           `json:"Notes,omitempty"`
+	StoredInfo       *string           `json:"StoredInfo,omitempty"`
+	ResolvedComments []resolvedComment `json:"ResolvedComments,omitempty"`
+}
+
+// resolvedComment mirrors agent.ResolvedComment.
+type resolvedComment struct {
+	ID   string `json:"id"`
+	Note string `json:"note"`
 }
 
 type transitionHint struct {
 	ToLabel string `json:"to_label"`
 	Path    string `json:"path"`
+}
+
+// reviewComment carries just enough of agent.ReviewComment for the sidecar to
+// validate resolve_comment calls against the set of open comments.
+type reviewComment struct {
+	ID string `json:"id"`
+}
+
+// toolState accumulates per-run state across tool calls: task notes, stored
+// info, resolved review comments, and the terminal result (once
+// signal_complete/request_human has fired) so later resolve_comment calls can
+// re-persist it with updated resolutions.
+type toolState struct {
+	notes      string
+	storedInfo string
+	resolved   []resolvedComment
+	terminal   *result
+	commentIDs map[string]bool
 }
 
 type rpcRequest struct {
@@ -62,12 +87,22 @@ func main() {
 		_ = json.Unmarshal([]byte(raw), &transitions)
 	}
 
+	// Parse open review comments from env (set by MCPManager.Prepare) so
+	// resolve_comment can validate IDs against the set of open comments.
+	st := &toolState{commentIDs: map[string]bool{}}
+	if raw := os.Getenv("REVIEW_COMMENTS"); raw != "" {
+		var comments []reviewComment
+		_ = json.Unmarshal([]byte(raw), &comments)
+		for _, c := range comments {
+			if c.ID != "" {
+				st.commentIDs[c.ID] = true
+			}
+		}
+	}
+
 	enc := json.NewEncoder(os.Stdout)
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
-
-	var currentNotes string
-	var currentStoredInfo string
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -161,6 +196,18 @@ func main() {
 							"required": []string{"info"},
 						},
 					},
+					{
+						"name":        "resolve_comment",
+						"description": "Mark an inline diff review comment (from the OPEN REVIEW COMMENTS section of your prompt) as addressed. Call once per comment after you have made the fix.",
+						"inputSchema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"comment_id": map[string]any{"type": "string", "description": "The comment_id from the OPEN REVIEW COMMENTS section"},
+								"note":       map[string]any{"type": "string", "description": "One-line description of how the comment was addressed"},
+							},
+							"required": []string{"comment_id", "note"},
+						},
+					},
 				},
 			})
 
@@ -174,7 +221,7 @@ func main() {
 				continue
 			}
 
-			text, r := dispatchTool(params.Name, params.Arguments, &currentNotes, &currentStoredInfo, transitions)
+			text, r := dispatchTool(params.Name, params.Arguments, st, transitions)
 			if r != nil {
 				if data, err := json.Marshal(r); err == nil {
 					if err := os.WriteFile(resultFile, data, 0600); err != nil {
@@ -193,7 +240,12 @@ func main() {
 	}
 }
 
-func dispatchTool(name string, args json.RawMessage, currentNotes, currentStoredInfo *string, transitions []transitionHint) (string, *result) {
+// dispatchTool executes one tool call against the accumulated run state.
+// The returned *result, when non-nil, must be persisted to RESULT_FILE by the
+// caller — terminal tools (signal_complete/request_human) return the full
+// result, and resolve_comment returns the current state so resolutions
+// survive even if the agent never signals completion.
+func dispatchTool(name string, args json.RawMessage, st *toolState, transitions []transitionHint) (string, *result) {
 	switch name {
 	case "get_task_transitions":
 		if len(transitions) == 0 {
@@ -210,12 +262,8 @@ func dispatchTool(name string, args json.RawMessage, currentNotes, currentStored
 		_ = json.Unmarshal(args, &a)
 		msg := a.Summary
 		r := &result{Status: "completed", Outcome: a.Outcome, Message: &msg}
-		if *currentNotes != "" {
-			r.Notes = currentNotes
-		}
-		if *currentStoredInfo != "" {
-			r.StoredInfo = currentStoredInfo
-		}
+		st.fill(r)
+		st.terminal = r
 		return "acknowledged", r
 
 	case "request_human":
@@ -225,12 +273,8 @@ func dispatchTool(name string, args json.RawMessage, currentNotes, currentStored
 		_ = json.Unmarshal(args, &a)
 		msg := a.Message
 		r := &result{Status: "waiting_human", Message: &msg}
-		if *currentNotes != "" {
-			r.Notes = currentNotes
-		}
-		if *currentStoredInfo != "" {
-			r.StoredInfo = currentStoredInfo
-		}
+		st.fill(r)
+		st.terminal = r
 		return "pausing for human input", r
 
 	case "store_info":
@@ -238,7 +282,7 @@ func dispatchTool(name string, args json.RawMessage, currentNotes, currentStored
 			Info string `json:"info"`
 		}
 		_ = json.Unmarshal(args, &a)
-		*currentStoredInfo = a.Info
+		st.storedInfo = a.Info
 		return "stored", nil
 
 	case "update_task_notes":
@@ -247,14 +291,57 @@ func dispatchTool(name string, args json.RawMessage, currentNotes, currentStored
 			Append bool   `json:"append"`
 		}
 		_ = json.Unmarshal(args, &a)
-		if a.Append && *currentNotes != "" {
-			*currentNotes = *currentNotes + "\n\n" + a.Notes
+		if a.Append && st.notes != "" {
+			st.notes = st.notes + "\n\n" + a.Notes
 		} else {
-			*currentNotes = a.Notes
+			st.notes = a.Notes
 		}
 		return "Task notes updated", nil
 
+	case "resolve_comment":
+		var a struct {
+			CommentID string `json:"comment_id"`
+			Note      string `json:"note"`
+		}
+		_ = json.Unmarshal(args, &a)
+		if a.CommentID == "" {
+			return "comment_id is required", nil
+		}
+		if len(st.commentIDs) > 0 && !st.commentIDs[a.CommentID] {
+			return "unknown comment_id: " + a.CommentID + " (not in this task's open review comments)", nil
+		}
+		for _, rc := range st.resolved {
+			if rc.ID == a.CommentID {
+				return "comment already resolved", nil
+			}
+		}
+		st.resolved = append(st.resolved, resolvedComment{ID: a.CommentID, Note: a.Note})
+		// Persist immediately: if the run already signalled a terminal result,
+		// re-write it with the updated resolutions; otherwise write a partial
+		// result (no Status) so resolutions survive an agent that exits
+		// without calling signal_complete.
+		if st.terminal != nil {
+			st.terminal.ResolvedComments = st.resolved
+			return "comment resolved", st.terminal
+		}
+		return "comment resolved", &result{ResolvedComments: st.resolved}
+
 	default:
 		return "unknown tool: " + name, nil
+	}
+}
+
+// fill copies the accumulated notes/stored-info/resolutions onto a terminal result.
+func (st *toolState) fill(r *result) {
+	if st.notes != "" {
+		notes := st.notes
+		r.Notes = &notes
+	}
+	if st.storedInfo != "" {
+		info := st.storedInfo
+		r.StoredInfo = &info
+	}
+	if len(st.resolved) > 0 {
+		r.ResolvedComments = st.resolved
 	}
 }

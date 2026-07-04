@@ -110,6 +110,21 @@ Store structured information about this run that will be visible in the task vie
 
 ---
 
+### `resolve_comment`
+
+Mark an inline diff review comment as addressed. Open review comments appear in the agent's prompt under `"OPEN REVIEW COMMENTS"`, each with a `comment_id`. After making the fix for a comment, call this tool once with that ID.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|---|---|---|---|
+| `comment_id` | string | ✅ | The `comment_id` from the OPEN REVIEW COMMENTS prompt section |
+| `note` | string | ✅ | One-line description of how the comment was addressed |
+
+**Behaviour:** resolutions are persisted immediately to the result file (so they survive even if the run never calls `signal_complete`), but the server only marks comments resolved in the database when the run finishes with status `completed` — a failed run's claimed fixes never landed on the branch. Unknown or already-resolved IDs are rejected with an error message. The resolution note is shown next to the comment in the diff viewer.
+
+---
+
 ## Environment Variables (set by MCPManager)
 
 The `mcp-server` binary reads these from its environment:
@@ -119,6 +134,7 @@ The `mcp-server` binary reads these from its environment:
 | `RUN_ID` | UUID of the current agent run |
 | `RESULT_FILE` | Path to a temp file where the sidecar writes the JSON result |
 | `TRANSITIONS` | JSON array of `{"to_label":"...","path":"..."}` objects for the current task |
+| `REVIEW_COMMENTS` | JSON array of the task's open review comments (used to validate `resolve_comment` IDs) |
 
 ## Building the MCP Server
 

@@ -4,10 +4,14 @@ A minimal MCP (Model Context Protocol) server that the `claude` provider runs as
 
 ## Purpose
 
-The Claude CLI (`claude -p`) supports external MCP servers via `--mcp-config`. The sidecar exposes two tools that let the agent signal back to the orchestration system:
+The Claude CLI (`claude -p`) supports external MCP servers via `--mcp-config`. The sidecar exposes tools that let the agent signal back to the orchestration system:
 
-- `signal_complete(next_label, summary)` — marks the agent run as completed and specifies which workflow label to transition the task to
+- `get_task_transitions()` — lists the valid outcome transitions from the task's current label
+- `signal_complete(outcome, summary)` — marks the agent run as completed with outcome `success`/`failure`; the pool resolves the next workflow label
 - `request_human(message)` — pauses the run and surfaces a message for human review before the agent continues
+- `update_task_notes(notes, append)` — persists markdown notes on the task for subsequent agents
+- `store_info(info)` — stores per-run info shown in the task detail view
+- `resolve_comment(comment_id, note)` — marks an inline diff review comment (from the prompt's "OPEN REVIEW COMMENTS" section) as addressed; applied to the DB by the pool only if the run completes successfully
 
 ## How It Works
 
@@ -22,6 +26,8 @@ The Claude CLI (`claude -p`) supports external MCP servers via `--mcp-config`. T
 |---|---|
 | `RUN_ID` | The agent run UUID (set by `MCPManager.Prepare`) |
 | `RESULT_FILE` | Path where the result JSON is written (set by `MCPManager.Prepare`) |
+| `TRANSITIONS` | JSON array of available transitions for `get_task_transitions` |
+| `REVIEW_COMMENTS` | JSON array of open review comments, used to validate `resolve_comment` IDs |
 
 ## Protocol Details
 

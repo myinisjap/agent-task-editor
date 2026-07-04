@@ -22,6 +22,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
 	reposH := handlers.NewReposHandler(q, repoBaseDir)
+	reviewH := handlers.NewReviewCommentsHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 
@@ -73,6 +74,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Get("/tasks/{id}/github-status", tasksH.GitHubStatus)
 		r.Patch("/tasks/{id}/git-state", tasksH.UpdateGitState)
 		r.Patch("/tasks/{id}/pause", tasksH.SetPaused)
+
+		// Inline diff review comments — persisted, injected into agent prompts while open
+		r.Get("/tasks/{id}/review-comments", reviewH.List)
+		r.Post("/tasks/{id}/review-comments", reviewH.Create)
+		r.Patch("/tasks/{id}/review-comments/{comment_id}", reviewH.Update)
+		r.Delete("/tasks/{id}/review-comments/{comment_id}", reviewH.Delete)
 
 		// GitHub auth status (used by the frontend to warn when gh credentials are absent)
 		r.Get("/github/auth-status", handlers.GitHubAuthStatus)

@@ -94,6 +94,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 - **Workflow editor** — create/edit labels, transitions, trigger types; import/export YAML
 - **Agent config UI** — manage multiple AI configs each targeting different workflow stages
 - **Git diff viewer** — per-task branch diff against the base ref
+- **Inline diff review comments** — leave file/line-anchored comments on the diff; open comments are injected into every agent run's prompt until the agent resolves them via the `resolve_comment` MCP tool (resolutions show up threaded in the diff viewer)
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
 - **GitHub Issues sync** — auto-sync task labels with GitHub PR state; once a PR
   is detected as merged, the task's local branch (and any leftover worktree) are

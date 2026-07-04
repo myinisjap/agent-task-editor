@@ -23,6 +23,7 @@ sql:
       - "internal/storage/migrations/018_agent_run_usage.up.sql"
       - "internal/storage/migrations/019_agent_command_filters.up.sql"
       - "internal/storage/migrations/020_agent_retry_policy.up.sql"
+      - "internal/storage/migrations/021_task_review_comments.up.sql"
     gen:
       go:
         package: "gen"

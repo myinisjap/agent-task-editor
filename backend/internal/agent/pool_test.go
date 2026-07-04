@@ -316,6 +316,117 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 	}
 }
 
+// TestPool_ResolvedComments_MarkedResolved verifies that when a completed run
+// carries ResolvedComments (from the MCP resolve_comment tool), the pool marks
+// the matching open review comments resolved with the run ID and note, and
+// leaves unknown IDs alone.
+func TestPool_ResolvedComments_MarkedResolved(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	commentID := uuid.NewString()
+	_, err := q.CreateTaskReviewComment(context.Background(), gen.CreateTaskReviewCommentParams{
+		ID:        commentID,
+		TaskID:    taskID,
+		FilePath:  "main.go",
+		Side:      "new",
+		StartLine: 1,
+		EndLine:   2,
+		Body:      "fix this",
+	})
+	if err != nil {
+		t.Fatalf("create review comment: %v", err)
+	}
+
+	provider := &mockProvider{result: agent.Result{
+		Status:  "completed",
+		Outcome: "success",
+		ResolvedComments: []agent.ResolvedComment{
+			{ID: commentID, Note: "used the helper"},
+			{ID: "not-a-real-comment", Note: "ignored"},
+		},
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
+
+	waitForLabel(t, q, taskID, "review-plan")
+	cancel()
+
+	c, err := q.GetTaskReviewComment(context.Background(), gen.GetTaskReviewCommentParams{ID: commentID, TaskID: taskID})
+	if err != nil {
+		t.Fatalf("get review comment: %v", err)
+	}
+	if c.Status != "resolved" {
+		t.Errorf("expected comment resolved, got %q", c.Status)
+	}
+	if c.ResolutionNote == nil || *c.ResolutionNote != "used the helper" {
+		t.Errorf("expected resolution note preserved, got %v", c.ResolutionNote)
+	}
+	if c.ResolvedByRunID == nil || *c.ResolvedByRunID != runID {
+		t.Errorf("expected resolved_by_run_id %q, got %v", runID, c.ResolvedByRunID)
+	}
+	if !pub.hasEvent("task.review_comments_changed") {
+		t.Errorf("expected task.review_comments_changed event")
+	}
+}
+
+// TestPool_ResolvedComments_IgnoredOnFailure verifies that a failed run's
+// claimed resolutions are NOT applied — the fixes never landed on the branch.
+func TestPool_ResolvedComments_IgnoredOnFailure(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	commentID := uuid.NewString()
+	_, err := q.CreateTaskReviewComment(context.Background(), gen.CreateTaskReviewCommentParams{
+		ID:        commentID,
+		TaskID:    taskID,
+		FilePath:  "main.go",
+		Side:      "new",
+		StartLine: 1,
+		EndLine:   1,
+		Body:      "fix this",
+	})
+	if err != nil {
+		t.Fatalf("create review comment: %v", err)
+	}
+
+	provider := &mockProvider{result: agent.Result{
+		Status:           "failed",
+		ResolvedComments: []agent.ResolvedComment{{ID: commentID, Note: "claimed fix"}},
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
+
+	waitForStatus(t, q, runID, "failed")
+	cancel()
+
+	c, err := q.GetTaskReviewComment(context.Background(), gen.GetTaskReviewCommentParams{ID: commentID, TaskID: taskID})
+	if err != nil {
+		t.Fatalf("get review comment: %v", err)
+	}
+	if c.Status != "open" {
+		t.Errorf("expected comment to stay open after failed run, got %q", c.Status)
+	}
+}
+
 func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 	db := openAgentTestDB(t)
 	pub := &testPub{}
