@@ -166,6 +166,27 @@ components:
         workflow_id: { type: string, nullable: true }
         created_at:  { type: string, format: date-time }
 
+    ReviewComment:
+      type: object
+      description: >-
+        A persistent, file/line-anchored inline review comment on a task's
+        diff. Open comments are injected into every agent run's prompt until
+        resolved (by an agent via the MCP resolve_comment tool, or by a human).
+      properties:
+        id:                 { type: string }
+        task_id:            { type: string }
+        file_path:          { type: string }
+        side:               { type: string, enum: [old, new] }
+        start_line:         { type: integer }
+        end_line:           { type: integer }
+        quoted_text:        { type: string }
+        body:               { type: string }
+        status:             { type: string, enum: [open, resolved] }
+        resolution_note:    { type: string, nullable: true }
+        resolved_by_run_id: { type: string, nullable: true, description: "Run that resolved it; null when human-resolved" }
+        created_at:         { type: string, format: date-time }
+        updated_at:         { type: string, format: date-time }
+
     AgentRun:
       type: object
       properties:
@@ -439,6 +460,97 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
+
+  /tasks/{id}/review-comments:
+    get:
+      summary: List inline diff review comments on a task (open and resolved)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ReviewComment" }
+    post:
+      summary: Add an inline diff review comment
+      description: >
+        Creates a persistent, file/line-anchored review comment on the task's
+        diff. Open comments are injected into every subsequent agent run's
+        prompt (under "OPEN REVIEW COMMENTS") until resolved — by the agent via
+        the MCP resolve_comment tool, or by a human via PATCH.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_path, start_line, end_line, body]
+              properties:
+                file_path:   { type: string }
+                side:        { type: string, enum: [old, new], default: new }
+                start_line:  { type: integer, minimum: 1 }
+                end_line:    { type: integer, minimum: 1 }
+                quoted_text: { type: string, description: "Diff content the comment anchors to" }
+                body:        { type: string, description: "The review comment text" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewComment" }
+
+  /tasks/{id}/review-comments/{comment_id}:
+    patch:
+      summary: Resolve or reopen a review comment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: comment_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:          { type: string, enum: [resolved, open] }
+                resolution_note: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewComment" }
+        "404":
+          description: Comment not found (or already resolved when resolving)
+    delete:
+      summary: Delete a review comment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: comment_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Deleted
 
   /tasks/{id}/diff:
     get:

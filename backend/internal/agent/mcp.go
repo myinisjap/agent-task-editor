@@ -45,11 +45,13 @@ type TransitionHint struct {
 
 // Prepare creates temp files for one agent run and returns the config.
 // transitions is the list of agent-available transitions from the task's current label.
+// reviewComments is the list of open inline diff review comments on the task,
+// passed so the sidecar's resolve_comment tool can validate comment IDs.
 // extraServers, if non-nil, is merged into the mcpServers map as raw JSON entries
 // (e.g. user-selected Claude MCP servers read from ~/.claude.json). A server named
 // "task-editor" in extraServers is ignored to avoid colliding with the sidecar entry.
 // The caller must call Cleanup when the run ends.
-func (m *MCPManager) Prepare(runID string, transitions []TransitionHint, extraServers map[string]json.RawMessage) (*MCPRunConfig, error) {
+func (m *MCPManager) Prepare(runID string, transitions []TransitionHint, reviewComments []ReviewComment, extraServers map[string]json.RawMessage) (*MCPRunConfig, error) {
 	dir := os.TempDir()
 
 	resultFile := filepath.Join(dir, fmt.Sprintf("ate-result-%s.json", runID))
@@ -59,6 +61,10 @@ func (m *MCPManager) Prepare(runID string, transitions []TransitionHint, extraSe
 	if err != nil {
 		return nil, fmt.Errorf("marshal transitions: %w", err)
 	}
+	reviewCommentsJSON, err := json.Marshal(reviewComments)
+	if err != nil {
+		return nil, fmt.Errorf("marshal review comments: %w", err)
+	}
 
 	cfg := mcpConfig{
 		MCPServers: map[string]mcpServerEntry{
@@ -67,9 +73,10 @@ func (m *MCPManager) Prepare(runID string, transitions []TransitionHint, extraSe
 				Command: m.ServerBinary,
 				Args:    []string{},
 				Env: map[string]string{
-					"RUN_ID":      runID,
-					"RESULT_FILE": resultFile,
-					"TRANSITIONS": string(transitionsJSON),
+					"RUN_ID":          runID,
+					"RESULT_FILE":     resultFile,
+					"TRANSITIONS":     string(transitionsJSON),
+					"REVIEW_COMMENTS": string(reviewCommentsJSON),
 				},
 			},
 		},
@@ -130,6 +137,12 @@ func (c *MCPRunConfig) ReadResult() Result {
 	if err := json.Unmarshal(data, &r); err != nil {
 		status := "completed"
 		return Result{Status: status}
+	}
+	// A result file with no Status means the sidecar persisted intermediate
+	// state (e.g. resolve_comment calls) but the agent never reached
+	// signal_complete/request_human — same semantics as a missing file.
+	if r.Status == "" {
+		r.Status = "completed"
 	}
 	return r
 }

@@ -48,7 +48,7 @@ func buildClaudeArgs(input RunInput, sidecarEnabled bool, mcpCfg *MCPRunConfig) 
 
 	allowedTools := "Edit,Write,Read,Bash,Glob,Grep"
 	if sidecarEnabled {
-		allowedTools += ",mcp__task-editor__get_task_transitions,mcp__task-editor__signal_complete,mcp__task-editor__request_human,mcp__task-editor__update_task_notes,mcp__task-editor__store_info"
+		allowedTools += ",mcp__task-editor__get_task_transitions,mcp__task-editor__signal_complete,mcp__task-editor__request_human,mcp__task-editor__update_task_notes,mcp__task-editor__store_info,mcp__task-editor__resolve_comment"
 	}
 	// Allow tools from each selected MCP server. Claude Code supports
 	// server-level wildcarding via the bare "mcp__<server>" entry; this has
@@ -117,7 +117,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			mgr = &MCPManager{}
 		}
 		var err error
-		mcpCfg, err = mgr.Prepare(input.RunID, input.Transitions, extraServers)
+		mcpCfg, err = mgr.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, extraServers)
 		if err != nil {
 			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
 		}
@@ -473,6 +473,23 @@ func buildPrompt(input RunInput) string {
 		b.WriteString(*input.Feedback)
 		b.WriteString("\n\n---\n\n")
 	}
+	if len(input.OpenReviewComments) > 0 {
+		b.WriteString("OPEN REVIEW COMMENTS (inline comments a human left on your branch's diff — address every one):\n\n")
+		for i, c := range input.OpenReviewComments {
+			lineRef := fmt.Sprintf("line %d", c.StartLine)
+			if c.EndLine != c.StartLine {
+				lineRef = fmt.Sprintf("lines %d-%d", c.StartLine, c.EndLine)
+			}
+			fmt.Fprintf(&b, "%d. [comment_id: %s] %s (%s):\n", i+1, c.ID, c.FilePath, lineRef)
+			if c.QuotedText != "" {
+				b.WriteString("```\n")
+				b.WriteString(c.QuotedText)
+				b.WriteString("\n```\n")
+			}
+			fmt.Fprintf(&b, "→ %s\n\n", c.Body)
+		}
+		b.WriteString("After addressing each comment, call mcp__task-editor__resolve_comment with its comment_id and a one-line note describing your fix. If that tool is unavailable, list each addressed comment_id in your task notes instead.\n\n---\n\n")
+	}
 	if input.PriorPlan != nil && *input.PriorPlan != "" {
 		b.WriteString("NOTES FROM PRIOR AGENT:\n")
 		b.WriteString(*input.PriorPlan)
@@ -501,7 +518,7 @@ func buildSystemPrompt(input RunInput) string {
 	if input.RepoPath != "" {
 		dirLine = fmt.Sprintf("\n\nThe repository you are working on is located at: %s\nAll file operations should be performed relative to this directory.", input.RepoPath)
 	}
-	suffix := "\n\nIf the prompt contains a \"NOTES FROM PRIOR AGENT\" section, read it carefully before starting — it contains context, plans, and decisions from previous agents in this workflow.\n\nBefore calling mcp__task-editor__signal_complete, call mcp__task-editor__update_task_notes with a concise summary of what you did, what decisions you made, and any context the next agent will need. If prior notes exist (\"NOTES FROM PRIOR AGENT\" was present), use append:true to preserve them. This is how agents hand off state to each other — always do it.\n\nWhen your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"
+	suffix := "\n\nIf the prompt contains an \"OPEN REVIEW COMMENTS\" section, treat each comment as a code-review finding on your branch: address every one, then call mcp__task-editor__resolve_comment with the comment's comment_id and a one-line note describing the fix.\n\nIf the prompt contains a \"NOTES FROM PRIOR AGENT\" section, read it carefully before starting — it contains context, plans, and decisions from previous agents in this workflow.\n\nBefore calling mcp__task-editor__signal_complete, call mcp__task-editor__update_task_notes with a concise summary of what you did, what decisions you made, and any context the next agent will need. If prior notes exist (\"NOTES FROM PRIOR AGENT\" was present), use append:true to preserve them. This is how agents hand off state to each other — always do it.\n\nWhen your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"
 	return base + dirLine + suffix
 }
 

@@ -63,6 +63,7 @@ func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 			"mcp__task-editor__request_human",
 			"mcp__task-editor__update_task_notes",
 			"mcp__task-editor__store_info",
+			"mcp__task-editor__resolve_comment",
 		)
 	}
 	// Command allowlist: qwen reuses the same Bash(pattern) tool-restriction
@@ -87,7 +88,7 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 	var mcpCfg *MCPRunConfig
 	if r.MCP != nil && r.MCP.ServerBinary != "" {
 		var err error
-		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, nil)
+		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, nil)
 		if err != nil {
 			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
 		}

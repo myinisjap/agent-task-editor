@@ -67,6 +67,25 @@ export type AgentRun = {
   cost_usd?: number
 }
 
+// ReviewComment is a persistent, file/line-anchored inline comment on a
+// task's diff. Open comments are injected into every agent run's prompt until
+// resolved (by the agent via the MCP resolve_comment tool, or by a human).
+export type ReviewComment = {
+  id: string
+  task_id: string
+  file_path: string
+  side: 'old' | 'new'
+  start_line: number
+  end_line: number
+  quoted_text: string
+  body: string
+  status: 'open' | 'resolved'
+  resolution_note?: string | null
+  resolved_by_run_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type AgentLog = {
   id: string
   agent_run_id: string
@@ -216,6 +235,13 @@ export const api = {
       request<Task>(`/tasks/${id}/git-state`, { method: 'PATCH', body: JSON.stringify({ git_state }) }),
     setPaused: (id: string, paused: boolean) =>
       request<Task>(`/tasks/${id}/pause`, { method: 'PATCH', body: JSON.stringify({ paused }) }),
+    reviewComments: (id: string) => request<ReviewComment[]>(`/tasks/${id}/review-comments`),
+    addReviewComment: (id: string, body: { file_path: string; side: 'old' | 'new'; start_line: number; end_line: number; quoted_text?: string; body: string }) =>
+      request<ReviewComment>(`/tasks/${id}/review-comments`, { method: 'POST', body: JSON.stringify(body) }),
+    updateReviewComment: (id: string, commentId: string, body: { status: 'resolved' | 'open'; resolution_note?: string }) =>
+      request<ReviewComment>(`/tasks/${id}/review-comments/${commentId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    deleteReviewComment: (id: string, commentId: string) =>
+      request<void>(`/tasks/${id}/review-comments/${commentId}`, { method: 'DELETE' }),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type AgentLog, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { parseDiff, type FileDiff } from '../lib/parseDiff'
-import { buildRejectionNote, type DiffComment } from '../lib/diffComments'
+import { fromApiComment, type DiffComment } from '../lib/diffComments'
 import FileDiffViewer from '../components/diff/FileDiffViewer'
 import AgentLogEntry from '../components/board/AgentLogEntry'
 import { useAgentsStore } from '../stores/agents'
@@ -54,6 +54,13 @@ export default function TaskDetailPage() {
     }).catch(() => {})
   }, [id])
 
+  const refreshComments = useCallback(() => {
+    if (!id) return
+    api.tasks.reviewComments(id)
+      .then((cs) => setDiffComments((cs ?? []).map(fromApiComment)))
+      .catch(() => {})
+  }, [id])
+
   // Fetch agent configs for name lookup
   useEffect(() => {
     fetchAgents()
@@ -94,12 +101,16 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (!task?.id) return
     setDiffLoading(true)
-    setDiffComments([])
     api.tasks.diff(task.id)
       .then((d) => setDiffFiles(parseDiff(d.diff)))
       .catch(() => setDiffFiles([]))
       .finally(() => setDiffLoading(false))
   }, [task?.id])
+
+  // Load persisted review comments (open + resolved) when the task changes.
+  useEffect(() => {
+    refreshComments()
+  }, [refreshComments])
 
   // WS subscription
   useEffect(() => {
@@ -125,6 +136,9 @@ export default function TaskDetailPage() {
           )
         )
         refreshTask()
+        refreshComments()
+      } else if (event.type === 'task.review_comments_changed' && event.payload.task_id === id) {
+        refreshComments()
       } else if (event.type === 'task.needs_human' && event.payload.task_id === id) {
         refreshRuns()
         refreshTask()
@@ -137,7 +151,7 @@ export default function TaskDetailPage() {
       off()
       wsClient.unsubscribeTask(id)
     }
-  }, [id, selectedRun, refreshTask, refreshRuns])
+  }, [id, selectedRun, refreshTask, refreshRuns, refreshComments])
 
   // Auto-scroll log pane
   useEffect(() => {
@@ -207,13 +221,14 @@ export default function TaskDetailPage() {
     }
   }
 
+  const openComments = diffComments.filter((c) => c.status !== 'resolved')
+
   const handleApprove = async () => {
     if (!id) return
     setActionPending(true)
     try {
       const updated = await api.tasks.approve(id)
       setTask(updated)
-      setDiffComments([])
       refreshRuns()
     } catch (e: any) {
       alert(e.message)
@@ -223,19 +238,60 @@ export default function TaskDetailPage() {
   }
 
   const handleReject = async () => {
-    if (!id || (!rejectNote.trim() && diffComments.length === 0)) return
+    // Open review comments are persisted server-side and injected into the
+    // next run's prompt directly — only the free-text note travels here.
+    if (!id || (!rejectNote.trim() && openComments.length === 0)) return
     setActionPending(true)
     try {
-      const note = buildRejectionNote(rejectNote, diffComments)
-      const updated = await api.tasks.reject(id, note)
+      const updated = await api.tasks.reject(id, rejectNote.trim())
       setTask(updated)
       setRejectNote('')
-      setDiffComments([])
       refreshRuns()
     } catch (e: any) {
       alert(e.message)
     } finally {
       setActionPending(false)
+    }
+  }
+
+  const handleAddComment = async (draft: DiffComment) => {
+    if (!id) return
+    // Optimistic insert with the draft's temporary id, replaced (or rolled
+    // back) once the API responds.
+    setDiffComments((prev) => [...prev, draft])
+    try {
+      const created = await api.tasks.addReviewComment(id, {
+        file_path: draft.filePath,
+        side: draft.side,
+        start_line: draft.startLine,
+        end_line: draft.endLine,
+        quoted_text: draft.quotedText,
+        body: draft.comment,
+      })
+      setDiffComments((prev) => prev.map((c) => (c.id === draft.id ? fromApiComment(created) : c)))
+    } catch (e: any) {
+      setDiffComments((prev) => prev.filter((c) => c.id !== draft.id))
+      alert(`Failed to save comment: ${e.message ?? e}`)
+    }
+  }
+
+  const handleRemoveComment = async (commentId: string) => {
+    if (!id) return
+    try {
+      await api.tasks.deleteReviewComment(id, commentId)
+      setDiffComments((prev) => prev.filter((c) => c.id !== commentId))
+    } catch (e: any) {
+      alert(`Failed to delete comment: ${e.message ?? e}`)
+    }
+  }
+
+  const handleReopenComment = async (commentId: string) => {
+    if (!id) return
+    try {
+      const updated = await api.tasks.updateReviewComment(id, commentId, { status: 'open' })
+      setDiffComments((prev) => prev.map((c) => (c.id === commentId ? fromApiComment(updated) : c)))
+    } catch (e: any) {
+      alert(`Failed to reopen comment: ${e.message ?? e}`)
     }
   }
 
@@ -592,8 +648,9 @@ export default function TaskDetailPage() {
               files={diffFiles}
               loading={diffLoading}
               comments={diffComments}
-              onAddComment={(c) => setDiffComments((prev) => [...prev, c])}
-              onRemoveComment={(cid) => setDiffComments((prev) => prev.filter((c) => c.id !== cid))}
+              onAddComment={handleAddComment}
+              onRemoveComment={handleRemoveComment}
+              onReopenComment={handleReopenComment}
             />
           </div>
         )}
@@ -610,9 +667,9 @@ export default function TaskDetailPage() {
               {activeRun.feedback}
             </p>
           )}
-          {diffComments.length > 0 && (
+          {openComments.length > 0 && (
             <p className="text-xs text-amber-400 mb-2">
-              💬 {diffComments.length} inline diff comment{diffComments.length !== 1 ? 's' : ''} attached
+              💬 {openComments.length} open diff comment{openComments.length !== 1 ? 's' : ''} — the next agent run will see and address them
               {' '}
               <button
                 onClick={() => setActiveTab('diff')}
@@ -627,8 +684,8 @@ export default function TaskDetailPage() {
               value={rejectNote}
               onChange={(e) => setRejectNote(e.target.value)}
               placeholder={
-                diffComments.length > 0
-                  ? 'Additional rejection note (optional — inline comments will be included)…'
+                openComments.length > 0
+                  ? 'Additional rejection note (optional — open inline comments reach the agent automatically)…'
                   : 'Rejection note (required to reject)…'
               }
               rows={2}
@@ -644,7 +701,7 @@ export default function TaskDetailPage() {
               </button>
               <button
                 onClick={handleReject}
-                disabled={actionPending || (!rejectNote.trim() && diffComments.length === 0)}
+                disabled={actionPending || (!rejectNote.trim() && openComments.length === 0)}
                 className="px-4 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
               >
                 Reject

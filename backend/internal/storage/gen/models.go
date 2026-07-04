@@ -97,6 +97,22 @@ type TaskLabelHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type TaskReviewComment struct {
+	ID              string    `json:"id"`
+	TaskID          string    `json:"task_id"`
+	FilePath        string    `json:"file_path"`
+	Side            string    `json:"side"`
+	StartLine       int64     `json:"start_line"`
+	EndLine         int64     `json:"end_line"`
+	QuotedText      string    `json:"quoted_text"`
+	Body            string    `json:"body"`
+	Status          string    `json:"status"`
+	ResolutionNote  *string   `json:"resolution_note"`
+	ResolvedByRunID *string   `json:"resolved_by_run_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type Workflow struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`

@@ -1,7 +1,10 @@
-// Ephemeral, frontend-only inline diff review comments.
-// These are not persisted to the backend — they are collected during a review
-// session and merged into the free-text rejection note when the reviewer
-// clicks "Reject", giving the agent file/line-anchored context for the feedback.
+// View model for inline diff review comments.
+// Comments are persisted on the backend (task_review_comments) and injected
+// into every agent run's prompt while open; agents resolve them via the MCP
+// resolve_comment tool. This module maps the API wire type to the shape the
+// diff viewer renders.
+
+import type { ReviewComment } from '../api/client'
 
 export type DiffComment = {
   id: string
@@ -11,31 +14,21 @@ export type DiffComment = {
   endLine: number
   quotedText: string
   comment: string
+  status: 'open' | 'resolved'
+  resolutionNote?: string | null
 }
 
-/**
- * Combine the free-text rejection note with any inline diff comments into a
- * single note string suitable for `api.tasks.reject(id, note)`. The result is
- * formatted so the agent can clearly see which file/line(s) each comment
- * refers to, along with the quoted diff content for context.
- */
-export function buildRejectionNote(freeText: string, comments: DiffComment[]): string {
-  const trimmedFreeText = freeText.trim()
-  if (comments.length === 0) return trimmedFreeText
-
-  const sections = comments.map((c, i) => {
-    const lineRef = c.startLine === c.endLine
-      ? `line ${c.startLine}`
-      : `lines ${c.startLine}-${c.endLine}`
-    return [
-      `${i + 1}. ${c.filePath} (${lineRef}):`,
-      '```',
-      c.quotedText,
-      '```',
-      `→ ${c.comment}`,
-    ].join('\n')
-  })
-
-  const header = trimmedFreeText ? `${trimmedFreeText}\n\n` : ''
-  return `${header}Inline review comments:\n\n${sections.join('\n\n')}`
+/** Map an API ReviewComment to the diff viewer's view model. */
+export function fromApiComment(c: ReviewComment): DiffComment {
+  return {
+    id: c.id,
+    filePath: c.file_path,
+    side: c.side,
+    startLine: c.start_line,
+    endLine: c.end_line,
+    quotedText: c.quoted_text,
+    comment: c.body,
+    status: c.status,
+    resolutionNote: c.resolution_note,
+  }
 }

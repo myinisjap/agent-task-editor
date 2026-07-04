@@ -102,9 +102,48 @@ function DiffLineRow({
 type CommentChipProps = {
   comment: DiffComment
   onRemove: (id: string) => void
+  onReopen?: (id: string) => void
 }
 
-function CommentChip({ comment, onRemove }: CommentChipProps) {
+function CommentChip({ comment, onRemove, onReopen }: CommentChipProps) {
+  const resolved = comment.status === 'resolved'
+  if (resolved) {
+    return (
+      <tr className="bg-emerald-950/30">
+        <td colSpan={4} className="px-3 py-2 border-l-2 border-emerald-500/70">
+          <div className="flex items-start gap-2">
+            <span className="text-emerald-400 text-xs mt-0.5">✓</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-slate-400 whitespace-pre-wrap break-words font-sans line-through decoration-slate-600">{comment.comment}</p>
+              {comment.resolutionNote && (
+                <p className="text-xs text-emerald-300/90 whitespace-pre-wrap break-words font-sans mt-1">
+                  ↳ {comment.resolutionNote}
+                </p>
+              )}
+            </div>
+            {onReopen && (
+              <button
+                type="button"
+                onClick={() => onReopen(comment.id)}
+                className="text-xs text-slate-500 hover:text-amber-400 shrink-0"
+                title="Reopen comment"
+              >
+                Reopen
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onRemove(comment.id)}
+              className="text-xs text-slate-500 hover:text-red-400 shrink-0"
+              title="Remove comment"
+            >
+              ✕
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
   return (
     <tr className="bg-amber-950/40">
       <td colSpan={4} className="px-3 py-2 border-l-2 border-amber-400/80">
@@ -183,9 +222,10 @@ type FileBlockProps = {
   comments: DiffComment[]
   onAddComment?: (comment: DiffComment) => void
   onRemoveComment?: (id: string) => void
+  onReopenComment?: (id: string) => void
 }
 
-function FileBlock({ file, comments, onAddComment, onRemoveComment }: FileBlockProps) {
+function FileBlock({ file, comments, onAddComment, onRemoveComment, onReopenComment }: FileBlockProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [dragAnchor, setDragAnchor] = useState<LineTarget | null>(null)
   const [selection, setSelection] = useState<{ side: 'old' | 'new'; from: number; to: number } | null>(null)
@@ -311,7 +351,7 @@ function FileBlock({ file, comments, onAddComment, onRemoveComment }: FileBlockP
                       key={key}
                       line={line}
                       isSelected={isLineSelected(target)}
-                      hasComments={commentsForLine(target).length > 0}
+                      hasComments={commentsForLine(target).some((c) => c.status !== 'resolved')}
                       isCommenting={isLineCommenting(target)}
                       onGutterMouseDown={handleGutterMouseDown}
                       onGutterMouseEnter={handleGutterMouseEnter}
@@ -334,6 +374,8 @@ function FileBlock({ file, comments, onAddComment, onRemoveComment }: FileBlockP
                           if (!selection) return
                           const quotedText = collectQuotedText(file, selection.side, selection.from, selection.to)
                           onAddComment?.({
+                            // Temporary client-side id — the parent replaces it
+                            // with the persisted comment returned by the API.
                             id: crypto.randomUUID(),
                             filePath: displayPath,
                             side: selection.side,
@@ -341,6 +383,7 @@ function FileBlock({ file, comments, onAddComment, onRemoveComment }: FileBlockP
                             endLine: selection.to,
                             quotedText,
                             comment: text,
+                            status: 'open',
                           })
                           setEditingKey(null)
                           setSelection(null)
@@ -357,6 +400,7 @@ function FileBlock({ file, comments, onAddComment, onRemoveComment }: FileBlockP
                           key={`${key}-comment-${c.id}`}
                           comment={c}
                           onRemove={(id) => onRemoveComment?.(id)}
+                          onReopen={onReopenComment ? (id) => onReopenComment(id) : undefined}
                         />
                       )
                     }
@@ -393,19 +437,28 @@ type Props = {
   comments?: DiffComment[]
   onAddComment?: (comment: DiffComment) => void
   onRemoveComment?: (id: string) => void
+  onReopenComment?: (id: string) => void
 }
 
-export default function FileDiffViewer({ files, loading, comments = [], onAddComment, onRemoveComment }: Props) {
+export default function FileDiffViewer({ files, loading, comments = [], onAddComment, onRemoveComment, onReopenComment }: Props) {
   if (loading) return <p className="text-xs text-slate-500">Loading diff…</p>
   if (files.length === 0) return <p className="text-xs text-slate-600">No changes</p>
+
+  const openCount = comments.filter((c) => c.status !== 'resolved').length
+  const resolvedCount = comments.length - openCount
 
   return (
     <div>
       <p className="text-xs text-slate-500 mb-3">
         {files.length} file{files.length !== 1 ? 's' : ''} changed
-        {comments.length > 0 && (
+        {openCount > 0 && (
           <span className="ml-2 text-amber-400">
-            · {comments.length} inline comment{comments.length !== 1 ? 's' : ''}
+            · {openCount} open comment{openCount !== 1 ? 's' : ''}
+          </span>
+        )}
+        {resolvedCount > 0 && (
+          <span className="ml-2 text-emerald-400">
+            · {resolvedCount} resolved
           </span>
         )}
       </p>
@@ -416,6 +469,7 @@ export default function FileDiffViewer({ files, loading, comments = [], onAddCom
           comments={comments}
           onAddComment={onAddComment}
           onRemoveComment={onRemoveComment}
+          onReopenComment={onReopenComment}
         />
       ))}
     </div>
