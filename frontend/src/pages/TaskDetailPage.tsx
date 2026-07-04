@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type AgentLog, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
@@ -71,9 +72,24 @@ export default function TaskDetailPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
-  const logBottomRef = useRef<HTMLDivElement>(null)
+  const logScrollRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
+  // When "load earlier" prepends N entries, this holds N so the post-render
+  // effect can re-anchor the viewport to the entry that was previously on top
+  // (otherwise the virtualized list would jump).
+  const anchorIndexRef = useRef<number | null>(null)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
+
+  // Virtualize the log list: only entries near the viewport are mounted, so a
+  // run with thousands of entries stays smooth. Rows are variable-height
+  // (markdown, expandable tool results), so heights are measured dynamically
+  // via measureElement rather than estimated up front.
+  const logVirtualizer = useVirtualizer({
+    count: logs.length,
+    getScrollElement: () => logScrollRef.current,
+    estimateSize: () => 44,
+    overscan: 12,
+  })
 
   const refreshTask = useCallback(() => {
     if (!id) return
@@ -142,7 +158,12 @@ export default function TaskDetailPage() {
     try {
       const res = await api.tasks.runLogs(id, selectedRun, { before: oldest, limit: LOG_PAGE_SIZE })
       autoScrollRef.current = false
-      setLogs((prev) => mergeLogs(prev, res.items))
+      setLogs((prev) => {
+        const merged = mergeLogs(prev, res.items)
+        // Number of entries added at the top — used to re-anchor the viewport.
+        anchorIndexRef.current = merged.length - prev.length
+        return merged
+      })
       setLogsHasEarlier(res.hasMore)
     } catch {
       // best-effort; leave the button so the user can retry
@@ -222,12 +243,20 @@ export default function TaskDetailPage() {
     }
   }, [id, selectedRun, refreshTask, refreshRuns, refreshComments])
 
-  // Auto-scroll log pane
+  // Keep the log viewport anchored as entries change. After "load earlier"
+  // prepends entries, re-anchor to the entry that was previously on top so the
+  // view doesn't jump. Otherwise, when following the tail, scroll to the newest.
   useEffect(() => {
-    if (autoScrollRef.current) {
-      logBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (anchorIndexRef.current != null) {
+      const idx = anchorIndexRef.current
+      anchorIndexRef.current = null
+      if (idx > 0) logVirtualizer.scrollToIndex(idx, { align: 'start' })
+      return
     }
-  }, [logs])
+    if (autoScrollRef.current && logs.length > 0) {
+      logVirtualizer.scrollToIndex(logs.length - 1, { align: 'end' })
+    }
+  }, [logs, logVirtualizer])
 
   const activeRun = runs.find((r) => r.id === selectedRun)
   const needsHuman = activeRun?.status === 'waiting_human'
@@ -699,14 +728,8 @@ export default function TaskDetailPage() {
 
         {/* Logs tab */}
         {activeTab === 'logs' && (
-          <div
-            className="h-full overflow-y-auto py-3 px-2"
-            onScroll={(e) => {
-              const el = e.currentTarget
-              autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-            }}
-          >
-            <p className="text-slate-500 text-xs mb-3 px-3 font-sans flex items-center gap-2">
+          <div className="h-full flex flex-col">
+            <p className="text-slate-500 text-xs py-3 px-3 font-sans flex items-center gap-2 shrink-0">
               {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
               {selectedRun ? `Run ${selectedRun.slice(0, 8)}` : 'No agent runs yet'}
               {logs.length > 0 && <span className="text-slate-700">· {logs.length} events</span>}
@@ -724,7 +747,7 @@ export default function TaskDetailPage() {
               <p className="text-slate-600 text-xs px-3">No log entries</p>
             )}
             {logsHasEarlier && (
-              <div className="flex justify-center mb-2">
+              <div className="flex justify-center pb-2 shrink-0">
                 <button
                   onClick={handleLoadEarlier}
                   disabled={loadingEarlier}
@@ -734,10 +757,28 @@ export default function TaskDetailPage() {
                 </button>
               </div>
             )}
-            {logs.map((log, i) => (
-              <AgentLogEntry key={log.id ?? i} log={log} debug={debug} />
-            ))}
-            <div ref={logBottomRef} />
+            {/* Virtualized log list — only rows near the viewport are mounted. */}
+            <div
+              ref={logScrollRef}
+              className="flex-1 overflow-y-auto px-2"
+              onScroll={(e) => {
+                const el = e.currentTarget
+                autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+              }}
+            >
+              <div style={{ height: logVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+                {logVirtualizer.getVirtualItems().map((vi) => (
+                  <div
+                    key={logs[vi.index].id ?? vi.index}
+                    data-index={vi.index}
+                    ref={logVirtualizer.measureElement}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
+                  >
+                    <AgentLogEntry log={logs[vi.index]} debug={debug} />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
