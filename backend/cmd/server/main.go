@@ -18,6 +18,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/tasksource"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
@@ -188,9 +189,15 @@ func main() {
 	ghSyncer := ghsync.New(db.SQL(), hub, cfg.GitHubSyncInterval)
 	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 
+	// GitHub Issues import: polls repos with issue sync enabled and creates
+	// tasks from matching open issues (deduped by tasks.source/source_ref).
+	issueImporter := tasksource.New(db.SQL(), hub, cfg.IssueSyncInterval, tasksource.GitHubIssues{})
+	slog.Info("github issue import enabled", "interval", cfg.IssueSyncInterval)
+
 	go pool.Start(ctx)
 	go dispatcher.Run(ctx)
 	go ghSyncer.Run(ctx)
+	go issueImporter.Run(ctx)
 
 	go func() {
 		slog.Info("server starting", "port", cfg.Port)

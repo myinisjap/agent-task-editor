@@ -78,6 +78,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins (e.g. `http://localhost:5173`) |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
+| `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer ([task-sources.md](task-sources.md)) |
 | `CONFIG_FILE` | _(empty)_ | Path to a YAML config file (all keys are optional) |
 
 ### Repository Access

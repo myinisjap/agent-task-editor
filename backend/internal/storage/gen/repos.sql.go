@@ -10,17 +10,19 @@ import (
 )
 
 const createRepo = `-- name: CreateRepo :one
-INSERT INTO repos (id, name, path, remote_url, workflow_id)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, name, path, remote_url, workflow_id, created_at
+INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label
 `
 
 type CreateRepoParams struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Path       string  `json:"path"`
-	RemoteUrl  *string `json:"remote_url"`
-	WorkflowID *string `json:"workflow_id"`
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	Path             string  `json:"path"`
+	RemoteUrl        *string `json:"remote_url"`
+	WorkflowID       *string `json:"workflow_id"`
+	IssueSyncEnabled int64   `json:"issue_sync_enabled"`
+	IssueSyncLabel   string  `json:"issue_sync_label"`
 }
 
 func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, error) {
@@ -30,6 +32,8 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		arg.Path,
 		arg.RemoteUrl,
 		arg.WorkflowID,
+		arg.IssueSyncEnabled,
+		arg.IssueSyncLabel,
 	)
 	var i Repo
 	err := row.Scan(
@@ -39,6 +43,8 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		&i.RemoteUrl,
 		&i.WorkflowID,
 		&i.CreatedAt,
+		&i.IssueSyncEnabled,
+		&i.IssueSyncLabel,
 	)
 	return i, err
 }
@@ -53,7 +59,7 @@ func (q *Queries) DeleteRepo(ctx context.Context, id string) error {
 }
 
 const getRepo = `-- name: GetRepo :one
-SELECT id, name, path, remote_url, workflow_id, created_at FROM repos WHERE id = ?
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label FROM repos WHERE id = ?
 `
 
 func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
@@ -66,12 +72,50 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 		&i.RemoteUrl,
 		&i.WorkflowID,
 		&i.CreatedAt,
+		&i.IssueSyncEnabled,
+		&i.IssueSyncLabel,
 	)
 	return i, err
 }
 
+const listIssueSyncRepos = `-- name: ListIssueSyncRepos :many
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
+`
+
+func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
+	rows, err := q.db.QueryContext(ctx, listIssueSyncRepos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Repo
+	for rows.Next() {
+		var i Repo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Path,
+			&i.RemoteUrl,
+			&i.WorkflowID,
+			&i.CreatedAt,
+			&i.IssueSyncEnabled,
+			&i.IssueSyncLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRepos = `-- name: ListRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at FROM repos ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label FROM repos ORDER BY created_at DESC
 `
 
 func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
@@ -90,6 +134,8 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 			&i.RemoteUrl,
 			&i.WorkflowID,
 			&i.CreatedAt,
+			&i.IssueSyncEnabled,
+			&i.IssueSyncLabel,
 		); err != nil {
 			return nil, err
 		}
@@ -106,17 +152,19 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 
 const updateRepo = `-- name: UpdateRepo :one
 UPDATE repos
-SET name = ?, path = ?, remote_url = ?, workflow_id = ?
+SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?
 WHERE id = ?
-RETURNING id, name, path, remote_url, workflow_id, created_at
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label
 `
 
 type UpdateRepoParams struct {
-	Name       string  `json:"name"`
-	Path       string  `json:"path"`
-	RemoteUrl  *string `json:"remote_url"`
-	WorkflowID *string `json:"workflow_id"`
-	ID         string  `json:"id"`
+	Name             string  `json:"name"`
+	Path             string  `json:"path"`
+	RemoteUrl        *string `json:"remote_url"`
+	WorkflowID       *string `json:"workflow_id"`
+	IssueSyncEnabled int64   `json:"issue_sync_enabled"`
+	IssueSyncLabel   string  `json:"issue_sync_label"`
+	ID               string  `json:"id"`
 }
 
 func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, error) {
@@ -125,6 +173,8 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		arg.Path,
 		arg.RemoteUrl,
 		arg.WorkflowID,
+		arg.IssueSyncEnabled,
+		arg.IssueSyncLabel,
 		arg.ID,
 	)
 	var i Repo
@@ -135,6 +185,8 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		&i.RemoteUrl,
 		&i.WorkflowID,
 		&i.CreatedAt,
+		&i.IssueSyncEnabled,
+		&i.IssueSyncLabel,
 	)
 	return i, err
 }

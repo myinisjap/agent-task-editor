@@ -352,6 +352,158 @@ export interface paths {
         };
         trace?: never;
     };
+    "/tasks/{id}/review-comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List inline diff review comments on a task (open and resolved) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewComment"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Add an inline diff review comment
+         * @description Creates a persistent, file/line-anchored review comment on the task's diff. Open comments are injected into every subsequent agent run's prompt (under "OPEN REVIEW COMMENTS") until resolved — by the agent via the MCP resolve_comment tool, or by a human via PATCH.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        file_path: string;
+                        /**
+                         * @default new
+                         * @enum {string}
+                         */
+                        side?: "old" | "new";
+                        start_line: number;
+                        end_line: number;
+                        /** @description Diff content the comment anchors to */
+                        quoted_text?: string;
+                        /** @description The review comment text */
+                        body: string;
+                    };
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewComment"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/review-comments/{comment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a review comment */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    comment_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Resolve or reopen a review comment */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    comment_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "resolved" | "open";
+                        resolution_note?: string;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewComment"];
+                    };
+                };
+                /** @description Comment not found (or already resolved when resolving) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
     "/tasks/{id}/diff": {
         parameters: {
             query?: never;
@@ -1127,6 +1279,10 @@ export interface components {
              * @description If set, the task is in a backed-off auto-retry state and will not be picked up by the dispatcher again until this time.
              */
             next_retry_at?: string | null;
+            /** @description Where the task was imported from ("github" for the GitHub Issues importer). Empty for manually created tasks. */
+            source?: string;
+            /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
+            source_ref?: string;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -1213,8 +1369,33 @@ export interface components {
             path?: string;
             remote_url?: string | null;
             workflow_id?: string | null;
+            /** @description 1 = open GitHub issues matching issue_sync_label are periodically imported as tasks (requires remote_url and workflow_id). 0 = off. */
+            issue_sync_enabled?: number;
+            /** @description Only import issues carrying this label (empty = all open issues). */
+            issue_sync_label?: string;
             /** Format: date-time */
             created_at?: string;
+        };
+        /** @description A persistent, file/line-anchored inline review comment on a task's diff. Open comments are injected into every agent run's prompt until resolved (by an agent via the MCP resolve_comment tool, or by a human). */
+        ReviewComment: {
+            id?: string;
+            task_id?: string;
+            file_path?: string;
+            /** @enum {string} */
+            side?: "old" | "new";
+            start_line?: number;
+            end_line?: number;
+            quoted_text?: string;
+            body?: string;
+            /** @enum {string} */
+            status?: "open" | "resolved";
+            resolution_note?: string | null;
+            /** @description Run that resolved it; null when human-resolved */
+            resolved_by_run_id?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
         AgentRun: {
             id?: string;

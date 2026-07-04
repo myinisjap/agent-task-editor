@@ -55,12 +55,14 @@ type AgentRun struct {
 }
 
 type Repo struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Path       string    `json:"path"`
-	RemoteUrl  *string   `json:"remote_url"`
-	WorkflowID *string   `json:"workflow_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Path             string    `json:"path"`
+	RemoteUrl        *string   `json:"remote_url"`
+	WorkflowID       *string   `json:"workflow_id"`
+	CreatedAt        time.Time `json:"created_at"`
+	IssueSyncEnabled int64     `json:"issue_sync_enabled"`
+	IssueSyncLabel   string    `json:"issue_sync_label"`
 }
 
 type Task struct {
@@ -84,6 +86,8 @@ type Task struct {
 	Paused              int64      `json:"paused"`
 	TransientRetryCount int64      `json:"transient_retry_count"`
 	NextRetryAt         *time.Time `json:"next_retry_at"`
+	Source              string     `json:"source"`
+	SourceRef           string     `json:"source_ref"`
 }
 
 type TaskLabelHistory struct {

@@ -73,6 +73,63 @@ func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL 
 	return s, prs[0].URL, prs[0].Number, nil
 }
 
+// Issue is a GitHub issue as returned by `gh issue list`.
+type Issue struct {
+	Number int
+	Title  string
+	Body   string
+	URL    string
+	Labels []string // label names only
+}
+
+// ListOpenIssues returns open issues for the given repo (org/repo format),
+// optionally filtered to issues carrying the given label (empty = all open
+// issues). Pull requests are never included — `gh issue list` excludes them.
+func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error) {
+	args := []string{"issue", "list",
+		"--repo", repoName,
+		"--state", "open",
+		"--json", "number,title,body,url,labels",
+		"--limit", "200",
+	}
+	if label != "" {
+		args = append(args, "--label", label)
+	}
+	out, err := exec.CommandContext(ctx, "gh", args...).Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var raw []struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		URL    string `json:"url"`
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, err
+	}
+
+	issues := make([]Issue, 0, len(raw))
+	for _, r := range raw {
+		labels := make([]string, 0, len(r.Labels))
+		for _, l := range r.Labels {
+			labels = append(labels, l.Name)
+		}
+		issues = append(issues, Issue{
+			Number: r.Number,
+			Title:  r.Title,
+			Body:   r.Body,
+			URL:    r.URL,
+			Labels: labels,
+		})
+	}
+	return issues, nil
+}
+
 // ParseGitHubName extracts the "org/repo" name from a GitHub remote URL.
 // It handles both HTTPS (https://github.com/org/repo[.git]) and SSH
 // (git@github.com:org/repo[.git]) formats.

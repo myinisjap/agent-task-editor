@@ -12,6 +12,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [agents.md](agents.md) | Agent configs, providers, dispatcher, worker pool, prompt construction |
 | [providers/](providers/) | Per-provider deep-dives (credentials, MCP support, limitations) |
 | [mcp-tools.md](mcp-tools.md) | MCP sidecar tool reference (for `claude` and `qwen_code` providers) |
+| [task-sources.md](task-sources.md) | Importing GitHub Issues as tasks |
 | [api.md](api.md) | REST API reference |
 | [websocket.md](websocket.md) | WebSocket protocol and event types |
 

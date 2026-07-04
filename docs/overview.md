@@ -12,6 +12,7 @@ Additional task fields:
 - `worktree_path` — path to the per-task git worktree (empty if not yet provisioned or already torn down)
 - `base_ref` — the ref the branch was forked from (used for diff computation)
 - `agent_notes` — persistent markdown notes written by agents across runs; injected into each new run's prompt
+- `source` / `source_ref` — where the task was imported from (`github` / `owner/repo#123`); empty for manually created tasks (see [task-sources.md](task-sources.md))
 
 ### Workflows
 A workflow is a directed state machine composed of **labels** (columns) and **transitions** (allowed moves between them). Each transition has a `trigger_type`:
@@ -96,9 +97,13 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 - **Git diff viewer** — per-task branch diff against the base ref
 - **Inline diff review comments** — leave file/line-anchored comments on the diff; open comments are injected into every agent run's prompt until the agent resolves them via the `resolve_comment` MCP tool (resolutions show up threaded in the diff viewer)
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
-- **GitHub Issues sync** — auto-sync task labels with GitHub PR state; once a PR
-  is detected as merged, the task's local branch (and any leftover worktree) are
-  automatically cleaned up (remote branches are left untouched)
+- **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once
+  a PR is detected as merged, the task's local branch (and any leftover
+  worktree) are automatically cleaned up (remote branches are left untouched)
+- **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered
+  by a label like `agent-ok`) are periodically imported as tasks, with a link
+  back to the issue and dedupe on re-sweeps — see
+  [task-sources.md](task-sources.md)
 - **Dashboard** — run counts, completion rate, recent activity
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — single `docker compose up` to run everything

@@ -122,6 +122,25 @@ worktree and deletes the task's local branch from the repo's main clone
 }
 ```
 
+### `task.created`
+A new task was created by the background GitHub Issues importer (see
+[task-sources.md](task-sources.md)). The payload is a subset of task fields —
+clients should refetch the task for full data.
+
+```json
+{
+  "type": "task.created",
+  "payload": {
+    "id": "uuid",
+    "title": "Fix crash on empty input",
+    "label": "not_ready",
+    "repo_id": "uuid",
+    "source": "github",
+    "source_ref": "owner/repo#123"
+  }
+}
+```
+
 ### `agent.log`
 A single log entry from a running agent. Sent for every line of output in real time, and replayed from the database when a client subscribes.
 
