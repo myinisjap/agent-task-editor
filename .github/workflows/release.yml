@@ -1,0 +1,103 @@
+name: Release
+
+# Build and publish multi-arch (amd64 + arm64) images to GHCR on every semver
+# tag push, then cut a GitHub Release. arm64 is built explicitly because the
+# backend links cgo/sqlite (mattn/go-sqlite3) and is worth verifying natively.
+#
+#   git tag v1.2.3 && git push origin v1.2.3
+#
+# Publishes:
+#   ghcr.io/myinisjap/agent-task-editor-backend:{1.2.3,1.2,1,latest}
+#   ghcr.io/myinisjap/agent-task-editor-frontend:{1.2.3,1.2,1,latest}
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # create the GitHub Release
+  packages: write   # push images to GHCR
+
+jobs:
+  images:
+    name: Build & push ${{ matrix.component }} image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: backend
+            context: ./backend
+          - component: frontend
+            context: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.component }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: images
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes_file="$(mktemp)"
+          # Pull the body of the matching CHANGELOG section (## [x.y.z] ... up to
+          # the next ## heading). Falls back to auto-generated notes if absent.
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { grab=1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > "$notes_file" || true
+          echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
+          if [ -s "$notes_file" ]; then
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.changelog.outputs.has_notes == 'true' && steps.changelog.outputs.notes_file || '' }}
+          generate_release_notes: ${{ steps.changelog.outputs.has_notes != 'true' }}
+          fail_on_unmatched_files: false

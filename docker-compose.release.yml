@@ -1,14 +1,17 @@
+# Deploy Agent Task Editor from prebuilt images instead of building from source.
+#
+#   ATE_VERSION=v1.2.3 docker compose -f docker-compose.release.yml up -d
+#
+# Or use ./run.sh, which injects the required env vars for you (repo mount,
+# GitHub token, Claude auth) and defaults ATE_VERSION to "latest".
+#
+# The container remaps its runtime user to PUID/PGID at startup, so files agents
+# write to bind-mounted repos are owned by your host user. run.sh sets these from
+# `id -u`/`id -g`; they default to 1000:1000.
 services:
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      args:
-        # Set INSECURE_SKIP_SSL_VERIFY=true in your environment or .env file to
-        # disable SSL certificate verification — required behind corporate
-        # TLS-inspecting proxies (affects npm install of claude-code at build time
-        # and git clone / npm / claude CLI at runtime).
-        INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
+    image: ghcr.io/myinisjap/agent-task-editor-backend:${ATE_VERSION:-latest}
+    pull_policy: always
     ports:
       - "8080:8080"
     # Lets the container reach services published on the host (e.g. a separate
@@ -26,7 +29,7 @@ services:
       - DB_PATH=/data/agent-task-editor.db
       - CORS_ORIGINS=http://localhost:5173
       # Run agents as your host user so files they write to bind-mounted repos
-      # are owned by you, not root. dev.sh sets these from `id -u`/`id -g`.
+      # are owned by you, not root. run.sh sets these from `id -u`/`id -g`.
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       # Path to the MCP sidecar binary built into the image
@@ -43,9 +46,10 @@ services:
       # gh CLI picks this up automatically; set it here to enable PR state sync
       # without mounting the gh config directory.
       - GITHUB_TOKEN=${GH_TOKEN:-}
-      # SSL bypass — active when INSECURE_SKIP_SSL_VERIFY=true (see build args above).
-      # These vars are pre-computed by dev.sh so that setting INSECURE_SKIP_SSL_VERIFY=false
-      # never accidentally disables SSL (compose's :+ expansion fires on any non-empty value).
+      # SSL bypass — active when INSECURE_SKIP_SSL_VERIFY=true. These vars are
+      # pre-computed by run.sh so that setting INSECURE_SKIP_SSL_VERIFY=false
+      # never accidentally disables SSL (compose's :+ expansion fires on any
+      # non-empty value).
       - GIT_SSL_NO_VERIFY=${GIT_SSL_NO_VERIFY:-}
       - NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL:-}
       - NODE_TLS_REJECT_UNAUTHORIZED=${NODE_TLS_REJECT_UNAUTHORIZED:-}
@@ -66,11 +70,8 @@ services:
       - ${REPO_BASE_DIR:-/tmp/repos}:${REPO_BASE_DIR:-/tmp/repos}
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
+    image: ghcr.io/myinisjap/agent-task-editor-frontend:${ATE_VERSION:-latest}
+    pull_policy: always
     ports:
       - "5173:80"
     depends_on:

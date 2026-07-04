@@ -6,7 +6,10 @@ A self-hosted Kanban board where AI agents automatically process tasks as they m
 
 ```
 agent-task-editor/
-├── docker-compose.yml        # Production deployment (backend :8080, frontend :5173)
+├── docker-compose.yml        # Build-from-source deployment (backend :8080, frontend :5173)
+├── docker-compose.release.yml # Deploy from prebuilt GHCR images (see run.sh)
+├── run.sh                    # Start the stack from published images (prod counterpart to dev.sh)
+├── CHANGELOG.md              # Release history; drives GitHub Release notes
 ├── openapi.yaml              # Full REST API spec
 ├── docs/                     # Feature and usage documentation
 │   ├── overview.md

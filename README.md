@@ -18,19 +18,42 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Git diff viewer** — per-repo diff of uncommitted changes
 - **Dashboard** — run counts, completion rate, and recent activity
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
-- **Docker Compose deployment** — single `docker compose up` to run everything
+- **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 
 ---
 
 ## Quick Start
 
+Run from prebuilt, multi-arch (amd64 + arm64) images — no Go/Node toolchain or
+local build required:
+
 ```bash
 git clone https://github.com/myinisjap/agent-task-editor
 cd agent-task-editor
-docker compose up -d
+./run.sh                       # pulls ghcr.io/myinisjap/... :latest and starts the stack
+# or pin a release:  ATE_VERSION=v0.1.0 ./run.sh
 ```
 
+`run.sh` injects the runtime env vars for you (repo mount, GitHub token, Claude
+auth, optional SSL bypass) and starts [`docker-compose.release.yml`](docker-compose.release.yml),
+which references the published images:
+
+- `ghcr.io/myinisjap/agent-task-editor-backend`
+- `ghcr.io/myinisjap/agent-task-editor-frontend`
+
+Prefer plain Compose? `ATE_VERSION=v0.1.0 docker compose -f docker-compose.release.yml up -d`.
+
 Open **http://localhost:5173** in your browser.
+
+> **Repo file ownership.** The backend container remaps its runtime user to your
+> host user (`PUID`/`PGID`) at startup, so files agents write to bind-mounted
+> repos are owned by you, not root. `run.sh` and `dev.sh` set these from
+> `id -u`/`id -g` automatically; with plain Compose, export `PUID`/`PGID` or
+> accept the `1000:1000` default. No rebuild needed.
+
+Releases and their notes are on the
+[Releases page](https://github.com/myinisjap/agent-task-editor/releases); see
+[CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ### Mount the Claude CLI (if using the `claude` provider)
 

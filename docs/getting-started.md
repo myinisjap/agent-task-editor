@@ -222,7 +222,7 @@ docker compose build backend
 
 **Caveat — Alpine vs glibc:** Alpine uses `musl libc`, not `glibc`. Some toolchains/prebuilt binaries (certain Rust crates, precompiled CLI tools, some Python wheels) expect `glibc` and may fail to run or compile. Workarounds include installing `gcompat` (`apk add --no-cache gcompat`) for partial compatibility, or building from source instead of using a prebuilt glibc binary. If a toolchain is fundamentally incompatible with Alpine, consider whether it's worth switching `backend/Dockerfile`'s final stage to a Debian/Ubuntu-based Node image instead — this is a larger change with broader image-size and security tradeoffs, not something to do for a one-off need.
 
-Remember to make sure any new tool's cache/config directories are writable by the remapped `node` user (see the `chown` step in the Dockerfile, applied to `/data` and the Go cache dirs) — otherwise agents will hit permission errors the first time they invoke the tool.
+Remember to make sure any new tool's cache/config directories are writable by the `node` user. The container runs as `node`, which `backend/entrypoint.sh` remaps to your host `PUID`/`PGID` at startup and `chown`s the state dirs (`/data`, `/app`, the Go caches under `/home/node`) accordingly. If your tool writes elsewhere under `/home/node`, add it to that `chown` list — otherwise agents will hit permission errors the first time they invoke the tool.
 
 ## Local Development
 

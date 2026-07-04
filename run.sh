@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# run.sh — start Agent Task Editor from prebuilt GHCR images (no local build).
+#
+# This is the counterpart to dev.sh: same env-var injection (repo mount, GitHub
+# token, Claude auth, SSL bypass), but it pulls published images via
+# docker-compose.release.yml instead of building from source.
+#
+#   ./run.sh                       # pull + start :latest
+#   ATE_VERSION=v1.2.3 ./run.sh    # pin a specific release
+#   ./run.sh --repo-dir ~/code start
+
 # Load .env if present (without overriding existing shell vars)
 if [[ -f "$(dirname "$0")/.env" ]]; then
   set -o allexport
@@ -6,9 +16,10 @@ if [[ -f "$(dirname "$0")/.env" ]]; then
   set +o allexport
 fi
 
-export LLM_API_KEY=${LLM_API_KEY:-"your_api_key_here"}
-export LLM_BASE_URL=${LLM_BASE_URL:-"http://localhost:8081/v1"}
-export LLM_MODEL=${LLM_MODEL:-"gemma-4-12B-it-qat-UD-Q4_K_XL"}
+# Image tag to run. Override with ATE_VERSION=v1.2.3 (or a bare "1.2.3").
+export ATE_VERSION=${ATE_VERSION:-latest}
+
+export LLM_BASE_URL=${LLM_BASE_URL:-"http://host.docker.internal:8081/v1"}
 
 # Parse optional --repo-dir <path> before the command.
 while [[ $# -gt 0 ]]; do
@@ -34,12 +45,13 @@ done
 unset _prefix _UNSAFE_PREFIXES
 
 export REPO_BASE_DIR
+
 # Passed to the backend container, which remaps its runtime user to these so
 # files agents write to bind-mounted repos are owned by the host user rather
 # than root (see backend/entrypoint.sh).
 export PUID=$(id -u) PGID=$(id -g)
 
-# Compute SSL-bypass env vars here rather than in docker-compose.yml, because
+# Compute SSL-bypass env vars here rather than in the compose file, because
 # compose's ${VAR:+word} expansion fires on any non-empty string (including
 # "false"), which would silently disable SSL when a user sets
 # INSECURE_SKIP_SSL_VERIFY=false in their shell or .env file.
@@ -53,9 +65,9 @@ else
   export NODE_TLS_REJECT_UNAUTHORIZED=
 fi
 
-COMPOSE="docker compose"
+COMPOSE="docker compose -f docker-compose.release.yml"
 if [[ -n "$TRAEFIK_HOST" ]]; then
-  COMPOSE="docker compose -f docker-compose.yml -f docker-compose.traefik.yml"
+  COMPOSE="$COMPOSE -f docker-compose.traefik.yml"
 fi
 
 # Extract GH token from gh CLI (keyring or hosts.yml) if not already set.
@@ -77,18 +89,22 @@ CMD=${1:-start}
 
 case "$CMD" in
   start)
-    $COMPOSE up -d --build
+    $COMPOSE up -d --pull always
     echo ""
+    echo "  Running images: ghcr.io/myinisjap/agent-task-editor-{backend,frontend}:${ATE_VERSION}"
     echo "  Board:   http://localhost:5173"
     echo "  API:     http://localhost:8080"
     echo ""
+    ;;
+  pull)
+    $COMPOSE pull
     ;;
   stop)
     $COMPOSE down
     ;;
   restart)
     $COMPOSE down
-    $COMPOSE up -d --build
+    $COMPOSE up -d --pull always
     ;;
   logs)
     $COMPOSE logs -f backend
@@ -102,42 +118,8 @@ case "$CMD" in
   shell)
     $COMPOSE exec --user node backend sh
     ;;
-  dev-stop)
-    # Kill any orphaned dev processes by port.
-    kill $(lsof -ti :8080 :5173 :5174 :5175 2>/dev/null) 2>/dev/null
-    pkill -f 'agent-task-editor/backend/server' 2>/dev/null
-    echo "dev processes stopped"
-    ;;
-  dev)
-    # Start backend and frontend as local processes (no Docker).
-    # Requires: Go, Node.js/npm installed locally.
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    trap 'kill 0' INT TERM EXIT
-
-    echo "Building MCP server..."
-    (cd "$SCRIPT_DIR/backend" && go build -o mcp-server ./cmd/mcp-server)
-    MCP_SERVER_PATH="$SCRIPT_DIR/backend/mcp-server"
-
-    echo "Building backend..."
-    (cd "$SCRIPT_DIR/backend" && go build -o server ./cmd/server)
-
-    echo "Starting backend on :8080..."
-    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" LOG_LEVEL=DEBUG ./server) &
-    BACKEND_PID=$!
-
-    echo "Starting frontend on :5173..."
-    (cd "$SCRIPT_DIR/frontend" && npm install --silent && VITE_API_BASE_URL=http://localhost:8080 VITE_WS_BASE_URL=ws://localhost:8080 npm run dev) &
-    FRONTEND_PID=$!
-
-    echo ""
-    echo "  Board:   http://localhost:5173"
-    echo "  API:     http://localhost:8080"
-    echo ""
-    echo "Press Ctrl+C to stop both."
-    wait $BACKEND_PID $FRONTEND_PID
-    ;;
   *)
-    echo "Usage: $0 [--repo-dir <path>] [start|stop|restart|logs|login|shell|dev]"
+    echo "Usage: $0 [--repo-dir <path>] [start|pull|stop|restart|logs|login|shell]"
     exit 1
     ;;
 esac
