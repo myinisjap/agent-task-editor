@@ -38,6 +38,9 @@ func CORS(origins string) func(http.Handler) http.Handler {
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			// Expose pagination cursor headers so cross-origin (dev) clients can
+			// read them from fetch responses.
+			w.Header().Set("Access-Control-Expose-Headers", "X-Next-Cursor, X-Prev-Cursor, X-Has-More")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)

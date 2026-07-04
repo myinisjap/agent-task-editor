@@ -10,6 +10,17 @@ import (
 	"time"
 )
 
+const countAgentLogs = `-- name: CountAgentLogs :one
+SELECT COUNT(*) FROM agent_logs WHERE agent_run_id = ?
+`
+
+func (q *Queries) CountAgentLogs(ctx context.Context, agentRunID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAgentLogs, agentRunID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAgentLog = `-- name: CreateAgentLog :exec
 INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
 VALUES (?, ?, ?, ?, ?)
@@ -198,6 +209,63 @@ SELECT id, agent_run_id, timestamp, type, content FROM agent_logs WHERE agent_ru
 
 func (q *Queries) ListAgentLogs(ctx context.Context, agentRunID string) ([]AgentLog, error) {
 	rows, err := q.db.QueryContext(ctx, listAgentLogs, agentRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentLog
+	for rows.Next() {
+		var i AgentLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentRunID,
+			&i.Timestamp,
+			&i.Type,
+			&i.Content,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentLogsPage = `-- name: ListAgentLogsPage :many
+SELECT l.id, l.agent_run_id, l.timestamp, l.type, l.content FROM agent_logs l
+WHERE l.agent_run_id = ?1
+  AND (
+    ?2 = ''
+    OR l.timestamp < (SELECT timestamp FROM agent_logs WHERE id = ?2)
+    OR (l.timestamp = (SELECT timestamp FROM agent_logs WHERE id = ?2) AND l.id < ?2)
+  )
+ORDER BY l.timestamp DESC, l.id DESC
+LIMIT ?3
+`
+
+type ListAgentLogsPageParams struct {
+	AgentRunID string      `json:"agent_run_id"`
+	Column2    interface{} `json:"column_2"`
+	Limit      int64       `json:"limit"`
+}
+
+// Cursor-paginated log fetch, newest first. Returns the most recent entries
+// (up to the limit) for a run that are older than the cursor (the id of the
+// oldest entry the caller already has). An empty cursor returns the newest
+// entries (the tail). Callers reverse the slice for chronological display and
+// use the oldest returned id as the next cursor to "load earlier". Ordering is
+// (timestamp, id) descending with id as a stable tiebreaker; the cursor
+// comparison reads the anchor row's own timestamp so it matches the ORDER BY
+// regardless of timestamp text format. Positional params (?1 run_id, ?2 before
+// cursor, ?3 limit) are used instead of @named ones to sidestep a byte-offset
+// bug in sqlc's SQLite analyzer that corrupts long named-parameter queries.
+func (q *Queries) ListAgentLogsPage(ctx context.Context, arg ListAgentLogsPageParams) ([]AgentLog, error) {
+	rows, err := q.db.QueryContext(ctx, listAgentLogsPage, arg.AgentRunID, arg.Column2, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

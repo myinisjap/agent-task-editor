@@ -33,6 +33,30 @@ RETURNING *;
 -- name: ListAgentLogs :many
 SELECT * FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC;
 
+-- name: ListAgentLogsPage :many
+-- Cursor-paginated log fetch, newest first. Returns the most recent entries
+-- (up to the limit) for a run that are older than the cursor (the id of the
+-- oldest entry the caller already has). An empty cursor returns the newest
+-- entries (the tail). Callers reverse the slice for chronological display and
+-- use the oldest returned id as the next cursor to "load earlier". Ordering is
+-- (timestamp, id) descending with id as a stable tiebreaker; the cursor
+-- comparison reads the anchor row's own timestamp so it matches the ORDER BY
+-- regardless of timestamp text format. Positional params (?1 run_id, ?2 before
+-- cursor, ?3 limit) are used instead of @named ones to sidestep a byte-offset
+-- bug in sqlc's SQLite analyzer that corrupts long named-parameter queries.
+SELECT l.* FROM agent_logs l
+WHERE l.agent_run_id = ?1
+  AND (
+    ?2 = ''
+    OR l.timestamp < (SELECT timestamp FROM agent_logs WHERE id = ?2)
+    OR (l.timestamp = (SELECT timestamp FROM agent_logs WHERE id = ?2) AND l.id < ?2)
+  )
+ORDER BY l.timestamp DESC, l.id DESC
+LIMIT ?3;
+
+-- name: CountAgentLogs :one
+SELECT COUNT(*) FROM agent_logs WHERE agent_run_id = ?;
+
 -- name: CreateAgentLog :exec
 INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
 VALUES (?, ?, ?, ?, ?);

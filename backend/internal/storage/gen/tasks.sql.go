@@ -494,6 +494,104 @@ func (q *Queries) SearchTasks(ctx context.Context, arg SearchTasksParams) ([]Tas
 	return items, nil
 }
 
+const searchTasksPage = `-- name: SearchTasksPage :many
+SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at, t.source, t.source_ref, t.archived, t.pr_url FROM tasks t
+WHERE (?1 = '' OR t.title LIKE '%' || ?1 || '%' OR t.description LIKE '%' || ?1 || '%')
+  AND (?2 = '' OR t.label = ?2)
+  AND (?3 = '' OR t.repo_id = ?3)
+  AND (?4 = '' OR t.type = ?4)
+  AND (?5 = '' OR t.git_state = ?5)
+  AND (
+    (?6 = '' AND t.archived = 0)
+    OR (?6 = 'only' AND t.archived != 0)
+    OR ?6 = 'all'
+  )
+  AND (
+    ?7 = ''
+    OR t.created_at < (SELECT created_at FROM tasks WHERE id = ?7)
+    OR (t.created_at = (SELECT created_at FROM tasks WHERE id = ?7) AND t.id < ?7)
+  )
+ORDER BY t.created_at DESC, t.id DESC
+LIMIT ?8
+`
+
+type SearchTasksPageParams struct {
+	Column1 interface{} `json:"column_1"`
+	Column2 interface{} `json:"column_2"`
+	Column3 interface{} `json:"column_3"`
+	Column4 interface{} `json:"column_4"`
+	Column5 interface{} `json:"column_5"`
+	Column6 interface{} `json:"column_6"`
+	Column7 interface{} `json:"column_7"`
+	Limit   int64       `json:"limit"`
+}
+
+// Cursor-paginated variant of SearchTasks. Positional params are used instead
+// of @named ones to sidestep a byte-offset bug in sqlc's SQLite analyzer that
+// corrupts long named-parameter queries. Argument order:
+//
+//	query, query, label, label, repo_id, repo_id, type, type,
+//	git_state, git_state, archived, archived, archived,
+//	after, after (cursor: created_at then id of the last row), limit.
+//
+// Ordering is (created_at, id) descending so the cursor is a stable total order.
+func (q *Queries) SearchTasksPage(ctx context.Context, arg SearchTasksPageParams) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, searchTasksPage,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.Column7,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.Type,
+			&i.Label,
+			&i.RepoID,
+			&i.WorkflowID,
+			&i.CurrentAgentRunID,
+			&i.AgentNotes,
+			&i.ActiveAgentRunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Branch,
+			&i.WorktreePath,
+			&i.BaseRef,
+			&i.Attachments,
+			&i.GitState,
+			&i.Paused,
+			&i.TransientRetryCount,
+			&i.NextRetryAt,
+			&i.Source,
+			&i.SourceRef,
+			&i.Archived,
+			&i.PrUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setTaskActiveRun = `-- name: SetTaskActiveRun :exec
 UPDATE tasks
 SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP

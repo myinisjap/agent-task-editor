@@ -12,6 +12,39 @@ import GitHubAuthWarning from '../components/shared/GitHubAuthWarning'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
+// How many log entries to fetch per page (initial tail + each "load earlier").
+const LOG_PAGE_SIZE = 200
+
+// toLog normalises a log-ish payload (from a REST page, the batched replay, or
+// a live agent.log event) into an AgentLog. Live events carry the timestamp as
+// `at` and may omit the id, so fill both in.
+function toLog(e: any): AgentLog {
+  return {
+    id: e.id ?? crypto.randomUUID(),
+    agent_run_id: e.agent_run_id ?? '',
+    timestamp: e.timestamp ?? e.at ?? '',
+    type: e.type,
+    content: e.content,
+  }
+}
+
+// mergeLogs unions two log lists by id (deduping) and returns them in
+// chronological order. Used when combining the initial page with the batched
+// replay or with an older "load earlier" page. Ordering is by timestamp, with
+// id as a stable tiebreaker for entries that share a timestamp.
+function mergeLogs(prev: AgentLog[], incoming: AgentLog[]): AgentLog[] {
+  if (incoming.length === 0) return prev
+  const byId = new Map<string, AgentLog>()
+  for (const l of prev) byId.set(l.id, l)
+  for (const l of incoming) byId.set(l.id, l)
+  return Array.from(byId.values()).sort((a, b) => {
+    const ta = Date.parse(a.timestamp) || 0
+    const tb = Date.parse(b.timestamp) || 0
+    if (ta !== tb) return ta - tb
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+  })
+}
+
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -20,6 +53,8 @@ export default function TaskDetailPage() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null)
   const [debug, setDebug] = useState(false)
   const [logs, setLogs] = useState<AgentLog[]>([])
+  const [logsHasEarlier, setLogsHasEarlier] = useState(false)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
   const [rejectNote, setRejectNote] = useState('')
   const [actionPending, setActionPending] = useState(false)
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
@@ -83,14 +118,38 @@ export default function TaskDetailPage() {
       })
   }, [id])
 
-  // Load logs when selected run changes
+  // Load the newest page of logs when the selected run changes. Older entries
+  // are fetched on demand via "Load earlier".
   useEffect(() => {
     if (!id || !selectedRun) return
-    api.tasks.runLogs(id, selectedRun).then((l) => {
-      setLogs(l ?? [])
+    let cancelled = false
+    api.tasks.runLogs(id, selectedRun, { limit: LOG_PAGE_SIZE }).then((res) => {
+      if (cancelled) return
+      setLogs(res.items)
+      setLogsHasEarlier(res.hasMore)
       autoScrollRef.current = true
     }).catch(() => {})
+    return () => { cancelled = true }
   }, [id, selectedRun])
+
+  // Fetch the page of log entries immediately older than the ones we hold,
+  // using the oldest currently-loaded entry's id as the cursor.
+  const handleLoadEarlier = useCallback(async () => {
+    if (!id || !selectedRun || loadingEarlier) return
+    const oldest = logs[0]?.id
+    if (!oldest) return
+    setLoadingEarlier(true)
+    try {
+      const res = await api.tasks.runLogs(id, selectedRun, { before: oldest, limit: LOG_PAGE_SIZE })
+      autoScrollRef.current = false
+      setLogs((prev) => mergeLogs(prev, res.items))
+      setLogsHasEarlier(res.hasMore)
+    } catch {
+      // best-effort; leave the button so the user can retry
+    } finally {
+      setLoadingEarlier(false)
+    }
+  }, [id, selectedRun, logs, loadingEarlier])
 
   // Load workflow when task is available
   useEffect(() => {
@@ -122,7 +181,16 @@ export default function TaskDetailPage() {
       if (event.type === 'agent.log' && event.payload.task_id === id) {
         const entry = event.payload.entry as AgentLog
         if (entry && event.payload.run_id === selectedRun) {
-          setLogs((prev) => [...prev, { ...entry, id: entry.id ?? crypto.randomUUID() }])
+          const l = toLog(entry)
+          setLogs((prev) => (prev.some((x) => x.id === l.id) ? prev : [...prev, l]))
+        }
+      } else if (event.type === 'agent.log_replay' && event.payload.task_id === id) {
+        // Batched tail sent on subscribe. Merge (dedupe) with whatever the REST
+        // page already loaded, and surface "load earlier" if more history exists.
+        if (event.payload.run_id === selectedRun) {
+          const entries = (event.payload.entries ?? []).map(toLog)
+          setLogs((prev) => mergeLogs(prev, entries))
+          if (event.payload.has_more) setLogsHasEarlier(true)
         }
       } else if (event.type === 'task.label_changed' && event.payload.task_id === id) {
         setEditingTask(false)
@@ -654,6 +722,17 @@ export default function TaskDetailPage() {
             </p>
             {logs.length === 0 && selectedRun && (
               <p className="text-slate-600 text-xs px-3">No log entries</p>
+            )}
+            {logsHasEarlier && (
+              <div className="flex justify-center mb-2">
+                <button
+                  onClick={handleLoadEarlier}
+                  disabled={loadingEarlier}
+                  className="text-xs px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-50"
+                >
+                  {loadingEarlier ? 'Loading…' : '↑ Load earlier'}
+                </button>
+              </div>
             )}
             {logs.map((log, i) => (
               <AgentLogEntry key={log.id ?? i} log={log} debug={debug} />

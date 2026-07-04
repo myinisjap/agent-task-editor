@@ -18,6 +18,13 @@ import (
 
 const maxSubscriptions = 100
 
+// replayLimit caps how many historical log entries are replayed to a client on
+// subscribe. A single batched agent.log_replay message carries the newest
+// replayLimit entries; older entries are fetched on demand via the REST logs
+// endpoint ("load earlier"). This bounds the work done — and the send-buffer
+// pressure — when subscribing to a task with a very long run.
+const replayLimit = 500
+
 // Client represents a single WebSocket connection.
 type Client struct {
 	hub  *Hub
@@ -150,8 +157,12 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 }
 
-// replayTaskLogs fetches historical log entries for the task's current run
-// and sends them to the client so a reconnecting browser sees prior output.
+// replayTaskLogs fetches the tail of the task's current run's log and sends it
+// to the client as a single batched agent.log_replay message, so a reconnecting
+// browser sees prior output without the server queueing tens of thousands of
+// individual messages through the send buffer. Only the newest replayLimit
+// entries are sent; older ones are loaded on demand via the REST logs endpoint.
+// The has_more flag tells the client whether earlier entries exist.
 func replayTaskLogs(ctx context.Context, c *Client, q *gen.Queries, taskID string) {
 	task, err := q.GetTask(ctx, taskID)
 	if err != nil || task.CurrentAgentRunID == nil {
@@ -159,31 +170,47 @@ func replayTaskLogs(ctx context.Context, c *Client, q *gen.Queries, taskID strin
 	}
 	runID := *task.CurrentAgentRunID
 
-	logs, err := q.ListAgentLogs(ctx, runID)
+	// Fetch one extra (newest-first) to detect whether earlier entries exist.
+	logs, err := q.ListAgentLogsPage(ctx, gen.ListAgentLogsPageParams{
+		AgentRunID: runID,
+		Column2:    "",
+		Limit:      int64(replayLimit) + 1,
+	})
 	if err != nil || len(logs) == 0 {
 		return
 	}
+	hasMore := false
+	if len(logs) > replayLimit {
+		logs = logs[:replayLimit]
+		hasMore = true
+	}
 
-	for _, log := range logs {
-		msg, err := json.Marshal(Event{
-			Type: "agent.log",
-			Payload: map[string]any{
-				"run_id":  runID,
-				"task_id": taskID,
-				"entry": map[string]any{
-					"type":    log.Type,
-					"content": log.Content,
-					"at":      log.Timestamp,
-				},
-			},
-		})
-		if err != nil {
-			continue
+	// logs are newest-first; reverse to chronological order for the client.
+	entries := make([]map[string]any, len(logs))
+	for i := range logs {
+		log := logs[len(logs)-1-i]
+		entries[i] = map[string]any{
+			"id":      log.ID,
+			"type":    log.Type,
+			"content": log.Content,
+			"at":      log.Timestamp,
 		}
-		select {
-		case c.send <- msg:
-		case <-ctx.Done():
-			return
-		}
+	}
+
+	msg, err := json.Marshal(Event{
+		Type: "agent.log_replay",
+		Payload: map[string]any{
+			"run_id":   runID,
+			"task_id":  taskID,
+			"has_more": hasMore,
+			"entries":  entries,
+		},
+	})
+	if err != nil {
+		return
+	}
+	select {
+	case c.send <- msg:
+	case <-ctx.Done():
 	}
 }

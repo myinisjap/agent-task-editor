@@ -17,6 +17,26 @@ async function request<T>(path: string, init?: RequestInit & { isFormData?: bool
   return res.json()
 }
 
+// requestWithHeaders is like request but also surfaces the response headers, so
+// callers can read pagination cursors (X-Next-Cursor / X-Prev-Cursor /
+// X-Has-More) that the list endpoints return alongside the array body.
+async function requestWithHeaders<T>(path: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    ...init,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  const data = (res.status === 204 ? undefined : await res.json()) as T
+  return { data, headers: res.headers }
+}
+
+// Cursor-paginated result: a page of items plus the cursor for the next page
+// (null when the list is exhausted).
+export type Page<T> = { items: T[]; nextCursor: string | null }
+
 // ----- Tasks -----
 
 export type Task = {
@@ -250,13 +270,20 @@ export type Dashboard = {
 
 export const api = {
   tasks: {
-    list: (filters?: TaskFilters) => {
+    // list returns a single page of tasks (newest first). Pass `after` (a
+    // cursor from a previous page's nextCursor) and `limit` to page through.
+    // The nextCursor is read from the X-Next-Cursor response header; it is null
+    // once no more tasks remain.
+    list: async (filters?: TaskFilters, opts?: { after?: string; limit?: number }): Promise<Page<Task>> => {
       const params = new URLSearchParams()
       for (const [key, value] of Object.entries(filters ?? {})) {
-        if (value) params.set(key, value)
+        if (value) params.set(key, String(value))
       }
+      if (opts?.after) params.set('after', opts.after)
+      if (opts?.limit) params.set('limit', String(opts.limit))
       const qs = params.toString()
-      return request<Task[]>(`/tasks${qs ? `?${qs}` : ''}`)
+      const { data, headers } = await requestWithHeaders<Task[]>(`/tasks${qs ? `?${qs}` : ''}`)
+      return { items: data ?? [], nextCursor: headers.get('X-Next-Cursor') || null }
     },
     get: (id: string) => request<Task>(`/tasks/${id}`),
     create: (body: FormData | { title: string; description?: string; type?: string; repo_id: string; workflow_id: string }) => {
@@ -303,7 +330,28 @@ export const api = {
       request<void>(`/tasks/${id}/review-comments/${commentId}`, { method: 'DELETE' }),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
-    runLogs: (id: string, runId: string) => request<AgentLog[]>(`/tasks/${id}/runs/${runId}/logs`),
+    // runLogs returns a page of a run's log entries in chronological order
+    // (oldest first). Omit `before` for the newest page (the tail); pass a
+    // previous page's prevCursor as `before` to load earlier entries. hasMore
+    // and prevCursor come from the X-Has-More / X-Prev-Cursor headers.
+    runLogs: async (
+      id: string,
+      runId: string,
+      opts?: { before?: string; limit?: number },
+    ): Promise<{ items: AgentLog[]; hasMore: boolean; prevCursor: string | null }> => {
+      const params = new URLSearchParams()
+      if (opts?.before) params.set('before', opts.before)
+      if (opts?.limit) params.set('limit', String(opts.limit))
+      const qs = params.toString()
+      const { data, headers } = await requestWithHeaders<AgentLog[]>(
+        `/tasks/${id}/runs/${runId}/logs${qs ? `?${qs}` : ''}`,
+      )
+      return {
+        items: data ?? [],
+        hasMore: headers.get('X-Has-More') === 'true',
+        prevCursor: headers.get('X-Prev-Cursor') || null,
+      }
+    },
   },
   workflows: {
     list: () => request<Workflow[]>('/workflows'),

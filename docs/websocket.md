@@ -23,7 +23,7 @@ Send JSON messages to control which tasks you receive events for:
 
 Maximum 100 active subscriptions per connection.
 
-**On subscribe**, the server immediately replays all persisted log entries for the task's current agent run. This ensures a reconnecting browser sees prior output without any gap.
+**On subscribe**, the server immediately replays the tail of the persisted log for the task's current agent run as a single batched `agent.log_replay` message (see below). This ensures a reconnecting browser sees prior output without any gap. Only the most recent entries are replayed (capped at 500); if the run is longer, `has_more` is `true` and earlier entries can be loaded on demand via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
 
 ## Event Types
 
@@ -142,7 +142,7 @@ clients should refetch the task for full data.
 ```
 
 ### `agent.log`
-A single log entry from a running agent. Sent for every line of output in real time, and replayed from the database when a client subscribes.
+A single log entry from a running agent. Sent for every line of output in real time.
 
 ```json
 {
@@ -155,6 +155,33 @@ A single log entry from a running agent. Sent for every line of output in real t
       "content": "string",
       "at": "RFC3339 timestamp"
     }
+  }
+}
+```
+
+### `agent.log_replay`
+Sent once when a client subscribes to a task: the tail of the current run's
+persisted log, batched into a single message rather than one `agent.log` per
+row. This bounds the work (and send-buffer pressure) when subscribing to a task
+with a very long run. `entries` is chronological (oldest first) and capped at
+the 500 most recent rows; `has_more` is `true` when earlier entries exist and
+can be fetched via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
+
+```json
+{
+  "type": "agent.log_replay",
+  "payload": {
+    "run_id": "uuid",
+    "task_id": "uuid",
+    "has_more": false,
+    "entries": [
+      {
+        "id": "uuid",
+        "type": "stdout | stderr | system | tool_call | tool_result",
+        "content": "string",
+        "at": "RFC3339 timestamp"
+      }
+    ]
   }
 }
 ```
