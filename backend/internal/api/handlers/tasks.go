@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -60,6 +61,33 @@ func toTaskResponses(tasks []gen.Task) []taskResponse {
 	return out
 }
 
+// Pagination defaults and caps. List endpoints return at most a page at a time,
+// cursored on (created_at|timestamp, id). Callers pass ?limit= (clamped to the
+// max) and ?after=/?before= cursors; the response carries the next cursor in a
+// header so the body shape stays a plain array.
+const (
+	defaultTaskPageLimit = 200
+	maxTaskPageLimit     = 500
+	defaultLogPageLimit  = 200
+	maxLogPageLimit      = 1000
+)
+
+// parsePageLimit parses a ?limit= value, falling back to def when empty or
+// invalid and clamping into [1, max].
+func parsePageLimit(raw string, def, max int) int {
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return def
+	}
+	if n > max {
+		return max
+	}
+	return n
+}
+
 // maxUploadSize is the maximum total multipart body size (50 MB).
 const maxUploadSize = 50 << 20
 
@@ -76,11 +104,16 @@ func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string) 
 	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir}
 }
 
-// List returns tasks, optionally narrowed by query parameters:
+// List returns a page of tasks, optionally narrowed by query parameters:
 //   - q: case-insensitive substring match against title and description
 //   - label, repo_id, type, git_state: exact-match filters
 //   - archived: "" (default) hides archived tasks, "only" returns just
 //     archived tasks, "all" returns everything
+//   - limit: page size (default 200, capped at 500)
+//   - after: cursor (the id of the last task from the previous page)
+//
+// The body is a plain JSON array (newest first). When more tasks remain, the
+// id to pass as the next ?after= cursor is returned in the X-Next-Cursor header.
 func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	qp := r.URL.Query()
 	archived := qp.Get("archived")
@@ -91,17 +124,27 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.q.SearchTasks(r.Context(), gen.SearchTasksParams{
-		Query:    qp.Get("q"),
-		Label:    qp.Get("label"),
-		RepoID:   qp.Get("repo_id"),
-		Type:     qp.Get("type"),
-		GitState: qp.Get("git_state"),
-		Archived: archived,
+	limit := parsePageLimit(qp.Get("limit"), defaultTaskPageLimit, maxTaskPageLimit)
+
+	// Fetch one extra row so we can tell whether another page exists without a
+	// separate COUNT.
+	tasks, err := h.q.SearchTasksPage(r.Context(), gen.SearchTasksPageParams{
+		Column1: qp.Get("q"),
+		Column2: qp.Get("label"),
+		Column3: qp.Get("repo_id"),
+		Column4: qp.Get("type"),
+		Column5: qp.Get("git_state"),
+		Column6: archived,
+		Column7: qp.Get("after"),
+		Limit:   int64(limit) + 1,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+		w.Header().Set("X-Next-Cursor", tasks[len(tasks)-1].ID)
 	}
 	JSON(w, http.StatusOK, toTaskResponses(tasks))
 }
@@ -989,11 +1032,38 @@ func (h *TasksHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, run)
 }
 
+// GetRunLogs returns a page of a run's log entries in chronological order
+// (oldest first), newest page first. Query parameters:
+//   - limit: page size (default 200, capped at 1000)
+//   - before: cursor (the id of the oldest entry the caller already has) —
+//     returns entries older than it. Omit to get the most recent page (tail).
+//
+// The body is a plain JSON array. When older entries remain, X-Has-More is
+// "true" and X-Prev-Cursor carries the id to pass as the next ?before= to load
+// earlier.
 func (h *TasksHandler) GetRunLogs(w http.ResponseWriter, r *http.Request) {
-	logs, err := h.q.ListAgentLogs(r.Context(), chi.URLParam(r, "run_id"))
+	runID := chi.URLParam(r, "run_id")
+	limit := parsePageLimit(r.URL.Query().Get("limit"), defaultLogPageLimit, maxLogPageLimit)
+
+	// Fetch one extra row (newest first) to detect whether older entries exist.
+	logs, err := h.q.ListAgentLogsPage(r.Context(), gen.ListAgentLogsPageParams{
+		AgentRunID: runID,
+		Column2:    r.URL.Query().Get("before"),
+		Limit:      int64(limit) + 1,
+	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if len(logs) > limit {
+		logs = logs[:limit]
+		// logs are newest-first; the oldest in this page is the last element.
+		w.Header().Set("X-Has-More", "true")
+		w.Header().Set("X-Prev-Cursor", logs[len(logs)-1].ID)
+	}
+	// Reverse to chronological (oldest-first) order for display.
+	for i, j := 0, len(logs)-1; i < j; i, j = i+1, j-1 {
+		logs[i], logs[j] = logs[j], logs[i]
 	}
 	JSON(w, http.StatusOK, logs)
 }

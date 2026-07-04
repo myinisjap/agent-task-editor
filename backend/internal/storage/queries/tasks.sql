@@ -19,6 +19,33 @@ WHERE (@query = '' OR title LIKE '%' || @query || '%' OR description LIKE '%' ||
   )
 ORDER BY created_at DESC;
 
+-- name: SearchTasksPage :many
+-- Cursor-paginated variant of SearchTasks. Positional params are used instead
+-- of @named ones to sidestep a byte-offset bug in sqlc's SQLite analyzer that
+-- corrupts long named-parameter queries. Argument order:
+--   query, query, label, label, repo_id, repo_id, type, type,
+--   git_state, git_state, archived, archived, archived,
+--   after, after (cursor: created_at then id of the last row), limit.
+-- Ordering is (created_at, id) descending so the cursor is a stable total order.
+SELECT t.* FROM tasks t
+WHERE (?1 = '' OR t.title LIKE '%' || ?1 || '%' OR t.description LIKE '%' || ?1 || '%')
+  AND (?2 = '' OR t.label = ?2)
+  AND (?3 = '' OR t.repo_id = ?3)
+  AND (?4 = '' OR t.type = ?4)
+  AND (?5 = '' OR t.git_state = ?5)
+  AND (
+    (?6 = '' AND t.archived = 0)
+    OR (?6 = 'only' AND t.archived != 0)
+    OR ?6 = 'all'
+  )
+  AND (
+    ?7 = ''
+    OR t.created_at < (SELECT created_at FROM tasks WHERE id = ?7)
+    OR (t.created_at = (SELECT created_at FROM tasks WHERE id = ?7) AND t.id < ?7)
+  )
+ORDER BY t.created_at DESC, t.id DESC
+LIMIT ?8;
+
 -- name: GetTask :one
 SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks WHERE id = ?;
 

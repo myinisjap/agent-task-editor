@@ -370,9 +370,27 @@ paths:
             Archived-task visibility. Omitted (default) hides archived tasks;
             "only" returns just archived tasks; "all" returns everything.
           schema: { type: string, enum: [all, only] }
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last task from the previous
+            page (returned in that response's X-Next-Cursor header). Omit for the
+            first page.
+          schema: { type: string }
       responses:
         "200":
-          description: List of tasks
+          description: >
+            A page of tasks, newest first. When more tasks remain, the id to pass
+            as the next `after` cursor is returned in the X-Next-Cursor header
+            (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more tasks remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/Task" } }
@@ -786,7 +804,11 @@ paths:
 
   /tasks/{id}/runs/{run_id}/logs:
     get:
-      summary: Get logs for an agent run
+      summary: Get a page of logs for an agent run
+      description: >
+        Returns a page of the run's log entries in chronological order (oldest
+        first). Omit `before` to get the most recent page (the tail); pass a
+        previous response's X-Prev-Cursor as `before` to load earlier entries.
       parameters:
         - name: id
           in: path
@@ -796,8 +818,30 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 1000 are clamped to 1000.
+          schema: { type: integer, default: 200, maximum: 1000 }
+        - name: before
+          in: query
+          description: >
+            Cursor to load earlier entries: the id of the oldest entry the caller
+            already has (returned in the previous response's X-Prev-Cursor
+            header). Omit for the newest page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of log entries, oldest first. When earlier entries remain,
+            X-Has-More is "true" and X-Prev-Cursor carries the id to pass as the
+            next `before` cursor.
+          headers:
+            X-Has-More:
+              description: '"true" when earlier entries exist before this page.'
+              schema: { type: string }
+            X-Prev-Cursor:
+              description: Cursor (id) to pass as the next `before` to load earlier entries.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentLog" } }

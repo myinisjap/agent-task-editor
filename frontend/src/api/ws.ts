@@ -7,6 +7,10 @@ export type WSEvent =
   | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string } }
   | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
   | { type: 'agent.log'; payload: { task_id: string; run_id: string; entry: AgentLog } }
+  // Sent once on subscribe: the tail of the run's persisted log as a single
+  // batched message (capped server-side). has_more signals that earlier entries
+  // exist and can be fetched via the REST logs endpoint ("load earlier").
+  | { type: 'agent.log_replay'; payload: { task_id: string; run_id: string; has_more: boolean; entries: AgentLog[] } }
   | { type: 'task.git_state_changed'; payload: { task_id: string; git_state: string; pr_url: string } }
   | { type: 'task.review_comments_changed'; payload: { task_id: string; run_id: string; resolved: number } }
   // task.created payloads carry a subset of Task fields (always includes id);

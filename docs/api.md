@@ -38,8 +38,9 @@ Key fields returned by task endpoints:
 ---
 
 ### `GET /tasks`
-List tasks. Returns an array of task objects. Archived tasks are excluded
-unless `archived` is passed.
+List tasks, newest first. Returns an array of task objects (the body shape is
+unchanged; pagination is carried in a response header). Archived tasks are
+excluded unless `archived` is passed.
 
 Query params (all optional, combinable):
 
@@ -51,6 +52,13 @@ Query params (all optional, combinable):
 | `type` | Filter by task type (`feature`, `bug`, …) |
 | `git_state` | Filter by git state (`pushed`, `pr_open`, …) |
 | `archived` | `all` includes archived tasks, `only` returns just archived tasks; omitted = hide archived |
+| `limit` | Page size (default 200, clamped to 500) |
+| `after` | Cursor for the next page — the id of the last task from the previous page |
+
+**Pagination:** results are cursor-paginated on `(created_at, id)`. When more
+tasks remain, the response includes an `X-Next-Cursor` header whose value is the
+id to pass as `after` on the next request. The header is absent on the final
+page. To load everything, page until `X-Next-Cursor` is no longer present.
 
 ### `POST /tasks`
 Create a task. Accepts JSON body or `multipart/form-data` (for image attachments).
@@ -292,7 +300,21 @@ List all agent runs for a task (newest first).
 Get a single run record.
 
 ### `GET /tasks/{id}/runs/{run_id}/logs`
-Get all persisted log entries for a run.
+Get a page of a run's persisted log entries, in chronological order (oldest
+first). A long verbose run can produce tens of thousands of entries, so the
+endpoint is paginated.
+
+Query params:
+
+| Param | Meaning |
+|---|---|
+| `limit` | Page size (default 200, clamped to 1000) |
+| `before` | Cursor to load earlier entries — the id of the oldest entry you already have |
+
+Omit `before` to get the most recent page (the tail). When earlier entries
+remain, the response includes `X-Has-More: true` and an `X-Prev-Cursor` header
+whose value is the id to pass as `before` to load the previous page. This is the
+"load earlier" path that complements the capped WebSocket log replay.
 
 ```json
 [

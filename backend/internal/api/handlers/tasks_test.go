@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -96,6 +98,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Delete("/tasks/{id}", h.Delete)
 	r.Patch("/tasks/{id}/label", h.MoveLabel)
 	r.Get("/tasks/{id}/runs", h.ListRuns)
+	r.Get("/tasks/{id}/runs/{run_id}/logs", h.GetRunLogs)
 	r.Patch("/tasks/{id}/pause", h.SetPaused)
 	r.Patch("/tasks/{id}/archive", h.SetArchived)
 	r.Post("/tasks/{id}/pr", h.CreatePR)
@@ -927,5 +930,193 @@ func TestCreatePR_RepoWithoutRemote_Returns400(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "remote_url") {
 		t.Errorf("expected 'remote_url' error, got %s", w.Body)
+	}
+}
+
+// ---------- Pagination ----------
+
+// listTasksPage GETs /tasks with the given query and returns the decoded tasks
+// plus the X-Next-Cursor header.
+func listTasksPage(t *testing.T, r http.Handler, query string) ([]apiTask, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/tasks"+query, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /tasks%s: expected 200, got %d: %s", query, w.Code, w.Body)
+	}
+	var tasks []apiTask
+	if err := json.NewDecoder(w.Body).Decode(&tasks); err != nil {
+		t.Fatal(err)
+	}
+	return tasks, w.Header().Get("X-Next-Cursor")
+}
+
+func TestTasks_List_Pagination(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	// Create 5 tasks; created_at is assigned by CURRENT_TIMESTAMP so several may
+	// share a second — the (created_at, id) cursor must still not skip or repeat.
+	for i := 0; i < 5; i++ {
+		if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+			ID:         uuid.NewString(),
+			Title:      "Task",
+			WorkflowID: wfID,
+			RepoID:     repoID,
+			Label:      "work",
+		}); err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+	}
+
+	// Walk the full list in pages of 2, collecting ids and asserting no dupes.
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		q := "?limit=2"
+		if cursor != "" {
+			q += "&after=" + cursor
+		}
+		page, next := listTasksPage(t, r, q)
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d tasks, expected <= 2", len(page))
+		}
+		for _, task := range page {
+			if seen[task.ID] {
+				t.Fatalf("task %s returned on more than one page", task.ID)
+			}
+			seen[task.ID] = true
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 tasks, saw %d", len(seen))
+	}
+	// 5 tasks / 2 per page = 3 pages, and the last full page must not advertise
+	// a further cursor once the extra look-ahead row is exhausted.
+	if _, next := listTasksPage(t, r, "?limit=5"); next != "" {
+		t.Errorf("a full-size page covering every task should have no next cursor, got %q", next)
+	}
+}
+
+func TestTasks_List_LimitCapped(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+	// An over-max limit must be clamped rather than rejected.
+	if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	page, _ := listTasksPage(t, r, "?limit=100000")
+	if len(page) != 1 {
+		t.Fatalf("expected the single task back, got %d", len(page))
+	}
+}
+
+// seedRun creates an agent run with n log entries spaced one second apart and
+// returns the run id.
+func seedRun(t *testing.T, q *gen.Queries, taskID string, n int) string {
+	t.Helper()
+	ctx := context.Background()
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID:     runID,
+		TaskID: taskID,
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < n; i++ {
+		if err := q.CreateAgentLog(ctx, gen.CreateAgentLogParams{
+			ID:         uuid.NewString(),
+			AgentRunID: runID,
+			Timestamp:  base.Add(time.Duration(i) * time.Second),
+			Type:       "text",
+			Content:    fmt.Sprintf("line %d", i),
+		}); err != nil {
+			t.Fatalf("create log: %v", err)
+		}
+	}
+	return runID
+}
+
+// getLogsPage GETs a run's logs and returns the decoded entries plus the
+// X-Has-More and X-Prev-Cursor headers.
+func getLogsPage(t *testing.T, r http.Handler, taskID, runID, query string) ([]gen.AgentLog, bool, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/runs/"+runID+"/logs"+query, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET logs%s: expected 200, got %d: %s", query, w.Code, w.Body)
+	}
+	var logs []gen.AgentLog
+	if err := json.NewDecoder(w.Body).Decode(&logs); err != nil {
+		t.Fatal(err)
+	}
+	return logs, w.Header().Get("X-Has-More") == "true", w.Header().Get("X-Prev-Cursor")
+}
+
+func TestTasks_RunLogs_Pagination(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	task, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	runID := seedRun(t, q, task.ID, 5)
+
+	// No cursor returns the newest page (tail), in chronological order.
+	page, hasMore, prev := getLogsPage(t, r, task.ID, runID, "?limit=2")
+	if len(page) != 2 {
+		t.Fatalf("expected 2 log entries, got %d", len(page))
+	}
+	if page[0].Content != "line 3" || page[1].Content != "line 4" {
+		t.Errorf("tail page should be the two newest in order, got %q,%q", page[0].Content, page[1].Content)
+	}
+	if !hasMore || prev == "" {
+		t.Fatalf("expected has_more with a prev cursor, got hasMore=%v prev=%q", hasMore, prev)
+	}
+	if prev != page[0].ID {
+		t.Errorf("prev cursor should be the oldest id in the page")
+	}
+
+	// Walk backwards to the start via the before cursor, collecting everything.
+	seen := map[string]bool{}
+	for _, l := range page {
+		seen[l.ID] = true
+	}
+	cursor := prev
+	for {
+		older, more, p := getLogsPage(t, r, task.ID, runID, "?limit=2&before="+cursor)
+		for i := 1; i < len(older); i++ {
+			if older[i-1].Content >= older[i].Content {
+				t.Errorf("page not in chronological order: %q then %q", older[i-1].Content, older[i].Content)
+			}
+		}
+		for _, l := range older {
+			if seen[l.ID] {
+				t.Fatalf("log %s returned twice across pages", l.ID)
+			}
+			seen[l.ID] = true
+		}
+		if !more {
+			break
+		}
+		cursor = p
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 log entries, saw %d", len(seen))
 	}
 }

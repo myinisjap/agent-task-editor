@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type AgentLog, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
@@ -12,6 +13,39 @@ import GitHubAuthWarning from '../components/shared/GitHubAuthWarning'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
+// How many log entries to fetch per page (initial tail + each "load earlier").
+const LOG_PAGE_SIZE = 200
+
+// toLog normalises a log-ish payload (from a REST page, the batched replay, or
+// a live agent.log event) into an AgentLog. Live events carry the timestamp as
+// `at` and may omit the id, so fill both in.
+function toLog(e: any): AgentLog {
+  return {
+    id: e.id ?? crypto.randomUUID(),
+    agent_run_id: e.agent_run_id ?? '',
+    timestamp: e.timestamp ?? e.at ?? '',
+    type: e.type,
+    content: e.content,
+  }
+}
+
+// mergeLogs unions two log lists by id (deduping) and returns them in
+// chronological order. Used when combining the initial page with the batched
+// replay or with an older "load earlier" page. Ordering is by timestamp, with
+// id as a stable tiebreaker for entries that share a timestamp.
+function mergeLogs(prev: AgentLog[], incoming: AgentLog[]): AgentLog[] {
+  if (incoming.length === 0) return prev
+  const byId = new Map<string, AgentLog>()
+  for (const l of prev) byId.set(l.id, l)
+  for (const l of incoming) byId.set(l.id, l)
+  return Array.from(byId.values()).sort((a, b) => {
+    const ta = Date.parse(a.timestamp) || 0
+    const tb = Date.parse(b.timestamp) || 0
+    if (ta !== tb) return ta - tb
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+  })
+}
+
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -20,6 +54,8 @@ export default function TaskDetailPage() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null)
   const [debug, setDebug] = useState(false)
   const [logs, setLogs] = useState<AgentLog[]>([])
+  const [logsHasEarlier, setLogsHasEarlier] = useState(false)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
   const [rejectNote, setRejectNote] = useState('')
   const [actionPending, setActionPending] = useState(false)
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
@@ -36,9 +72,24 @@ export default function TaskDetailPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
-  const logBottomRef = useRef<HTMLDivElement>(null)
+  const logScrollRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
+  // When "load earlier" prepends N entries, this holds N so the post-render
+  // effect can re-anchor the viewport to the entry that was previously on top
+  // (otherwise the virtualized list would jump).
+  const anchorIndexRef = useRef<number | null>(null)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
+
+  // Virtualize the log list: only entries near the viewport are mounted, so a
+  // run with thousands of entries stays smooth. Rows are variable-height
+  // (markdown, expandable tool results), so heights are measured dynamically
+  // via measureElement rather than estimated up front.
+  const logVirtualizer = useVirtualizer({
+    count: logs.length,
+    getScrollElement: () => logScrollRef.current,
+    estimateSize: () => 44,
+    overscan: 12,
+  })
 
   const refreshTask = useCallback(() => {
     if (!id) return
@@ -83,14 +134,43 @@ export default function TaskDetailPage() {
       })
   }, [id])
 
-  // Load logs when selected run changes
+  // Load the newest page of logs when the selected run changes. Older entries
+  // are fetched on demand via "Load earlier".
   useEffect(() => {
     if (!id || !selectedRun) return
-    api.tasks.runLogs(id, selectedRun).then((l) => {
-      setLogs(l ?? [])
+    let cancelled = false
+    api.tasks.runLogs(id, selectedRun, { limit: LOG_PAGE_SIZE }).then((res) => {
+      if (cancelled) return
+      setLogs(res.items)
+      setLogsHasEarlier(res.hasMore)
       autoScrollRef.current = true
     }).catch(() => {})
+    return () => { cancelled = true }
   }, [id, selectedRun])
+
+  // Fetch the page of log entries immediately older than the ones we hold,
+  // using the oldest currently-loaded entry's id as the cursor.
+  const handleLoadEarlier = useCallback(async () => {
+    if (!id || !selectedRun || loadingEarlier) return
+    const oldest = logs[0]?.id
+    if (!oldest) return
+    setLoadingEarlier(true)
+    try {
+      const res = await api.tasks.runLogs(id, selectedRun, { before: oldest, limit: LOG_PAGE_SIZE })
+      autoScrollRef.current = false
+      setLogs((prev) => {
+        const merged = mergeLogs(prev, res.items)
+        // Number of entries added at the top — used to re-anchor the viewport.
+        anchorIndexRef.current = merged.length - prev.length
+        return merged
+      })
+      setLogsHasEarlier(res.hasMore)
+    } catch {
+      // best-effort; leave the button so the user can retry
+    } finally {
+      setLoadingEarlier(false)
+    }
+  }, [id, selectedRun, logs, loadingEarlier])
 
   // Load workflow when task is available
   useEffect(() => {
@@ -122,7 +202,16 @@ export default function TaskDetailPage() {
       if (event.type === 'agent.log' && event.payload.task_id === id) {
         const entry = event.payload.entry as AgentLog
         if (entry && event.payload.run_id === selectedRun) {
-          setLogs((prev) => [...prev, { ...entry, id: entry.id ?? crypto.randomUUID() }])
+          const l = toLog(entry)
+          setLogs((prev) => (prev.some((x) => x.id === l.id) ? prev : [...prev, l]))
+        }
+      } else if (event.type === 'agent.log_replay' && event.payload.task_id === id) {
+        // Batched tail sent on subscribe. Merge (dedupe) with whatever the REST
+        // page already loaded, and surface "load earlier" if more history exists.
+        if (event.payload.run_id === selectedRun) {
+          const entries = (event.payload.entries ?? []).map(toLog)
+          setLogs((prev) => mergeLogs(prev, entries))
+          if (event.payload.has_more) setLogsHasEarlier(true)
         }
       } else if (event.type === 'task.label_changed' && event.payload.task_id === id) {
         setEditingTask(false)
@@ -154,12 +243,20 @@ export default function TaskDetailPage() {
     }
   }, [id, selectedRun, refreshTask, refreshRuns, refreshComments])
 
-  // Auto-scroll log pane
+  // Keep the log viewport anchored as entries change. After "load earlier"
+  // prepends entries, re-anchor to the entry that was previously on top so the
+  // view doesn't jump. Otherwise, when following the tail, scroll to the newest.
   useEffect(() => {
-    if (autoScrollRef.current) {
-      logBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (anchorIndexRef.current != null) {
+      const idx = anchorIndexRef.current
+      anchorIndexRef.current = null
+      if (idx > 0) logVirtualizer.scrollToIndex(idx, { align: 'start' })
+      return
     }
-  }, [logs])
+    if (autoScrollRef.current && logs.length > 0) {
+      logVirtualizer.scrollToIndex(logs.length - 1, { align: 'end' })
+    }
+  }, [logs, logVirtualizer])
 
   const activeRun = runs.find((r) => r.id === selectedRun)
   const needsHuman = activeRun?.status === 'waiting_human'
@@ -631,14 +728,8 @@ export default function TaskDetailPage() {
 
         {/* Logs tab */}
         {activeTab === 'logs' && (
-          <div
-            className="h-full overflow-y-auto py-3 px-2"
-            onScroll={(e) => {
-              const el = e.currentTarget
-              autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-            }}
-          >
-            <p className="text-slate-500 text-xs mb-3 px-3 font-sans flex items-center gap-2">
+          <div className="h-full flex flex-col">
+            <p className="text-slate-500 text-xs py-3 px-3 font-sans flex items-center gap-2 shrink-0">
               {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
               {selectedRun ? `Run ${selectedRun.slice(0, 8)}` : 'No agent runs yet'}
               {logs.length > 0 && <span className="text-slate-700">· {logs.length} events</span>}
@@ -655,10 +746,39 @@ export default function TaskDetailPage() {
             {logs.length === 0 && selectedRun && (
               <p className="text-slate-600 text-xs px-3">No log entries</p>
             )}
-            {logs.map((log, i) => (
-              <AgentLogEntry key={log.id ?? i} log={log} debug={debug} />
-            ))}
-            <div ref={logBottomRef} />
+            {logsHasEarlier && (
+              <div className="flex justify-center pb-2 shrink-0">
+                <button
+                  onClick={handleLoadEarlier}
+                  disabled={loadingEarlier}
+                  className="text-xs px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-50"
+                >
+                  {loadingEarlier ? 'Loading…' : '↑ Load earlier'}
+                </button>
+              </div>
+            )}
+            {/* Virtualized log list — only rows near the viewport are mounted. */}
+            <div
+              ref={logScrollRef}
+              className="flex-1 overflow-y-auto px-2"
+              onScroll={(e) => {
+                const el = e.currentTarget
+                autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+              }}
+            >
+              <div style={{ height: logVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+                {logVirtualizer.getVirtualItems().map((vi) => (
+                  <div
+                    key={logs[vi.index].id ?? vi.index}
+                    data-index={vi.index}
+                    ref={logVirtualizer.measureElement}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
+                  >
+                    <AgentLogEntry log={logs[vi.index]} debug={debug} />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 

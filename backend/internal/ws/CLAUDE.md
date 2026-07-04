@@ -27,7 +27,7 @@ Each WebSocket connection is managed by `ServeWS`:
 
 ## Log Replay
 
-On subscribe, `replayTaskLogs` fetches all persisted log entries for the task's current agent run and queues them to `c.send`. This ensures clients that reconnect mid-run (or open the task detail page after a run started) see the full output.
+On subscribe, `replayTaskLogs` fetches the **tail** of the task's current agent run's log (the newest `replayLimit` = 500 entries, via `ListAgentLogsPage`) and sends it as a **single batched `agent.log_replay` message**, not one `agent.log` per row. This ensures clients that reconnect mid-run (or open the task detail page after a run started) see prior output, while bounding the work: the previous per-row replay queued *every* persisted row through the 256-slot send buffer, which stalled the UI and could drop live events on a long run. The batch payload carries `entries` (chronological, oldest first), `run_id`, `task_id`, and `has_more`; when `has_more` is true the client loads earlier entries on demand via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
 
 Replay uses `task.current_agent_run_id` (not `active_agent_run_id`) — so clients can also replay logs from completed or failed runs.
 
