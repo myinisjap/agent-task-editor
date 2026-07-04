@@ -100,6 +100,11 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	counts := map[string]int{}
 	for _, t := range tasks {
+		// Archived tasks are hidden from the board, so keep the dashboard's
+		// per-label counts consistent with what the board shows.
+		if t.Archived != 0 {
+			continue
+		}
 		counts[t.Label]++
 	}
 

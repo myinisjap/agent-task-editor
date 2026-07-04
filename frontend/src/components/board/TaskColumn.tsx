@@ -16,9 +16,11 @@ type Props = {
   isStartingColumn?: boolean
   isTerminal?: boolean
   className?: string
+  selectedIds?: Set<string>
+  onToggleSelect?: (taskId: string) => void
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn, isTerminal, className }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const { remove } = useTasksStore()
   const [expanded, setExpanded] = useState(false)
@@ -53,6 +55,8 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
             onDelete={() => handleDelete(task.id)}
             isEditable={isStartingColumn}
+            selected={selectedIds?.has(task.id)}
+            onToggleSelect={onToggleSelect}
           />
         ))}
         {tasks.length === 0 && (

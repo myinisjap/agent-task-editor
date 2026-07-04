@@ -48,6 +48,9 @@ After editing any `.sql` file, run `sqlc generate` (or `go generate ./...` from 
 - `ClearActiveAgentRun` sets only `active_agent_run_id = NULL` — used by pool on run completion.
 - `015_task_paused` adds `tasks.paused INTEGER NOT NULL DEFAULT 0`, toggled via `SetTaskPaused` / `PATCH /tasks/{id}/pause`. It's independent of `label` and `active_agent_run_id`, and persists across restarts (it's a column, not in-memory state).
 - `022_task_source` adds `tasks.source`/`tasks.source_ref` plus a partial unique index on `(source, source_ref) WHERE source != ''` — the GitHub Issues importer (`internal/tasksource`) checks `CountTasksBySource` before `CreateSourcedTask`, and the index guards against concurrent-insert races. Manually created tasks keep both fields `''`.
+- `023_task_archived` adds `tasks.archived INTEGER NOT NULL DEFAULT 0`, toggled via `SetTaskArchived` / `PATCH /tasks/{id}/archive`. Archived tasks are excluded from `ListAgentPickupTasks` (never dispatched), skipped by the ghsync sweep, and hidden from `GET /tasks` unless `archived=all|only` is passed. Like `paused`, it's independent of `label`.
+- `SearchTasks` is the filterable listing behind `GET /tasks` — every param (`@query` free-text over title/description, `@label`, `@repo_id`, `@type`, `@git_state`, tri-state `@archived`) treats `''` as "no filter". sqlc types these params `interface{}` (it can't infer types from the `@x = '' OR col = @x` pattern); pass strings.
+- `024_task_templates` adds the `task_templates` table (unique `name`; pre-filled `title`/`description`/`type` for the new-task form). CRUD queries live in `queries/templates.sql`.
 
 ## Schema Key Tables
 

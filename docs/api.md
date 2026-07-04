@@ -29,15 +29,27 @@ Key fields returned by task endpoints:
 | `agent_notes` | string | Persistent markdown notes written by agents |
 | `git_state` | string | `""`, `pushed`, `pr_open`, `pr_merged`, `pr_closed` |
 | `attachments` | string[] | Relative paths to uploaded attachment files |
+| `paused` | boolean | Paused tasks are never picked up by the dispatcher |
+| `archived` | boolean | Archived tasks are hidden from the default board view, skipped by the GitHub PR sweep, and never dispatched |
 | `active_agent_run_id` | UUID? | Set while an agent run is in progress |
 | `current_agent_run_id` | UUID? | ID of the most recent agent run |
 
 ---
 
 ### `GET /tasks`
-List all tasks. Returns an array of task objects.
+List tasks. Returns an array of task objects. Archived tasks are excluded
+unless `archived` is passed.
 
-Query params: `label` (filter by label name).
+Query params (all optional, combinable):
+
+| Param | Meaning |
+|---|---|
+| `q` | Case-insensitive substring search over title and description |
+| `label` | Filter by label name |
+| `repo_id` | Filter by repository |
+| `type` | Filter by task type (`feature`, `bug`, …) |
+| `git_state` | Filter by git state (`pushed`, `pr_open`, …) |
+| `archived` | `all` includes archived tasks, `only` returns just archived tasks; omitted = hide archived |
 
 ### `POST /tasks`
 Create a task. Accepts JSON body or `multipart/form-data` (for image attachments).
@@ -175,6 +187,74 @@ a DB column, not in-memory state).
 ```
 
 Returns the updated `Task` object (with `paused: true`/`false`).
+
+### `PATCH /tasks/{id}/archive`
+Archive or unarchive a task. Archived tasks are hidden from the default board
+view (`GET /tasks` excludes them unless `archived=all|only` is passed),
+excluded from the GitHub PR status sweep, and never picked up by the
+dispatcher. Archiving does not change the task's `label`, so unarchiving
+restores it exactly where it was.
+
+```json
+{ "archived": true }
+```
+
+Returns the updated `Task` object.
+
+### `POST /tasks/bulk`
+Apply one action to many tasks. Each task is processed independently — one
+failure doesn't abort the rest.
+
+```json
+{
+  "ids": ["uuid", "uuid"],
+  "action": "move | pause | resume | archive | unarchive",
+  "to_label": "required when action is move",
+  "note": "optional transition note (move only)"
+}
+```
+
+`move` transitions are validated through the workflow engine per task, exactly
+like `PATCH /tasks/{id}/label`. Response is `200` if every task succeeded,
+`207 Multi-Status` if any failed:
+
+```json
+{
+  "results": [
+    { "id": "uuid", "ok": true },
+    { "id": "uuid", "ok": false, "error": "no transition defined between these labels" }
+  ]
+}
+```
+
+---
+
+## Task Templates
+
+Reusable pre-filled `title`/`description`/`type` for recurring shapes of work
+("upgrade dependency X", "fix flaky test"). Templates only pre-fill the
+new-task form — creating a task from a template is just `POST /tasks` with the
+filled-in fields.
+
+### `GET /templates`
+List all templates, sorted by name.
+
+### `POST /templates`
+Create a template. `name` is required and unique (`409` on conflict); `type`
+defaults to `feature`.
+
+```json
+{ "name": "Upgrade dependency", "title": "Upgrade <pkg> to latest", "description": "…", "type": "chore" }
+```
+
+### `GET /templates/{id}`
+Get a single template.
+
+### `PUT /templates/{id}`
+Update a template (same body as create). `404` if missing, `409` on name conflict.
+
+### `DELETE /templates/{id}`
+Delete a template. Returns `204`.
 
 ---
 

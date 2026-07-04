@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
-import type { Repo, Workflow } from '../../api/client'
+import type { Repo, TaskTemplate, Workflow } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 
 type Props = {
@@ -19,6 +19,8 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
   const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [templates, setTemplates] = useState<TaskTemplate[]>([])
+  const [templateId, setTemplateId] = useState('')
   const titleRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -28,8 +30,49 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
       setRepos(workflowRepos)
       if (workflowRepos.length > 0) setRepoId(workflowRepos[0].id)
     })
+    api.templates.list().then(setTemplates).catch(() => {})
     titleRef.current?.focus()
   }, [workflow.id])
+
+  function applyTemplate(id: string) {
+    setTemplateId(id)
+    const tpl = templates.find((t) => t.id === id)
+    if (!tpl) return
+    setTitle(tpl.title)
+    setDescription(tpl.description)
+    if (tpl.type === 'feature' || tpl.type === 'bug' || tpl.type === 'chore' || tpl.type === 'spike') {
+      setType(tpl.type)
+    }
+  }
+
+  async function saveAsTemplate() {
+    const name = window.prompt('Template name:')
+    if (!name?.trim()) return
+    try {
+      const tpl = await api.templates.create({
+        name: name.trim(),
+        title: title.trim(),
+        description: description.trim(),
+        type,
+      })
+      setTemplates((prev) => [...prev, tpl].sort((a, b) => a.name.localeCompare(b.name)))
+      setTemplateId(tpl.id)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  async function deleteTemplate() {
+    const tpl = templates.find((t) => t.id === templateId)
+    if (!tpl || !window.confirm(`Delete template "${tpl.name}"?`)) return
+    try {
+      await api.templates.delete(tpl.id)
+      setTemplates((prev) => prev.filter((t) => t.id !== tpl.id))
+      setTemplateId('')
+    } catch (e) {
+      setError(String(e))
+    }
+  }
 
   // Revoke object URLs when component unmounts to avoid memory leaks
   useEffect(() => {
@@ -111,6 +154,34 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto">
+          {templates.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-slate-400">Template</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={templateId}
+                  onChange={(e) => applyTemplate(e.target.value)}
+                  className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="">— none —</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                {templateId && (
+                  <button
+                    type="button"
+                    onClick={deleteTemplate}
+                    className="text-slate-500 hover:text-red-400 transition-colors text-sm"
+                    title="Delete this template"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-slate-400">Title</label>
             <input
@@ -216,7 +287,17 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
 
           {error && <p className="text-xs text-red-400">{error}</p>}
 
-          <div className="flex justify-end gap-2 pt-1">
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={saveAsTemplate}
+              disabled={!title.trim()}
+              className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="Save the current title/description/type as a reusable template"
+            >
+              Save as template
+            </button>
+            <div className="flex-1" />
             <button
               type="button"
               onClick={onClose}

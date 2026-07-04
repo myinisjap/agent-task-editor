@@ -25,6 +25,14 @@ components:
         worktree_path: { type: string, description: "Path to the task's git worktree" }
         base_ref:      { type: string, description: "Ref the branch forked from" }
         paused:        { type: boolean, description: "If true, the task is never auto-picked-up by the dispatcher" }
+        archived:
+          type: boolean
+          description: >
+            If true, the task is hidden from the default board view (GET /tasks
+            excludes it unless archived=all|only), skipped by the GitHub PR
+            status sweep, and never picked up by the dispatcher. Independent of
+            the task's label.
+        git_state:     { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
         transient_retry_count:
           type: integer
           description: >
@@ -48,6 +56,21 @@ components:
           description: >
             External item the task was imported from, unique within source
             (e.g. "owner/repo#123"). Empty for manually created tasks.
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    TaskTemplate:
+      type: object
+      description: >
+        Reusable pre-filled title/description/type for recurring shapes of
+        work (e.g. "upgrade dependency X", "fix flaky test"). Applied in the
+        new-task form; creating a task from a template just pre-fills fields.
+      properties:
+        id:          { type: string }
+        name:        { type: string, description: "Unique display name" }
+        title:       { type: string }
+        description: { type: string }
+        type:        { type: string, enum: [feature, bug, chore, spike] }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
@@ -319,12 +342,28 @@ paths:
     get:
       summary: List tasks
       parameters:
+        - name: q
+          in: query
+          description: Case-insensitive substring search over title and description
+          schema: { type: string }
         - name: label
           in: query
           schema: { type: string }
         - name: repo_id
           in: query
           schema: { type: string }
+        - name: type
+          in: query
+          schema: { type: string }
+        - name: git_state
+          in: query
+          schema: { type: string, enum: [pushed, pr_open, pr_merged, pr_closed] }
+        - name: archived
+          in: query
+          description: >
+            Archived-task visibility. Omitted (default) hides archived tasks;
+            "only" returns just archived tasks; "all" returns everything.
+          schema: { type: string, enum: [all, only] }
       responses:
         "200":
           description: List of tasks
@@ -352,6 +391,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
+
+  /tasks/bulk:
+    post:
+      summary: Apply one action to many tasks
+      description: >
+        Applies a single action to every task in ids. Each task is processed
+        independently — one failure doesn't abort the rest. Returns 200 if
+        every task succeeded, 207 if any failed; the per-task results array
+        reports each outcome either way. "move" transitions are validated
+        through the workflow engine exactly like PATCH /tasks/{id}/label.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, action]
+              properties:
+                ids:      { type: array, items: { type: string } }
+                action:   { type: string, enum: [move, pause, resume, archive, unarchive] }
+                to_label: { type: string, description: "Required when action is move" }
+                note:     { type: string, description: "Optional transition note (move only)" }
+      responses:
+        "200":
+          description: All tasks processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:    { type: string }
+                        ok:    { type: boolean }
+                        error: { type: string }
+        "207": { description: Some tasks failed; see per-task results }
+        "400": { description: Missing ids, unknown action, or move without to_label }
 
   /tasks/{id}:
     parameters:
@@ -412,6 +491,34 @@ paths:
               schema: { $ref: "#/components/schemas/Task" }
         "400": { description: Invalid transition }
         "403": { description: Gate required }
+
+  /tasks/{id}/archive:
+    patch:
+      summary: Archive or unarchive a task
+      description: >
+        Archived tasks are hidden from the default board view, excluded from
+        the GitHub PR status sweep, and never dispatched to agents. Archiving
+        does not change the task's label.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [archived]
+              properties:
+                archived: { type: boolean }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "404": { description: Task not found }
 
   /tasks/{id}/approve:
     post:
@@ -660,6 +767,75 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentLog" } }
+
+  /templates:
+    get:
+      summary: List task templates
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TaskTemplate" } }
+    post:
+      summary: Create a task template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string }
+                title:       { type: string }
+                description: { type: string }
+                type:        { type: string, default: feature }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskTemplate" }
+        "409": { description: A template with that name already exists }
+
+  /templates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a task template
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskTemplate" }
+        "404": { description: Template not found }
+    put:
+      summary: Update a task template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string }
+                title:       { type: string }
+                description: { type: string }
+                type:        { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskTemplate" }
+        "404": { description: Template not found }
+        "409": { description: A template with that name already exists }
+    delete:
+      summary: Delete a task template
+      responses:
+        "204": { description: Deleted }
 
   /workflows:
     get:

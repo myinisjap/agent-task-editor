@@ -11,6 +11,7 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `agents.go` | `AgentsHandler` | `gen.Queries` |
 | `repos.go` | `ReposHandler` | `gen.Queries`, `repoBaseDir string` |
 | `review_comments.go` | `ReviewCommentsHandler` | `gen.Queries` |
+| `templates.go` | `TemplatesHandler` | `gen.Queries` |
 | `dashboard.go` | `DashboardHandler` | `gen.Queries` |
 | `health.go` | `Health` func | none |
 | `workflow_yaml.go` | helpers for `WorkflowsHandler` | — |
@@ -20,6 +21,9 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 - **Approve** (`POST /tasks/{id}/approve`) — follows the `success` human transition from the task's current label (via `humanPathTarget`), then calls `engine.Transition`. Returns `400` if no such transition exists.
 - **Reject** (`POST /tasks/{id}/reject`) — follows the `failure` human transition from the current label; the optional `to_label` body field overrides it. Returns `400` if no `failure` transition exists and no override is given.
 - **MoveLabel** (`PATCH /tasks/{id}/label`) — human-triggered move validated through `engine.Transition`; used by board drag-and-drop.
+- **List** (`GET /tasks`) — backed by the `SearchTasks` query; supports `q` (title/description substring), `label`, `repo_id`, `type`, `git_state`, and tri-state `archived` (`''` hides archived, `only`, `all`). Invalid `archived` values return `400`.
+- **SetArchived** (`PATCH /tasks/{id}/archive`) — toggles the `archived` flag; does not touch `label`. Archived tasks are hidden from the default list, skipped by ghsync, and never dispatched.
+- **Bulk** (`POST /tasks/bulk`) — applies `move`/`pause`/`resume`/`archive`/`unarchive` to a list of ids; per-task results, `207` when any task fails. `move` goes through `engine.Transition` per task.
 
 ## Review Comments Handler Notes
 

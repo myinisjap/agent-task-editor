@@ -71,6 +71,8 @@ type Props = {
   onAddTask?: () => void
   condensed?: boolean
   transitions?: WorkflowTransition[]
+  selectedIds?: Set<string>
+  onToggleSelect?: (taskId: string) => void
 }
 
 export default function TaskBoard({
@@ -81,6 +83,8 @@ export default function TaskBoard({
   onAddTask,
   condensed = false,
   transitions = [],
+  selectedIds,
+  onToggleSelect,
 }: Props) {
   const { upsert } = useTasksStore()
   const isMobile = useIsMobile()
@@ -160,6 +164,8 @@ export default function TaskBoard({
                   tasks={byLabel(currentGroup.label.name)}
                   runningTaskIds={runningTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
+                  selectedIds={selectedIds}
+                  onToggleSelect={onToggleSelect}
                   onAddTask={clampedCondensed === 0 ? onAddTask : undefined}
                   isStartingColumn={clampedCondensed === 0}
                   isTerminal={!!currentGroup.label.is_terminal}
@@ -171,6 +177,8 @@ export default function TaskBoard({
                   tasks={byLabels(currentGroup.labels.map((l) => l.name))}
                   runningTaskIds={runningTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
+                  selectedIds={selectedIds}
+                  onToggleSelect={onToggleSelect}
                   className="w-full"
                 />
               )}
@@ -193,6 +201,8 @@ export default function TaskBoard({
                   tasks={byLabel(group.label.name)}
                   runningTaskIds={runningTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
+                  selectedIds={selectedIds}
+                  onToggleSelect={onToggleSelect}
                   onAddTask={i === 0 ? onAddTask : undefined}
                   isStartingColumn={i === 0}
                   isTerminal={!!group.label.is_terminal}
@@ -209,6 +219,8 @@ export default function TaskBoard({
                   tasks={groupTasks}
                   runningTaskIds={runningTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
+                  selectedIds={selectedIds}
+                  onToggleSelect={onToggleSelect}
                 />
               )
             }
@@ -238,6 +250,8 @@ export default function TaskBoard({
               tasks={byLabel(currentLabel.name)}
               runningTaskIds={runningTaskIds}
               rateLimitedTaskIds={rateLimitedTaskIds}
+              selectedIds={selectedIds}
+              onToggleSelect={onToggleSelect}
               onAddTask={clampedNormal === 0 ? onAddTask : undefined}
               isStartingColumn={clampedNormal === 0}
               isTerminal={!!currentLabel.is_terminal}
@@ -260,6 +274,8 @@ export default function TaskBoard({
             tasks={byLabel(label.name)}
             runningTaskIds={runningTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
+            selectedIds={selectedIds}
+            onToggleSelect={onToggleSelect}
             onAddTask={i === 0 ? onAddTask : undefined}
             isStartingColumn={i === 0}
             isTerminal={!!label.is_terminal}
