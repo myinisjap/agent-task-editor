@@ -1,0 +1,34 @@
+[
+  {
+    "type": "system",
+    "content": "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-4\",\"tools\":[\"Read\",\"Edit\",\"Bash\"],\"mcp_servers\":[{\"name\":\"ate\",\"status\":\"connected\"}],\"session_id\":\"sess-abc-123\"}"
+  },
+  {
+    "type": "stdout",
+    "content": "I'll start by reading the workflow config, then run the tests."
+  },
+  {
+    "type": "tool_call",
+    "content": "{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/home/user/agent-task-editor/frontend/src/lib/parseDiff.ts\"}}"
+  },
+  {
+    "type": "tool_result",
+    "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"Read\",\"input\":{}},{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_01\",\"content\":\"export function parseDiff(raw) {\\n  return []\\n}\"}]}}"
+  },
+  {
+    "type": "tool_call",
+    "content": "{\"tool_use\":{\"name\":\"Bash\",\"input\":{\"command\":\"cd frontend && npm test\"}}}"
+  },
+  {
+    "type": "tool_result",
+    "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_02\",\"name\":\"Bash\",\"input\":{}},{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_02\",\"is_error\":true,\"content\":\"npm ERR! Missing script: \\\"test\\\"\\nnpm ERR! To see a list of scripts, run:\\nnpm ERR!   npm run\\nnpm ERR! A complete log of this run can be found in the log file.\"}]}}"
+  },
+  {
+    "type": "system",
+    "content": "{\"type\":\"system\",\"subtype\":\"thinking\",\"thinking\":\"internal reasoning that should be hidden by default\"}"
+  },
+  {
+    "type": "system",
+    "content": "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Added the test script and wrote unit tests.\",\"usage\":{\"input_tokens\":1200,\"output_tokens\":340},\"total_cost_usd\":0.042}"
+  }
+]
