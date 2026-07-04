@@ -11,6 +11,10 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-04
+
+First tagged release.
+
 ### Added
 - Versioned multi-arch (amd64 + arm64) Docker images published to GHCR on every
   `v*` tag push, plus an automated GitHub Release.
