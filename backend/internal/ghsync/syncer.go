@@ -70,6 +70,11 @@ func (s *Syncer) sweep(ctx context.Context) {
 		if task.Branch == "" {
 			continue
 		}
+		// Skip archived tasks — they're done as far as the board is concerned
+		// and shouldn't cost a GitHub API call on every sweep.
+		if task.Archived != 0 {
+			continue
+		}
 		// Skip tasks already in the final desired state.
 		if task.GitState == "pr_merged" {
 			continue

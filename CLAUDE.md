@@ -87,6 +87,22 @@ curl "http://localhost:8080/api/v1/tasks?label=work"
 # Filter by repo
 curl "http://localhost:8080/api/v1/tasks?repo_id=<id>"
 
+# Free-text search + filters (q, label, repo_id, type, git_state; combinable)
+curl "http://localhost:8080/api/v1/tasks?q=flaky&type=bug"
+
+# Include archived tasks (excluded by default; archived=only for just archived)
+curl "http://localhost:8080/api/v1/tasks?archived=all"
+
+# Archive / unarchive a task
+curl -X PATCH http://localhost:8080/api/v1/tasks/<id>/archive \
+  -H "Content-Type: application/json" \
+  -d '{"archived": true}'
+
+# Bulk action (move | pause | resume | archive | unarchive)
+curl -X POST http://localhost:8080/api/v1/tasks/bulk \
+  -H "Content-Type: application/json" \
+  -d '{"ids": ["<id1>", "<id2>"], "action": "archive"}'
+
 # Move a task to a different label
 curl -X PATCH http://localhost:8080/api/v1/tasks/<id>/label \
   -H "Content-Type: application/json" \

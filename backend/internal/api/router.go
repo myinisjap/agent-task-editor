@@ -23,6 +23,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	agentsH := handlers.NewAgentsHandler(q)
 	reposH := handlers.NewReposHandler(q, repoBaseDir)
 	reviewH := handlers.NewReviewCommentsHandler(q)
+	templatesH := handlers.NewTemplatesHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 
@@ -58,6 +59,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		// Tasks
 		r.Get("/tasks", tasksH.List)
 		r.Post("/tasks", tasksH.Create)
+		r.Post("/tasks/bulk", tasksH.Bulk)
 
 		// Uploads — serve attachment images
 		r.Get("/uploads/{task_id}/{filename}", uploadsH.ServeFile)
@@ -74,6 +76,14 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		r.Get("/tasks/{id}/github-status", tasksH.GitHubStatus)
 		r.Patch("/tasks/{id}/git-state", tasksH.UpdateGitState)
 		r.Patch("/tasks/{id}/pause", tasksH.SetPaused)
+		r.Patch("/tasks/{id}/archive", tasksH.SetArchived)
+
+		// Task templates — pre-filled title/description/type for recurring work
+		r.Get("/templates", templatesH.List)
+		r.Post("/templates", templatesH.Create)
+		r.Get("/templates/{id}", templatesH.Get)
+		r.Put("/templates/{id}", templatesH.Update)
+		r.Delete("/templates/{id}", templatesH.Delete)
 
 		// Inline diff review comments — persisted, injected into agent prompts while open
 		r.Get("/tasks/{id}/review-comments", reviewH.List)

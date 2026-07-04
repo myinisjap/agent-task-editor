@@ -1,11 +1,11 @@
 import { create } from 'zustand'
-import { api, type Task } from '../api/client'
+import { api, type Task, type TaskFilters } from '../api/client'
 
 type TasksState = {
   tasks: Task[]
   loading: boolean
   error: string | null
-  fetch: (label?: string) => Promise<void>
+  fetch: (filters?: TaskFilters) => Promise<void>
   upsert: (task: Task) => void
   remove: (id: string) => void
 }
@@ -15,10 +15,10 @@ export const useTasksStore = create<TasksState>((set) => ({
   loading: false,
   error: null,
 
-  fetch: async (label?: string) => {
+  fetch: async (filters?: TaskFilters) => {
     set({ loading: true, error: null })
     try {
-      const tasks = await api.tasks.list(label)
+      const tasks = await api.tasks.list(filters)
       set({ tasks: tasks ?? [], loading: false })
     } catch (e) {
       set({ error: String(e), loading: false })

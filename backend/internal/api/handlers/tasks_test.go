@@ -31,6 +31,7 @@ type apiTask struct {
 	AgentNotes  string   `json:"agent_notes"`
 	Attachments []string `json:"attachments"`
 	Paused      bool     `json:"paused"`
+	Archived    bool     `json:"archived"`
 }
 
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
@@ -88,12 +89,14 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r := chi.NewRouter()
 	r.Get("/tasks", h.List)
 	r.Post("/tasks", h.Create)
+	r.Post("/tasks/bulk", h.Bulk)
 	r.Get("/tasks/{id}", h.Get)
 	r.Patch("/tasks/{id}", h.Update)
 	r.Delete("/tasks/{id}", h.Delete)
 	r.Patch("/tasks/{id}/label", h.MoveLabel)
 	r.Get("/tasks/{id}/runs", h.ListRuns)
 	r.Patch("/tasks/{id}/pause", h.SetPaused)
+	r.Patch("/tasks/{id}/archive", h.SetArchived)
 
 	return r, q, wfID, repoID
 }
@@ -485,6 +488,323 @@ func TestTasks_SetPaused_Unpause(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&updated)
 	if updated.Paused {
 		t.Errorf("expected paused=false in response")
+	}
+}
+
+// ---------- List filters / search ----------
+
+// listTasks is a helper that GETs /tasks with the given query string and
+// decodes the response.
+func listTasks(t *testing.T, r http.Handler, query string) []apiTask {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/tasks"+query, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /tasks%s: expected 200, got %d: %s", query, w.Code, w.Body)
+	}
+	var tasks []apiTask
+	if err := json.NewDecoder(w.Body).Decode(&tasks); err != nil {
+		t.Fatal(err)
+	}
+	return tasks
+}
+
+func TestTasks_List_SearchAndFilters(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	mk := func(title, desc, typ string) apiTask {
+		task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+			ID:          uuid.NewString(),
+			Title:       title,
+			Description: desc,
+			Type:        typ,
+			WorkflowID:  wfID,
+			RepoID:      repoID,
+			Label:       "work",
+		})
+		if err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+		return apiTask{ID: task.ID}
+	}
+	flaky := mk("Fix flaky test", "the websocket test flakes", "bug")
+	mk("Upgrade dependency", "bump react to 19", "chore")
+	upgradeDesc := mk("Ship dark mode", "also upgrade tailwind while in there", "feature")
+
+	// Free-text search matches title...
+	got := listTasks(t, r, "?q=flaky")
+	if len(got) != 1 || got[0].ID != flaky.ID {
+		t.Errorf("q=flaky: expected exactly the flaky task, got %+v", got)
+	}
+	// ...and description, case-insensitively.
+	got = listTasks(t, r, "?q=UPGRADE")
+	if len(got) != 2 {
+		t.Errorf("q=UPGRADE: expected 2 tasks (title + description match), got %d", len(got))
+	}
+	// Search combined with a type filter.
+	got = listTasks(t, r, "?q=upgrade&type=feature")
+	if len(got) != 1 || got[0].ID != upgradeDesc.ID {
+		t.Errorf("q=upgrade&type=feature: expected the dark mode task, got %+v", got)
+	}
+	// repo_id filter: matching repo returns everything, unknown repo nothing.
+	if got = listTasks(t, r, "?repo_id="+repoID); len(got) != 3 {
+		t.Errorf("repo_id filter: expected 3 tasks, got %d", len(got))
+	}
+	if got = listTasks(t, r, "?repo_id=nope"); len(got) != 0 {
+		t.Errorf("repo_id=nope: expected 0 tasks, got %d", len(got))
+	}
+	// git_state filter: nothing has a git state yet.
+	if got = listTasks(t, r, "?git_state=pr_open"); len(got) != 0 {
+		t.Errorf("git_state=pr_open: expected 0 tasks, got %d", len(got))
+	}
+}
+
+func TestTasks_List_ArchivedFilter(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	live, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Live", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	archived, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Old", WorkflowID: wfID, RepoID: repoID, Label: "done",
+	})
+	if _, err := q.SetTaskArchived(ctx, gen.SetTaskArchivedParams{Archived: 1, ID: archived.ID}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// Default view hides archived tasks.
+	got := listTasks(t, r, "")
+	if len(got) != 1 || got[0].ID != live.ID {
+		t.Errorf("default list: expected only the live task, got %+v", got)
+	}
+	// archived=only returns just archived tasks.
+	got = listTasks(t, r, "?archived=only")
+	if len(got) != 1 || got[0].ID != archived.ID || !got[0].Archived {
+		t.Errorf("archived=only: expected only the archived task, got %+v", got)
+	}
+	// archived=all returns everything.
+	if got = listTasks(t, r, "?archived=all"); len(got) != 2 {
+		t.Errorf("archived=all: expected 2 tasks, got %d", len(got))
+	}
+	// Invalid value is rejected.
+	req := httptest.NewRequest(http.MethodGet, "/tasks?archived=maybe", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("archived=maybe: expected 400, got %d", w.Code)
+	}
+}
+
+// ---------- Archive ----------
+
+func TestTasks_SetArchived_OK(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Archivable", WorkflowID: wfID, RepoID: repoID, Label: "done",
+	})
+
+	body := map[string]bool{"archived": true}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if !updated.Archived {
+		t.Errorf("expected archived=true in response")
+	}
+	if updated.Label != "done" {
+		t.Errorf("expected label to remain unchanged, got %q", updated.Label)
+	}
+}
+
+func TestTasks_SetArchived_NotFound(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	body := map[string]bool{"archived": true}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/does-not-exist/archive", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// TestTasks_Archived_ExcludedFromAgentPickup confirms the dispatcher's
+// ListAgentPickupTasks query never returns an archived task, even when its
+// label is otherwise eligible for agent pickup.
+func TestTasks_Archived_ExcludedFromAgentPickup(t *testing.T) {
+	_, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Eligible", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if _, err := q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "work", ID: task.ID}); err != nil {
+		t.Fatalf("move label: %v", err)
+	}
+	if _, err := q.SetTaskArchived(ctx, gen.SetTaskArchivedParams{Archived: 1, ID: task.ID}); err != nil {
+		t.Fatalf("archive task: %v", err)
+	}
+
+	pickup, err := q.ListAgentPickupTasks(ctx)
+	if err != nil {
+		t.Fatalf("list pickup: %v", err)
+	}
+	for _, p := range pickup {
+		if p.ID == task.ID {
+			t.Fatalf("expected archived task to be excluded from ListAgentPickupTasks")
+		}
+	}
+}
+
+// ---------- Bulk ----------
+
+type bulkResponse struct {
+	Results []struct {
+		ID    string `json:"id"`
+		Ok    bool   `json:"ok"`
+		Error string `json:"error"`
+	} `json:"results"`
+}
+
+func TestTasks_Bulk_Archive(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	a, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "A", WorkflowID: wfID, RepoID: repoID, Label: "done",
+	})
+	b, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "B", WorkflowID: wfID, RepoID: repoID, Label: "done",
+	})
+
+	body := map[string]any{"ids": []string{a.ID, b.ID}, "action": "archive"}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var resp bulkResponse
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 2 || !resp.Results[0].Ok || !resp.Results[1].Ok {
+		t.Fatalf("expected both results ok, got %+v", resp.Results)
+	}
+
+	for _, id := range []string{a.ID, b.ID} {
+		task, err := q.GetTask(ctx, id)
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		if task.Archived == 0 {
+			t.Errorf("task %s: expected archived", id)
+		}
+	}
+}
+
+func TestTasks_Bulk_Move_PartialFailure(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	// "not_ready" → "plan" is a valid human transition in the seeded workflow.
+	movable, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Movable", WorkflowID: wfID, RepoID: repoID, Label: "not_ready",
+	})
+
+	body := map[string]any{"ids": []string{movable.ID, "does-not-exist"}, "action": "move", "to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d: %s", w.Code, w.Body)
+	}
+	var resp bulkResponse
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 results, got %+v", resp.Results)
+	}
+	if !resp.Results[0].Ok {
+		t.Errorf("expected move of existing task to succeed: %+v", resp.Results[0])
+	}
+	if resp.Results[1].Ok || resp.Results[1].Error == "" {
+		t.Errorf("expected move of missing task to fail with an error: %+v", resp.Results[1])
+	}
+
+	moved, _ := q.GetTask(ctx, movable.ID)
+	if moved.Label != "plan" {
+		t.Errorf("expected label 'plan' after bulk move, got %q", moved.Label)
+	}
+}
+
+func TestTasks_Bulk_Validation(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	cases := []map[string]any{
+		{"ids": []string{}, "action": "archive"},              // empty ids
+		{"ids": []string{"x"}, "action": "explode"},           // unknown action
+		{"ids": []string{"x"}, "action": "move"},              // move without to_label
+	}
+	for i, body := range cases {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("case %d: expected 400, got %d", i, w.Code)
+		}
+	}
+}
+
+func TestTasks_Bulk_Pause(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "P", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+
+	body := map[string]any{"ids": []string{task.ID}, "action": "pause"}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	got, _ := q.GetTask(ctx, task.ID)
+	if got.Paused == 0 {
+		t.Errorf("expected task paused after bulk pause")
+	}
+
+	body = map[string]any{"ids": []string{task.ID}, "action": "resume"}
+	req = httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	got, _ = q.GetTask(ctx, task.ID)
+	if got.Paused != 0 {
+		t.Errorf("expected task unpaused after bulk resume")
 	}
 }
 

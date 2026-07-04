@@ -88,6 +88,7 @@ type Task struct {
 	NextRetryAt         *time.Time `json:"next_retry_at"`
 	Source              string     `json:"source"`
 	SourceRef           string     `json:"source_ref"`
+	Archived            int64      `json:"archived"`
 }
 
 type TaskLabelHistory struct {
@@ -115,6 +116,16 @@ type TaskReviewComment struct {
 	ResolvedByRunID *string   `json:"resolved_by_run_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type TaskTemplate struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Type        string    `json:"type"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type Workflow struct {

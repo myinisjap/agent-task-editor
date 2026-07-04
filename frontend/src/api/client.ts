@@ -38,6 +38,10 @@ export type Task = {
   base_ref?: string
   git_state?: string
   paused?: boolean
+  // Archived tasks are hidden from the board by default (GET /tasks excludes
+  // them unless archived=all|only), skipped by the ghsync sweep, and never
+  // dispatched to agents. Independent of label.
+  archived?: boolean
   // Transient-error auto-retry state (see AgentConfig.max_retries /
   // retry_backoff_secs). next_retry_at is set while the task is in a
   // backed-off auto-retry window and cleared on success, genuine failure, or
@@ -48,6 +52,35 @@ export type Task = {
   // came from ("owner/repo#123"). Both empty for manually created tasks.
   source?: string
   source_ref?: string
+}
+
+// Optional filters for GET /tasks. `q` is a case-insensitive substring match
+// against title/description; the rest are exact matches. `archived` defaults
+// to hiding archived tasks; 'only' returns just archived, 'all' everything.
+export type TaskFilters = {
+  q?: string
+  label?: string
+  repo_id?: string
+  type?: string
+  git_state?: string
+  archived?: 'all' | 'only'
+}
+
+// Action applied by POST /tasks/bulk to every id in the request.
+export type BulkAction = 'move' | 'pause' | 'resume' | 'archive' | 'unarchive'
+
+export type BulkResult = { id: string; ok: boolean; error?: string }
+
+// TaskTemplate pre-fills title/description/type in the new-task form for
+// recurring shapes of work ("upgrade dependency X", "fix flaky test").
+export type TaskTemplate = {
+  id: string
+  name: string
+  title: string
+  description: string
+  type: string
+  created_at: string
+  updated_at: string
 }
 
 export type AgentRun = {
@@ -214,8 +247,14 @@ export type Dashboard = {
 
 export const api = {
   tasks: {
-    list: (label?: string) =>
-      request<Task[]>(`/tasks${label ? `?label=${label}` : ''}`),
+    list: (filters?: TaskFilters) => {
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters ?? {})) {
+        if (value) params.set(key, value)
+      }
+      const qs = params.toString()
+      return request<Task[]>(`/tasks${qs ? `?${qs}` : ''}`)
+    },
     get: (id: string) => request<Task>(`/tasks/${id}`),
     create: (body: FormData | { title: string; description?: string; type?: string; repo_id: string; workflow_id: string }) => {
       if (body instanceof FormData) {
@@ -243,6 +282,13 @@ export const api = {
       request<Task>(`/tasks/${id}/git-state`, { method: 'PATCH', body: JSON.stringify({ git_state }) }),
     setPaused: (id: string, paused: boolean) =>
       request<Task>(`/tasks/${id}/pause`, { method: 'PATCH', body: JSON.stringify({ paused }) }),
+    setArchived: (id: string, archived: boolean) =>
+      request<Task>(`/tasks/${id}/archive`, { method: 'PATCH', body: JSON.stringify({ archived }) }),
+    bulk: (ids: string[], action: BulkAction, opts?: { to_label?: string; note?: string }) =>
+      request<{ results: BulkResult[] }>('/tasks/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ ids, action, ...opts }),
+      }),
     reviewComments: (id: string) => request<ReviewComment[]>(`/tasks/${id}/review-comments`),
     addReviewComment: (id: string, body: { file_path: string; side: 'old' | 'new'; start_line: number; end_line: number; quoted_text?: string; body: string }) =>
       request<ReviewComment>(`/tasks/${id}/review-comments`, { method: 'POST', body: JSON.stringify(body) }),
@@ -300,6 +346,14 @@ export const api = {
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
+  },
+  templates: {
+    list: () => request<TaskTemplate[]>('/templates'),
+    create: (body: { name: string; title?: string; description?: string; type?: string }) =>
+      request<TaskTemplate>('/templates', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: { name: string; title?: string; description?: string; type?: string }) =>
+      request<TaskTemplate>(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/templates/${id}`, { method: 'DELETE' }),
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),

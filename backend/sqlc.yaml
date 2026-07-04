@@ -25,6 +25,8 @@ sql:
       - "internal/storage/migrations/020_agent_retry_policy.up.sql"
       - "internal/storage/migrations/021_task_review_comments.up.sql"
       - "internal/storage/migrations/022_task_source.up.sql"
+      - "internal/storage/migrations/023_task_archived.up.sql"
+      - "internal/storage/migrations/024_task_templates.up.sql"
     gen:
       go:
         package: "gen"

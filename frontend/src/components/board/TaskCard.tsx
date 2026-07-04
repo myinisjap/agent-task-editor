@@ -24,6 +24,8 @@ export default function TaskCard({
   onDelete,
   isEditable,
   showColumnLabel,
+  selected,
+  onToggleSelect,
 }: {
   task: Task
   isRunning?: boolean
@@ -32,6 +34,9 @@ export default function TaskCard({
   isEditable?: boolean
   /** When set, renders a muted column-name badge on the card (used in condensed view) */
   showColumnLabel?: string
+  /** Multi-select state for bulk actions; checkbox is shown on hover or while selected */
+  selected?: boolean
+  onToggleSelect?: (taskId: string) => void
 }) {
   const navigate = useNavigate()
   const { upsert } = useTasksStore()
@@ -166,11 +171,36 @@ export default function TaskCard({
         if (!isDragging) navigate(`/tasks/${task.id}`)
         e.stopPropagation()
       }}
-      className="group bg-slate-800 border border-slate-700 rounded-lg p-3 hover:border-slate-500 transition-colors select-none"
+      className={`group bg-slate-800 border rounded-lg p-3 hover:border-slate-500 transition-colors select-none ${
+        selected ? 'border-indigo-500' : 'border-slate-700'
+      } ${task.archived ? 'opacity-60' : ''}`}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
-        <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
+        <div className="flex items-start gap-2 min-w-0">
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={() => onToggleSelect(task.id)}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={`mt-0.5 shrink-0 accent-indigo-500 cursor-pointer transition-opacity ${
+                selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}
+              title="Select for bulk actions"
+            />
+          )}
+          <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
+        </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          {task.archived && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-semibold"
+              title="Task is archived — hidden from the default board view"
+            >
+              🗄 Archived
+            </span>
+          )}
           {task.paused && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/70 text-amber-300 font-semibold"
@@ -213,6 +243,22 @@ export default function TaskCard({
             title={task.paused ? 'Resume task' : 'Pause task'}
           >
             {task.paused ? '▶' : '⏸'}
+          </button>
+          <button
+            onClick={async (e) => {
+              e.stopPropagation()
+              try {
+                const updated = await api.tasks.setArchived(task.id, !task.archived)
+                upsert(updated)
+              } catch (err) {
+                alert(String(err))
+              }
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
+            title={task.archived ? 'Unarchive task' : 'Archive task — hide from the board'}
+          >
+            {task.archived ? '↩' : '🗄'}
           </button>
           {isEditable && (
             <button
