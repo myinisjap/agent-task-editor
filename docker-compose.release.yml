@@ -1,0 +1,86 @@
+# Deploy Agent Task Editor from prebuilt images instead of building from source.
+#
+#   ATE_VERSION=v1.2.3 docker compose -f docker-compose.release.yml up -d
+#
+# Or use ./run.sh, which injects the required env vars for you (repo mount,
+# GitHub token, Claude auth) and defaults ATE_VERSION to "latest".
+#
+# Note: the published images are built with the default 1000:1000 UID/GID. If
+# your host user differs and you hit permission errors on bind-mounted repos,
+# build from source with the main docker-compose.yml (which remaps the UID) or
+# chown the repo/data directories to 1000:1000.
+services:
+  backend:
+    image: ghcr.io/myinisjap/agent-task-editor-backend:${ATE_VERSION:-latest}
+    pull_policy: always
+    ports:
+      - "8080:8080"
+    # Lets the container reach services published on the host (e.g. a separate
+    # local-model container). Use host.docker.internal as the hostname.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    environment:
+      - PORT=8080
+      - DB_PATH=/data/agent-task-editor.db
+      - CORS_ORIGINS=http://localhost:5173
+      # Path to the MCP sidecar binary built into the image
+      - MCP_SERVER_PATH=/app/mcp-server
+      # Optional: set API_TOKEN to require a Bearer token on all API requests
+      # - API_TOKEN=change-me
+      # Optional: use provider=anthropic in agent configs to call the API directly
+      # instead of the CLI (different billing — pay-per-token vs Claude Max)
+      # - LLM_API_KEY=sk-ant-...
+      # Local model via a separate container (OpenAI-compatible API, e.g. llama.cpp
+      # server). host.docker.internal reaches ports the model publishes on the host.
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8081/v1}
+      # Optional: GitHub token as a fallback if ~/.config/gh isn't mounted.
+      # gh CLI picks this up automatically; set it here to enable PR state sync
+      # without mounting the gh config directory.
+      - GITHUB_TOKEN=${GH_TOKEN:-}
+      # SSL bypass — active when INSECURE_SKIP_SSL_VERIFY=true. These vars are
+      # pre-computed by run.sh so that setting INSECURE_SKIP_SSL_VERIFY=false
+      # never accidentally disables SSL (compose's :+ expansion fires on any
+      # non-empty value).
+      - GIT_SSL_NO_VERIFY=${GIT_SSL_NO_VERIFY:-}
+      - NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL:-}
+      - NODE_TLS_REJECT_UNAUTHORIZED=${NODE_TLS_REJECT_UNAUTHORIZED:-}
+      # Set to the host directory containing your repos. The backend rewrites
+      # paths under this directory to /repos inside the container automatically.
+      - REPO_BASE_DIR=${REPO_BASE_DIR:-/tmp/repos}
+    volumes:
+      - db_data:/data
+      # Claude Max auth — run 'claude login' on your host machine first,
+      # then this mount shares that session with the container.
+      - ${HOME}/.claude:/home/node/.claude
+      - ${HOME}/.claude.json:/home/node/.claude.json
+      # GitHub CLI auth — run 'gh auth login' on your host machine first,
+      # then this mount shares that credential with the container.
+      # The :ro flag makes it read-only (the container never writes new auth).
+      - ${HOME}/.config/gh:/home/node/.config/gh:ro
+      # Repos directory — mounted at the same path so host paths work as-is.
+      - ${REPO_BASE_DIR:-/tmp/repos}:${REPO_BASE_DIR:-/tmp/repos}
+
+  frontend:
+    image: ghcr.io/myinisjap/agent-task-editor-frontend:${ATE_VERSION:-latest}
+    pull_policy: always
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: on-failure
+
+volumes:
+  db_data:
