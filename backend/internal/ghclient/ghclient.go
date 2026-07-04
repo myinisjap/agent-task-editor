@@ -5,6 +5,7 @@ package ghclient
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -71,6 +72,52 @@ func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL 
 		s = "pr_closed"
 	}
 	return s, prs[0].URL, prs[0].Number, nil
+}
+
+// CreatePR opens a pull request for the given branch using the gh CLI, or
+// returns the existing PR if one already exists for the branch (idempotent).
+// title/body are only used when creating a new PR. base is the target branch
+// (e.g. "main"); an empty base lets gh fall back to the repo's default branch.
+// The branch is expected to already be pushed to origin.
+//
+// Returns the normalised state ("pr_open" for a freshly created PR, or the
+// existing PR's state) and the PR web URL.
+func CreatePR(ctx context.Context, repoName, branch, base, title, body string) (state, prURL string, err error) {
+	// Idempotency: if a PR already exists for this branch, return it rather
+	// than letting `gh pr create` fail with "a pull request already exists".
+	if s, u, n, gerr := GetPRForBranch(ctx, repoName, branch); gerr == nil && n != 0 {
+		return s, u, nil
+	}
+
+	args := []string{"pr", "create",
+		"--repo", repoName,
+		"--head", branch,
+		"--title", title,
+		"--body", body,
+	}
+	if base != "" {
+		args = append(args, "--base", base)
+	}
+	out, err := exec.CommandContext(ctx, "gh", args...).CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(out))
+		// Handle the race where a PR appeared between our check and create.
+		if strings.Contains(trimmed, "already exists") {
+			if s, u, n, gerr := GetPRForBranch(ctx, repoName, branch); gerr == nil && n != 0 {
+				return s, u, nil
+			}
+		}
+		return "", "", fmt.Errorf("gh pr create: %w: %s", err, trimmed)
+	}
+
+	// `gh pr create` prints the new PR's URL on stdout (last non-empty line).
+	url := ""
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "https://") {
+			url = line
+		}
+	}
+	return "pr_open", url, nil
 }
 
 // Issue is a GitHub issue as returned by `gh issue list`.

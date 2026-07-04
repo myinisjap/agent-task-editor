@@ -28,6 +28,7 @@ Key fields returned by task endpoints:
 | `base_ref` | string | The git ref the branch was forked from |
 | `agent_notes` | string | Persistent markdown notes written by agents |
 | `git_state` | string | `""`, `pushed`, `pr_open`, `pr_merged`, `pr_closed` |
+| `pr_url` | string | URL of the GitHub PR for the branch (set by `POST /tasks/{id}/pr` or the ghsync sweep); empty until a PR exists |
 | `attachments` | string[] | Relative paths to uploaded attachment files |
 | `paused` | boolean | Paused tasks are never picked up by the dispatcher |
 | `archived` | boolean | Archived tasks are hidden from the default board view, skipped by the GitHub PR sweep, and never dispatched |
@@ -161,6 +162,13 @@ Delete a comment entirely. Returns `204 No Content`.
 
 ### `GET /tasks/{id}/pr-url`
 Returns `{ "url": "..." }` — a GitHub `compare` URL with the PR **title and body pre-filled** (task title, description, agent notes, and commit subjects). Open it to create a fully-described PR in one click; no GitHub auth or `gh` CLI needed. Requires the repo to have a GitHub remote and the task to have a provisioned branch (else `400`).
+
+### `POST /tasks/{id}/pr`
+One-click PR creation. Pushes the task's branch to origin, then runs `gh pr create` with the title from the task and a body assembled from the description, agent notes, and commit subjects. Stores the resulting PR URL and git state on the task and returns:
+```json
+{ "pr_url": "https://github.com/owner/repo/pull/42", "git_state": "pr_open" }
+```
+**Idempotent** — if a PR already exists for the branch, that PR is returned instead of erroring. Requires the repo to have a GitHub remote, the task to have a provisioned branch (else `400`), and the `gh` CLI to be authenticated (a `gh pr create` failure returns `502`).
 
 ### `GET /tasks/{id}/github-status`
 Fetches live GitHub PR state for the task's branch. Returns:
