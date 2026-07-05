@@ -11,6 +11,14 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Security
+- Fixed an authentication bypass where any request carrying an
+  `Upgrade: websocket` header skipped bearer-token validation on **every** API
+  route (not just `/ws`), letting a client read and write the full API without a
+  token when `API_TOKEN` was set. The `/ws` route is now mounted outside the
+  `BearerAuth` middleware (it does its own constant-time `?token=` check), and
+  the header-based bypass has been removed.
+
 ### Added
 - Cancel a running agent run: `POST /api/v1/tasks/{id}/runs/{run_id}/cancel` plus
   a **Stop run** button on the task detail page. The pool keeps a per-run cancel

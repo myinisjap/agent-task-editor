@@ -63,16 +63,21 @@ func TestBearerAuth_NoHeader_Rejects(t *testing.T) {
 	}
 }
 
-func TestBearerAuth_WebSocketUpgrade_Bypasses(t *testing.T) {
+// TestBearerAuth_WebSocketUpgrade_DoesNotBypass is a regression test for a
+// security bug where any request carrying `Upgrade: websocket` skipped bearer
+// validation on every API route (not just /ws). The bypass has been removed;
+// the /ws route is now mounted outside this middleware instead, and it does its
+// own ?token= check. A tokenless upgrade request to a protected route must 401.
+func TestBearerAuth_WebSocketUpgrade_DoesNotBypass(t *testing.T) {
 	h := middleware.BearerAuth("s3cr3t")(http.HandlerFunc(okHandler))
 
-	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
 	req.Header.Set("Upgrade", "websocket")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 for WS upgrade without token, got %d", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for WS upgrade without token, got %d", w.Code)
 	}
 }
 

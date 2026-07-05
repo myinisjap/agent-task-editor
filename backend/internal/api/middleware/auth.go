@@ -14,11 +14,6 @@ func BearerAuth(bearerToken string) func(http.Handler) http.Handler {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Allow WebSocket upgrades to pass through (browser can't set auth headers in WS)
-			if r.Header.Get("Upgrade") == "websocket" {
-				next.ServeHTTP(w, r)
-				return
-			}
 			auth := r.Header.Get("Authorization")
 			token := strings.TrimPrefix(auth, "Bearer ")
 			if subtle.ConstantTimeCompare([]byte(token), []byte(bearerToken)) != 1 {
