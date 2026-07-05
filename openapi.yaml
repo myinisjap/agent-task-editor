@@ -338,6 +338,30 @@ components:
             weekly_percent:      { type: number, format: double }
             weekly_resets_at:    { type: string, format: date-time, nullable: true }
 
+    ProviderCheck:
+      type: object
+      description: A single provider/onboarding readiness row.
+      properties:
+        id:
+          type: string
+          description: Stable identifier (e.g. claude_cli, mcp_sidecar, gh_auth).
+        name:
+          type: string
+          description: Human-readable check name.
+        status:
+          type: string
+          enum: [ok, warn, error]
+          description: >
+            ok = ready (green); warn = optional/degraded or heuristically
+            undetected (yellow); error = required item missing, runs will fail (red).
+        detail:
+          type: string
+          description: One-line description of the current state.
+        hint:
+          type: string
+          description: How to fix it; present when status is not ok.
+      required: [id, name, status, detail]
+
     Error:
       type: object
       properties:
@@ -1093,3 +1117,29 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Dashboard" }
+
+  /health/providers:
+    get:
+      summary: Provider / onboarding readiness checks
+      description: >
+        Reports the readiness of each agent provider and supporting piece of
+        infrastructure so first-run misconfiguration is visible at a glance
+        instead of surfacing as a failed agent run. Checks the claude CLI
+        (present + authenticated), API keys for the anthropic/llm providers,
+        qwen/opencode binaries (only for providers referenced by an enabled
+        agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, and
+        REPO_BASE_DIR. Checks are cheap and side-effect free (PATH lookups,
+        credential/config-file existence, env/config values) — no real agent
+        invocation is performed, so a green result means "ready as far as we can
+        tell", not a live token validation.
+      responses:
+        "200":
+          description: Ordered list of readiness checks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checks:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProviderCheck" }

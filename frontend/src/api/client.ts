@@ -268,6 +268,16 @@ export type Dashboard = {
   }
 }
 
+export type ProviderCheckStatus = 'ok' | 'warn' | 'error'
+
+export type ProviderCheck = {
+  id: string
+  name: string
+  status: ProviderCheckStatus
+  detail: string
+  hint?: string
+}
+
 export const api = {
   tasks: {
     // list returns a single page of tasks (newest first). Pass `after` (a
@@ -413,5 +423,8 @@ export const api = {
   },
   github: {
     authStatus: () => request<{ authed: boolean; note: string }>('/github/auth-status'),
+  },
+  health: {
+    providers: () => request<{ checks: ProviderCheck[] }>('/health/providers'),
   },
 }

@@ -6,6 +6,7 @@ import TaskDetailPage from './pages/TaskDetailPage'
 import WorkflowPage from './pages/WorkflowPage'
 import AgentConfigPage from './pages/AgentConfigPage'
 import ReposPage from './pages/ReposPage'
+import HealthPage from './pages/HealthPage'
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
             <Route path="/workflow"    element={<WorkflowPage />} />
             <Route path="/agents"      element={<AgentConfigPage />} />
             <Route path="/repos"       element={<ReposPage />} />
+            <Route path="/health"      element={<HealthPage />} />
           </Routes>
         </main>
       </div>

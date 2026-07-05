@@ -11,6 +11,15 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- Provider health / onboarding status page (`Health` in the sidebar) backed by a
+  new `GET /api/v1/health/providers` endpoint. Checks the claude CLI (present +
+  authenticated), API keys for the anthropic/llm providers, qwen/opencode
+  binaries (only for providers an enabled agent config uses), the MCP sidecar
+  binary (`MCP_SERVER_PATH`), gh auth, and `REPO_BASE_DIR` — each rendered as a
+  green/yellow/red row with a one-line fix hint. Turns the most common "why did
+  my first run fail" support loop into a glance.
+
 ## [0.1.0] - 2026-07-04
 
 First tagged release.

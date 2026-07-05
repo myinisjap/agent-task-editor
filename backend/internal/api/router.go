@@ -15,7 +15,7 @@ import (
 )
 
 // NewRouter builds and returns the application router.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir)
@@ -26,6 +26,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	templatesH := handlers.NewTemplatesHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
+	healthH := handlers.NewHealthHandler(q, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -94,6 +95,11 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 		// GitHub auth status (used by the frontend to warn when gh credentials are absent)
 		r.Get("/github/auth-status", handlers.GitHubAuthStatus)
+
+		// Provider / onboarding health — checks CLI binaries, API keys, MCP
+		// sidecar, gh auth, and REPO_BASE_DIR so first-run misconfiguration is
+		// visible at a glance instead of surfacing as failed agent runs.
+		r.Get("/health/providers", healthH.Providers)
 
 		// Agent runs
 		r.Get("/tasks/{id}/runs", tasksH.ListRuns)
