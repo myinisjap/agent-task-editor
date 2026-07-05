@@ -17,6 +17,7 @@ The agent package owns everything to do with running AI agents: the provider abs
 | `dispatcher.go` | `Dispatcher` — periodic DB sweep; matches tasks to configs; submits jobs |
 | `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown |
 | `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure |
+| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `is429Line`/`isTransientLine` are thin wrappers; `classifyResultMessage` prefers the claude/qwen stream-json typed `result` event over raw line sniffing |
 | `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers |
 
 ## Branch-per-task / Worktrees
@@ -99,16 +100,25 @@ Per-`AgentConfig` fields `max_retries` (default 3, 0 disables auto-retry) and
 `retry_backoff_secs` (default 30, base for exponential backoff capped at 10m)
 govern automatic retries for **transient** provider errors only:
 
-- **Classification** (`errors.go`, `ratelimit.go`): any error implementing
-  `Transient() bool` (both `ErrRateLimit` and `ErrTransient`) is treated as
-  transient. HTTP providers (`anthropic.go`, `llm.go`) wrap network-level
-  `Do()` errors and `5xx` responses as `ErrTransient`; `429` stays
-  `ErrRateLimit`. CLI providers (`claude.go`, `qwen.go`, `opencode.go`)
-  best-effort sniff stdout/stderr text (`isTransientLine`) for signals like
-  connection resets, `502/503/504`, or "timeout", and also treat an ambiguous
-  run-timeout (context deadline exceeded) as transient. A plain non-zero CLI
-  exit with no such signal, or a `Result{Status:"failed"}` with no error at
-  all, is a **genuine** failure and does not consume retry budget.
+- **Classification** (`errclass.go`, `errors.go`, `ratelimit.go`): every failure
+  resolves to one explicit `Classification` — `genuine`, `transient`,
+  `rate_limit`, or `auth` — logged as the `classification` field on the failure
+  log line so misclassifications are diagnosable from logs alone. Any error
+  implementing `Transient() bool` (both `ErrRateLimit` and `ErrTransient`) is
+  treated as transient. HTTP providers (`anthropic.go`, `llm.go`) wrap
+  network-level `Do()` errors and `5xx` responses as `ErrTransient`; `429` stays
+  `ErrRateLimit`. CLI providers (`claude.go`, `qwen.go`, `opencode.go`) classify
+  stdout/stderr via the **single** pattern table in `errclass.go`
+  (`ClassifyLine`) — connection resets, `502/503/504`, "timeout", `429`/rate
+  limit, and "Not logged in"/"Please run /login" all live in that one table with
+  per-pattern unit tests, so a CLI-wording change is a one-line edit. For the
+  claude/qwen providers, the typed stream-json `result` event
+  (`classifyResultMessage`) is preferred over raw line sniffing where present.
+  An ambiguous run-timeout (context deadline exceeded) is also treated as
+  transient without needing a log signal. A plain non-zero CLI exit with no such
+  signal, or a `Result{Status:"failed"}` with no error at all, is a **genuine**
+  failure and does not consume retry budget. An `auth` signal in the run's logs
+  (login/auth failure) escalates to `waiting_human` instead of retrying.
 - **Budget tracking** (`tasks.transient_retry_count`, `tasks.next_retry_at`):
   `pool.go#handleTransientFailure` increments the task's counter and sets
   `next_retry_at` (via `BackoffDurationWithBase(count, RetryBackoffSecs)`)

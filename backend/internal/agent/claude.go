@@ -179,7 +179,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			if line == "" {
 				continue
 			}
-			entry, parsed, u := classifyStreamJSON(line)
+			entry, parsed, u, class := classifyStreamJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
@@ -191,12 +191,18 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 				usage = u
 				mu.Unlock()
 			}
-			// Also scan stdout JSON lines for 429/transient-infra indicators
-			if is429Line(line) {
+			// Prefer the structured classification from the typed "result"
+			// event; fall back to sniffing the raw line for non-result / non-
+			// JSON output. See errclass.go.
+			if class == ClassNone {
+				class = ClassifyLine(line)
+			}
+			switch class {
+			case ClassRateLimit:
 				mu.Lock()
 				rateLimited = true
 				mu.Unlock()
-			} else if isTransientLine(line) {
+			case ClassTransient:
 				mu.Lock()
 				transient = true
 				mu.Unlock()
@@ -211,11 +217,12 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		for scanner.Scan() {
 			line := scanner.Text()
 			logCh <- LogEntry{Type: LogStderr, Content: line, At: time.Now()}
-			if is429Line(line) {
+			switch ClassifyLine(line) {
+			case ClassRateLimit:
 				mu.Lock()
 				rateLimited = true
 				mu.Unlock()
-			} else if isTransientLine(line) {
+			case ClassTransient:
 				mu.Lock()
 				transient = true
 				mu.Unlock()
@@ -304,71 +311,31 @@ func applyUsage(res *Result, u *runUsage) {
 	res.CostUSD = u.CostUSD
 }
 
-// is429Line returns true if the log line indicates an API rate-limit rejection.
-func is429Line(line string) bool {
-	return strings.Contains(line, "429") ||
-		strings.Contains(line, "Request rejected") ||
-		strings.Contains(line, "rate limit") ||
-		strings.Contains(line, "rate_limit")
-}
-
-// isTransientLine returns true if the log line indicates a transient
-// infrastructure problem (network blip, upstream 5xx, connection reset,
-// timeout) rather than a genuine task/agent failure. Best-effort text
-// sniffing — the claude CLI doesn't expose structured error classification,
-// only free-form stdout/stderr text and an exit code.
-func isTransientLine(line string) bool {
-	lower := strings.ToLower(line)
-	for _, marker := range []string{
-		"connection reset",
-		"econnreset",
-		"econnrefused",
-		"etimedout",
-		"enotfound",
-		"eai_again",
-		"timeout",
-		"timed out",
-		"temporary failure",
-		"network error",
-		"network is unreachable",
-		"socket hang up",
-		"eof",
-		"502",
-		"503",
-		"504",
-		"bad gateway",
-		"service unavailable",
-		"gateway timeout",
-	} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 // classifyStreamJSON parses one NDJSON line from claude --output-format stream-json.
 // Returns the log entry, an optional outcome ("success"/"failure") parsed
-// from an OUTCOME marker or the result subtype, and — for "result" messages
-// only — the token usage / cost reported by the CLI (nil for all other
-// message types, or if the result message has no usage data).
-func classifyStreamJSON(line string) (LogEntry, string, *runUsage) {
+// from an OUTCOME marker or the result subtype, the token usage / cost reported
+// by the CLI (non-nil for "result" messages only), and a failure Classification
+// derived from the *structured* terminal "result" event (ClassNone for every
+// non-result message and for a clean success). The classification lets the CLI
+// providers prefer the typed error event over sniffing arbitrary log lines —
+// see errclass.go.
+func classifyStreamJSON(line string) (LogEntry, string, *runUsage, Classification) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil
+		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil, ClassNone
 	}
 
 	msgType := strings.Trim(string(raw["type"]), `"`)
 	switch msgType {
 	case "assistant":
-		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, "", nil
+		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, "", nil, ClassNone
 	case "tool_use":
-		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, "", nil
+		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, "", nil, ClassNone
 	case "tool_result":
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil
+		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil, ClassNone
 	case "user":
 		// Claude SDK wraps tool results in a user message: {"type":"user","message":{"role":"user","content":[{"type":"tool_result",...}]}}
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil
+		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil, ClassNone
 	case "result":
 		// Parse OUTCOME: success|failure from the result text; fall back to subtype.
 		var outcome string
@@ -388,10 +355,35 @@ func classifyStreamJSON(line string) (LogEntry, string, *runUsage) {
 			}
 		}
 		usage := extractResultUsage(raw)
-		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome, usage
+		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome, usage, classifyResultMessage(raw)
 	default:
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil
+		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil, ClassNone
 	}
+}
+
+// classifyResultMessage derives a failure Classification from a claude/qwen
+// stream-json "result" envelope — a *typed* terminal event — so the providers
+// can prefer it over sniffing arbitrary log lines. Returns ClassNone for a
+// successful result, or for an error whose text carries no recognizable
+// infra/auth/rate-limit signal (a genuine failure such as error_max_turns).
+func classifyResultMessage(raw map[string]json.RawMessage) Classification {
+	subtype := strings.Trim(string(raw["subtype"]), `"`)
+	isErr := false
+	if v, ok := raw["is_error"]; ok {
+		_ = json.Unmarshal(v, &isErr)
+	}
+	// A clean success carries no failure signal.
+	if !isErr && subtype != "error" && subtype != "error_max_turns" {
+		return ClassNone
+	}
+	// Classify the structured error text, if any.
+	if v, ok := raw["result"]; ok {
+		var text string
+		if err := json.Unmarshal(v, &text); err == nil {
+			return ClassifyLine(text)
+		}
+	}
+	return ClassNone
 }
 
 // extractResultUsage parses the usage/total_cost_usd fields from a claude/qwen

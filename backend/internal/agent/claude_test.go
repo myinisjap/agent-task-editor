@@ -156,7 +156,7 @@ func TestClaudeExitCode0_NoOutcome(t *testing.T) {
 func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"total_cost_usd":0.0789,"duration_ms":1500}`
 
-	entry, outcome, usage := classifyStreamJSON(line)
+	entry, outcome, usage, _ := classifyStreamJSON(line)
 
 	if entry.Type != LogSystem {
 		t.Errorf("want LogSystem entry, got %v", entry.Type)
@@ -185,7 +185,7 @@ func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 func TestClassifyStreamJSON_ResultNoUsage(t *testing.T) {
 	line := `{"type":"result","subtype":"success","result":"OUTCOME: success"}`
 
-	_, outcome, usage := classifyStreamJSON(line)
+	_, outcome, usage, _ := classifyStreamJSON(line)
 
 	if outcome != "success" {
 		t.Errorf("want outcome=success, got %q", outcome)
@@ -204,7 +204,7 @@ func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 		`{"type":"tool_result"}`,
 		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result"}]}}`,
 	} {
-		_, _, usage := classifyStreamJSON(line)
+		_, _, usage, _ := classifyStreamJSON(line)
 		if usage != nil {
 			t.Errorf("line %q: want nil usage, got %+v", line, usage)
 		}

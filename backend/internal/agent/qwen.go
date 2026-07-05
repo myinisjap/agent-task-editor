@@ -145,18 +145,24 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 			if line == "" {
 				continue
 			}
-			entry, parsed, u := classifyStreamJSON(line)
+			entry, parsed, u, class := classifyStreamJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
 				outcome = parsed
 				mu.Unlock()
 			}
-			if is429Line(line) {
+			// Prefer the structured classification from the typed "result"
+			// event; fall back to sniffing the raw line. See errclass.go.
+			if class == ClassNone {
+				class = ClassifyLine(line)
+			}
+			switch class {
+			case ClassRateLimit:
 				mu.Lock()
 				rateLimited = true
 				mu.Unlock()
-			} else if isTransientLine(line) {
+			case ClassTransient:
 				mu.Lock()
 				transient = true
 				mu.Unlock()
