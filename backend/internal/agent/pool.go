@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -214,7 +213,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	if err != nil {
 		var rl *ErrRateLimit
 		if errors.As(err, &rl) {
-			log.Warn("pool: agent run rate limited", "reset_at", rl.ResetAt, "msg", rl.Message)
+			log.Warn("pool: agent run rate limited", "classification", string(ClassRateLimit), "reset_at", rl.ResetAt, "msg", rl.Message)
 			// Register the block in the rate-limit registry. This blocks the
 			// whole agent config (not just this task) from further dispatch
 			// for a while — separate from, and complementary to, the
@@ -247,7 +246,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 		var te transientErr
 		if errors.As(err, &te) {
-			log.Warn("pool: agent run transient error", "err", err)
+			log.Warn("pool: agent run transient error", "classification", string(ClassTransient), "err", err)
 			p.handleTransientFailure(ctx, job, err.Error())
 			return
 		}
@@ -257,12 +256,20 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	finalStatus := result.Status
-	// If the run failed due to an auth error, escalate to waiting_human so a human
-	// can intervene (e.g. re-login) rather than silently retrying forever.
+	// Classify a plain failure for observability. Defaults to "genuine" (real
+	// task failure, immediate re-dispatch); an auth signal in the run's logs
+	// escalates to waiting_human so a human can re-authenticate rather than
+	// silently retrying forever. Logged below as the `classification` field so
+	// misclassifications are diagnosable from logs alone (see errclass.go).
+	classification := ClassGenuine
 	if finalStatus == "failed" && p.hasLoginError(ctx, job.RunID) {
 		finalStatus = "waiting_human"
+		classification = ClassAuth
 		msg := "Agent failed: not logged in. Please re-authenticate and re-run."
 		result.Message = &msg
+	}
+	if result.Status == "failed" {
+		log.Warn("pool: agent run failed", "classification", string(classification), "final_status", finalStatus)
 	}
 
 	// A genuine (non-transient) failure or a successful completion resets the
@@ -542,6 +549,8 @@ func (p *Pool) handleCancelled(job Job) {
 }
 
 // hasLoginError scans the last 20 log entries for an auth/login error signal.
+// The patterns live in the central classification table (errclass.go), so a
+// CLI wording change is a one-line edit there rather than here.
 func (p *Pool) hasLoginError(ctx context.Context, runID string) bool {
 	logs, err := p.q.ListAgentLogs(ctx, runID)
 	if err != nil {
@@ -553,7 +562,7 @@ func (p *Pool) hasLoginError(ctx context.Context, runID string) bool {
 		start = 0
 	}
 	for _, l := range logs[start:] {
-		if strings.Contains(l.Content, "Not logged in") || strings.Contains(l.Content, "Please run /login") {
+		if ClassifyLine(l.Content) == ClassAuth {
 			return true
 		}
 	}

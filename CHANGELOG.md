@@ -11,6 +11,17 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Changed
+- Centralized the previously-scattered provider error classification (login
+  detection, transient-infra detection, and rate-limit detection) into a single
+  pattern table in `backend/internal/agent/errclass.go` with per-pattern unit
+  tests, so adapting to a CLI wording change is a one-line edit instead of a hunt
+  across three files. Every failure now resolves to one explicit
+  `classification` (`genuine`/`transient`/`rate_limit`/`auth`) that is logged on
+  the failure log line, making misclassifications diagnosable from logs. The
+  claude/qwen providers now prefer the typed stream-json `result` event over raw
+  stdout/stderr sniffing when classifying a run.
+
 ### Security
 - Fixed an authentication bypass where any request carrying an
   `Upgrade: websocket` header skipped bearer-token validation on **every** API
