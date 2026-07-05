@@ -340,6 +340,11 @@ export const api = {
       request<void>(`/tasks/${id}/review-comments/${commentId}`, { method: 'DELETE' }),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
+    // cancelRun signals an in-flight run to stop. The pool marks the run
+    // "cancelled" and pauses the task asynchronously, then broadcasts
+    // task.agent_done, so callers rely on the WS event rather than the response.
+    cancelRun: (id: string, runId: string) =>
+      request<{ status: string; run_id: string }>(`/tasks/${id}/runs/${runId}/cancel`, { method: 'POST' }),
     // runLogs returns a page of a run's log entries in chronological order
     // (oldest first). Omit `before` for the newest page (the tail); pass a
     // previous page's prevCursor as `before` to load earlier entries. hasMore

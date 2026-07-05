@@ -94,14 +94,22 @@ const maxUploadSize = 50 << 20
 // maxSingleFile is the maximum size per image file (10 MB).
 const maxSingleFile = 10 << 20
 
+// RunCanceller signals an in-flight agent run to stop. It is implemented by the
+// agent pool; it may be nil in contexts (e.g. some tests) where no pool is wired,
+// in which case CancelRun reports the run as no longer active.
+type RunCanceller interface {
+	Cancel(runID string) bool
+}
+
 type TasksHandler struct {
 	q         *gen.Queries
 	engine    *workflow.Engine
 	uploadDir string
+	canceller RunCanceller
 }
 
-func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string) *TasksHandler {
-	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir}
+func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller) *TasksHandler {
+	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller}
 }
 
 // List returns a page of tasks, optionally narrowed by query parameters:
@@ -1030,6 +1038,34 @@ func (h *TasksHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, run)
+}
+
+// CancelRun requests cancellation of an in-flight agent run. It only signals the
+// pool's cancel registry (which cancels the run's context, propagating to CLI
+// subprocesses and aborting HTTP providers); the pool marks the run "cancelled"
+// and pauses the task asynchronously once the provider returns, then broadcasts
+// task.agent_done. Returns 404 if the run doesn't belong to the task, 409 if the
+// run isn't currently running, and 202 Accepted once cancellation is signalled.
+func (h *TasksHandler) CancelRun(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	runID := chi.URLParam(r, "run_id")
+
+	run, err := h.q.GetAgentRun(r.Context(), runID)
+	if err != nil || run.TaskID != taskID {
+		Err(w, http.StatusNotFound, "run not found")
+		return
+	}
+	if run.Status != "running" {
+		Err(w, http.StatusConflict, "run is not running")
+		return
+	}
+	if h.canceller == nil || !h.canceller.Cancel(runID) {
+		// Not in the registry — it finished between the status read and here, or
+		// is running on a different server instance.
+		Err(w, http.StatusConflict, "run is no longer active")
+		return
+	}
+	JSON(w, http.StatusAccepted, map[string]string{"status": "cancelling", "run_id": runID})
 }
 
 // GetRunLogs returns a page of a run's log entries in chronological order

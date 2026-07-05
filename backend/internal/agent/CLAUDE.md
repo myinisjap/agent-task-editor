@@ -64,6 +64,34 @@ Providers stream log entries on `logCh` as they run. The pool drains this channe
   - **Genuine failure** (the agent ran and the work itself failed, e.g. a plain `Result{Status:"failed"}` with no underlying transport/provider error): re-dispatch is immediate and unbounded, same as before this feature — the next 5s sweep picks the task straight back up.
   - **Transient infra failure** (rate limit, network blip, upstream 5xx, ambiguous timeout — see "Retry Policy" below): auto-retried up to `AgentConfig.MaxRetries` times with exponential backoff, then escalated to `waiting_human` so a human doesn't have to guess whether it's quietly retrying or stuck.
 - `waiting_human` — agent called `request_human`, hit a login/auth error, or exhausted its transient-retry budget; `Message` surfaces to the UI
+- `cancelled` — a human stopped the run via `POST /tasks/{id}/runs/{run_id}/cancel` (see "Run Cancellation" below). Terminal; excluded from usage/dashboard aggregates.
+
+## Run Cancellation (Kill Switch)
+
+`Pool.Cancel(runID)` stops an in-flight run. The pool keeps a per-run cancel
+registry (`running map[string]*runControl`, guarded by `mu`): `run()` derives a
+cancellable context from the worker context, registers its `cancel` func before
+invoking the provider, and unregisters on return. `Cancel` flips the run's
+`cancelled` flag and calls `cancel()`; because the provider runs under this
+context, CLI providers' `exec.CommandContext` subprocesses are killed and HTTP
+providers abort their request.
+
+When the provider returns, `run()` checks the `cancelled` flag **before** error
+classification (a cancelled provider usually surfaces a context/transient-looking
+error) and routes to `handleCancelled`, which:
+
+- marks the run `cancelled` with a note (does **not** count as failure);
+- resets the task's transient-retry budget (a cancel consumes none);
+- **pauses the task** and clears `active_agent_run_id`. Pausing is deliberate:
+  clearing the lock alone would let the next 5s sweep re-dispatch the very run
+  just killed. Pausing leaves the task on its label for a human to resume.
+- publishes `task.agent_done` (status `cancelled`) plus `task.updated` so boards
+  not subscribed to the task still refresh the paused state.
+
+The HTTP handler (`TasksHandler.CancelRun`) only signals — it returns `202` once
+`Cancel` succeeds, `409` if the run isn't `running` (or is no longer registered,
+e.g. it finished in the race window), and `404` if the run doesn't belong to the
+task. The DB writes and WS broadcast happen asynchronously in the pool goroutine.
 
 ## Retry Policy (Transient vs Genuine Failures)
 
@@ -114,7 +142,7 @@ resolve/reopen comments directly in the UI.
 
 `active_agent_run_id` prevents double-dispatch:
 - Dispatcher sets it when creating a run
-- Pool clears it on `completed` / `failed`
+- Pool clears it on `completed` / `failed` / `cancelled`
 - Pool leaves it set on `waiting_human`
 - `UpdateTaskLabel` (any workflow transition) always clears it via SQL
 
@@ -123,7 +151,10 @@ A task's `paused` flag (a persisted DB column, set via `PATCH
 `ListAgentPickupTasks` (`AND t.paused = 0`), regardless of label or
 `active_agent_run_id`. `dispatch()` also re-checks `t.Paused` as
 defense-in-depth. Pausing does not cancel an already-running agent run; it
-only prevents the dispatcher from starting a new one.
+only prevents the dispatcher from starting a new one. The reverse also holds:
+**cancelling** a run (see "Run Cancellation" above) pauses the task, so the
+kill switch both stops the current run *and* blocks the immediate re-dispatch
+that clearing the lock would otherwise trigger.
 
 ## Environment Variable Security
 

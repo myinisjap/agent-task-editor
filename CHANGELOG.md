@@ -12,6 +12,15 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- Cancel a running agent run: `POST /api/v1/tasks/{id}/runs/{run_id}/cancel` plus
+  a **Stop run** button on the task detail page. The pool keeps a per-run cancel
+  registry; cancelling cancels the run's context (killing CLI subprocesses via
+  `exec.CommandContext` and aborting HTTP providers), then marks the run
+  `cancelled` (not `failed`, and without consuming transient-retry budget),
+  pauses the task so it isn't immediately re-dispatched, clears the active-run
+  lock, and broadcasts `task.agent_done`. Fills the kill-switch gap where
+  pausing only blocked *future* dispatch — a runaway agent no longer burns
+  tokens until it times out.
 - Provider health / onboarding status page (`Health` in the sidebar) backed by a
   new `GET /api/v1/health/providers` endpoint. Checks the claude CLI (present +
   authenticated), API keys for the anthropic/llm providers, qwen/opencode

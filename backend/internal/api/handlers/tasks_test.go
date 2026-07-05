@@ -42,6 +42,18 @@ type noopPub struct{}
 
 func (noopPub) Publish(string, map[string]any) {}
 
+// fakeCanceller records the run IDs it was asked to cancel and reports whether
+// each was "active" via the found map.
+type fakeCanceller struct {
+	called []string
+	found  map[string]bool
+}
+
+func (c *fakeCanceller) Cancel(runID string) bool {
+	c.called = append(c.called, runID)
+	return c.found[runID]
+}
+
 // openTestDB creates a temp SQLite database, seeds the default workflow,
 // and registers cleanup functions.
 func openTestDB(t *testing.T) *storage.DB {
@@ -87,7 +99,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir())
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}})
 
 	r := chi.NewRouter()
 	r.Get("/tasks", h.List)
@@ -99,11 +111,124 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Patch("/tasks/{id}/label", h.MoveLabel)
 	r.Get("/tasks/{id}/runs", h.ListRuns)
 	r.Get("/tasks/{id}/runs/{run_id}/logs", h.GetRunLogs)
+	r.Post("/tasks/{id}/runs/{run_id}/cancel", h.CancelRun)
 	r.Patch("/tasks/{id}/pause", h.SetPaused)
 	r.Patch("/tasks/{id}/archive", h.SetArchived)
 	r.Post("/tasks/{id}/pr", h.CreatePR)
 
 	return r, q, wfID, repoID
+}
+
+// setupCancelRouter wires just the cancel route against a caller-supplied
+// canceller so tests can assert on what the handler signals.
+func setupCancelRouter(t *testing.T, canceller handlers.RunCanceller) (http.Handler, *gen.Queries, string, string) {
+	t.Helper()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), noopPub{})
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID:         repoID,
+		Name:       "test-repo",
+		Path:       t.TempDir(),
+		WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), canceller)
+	r := chi.NewRouter()
+	r.Post("/tasks/{id}/runs/{run_id}/cancel", h.CancelRun)
+	return r, q, wfID, repoID
+}
+
+// seedRunningRun creates a task plus an agent run in the given status and
+// returns their IDs.
+func seedRunningRun(t *testing.T, q *gen.Queries, wfID, repoID, status string) (taskID, runID string) {
+	t.Helper()
+	ctx := context.Background()
+	taskID = uuid.NewString()
+	if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: taskID, Title: "Cancel me", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	runID = uuid.NewString()
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: taskID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(ctx, gen.UpdateAgentRunStatusParams{Status: status, ID: runID}); err != nil {
+		t.Fatalf("set run status: %v", err)
+	}
+	return taskID, runID
+}
+
+func TestTasks_CancelRun_OK(t *testing.T) {
+	c := &fakeCanceller{found: map[string]bool{}}
+	r, q, wfID, repoID := setupCancelRouter(t, c)
+	taskID, runID := seedRunningRun(t, q, wfID, repoID, "running")
+	c.found[runID] = true
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/runs/"+runID+"/cancel", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", w.Code, w.Body.String())
+	}
+	if len(c.called) != 1 || c.called[0] != runID {
+		t.Errorf("expected Cancel(%s) once, got %v", runID, c.called)
+	}
+}
+
+func TestTasks_CancelRun_NotRunning(t *testing.T) {
+	c := &fakeCanceller{found: map[string]bool{}}
+	r, q, wfID, repoID := setupCancelRouter(t, c)
+	taskID, runID := seedRunningRun(t, q, wfID, repoID, "completed")
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/runs/"+runID+"/cancel", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", w.Code)
+	}
+	if len(c.called) != 0 {
+		t.Errorf("expected Cancel not called for a non-running run, got %v", c.called)
+	}
+}
+
+func TestTasks_CancelRun_NoLongerActive(t *testing.T) {
+	// Run is 'running' in the DB but the pool no longer has it registered.
+	c := &fakeCanceller{found: map[string]bool{}}
+	r, q, wfID, repoID := setupCancelRouter(t, c)
+	taskID, runID := seedRunningRun(t, q, wfID, repoID, "running")
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/runs/"+runID+"/cancel", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", w.Code)
+	}
+}
+
+func TestTasks_CancelRun_WrongTask(t *testing.T) {
+	c := &fakeCanceller{found: map[string]bool{}}
+	r, q, wfID, repoID := setupCancelRouter(t, c)
+	_, runID := seedRunningRun(t, q, wfID, repoID, "running")
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+uuid.NewString()+"/runs/"+runID+"/cancel", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
 }
 
 func jsonBody(t *testing.T, v any) *bytes.Reader {
