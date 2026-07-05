@@ -71,7 +71,7 @@ An agent run completed (any terminal run status).
   "payload": {
     "task_id": "uuid",
     "run_id": "uuid",
-    "status": "completed | failed | waiting_human"
+    "status": "completed | failed | waiting_human | cancelled"
   }
 }
 ```

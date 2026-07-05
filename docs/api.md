@@ -283,7 +283,7 @@ Delete a template. Returns `204`.
 | `id` | UUID | Run identifier |
 | `task_id` | UUID | Associated task |
 | `agent_config_id` | UUID | Agent config used for this run |
-| `status` | string | `pending`, `running`, `completed`, `failed`, `waiting_human` |
+| `status` | string | `pending`, `running`, `completed`, `failed`, `waiting_human`, `cancelled` |
 | `feedback` | string? | Feedback set on rejection (injected into the next run's prompt) |
 | `stored_info` | string? | Info stored by the agent via `store_info`; visible in the task UI |
 | `created_at` | RFC3339 | When the run was created |
@@ -298,6 +298,20 @@ List all agent runs for a task (newest first).
 
 ### `GET /tasks/{id}/runs/{run_id}`
 Get a single run record.
+
+### `POST /tasks/{id}/runs/{run_id}/cancel`
+Stop a running agent run (kill switch). The pool cancels the run's context —
+killing CLI provider subprocesses and aborting HTTP provider requests — then,
+once the provider returns, marks the run `cancelled` (not `failed`, and without
+consuming retry budget), **pauses the task** so it isn't immediately
+re-dispatched, clears the active-run lock, and broadcasts `task.agent_done`.
+
+Cancellation is asynchronous: a `202 Accepted` (`{ "status": "cancelling",
+"run_id": "..." }`) means it was signalled, not that the run has fully stopped —
+watch for the `task.agent_done` WebSocket event. Returns `409` if the run isn't
+currently `running` (already finished, or racing to finish) and `404` if the run
+doesn't belong to the task. Resume the task (unpause) or hit re-run to dispatch
+again.
 
 ### `GET /tasks/{id}/runs/{run_id}/logs`
 Get a page of a run's persisted log entries, in chronological order (oldest

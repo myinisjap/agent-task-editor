@@ -453,6 +453,61 @@ func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 	}
 }
 
+// blockingProvider waits until its context is cancelled, mimicking a CLI
+// subprocess that only returns once killed by exec.CommandContext.
+type blockingProvider struct{}
+
+func (blockingProvider) Run(ctx context.Context, _ agent.RunInput, _ chan<- agent.LogEntry) (agent.Result, error) {
+	<-ctx.Done()
+	return agent.Result{Status: "failed"}, ctx.Err()
+}
+
+// TestPool_Cancel_MarksCancelledAndPauses verifies a human-requested cancel
+// stops a running provider, records the run as "cancelled" (not failed), pauses
+// the task, clears the active-run lock, and reports the run gone afterwards.
+func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// Mark the task's active run so the clear-on-cancel is observable.
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go pool.Start(ctx)
+
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProvider{}))
+
+	// Once the run is 'running' it is registered in the cancel registry.
+	waitForStatus(t, q, runID, "running")
+	if !pool.Cancel(runID) {
+		t.Fatal("expected Cancel to find the active run")
+	}
+
+	waitForStatus(t, q, runID, "cancelled")
+
+	task, _ := q.GetTask(context.Background(), taskID)
+	if task.Paused == 0 {
+		t.Errorf("expected task to be paused after cancel")
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Errorf("expected active_agent_run_id cleared, got %q", *task.ActiveAgentRunID)
+	}
+	if !pub.hasEvent("task.agent_done") {
+		t.Errorf("expected task.agent_done event")
+	}
+}
+
 func TestPool_WaitingHuman_PublishesEvent(t *testing.T) {
 	db := openAgentTestDB(t)
 	pub := &testPub{}

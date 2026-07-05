@@ -826,6 +826,39 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AgentRun" }
 
+  /tasks/{id}/runs/{run_id}/cancel:
+    post:
+      summary: Cancel a running agent run
+      description: >
+        Signals an in-flight run to stop. The pool cancels the run's context —
+        propagating to CLI subprocesses (exec.CommandContext) and aborting HTTP
+        providers — then, once the provider returns, marks the run `cancelled`
+        (not `failed`, and without consuming retry budget), pauses the task so it
+        is not immediately re-dispatched, clears the active-run lock, and
+        broadcasts `task.agent_done`. Cancellation is asynchronous: a 202 means
+        it was signalled, not that the run has fully stopped.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Cancellation signalled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: cancelling }
+                  run_id: { type: string }
+        "404": { description: Run not found or does not belong to the task }
+        "409": { description: Run is not currently running (already finished or never started). }
+
   /tasks/{id}/runs/{run_id}/logs:
     get:
       summary: Get a page of logs for an agent run

@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,19 @@ type Pool struct {
 	// GitName/GitEmail are used for safety-net commits when the container has no git identity.
 	GitName  string
 	GitEmail string
+
+	// running tracks the cancel func for each in-flight run so a human can stop
+	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
+	mu      sync.Mutex
+	running map[string]*runControl
+}
+
+// runControl carries the per-run cancellation handle plus a flag distinguishing
+// a human-requested stop from an incidental context cancellation (e.g. pool
+// shutdown), so the pool can mark the run "cancelled" rather than "failed".
+type runControl struct {
+	cancel    context.CancelFunc
+	cancelled atomic.Bool
 }
 
 // NewPool creates a new pool. Call Start to begin accepting jobs.
@@ -53,7 +67,42 @@ func NewPool(maxWorkers int, db *sql.DB, engine *workflow.Engine, pub Publisher)
 		q:          gen.New(db),
 		engine:     engine,
 		pub:        pub,
+		running:    make(map[string]*runControl),
 	}
+}
+
+// Cancel signals the in-flight run identified by runID to stop. It cancels the
+// run's context — CLI providers propagate this to their subprocess (they run
+// under exec.CommandContext) and HTTP providers abort their request — and marks
+// the run so the pool records it as "cancelled" when the provider returns.
+// Returns false if no such run is currently active (already finished, never
+// started, or running on a different server instance).
+func (p *Pool) Cancel(runID string) bool {
+	p.mu.Lock()
+	rc := p.running[runID]
+	p.mu.Unlock()
+	if rc == nil {
+		return false
+	}
+	rc.cancelled.Store(true)
+	rc.cancel()
+	return true
+}
+
+// registerRun records the cancel handle for a run and returns its control block.
+func (p *Pool) registerRun(runID string, cancel context.CancelFunc) *runControl {
+	rc := &runControl{cancel: cancel}
+	p.mu.Lock()
+	p.running[runID] = rc
+	p.mu.Unlock()
+	return rc
+}
+
+// unregisterRun removes a run from the cancel registry once it has finished.
+func (p *Pool) unregisterRun(runID string) {
+	p.mu.Lock()
+	delete(p.running, runID)
+	p.mu.Unlock()
 }
 
 // Start launches worker goroutines. Blocks until ctx is cancelled.
@@ -108,6 +157,16 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 	log.Info("pool: agent run starting", "provider", job.Input.AgentConfig.Provider, "agent", job.Input.AgentConfig.Name)
 
+	// Derive a cancellable context so a human can stop this run (see Cancel).
+	// It also inherits the worker ctx, so pool shutdown still tears the run down.
+	runCtx, cancel := context.WithCancel(ctx)
+	rc := p.registerRun(job.RunID, cancel)
+	defer func() {
+		cancel()
+		p.unregisterRun(job.RunID)
+	}()
+	ctx = runCtx
+
 	if _, err := p.q.SetAgentRunStarted(ctx, job.RunID); err != nil {
 		log.Error("pool: set run started", "err", err)
 		_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
@@ -142,6 +201,15 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	result, err := job.Provider.Run(ctx, job.Input, logCh)
 	close(logCh)
 	<-done
+
+	// A human-requested stop short-circuits all outcome handling: the run is
+	// marked "cancelled" (not failed), consumes no retry budget, and is not
+	// re-dispatched. Checked before error classification because a cancelled
+	// provider typically returns a context/transient-looking error.
+	if rc.cancelled.Load() {
+		p.handleCancelled(job)
+		return
+	}
 
 	if err != nil {
 		var rl *ErrRateLimit
@@ -420,6 +488,57 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, reason strin
 			"status":  finalStatus,
 		})
 	}
+}
+
+// handleCancelled records a human-requested stop. It marks the run "cancelled"
+// with a note, resets the transient-retry budget (a cancel is not a failure),
+// pauses the task, and clears the active-run lock. Pausing — rather than only
+// clearing the lock — is deliberate: an unpaused task on an agent-triggerable
+// label would be re-dispatched on the very next sweep, restarting the run the
+// human just killed. Pausing leaves the task on its label for a human to resume
+// when ready. Uses context.Background throughout since the run's own context is
+// already cancelled.
+func (p *Pool) handleCancelled(job Job) {
+	bg := context.Background()
+	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
+
+	note := "Run cancelled by user."
+	if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
+		Status: "cancelled",
+		Notes:  &note,
+		ID:     job.RunID,
+	}); err != nil {
+		log.Error("pool: set run cancelled", "err", err)
+	}
+
+	if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
+		log.Warn("pool: reset transient retry (cancel)", "err", err)
+	}
+
+	if _, err := p.q.SetTaskPaused(bg, gen.SetTaskPausedParams{Paused: 1, ID: job.Input.Task.ID}); err != nil {
+		log.Warn("pool: pause task after cancel", "err", err)
+	}
+	if err := p.q.ClearActiveAgentRun(bg, job.Input.Task.ID); err != nil {
+		log.Warn("pool: clear active run after cancel", "err", err)
+	}
+
+	if p.pub != nil {
+		p.pub.Publish("task.agent_done", map[string]any{
+			"task_id": job.Input.Task.ID,
+			"run_id":  job.RunID,
+			"status":  "cancelled",
+		})
+		// Nudge boards (which may not be subscribed to this task) to refetch so
+		// the newly-paused state is reflected without a reload.
+		p.pub.Publish("task.updated", map[string]any{"id": job.Input.Task.ID})
+	}
+
+	// The agent config isn't why we stopped, so clear any rate-limit backoff.
+	if p.RateLimits != nil {
+		p.RateLimits.Unblock(job.Input.AgentConfig.ID)
+	}
+
+	log.Info("pool: agent run cancelled by user")
 }
 
 // hasLoginError scans the last 20 log entries for an auth/login error signal.

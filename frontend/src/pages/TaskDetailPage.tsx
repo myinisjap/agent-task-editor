@@ -262,7 +262,7 @@ export default function TaskDetailPage() {
   const needsHuman = activeRun?.status === 'waiting_human'
   const isRunning = activeRun?.status === 'running'
   const latestRun = runs[0]
-  const canRerun = latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed')
+  const canRerun = latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed' || latestRun.status === 'cancelled')
   const isHumanGateLabel = task
     ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
     : false
@@ -311,6 +311,23 @@ export default function TaskDetailPage() {
     setActionPending(true)
     try {
       await api.tasks.rerun(id)
+      refreshRuns()
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  // handleStop requests cancellation of the running agent run. The pool marks
+  // the run "cancelled" and pauses the task; the resulting task.agent_done WS
+  // event refreshes the run list and task, so we just fire the request.
+  const handleStop = async () => {
+    if (!id || !selectedRun) return
+    if (!confirm('Stop this agent run? The task will be paused so it is not immediately re-dispatched.')) return
+    setActionPending(true)
+    try {
+      await api.tasks.cancelRun(id, selectedRun)
       refreshRuns()
     } catch (e: any) {
       alert(e.message)
@@ -693,6 +710,7 @@ export default function TaskDetailPage() {
                             run.status === 'running'       ? 'text-yellow-400 animate-pulse' :
                             run.status === 'failed'        ? 'text-red-400' :
                             run.status === 'waiting_human' ? 'text-pink-400' :
+                            run.status === 'cancelled'     ? 'text-orange-400' :
                             'text-slate-500'
                           }`}>{run.status}</span>
                         </div>
@@ -712,6 +730,17 @@ export default function TaskDetailPage() {
                   ))}
                 </div>
               </div>
+            )}
+
+            {isRunning && (
+              <button
+                onClick={handleStop}
+                disabled={actionPending}
+                className="w-full px-3 py-1.5 text-xs font-medium rounded bg-red-900/60 hover:bg-red-800 text-red-200 disabled:opacity-50"
+                title="Stop the running agent and pause the task"
+              >
+                ■ Stop run
+              </button>
             )}
 
             {canRerun && (
