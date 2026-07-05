@@ -12,7 +12,7 @@ import (
 const createRepo = `-- name: CreateRepo :one
 INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label)
 VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error
 `
 
 type CreateRepoParams struct {
@@ -45,6 +45,8 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		&i.CreatedAt,
 		&i.IssueSyncEnabled,
 		&i.IssueSyncLabel,
+		&i.CloneStatus,
+		&i.CloneError,
 	)
 	return i, err
 }
@@ -59,7 +61,7 @@ func (q *Queries) DeleteRepo(ctx context.Context, id string) error {
 }
 
 const getRepo = `-- name: GetRepo :one
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label FROM repos WHERE id = ?
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error FROM repos WHERE id = ?
 `
 
 func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
@@ -74,12 +76,14 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 		&i.CreatedAt,
 		&i.IssueSyncEnabled,
 		&i.IssueSyncLabel,
+		&i.CloneStatus,
+		&i.CloneError,
 	)
 	return i, err
 }
 
 const listIssueSyncRepos = `-- name: ListIssueSyncRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
@@ -100,6 +104,8 @@ func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
 			&i.CreatedAt,
 			&i.IssueSyncEnabled,
 			&i.IssueSyncLabel,
+			&i.CloneStatus,
+			&i.CloneError,
 		); err != nil {
 			return nil, err
 		}
@@ -115,7 +121,7 @@ func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
 }
 
 const listRepos = `-- name: ListRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label FROM repos ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error FROM repos ORDER BY created_at DESC
 `
 
 func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
@@ -136,6 +142,8 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 			&i.CreatedAt,
 			&i.IssueSyncEnabled,
 			&i.IssueSyncLabel,
+			&i.CloneStatus,
+			&i.CloneError,
 		); err != nil {
 			return nil, err
 		}
@@ -150,11 +158,28 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 	return items, nil
 }
 
+const setRepoCloneStatus = `-- name: SetRepoCloneStatus :exec
+UPDATE repos
+SET clone_status = ?, clone_error = ?
+WHERE id = ?
+`
+
+type SetRepoCloneStatusParams struct {
+	CloneStatus string `json:"clone_status"`
+	CloneError  string `json:"clone_error"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) SetRepoCloneStatus(ctx context.Context, arg SetRepoCloneStatusParams) error {
+	_, err := q.db.ExecContext(ctx, setRepoCloneStatus, arg.CloneStatus, arg.CloneError, arg.ID)
+	return err
+}
+
 const updateRepo = `-- name: UpdateRepo :one
 UPDATE repos
 SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?
 WHERE id = ?
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error
 `
 
 type UpdateRepoParams struct {
@@ -187,6 +212,8 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		&i.CreatedAt,
 		&i.IssueSyncEnabled,
 		&i.IssueSyncLabel,
+		&i.CloneStatus,
+		&i.CloneError,
 	)
 	return i, err
 }

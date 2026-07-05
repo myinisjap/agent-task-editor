@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -26,13 +28,20 @@ func isValidGitRef(ref string) bool {
 	return validGitRef.MatchString(ref) && !strings.Contains(ref, "..")
 }
 
+// RepoEventPublisher publishes repo lifecycle events (e.g. async clone
+// completion) to connected WebSocket clients. Satisfied by *ws.Hub.
+type RepoEventPublisher interface {
+	Publish(eventType string, payload map[string]any)
+}
+
 type ReposHandler struct {
 	q           *gen.Queries
 	repoBaseDir string // host-side base dir; paths under it are rewritten to /repos inside the container
+	pub         RepoEventPublisher
 }
 
-func NewReposHandler(q *gen.Queries, repoBaseDir string) *ReposHandler {
-	return &ReposHandler{q: q, repoBaseDir: repoBaseDir}
+func NewReposHandler(q *gen.Queries, repoBaseDir string, pub RepoEventPublisher) *ReposHandler {
+	return &ReposHandler{q: q, repoBaseDir: repoBaseDir, pub: pub}
 }
 
 func (h *ReposHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -86,8 +95,11 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Auto-clone when no local path is provided.
-	if body.Path == "" {
+	// Auto-clone when no local path is provided. The git clone itself runs
+	// asynchronously (see cloneRepoAsync below); here we only validate inputs and
+	// derive the destination path.
+	isClone := body.Path == ""
+	if isClone {
 		if remoteURL == "" {
 			Err(w, http.StatusBadRequest, "path or remote_url is required")
 			return
@@ -109,14 +121,14 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 		// Validate destPath is within repoBaseDir BEFORE any filesystem operations
 		// to prevent path traversal via a crafted name or URL segment (e.g. "../../etc").
-		{
-			cleanDest := filepath.Clean(destPath)
-			cleanBase := filepath.Clean(h.repoBaseDir)
-			sep := string(os.PathSeparator)
-			if cleanDest != cleanBase && !strings.HasPrefix(cleanDest+sep, cleanBase+sep) {
-				Err(w, http.StatusBadRequest, "derived clone path is outside the allowed base directory")
-				return
-			}
+		// The destination doesn't exist yet, so this is a lexical (cleaned-path)
+		// check; withinBaseDir's symlink resolution is for already-existing paths.
+		cleanDest := filepath.Clean(destPath)
+		cleanBase := filepath.Clean(h.repoBaseDir)
+		sep := string(os.PathSeparator)
+		if cleanDest != cleanBase && !strings.HasPrefix(cleanDest+sep, cleanBase+sep) {
+			Err(w, http.StatusBadRequest, "derived clone path is outside the allowed base directory")
+			return
 		}
 
 		// Only allow https:// and git@ schemes to avoid unexpected behaviour.
@@ -125,15 +137,10 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Create parent directory structure (e.g. repoBaseDir/org/).
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			Err(w, http.StatusInternalServerError, fmt.Sprintf("failed to create parent directory: %v", err))
-			return
-		}
-
-		cloneCmd := exec.CommandContext(r.Context(), "git", "clone", remoteURL, destPath)
-		if out, err := cloneCmd.CombinedOutput(); err != nil {
-			Err(w, http.StatusBadRequest, fmt.Sprintf("git clone failed: %s", strings.TrimSpace(string(out))))
+		// Refuse to clone over an existing directory — the async clone would fail
+		// anyway, and this keeps the error synchronous and clear.
+		if _, err := os.Stat(destPath); err == nil {
+			Err(w, http.StatusBadRequest, "clone destination already exists")
 			return
 		}
 
@@ -146,22 +153,19 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If a host-to-container path mapping is configured, transparently rewrite host paths.
-	// Enforce base-dir restriction when configured.
-	if h.repoBaseDir != "" {
-		sep := string(os.PathSeparator)
-		base := filepath.Clean(h.repoBaseDir)
-		clean := filepath.Clean(body.Path)
-		if clean != base && !strings.HasPrefix(clean+sep, base+sep) {
+	// For an existing local path, enforce the base-dir restriction (resolving
+	// symlinks, consistent with Update) and verify it's a git repository before
+	// persisting. The clone path skips both here: the directory doesn't exist yet
+	// and is created/verified asynchronously by cloneRepoAsync.
+	if !isClone {
+		if h.repoBaseDir != "" && !withinBaseDir(body.Path, h.repoBaseDir) {
 			Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
 			return
 		}
-	}
-
-	// Verify the path exists and is a git repository before persisting.
-	if err := exec.CommandContext(r.Context(), "git", "-C", body.Path, "rev-parse", "--git-dir").Run(); err != nil {
-		Err(w, http.StatusBadRequest, "path is not a git repository")
-		return
+		if err := exec.CommandContext(r.Context(), "git", "-C", body.Path, "rev-parse", "--git-dir").Run(); err != nil {
+			Err(w, http.StatusBadRequest, "path is not a git repository")
+			return
+		}
 	}
 
 	issueSyncEnabled := int64(0)
@@ -189,8 +193,99 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	setClaudeTrust(r.Context(), body.Path)
+
+	if isClone {
+		// Mark the row 'cloning' and run the clone in the background so a slow
+		// clone of a large repo doesn't exceed the server's WriteTimeout and get
+		// cut off mid-clone. The UI shows a spinner and refreshes on the
+		// repo.clone_done / repo.clone_failed WS event.
+		if err := h.q.SetRepoCloneStatus(r.Context(), gen.SetRepoCloneStatusParams{
+			CloneStatus: "cloning",
+			CloneError:  "",
+			ID:          repo.ID,
+		}); err != nil {
+			middleware.LoggerFromContext(r.Context()).Warn("failed to mark repo cloning", "repo_id", repo.ID, "err", err)
+		}
+		repo.CloneStatus = "cloning"
+		go h.cloneRepoAsync(repo.ID, remoteURL, body.Path)
+	} else {
+		setClaudeTrust(r.Context(), body.Path)
+	}
 	JSON(w, http.StatusCreated, repo)
+}
+
+// cloneRepoAsync performs the git clone for an auto-cloned repo outside the HTTP
+// request. On success it marks the repo 'ready' and records claude trust; on
+// failure it records the error, removes the partial clone directory (so a retry
+// can reuse the path), and marks the repo 'error'. Either way it publishes a WS
+// event so connected boards refresh.
+func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
+	// Detached from any request context; a generous ceiling guards against a
+	// clone that hangs indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	fail := func(msg string) {
+		_ = os.RemoveAll(destPath) // best-effort partial-clone cleanup
+		if err := h.q.SetRepoCloneStatus(ctx, gen.SetRepoCloneStatusParams{
+			CloneStatus: "error",
+			CloneError:  msg,
+			ID:          repoID,
+		}); err != nil {
+			slog.Warn("cloneRepoAsync: mark error", "repo_id", repoID, "err", err)
+		}
+		h.publishRepoEvent("repo.clone_failed", repoID, "error", msg)
+	}
+
+	// Create parent directory structure (e.g. repoBaseDir/org/).
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		fail(fmt.Sprintf("failed to create parent directory: %v", err))
+		return
+	}
+	if out, err := exec.CommandContext(ctx, "git", "clone", remoteURL, destPath).CombinedOutput(); err != nil {
+		fail(fmt.Sprintf("git clone failed: %s", strings.TrimSpace(string(out))))
+		return
+	}
+
+	if err := h.q.SetRepoCloneStatus(ctx, gen.SetRepoCloneStatusParams{
+		CloneStatus: "ready",
+		CloneError:  "",
+		ID:          repoID,
+	}); err != nil {
+		slog.Warn("cloneRepoAsync: mark ready", "repo_id", repoID, "err", err)
+	}
+	setClaudeTrust(ctx, destPath)
+	h.publishRepoEvent("repo.clone_done", repoID, "ready", "")
+}
+
+// publishRepoEvent broadcasts a repo clone lifecycle event to WS clients.
+func (h *ReposHandler) publishRepoEvent(event, repoID, status, errMsg string) {
+	if h.pub == nil {
+		return
+	}
+	h.pub.Publish(event, map[string]any{
+		"repo_id":      repoID,
+		"clone_status": status,
+		"clone_error":  errMsg,
+	})
+}
+
+// withinBaseDir reports whether path is base itself or nested under it, after
+// resolving symlinks on both (falling back to a lexical clean when a path can't
+// be resolved — e.g. it doesn't exist yet). Shared by Create and Update so the
+// two agree on containment: a symlink under the base pointing outside it is
+// rejected by both, not just Update.
+func withinBaseDir(path, base string) bool {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		realPath = filepath.Clean(path)
+	}
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		realBase = filepath.Clean(base)
+	}
+	sep := string(os.PathSeparator)
+	return realPath == realBase || strings.HasPrefix(realPath+sep, realBase+sep)
 }
 
 func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -289,20 +384,9 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce base-dir restriction when configured.
-	if h.repoBaseDir != "" {
-		realPath, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			realPath = filepath.Clean(path)
-		}
-		realBase, err := filepath.EvalSymlinks(h.repoBaseDir)
-		if err != nil {
-			realBase = filepath.Clean(h.repoBaseDir)
-		}
-		sep := string(os.PathSeparator)
-		if realPath != realBase && !strings.HasPrefix(realPath+sep, realBase+sep) {
-			Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
-			return
-		}
+	if h.repoBaseDir != "" && !withinBaseDir(path, h.repoBaseDir) {
+		Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
+		return
 	}
 
 	// Verify the path is still a valid git repository.
@@ -401,7 +485,44 @@ func setClaudeTrust(ctx context.Context, repoPath string) {
 	if err != nil {
 		return
 	}
-	if err := os.WriteFile(claudeJSON, out, 0o600); err != nil {
+
+	// Write atomically: a concurrent claude CLI subprocess (an agent run) may be
+	// reading or rewriting this same file. Write to a temp file in the same
+	// directory and rename over the original — os.Rename is atomic on the same
+	// filesystem, so readers see either the old or the new file, never a
+	// half-written one. A crash mid-write leaves only an orphaned temp file.
+	if err := atomicWriteFile(claudeJSON, out, 0o600); err != nil {
 		middleware.LoggerFromContext(ctx).Warn("failed to update claude trust dialog", "path", repoPath, "err", err)
 	}
+}
+
+// atomicWriteFile writes data to path atomically by creating a temp file in the
+// same directory, writing and syncing it, then renaming it over path. The temp
+// file is removed on any error before the rename. The final file has the given
+// mode.
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup if we don't make it to a successful rename.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

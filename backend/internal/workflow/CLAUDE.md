@@ -20,7 +20,12 @@ engine.AgentPickupLabels(ctx, workflowID) ([]string, error)
 4. If destination label has `agent_ignore = true` and trigger is `agent` → `ErrAgentIgnored`
 
 On success, wraps two DB writes in a transaction:
-- `UpdateTaskLabel` (updates the task's label; also clears `active_agent_run_id`)
+- the label update — a **compare-and-swap** (`UPDATE tasks SET label = ? … WHERE
+  id = ? AND label = ?`, the expected from-label) run as raw SQL on the tx, not
+  the generated `UpdateTaskLabel` (sqlc's SQLite analyzer miscompiles the extra
+  guard param — see the byte-offset note in `internal/storage/CLAUDE.md`). It
+  still clears `active_agent_run_id`. If it matches 0 rows, a concurrent
+  transition already moved the task, so it returns `ErrStale` (no clobber).
 - `CreateTaskLabelHistory` (audit log)
 
 Then publishes `task.label_changed` to the WebSocket hub.
@@ -32,6 +37,7 @@ ErrNoTransition   // (from→to) not in workflow_transitions
 ErrGateRequired   // agent tried a human-only transition
 ErrAgentIgnored   // destination has agent_ignore = true
 ErrTaskNotFound   // task ID doesn't exist
+ErrStale          // task's label changed concurrently (CAS lost); map to HTTP 409
 ```
 
 ## Trigger Types

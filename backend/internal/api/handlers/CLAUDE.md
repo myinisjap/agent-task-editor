@@ -34,7 +34,9 @@ Persistent inline diff review comments (`task_review_comments`). Open comments a
 
 ## Repos Handler Notes
 
-When `repoBaseDir` is non-empty, the `Create` handler rejects paths outside that directory. It resolves symlinks via `filepath.EvalSymlinks` (falls back to `filepath.Clean` if the path doesn't exist yet) before comparing.
+When `repoBaseDir` is non-empty, both `Create` and `Update` reject paths outside that directory via the shared `withinBaseDir` helper, which resolves symlinks with `filepath.EvalSymlinks` (falling back to `filepath.Clean` if a path doesn't exist yet) before comparing — so a symlink under the base pointing outside it is rejected consistently on create and update. (The pre-clone check on a *derived* clone destination stays a lexical `filepath.Clean` comparison, since that path doesn't exist yet.)
+
+Auto-clone (`POST /repos` with only a `remote_url`, no `path`) is **asynchronous**: the handler validates inputs, creates the repo row with `clone_status: cloning`, and returns `201` immediately, then `cloneRepoAsync` runs `git clone` in a background goroutine under a detached 30-minute context (not the request context — a large clone must not hit the server's 60s `WriteTimeout`). On success it marks the repo `ready` and records claude trust; on failure it removes the partial clone dir, marks the repo `error` with `clone_error`, and either way publishes a `repo.clone_done` / `repo.clone_failed` WS event (via the injected `RepoEventPublisher`, satisfied by `*ws.Hub`; nil in tests). An existing local `path` still verifies synchronously (`git rev-parse`) before persisting.
 
 Issue sync (`issue_sync_enabled` / `issue_sync_label`): enabling requires both a `remote_url` and a `workflow_id` (Create returns `400` otherwise; Update validates the merged result). `PATCH` merges — omitted fields keep their existing values.
 

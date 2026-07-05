@@ -1017,6 +1017,8 @@ func bulkErrorMessage(err error) string {
 		return "transition requires human approval"
 	case errors.Is(err, workflow.ErrAgentIgnored):
 		return "destination label is ignored by agents"
+	case errors.Is(err, workflow.ErrStale):
+		return "task label changed concurrently; refresh and retry"
 	default:
 		return err.Error()
 	}
@@ -1112,6 +1114,8 @@ func handleTransitionError(w http.ResponseWriter, err error) {
 		Err(w, http.StatusForbidden, "transition requires human approval")
 	case errors.Is(err, workflow.ErrAgentIgnored):
 		Err(w, http.StatusForbidden, "destination label is ignored by agents")
+	case errors.Is(err, workflow.ErrStale):
+		Err(w, http.StatusConflict, "task label changed concurrently; refresh and retry")
 	case errors.Is(err, workflow.ErrTaskNotFound):
 		Err(w, http.StatusNotFound, "task not found")
 	default:

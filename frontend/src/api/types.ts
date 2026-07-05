@@ -1762,6 +1762,13 @@ export interface components {
             issue_sync_enabled?: number;
             /** @description Only import issues carrying this label (empty = all open issues). */
             issue_sync_label?: string;
+            /**
+             * @description State of the repo's initial auto-clone. 'ready' for local repos and finished clones; 'cloning' while an async git clone is in progress (POST /repos returns immediately with this status); 'error' if the clone failed (see clone_error). Watch the repo.clone_done / repo.clone_failed WebSocket events for transitions out of 'cloning'.
+             * @enum {string}
+             */
+            clone_status?: "ready" | "cloning" | "error";
+            /** @description Human-readable failure detail when clone_status is 'error'. */
+            clone_error?: string;
             /** Format: date-time */
             created_at?: string;
         };

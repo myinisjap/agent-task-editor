@@ -18,5 +18,10 @@ SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?,
 WHERE id = ?
 RETURNING *;
 
+-- name: SetRepoCloneStatus :exec
+UPDATE repos
+SET clone_status = ?, clone_error = ?
+WHERE id = ?;
+
 -- name: DeleteRepo :exec
 DELETE FROM repos WHERE id = ?;

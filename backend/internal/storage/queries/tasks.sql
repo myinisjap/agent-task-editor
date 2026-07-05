@@ -92,6 +92,12 @@ WHERE id = ?;
 -- name: DeleteTask :exec
 DELETE FROM tasks WHERE id = ?;
 
+-- name: ListGhSyncEligibleTasks :many
+-- Tasks worth polling GitHub for PR status: branch-bearing, not archived, and
+-- not in a terminal PR state (pr_merged / pr_closed). Filtering here instead of
+-- in Go keeps the number of `gh` calls per sweep bounded by open work.
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') ORDER BY created_at DESC;
+
 -- name: ListTasksByLabel :many
 SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks WHERE label = ? ORDER BY created_at DESC;
 

@@ -11,6 +11,39 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Fixed
+- **Concurrent workflow transitions no longer race** (#49). `workflow.Engine.Transition`
+  now performs the label update as a compare-and-swap (`… WHERE id = ? AND label = ?`,
+  the expected from-label): if a concurrent transition already moved the task, the
+  update matches 0 rows and the engine returns the new `ErrStale` sentinel instead of
+  silently clobbering the other write and recording two history rows from the same
+  source label. Handlers map `ErrStale` to HTTP `409 Conflict` so the UI can refresh
+  and retry.
+- **Orphaned `pending` agent runs no longer linger** (#50). The dispatcher now creates
+  the run row and sets the task's active-run pointer in a single transaction (either
+  both land or neither does), and the startup crash-recovery sweep marks runs stuck in
+  `pending` — not just `running` — as `failed`, so a crash between the two writes can no
+  longer leave a task permanently locked behind a run nothing points at.
+- **ghsync no longer polls dead tasks forever** (#52). The GitHub PR-status sweep now
+  selects only branch-bearing, non-archived tasks that aren't already in a terminal PR
+  state (`pr_merged` **or** `pr_closed`) via a new `ListGhSyncEligibleTasks` SQL query,
+  instead of listing every task and filtering in Go. Tasks that never get a PR, or whose
+  PR was closed without merging, no longer cost a `gh` call on every sweep — keeping the
+  external-call rate bounded by open work as the task table grows.
+- **Repo auto-clone no longer times out or leaves partial directories** (#53). `git clone`
+  for a `remote_url`-only repo now runs asynchronously (the repo row is created with
+  `clone_status: cloning` and `POST /repos` returns immediately), so a slow clone of a
+  large repo can't exceed the server's 60s `WriteTimeout` and get cut off mid-clone. On
+  completion the row flips to `ready` (or `error` with `clone_error`, removing the partial
+  clone directory) and a `repo.clone_done` / `repo.clone_failed` WebSocket event fires.
+  The `Create` base-dir containment check now also resolves symlinks (via
+  `filepath.EvalSymlinks`), matching `Update`, so a symlink under the base dir can no
+  longer pass validation on create but fail on update.
+- **`~/.claude.json` trust updates are now atomic** (#55). `setClaudeTrust` writes to a
+  temp file in the same directory and `os.Rename`s it over the original (preserving mode
+  `0600`) instead of rewriting in place, so a crash or a concurrent claude-CLI subprocess
+  write can no longer corrupt the file and break every subsequent claude-provider run.
+
 ### Changed
 - Centralized the previously-scattered provider error classification (login
   detection, transient-infra detection, and rate-limit detection) into a single
