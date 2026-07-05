@@ -7,6 +7,7 @@ const links = [
   { to: '/workflow',  label: 'Workflow' },
   { to: '/agents',    label: 'Agents' },
   { to: '/repos',     label: 'Repos' },
+  { to: '/health',    label: 'Health' },
 ]
 
 export default function NavSidebar() {

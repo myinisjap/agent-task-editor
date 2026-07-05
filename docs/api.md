@@ -506,4 +506,34 @@ Returns aggregated statistics:
 ## Health
 
 ### `GET /healthz`
-Returns `200 OK` with `{"status":"ok"}`. Not auth-gated.
+Returns `200 OK` with `{"status":"ok"}`. Not auth-gated. (Served at the server
+root, **not** under `/api/v1`.)
+
+### `GET /health/providers`
+Provider / onboarding readiness checks. Surfaces first-run misconfiguration at a
+glance instead of letting it show up as a failed agent run. Returns an ordered
+list of checks:
+
+```json
+{
+  "checks": [
+    { "id": "claude_cli", "name": "Claude CLI", "status": "ok", "detail": "claude CLI installed and credentials found" },
+    { "id": "mcp_sidecar", "name": "MCP sidecar", "status": "warn", "detail": "MCP_SERVER_PATH is not set", "hint": "Set MCP_SERVER_PATH to the mcp-server binary to enable signal_complete/request_human for claude/qwen agents." },
+    { "id": "repo_base_dir", "name": "Repo base directory", "status": "error", "detail": "REPO_BASE_DIR is set but does not exist: /repos", "hint": "Create the directory or point REPO_BASE_DIR at an existing path." }
+  ]
+}
+```
+
+- `status` is `ok` (green — ready), `warn` (yellow — optional/degraded, or a
+  credential we couldn't detect heuristically), or `error` (red — a required
+  item is missing and runs using it will fail).
+- `hint` is a one-line fix, present whenever `status` is not `ok`.
+- Checks covered: the `claude` CLI (present + authenticated), API keys for the
+  `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for
+  providers referenced by an **enabled** agent config), the MCP sidecar binary
+  (`MCP_SERVER_PATH`), gh auth (same probe as `/github/auth-status`), and
+  `REPO_BASE_DIR`.
+- Checks are cheap and side-effect free (PATH lookups, credential/config-file
+  existence, env/config values). No real agent invocation is made, so a green
+  `claude` row means credentials were **found**, not that a live token was
+  validated. Rendered by the frontend's **Health** page.
