@@ -72,6 +72,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 - **Tests:** `cd backend && go test ./...`
 - **Frontend types:** edit `frontend/src/api/types.ts` when adding new API fields
 - **Migrations:** add numbered files to `backend/internal/storage/migrations/`; they run automatically on startup
+- **Changelog:** always add an entry under `## [Unreleased]` in `CHANGELOG.md` for any user-facing change (features, fixes, security, breaking changes). This file drives the GitHub Release notes, so keep it current with every PR.
 
 ## Common API Calls
 
