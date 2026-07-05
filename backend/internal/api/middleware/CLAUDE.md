@@ -22,4 +22,4 @@ Configured from the `CORS_ORIGINS` env var:
 
 If `API_TOKEN` is set, requires `Authorization: Bearer <token>` on every request. Uses `crypto/subtle.ConstantTimeCompare` to prevent timing attacks. Skips auth entirely when token is empty (development mode).
 
-WebSocket connections bypass this middleware (they use `?token=` query param handled in `ws.ServeWS`).
+The `/ws` route is mounted *outside* this middleware (see `router.go`) rather than bypassed via a request header — an earlier `Upgrade: websocket` header check let any route skip auth. WebSocket auth is handled by `ws.ServeWS` via the `?token=` query param, since browsers can't set request headers on a WS handshake.
