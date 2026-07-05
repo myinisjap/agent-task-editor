@@ -11,6 +11,33 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **Task dependencies — "don't dispatch B until A is done"** (#82, Mechanism 1). Tasks can
+  now declare peer dependencies: a task with any unsatisfied blocker is never picked up by
+  the dispatcher, though a human can still move it anywhere on the board. A blocker is
+  satisfied once it reaches a terminal label or is archived, so there are no invisible
+  deadlocks. Blocked-ness is *derived at read time* — there's no status column to drift and
+  no event needed when a blocker finishes; the next dispatch sweep simply sees the task
+  differently. Details:
+  - New `task_dependencies` table (migration `028`); both foreign keys cascade on delete, so
+    deleting a task unblocks its dependents. Edges are within a single workflow in v1.
+  - `ListAgentPickupTasks` grows a `NOT EXISTS (unsatisfied blocker)` clause — the whole gate
+    is one SQL predicate alongside the existing pause/archive/retry filters.
+  - Endpoints: `GET/POST /tasks/{id}/dependencies` and `DELETE /tasks/{id}/dependencies/{dep_id}`.
+    Adding an edge rejects self-edges and cross-workflow edges (`400`), blockers whose workflow
+    has no terminal label (`400`, an edge there could never satisfy), and cycles or duplicates
+    (`409`, the error names the cycle path). Cycle validation runs transactionally.
+  - Task list/detail responses carry derived `blocked_by_count` / `blocking_count` so the board
+    renders "blocked by N" badges in one query (no N+1). Blocked cards are visually muted, and
+    dragging a blocked card into an agent-triggerable column pops a confirmation.
+  - Task detail gains a Dependencies section: a same-workflow blocker picker with live met/unmet
+    state, plus the list of dependents. Edge changes and blocker completion refresh badges live
+    via `task.updated` events.
+
+  _Not included in this change:_ Mechanism 2 of #82 (agent-driven subtask decomposition — the
+  `create_subtask` MCP tool, child branch/merge-back, conflict handling, and parent auto-advance)
+  is a separate follow-up that builds on this dependency primitive.
+
 ### Fixed
 - **Concurrent workflow transitions no longer race** (#49). `workflow.Engine.Transition`
   now performs the label update as a compare-and-swap (`… WHERE id = ? AND label = ?`,

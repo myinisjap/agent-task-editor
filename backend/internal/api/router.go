@@ -19,6 +19,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
+	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
 	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
@@ -84,6 +85,11 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Patch("/tasks/{id}/git-state", tasksH.UpdateGitState)
 			r.Patch("/tasks/{id}/pause", tasksH.SetPaused)
 			r.Patch("/tasks/{id}/archive", tasksH.SetArchived)
+
+			// Peer task dependencies (dispatch gate)
+			r.Get("/tasks/{id}/dependencies", depsH.List)
+			r.Post("/tasks/{id}/dependencies", depsH.Add)
+			r.Delete("/tasks/{id}/dependencies/{dep_id}", depsH.Remove)
 
 			// Task templates — pre-filled title/description/type for recurring work
 			r.Get("/templates", templatesH.List)

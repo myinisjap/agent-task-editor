@@ -355,6 +355,141 @@ export interface paths {
         };
         trace?: never;
     };
+    "/tasks/{id}/dependencies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a task's dependency edges
+         * @description Returns both directions of the task's dependency edges: the tasks it is blocked by (each with derived satisfaction state) and the tasks that depend on it. Dependencies are a pure dispatch gate — a task with any unsatisfied blocker is never picked up by the dispatcher, though a human can still move it anywhere.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskDependencies"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Add a dependency (this task depends on another)
+         * @description Creates an edge so this task is not dispatched until the depended-on task reaches a terminal label or is archived. Both tasks must be in the same workflow, and the blocker's workflow must have a terminal label (otherwise the edge could never satisfy). Cycles and self-edges are rejected.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        depends_on_task_id: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Dependency created */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Self-edge */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Edge already exists or would create a cycle */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/dependencies/{dep_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a dependency edge */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    /** @description The depends_on_task_id of the edge to remove. */
+                    dep_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dependency removed (idempotent) */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/approve": {
         parameters: {
             query?: never;
@@ -1858,10 +1993,35 @@ export interface components {
             source?: string;
             /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
             source_ref?: string;
+            /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived. Zero when the task has no unsatisfied blockers. */
+            blocked_by_count?: number;
+            /** @description Derived (read-time) count of tasks that depend on this task (i.e. this task is a blocker for that many other tasks). */
+            blocking_count?: number;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description One end of a task dependency edge (a blocker or a dependent). */
+        DependencyEdge: {
+            /** @description The other task in the edge */
+            task_id?: string;
+            title?: string;
+            label?: string;
+            archived?: boolean;
+            /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived). Not meaningful for dependents (always false there). */
+            satisfied?: boolean;
+        };
+        /** @description Both directions of a task's dependency edges. */
+        TaskDependencies: {
+            /** @description Tasks this task depends on (its blockers), newest first. */
+            blocked_by?: components["schemas"]["DependencyEdge"][];
+            /** @description Tasks that depend on this task, newest first. */
+            blocking?: components["schemas"]["DependencyEdge"][];
+            /** @description Count of unsatisfied blockers */
+            blocked_by_count?: number;
+            /** @description Count of dependents */
+            blocking_count?: number;
         };
         /** @description Reusable pre-filled title/description/type for recurring shapes of work (e.g. "upgrade dependency X", "fix flaky test"). Applied in the new-task form; creating a task from a template just pre-fills fields. */
         TaskTemplate: {

@@ -218,8 +218,22 @@ AND t.active_agent_run_id IS NULL
 AND t.paused = 0
 AND t.archived = 0
 AND (t.next_retry_at IS NULL OR t.next_retry_at <= CURRENT_TIMESTAMP)
+AND NOT EXISTS (
+    SELECT 1 FROM task_dependencies d
+    JOIN tasks dt ON dt.id = d.depends_on_task_id
+    WHERE d.task_id = t.id
+      AND dt.archived = 0
+      AND NOT EXISTS (
+          SELECT 1 FROM workflow_labels wl
+          WHERE wl.workflow_id = dt.workflow_id
+            AND wl.name = dt.label
+            AND wl.is_terminal != 0
+      )
+)
 `
 
+// Dependency gate: never dispatch a task that still has an unsatisfied blocker.
+// A blocker is satisfied once it is archived or sits on a terminal label.
 func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listAgentPickupTasks)
 	if err != nil {

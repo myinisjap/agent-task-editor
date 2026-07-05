@@ -41,6 +41,9 @@ export default function TaskCard({
   const navigate = useNavigate()
   const { upsert } = useTasksStore()
   const repoName = useReposStore((s) => s.byId(task.repo_id))?.name
+  // A task with any unsatisfied blocker is gated from dispatch; mute it and show
+  // a badge so an idle-looking card isn't mysterious.
+  const blocked = (task.blocked_by_count ?? 0) > 0
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(task.title)
   const [editDesc, setEditDesc] = useState(task.description ?? '')
@@ -172,8 +175,8 @@ export default function TaskCard({
         e.stopPropagation()
       }}
       className={`group bg-slate-800 border rounded-lg p-3 hover:border-slate-500 transition-colors select-none ${
-        selected ? 'border-indigo-500' : 'border-slate-700'
-      } ${task.archived ? 'opacity-60' : ''}`}
+        selected ? 'border-indigo-500' : blocked ? 'border-amber-700/60' : 'border-slate-700'
+      } ${task.archived || blocked ? 'opacity-60' : ''}`}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-start gap-2 min-w-0">
@@ -193,6 +196,14 @@ export default function TaskCard({
           <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          {blocked && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-semibold"
+              title={`Waiting on ${task.blocked_by_count} unfinished dependency${(task.blocked_by_count ?? 0) === 1 ? '' : ' tasks'} — not dispatched until they finish`}
+            >
+              🔒 Blocked by {task.blocked_by_count}
+            </span>
+          )}
           {task.archived && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-semibold"

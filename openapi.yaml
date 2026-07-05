@@ -62,8 +62,50 @@ components:
           description: >
             External item the task was imported from, unique within source
             (e.g. "owner/repo#123"). Empty for manually created tasks.
+        blocked_by_count:
+          type: integer
+          description: >
+            Derived (read-time) count of this task's dependency blockers whose
+            edges are still unsatisfied. A task with any unsatisfied blocker is
+            never picked up by the dispatcher. A blocker is satisfied once it
+            reaches a terminal label or is archived. Zero when the task has no
+            unsatisfied blockers.
+        blocking_count:
+          type: integer
+          description: >
+            Derived (read-time) count of tasks that depend on this task (i.e.
+            this task is a blocker for that many other tasks).
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
+
+    DependencyEdge:
+      type: object
+      description: One end of a task dependency edge (a blocker or a dependent).
+      properties:
+        task_id:   { type: string, description: "The other task in the edge" }
+        title:     { type: string }
+        label:     { type: string }
+        archived:  { type: boolean }
+        satisfied:
+          type: boolean
+          description: >
+            For a blocker: whether the edge is satisfied (the blocker is terminal
+            or archived). Not meaningful for dependents (always false there).
+
+    TaskDependencies:
+      type: object
+      description: Both directions of a task's dependency edges.
+      properties:
+        blocked_by:
+          type: array
+          items: { $ref: '#/components/schemas/DependencyEdge' }
+          description: Tasks this task depends on (its blockers), newest first.
+        blocking:
+          type: array
+          items: { $ref: '#/components/schemas/DependencyEdge' }
+          description: Tasks that depend on this task, newest first.
+        blocked_by_count: { type: integer, description: "Count of unsatisfied blockers" }
+        blocking_count:   { type: integer, description: "Count of dependents" }
 
     TaskTemplate:
       type: object
@@ -594,6 +636,70 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
         "404": { description: Task not found }
+
+  /tasks/{id}/dependencies:
+    get:
+      summary: List a task's dependency edges
+      description: >
+        Returns both directions of the task's dependency edges: the tasks it is
+        blocked by (each with derived satisfaction state) and the tasks that
+        depend on it. Dependencies are a pure dispatch gate — a task with any
+        unsatisfied blocker is never picked up by the dispatcher, though a human
+        can still move it anywhere.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDependencies" }
+        "404": { description: Task not found }
+    post:
+      summary: Add a dependency (this task depends on another)
+      description: >
+        Creates an edge so this task is not dispatched until the depended-on
+        task reaches a terminal label or is archived. Both tasks must be in the
+        same workflow, and the blocker's workflow must have a terminal label
+        (otherwise the edge could never satisfy). Cycles and self-edges are
+        rejected.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [depends_on_task_id]
+              properties:
+                depends_on_task_id: { type: string }
+      responses:
+        "204": { description: Dependency created }
+        "400": { description: Self-edge, cross-workflow, or blocker workflow has no terminal label }
+        "404": { description: Task not found }
+        "409": { description: Edge already exists or would create a cycle }
+
+  /tasks/{id}/dependencies/{dep_id}:
+    delete:
+      summary: Remove a dependency edge
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: dep_id
+          in: path
+          required: true
+          schema: { type: string }
+          description: The depends_on_task_id of the edge to remove.
+      responses:
+        "204": { description: Dependency removed (idempotent) }
 
   /tasks/{id}/approve:
     post:

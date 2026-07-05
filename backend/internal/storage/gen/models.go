@@ -96,6 +96,12 @@ type Task struct {
 	PrUrl               string     `json:"pr_url"`
 }
 
+type TaskDependency struct {
+	TaskID          string    `json:"task_id"`
+	DependsOnTaskID string    `json:"depends_on_task_id"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 type TaskLabelHistory struct {
 	ID        string    `json:"id"`
 	TaskID    string    `json:"task_id"`

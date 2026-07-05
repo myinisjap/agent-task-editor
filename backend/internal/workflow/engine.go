@@ -38,6 +38,7 @@ type querier interface {
 	ListWorkflowTransitions(ctx context.Context, workflowID string) ([]gen.WorkflowTransition, error)
 	ListWorkflowLabels(ctx context.Context, workflowID string) ([]gen.WorkflowLabel, error)
 	CreateTaskLabelHistory(ctx context.Context, arg gen.CreateTaskLabelHistoryParams) error
+	ListTaskDependents(ctx context.Context, dependsOnTaskID string) ([]gen.ListTaskDependentsRow, error)
 }
 
 // Publisher publishes a workflow event (e.g. to the WebSocket hub).
@@ -158,6 +159,14 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 			"to":      toLabel,
 			"note":    note,
 		})
+		// A label change can satisfy or un-satisfy edges that point at this task
+		// (e.g. moving into or out of a terminal label). Nudge dependents so their
+		// "blocked by N" badges refresh live instead of going stale on the board.
+		if deps, derr := e.q.ListTaskDependents(ctx, taskID); derr == nil {
+			for _, d := range deps {
+				e.pub.Publish("task.updated", map[string]any{"id": d.TaskID})
+			}
+		}
 	}
 
 	if toIsTerminal && e.OnTerminal != nil {

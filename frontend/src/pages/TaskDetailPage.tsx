@@ -10,6 +10,7 @@ import AgentLogEntry from '../components/board/AgentLogEntry'
 import { useAgentsStore } from '../stores/agents'
 import GitStateBadge from '../components/board/GitStateBadge'
 import GitHubAuthWarning from '../components/shared/GitHubAuthWarning'
+import DependenciesPanel from '../components/DependenciesPanel'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -703,6 +704,11 @@ export default function TaskDetailPage() {
                 <span className="text-xs text-slate-400">{new Date(task.created_at).toLocaleDateString()}</span>
               </Row>
             </div>
+
+            <DependenciesPanel
+              task={task}
+              onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
+            />
 
             {runs.length > 0 && (
               <div>
