@@ -63,6 +63,8 @@ type Repo struct {
 	CreatedAt        time.Time `json:"created_at"`
 	IssueSyncEnabled int64     `json:"issue_sync_enabled"`
 	IssueSyncLabel   string    `json:"issue_sync_label"`
+	CloneStatus      string    `json:"clone_status"`
+	CloneError       string    `json:"clone_error"`
 }
 
 type Task struct {

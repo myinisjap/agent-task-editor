@@ -24,6 +24,10 @@ var (
 	ErrGateRequired  = errors.New("transition requires human approval")
 	ErrAgentIgnored  = errors.New("label is marked agent_ignore; agents cannot move tasks here")
 	ErrTaskNotFound  = errors.New("task not found")
+	// ErrStale means the task's label changed out from under this transition
+	// between validation and the compare-and-swap write — a concurrent transition
+	// won the race. Callers should refresh and retry.
+	ErrStale = errors.New("task label changed concurrently; transition is stale")
 )
 
 // querier is the subset of gen.Queries the engine needs.
@@ -114,12 +118,23 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	defer func() { _ = tx.Rollback() }()
 
 	tq := gen.New(tx)
-	if _, err := tq.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{
-		Label:             toLabel,
-		CurrentAgentRunID: task.CurrentAgentRunID,
-		ID:                taskID,
-	}); err != nil {
+	// Compare-and-swap on the label: only update if the task is still on the
+	// label we validated against (fromLabel). If a concurrent transition already
+	// moved it, this matches 0 rows and we report a stale conflict rather than
+	// silently clobbering the other write. Run as raw SQL (mirroring the
+	// generated UpdateTaskLabel, plus the `AND label = ?` guard and always
+	// clearing active_agent_run_id) because sqlc's SQLite analyzer miscompiles
+	// this particular query — see the byte-offset note on SearchTasksPage.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE tasks SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND label = ?`,
+		toLabel, task.CurrentAgentRunID, taskID, fromLabel)
+	if err != nil {
 		return fmt.Errorf("update task label: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("update task label: %w", err)
+	} else if n == 0 {
+		return ErrStale
 	}
 	if err := tq.CreateTaskLabelHistory(ctx, gen.CreateTaskLabelHistoryParams{
 		ID:        uuid.NewString(),

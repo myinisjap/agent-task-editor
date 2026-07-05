@@ -268,6 +268,61 @@ func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 	return items, nil
 }
 
+const listGhSyncEligibleTasks = `-- name: ListGhSyncEligibleTasks :many
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') ORDER BY created_at DESC
+`
+
+// Tasks worth polling GitHub for PR status: branch-bearing, not archived, and
+// not in a terminal PR state (pr_merged / pr_closed). Filtering here instead of
+// in Go keeps the number of `gh` calls per sweep bounded by open work.
+func (q *Queries) ListGhSyncEligibleTasks(ctx context.Context) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listGhSyncEligibleTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.Type,
+			&i.Label,
+			&i.RepoID,
+			&i.WorkflowID,
+			&i.CurrentAgentRunID,
+			&i.AgentNotes,
+			&i.ActiveAgentRunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Branch,
+			&i.WorktreePath,
+			&i.BaseRef,
+			&i.Attachments,
+			&i.GitState,
+			&i.Paused,
+			&i.TransientRetryCount,
+			&i.NextRetryAt,
+			&i.Source,
+			&i.SourceRef,
+			&i.Archived,
+			&i.PrUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTasks = `-- name: ListTasks :many
 SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks ORDER BY created_at DESC
 `

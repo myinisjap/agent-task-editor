@@ -22,7 +22,7 @@ func setupReposRouter(t *testing.T, repoBaseDir string) (http.Handler, *gen.Quer
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, repoBaseDir)
+	h := handlers.NewReposHandler(q, repoBaseDir, nil)
 
 	r := chi.NewRouter()
 	r.Post("/repos", h.Create)
@@ -461,7 +461,7 @@ func TestReposUpdate_IssueSyncRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base)
+	h := handlers.NewReposHandler(q, base, nil)
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)

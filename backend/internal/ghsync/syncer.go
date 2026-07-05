@@ -21,7 +21,8 @@ type Publisher interface {
 // Syncer polls all eligible tasks on a fixed interval and refreshes their
 // GitHub PR state via the `gh` CLI. Eligible tasks are those that:
 //   - have a branch set
-//   - are not already in state "pr_merged"
+//   - are not archived
+//   - are not in a terminal PR state ("pr_merged" or "pr_closed")
 type Syncer struct {
 	q        *gen.Queries
 	hub      Publisher
@@ -55,7 +56,12 @@ func (s *Syncer) Run(ctx context.Context) {
 func (s *Syncer) sweep(ctx context.Context) {
 	log := slog.With("component", "ghsync")
 	log.Info("ghsync: sweep start")
-	tasks, err := s.q.ListTasks(ctx)
+	// Only tasks worth polling: branch-bearing, not archived, and not already in
+	// a terminal PR state (pr_merged/pr_closed). Filtering in SQL keeps the number
+	// of `gh` calls per sweep bounded by open work rather than the whole table,
+	// so tasks that never get a PR (or whose PR closed unmerged) aren't polled
+	// forever as the task table grows.
+	tasks, err := s.q.ListGhSyncEligibleTasks(ctx)
 	if err != nil {
 		log.Warn("ghsync: list tasks failed", "err", err)
 		return
@@ -66,19 +72,6 @@ func (s *Syncer) sweep(ctx context.Context) {
 
 	checked := 0
 	for _, task := range tasks {
-		// Skip tasks with no branch — nothing to check.
-		if task.Branch == "" {
-			continue
-		}
-		// Skip archived tasks — they're done as far as the board is concerned
-		// and shouldn't cost a GitHub API call on every sweep.
-		if task.Archived != 0 {
-			continue
-		}
-		// Skip tasks already in the final desired state.
-		if task.GitState == "pr_merged" {
-			continue
-		}
 		// Resolve org/repo and local path for this task's repo (cached).
 		info, ok := repoCache[task.RepoID]
 		if !ok {

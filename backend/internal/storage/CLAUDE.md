@@ -41,7 +41,9 @@ After editing any `.sql` file, run `sqlc generate` (or `go generate ./...` from 
 
 ## Important Query Invariants
 
-- `UpdateTaskLabel` always sets `active_agent_run_id = NULL` — every label transition implicitly clears the dispatch lock.
+- `UpdateTaskLabel` always sets `active_agent_run_id = NULL` — every label transition implicitly clears the dispatch lock. Note the workflow engine does **not** call this generated query for the transition write: it runs an equivalent raw-SQL **compare-and-swap** (adds `AND label = ?` on the expected from-label) directly on the tx, because sqlc's SQLite analyzer miscompiles that extra guard param (see the byte-offset note below). The generated `UpdateTaskLabel` is still used by tests/other callers.
+- `ListGhSyncEligibleTasks` is the ghsync sweep's task source: `WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged','pr_closed')`. Filtering in SQL (rather than listing all tasks and filtering in Go) keeps the number of `gh` calls per sweep bounded by open, branch-bearing work.
+- `026_repo_clone_status` adds `repos.clone_status TEXT NOT NULL DEFAULT 'ready'` (`ready`/`cloning`/`error`) and `repos.clone_error TEXT NOT NULL DEFAULT ''`, written by `SetRepoCloneStatus`. Local repos and finished clones are `ready`; an auto-clone (`POST /repos` with only a `remote_url`) inserts the row, flips it to `cloning`, runs `git clone` in a background goroutine, then sets `ready` or `error` and publishes a `repo.clone_done` / `repo.clone_failed` WS event.
 - `ListAgentPickupTasks` filters on `active_agent_run_id IS NULL` — only unlocked tasks are dispatched.
 - `ListAgentPickupTasks` also filters on `paused = 0` — a manually paused task is never dispatched, regardless of label.
 - `SetTaskActiveRun` sets both `current_agent_run_id` and `active_agent_run_id` atomically — used by dispatcher when creating a new run.

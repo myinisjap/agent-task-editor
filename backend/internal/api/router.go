@@ -21,7 +21,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
-	reposH := handlers.NewReposHandler(q, repoBaseDir)
+	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
 	dashH := handlers.NewDashboardHandler(q)

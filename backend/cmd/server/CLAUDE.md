@@ -8,7 +8,7 @@ Main server entrypoint. Reads config, opens the database, wires all subsystems t
 2. Open SQLite database with WAL mode enabled
 3. Run database migrations
 4. Seed default workflow if no workflows exist
-5. Mark any `running` agent runs as `failed` (crash recovery)
+5. Mark any `running` or `pending` agent runs as `failed` (crash recovery — `pending` covers a run the dispatcher created but never enqueued before the crash)
 6. Clear all `active_agent_run_id` values (pool has restarted; nothing is genuinely active)
 7. Create the WebSocket hub
 8. Create the workflow engine (hub is the Publisher)
@@ -20,7 +20,7 @@ Main server entrypoint. Reads config, opens the database, wires all subsystems t
 ## Crash Recovery
 
 Steps 5 and 6 ensure a clean state after an unclean shutdown:
-- Runs stuck in `running` become `failed` so the dispatcher can re-dispatch
+- Runs stuck in `running` or `pending` become `failed` so the dispatcher can re-dispatch
 - `active_agent_run_id` is cleared so no tasks are permanently locked
 
 ## Configuration

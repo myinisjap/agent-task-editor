@@ -2,7 +2,9 @@ package workflow_test
 
 import (
 	"context"
+	"errors"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -101,6 +103,72 @@ func TestTransition_HappyPath(t *testing.T) {
 	updated, _ := q.GetTask(context.Background(), task.ID)
 	if updated.Label != "testing" {
 		t.Errorf("expected label testing, got %s", updated.Label)
+	}
+}
+
+// TestTransition_ConcurrentSameLabel_OnlyOneSucceeds fires many transitions from
+// the same source label at once and asserts the compare-and-swap lets exactly one
+// win. Before the CAS, both would validate against the same from_label and both
+// commit, recording two history rows from the same source. Now the losers fail
+// cleanly (ErrStale if they lost the race after reading the old label, or
+// ErrNoTransition if they read the already-moved label) and history records the
+// move exactly once.
+func TestTransition_ConcurrentSameLabel_OnlyOneSucceeds(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+
+	task := createTestTask(t, db, "work", wfID)
+
+	const n = 8
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start // release all at once to maximise contention
+			errs[i] = engine.Transition(context.Background(), task.ID, "testing", workflow.TriggerAgent, "", "")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	successes := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, workflow.ErrStale), errors.Is(err, workflow.ErrNoTransition):
+			// expected outcome for a loser
+		default:
+			t.Errorf("losing transition failed unexpectedly: %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly one successful transition, got %d", successes)
+	}
+
+	q := gen.New(db.SQL())
+	updated, _ := q.GetTask(context.Background(), task.ID)
+	if updated.Label != "testing" {
+		t.Errorf("expected final label testing, got %s", updated.Label)
+	}
+
+	// The move must be recorded exactly once — the whole point of the CAS.
+	hist, err := q.ListTaskLabelHistory(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	moves := 0
+	for _, h := range hist {
+		if h.ToLabel == "testing" {
+			moves++
+		}
+	}
+	if moves != 1 {
+		t.Errorf("expected exactly one history entry for the move, got %d", moves)
 	}
 }
 

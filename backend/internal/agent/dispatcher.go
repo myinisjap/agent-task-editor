@@ -19,6 +19,7 @@ import (
 // in agent-triggerable labels, and submits them to the Pool.
 type Dispatcher struct {
 	pool      *Pool
+	db        *sql.DB
 	q         *gen.Queries
 	engine    *workflow.Engine
 	interval  time.Duration
@@ -33,6 +34,7 @@ type Dispatcher struct {
 func NewDispatcher(db *sql.DB, pool *Pool, engine *workflow.Engine, factory func(AgentConfig) Provider) *Dispatcher {
 	return &Dispatcher{
 		pool:            pool,
+		db:              db,
 		q:               gen.New(db),
 		engine:          engine,
 		interval:        5 * time.Second,
@@ -148,24 +150,39 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 
 	agentCfg := toAgentConfig(*matched)
 
-	_, err = d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+	// Create the run row and mark the task's active run in a single transaction.
+	// These two writes must be atomic: if the run were created but the task never
+	// pointed at it (a crash or error between the statements), an orphaned
+	// 'pending' run would linger with nothing gating re-dispatch. Committing them
+	// together means either both land or neither does.
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Error("dispatcher: begin tx", "err", err)
+		return
+	}
+	tq := d.q.WithTx(tx)
+	if _, err := tq.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:            runID,
 		TaskID:        t.ID,
 		AgentConfigID: &matched.ID,
 		Feedback:      feedback,
-	})
-	if err != nil {
+	}); err != nil {
+		_ = tx.Rollback()
 		log.Error("dispatcher: create agent run", "err", err)
 		return
 	}
-
 	// Mark the task's active run so the next sweep skips it.
-	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+	if err := tq.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
 		CurrentAgentRunID: &runID,
 		ActiveAgentRunID:  &runID,
 		ID:                t.ID,
 	}); err != nil {
+		_ = tx.Rollback()
 		log.Error("dispatcher: set task active run", "err", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		log.Error("dispatcher: commit run creation", "err", err)
 		return
 	}
 
