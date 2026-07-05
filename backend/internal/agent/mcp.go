@@ -43,6 +43,22 @@ type TransitionHint struct {
 	Path    string `json:"path"` // success | failure | either
 }
 
+// SubtaskEnv carries what the sidecar needs to expose the create_subtask tool,
+// which writes live through the backend REST API (unlike the deferred
+// result-file tools). Nil, or Enabled=false, means the tool isn't exposed.
+type SubtaskEnv struct {
+	// BackendURL is the base URL of the backend (same container, localhost).
+	BackendURL string
+	// APIToken is the bearer token, when the backend requires one.
+	APIToken string
+	// TaskID is the parent task the created children hang under.
+	TaskID string
+	// Enabled gates whether the tool is exposed at all.
+	Enabled bool
+	// MaxSubtasks is surfaced to the agent in the tool description.
+	MaxSubtasks int64
+}
+
 // Prepare creates temp files for one agent run and returns the config.
 // transitions is the list of agent-available transitions from the task's current label.
 // reviewComments is the list of open inline diff review comments on the task,
@@ -51,7 +67,7 @@ type TransitionHint struct {
 // (e.g. user-selected Claude MCP servers read from ~/.claude.json). A server named
 // "task-editor" in extraServers is ignored to avoid colliding with the sidecar entry.
 // The caller must call Cleanup when the run ends.
-func (m *MCPManager) Prepare(runID string, transitions []TransitionHint, reviewComments []ReviewComment, extraServers map[string]json.RawMessage) (*MCPRunConfig, error) {
+func (m *MCPManager) Prepare(runID string, transitions []TransitionHint, reviewComments []ReviewComment, extraServers map[string]json.RawMessage, subtasks *SubtaskEnv) (*MCPRunConfig, error) {
 	dir := os.TempDir()
 
 	resultFile := filepath.Join(dir, fmt.Sprintf("ate-result-%s.json", runID))
@@ -66,18 +82,30 @@ func (m *MCPManager) Prepare(runID string, transitions []TransitionHint, reviewC
 		return nil, fmt.Errorf("marshal review comments: %w", err)
 	}
 
+	env := map[string]string{
+		"RUN_ID":          runID,
+		"RESULT_FILE":     resultFile,
+		"TRANSITIONS":     string(transitionsJSON),
+		"REVIEW_COMMENTS": string(reviewCommentsJSON),
+	}
+	// Expose create_subtask only when the run's config opted in. The sidecar
+	// posts children live to the backend REST API, so it needs the base URL,
+	// bearer token, and parent task id.
+	if subtasks != nil && subtasks.Enabled {
+		env["SUBTASKS_ENABLED"] = "1"
+		env["BACKEND_URL"] = subtasks.BackendURL
+		env["TASK_ID"] = subtasks.TaskID
+		env["API_TOKEN"] = subtasks.APIToken
+		env["MAX_SUBTASKS"] = fmt.Sprintf("%d", subtasks.MaxSubtasks)
+	}
+
 	cfg := mcpConfig{
 		MCPServers: map[string]mcpServerEntry{
 			"task-editor": {
 				Type:    "stdio",
 				Command: m.ServerBinary,
 				Args:    []string{},
-				Env: map[string]string{
-					"RUN_ID":          runID,
-					"RESULT_FILE":     resultFile,
-					"TRANSITIONS":     string(transitionsJSON),
-					"REVIEW_COMMENTS": string(reviewCommentsJSON),
-				},
+				Env:     env,
 			},
 		},
 	}

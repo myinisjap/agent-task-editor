@@ -30,6 +30,10 @@ type Dispatcher struct {
 	ProviderFactory func(cfg AgentConfig) Provider
 	// RateLimits is the shared rate-limit registry (optional — no-op when nil).
 	RateLimits *RateLimitRegistry
+	// Subtasks coordinates child→parent merge-back (optional — nil disables the
+	// subtask branching model). Used here to branch a child off its parent's
+	// branch and to inject merge-conflict context into a parent's run.
+	Subtasks *SubtaskCoordinator
 }
 
 // NewDispatcher creates a Dispatcher with a 5-second sweep interval.
@@ -186,10 +190,17 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 
 	// Each task works in its own git worktree on its own branch so concurrent
 	// agents on the same repo don't conflict. Reuse the task's worktree across
-	// re-runs; provision it on first dispatch.
+	// re-runs; provision it on first dispatch. A subtask's branch is cut from its
+	// parent's branch (not the repo base) so its work merges back cleanly.
 	workDir := t.WorktreePath
 	if workDir == "" {
-		wtPath, branch, baseRef, perr := provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+		var wtPath, branch, baseRef string
+		var perr error
+		if base := d.parentBranchBase(ctx, t); base != "" {
+			wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
+		} else {
+			wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+		}
 		if perr != nil {
 			return "", fmt.Errorf("provision worktree: %w", perr)
 		}
@@ -321,12 +332,19 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	transitions := d.buildTransitionHints(ctx, t.ID, t.WorkflowID, t.Label)
 	provider := d.ProviderFactory(agentCfg)
 
+	// If this is a parent with subtasks that conflicted on merge-back, hand the
+	// work agent the conflict context so it resolves the merges on this branch.
+	var subtaskConflicts *string
+	if d.Subtasks != nil {
+		subtaskConflicts = d.Subtasks.BuildConflictContext(ctx, t.ID)
+	}
+
 	enqueued := d.pool.Submit(Job{
 		RunID:    runID,
 		Provider: provider,
 		Input: RunInput{
 			RunID:              runID,
-			Task:               Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, Attachments: attachmentRels},
+			Task:               Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), RepoPath: repo.Path, Attachments: attachmentRels},
 			AgentConfig:        agentCfg,
 			RepoPath:           workDir,
 			RepoRemoteURL:      derefStr(repo.RemoteUrl),
@@ -337,6 +355,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			AttachmentAbsPaths: attachmentAbsPaths,
 			ResumeSessionID:    resumeSessionID,
 			HumanReply:         opts.humanReply,
+			SubtaskConflicts:   subtaskConflicts,
 		},
 	})
 	if !enqueued {
@@ -350,6 +369,22 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 
 	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", matched.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled, "resume_session", resumeSessionID != "", "human_reply", opts.humanReply != nil)
 	return runID, nil
+}
+
+// parentBranchBase returns the branch a subtask should fork from: its parent's
+// branch. Returns "" for a top-level task, or when the parent has no branch yet
+// (falls back to the repo base). The parent's branch always exists by the time a
+// child is dispatched — the planning run that created the child provisioned the
+// parent's worktree at dispatch.
+func (d *Dispatcher) parentBranchBase(ctx context.Context, t gen.Task) string {
+	if t.ParentTaskID == nil || *t.ParentTaskID == "" {
+		return ""
+	}
+	parent, err := d.q.GetTask(ctx, *t.ParentTaskID)
+	if err != nil || parent.Branch == "" {
+		return ""
+	}
+	return parent.Branch
 }
 
 func (d *Dispatcher) buildTransitionHints(ctx context.Context, taskID, workflowID, fromLabel string) []TransitionHint {
@@ -464,6 +499,8 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 		MaxRetries:        cfg.MaxRetries,
 		RetryBackoffSecs:  cfg.RetryBackoffSecs,
 		ResumeSessions:    cfg.ResumeSessions != 0,
+		SubtasksEnabled:   cfg.SubtasksEnabled != 0,
+		MaxSubtasks:       cfg.MaxSubtasks,
 		Env:               env,
 		EnabledPlugins:    enabledPlugins,
 		EnabledMCPServers: enabledMCPServers,

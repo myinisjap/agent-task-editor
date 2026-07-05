@@ -23,6 +23,8 @@ const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'> =
   max_retries: 3,
   retry_backoff_secs: 30,
   resume_sessions: true,
+  subtasks_enabled: false,
+  max_subtasks: 10,
   enabled_plugins: '[]',
   enabled_mcp_servers: '[]',
   command_allowlist: '[]',
@@ -83,6 +85,8 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_retries: 3,
     retry_backoff_secs: 30,
     resume_sessions: true,
+    subtasks_enabled: true,
+    max_subtasks: 10,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
     command_allowlist: '[]',
@@ -216,6 +220,8 @@ export default function AgentConfigPage() {
       max_retries: a.max_retries,
       retry_backoff_secs: a.retry_backoff_secs,
       resume_sessions: a.resume_sessions ?? true,
+      subtasks_enabled: a.subtasks_enabled ?? false,
+      max_subtasks: a.max_subtasks ?? 10,
       enabled_plugins: a.enabled_plugins ?? '[]',
       enabled_mcp_servers: a.enabled_mcp_servers ?? '[]',
       command_allowlist: a.command_allowlist ?? '[]',
@@ -625,6 +631,29 @@ export default function AgentConfigPage() {
               />
               Resume previous session on re-runs
             </label>
+          </Field>
+
+          <Field label="Subtasks" hint="claude/qwen_code only: expose the create_subtask tool so this agent (typically the planner) can decompose its task into child tasks. Children branch off the parent's branch and merge back automatically. Off by default.">
+            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.subtasks_enabled ?? false}
+                onChange={(e) => setForm((f) => ({ ...f, subtasks_enabled: e.target.checked }))}
+              />
+              Allow this agent to create subtasks
+            </label>
+            {form.subtasks_enabled && (
+              <label className="flex items-center gap-2 text-xs text-slate-400 mt-2">
+                Max subtasks per task
+                <input
+                  type="number"
+                  min={1}
+                  value={form.max_subtasks ?? 10}
+                  onChange={(e) => setForm((f) => ({ ...f, max_subtasks: Number(e.target.value) }))}
+                  className="w-20 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-100"
+                />
+              </label>
+            )}
           </Field>
 
           <Field label="Labels" className="col-span-2">

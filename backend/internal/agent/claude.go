@@ -23,6 +23,10 @@ type ClaudeRunner struct {
 	// UploadDir is the server-side directory where task attachments are stored.
 	// Used to resolve absolute paths when passing --image flags to the claude CLI.
 	UploadDir string
+	// BackendURL / APIToken let the create_subtask MCP tool post children live to
+	// the backend REST API (same container). Set from server config.
+	BackendURL string
+	APIToken   string
 }
 
 func (r *ClaudeRunner) binary() string {
@@ -128,7 +132,13 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			mgr = &MCPManager{}
 		}
 		var err error
-		mcpCfg, err = mgr.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, extraServers)
+		mcpCfg, err = mgr.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, extraServers, &SubtaskEnv{
+			BackendURL:  r.BackendURL,
+			APIToken:    r.APIToken,
+			TaskID:      input.Task.ID,
+			Enabled:     input.AgentConfig.SubtasksEnabled,
+			MaxSubtasks: input.AgentConfig.MaxSubtasks,
+		})
 		if err != nil {
 			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
 		}
@@ -540,6 +550,7 @@ func extractAssistantText(raw map[string]json.RawMessage) string {
 func buildPrompt(input RunInput) string {
 	var b strings.Builder
 	writeHumanReplySection(&b, input)
+	writeSubtaskConflictSection(&b, input)
 	writeFeedbackSection(&b, input)
 	writeReviewCommentsSection(&b, input)
 	if input.PriorPlan != nil && *input.PriorPlan != "" {
@@ -567,6 +578,7 @@ func buildPrompt(input RunInput) string {
 func buildResumePrompt(input RunInput) string {
 	var b strings.Builder
 	writeHumanReplySection(&b, input)
+	writeSubtaskConflictSection(&b, input)
 	writeFeedbackSection(&b, input)
 	writeReviewCommentsSection(&b, input)
 	if b.Len() == 0 {
@@ -584,6 +596,18 @@ func writeHumanReplySection(b *strings.Builder, input RunInput) {
 	}
 	b.WriteString("RESPONSE FROM HUMAN (answering your request for help):\n")
 	b.WriteString(*input.HumanReply)
+	b.WriteString("\n\n---\n\n")
+}
+
+// writeSubtaskConflictSection renders subtask branches that conflicted when
+// merging back into this parent's branch, so the parent's work agent resolves
+// them (git merge the named branches and fix the conflicting files).
+func writeSubtaskConflictSection(b *strings.Builder, input RunInput) {
+	if input.SubtaskConflicts == nil || *input.SubtaskConflicts == "" {
+		return
+	}
+	b.WriteString("SUBTASK MERGE CONFLICTS (resolve these first):\n")
+	b.WriteString(*input.SubtaskConflicts)
 	b.WriteString("\n\n---\n\n")
 }
 

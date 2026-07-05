@@ -17,6 +17,14 @@ type TransitionTrigger string
 const (
 	TriggerAgent TransitionTrigger = "agent"
 	TriggerHuman TransitionTrigger = "human"
+	// TriggerSubtasksComplete marks the automatic advance of a parent task once
+	// all of its subtasks reach a terminal label and merge back cleanly. It is
+	// recorded in task_label_history as its own trigger so the auto-advance is
+	// distinguishable from a normal agent/human move. Because it is neither
+	// "agent" nor "human", it bypasses the human-gate / agent_ignore checks — the
+	// coordinator only ever uses it for a transition it already validated as the
+	// parent's agent-success path.
+	TriggerSubtasksComplete TransitionTrigger = "subtasks_complete"
 )
 
 var (

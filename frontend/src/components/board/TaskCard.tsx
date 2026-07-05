@@ -44,6 +44,9 @@ export default function TaskCard({
   // A task with any unsatisfied blocker is gated from dispatch; mute it and show
   // a badge so an idle-looking card isn't mysterious.
   const blocked = (task.blocked_by_count ?? 0) > 0
+  const isChild = !!task.parent_task_id
+  const subtaskTotal = task.subtask_total ?? 0
+  const subtaskConflicts = task.subtask_conflicts ?? 0
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(task.title)
   const [editDesc, setEditDesc] = useState(task.description ?? '')
@@ -196,6 +199,37 @@ export default function TaskCard({
           <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          {isChild && (
+            <button
+              onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.parent_task_id}`) }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-900/60 text-indigo-300 font-semibold hover:bg-indigo-800"
+              title="Subtask — click to open its parent"
+            >
+              ↳ subtask
+            </button>
+          )}
+          {isChild && task.merge_status === 'merge_conflict' && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/70 text-red-300 font-semibold"
+              title="Merge-back into the parent's branch conflicted — the parent's agent will resolve it"
+            >
+              ⚠ conflict
+            </span>
+          )}
+          {isChild && task.merge_status === 'merged' && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 font-semibold" title="Merged back into the parent's branch">
+              ✓ merged
+            </span>
+          )}
+          {subtaskTotal > 0 && (
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold ${subtaskConflicts > 0 ? 'bg-red-900/60 text-red-300' : 'bg-slate-700 text-slate-300'}`}
+              title={`${task.subtask_done ?? 0} of ${subtaskTotal} subtasks done${subtaskConflicts > 0 ? `, ${subtaskConflicts} in conflict` : ''}`}
+            >
+              ⑃ {task.subtask_done ?? 0}/{subtaskTotal}{subtaskConflicts > 0 ? ' ⚠' : ''}
+            </span>
+          )}
           {blocked && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-semibold"

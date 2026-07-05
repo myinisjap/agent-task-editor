@@ -24,6 +24,8 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
 | `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `opencode`; not enforced for `qwen_code`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
 | `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude` provider only** (others ignore it). Default on. See [Session Resume](#session-resume) below. |
+| `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
+| `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 
 ## Providers
 

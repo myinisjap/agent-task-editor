@@ -24,6 +24,10 @@ type QwenRunner struct {
 	// UploadDir is the server-side directory where task attachments are stored.
 	// Reserved for future use if Qwen CLI gains an --image flag.
 	UploadDir string
+	// BackendURL / APIToken let the create_subtask MCP tool post children live to
+	// the backend REST API (same container). Set from server config.
+	BackendURL string
+	APIToken   string
 }
 
 func (r *QwenRunner) binary() string {
@@ -88,7 +92,13 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 	var mcpCfg *MCPRunConfig
 	if r.MCP != nil && r.MCP.ServerBinary != "" {
 		var err error
-		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, nil)
+		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, nil, &SubtaskEnv{
+			BackendURL:  r.BackendURL,
+			APIToken:    r.APIToken,
+			TaskID:      input.Task.ID,
+			Enabled:     input.AgentConfig.SubtasksEnabled,
+			MaxSubtasks: input.AgentConfig.MaxSubtasks,
+		})
 		if err != nil {
 			return Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
 		}

@@ -20,6 +20,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
+	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
 	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
@@ -90,6 +91,9 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Get("/tasks/{id}/dependencies", depsH.List)
 			r.Post("/tasks/{id}/dependencies", depsH.Add)
 			r.Delete("/tasks/{id}/dependencies/{dep_id}", depsH.Remove)
+
+			// Agent-driven subtasks (create_subtask MCP tool posts here live)
+			r.Post("/tasks/{id}/subtasks", subtasksH.Create)
 
 			// Task templates — pre-filled title/description/type for recurring work
 			r.Get("/templates", templatesH.List)

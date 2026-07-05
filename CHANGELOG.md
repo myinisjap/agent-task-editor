@@ -12,6 +12,39 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Agent-driven subtask decomposition** (#82, Mechanism 2). A planning agent can now
+  split a large task into structured, dispatchable child tasks instead of leaving prose in
+  `agent_notes`. Children are an implementation mechanism; the parent's branch (and single
+  eventual PR) stays the only outward-facing artifact. Built on the Mechanism 1 dependency
+  gate. Details:
+  - **`create_subtask` MCP tool** (claude/qwen_code), exposed only when the run's agent
+    config opts in (`subtasks_enabled`, off by default; `max_subtasks` caps children,
+    default 10). Unlike the deferred result-file tools it writes **live** through the backend
+    (`POST /tasks/{id}/subtasks`), so children appear on the board mid-run and the agent gets
+    real task ids back. Guardrails: opt-in per config, per-parent cap, depth limit 1 (a
+    subtask can't create subtasks), and a human gate — children land on the workflow's first
+    `agent_ignore` label and a human releases them.
+  - **Relationship model:** `tasks.parent_task_id` (grouping/rollup/provenance,
+    `created_by_run_id`) plus an auto-created parent→child dependency edge (the dispatch
+    gate). Deleting a parent orphans children to top-level rather than deleting them.
+  - **Branch off parent, merge back:** a child's worktree is cut from the parent's branch. On
+    reaching a terminal label a child's branch is **merged back into the parent's branch** (a
+    plain merge commit, keeping per-child history) and its worktree/branch are removed —
+    children never push to origin or open PRs. A conflicting merge-back is aborted cleanly,
+    the child is flagged `merge_conflict`, and the parent's `work` agent is handed the
+    conflict context to resolve it (`tasks.merge_status`: ``/`pending`/`merged`/
+    `merge_conflict`).
+  - **Parent auto-advance:** once every child is terminal and merged cleanly, the parent
+    advances along its agent-success transition (`work → testing` in the seed workflow),
+    recorded in history with a distinct `subtasks_complete` trigger. Degrades gracefully
+    (leaves the parent for a human / the next dispatch) when it's paused, has a run in flight,
+    or has no agent-success transition.
+  - **UI:** child cards carry a `↳ subtask` badge (click → parent) and a merge-status badge;
+    parent cards show a `⑃ done/total` rollup with a conflict indicator; the task detail page
+    gains a Subtasks section (parent link + merge state for a child; children list + bulk
+    "release" for a parent); `GET /tasks?parent_id=` filters to one family. Agent config gains
+    a "Subtasks" toggle, and the seeded Planner template enables it.
+
 - **Task dependencies — "don't dispatch B until A is done"** (#82, Mechanism 1). Tasks can
   now declare peer dependencies: a task with any unsatisfied blocker is never picked up by
   the dispatcher, though a human can still move it anywhere on the board. A blocker is

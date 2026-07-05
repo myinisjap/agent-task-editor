@@ -105,17 +105,28 @@ func main() {
 	// Shared workflow engine with WS publisher
 	engine := workflow.New(db.SQL(), hub)
 
-	// On reaching a terminal label: push the task's branch (if the repo has a
-	// remote) and tear down its worktree to reclaim disk. The branch is kept for
-	// human review/PR. Best-effort — failures are logged, not fatal.
+	// Subtask coordinator: owns child→parent branch merge-back and parent
+	// auto-advance (Mechanism 2). Git identity is filled in once resolved below.
 	termQ := gen.New(db.SQL())
+	subtaskCoord := agent.NewSubtaskCoordinator(termQ, engine, hub, "", "")
+
+	// On reaching a terminal label: for a subtask, merge its branch back into the
+	// parent's branch (see SubtaskCoordinator). For an ordinary task, push the
+	// branch (if the repo has a remote) and tear down its worktree to reclaim
+	// disk — the branch is kept for human review/PR. Best-effort.
 	engine.OnTerminal = func(ctx context.Context, task gen.Task) {
-		if task.WorktreePath == "" {
-			return
-		}
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
 			slog.Warn("onTerminal: get repo", "task_id", task.ID, "err", err)
+			return
+		}
+		if agent.IsSubtask(task) {
+			// Children merge back into the parent's branch instead of pushing to
+			// origin / keeping their branch.
+			subtaskCoord.OnChildTerminal(ctx, task, repo.Path)
+			return
+		}
+		if task.WorktreePath == "" {
 			return
 		}
 		if repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
@@ -128,6 +139,9 @@ func main() {
 		}
 	}
 
+	// Backend base URL the create_subtask MCP sidecar posts to (same container).
+	backendURL := "http://localhost:" + cfg.Port
+
 	// Agent provider factory — selects backend based on AgentConfig.Provider
 	providerFactory := func(agentCfg agent.AgentConfig) agent.Provider {
 		switch agentCfg.Provider {
@@ -136,7 +150,7 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &agent.ClaudeRunner{MCP: mcp, UploadDir: uploadDir}
+			return &agent.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		case "anthropic":
 			// Calls the Anthropic Messages API directly — no CLI binary needed.
 			// Requires LLM_API_KEY to be set. Billed per-token (not Claude Max).
@@ -148,12 +162,11 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &agent.QwenRunner{MCP: mcp, UploadDir: uploadDir}
+			return &agent.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		default:
 			return &agent.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 		}
 	}
-
 
 	maxWorkers := cfg.MaxWorkers
 	if maxWorkers <= 0 {
@@ -170,9 +183,12 @@ func main() {
 	}
 
 	pool.GitName, pool.GitEmail = resolveGitIdentity()
+	subtaskCoord.GitName, subtaskCoord.GitEmail = pool.GitName, pool.GitEmail
+	pool.Subtasks = subtaskCoord
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 	dispatcher.RateLimits = rateLimits
 	dispatcher.SetUploadDir(uploadDir)
+	dispatcher.Subtasks = subtaskCoord
 
 	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, pool, dispatcher)
 

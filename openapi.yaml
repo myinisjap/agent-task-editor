@@ -75,6 +75,32 @@ components:
           description: >
             Derived (read-time) count of tasks that depend on this task (i.e.
             this task is a blocker for that many other tasks).
+        parent_task_id:
+          type: string
+          nullable: true
+          description: >
+            Parent task id when this task is a subtask (Mechanism 2), else null.
+            A subtask branches off its parent's branch and merges back on
+            terminal; the parent isn't dispatched until every child finishes.
+        created_by_run_id:
+          type: string
+          nullable: true
+          description: The agent run that created this subtask (provenance).
+        merge_status:
+          type: string
+          enum: ["", pending, merged, merge_conflict]
+          description: >
+            A subtask's branch merge-back state into its parent's branch. Empty
+            for non-subtasks and until the child reaches a terminal label.
+        subtask_total:
+          type: integer
+          description: "Derived: number of this task's direct children (0 if not a parent)."
+        subtask_done:
+          type: integer
+          description: "Derived: children currently on a terminal label."
+        subtask_conflicts:
+          type: integer
+          description: "Derived: children whose merge-back is in conflict."
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
@@ -187,6 +213,15 @@ components:
             session (claude provider only; other providers ignore it). On by
             default. Off means every run starts cold — useful for stages that
             should look at the work with fresh eyes (e.g. agent review).
+        subtasks_enabled:
+          type: boolean
+          description: >
+            Whether this config's runs may decompose their task into subtasks via
+            the create_subtask MCP tool (claude/qwen_code only). Off by default —
+            a deliberate capability granted to a specific agent (the planner).
+        max_subtasks:
+          type: integer
+          description: "Per-parent cap on children this config may create. Default 10."
         enabled_plugins:
           type: string
           description: >
@@ -457,6 +492,12 @@ paths:
         - name: git_state
           in: query
           schema: { type: string, enum: [pushed, pr_open, pr_merged, pr_closed] }
+        - name: parent_id
+          in: query
+          description: >
+            When set, returns the direct children (subtasks) of this parent task
+            (one family at a time), bypassing pagination.
+          schema: { type: string }
         - name: archived
           in: query
           description: >
@@ -684,6 +725,49 @@ paths:
         "400": { description: Self-edge, cross-workflow, or blocker workflow has no terminal label }
         "404": { description: Task not found }
         "409": { description: Edge already exists or would create a cycle }
+
+  /tasks/{id}/subtasks:
+    post:
+      summary: Create a subtask under a parent
+      description: >
+        Creates a child task under the parent named in the path (Mechanism 2).
+        The create_subtask MCP tool posts here live during a planning run. The
+        child inherits the parent's repo + workflow, lands on a human-gate
+        (agent_ignore) label, and gets an auto-created parent→child dependency
+        edge so the parent isn't dispatched until the child finishes. Guardrails:
+        depth limit 1 (a subtask can't create subtasks), a per-parent cap
+        (config max_subtasks, default 10), and — when a creating run is in flight
+        — the run's config must have subtasks_enabled.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:       { type: string }
+                description: { type: string }
+                type:        { type: string, enum: [feature, bug, chore, spike] }
+                label:
+                  type: string
+                  description: >
+                    Optional landing label; must be an agent_ignore (human-gate)
+                    label. Defaults to the workflow's first agent_ignore label.
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "400": { description: Depth limit exceeded, non-gate label, or missing title }
+        "403": { description: Creating run's config is not permitted to create subtasks }
+        "404": { description: Parent task not found }
+        "422": { description: Per-parent subtask cap reached }
 
   /tasks/{id}/dependencies/{dep_id}:
     delete:
