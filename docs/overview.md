@@ -95,6 +95,11 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 - **Workflow editor** — create/edit labels, transitions, trigger types; import/export YAML
 - **Agent config UI** — manage multiple AI configs each targeting different workflow stages
 - **Git diff viewer** — per-task branch diff against the base ref
+- **Session resume** — re-runs on the same task continue the agent's previous
+  conversation (`claude --resume`) with full prior context instead of starting
+  cold; per-agent-config opt-out for stages that want fresh eyes
+- **Reply to a waiting agent** — when an agent asks for help (`request_human`),
+  answer with text and it continues in the same session, without moving the task
 - **Inline diff review comments** — leave file/line-anchored comments on the diff; open comments are injected into every agent run's prompt until the agent resolves them via the `resolve_comment` MCP tool (resolutions show up threaded in the diff viewer)
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once

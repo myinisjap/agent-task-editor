@@ -134,6 +134,28 @@ govern automatic retries for **transient** provider errors only:
   transient-retry budget — the two mechanisms operate independently on
   different scopes (config-wide throttle vs per-task retry cap).
 
+## Session Resume & Reply-to-Agent
+
+Each `claude`/`qwen_code` run's stream-json envelope carries a `session_id`;
+`classifyStreamJSON` extracts it, the Result carries it, and the pool persists
+it (`SetAgentRunSession`) on any outcome. `Dispatcher.startRun` looks up the
+latest session for (task, agent config) via `GetLatestTaskSession` — gated on
+`provider == "claude" && resume_sessions` — and sets `RunInput.ResumeSessionID`;
+`claude.go` then passes `--resume` with a **condensed prompt**
+(`buildResumePrompt`: human reply + feedback + open review comments only, since
+the resumed conversation already contains the task context). If the resume
+target is gone (`isResumeErrorLine`, or an error exit with no stream output —
+see `shouldFallBackToColdStart`), `Run` retries once cold.
+
+`Dispatcher.DispatchReply(taskID, message)` is the reply-to-agent entrypoint
+(`POST /tasks/{id}/runs/{run_id}/reply`): it validates the task's active run is
+`waiting_human`, prefers that run's agent config, and starts a run with
+`RunInput.HumanReply` set (rendered as `RESPONSE FROM HUMAN` in the prompt) and
+the reply recorded as the new run's first log entry. The replied-to run keeps
+its `waiting_human` status — same as the approve/reject flows — and the task's
+active-run lock moves to the new run. `dispatch()` and `DispatchReply` share
+`startRun` (worktree provisioning, atomic run creation, pool submit).
+
 ## Review Comment Feedback Loop
 
 Humans leave persistent, file/line-anchored review comments on a task's diff

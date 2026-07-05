@@ -22,6 +22,7 @@ const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'> =
   max_turns: 50,
   max_retries: 3,
   retry_backoff_secs: 30,
+  resume_sessions: true,
   enabled_plugins: '[]',
   enabled_mcp_servers: '[]',
   command_allowlist: '[]',
@@ -81,6 +82,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_turns: 50,
     max_retries: 3,
     retry_backoff_secs: 30,
+    resume_sessions: true,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
     command_allowlist: '[]',
@@ -98,6 +100,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_turns: 50,
     max_retries: 3,
     retry_backoff_secs: 30,
+    resume_sessions: true,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
     command_allowlist: '[]',
@@ -115,6 +118,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_turns: 50,
     max_retries: 3,
     retry_backoff_secs: 30,
+    resume_sessions: true,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
     command_allowlist: '[]',
@@ -132,6 +136,7 @@ const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'e
     max_turns: 50,
     max_retries: 3,
     retry_backoff_secs: 30,
+    resume_sessions: true,
     enabled_plugins: '[]',
     enabled_mcp_servers: '[]',
     command_allowlist: '[]',
@@ -210,6 +215,7 @@ export default function AgentConfigPage() {
       max_turns: a.max_turns,
       max_retries: a.max_retries,
       retry_backoff_secs: a.retry_backoff_secs,
+      resume_sessions: a.resume_sessions ?? true,
       enabled_plugins: a.enabled_plugins ?? '[]',
       enabled_mcp_servers: a.enabled_mcp_servers ?? '[]',
       command_allowlist: a.command_allowlist ?? '[]',
@@ -306,6 +312,7 @@ export default function AgentConfigPage() {
             max_turns: a.max_turns,
             max_retries: a.max_retries,
             retry_backoff_secs: a.retry_backoff_secs,
+            resume_sessions: a.resume_sessions ?? true,
             enabled_plugins: a.enabled_plugins ?? '[]',
             enabled_mcp_servers: a.enabled_mcp_servers ?? '[]',
             command_allowlist: a.command_allowlist ?? '[]',
@@ -607,6 +614,17 @@ export default function AgentConfigPage() {
               min={1}
               max={600}
             />
+          </Field>
+
+          <Field label="Resume sessions" hint="Claude provider only: re-runs on the same task continue the previous run's session (full prior context) instead of starting cold. Turn off for stages that should review with fresh eyes.">
+            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.resume_sessions ?? true}
+                onChange={(e) => setForm((f) => ({ ...f, resume_sessions: e.target.checked }))}
+              />
+              Resume previous session on re-runs
+            </label>
           </Field>
 
           <Field label="Labels" className="col-span-2">

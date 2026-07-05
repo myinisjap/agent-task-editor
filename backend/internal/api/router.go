@@ -15,10 +15,10 @@ import (
 )
 
 // NewRouter builds and returns the application router.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, canceller handlers.RunCanceller) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher) http.Handler {
 	q := gen.New(db.SQL())
 
-	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller)
+	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
 	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
@@ -111,6 +111,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Get("/tasks/{id}/runs/{run_id}", tasksH.GetRun)
 			r.Get("/tasks/{id}/runs/{run_id}/logs", tasksH.GetRunLogs)
 			r.Post("/tasks/{id}/runs/{run_id}/cancel", tasksH.CancelRun)
+			r.Post("/tasks/{id}/runs/{run_id}/reply", tasksH.ReplyRun)
 
 			// Workflows
 			r.Get("/workflows", workflowsH.List)

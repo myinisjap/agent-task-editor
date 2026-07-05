@@ -128,6 +128,7 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 	var (
 		wg          sync.WaitGroup
 		outcome     string
+		sessionID   string
 		rateLimited bool
 		transient   bool
 		usage       *runUsage
@@ -145,11 +146,16 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 			if line == "" {
 				continue
 			}
-			entry, parsed, u, class := classifyStreamJSON(line)
+			entry, parsed, u, class, sid := classifyStreamJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
 				outcome = parsed
+				mu.Unlock()
+			}
+			if sid != "" {
+				mu.Lock()
+				sessionID = sid
 				mu.Unlock()
 			}
 			// Prefer the structured classification from the typed "result"
@@ -216,6 +222,7 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 
 	mu.Lock()
 	finalUsage := usage
+	finalSession := sessionID
 	mu.Unlock()
 
 	// MCP result takes priority; fall back to OUTCOME text parsing if the
@@ -229,11 +236,12 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 		// token usage/cost — that only comes from the CLI's stream-json
 		// "result" message — so merge it in here.
 		applyUsage(&res, finalUsage)
+		res.SessionID = finalSession
 		// Non-zero exit with no signalled outcome means the subprocess crashed
 		// before signal_complete. ReadResult defaults to "completed", which would
 		// mask the failure and re-dispatch forever. Trust the exit code.
 		if err != nil && res.Outcome == "" {
-			failed := Result{Status: "failed"}
+			failed := Result{Status: "failed", SessionID: finalSession}
 			applyUsage(&failed, finalUsage)
 			return failed, nil
 		}
@@ -242,11 +250,11 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 
 	// Non-zero exit with no parsed outcome means the agent failed.
 	if err != nil && outcome == "" {
-		failed := Result{Status: "failed"}
+		failed := Result{Status: "failed", SessionID: finalSession}
 		applyUsage(&failed, finalUsage)
 		return failed, nil
 	}
-	res := Result{Status: "completed", Outcome: outcome}
+	res := Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
 	applyUsage(&res, finalUsage)
 	return res, nil
 }

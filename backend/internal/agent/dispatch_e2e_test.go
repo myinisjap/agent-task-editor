@@ -61,12 +61,24 @@ type fakeStep struct {
 // letting a single script span multiple re-dispatches (e.g. retry → escalate).
 // Once the script is exhausted the final step repeats.
 type fakeProvider struct {
-	mu    sync.Mutex
-	steps []fakeStep
-	idx   int
+	mu     sync.Mutex
+	steps  []fakeStep
+	idx    int
+	inputs []RunInput // RunInput of each invocation, in order
 }
 
-func (f *fakeProvider) Run(_ context.Context, _ RunInput, logCh chan<- LogEntry) (Result, error) {
+// input returns the RunInput of the i-th invocation (0-based).
+func (f *fakeProvider) input(t *testing.T, i int) RunInput {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if i >= len(f.inputs) {
+		t.Fatalf("fakeProvider: only %d invocations recorded, want index %d", len(f.inputs), i)
+	}
+	return f.inputs[i]
+}
+
+func (f *fakeProvider) Run(_ context.Context, input RunInput, logCh chan<- LogEntry) (Result, error) {
 	f.mu.Lock()
 	i := f.idx
 	if i >= len(f.steps) {
@@ -74,6 +86,7 @@ func (f *fakeProvider) Run(_ context.Context, _ RunInput, logCh chan<- LogEntry)
 	}
 	step := f.steps[i]
 	f.idx++
+	f.inputs = append(f.inputs, input)
 	f.mu.Unlock()
 
 	for _, l := range step.logs {
@@ -93,6 +106,7 @@ type e2eHarness struct {
 	q      *gen.Queries
 	engine *workflow.Engine
 	pool   *Pool
+	disp   *Dispatcher
 	pub    *recordingPub
 	repo   string // path to the temp git repo
 	cancel context.CancelFunc
@@ -150,7 +164,7 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	go d.Run(ctx)
 	t.Cleanup(cancel)
 
-	return &e2eHarness{q: q, engine: engine, pool: pool, pub: pub, repo: initRepo(t), cancel: cancel}
+	return &e2eHarness{q: q, engine: engine, pool: pool, disp: d, pub: pub, repo: initRepo(t), cancel: cancel}
 }
 
 // seedE2EWorkflow inserts a workflow purpose-built for these tests:
@@ -213,6 +227,14 @@ func seedE2EWorkflow(t *testing.T, q *gen.Queries) string {
 // seedTaskOnReady creates a repo row pointing at the harness git repo, an
 // enabled "ready"-triggered agent config, and a task sitting on "ready".
 func (h *e2eHarness) seedTaskOnReady(t *testing.T, wfID string) string {
+	return h.seedTaskOnReadyWithProvider(t, wfID, "fake", 0)
+}
+
+// seedTaskOnReadyWithProvider is seedTaskOnReady with control over the agent
+// config's provider string and resume_sessions flag (the dispatcher's session
+// resume lookup is gated on provider == "claude" && resume_sessions != 0; the
+// harness factory returns the fake provider regardless of the string).
+func (h *e2eHarness) seedTaskOnReadyWithProvider(t *testing.T, wfID, provider string, resumeSessions int64) string {
 	t.Helper()
 	ctx := context.Background()
 
@@ -224,8 +246,9 @@ func (h *e2eHarness) seedTaskOnReady(t *testing.T, wfID string) string {
 	}
 
 	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: uuid.NewString(), Name: "fake-agent", Provider: "fake", Model: "none",
+		ID: uuid.NewString(), Name: "fake-agent", Provider: provider, Model: "none",
 		Labels: `["ready"]`, Env: `{}`, MaxRetries: 1, RetryBackoffSecs: 1,
+		ResumeSessions: resumeSessions,
 	}); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
@@ -470,5 +493,79 @@ func TestE2E_WaitingHumanStaysLocked(t *testing.T) {
 	}
 	if released.ActiveAgentRunID != nil {
 		t.Errorf("expected lock cleared after human transition, got %q", *released.ActiveAgentRunID)
+	}
+}
+
+// TestE2E_ReplyResumesSession covers the reply-to-agent flow (#78) plus session
+// continuity (#77): a run pauses on waiting_human after recording its provider
+// session; DispatchReply starts a new run that carries the human's message and
+// the prior session id, records the reply in the new run's log, and leaves the
+// replied-to run in waiting_human (matching the approve/reject flows).
+func TestE2E_ReplyResumesSession(t *testing.T) {
+	question := "which approach do you want?"
+	fp := &fakeProvider{steps: []fakeStep{
+		{result: Result{Status: "waiting_human", Message: &question, SessionID: "sess-123"}},
+		{result: Result{Status: "completed", Outcome: "success"}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	// provider "claude" + resume_sessions on gates the dispatcher's session
+	// lookup; the harness factory still returns the fake provider.
+	taskID := h.seedTaskOnReadyWithProvider(t, wfID, "claude", 1)
+
+	// First run reaches waiting_human with its session recorded.
+	locked := h.pollTask(t, taskID, func(tk gen.Task) bool {
+		if tk.ActiveAgentRunID == nil {
+			return false
+		}
+		run, err := h.q.GetAgentRun(context.Background(), *tk.ActiveAgentRunID)
+		return err == nil && run.Status == "waiting_human"
+	}, "run to reach waiting_human")
+	firstRunID := *locked.ActiveAgentRunID
+
+	firstRun, err := h.q.GetAgentRun(context.Background(), firstRunID)
+	if err != nil {
+		t.Fatalf("get first run: %v", err)
+	}
+	if firstRun.SessionID != "sess-123" {
+		t.Fatalf("expected session sess-123 persisted on the waiting run, got %q", firstRun.SessionID)
+	}
+
+	newRunID, err := h.disp.DispatchReply(context.Background(), taskID, "use approach B")
+	if err != nil {
+		t.Fatalf("DispatchReply: %v", err)
+	}
+	if newRunID == firstRunID {
+		t.Fatal("expected a new run, got the waiting run's id")
+	}
+
+	// Second run completes with success → task transitions ready → next.
+	h.pollTask(t, taskID, func(tk gen.Task) bool { return tk.Label == "next" }, "reply run to complete and transition")
+
+	// The reply run received the human's message and the prior session.
+	in := fp.input(t, 1)
+	if in.HumanReply == nil || *in.HumanReply != "use approach B" {
+		t.Errorf("expected HumanReply %q, got %v", "use approach B", in.HumanReply)
+	}
+	if in.ResumeSessionID != "sess-123" {
+		t.Errorf("expected ResumeSessionID sess-123, got %q", in.ResumeSessionID)
+	}
+
+	// The reply is recorded at the top of the new run's log.
+	logs, err := h.q.ListAgentLogs(context.Background(), newRunID)
+	if err != nil || len(logs) == 0 {
+		t.Fatalf("expected logs on reply run, err=%v", err)
+	}
+	if want := "Human reply: use approach B"; logs[0].Content != want {
+		t.Errorf("expected first log entry %q, got %q", want, logs[0].Content)
+	}
+
+	// The replied-to run keeps waiting_human (approve/reject parity).
+	firstRun, err = h.q.GetAgentRun(context.Background(), firstRunID)
+	if err != nil {
+		t.Fatalf("get first run: %v", err)
+	}
+	if firstRun.Status != "waiting_human" {
+		t.Errorf("expected replied-to run to stay waiting_human, got %q", firstRun.Status)
 	}
 }

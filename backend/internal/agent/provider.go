@@ -53,6 +53,11 @@ type Result struct {
 	// InputTokens/OutputTokens via the internal pricing table. Zero if
 	// unknown/unreported — not necessarily a free run.
 	CostUSD float64
+	// SessionID is the provider-side conversation session for this run (the
+	// claude/qwen CLI stream-json envelope's session_id). Persisted on the run
+	// so a later run on the same task can resume the session with full prior
+	// context. Empty for providers/runs without a session.
+	SessionID string
 }
 
 // runUsage carries token usage and cost parsed from a single provider
@@ -81,6 +86,15 @@ type RunInput struct {
 	OpenReviewComments []ReviewComment
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
+	// ResumeSessionID, if non-empty, asks the provider to resume this prior
+	// conversation session instead of starting cold. Currently honored by the
+	// `claude` provider (--resume); other providers ignore it. Providers that
+	// resume fall back to a cold start if the session no longer exists.
+	ResumeSessionID string
+	// HumanReply is a human's textual answer to the agent's request_human
+	// question, injected into the prompt (and, when combined with
+	// ResumeSessionID, delivered as the next message of the resumed session).
+	HumanReply *string
 }
 
 // ReviewComment is a minimal copy of storage's task_review_comments row —
@@ -149,6 +163,10 @@ type AgentConfig struct {
 	// CommandDenylist blocks any run_bash/Bash command matching a pattern here,
 	// regardless of CommandAllowlist. Checked before the allowlist.
 	CommandDenylist []string
+	// ResumeSessions controls whether new runs for a task resume the previous
+	// run's provider session (claude provider only; on by default). Off means
+	// every run starts cold — useful for stages that want fresh eyes.
+	ResumeSessions bool
 }
 
 // Provider is the interface all agent backends must satisfy.

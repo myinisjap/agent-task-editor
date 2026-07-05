@@ -98,6 +98,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CommandDenylist   string `json:"command_denylist"`
 		MaxRetries        *int64 `json:"max_retries"`
 		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
+		ResumeSessions    *bool  `json:"resume_sessions"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -154,6 +155,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.RetryBackoffSecs != nil {
 		retryBackoffSecs = *body.RetryBackoffSecs
 	}
+	resumeSessions := int64(1)
+	if body.ResumeSessions != nil && !*body.ResumeSessions {
+		resumeSessions = 0
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -184,6 +189,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CommandDenylist:   body.CommandDenylist,
 		MaxRetries:        maxRetries,
 		RetryBackoffSecs:  retryBackoffSecs,
+		ResumeSessions:    resumeSessions,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -199,7 +205,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
 			CommandAllowlist: cfg.CommandAllowlist, CommandDenylist: cfg.CommandDenylist,
 			MaxRetries: cfg.MaxRetries, RetryBackoffSecs: cfg.RetryBackoffSecs,
-			Enabled: 0, ID: cfg.ID,
+			ResumeSessions: cfg.ResumeSessions,
+			Enabled:        0, ID: cfg.ID,
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -231,6 +238,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		CommandDenylist   string `json:"command_denylist"`
 		MaxRetries        *int64 `json:"max_retries"`
 		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
+		ResumeSessions    *bool  `json:"resume_sessions"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -298,6 +306,14 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.RetryBackoffSecs != nil {
 		retryBackoffSecs = *body.RetryBackoffSecs
 	}
+	resumeSessions := existing.ResumeSessions
+	if body.ResumeSessions != nil {
+		if *body.ResumeSessions {
+			resumeSessions = 1
+		} else {
+			resumeSessions = 0
+		}
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -316,6 +332,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		CommandDenylist:   body.CommandDenylist,
 		MaxRetries:        maxRetries,
 		RetryBackoffSecs:  retryBackoffSecs,
+		ResumeSessions:    resumeSessions,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {

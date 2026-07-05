@@ -57,6 +57,7 @@ export default function TaskDetailPage() {
   const [logsHasEarlier, setLogsHasEarlier] = useState(false)
   const [loadingEarlier, setLoadingEarlier] = useState(false)
   const [rejectNote, setRejectNote] = useState('')
+  const [replyText, setReplyText] = useState('')
   const [actionPending, setActionPending] = useState(false)
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
@@ -337,6 +338,25 @@ export default function TaskDetailPage() {
   }
 
   const openComments = diffComments.filter((c) => c.status !== 'resolved')
+
+  // Reply to a waiting_human run: answers the agent's question with text and
+  // starts a continuation run (resuming the provider session where supported).
+  // The task stays on its label — this is a conversation, not a transition.
+  const handleReply = async () => {
+    if (!id || !selectedRun || !replyText.trim()) return
+    setActionPending(true)
+    try {
+      const res = await api.tasks.replyRun(id, selectedRun, replyText.trim())
+      setReplyText('')
+      // Follow the continuation run so the user watches the agent pick the reply up.
+      setSelectedRun(res.run_id)
+      refreshRuns()
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setActionPending(false)
+    }
+  }
 
   const handleApprove = async () => {
     if (!id) return
@@ -885,6 +905,24 @@ export default function TaskDetailPage() {
                 review in Diff tab
               </button>
             </p>
+          )}
+          {needsHuman && (
+            <div className="flex gap-3 items-start mb-3">
+              <textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                placeholder="Reply to the agent — answer its question and it continues in the same session, without moving the task…"
+                rows={2}
+                className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500"
+              />
+              <button
+                onClick={handleReply}
+                disabled={actionPending || !replyText.trim()}
+                className="px-4 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-50"
+              >
+                Reply & Continue
+              </button>
+            </div>
           )}
           <div className="flex gap-3 items-start">
             <textarea

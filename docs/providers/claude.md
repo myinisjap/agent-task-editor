@@ -16,6 +16,25 @@ Runs: `claude -p <prompt> --system-prompt <system> --output-format stream-json -
 
 Output is parsed as NDJSON (stream-json format). The MCP sidecar is launched as a subprocess alongside `claude` and connected via `--mcp-config <tempfile>`.
 
+## Session Resume
+
+Every stream-json envelope carries the conversation's `session_id`; the runner
+extracts it and the pool persists it on the run row. When the same agent
+config runs the task again (and the config's `resume_sessions` flag is on —
+the default), the CLI is invoked with `--resume <session_id>` and a
+**condensed prompt** containing only the new information (human reply,
+rejection feedback, open review comments) — the resumed conversation already
+contains the task context as its own turns.
+
+- **Fallback:** if the CLI prints a session-not-found error (best-effort text
+  match: "No conversation found …"), or exits with an error before producing
+  any stream output, the runner retries once cold with the full prompt.
+- **System prompt:** rebuilt from `--system-prompt` on every invocation —
+  sessions persist the transcript, not the system prompt — so the config's
+  system prompt applies on resume too. Worth re-verifying against a live CLI
+  run if resume behavior looks off after a CLI upgrade (same spirit as the
+  `--allowedTools` wildcarding note below).
+
 ## Credentials
 
 - **Claude Max subscription** (recommended) — authenticate once with `claude login` on the host; credentials live in `~/.claude/.credentials.json`

@@ -292,6 +292,7 @@ Delete a template. Returns `204`.
 | `input_tokens` | integer | Total input/prompt tokens consumed across the run (summed across all turns); `0` if the provider doesn't report usage |
 | `output_tokens` | integer | Total output/completion tokens consumed across the run |
 | `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`qwen_code`; estimated from tokens via an internal pricing table for `anthropic`/`llm`; always `0` for `opencode`. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
+| `session_id` | string | Provider-side conversation session for this run (claude/qwen stream-json `session_id`); used to resume the session on a later run (see [agents.md § Session Resume](agents.md#session-resume)). Empty when the provider has no session |
 
 ### `GET /tasks/{id}/runs`
 List all agent runs for a task (newest first).
@@ -312,6 +313,22 @@ watch for the `task.agent_done` WebSocket event. Returns `409` if the run isn't
 currently `running` (already finished, or racing to finish) and `404` if the run
 doesn't belong to the task. Resume the task (unpause) or hit re-run to dispatch
 again.
+
+### `POST /tasks/{id}/runs/{run_id}/reply`
+Answer a `waiting_human` run's `request_human` question with text and let the
+agent continue. Body: `{ "message": "..." }`. Starts a **new run** that resumes
+the prior provider session where supported (`claude`, unless the agent config
+has `resume_sessions` off) so the reply lands as the next message of the same
+conversation; other providers start cold with the reply injected into the
+prompt under `RESPONSE FROM HUMAN`. The task stays on its current label — a
+reply is a conversation, not a workflow transition — and the replied-to run
+keeps its `waiting_human` status (matching approve/reject). The reply is
+recorded at the top of the new run's log.
+
+Returns `202` with `{ "run_id": "<new run>" }`, `400` for an empty message,
+`404` if the run doesn't belong to the task, `409` if the run isn't the task's
+active `waiting_human` run (or no enabled agent config can serve it), `503` if
+the worker pool is saturated.
 
 ### `GET /tasks/{id}/runs/{run_id}/logs`
 Get a page of a run's persisted log entries, in chronological order (oldest

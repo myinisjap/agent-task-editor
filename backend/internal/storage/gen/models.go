@@ -28,6 +28,7 @@ type AgentConfig struct {
 	CommandDenylist   string    `json:"command_denylist"`
 	MaxRetries        int64     `json:"max_retries"`
 	RetryBackoffSecs  int64     `json:"retry_backoff_secs"`
+	ResumeSessions    int64     `json:"resume_sessions"`
 }
 
 type AgentLog struct {
@@ -52,6 +53,7 @@ type AgentRun struct {
 	InputTokens   int64      `json:"input_tokens"`
 	OutputTokens  int64      `json:"output_tokens"`
 	CostUsd       float64    `json:"cost_usd"`
+	SessionID     string     `json:"session_id"`
 }
 
 type Repo struct {
