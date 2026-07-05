@@ -125,6 +125,9 @@ export type AgentRun = {
   input_tokens?: number
   output_tokens?: number
   cost_usd?: number
+  // Provider-side conversation session for this run (claude/qwen stream-json
+  // session_id). A later run on the same task can resume it (claude only).
+  session_id?: string
 }
 
 // ReviewComment is a persistent, file/line-anchored inline comment on a
@@ -216,6 +219,9 @@ export type AgentConfig = {
   // (no confirmed CLI flag) or opencode.
   command_allowlist?: string
   command_denylist?: string
+  // Whether new runs resume the previous run's provider session (claude
+  // provider only; on by default). Off = every run starts cold ("fresh eyes").
+  resume_sessions?: boolean
   created_at: string
   updated_at: string
 }
@@ -345,6 +351,12 @@ export const api = {
     // task.agent_done, so callers rely on the WS event rather than the response.
     cancelRun: (id: string, runId: string) =>
       request<{ status: string; run_id: string }>(`/tasks/${id}/runs/${runId}/cancel`, { method: 'POST' }),
+    // replyRun answers a waiting_human run's request_human question with text.
+    // The backend starts a new run that resumes the prior provider session
+    // where supported (claude) or starts cold with the reply in the prompt;
+    // the task stays on its label. 202 + the new run id on success.
+    replyRun: (id: string, runId: string, message: string) =>
+      request<{ run_id: string }>(`/tasks/${id}/runs/${runId}/reply`, { method: 'POST', body: JSON.stringify({ message }) }),
     // runLogs returns a page of a run's log entries in chronological order
     // (oldest first). Omit `before` for the newest page (the tail); pass a
     // previous page's prevCursor as `before` to load earlier entries. hasMore

@@ -124,7 +124,7 @@ func TestClassifyResultMessage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, _, got := classifyStreamJSON(tc.line)
+			_, _, _, got, _ := classifyStreamJSON(tc.line)
 			if got != tc.want {
 				t.Errorf("classifyStreamJSON(%q) classification = %q, want %q", tc.line, got, tc.want)
 			}
@@ -142,7 +142,7 @@ func TestClassifyStreamJSON_NonResultNoClassification(t *testing.T) {
 		`{"type":"tool_result"}`,
 		`not json at all`,
 	} {
-		if _, _, _, class := classifyStreamJSON(line); class != ClassNone {
+		if _, _, _, class, _ := classifyStreamJSON(line); class != ClassNone {
 			t.Errorf("line %q: want ClassNone, got %q", line, class)
 		}
 	}

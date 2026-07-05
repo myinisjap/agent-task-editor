@@ -156,7 +156,7 @@ func TestClaudeExitCode0_NoOutcome(t *testing.T) {
 func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"total_cost_usd":0.0789,"duration_ms":1500}`
 
-	entry, outcome, usage, _ := classifyStreamJSON(line)
+	entry, outcome, usage, _, _ := classifyStreamJSON(line)
 
 	if entry.Type != LogSystem {
 		t.Errorf("want LogSystem entry, got %v", entry.Type)
@@ -185,7 +185,7 @@ func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 func TestClassifyStreamJSON_ResultNoUsage(t *testing.T) {
 	line := `{"type":"result","subtype":"success","result":"OUTCOME: success"}`
 
-	_, outcome, usage, _ := classifyStreamJSON(line)
+	_, outcome, usage, _, _ := classifyStreamJSON(line)
 
 	if outcome != "success" {
 		t.Errorf("want outcome=success, got %q", outcome)
@@ -204,7 +204,7 @@ func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 		`{"type":"tool_result"}`,
 		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result"}]}}`,
 	} {
-		_, _, usage, _ := classifyStreamJSON(line)
+		_, _, usage, _, _ := classifyStreamJSON(line)
 		if usage != nil {
 			t.Errorf("line %q: want nil usage, got %+v", line, usage)
 		}
@@ -481,5 +481,123 @@ func TestBuildClaudeArgs_CommandPermissions(t *testing.T) {
 	}
 	if !strings.Contains(settingsJSON, `"Bash(rm -rf *)"`) {
 		t.Fatalf("expected deny entry in settings JSON, got %s", settingsJSON)
+	}
+}
+
+// TestBuildClaudeArgs_ResumeSession verifies that a resumed run passes
+// --resume with the session id and sends the condensed resume prompt (the
+// resumed conversation already contains the task context) instead of the full
+// task prompt.
+func TestBuildClaudeArgs_ResumeSession(t *testing.T) {
+	reply := "use approach B"
+	input := RunInput{
+		Task:            Task{Title: "Fix the bug", Description: "long description"},
+		AgentConfig:     AgentConfig{},
+		ResumeSessionID: "sess-1",
+		HumanReply:      &reply,
+	}
+	args, err := buildClaudeArgs(input, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumeIdx := -1
+	for i, a := range args {
+		if a == "--resume" {
+			resumeIdx = i
+		}
+	}
+	if resumeIdx < 0 || resumeIdx+1 >= len(args) || args[resumeIdx+1] != "sess-1" {
+		t.Fatalf("expected --resume sess-1 in args, got %v", args)
+	}
+	prompt := args[1] // "-p" value
+	if !strings.Contains(prompt, "RESPONSE FROM HUMAN") || !strings.Contains(prompt, "use approach B") {
+		t.Errorf("resume prompt should carry the human reply, got %q", prompt)
+	}
+	if strings.Contains(prompt, "Task: Fix the bug") {
+		t.Errorf("resume prompt should not repeat the full task context, got %q", prompt)
+	}
+}
+
+// TestBuildClaudeArgs_NoResumeFlagOnColdStart verifies --resume is absent for a
+// cold run and the full task prompt is sent (including any human reply).
+func TestBuildClaudeArgs_NoResumeFlagOnColdStart(t *testing.T) {
+	reply := "use approach B"
+	input := RunInput{
+		Task:        Task{Title: "Fix the bug", Description: "long description"},
+		AgentConfig: AgentConfig{},
+		HumanReply:  &reply,
+	}
+	args, err := buildClaudeArgs(input, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range args {
+		if a == "--resume" {
+			t.Fatalf("did not expect --resume in cold-start args: %v", args)
+		}
+	}
+	prompt := args[1]
+	if !strings.Contains(prompt, "RESPONSE FROM HUMAN") || !strings.Contains(prompt, "Task: Fix the bug") {
+		t.Errorf("cold prompt should carry both the reply and the task, got %q", prompt)
+	}
+}
+
+// TestBuildResumePrompt_NoNewInfo verifies the resume prompt degrades to a
+// plain continuation instruction when there is no reply/feedback/comments.
+func TestBuildResumePrompt_NoNewInfo(t *testing.T) {
+	p := buildResumePrompt(RunInput{Task: Task{Title: "Fix the bug"}, ResumeSessionID: "sess-1"})
+	if !strings.Contains(p, "Continue working on the task: Fix the bug") {
+		t.Errorf("expected continuation line, got %q", p)
+	}
+}
+
+// TestClassifyStreamJSON_SessionID verifies the session id is extracted from
+// any stream-json envelope carrying one, and is empty otherwise.
+func TestClassifyStreamJSON_SessionID(t *testing.T) {
+	cases := map[string]string{
+		`{"type":"system","subtype":"init","session_id":"abc-123"}`:        "abc-123",
+		`{"type":"result","subtype":"success","session_id":"abc-123"}`:     "abc-123",
+		`{"type":"assistant","message":{"content":[]},"session_id":"xyz"}`: "xyz",
+		`{"type":"assistant","message":{"content":[]}}`:                    "",
+		`not json at all`: "",
+	}
+	for line, want := range cases {
+		_, _, _, _, sid := classifyStreamJSON(line)
+		if sid != want {
+			t.Errorf("line %q: want session %q, got %q", line, want, sid)
+		}
+	}
+}
+
+// TestShouldFallBackToColdStart verifies the resume-failure heuristic: an
+// explicit session-not-found signal, or an error exit before any stream
+// output, retries cold; a normal failure mid-conversation does not.
+func TestShouldFallBackToColdStart(t *testing.T) {
+	cases := []struct {
+		name string
+		info attemptInfo
+		want bool
+	}{
+		{"explicit resume error", attemptInfo{resumeError: true}, true},
+		{"error exit before any stream output", attemptInfo{exitedWithError: true}, true},
+		{"error exit mid-conversation", attemptInfo{exitedWithError: true, sawStream: true}, false},
+		{"clean run", attemptInfo{sawStream: true}, false},
+	}
+	for _, tc := range cases {
+		if got := shouldFallBackToColdStart(tc.info); got != tc.want {
+			t.Errorf("%s: want %v, got %v", tc.name, tc.want, got)
+		}
+	}
+}
+
+func TestIsResumeErrorLine(t *testing.T) {
+	if !isResumeErrorLine("No conversation found with session ID: sess-1") {
+		t.Error("expected session-not-found line to match")
+	}
+	if !isResumeErrorLine("Error: session sess-1 not found") {
+		t.Error("expected session/not-found combination to match")
+	}
+	if isResumeErrorLine("File not found: main.go") {
+		t.Error("unrelated not-found line must not match")
 	}
 }

@@ -64,6 +64,24 @@ this file's section for that version as the release notes.
   the header-based bypass has been removed.
 
 ### Added
+- **Session continuity across runs** (#77). The `claude` provider now records each
+  run's conversation `session_id` (from the CLI's stream-json envelope) and, when
+  the same agent config runs the task again — a review rejection back to `work`, a
+  re-run after a failure — resumes it with `claude --resume` instead of starting
+  cold, so the agent keeps its full prior context instead of re-reading the repo
+  to address a one-line note. Resumed runs send a condensed prompt (only the new
+  feedback/reply/review comments); if the session no longer exists the runner
+  falls back to a cold start automatically. Per-agent-config `resume_sessions`
+  toggle (default on) for stages that should look at the work with fresh eyes.
+  `qwen_code` records its session id but is not resumed yet.
+- **Reply to a waiting agent** (#78). When a run pauses on `waiting_human`
+  (`request_human`), a reply box on the task detail page — backed by
+  `POST /api/v1/tasks/{id}/runs/{run_id}/reply` — answers the agent's question
+  with text and starts a continuation run that resumes the same session (or
+  starts cold with the reply injected as `RESPONSE FROM HUMAN` for non-resume
+  providers). The task stays on its label — a reply is a conversation, not a
+  workflow transition — the replied-to run keeps `waiting_human` (approve/reject
+  parity), and the reply is recorded at the top of the new run's log.
 - Cancel a running agent run: `POST /api/v1/tasks/{id}/runs/{run_id}/cancel` plus
   a **Stop run** button on the task detail page. The pool keeps a per-run cancel
   registry; cancelling cancels the run's context (killing CLI subprocesses via

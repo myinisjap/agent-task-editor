@@ -138,6 +138,13 @@ components:
             Base backoff, in seconds, before a transient-error retry becomes
             eligible for re-dispatch. Exponential backoff (base * 2^attempt,
             capped at 10 minutes) is applied on top of this base. Default 30.
+        resume_sessions:
+          type: boolean
+          description: >
+            Whether new runs for a task resume the previous run's provider
+            session (claude provider only; other providers ignore it). On by
+            default. Off means every run starts cold — useful for stages that
+            should look at the work with fresh eyes (e.g. agent review).
         enabled_plugins:
           type: string
           description: >
@@ -276,6 +283,14 @@ components:
             legitimately be 0 under a Claude Max subscription); for
             anthropic/llm providers it is computed from input/output tokens
             via an internal, approximate pricing table. 0 if unknown/unreported.
+        session_id:
+          type: string
+          description: >-
+            Provider-side conversation session recorded for this run (the
+            claude/qwen CLI stream-json session_id). A later run on the same
+            task under the same agent config resumes it (claude provider only,
+            unless the config's resume_sessions is off). Empty for
+            providers/runs without a session.
 
     AgentLog:
       type: object
@@ -870,6 +885,54 @@ paths:
                   run_id: { type: string }
         "404": { description: Run not found or does not belong to the task }
         "409": { description: Run is not currently running (already finished or never started). }
+
+  /tasks/{id}/runs/{run_id}/reply:
+    post:
+      summary: Reply to an agent waiting for human input
+      description: >
+        Answers a waiting_human run's request_human question with text and
+        continues the work. Starts a new run that resumes the prior provider
+        session where supported (claude provider, unless the agent config has
+        resume_sessions off) so the reply lands as the next message of the same
+        conversation; other providers start cold with the reply injected into
+        the prompt ("RESPONSE FROM HUMAN"). The task stays on its current
+        label — this is a conversation, not a workflow transition — and the
+        replied-to run keeps its waiting_human status, matching the
+        approve/reject flows. The reply is recorded at the top of the new
+        run's log.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  description: The human's answer to the agent's question.
+      responses:
+        "202":
+          description: Reply dispatched; a new run was created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id: { type: string, description: The continuation run's id. }
+        "400": { description: Missing/empty message }
+        "404": { description: Run not found or does not belong to the task }
+        "409": { description: Run is not the task's active waiting_human run, or no enabled agent config can serve the reply }
+        "503": { description: Worker pool is saturated }
 
   /tasks/{id}/runs/{run_id}/logs:
     get:

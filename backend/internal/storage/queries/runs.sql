@@ -24,6 +24,18 @@ SET status = 'running', started_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 
+-- name: SetAgentRunSession :exec
+UPDATE agent_runs SET session_id = ? WHERE id = ?;
+
+-- name: GetLatestTaskSession :one
+-- Latest non-empty provider session recorded for this task under this agent
+-- config, used to resume the session on the next run (claude provider).
+-- Positional params: ?1 task_id, ?2 agent_config_id.
+SELECT session_id FROM agent_runs
+WHERE task_id = ?1 AND agent_config_id = ?2 AND session_id != ''
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
 -- name: SetAgentRunCompleted :one
 UPDATE agent_runs
 SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, completed_at = CURRENT_TIMESTAMP

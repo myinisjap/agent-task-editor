@@ -23,6 +23,7 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `enabled_mcp_servers` | JSON array of Claude user-level MCP server names enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 | `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
 | `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `opencode`; not enforced for `qwen_code`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
+| `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude` provider only** (others ignore it). Default on. See [Session Resume](#session-resume) below. |
 
 ## Providers
 
@@ -100,6 +101,51 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 The pricing table is intentionally approximate and small (a hardcoded Go map); it will drift from live pricing over time and is not currently user-editable.
 
 The Dashboard shows an aggregate total (tokens + cost) across all runs in a terminal state (`completed`/`failed`/`waiting_human`), plus a per-provider breakdown (via `agent_configs.provider`, joined on `agent_runs.agent_config_id`). The aggregate total query does not join on `agent_configs`, so it includes every terminal run regardless of its config. The per-provider breakdown *does* join on `agent_configs`, so runs whose agent config was later deleted (`agent_config_id` is set `NULL` on delete) are excluded from that breakdown, since they can no longer be attributed to a provider — a known limitation.
+
+## Session Resume
+
+Each `claude`/`qwen_code` run's stream-json output carries a `session_id`; the
+pool persists it on the run row. When the dispatcher starts a new run for a
+task whose **same agent config** previously recorded a session — a feedback
+loop back to `work`, a re-run after a genuine failure, a reply to
+`request_human` — and the config's `resume_sessions` is on, the `claude`
+provider is invoked with `--resume <session_id>` so the new run continues the
+same conversation with full prior context, instead of re-deriving it from the
+repo. Currently `claude`-only; `qwen_code` records its session but is not
+resumed (no verified CLI flag semantics yet).
+
+Behavior details:
+
+- **Condensed prompt on resume.** A resumed conversation already contains the
+  task title/description/notes as its own turns, so only the *new* information
+  is sent as the next message: the human reply, rejection feedback, and open
+  review comments (plus a short continuation instruction).
+- **Cold-start fallback.** If the CLI reports the session can't be found — or
+  exits with an error before producing any stream output — the runner retries
+  once without `--resume`, using the full prompt. Resume failures are never
+  fatal.
+- **System prompt still applies.** The CLI rebuilds the system prompt from
+  flags on every invocation (sessions persist the transcript, not the system
+  prompt), so the agent config's `system_prompt` is re-applied on resume
+  exactly as on a cold start. Note that prior conversation turns still exert
+  behavioral pull — an agent that spent many turns building something keeps
+  thinking like the builder — which is why `resume_sessions` is per-config:
+  stages that should look at the work with **fresh eyes** (e.g. an
+  agent-review stage) should turn it off.
+- The `"NOTES FROM PRIOR AGENT"` handoff is unchanged and still the mechanism
+  for context transfer **between different agent configs** — resume only ever
+  applies within the same config.
+
+## Replying to `request_human`
+
+When a run pauses on `waiting_human` (the agent called `request_human`), a
+human can now **answer with text** instead of only approving/rejecting:
+`POST /tasks/{id}/runs/{run_id}/reply` (or the reply box on the task detail
+page) starts a continuation run carrying the reply. With session resume, the
+reply lands as the next message of the same conversation; without it, the run
+starts cold with the reply at the top of the prompt under
+`RESPONSE FROM HUMAN`. The task stays on its label, and the replied-to run
+keeps its `waiting_human` status. See [api.md](api.md) for status codes.
 
 ## Prompt Construction
 

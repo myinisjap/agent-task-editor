@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -99,7 +100,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}})
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
 
 	r := chi.NewRouter()
 	r.Get("/tasks", h.List)
@@ -140,7 +141,7 @@ func setupCancelRouter(t *testing.T, canceller handlers.RunCanceller) (http.Hand
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), canceller)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), canceller, nil)
 	r := chi.NewRouter()
 	r.Post("/tasks/{id}/runs/{run_id}/cancel", h.CancelRun)
 	return r, q, wfID, repoID
@@ -888,9 +889,9 @@ func TestTasks_Bulk_Validation(t *testing.T) {
 	r, _, _, _ := setupTaskRouter(t)
 
 	cases := []map[string]any{
-		{"ids": []string{}, "action": "archive"},              // empty ids
-		{"ids": []string{"x"}, "action": "explode"},           // unknown action
-		{"ids": []string{"x"}, "action": "move"},              // move without to_label
+		{"ids": []string{}, "action": "archive"},    // empty ids
+		{"ids": []string{"x"}, "action": "explode"}, // unknown action
+		{"ids": []string{"x"}, "action": "move"},    // move without to_label
 	}
 	for i, body := range cases {
 		req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
@@ -1243,5 +1244,139 @@ func TestTasks_RunLogs_Pagination(t *testing.T) {
 	}
 	if len(seen) != 5 {
 		t.Fatalf("expected to page through all 5 log entries, saw %d", len(seen))
+	}
+}
+
+// fakeReplyDispatcher records DispatchReply calls and returns a scripted result.
+type fakeReplyDispatcher struct {
+	calledTask string
+	calledMsg  string
+	runID      string
+	err        error
+}
+
+func (f *fakeReplyDispatcher) DispatchReply(_ context.Context, taskID, message string) (string, error) {
+	f.calledTask = taskID
+	f.calledMsg = message
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.runID, nil
+}
+
+// setupReplyRouter wires just the reply route against a caller-supplied dispatcher.
+func setupReplyRouter(t *testing.T, disp handlers.ReplyDispatcher) (http.Handler, *gen.Queries, string, string) {
+	t.Helper()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), noopPub{})
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID: repoID, Name: "test-repo", Path: t.TempDir(), WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, disp)
+	r := chi.NewRouter()
+	r.Post("/tasks/{id}/runs/{run_id}/reply", h.ReplyRun)
+	return r, q, wfID, repoID
+}
+
+// seedWaitingRun creates a task with an active waiting_human run.
+func seedWaitingRun(t *testing.T, q *gen.Queries, wfID, repoID string) (taskID, runID string) {
+	t.Helper()
+	taskID, runID = seedRunningRun(t, q, wfID, repoID, "waiting_human")
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+	return taskID, runID
+}
+
+func TestTasks_ReplyRun_OK(t *testing.T) {
+	disp := &fakeReplyDispatcher{runID: "new-run"}
+	r, q, wfID, repoID := setupReplyRouter(t, disp)
+	taskID, runID := seedWaitingRun(t, q, wfID, repoID)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/runs/"+runID+"/reply",
+		strings.NewReader(`{"message":"  use approach B  "}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", w.Code, w.Body.String())
+	}
+	if disp.calledTask != taskID || disp.calledMsg != "use approach B" {
+		t.Errorf("expected DispatchReply(%s, trimmed message), got (%s, %q)", taskID, disp.calledTask, disp.calledMsg)
+	}
+}
+
+func TestTasks_ReplyRun_EmptyMessage(t *testing.T) {
+	disp := &fakeReplyDispatcher{runID: "new-run"}
+	r, q, wfID, repoID := setupReplyRouter(t, disp)
+	taskID, runID := seedWaitingRun(t, q, wfID, repoID)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/runs/"+runID+"/reply",
+		strings.NewReader(`{"message":"   "}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if disp.calledTask != "" {
+		t.Error("dispatcher must not be called for an empty message")
+	}
+}
+
+func TestTasks_ReplyRun_NotActiveRun(t *testing.T) {
+	disp := &fakeReplyDispatcher{runID: "new-run"}
+	r, q, wfID, repoID := setupReplyRouter(t, disp)
+	// waiting_human run exists but is not marked as the task's active run.
+	taskID, runID := seedRunningRun(t, q, wfID, repoID, "waiting_human")
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/runs/"+runID+"/reply",
+		strings.NewReader(`{"message":"hello"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestTasks_ReplyRun_WrongTask(t *testing.T) {
+	disp := &fakeReplyDispatcher{runID: "new-run"}
+	r, q, wfID, repoID := setupReplyRouter(t, disp)
+	_, runID := seedWaitingRun(t, q, wfID, repoID)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+uuid.NewString()+"/runs/"+runID+"/reply",
+		strings.NewReader(`{"message":"hello"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_ReplyRun_DispatcherNotWaiting(t *testing.T) {
+	disp := &fakeReplyDispatcher{err: agent.ErrRunNotWaiting}
+	r, q, wfID, repoID := setupReplyRouter(t, disp)
+	taskID, runID := seedWaitingRun(t, q, wfID, repoID)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/runs/"+runID+"/reply",
+		strings.NewReader(`{"message":"hello"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", w.Code, w.Body.String())
 	}
 }

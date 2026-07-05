@@ -15,7 +15,7 @@ func TestBackoffDuration(t *testing.T) {
 		{2, 2 * time.Minute},
 		{3, 4 * time.Minute},
 		{4, 8 * time.Minute},
-		{5, 10 * time.Minute}, // capped
+		{5, 10 * time.Minute},  // capped
 		{10, 10 * time.Minute}, // still capped
 	}
 	for _, tc := range cases {

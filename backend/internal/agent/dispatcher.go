@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -107,10 +109,79 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		}
 	}
 
+	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
+		log.Error("dispatcher: start run", "err", err)
+	}
+}
+
+// Sentinel errors for DispatchReply, mapped to HTTP statuses by the handler.
+var (
+	// ErrRunNotWaiting means the task has no active run in waiting_human state.
+	ErrRunNotWaiting = errors.New("task has no agent run waiting for human input")
+	// ErrNoMatchingConfig means no enabled agent config could serve the reply run.
+	ErrNoMatchingConfig = errors.New("no enabled agent config available for this task")
+	// ErrPoolSaturated means the worker pool queue was full and the run was dropped.
+	ErrPoolSaturated = errors.New("agent worker pool is full")
+)
+
+// DispatchReply starts a new run for a task whose active run is waiting_human,
+// carrying the human's textual answer to the agent's request_human question.
+// The new run resumes the prior provider session where supported (claude,
+// unless the config opts out via resume_sessions), so the reply lands as the
+// next message of the same conversation; otherwise it starts cold with the
+// reply injected into the prompt. The replied-to run keeps its waiting_human
+// status (matching the approve/reject flows); the task's active-run lock moves
+// to the new run. Returns the new run's ID.
+func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) (string, error) {
+	t, err := d.q.GetTask(ctx, taskID)
+	if err != nil {
+		return "", err // sql.ErrNoRows → 404 in the handler
+	}
+	if t.ActiveAgentRunID == nil {
+		return "", ErrRunNotWaiting
+	}
+	run, err := d.q.GetAgentRun(ctx, *t.ActiveAgentRunID)
+	if err != nil || run.Status != "waiting_human" {
+		return "", ErrRunNotWaiting
+	}
+
+	// Prefer the config that asked the question; fall back to label matching
+	// if it has since been deleted or disabled.
+	var matched *gen.AgentConfig
+	if run.AgentConfigID != nil {
+		if cfg, cerr := d.q.GetAgentConfig(ctx, *run.AgentConfigID); cerr == nil && cfg.Enabled == 1 {
+			matched = &cfg
+		}
+	}
+	if matched == nil {
+		configs, cerr := d.q.ListAgentConfigs(ctx)
+		if cerr != nil {
+			return "", cerr
+		}
+		matched = matchConfig(configs, t.Label)
+	}
+	if matched == nil {
+		return "", ErrNoMatchingConfig
+	}
+
+	return d.startRun(ctx, t, *matched, runOptions{humanReply: &message})
+}
+
+// runOptions carries the extras a non-sweep dispatch (currently only the
+// human-reply flow) layers on top of a standard run.
+type runOptions struct {
+	humanReply *string
+}
+
+// startRun provisions the task's worktree if needed, creates the run row,
+// marks it as the task's active run, and submits the job to the pool. Shared
+// by the sweep dispatch path and DispatchReply.
+func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.AgentConfig, opts runOptions) (string, error) {
+	log := slog.With("component", "dispatcher", "task_id", t.ID)
+
 	repo, err := d.q.GetRepo(ctx, t.RepoID)
 	if err != nil {
-		log.Error("dispatcher: get repo", "err", err)
-		return
+		return "", fmt.Errorf("get repo: %w", err)
 	}
 
 	// Each task works in its own git worktree on its own branch so concurrent
@@ -120,8 +191,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	if workDir == "" {
 		wtPath, branch, baseRef, perr := provisionWorktree(ctx, repo.Path, t.ID, t.Title)
 		if perr != nil {
-			log.Error("dispatcher: provision worktree", "err", perr)
-			return
+			return "", fmt.Errorf("provision worktree: %w", perr)
 		}
 		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
 			Branch:       branch,
@@ -129,8 +199,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 			BaseRef:      baseRef,
 			ID:           t.ID,
 		}); err != nil {
-			log.Error("dispatcher: persist worktree", "err", err)
-			return
+			return "", fmt.Errorf("persist worktree: %w", err)
 		}
 		workDir = wtPath
 	}
@@ -148,7 +217,20 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		agentNotes = &t.AgentNotes
 	}
 
-	agentCfg := toAgentConfig(*matched)
+	agentCfg := toAgentConfig(matched)
+
+	// Resume the previous run's provider session, when there is one and the
+	// config hasn't opted out. Only the claude provider honors this today; the
+	// runner falls back to a cold start if the session no longer exists.
+	var resumeSessionID string
+	if agentCfg.Provider == "claude" && agentCfg.ResumeSessions {
+		if sid, serr := d.q.GetLatestTaskSession(ctx, gen.GetLatestTaskSessionParams{
+			TaskID:        t.ID,
+			AgentConfigID: &matched.ID,
+		}); serr == nil && sid != "" {
+			resumeSessionID = sid
+		}
+	}
 
 	// Create the run row and mark the task's active run in a single transaction.
 	// These two writes must be atomic: if the run were created but the task never
@@ -157,8 +239,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// together means either both land or neither does.
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Error("dispatcher: begin tx", "err", err)
-		return
+		return "", fmt.Errorf("begin tx: %w", err)
 	}
 	tq := d.q.WithTx(tx)
 	if _, err := tq.CreateAgentRun(ctx, gen.CreateAgentRunParams{
@@ -168,8 +249,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		Feedback:      feedback,
 	}); err != nil {
 		_ = tx.Rollback()
-		log.Error("dispatcher: create agent run", "err", err)
-		return
+		return "", fmt.Errorf("create agent run: %w", err)
 	}
 	// Mark the task's active run so the next sweep skips it.
 	if err := tq.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
@@ -178,12 +258,24 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		ID:                t.ID,
 	}); err != nil {
 		_ = tx.Rollback()
-		log.Error("dispatcher: set task active run", "err", err)
-		return
+		return "", fmt.Errorf("set task active run: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		log.Error("dispatcher: commit run creation", "err", err)
-		return
+		return "", fmt.Errorf("commit run creation: %w", err)
+	}
+
+	// Record the human's reply at the top of the new run's log so the
+	// conversation reads coherently in the UI (and in WS replay).
+	if opts.humanReply != nil && *opts.humanReply != "" {
+		if err := d.q.CreateAgentLog(ctx, gen.CreateAgentLogParams{
+			ID:         uuid.NewString(),
+			AgentRunID: runID,
+			Timestamp:  time.Now(),
+			Type:       "system",
+			Content:    "Human reply: " + *opts.humanReply,
+		}); err != nil {
+			log.Warn("dispatcher: record human reply log", "err", err)
+		}
 	}
 
 	// Parse task attachments from JSON.
@@ -243,19 +335,21 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 			PriorPlan:          agentNotes,
 			OpenReviewComments: reviewComments,
 			AttachmentAbsPaths: attachmentAbsPaths,
+			ResumeSessionID:    resumeSessionID,
+			HumanReply:         opts.humanReply,
 		},
 	})
 	if !enqueued {
-		log.Warn("dispatcher: pool full, dropping job")
 		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 			Status: "failed",
 			ID:     runID,
 		})
 		_ = d.q.ClearActiveAgentRun(ctx, t.ID)
-		return
+		return "", ErrPoolSaturated
 	}
 
-	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", matched.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled)
+	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", matched.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled, "resume_session", resumeSessionID != "", "human_reply", opts.humanReply != nil)
+	return runID, nil
 }
 
 func (d *Dispatcher) buildTransitionHints(ctx context.Context, taskID, workflowID, fromLabel string) []TransitionHint {
@@ -369,6 +463,7 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 		MaxTurns:          cfg.MaxTurns,
 		MaxRetries:        cfg.MaxRetries,
 		RetryBackoffSecs:  cfg.RetryBackoffSecs,
+		ResumeSessions:    cfg.ResumeSessions != 0,
 		Env:               env,
 		EnabledPlugins:    enabledPlugins,
 		EnabledMCPServers: enabledMCPServers,

@@ -23,6 +23,10 @@ export interface paths {
                     git_state?: "pushed" | "pr_open" | "pr_merged" | "pr_closed";
                     /** @description Archived-task visibility. Omitted (default) hides archived tasks; "only" returns just archived tasks; "all" returns everything. */
                     archived?: "all" | "only";
+                    /** @description Page size. Defaults to 200; values above 500 are clamped to 500. */
+                    limit?: number;
+                    /** @description Cursor for the next page: the id of the last task from the previous page (returned in that response's X-Next-Cursor header). Omit for the first page. */
+                    after?: string;
                 };
                 header?: never;
                 path?: never;
@@ -30,9 +34,11 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description List of tasks */
+                /** @description A page of tasks, newest first. When more tasks remain, the id to pass as the next `after` cursor is returned in the X-Next-Cursor header (absent on the final page). */
                 200: {
                     headers: {
+                        /** @description Cursor for the next page; absent when no more tasks remain. */
+                        "X-Next-Cursor"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -849,15 +855,20 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/tasks/{id}/runs/{run_id}/logs": {
+    "/tasks/{id}/runs/{run_id}/cancel": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get logs for an agent run */
-        get: {
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a running agent run
+         * @description Signals an in-flight run to stop. The pool cancels the run's context — propagating to CLI subprocesses (exec.CommandContext) and aborting HTTP providers — then, once the provider returns, marks the run `cancelled` (not `failed`, and without consuming retry budget), pauses the task so it is not immediately re-dispatched, clears the active-run lock, and broadcasts `task.agent_done`. Cancellation is asynchronous: a 202 means it was signalled, not that the run has fully stopped.
+         */
+        post: {
             parameters: {
                 query?: never;
                 header?: never;
@@ -869,8 +880,156 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
+                /** @description Cancellation signalled. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example cancelling */
+                            status?: string;
+                            run_id?: string;
+                        };
+                    };
+                };
+                /** @description Run not found or does not belong to the task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Run is not currently running (already finished or never started). */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/runs/{run_id}/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reply to an agent waiting for human input
+         * @description Answers a waiting_human run's request_human question with text and continues the work. Starts a new run that resumes the prior provider session where supported (claude provider, unless the agent config has resume_sessions off) so the reply lands as the next message of the same conversation; other providers start cold with the reply injected into the prompt ("RESPONSE FROM HUMAN"). The task stays on its current label — this is a conversation, not a workflow transition — and the replied-to run keeps its waiting_human status, matching the approve/reject flows. The reply is recorded at the top of the new run's log.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    run_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description The human's answer to the agent's question. */
+                        message: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Reply dispatched; a new run was created. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description The continuation run's id. */
+                            run_id?: string;
+                        };
+                    };
+                };
+                /** @description Missing/empty message */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Run not found or does not belong to the task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Run is not the task's active waiting_human run */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Worker pool is saturated */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/runs/{run_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a page of logs for an agent run
+         * @description Returns a page of the run's log entries in chronological order (oldest first). Omit `before` to get the most recent page (the tail); pass a previous response's X-Prev-Cursor as `before` to load earlier entries.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Page size. Defaults to 200; values above 1000 are clamped to 1000. */
+                    limit?: number;
+                    /** @description Cursor to load earlier entries: the id of the oldest entry the caller already has (returned in the previous response's X-Prev-Cursor header). Omit for the newest page. */
+                    before?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                    run_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of log entries, oldest first. When earlier entries remain, X-Has-More is "true" and X-Prev-Cursor carries the id to pass as the next `before` cursor. */
                 200: {
                     headers: {
+                        /** @description "true" when earlier entries exist before this page. */
+                        "X-Has-More"?: string;
+                        /** @description Cursor (id) to pass as the next `before` to load earlier entries. */
+                        "X-Prev-Cursor"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -1617,6 +1776,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/health/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Provider / onboarding readiness checks
+         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, and REPO_BASE_DIR. Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Ordered list of readiness checks */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            checks?: components["schemas"]["ProviderCheck"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1724,6 +1924,8 @@ export interface components {
             max_retries?: number;
             /** @description Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (base * 2^attempt, capped at 10 minutes) is applied on top of this base. Default 30. */
             retry_backoff_secs?: number;
+            /** @description Whether new runs for a task resume the previous run's provider session (claude provider only; other providers ignore it). On by default. Off means every run starts cold — useful for stages that should look at the work with fresh eyes (e.g. agent review). */
+            resume_sessions?: boolean;
             /** @description JSON array of Claude plugin IDs ("<name>@<marketplace>") enabled for this agent config. Claude-provider only; defaults to "[]" (all plugins off). */
             enabled_plugins?: string;
             /** @description JSON array of Claude user-level MCP server names (from ~/.claude.json's global mcpServers) enabled for this agent config. Claude-provider only; defaults to "[]" (all MCP servers off). */
@@ -1815,6 +2017,8 @@ export interface components {
              * @description Estimated USD cost of the run. For the `claude` CLI provider this is the CLI's own authoritative total_cost_usd figure (which may legitimately be 0 under a Claude Max subscription); for anthropic/llm providers it is computed from input/output tokens via an internal, approximate pricing table. 0 if unknown/unreported.
              */
             cost_usd?: number;
+            /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */
+            session_id?: string;
         };
         AgentLog: {
             id?: string;
@@ -1871,6 +2075,22 @@ export interface components {
                 /** Format: date-time */
                 weekly_resets_at?: string | null;
             };
+        };
+        /** @description A single provider/onboarding readiness row. */
+        ProviderCheck: {
+            /** @description Stable identifier (e.g. claude_cli, mcp_sidecar, gh_auth). */
+            id: string;
+            /** @description Human-readable check name. */
+            name: string;
+            /**
+             * @description ok = ready (green); warn = optional/degraded or heuristically undetected (yellow); error = required item missing, runs will fail (red).
+             * @enum {string}
+             */
+            status: "ok" | "warn" | "error";
+            /** @description One-line description of the current state. */
+            detail: string;
+            /** @description How to fix it; present when status is not ok. */
+            hint?: string;
         };
         Error: {
             error?: string;

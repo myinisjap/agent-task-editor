@@ -68,8 +68,16 @@ func buildClaudeArgs(input RunInput, sidecarEnabled bool, mcpCfg *MCPRunConfig) 
 		maxTurns = 50
 	}
 
+	// A resumed session already contains the task context (title, description,
+	// notes) as prior conversation turns, so only the new information (human
+	// reply, feedback, open review comments) is sent as the next message.
+	prompt := buildPrompt(input)
+	if input.ResumeSessionID != "" {
+		prompt = buildResumePrompt(input)
+	}
+
 	args := []string{
-		"-p", buildPrompt(input),
+		"-p", prompt,
 		"--system-prompt", buildSystemPrompt(input),
 		"--output-format", "stream-json",
 		"--verbose",
@@ -77,6 +85,9 @@ func buildClaudeArgs(input RunInput, sidecarEnabled bool, mcpCfg *MCPRunConfig) 
 		"--max-turns", strconv.FormatInt(maxTurns, 10),
 		"--bare",
 		"--settings", settingsJSON,
+	}
+	if input.ResumeSessionID != "" {
+		args = append(args, "--resume", input.ResumeSessionID)
 	}
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
@@ -124,9 +135,55 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		defer mcpCfg.Cleanup()
 	}
 
+	res, info, err := r.runAttempt(ctx, input, sidecarEnabled, mcpCfg, logCh)
+	if input.ResumeSessionID != "" && shouldFallBackToColdStart(info) {
+		// The --resume target most likely no longer exists (session expired,
+		// CLI updated, state moved). Non-fatal: retry once from a cold start
+		// with the full prompt.
+		logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("could not resume session %s — starting a fresh session", input.ResumeSessionID), At: time.Now()}
+		input.ResumeSessionID = ""
+		res, _, err = r.runAttempt(ctx, input, sidecarEnabled, mcpCfg, logCh)
+	}
+	return res, err
+}
+
+// attemptInfo carries the signals runAttempt observed that Run needs to decide
+// whether a failed --resume attempt should be retried as a cold start.
+type attemptInfo struct {
+	// sawStream is true once at least one well-formed stream-json line arrived —
+	// evidence the CLI actually started a conversation.
+	sawStream bool
+	// resumeError is true when the output carried an explicit
+	// session-not-found signal for the --resume target.
+	resumeError bool
+	// exitedWithError is true when the subprocess exited non-zero (for any reason).
+	exitedWithError bool
+}
+
+// shouldFallBackToColdStart reports whether a resumed attempt failed in a way
+// that points at the resume itself: either the CLI said the session doesn't
+// exist, or it exited with an error before producing any stream output.
+func shouldFallBackToColdStart(info attemptInfo) bool {
+	if info.resumeError {
+		return true
+	}
+	return info.exitedWithError && !info.sawStream
+}
+
+// isResumeErrorLine matches the claude CLI's session-not-found error for a bad
+// --resume id (best-effort text match, same spirit as errclass.go).
+func isResumeErrorLine(line string) bool {
+	l := strings.ToLower(line)
+	return strings.Contains(l, "no conversation found") ||
+		(strings.Contains(l, "session") && strings.Contains(l, "not found"))
+}
+
+func (r *ClaudeRunner) runAttempt(ctx context.Context, input RunInput, sidecarEnabled bool, mcpCfg *MCPRunConfig, logCh chan<- LogEntry) (Result, attemptInfo, error) {
+	var info attemptInfo
+
 	args, err := buildClaudeArgs(input, sidecarEnabled, mcpCfg)
 	if err != nil {
-		return Result{Status: "failed"}, err
+		return Result{Status: "failed"}, info, err
 	}
 
 	timeoutSecs := input.AgentConfig.TimeoutSecs
@@ -146,15 +203,15 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return Result{Status: "failed"}, fmt.Errorf("stdout pipe: %w", err)
+		return Result{Status: "failed"}, info, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return Result{Status: "failed"}, fmt.Errorf("stderr pipe: %w", err)
+		return Result{Status: "failed"}, info, fmt.Errorf("stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return Result{Status: "failed"}, fmt.Errorf("start claude: %w", err)
+		return Result{Status: "failed"}, info, fmt.Errorf("start claude: %w", err)
 	}
 
 	logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("started claude pid=%d", cmd.Process.Pid), At: time.Now()}
@@ -162,6 +219,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	var (
 		wg          sync.WaitGroup
 		outcome     string
+		sessionID   string
 		rateLimited bool
 		transient   bool
 		usage       *runUsage
@@ -179,18 +237,23 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			if line == "" {
 				continue
 			}
-			entry, parsed, u, class := classifyStreamJSON(line)
+			entry, parsed, u, class, sid := classifyStreamJSON(line)
 			logCh <- entry
+			mu.Lock()
 			if parsed != "" {
-				mu.Lock()
 				outcome = parsed
-				mu.Unlock()
 			}
 			if u != nil {
-				mu.Lock()
 				usage = u
-				mu.Unlock()
 			}
+			if sid != "" {
+				sessionID = sid
+				info.sawStream = true
+			}
+			if isResumeErrorLine(line) {
+				info.resumeError = true
+			}
+			mu.Unlock()
 			// Prefer the structured classification from the typed "result"
 			// event; fall back to sniffing the raw line for non-result / non-
 			// JSON output. See errclass.go.
@@ -217,6 +280,11 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		for scanner.Scan() {
 			line := scanner.Text()
 			logCh <- LogEntry{Type: LogStderr, Content: line, At: time.Now()}
+			if isResumeErrorLine(line) {
+				mu.Lock()
+				info.resumeError = true
+				mu.Unlock()
+			}
 			switch ClassifyLine(line) {
 			case ClassRateLimit:
 				mu.Lock()
@@ -232,6 +300,12 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 
 	wg.Wait()
 	err = cmd.Wait()
+	info.exitedWithError = err != nil
+
+	mu.Lock()
+	finalUsage := usage
+	finalSession := sessionID
+	mu.Unlock()
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- LogEntry{Type: LogSystem, Content: "agent timed out", At: time.Now()}
@@ -240,7 +314,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		// it counts against the task's bounded retry budget instead of
 		// retrying forever unconditionally, but don't require an infra
 		// signal to have been seen in the logs.
-		return Result{Status: "failed"}, &ErrTransient{Cause: fmt.Errorf("claude run timed out")}
+		return Result{Status: "failed", SessionID: finalSession}, info, &ErrTransient{Cause: fmt.Errorf("claude run timed out")}
 	}
 	if err != nil {
 		logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited: %v", err), At: time.Now()}
@@ -249,16 +323,12 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		tr := transient
 		mu.Unlock()
 		if rl {
-			return Result{Status: "failed"}, &ErrRateLimit{Message: "claude CLI 429: Request rejected by API rate limit"}
+			return Result{Status: "failed", SessionID: finalSession}, info, &ErrRateLimit{Message: "claude CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
-			return Result{Status: "failed"}, &ErrTransient{Cause: fmt.Errorf("claude CLI exited with transient infra error: %w", err)}
+			return Result{Status: "failed", SessionID: finalSession}, info, &ErrTransient{Cause: fmt.Errorf("claude CLI exited with transient infra error: %w", err)}
 		}
 	}
-
-	mu.Lock()
-	finalUsage := usage
-	mu.Unlock()
 
 	// MCP result takes priority; fall back to OUTCOME text parsing if the
 	// agent completed without calling signal_complete.
@@ -271,6 +341,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		// token usage/cost — that only comes from the CLI's stream-json
 		// "result" message — so merge it in here.
 		applyUsage(&r, finalUsage)
+		r.SessionID = finalSession
 		// Any non-zero exit from the claude binary means something went wrong
 		// (e.g. auth error, crash, bad config). Even if a signal_complete outcome
 		// was recorded, a non-zero exit overrides it — the agent may have signalled
@@ -279,11 +350,11 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			if r.Outcome != "" {
 				logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited with error but had outcome %q — treating as failed", r.Outcome), At: time.Now()}
 			}
-			failed := Result{Status: "failed"}
+			failed := Result{Status: "failed", SessionID: finalSession}
 			applyUsage(&failed, finalUsage)
-			return failed, nil
+			return failed, info, nil
 		}
-		return r, nil
+		return r, info, nil
 	}
 
 	// Non-zero exit means the agent failed regardless of any parsed outcome.
@@ -292,13 +363,13 @@ func (r *ClaudeRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 		if outcome != "" {
 			logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
 		}
-		failed := Result{Status: "failed"}
+		failed := Result{Status: "failed", SessionID: finalSession}
 		applyUsage(&failed, finalUsage)
-		return failed, nil
+		return failed, info, nil
 	}
-	res := Result{Status: "completed", Outcome: outcome}
+	res := Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
 	applyUsage(&res, finalUsage)
-	return res, nil
+	return res, info, nil
 }
 
 // applyUsage copies token/cost usage from u onto res, if u is non-nil.
@@ -314,28 +385,36 @@ func applyUsage(res *Result, u *runUsage) {
 // classifyStreamJSON parses one NDJSON line from claude --output-format stream-json.
 // Returns the log entry, an optional outcome ("success"/"failure") parsed
 // from an OUTCOME marker or the result subtype, the token usage / cost reported
-// by the CLI (non-nil for "result" messages only), and a failure Classification
+// by the CLI (non-nil for "result" messages only), a failure Classification
 // derived from the *structured* terminal "result" event (ClassNone for every
-// non-result message and for a clean success). The classification lets the CLI
-// providers prefer the typed error event over sniffing arbitrary log lines —
-// see errclass.go.
-func classifyStreamJSON(line string) (LogEntry, string, *runUsage, Classification) {
+// non-result message and for a clean success), and the conversation session_id
+// carried on the envelope (empty for non-stream-json lines). The classification
+// lets the CLI providers prefer the typed error event over sniffing arbitrary
+// log lines — see errclass.go.
+func classifyStreamJSON(line string) (LogEntry, string, *runUsage, Classification, string) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil, ClassNone
+		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil, ClassNone, ""
+	}
+
+	// Every stream-json event (init, assistant, result, …) carries the
+	// conversation's session_id at the top level of the envelope.
+	var sessionID string
+	if v, ok := raw["session_id"]; ok {
+		_ = json.Unmarshal(v, &sessionID)
 	}
 
 	msgType := strings.Trim(string(raw["type"]), `"`)
 	switch msgType {
 	case "assistant":
-		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, "", nil, ClassNone
+		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, "", nil, ClassNone, sessionID
 	case "tool_use":
-		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, "", nil, ClassNone
+		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, "", nil, ClassNone, sessionID
 	case "tool_result":
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil, ClassNone
+		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil, ClassNone, sessionID
 	case "user":
 		// Claude SDK wraps tool results in a user message: {"type":"user","message":{"role":"user","content":[{"type":"tool_result",...}]}}
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil, ClassNone
+		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil, ClassNone, sessionID
 	case "result":
 		// Parse OUTCOME: success|failure from the result text; fall back to subtype.
 		var outcome string
@@ -355,9 +434,9 @@ func classifyStreamJSON(line string) (LogEntry, string, *runUsage, Classificatio
 			}
 		}
 		usage := extractResultUsage(raw)
-		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome, usage, classifyResultMessage(raw)
+		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome, usage, classifyResultMessage(raw), sessionID
 	default:
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil, ClassNone
+		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil, ClassNone, sessionID
 	}
 }
 
@@ -460,28 +539,9 @@ func extractAssistantText(raw map[string]json.RawMessage) string {
 
 func buildPrompt(input RunInput) string {
 	var b strings.Builder
-	if input.Feedback != nil && *input.Feedback != "" {
-		b.WriteString("FEEDBACK FROM PRIOR REVIEW:\n")
-		b.WriteString(*input.Feedback)
-		b.WriteString("\n\n---\n\n")
-	}
-	if len(input.OpenReviewComments) > 0 {
-		b.WriteString("OPEN REVIEW COMMENTS (inline comments a human left on your branch's diff — address every one):\n\n")
-		for i, c := range input.OpenReviewComments {
-			lineRef := fmt.Sprintf("line %d", c.StartLine)
-			if c.EndLine != c.StartLine {
-				lineRef = fmt.Sprintf("lines %d-%d", c.StartLine, c.EndLine)
-			}
-			fmt.Fprintf(&b, "%d. [comment_id: %s] %s (%s):\n", i+1, c.ID, c.FilePath, lineRef)
-			if c.QuotedText != "" {
-				b.WriteString("```\n")
-				b.WriteString(c.QuotedText)
-				b.WriteString("\n```\n")
-			}
-			fmt.Fprintf(&b, "→ %s\n\n", c.Body)
-		}
-		b.WriteString("After addressing each comment, call mcp__task-editor__resolve_comment with its comment_id and a one-line note describing your fix. If that tool is unavailable, list each addressed comment_id in your task notes instead.\n\n---\n\n")
-	}
+	writeHumanReplySection(&b, input)
+	writeFeedbackSection(&b, input)
+	writeReviewCommentsSection(&b, input)
 	if input.PriorPlan != nil && *input.PriorPlan != "" {
 		b.WriteString("NOTES FROM PRIOR AGENT:\n")
 		b.WriteString(*input.PriorPlan)
@@ -498,6 +558,63 @@ func buildPrompt(input RunInput) string {
 		}
 	}
 	return b.String()
+}
+
+// buildResumePrompt is the prompt for a run that resumes a prior provider
+// session (claude --resume). The resumed conversation already contains the
+// task context (title, description, notes, prior work) as its own turns, so
+// only the *new* information is sent as the next message.
+func buildResumePrompt(input RunInput) string {
+	var b strings.Builder
+	writeHumanReplySection(&b, input)
+	writeFeedbackSection(&b, input)
+	writeReviewCommentsSection(&b, input)
+	if b.Len() == 0 {
+		fmt.Fprintf(&b, "Continue working on the task: %s\n\n", input.Task.Title)
+	}
+	b.WriteString("This session was resumed from your previous run on this task — the conversation above is your own prior work. Continue from where you left off rather than starting over.")
+	return b.String()
+}
+
+// writeHumanReplySection renders the human's answer to the agent's
+// request_human question, when a reply started this run.
+func writeHumanReplySection(b *strings.Builder, input RunInput) {
+	if input.HumanReply == nil || *input.HumanReply == "" {
+		return
+	}
+	b.WriteString("RESPONSE FROM HUMAN (answering your request for help):\n")
+	b.WriteString(*input.HumanReply)
+	b.WriteString("\n\n---\n\n")
+}
+
+func writeFeedbackSection(b *strings.Builder, input RunInput) {
+	if input.Feedback == nil || *input.Feedback == "" {
+		return
+	}
+	b.WriteString("FEEDBACK FROM PRIOR REVIEW:\n")
+	b.WriteString(*input.Feedback)
+	b.WriteString("\n\n---\n\n")
+}
+
+func writeReviewCommentsSection(b *strings.Builder, input RunInput) {
+	if len(input.OpenReviewComments) == 0 {
+		return
+	}
+	b.WriteString("OPEN REVIEW COMMENTS (inline comments a human left on your branch's diff — address every one):\n\n")
+	for i, c := range input.OpenReviewComments {
+		lineRef := fmt.Sprintf("line %d", c.StartLine)
+		if c.EndLine != c.StartLine {
+			lineRef = fmt.Sprintf("lines %d-%d", c.StartLine, c.EndLine)
+		}
+		fmt.Fprintf(b, "%d. [comment_id: %s] %s (%s):\n", i+1, c.ID, c.FilePath, lineRef)
+		if c.QuotedText != "" {
+			b.WriteString("```\n")
+			b.WriteString(c.QuotedText)
+			b.WriteString("\n```\n")
+		}
+		fmt.Fprintf(b, "→ %s\n\n", c.Body)
+	}
+	b.WriteString("After addressing each comment, call mcp__task-editor__resolve_comment with its comment_id and a one-line note describing your fix. If that tool is unavailable, list each addressed comment_id in your task notes instead.\n\n---\n\n")
 }
 
 func buildSystemPrompt(input RunInput) string {

@@ -210,6 +210,19 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		return
 	}
 
+	// Persist the provider session (claude/qwen stream-json session_id) as soon
+	// as the provider returns — on any outcome, including failures, so a later
+	// run on this task can resume the conversation. Done before error
+	// classification because the transient/rate-limit paths return early.
+	if result.SessionID != "" {
+		if serr := p.q.SetAgentRunSession(context.Background(), gen.SetAgentRunSessionParams{
+			SessionID: result.SessionID,
+			ID:        job.RunID,
+		}); serr != nil {
+			log.Warn("pool: persist run session", "err", serr)
+		}
+	}
+
 	if err != nil {
 		var rl *ErrRateLimit
 		if errors.As(err, &rl) {
