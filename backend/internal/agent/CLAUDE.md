@@ -15,7 +15,8 @@ The agent package owns everything to do with running AI agents: the provider abs
 | `mcp.go` | `MCPManager` — prepares/cleans up the MCP sidecar config and result file |
 | `pool.go` | `Pool` — bounded goroutine pool; persists logs, publishes WS events; classifies transient vs genuine failures and drives the per-task retry budget |
 | `dispatcher.go` | `Dispatcher` — periodic DB sweep; matches tasks to configs; submits jobs |
-| `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown |
+| `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown; `RepoGitLock` (per-repo git serialization) |
+| `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (Mechanism 2, issue #82) |
 | `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure |
 | `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `is429Line`/`isTransientLine` are thin wrappers; `classifyResultMessage` prefers the claude/qwen stream-json typed `result` event over raw line sniffing |
 | `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers |
@@ -187,6 +188,46 @@ only prevents the dispatcher from starting a new one. The reverse also holds:
 **cancelling** a run (see "Run Cancellation" above) pauses the task, so the
 kill switch both stops the current run *and* blocks the immediate re-dispatch
 that clearing the lock would otherwise trigger.
+
+## Subtask Merge-Back Coordinator (Mechanism 2)
+
+`SubtaskCoordinator` (`subtasks.go`) owns the child→parent branch lifecycle for
+agent-driven decomposition (issue #82). Wired in `cmd/server/main.go`:
+`engine.OnTerminal` calls `OnChildTerminal` for a subtask (else the normal
+push/teardown), `pool.Subtasks` calls `AfterParentRun` when a parent's run
+finishes, and `dispatcher.Subtasks` injects merge-conflict context into a
+parent's run prompt via `BuildConflictContext`.
+
+- **Merge-back on child terminal:** the child's branch is merged into the
+  parent's branch (`MergeBranch`, a `--no-ff` merge commit); on success the
+  child's worktree + local branch are removed (children never push to origin). A
+  conflict is aborted cleanly and the child flagged `merge_status=merge_conflict`.
+- **Auto-advance** fires only when **every** non-archived child is terminal *and*
+  `merge_status=merged` (not merely terminal — see the double-advance guard
+  below). It moves the parent along its agent-success transition with the
+  `workflow.TriggerSubtasksComplete` trigger, which bypasses the human/agent gate
+  checks (the coordinator selects an already-validated agent-success target).
+- **Concurrency:**
+  - *Per-parent lock* (`plocks`): all merge-back + evaluate work for one parent
+    runs under its mutex, so children finishing simultaneously merge one at a time
+    in completion order and can't corrupt the parent worktree.
+  - *Per-repo git lock* (`RepoGitLock`, `worktree.go`): the pool's safety-net
+    commit/push **and** the coordinator's merge/teardown take the repo's lock
+    around their ref-mutating git calls. Git worktrees share one ref store, so
+    without this a commit in one worktree races a merge/branch-delete in another
+    ("cannot lock ref 'HEAD'"). Lock order is always parent-lock → repo-lock
+    (the pool only ever takes the repo lock), so there's no cycle.
+  - *Double-advance guard:* requiring `merged` (not just terminal) in
+    `evaluateParent` means a sibling that is terminal-but-not-yet-merged (its
+    merge queued behind the parent lock) does not trigger a premature advance;
+    the advance happens exactly once, when the last merge lands.
+- **Deferred merges:** if a parent has a run in flight when a child goes terminal,
+  the merge is marked `pending` and flushed by `AfterParentRun` once the run ends.
+- **Tested end-to-end:** `subtasks_e2e_test.go` drives the real
+  dispatcher+pool+engine+coordinator over a temp git repo with a file-writing
+  fake provider (two children branch off the parent, run to terminal, merge back
+  concurrently, and the parent auto-advances). `subtasks_coord_test.go` unit-tests
+  the clean-merge, conflict, and auto-advance paths directly.
 
 ## Environment Variable Security
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -26,12 +27,34 @@ type SubtaskCoordinator struct {
 
 	GitName  string
 	GitEmail string
+
+	// Per-parent serialization: children reaching terminal concurrently must not
+	// merge into the same parent worktree at once (git would race). All merge-back
+	// / evaluate work for a given parent runs under its lock, so merges apply one
+	// at a time in completion order.
+	mu     sync.Mutex
+	plocks map[string]*sync.Mutex
 }
 
 // NewSubtaskCoordinator builds a coordinator. gitName/gitEmail author the
 // merge commits.
 func NewSubtaskCoordinator(q *gen.Queries, engine *workflow.Engine, pub Publisher, gitName, gitEmail string) *SubtaskCoordinator {
-	return &SubtaskCoordinator{q: q, engine: engine, pub: pub, GitName: gitName, GitEmail: gitEmail}
+	return &SubtaskCoordinator{q: q, engine: engine, pub: pub, GitName: gitName, GitEmail: gitEmail, plocks: map[string]*sync.Mutex{}}
+}
+
+// parentLock returns the per-parent mutex, creating it on first use.
+func (c *SubtaskCoordinator) parentLock(parentID string) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.plocks == nil {
+		c.plocks = map[string]*sync.Mutex{}
+	}
+	l := c.plocks[parentID]
+	if l == nil {
+		l = &sync.Mutex{}
+		c.plocks[parentID] = l
+	}
+	return l
 }
 
 // IsSubtask reports whether a task is a child (has a parent). The pool uses this
@@ -48,6 +71,10 @@ func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task
 	if child.ParentTaskID == nil {
 		return
 	}
+	lock := c.parentLock(*child.ParentTaskID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	parent, err := c.q.GetTask(ctx, *child.ParentTaskID)
 	if err != nil {
 		// Parent gone (deleted/orphaned): nothing to merge back into. Tear the
@@ -81,6 +108,10 @@ func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task
 // transition; auto-advance is driven only by a child reaching terminal.
 // A no-op for tasks that aren't parents. Returns whether anything changed.
 func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoPath string, runSucceeded bool) bool {
+	lock := c.parentLock(parentID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	parent, err := c.q.GetTask(ctx, parentID)
 	if err != nil {
 		return false
@@ -97,12 +128,16 @@ func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoP
 			changed = true
 		case child.MergeStatus == "merge_conflict" && runSucceeded:
 			// The work run resolved and committed the conflicting merge on the
-			// parent branch; mark the child merged and tear it down.
+			// parent branch; mark the child merged and tear it down (under the
+			// repo git lock so the ref writes don't race other tasks).
 			c.setMerge(ctx, child.ID, "merged")
+			lock := RepoGitLock(repoPath)
+			lock.Lock()
 			if child.WorktreePath != "" {
 				_ = RemoveWorktree(ctx, repoPath, child.WorktreePath)
 			}
 			_ = DeleteLocalBranch(ctx, repoPath, child.Branch)
+			lock.Unlock()
 			c.publishUpdated(child.ID, parentID)
 			changed = true
 		}
@@ -110,12 +145,19 @@ func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoP
 	return changed
 }
 
-// mergeChild performs one child→parent merge-back and records the outcome.
+// mergeChild performs one child→parent merge-back and records the outcome. The
+// whole git sequence (optional parent re-provision, merge, worktree/branch
+// teardown) runs under the repo's git lock so it never overlaps a concurrent
+// commit/merge on the same repo.
 func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, parent, child gen.Task) {
 	log := slog.With("component", "subtasks", "task_id", child.ID, "parent_id", parent.ID)
 	if child.Branch == "" || parent.Branch == "" {
 		return
 	}
+
+	lock := RepoGitLock(repoPath)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// Ensure the parent has a worktree to merge into (it was provisioned at plan
 	// dispatch; re-provision defensively if it was pruned).
@@ -175,22 +217,30 @@ func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID, repoP
 	}
 	terminal := terminalLabelSet(labels)
 
-	allTerminal := true
+	// The parent auto-advances only when every child is done AND its work has
+	// merged back cleanly. An archived child was deliberately dropped — it doesn't
+	// block the parent and needs no merge. A child that is terminal but not yet
+	// merged (its merge-back is still queued behind this parent's lock) is NOT
+	// "done" yet, so we wait: the merge that completes it will re-run this check.
+	// Requiring merged (not just terminal) also prevents a double auto-advance
+	// when two children finish near-simultaneously.
 	anyConflict := false
 	for _, ch := range children {
+		if ch.Archived != 0 {
+			continue
+		}
 		if ch.MergeStatus == "merge_conflict" {
 			anyConflict = true
+			continue
 		}
-		if !terminal[ch.Label] && ch.Archived == 0 {
-			allTerminal = false
+		if !terminal[ch.Label] || ch.MergeStatus != "merged" {
+			return // still waiting on a child to finish and merge back
 		}
-	}
-	if !allTerminal {
-		return // still waiting on children; parent stays gated by its edges
 	}
 	if anyConflict {
-		// The parent becomes dispatch-eligible (edges satisfied since children are
-		// terminal); the dispatcher hands its work agent the conflict context.
+		// The parent becomes dispatch-eligible (edges satisfied since the
+		// conflicting children are terminal); the dispatcher hands its work agent
+		// the conflict context to resolve on the parent branch.
 		return
 	}
 

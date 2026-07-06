@@ -351,6 +351,9 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// so the task's branch always reflects the run. No-op if the agent committed.
 	isSubtask := job.Input.Task.ParentID != ""
 	if finalStatus == "completed" && job.Input.RepoPath != "" {
+		// Serialize ref-mutating git ops against other tasks/merges in this repo.
+		lock := RepoGitLock(job.Input.Task.RepoPath)
+		lock.Lock()
 		msg := fmt.Sprintf("task %s: agent run %s", job.Input.Task.ID, job.RunID)
 		if err := commitIfDirty(ctx, job.Input.RepoPath, msg, p.GitName, p.GitEmail); err != nil {
 			log.Warn("pool: safety-net commit failed", "err", err)
@@ -363,6 +366,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 				log.Warn("pool: push branch failed", "branch", job.Input.Task.Branch, "err", err)
 			}
 		}
+		lock.Unlock()
 	}
 
 	// Resolve outcome → next label via workflow transitions.

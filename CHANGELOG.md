@@ -39,6 +39,11 @@ this file's section for that version as the release notes.
     recorded in history with a distinct `subtasks_complete` trigger. Degrades gracefully
     (leaves the parent for a human / the next dispatch) when it's paused, has a run in flight,
     or has no agent-success transition.
+  - **Concurrency-safe:** merge-backs for one parent are serialized (children finishing at
+    once can't corrupt the parent worktree), and a new per-repo git lock serializes the pool's
+    commits/pushes against the coordinator's merges so concurrent tasks in a repo never race on
+    the shared ref store. The whole loop is covered by a real-git end-to-end test driving the
+    dispatcher, pool, engine, and coordinator with a fake provider.
   - **UI:** child cards carry a `↳ subtask` badge (click → parent) and a merge-status badge;
     parent cards show a `⑃ done/total` rollup with a conflict indicator; the task detail page
     gains a Subtasks section (parent link + merge state for a child; children list + bulk

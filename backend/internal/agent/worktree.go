@@ -8,10 +8,39 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // worktreeDir is the subdirectory under a repo where per-task worktrees live.
 const worktreeDir = ".ate-worktrees"
+
+// repoGitLocks serializes ref-mutating git operations within a single repo.
+// Git worktrees share one object/ref store, so concurrent commits, merges,
+// branch deletes, and worktree adds/removes across sibling worktrees can race on
+// the ref lock ("cannot lock ref 'HEAD'…"). The pool (safety-net commit / push)
+// and the subtask coordinator (merge-back / branch teardown) both take the
+// repo's lock around their git writes so those operations never overlap.
+var (
+	repoGitLockMu sync.Mutex
+	repoGitLocks  = map[string]*sync.Mutex{}
+)
+
+// RepoGitLock returns the per-repo git mutex, creating it on first use. Keyed by
+// the repo's main-clone path. An empty path returns a throwaway lock (callers
+// without a known repo path still get correct, if uncontended, behavior).
+func RepoGitLock(repoPath string) *sync.Mutex {
+	if repoPath == "" {
+		return &sync.Mutex{}
+	}
+	repoGitLockMu.Lock()
+	defer repoGitLockMu.Unlock()
+	l := repoGitLocks[repoPath]
+	if l == nil {
+		l = &sync.Mutex{}
+		repoGitLocks[repoPath] = l
+	}
+	return l
+}
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
