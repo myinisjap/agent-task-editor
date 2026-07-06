@@ -68,6 +68,22 @@ npx tsc --noEmit  # Type-check (no dedicated script)
 4. Add any new API calls to `src/api/client.ts`
 5. Add types to `src/api/types.ts`
 
+## Theming (dark / light)
+
+The UI is authored **dark-first** with Tailwind's `slate` palette (plus accent colors).
+Rather than add `dark:` variants everywhere, the dark palette is kept as-is and a **light**
+theme is derived by remapping Tailwind's `--color-<name>-<shade>` CSS variables under a
+`.light` root class in `src/index.css`. Tailwind v4 compiles utilities to
+`var(--color-...)`, so overriding those variables re-themes existing classes with no
+component edits. The light values are a perceptual index-mirror of the dark ramp — regenerate
+them with `node scripts/gen-light-theme.mjs` after a Tailwind upgrade.
+
+`src/stores/theme.ts` owns the `'dark' | 'light'` state (persisted to `localStorage`,
+defaulting to `prefers-color-scheme`) and toggles the root class; an inline script in
+`index.html` applies the class before first paint to avoid a flash. Because the theme rides
+on CSS variables, prefer Tailwind `slate`/accent utilities over hardcoded hex so new UI
+themes automatically.
+
 ## State Management Pattern
 
 Zustand stores own server state. Components call store actions which call `client.ts` functions, then update store state on success. WebSocket events from `ws.ts` are also wired into stores to keep state live without polling.

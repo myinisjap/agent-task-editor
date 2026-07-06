@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
+import { useThemeStore } from '../../stores/theme'
 
 const links = [
   { to: '/',          label: 'Dashboard' },
@@ -12,6 +13,8 @@ const links = [
 
 export default function NavSidebar() {
   const [isOpen, setIsOpen] = useState(false)
+  const theme = useThemeStore((s) => s.theme)
+  const toggleTheme = useThemeStore((s) => s.toggle)
 
   return (
     <>
@@ -70,6 +73,16 @@ export default function NavSidebar() {
             {label}
           </NavLink>
         ))}
+
+        <button
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+        >
+          <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
+          <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+        </button>
       </aside>
     </>
   )

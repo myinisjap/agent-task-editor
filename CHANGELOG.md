@@ -12,6 +12,13 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Dark / light theme toggle** (#87). The UI now ships an explicit theme switch in the
+  sidebar; it defaults to the operating system's `prefers-color-scheme` and remembers your
+  choice in `localStorage`. The theme is applied before first paint (an inline bootstrap in
+  `index.html`) so there's no flash of the wrong theme on load. The dark theme is unchanged;
+  the new light theme is derived by remapping Tailwind's color variables under a `.light`
+  root class (see `frontend/scripts/gen-light-theme.mjs`), including light-appropriate diff
+  and agent-log colors rather than naive inversions.
 - **Agent-driven subtask decomposition** (#82, Mechanism 2). A planning agent can now
   split a large task into structured, dispatchable child tasks instead of leaving prose in
   `agent_notes`. Children are an implementation mechanism; the parent's branch (and single
