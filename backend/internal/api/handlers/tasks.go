@@ -95,7 +95,7 @@ func (h *TasksHandler) dependencyCountMap(ctx context.Context) map[string]depCou
 
 // applyDepCounts sets the derived counts on a response from the map.
 func applyDepCounts(resp taskResponse, counts map[string]depCounts) taskResponse {
-	if c, ok := counts[resp.Task.ID]; ok {
+	if c, ok := counts[resp.ID]; ok {
 		resp.BlockedByCount = c.blockedBy
 		resp.BlockingCount = c.blocking
 	}
@@ -137,7 +137,7 @@ func floatPtrToInt(f *float64) int64 {
 
 // applyRollup sets the derived subtask rollup on a response from the map.
 func applyRollup(resp taskResponse, rollups map[string]subtaskRollup) taskResponse {
-	if r, ok := rollups[resp.Task.ID]; ok {
+	if r, ok := rollups[resp.ID]; ok {
 		resp.SubtaskTotal = r.total
 		resp.SubtaskDone = r.done
 		resp.SubtaskConflicts = r.conflicts
