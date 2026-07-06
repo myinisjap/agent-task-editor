@@ -98,6 +98,22 @@ export default function TaskBoard({
   const byLabel = (name: string) => tasks.filter((t) => t.label === name)
   const byLabels = (names: string[]) => tasks.filter((t) => names.includes(t.label ?? ''))
 
+  // Labels an agent can pick tasks up from: some agent/both transition leaves
+  // the label and the label itself isn't agent_ignore. Dropping a blocked task
+  // into one of these is the case that warrants a heads-up — the move won't
+  // dispatch until the blockers clear.
+  const agentTriggerableLabels = new Set(
+    labels
+      .filter(
+        (l) =>
+          !l.agent_ignore &&
+          transitions.some(
+            (t) => t.from_label === l.name && (t.trigger_type === 'agent' || t.trigger_type === 'both'),
+          ),
+      )
+      .map((l) => l.name),
+  )
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     if (!over) return
@@ -106,6 +122,18 @@ export default function TaskBoard({
     const toLabel = String(over.id)
     const task = tasks.find((t) => t.id === taskId)
     if (!task || task.label === toLabel) return
+
+    // Moving a blocked task into an agent-triggerable column doesn't erase the
+    // block — it just sits un-dispatched until its dependencies satisfy. Confirm
+    // so that's a deliberate choice, not a surprise.
+    const blockedCount = task.blocked_by_count ?? 0
+    if (blockedCount > 0 && agentTriggerableLabels.has(toLabel)) {
+      const ok = window.confirm(
+        `This task is blocked by ${blockedCount} unfinished dependency task${blockedCount === 1 ? '' : 's'}. ` +
+          `Moving it to "${toLabel}" won't start an agent until those finish. Move anyway?`,
+      )
+      if (!ok) return
+    }
 
     const snapshot = { ...task }
 

@@ -30,6 +30,8 @@ sql:
       - "internal/storage/migrations/025_task_pr_url.up.sql"
       - "internal/storage/migrations/026_repo_clone_status.up.sql"
       - "internal/storage/migrations/027_session_resume.up.sql"
+      - "internal/storage/migrations/028_task_dependencies.up.sql"
+      - "internal/storage/migrations/029_subtasks.up.sql"
     gen:
       go:
         package: "gen"

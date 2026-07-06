@@ -34,6 +34,17 @@ type taskResponse struct {
 	Attachments json.RawMessage `json:"attachments"`
 	Paused      bool            `json:"paused"`
 	Archived    bool            `json:"archived"`
+	// Derived dependency counts (Mechanism 1). BlockedByCount is the number of
+	// this task's blockers whose edges are still unsatisfied; BlockingCount is
+	// the number of tasks that depend on it. Both are computed at read time.
+	BlockedByCount int64 `json:"blocked_by_count"`
+	BlockingCount  int64 `json:"blocking_count"`
+	// Derived subtask rollup (Mechanism 2), non-zero only for parent tasks.
+	// SubtaskTotal is the number of children; SubtaskDone is how many sit on a
+	// terminal label; SubtaskConflicts is how many are in merge_conflict.
+	SubtaskTotal     int64 `json:"subtask_total"`
+	SubtaskDone      int64 `json:"subtask_done"`
+	SubtaskConflicts int64 `json:"subtask_conflicts"`
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the
@@ -59,6 +70,79 @@ func toTaskResponses(tasks []gen.Task) []taskResponse {
 		out[i] = toTaskResponse(t)
 	}
 	return out
+}
+
+// depCounts pairs a task's derived dependency counts.
+type depCounts struct {
+	blockedBy int64
+	blocking  int64
+}
+
+// dependencyCountMap fetches derived dependency counts for every task that
+// participates in at least one edge, keyed by task id. Tasks absent from the
+// map have zero of both. One query serves a whole page so the board avoids N+1.
+func (h *TasksHandler) dependencyCountMap(ctx context.Context) map[string]depCounts {
+	rows, err := h.q.ListTaskDependencyCounts(ctx)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]depCounts, len(rows))
+	for _, row := range rows {
+		m[row.TaskID] = depCounts{blockedBy: row.BlockedByCount, blocking: row.BlockingCount}
+	}
+	return m
+}
+
+// applyDepCounts sets the derived counts on a response from the map.
+func applyDepCounts(resp taskResponse, counts map[string]depCounts) taskResponse {
+	if c, ok := counts[resp.ID]; ok {
+		resp.BlockedByCount = c.blockedBy
+		resp.BlockingCount = c.blocking
+	}
+	return resp
+}
+
+// subtaskRollup pairs a parent's derived child counts.
+type subtaskRollup struct {
+	total     int64
+	done      int64
+	conflicts int64
+}
+
+// subtaskRollupMap fetches per-parent child rollups keyed by parent id. Parents
+// absent from the map have no children. One query serves a whole page.
+func (h *TasksHandler) subtaskRollupMap(ctx context.Context) map[string]subtaskRollup {
+	rows, err := h.q.ListSubtaskRollups(ctx)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]subtaskRollup, len(rows))
+	for _, row := range rows {
+		m[row.ParentID] = subtaskRollup{
+			total:     row.Total,
+			done:      floatPtrToInt(row.Done),
+			conflicts: floatPtrToInt(row.Conflicts),
+		}
+	}
+	return m
+}
+
+// floatPtrToInt converts a nullable SQLite SUM (returned as *float64) to int64.
+func floatPtrToInt(f *float64) int64 {
+	if f == nil {
+		return 0
+	}
+	return int64(*f)
+}
+
+// applyRollup sets the derived subtask rollup on a response from the map.
+func applyRollup(resp taskResponse, rollups map[string]subtaskRollup) taskResponse {
+	if r, ok := rollups[resp.ID]; ok {
+		resp.SubtaskTotal = r.total
+		resp.SubtaskDone = r.done
+		resp.SubtaskConflicts = r.conflicts
+	}
+	return resp
 }
 
 // Pagination defaults and caps. List endpoints return at most a page at a time,
@@ -143,6 +227,25 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	limit := parsePageLimit(qp.Get("limit"), defaultTaskPageLimit, maxTaskPageLimit)
 
+	// parent_id short-circuits to the direct children of a parent (one family at
+	// a time), bypassing the cursor pagination since a parent's child set is
+	// naturally bounded by the subtask cap.
+	if parentID := qp.Get("parent_id"); parentID != "" {
+		children, cerr := h.q.ListSubtasks(r.Context(), &parentID)
+		if cerr != nil {
+			Err(w, http.StatusInternalServerError, cerr.Error())
+			return
+		}
+		counts := h.dependencyCountMap(r.Context())
+		rollups := h.subtaskRollupMap(r.Context())
+		resp := toTaskResponses(children)
+		for i := range resp {
+			resp[i] = applyRollup(applyDepCounts(resp[i], counts), rollups)
+		}
+		JSON(w, http.StatusOK, resp)
+		return
+	}
+
 	// Fetch one extra row so we can tell whether another page exists without a
 	// separate COUNT.
 	tasks, err := h.q.SearchTasksPage(r.Context(), gen.SearchTasksPageParams{
@@ -163,7 +266,13 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		tasks = tasks[:limit]
 		w.Header().Set("X-Next-Cursor", tasks[len(tasks)-1].ID)
 	}
-	JSON(w, http.StatusOK, toTaskResponses(tasks))
+	counts := h.dependencyCountMap(r.Context())
+	rollups := h.subtaskRollupMap(r.Context())
+	resp := toTaskResponses(tasks)
+	for i := range resp {
+		resp[i] = applyRollup(applyDepCounts(resp[i], counts), rollups)
+	}
+	JSON(w, http.StatusOK, resp)
 }
 
 func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -330,7 +439,9 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "task not found")
 		return
 	}
-	JSON(w, http.StatusOK, toTaskResponse(task))
+	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context()))
+	resp = applyRollup(resp, h.subtaskRollupMap(r.Context()))
+	JSON(w, http.StatusOK, resp)
 }
 
 func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {

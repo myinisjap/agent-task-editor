@@ -95,6 +95,10 @@ type RunInput struct {
 	// question, injected into the prompt (and, when combined with
 	// ResumeSessionID, delivered as the next message of the resumed session).
 	HumanReply *string
+	// SubtaskConflicts, when set, is a rendered description of subtask branches
+	// that failed to merge back into this (parent) task's branch. It is injected
+	// into the prompt so the parent's work agent resolves the conflicts.
+	SubtaskConflicts *string
 }
 
 // ReviewComment is a minimal copy of storage's task_review_comments row —
@@ -126,6 +130,13 @@ type Task struct {
 	WorkflowID  string
 	AgentNotes  string
 	Branch      string
+	// ParentID is the parent task id when this task is a subtask, else "".
+	// The pool reads it to skip pushing child branches (children merge back into
+	// the parent's branch instead) and to trigger merge-back on the parent.
+	ParentID string
+	// RepoPath is the repo's main clone path (not the worktree). Set so the pool
+	// can drive parent worktree merges after a run.
+	RepoPath string
 	// Attachments is a JSON array of relative paths (e.g. ["<task_id>/abc.png"])
 	Attachments []string
 }
@@ -167,6 +178,13 @@ type AgentConfig struct {
 	// run's provider session (claude provider only; on by default). Off means
 	// every run starts cold — useful for stages that want fresh eyes.
 	ResumeSessions bool
+	// SubtasksEnabled exposes the create_subtask MCP tool to this config's runs
+	// (claude/qwen_code only). Off by default — decomposition is a deliberate
+	// capability granted to a specific agent (typically the planning agent).
+	SubtasksEnabled bool
+	// MaxSubtasks caps how many children a single parent may have; enforced at
+	// the create endpoint. Defaults to 10.
+	MaxSubtasks int64
 }
 
 // Provider is the interface all agent backends must satisfy.

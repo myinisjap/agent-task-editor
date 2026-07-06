@@ -21,6 +21,8 @@ export interface paths {
                     repo_id?: string;
                     type?: string;
                     git_state?: "pushed" | "pr_open" | "pr_merged" | "pr_closed";
+                    /** @description When set, returns the direct children (subtasks) of this parent task (one family at a time), bypassing pagination. */
+                    parent_id?: string;
                     /** @description Archived-task visibility. Omitted (default) hides archived tasks; "only" returns just archived tasks; "all" returns everything. */
                     archived?: "all" | "only";
                     /** @description Page size. Defaults to 200; values above 500 are clamped to 500. */
@@ -353,6 +355,220 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/tasks/{id}/dependencies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a task's dependency edges
+         * @description Returns both directions of the task's dependency edges: the tasks it is blocked by (each with derived satisfaction state) and the tasks that depend on it. Dependencies are a pure dispatch gate — a task with any unsatisfied blocker is never picked up by the dispatcher, though a human can still move it anywhere.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskDependencies"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Add a dependency (this task depends on another)
+         * @description Creates an edge so this task is not dispatched until the depended-on task reaches a terminal label or is archived. Both tasks must be in the same workflow, and the blocker's workflow must have a terminal label (otherwise the edge could never satisfy). Cycles and self-edges are rejected.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        depends_on_task_id: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Dependency created */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Self-edge */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Edge already exists or would create a cycle */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/subtasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a subtask under a parent
+         * @description Creates a child task under the parent named in the path (Mechanism 2). The create_subtask MCP tool posts here live during a planning run. The child inherits the parent's repo + workflow, lands on a human-gate (agent_ignore) label, and gets an auto-created parent→child dependency edge so the parent isn't dispatched until the child finishes. Guardrails: depth limit 1 (a subtask can't create subtasks), a per-parent cap (config max_subtasks, default 10), and — when a creating run is in flight — the run's config must have subtasks_enabled.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        title: string;
+                        description?: string;
+                        /** @enum {string} */
+                        type?: "feature" | "bug" | "chore" | "spike";
+                        /** @description Optional landing label; must be an agent_ignore (human-gate) label. Defaults to the workflow's first agent_ignore label. */
+                        label?: string;
+                    };
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Depth limit exceeded */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Creating run's config is not permitted to create subtasks */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Parent task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Per-parent subtask cap reached */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/dependencies/{dep_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a dependency edge */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    /** @description The depends_on_task_id of the edge to remove. */
+                    dep_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dependency removed (idempotent) */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/tasks/{id}/approve": {
@@ -1858,10 +2074,50 @@ export interface components {
             source?: string;
             /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
             source_ref?: string;
+            /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived. Zero when the task has no unsatisfied blockers. */
+            blocked_by_count?: number;
+            /** @description Derived (read-time) count of tasks that depend on this task (i.e. this task is a blocker for that many other tasks). */
+            blocking_count?: number;
+            /** @description Parent task id when this task is a subtask (Mechanism 2), else null. A subtask branches off its parent's branch and merges back on terminal; the parent isn't dispatched until every child finishes. */
+            parent_task_id?: string | null;
+            /** @description The agent run that created this subtask (provenance). */
+            created_by_run_id?: string | null;
+            /**
+             * @description A subtask's branch merge-back state into its parent's branch. Empty for non-subtasks and until the child reaches a terminal label.
+             * @enum {string}
+             */
+            merge_status?: "" | "pending" | "merged" | "merge_conflict";
+            /** @description Derived: number of this task's direct children (0 if not a parent). */
+            subtask_total?: number;
+            /** @description Derived: children currently on a terminal label. */
+            subtask_done?: number;
+            /** @description Derived: children whose merge-back is in conflict. */
+            subtask_conflicts?: number;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description One end of a task dependency edge (a blocker or a dependent). */
+        DependencyEdge: {
+            /** @description The other task in the edge */
+            task_id?: string;
+            title?: string;
+            label?: string;
+            archived?: boolean;
+            /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived). Not meaningful for dependents (always false there). */
+            satisfied?: boolean;
+        };
+        /** @description Both directions of a task's dependency edges. */
+        TaskDependencies: {
+            /** @description Tasks this task depends on (its blockers), newest first. */
+            blocked_by?: components["schemas"]["DependencyEdge"][];
+            /** @description Tasks that depend on this task, newest first. */
+            blocking?: components["schemas"]["DependencyEdge"][];
+            /** @description Count of unsatisfied blockers */
+            blocked_by_count?: number;
+            /** @description Count of dependents */
+            blocking_count?: number;
         };
         /** @description Reusable pre-filled title/description/type for recurring shapes of work (e.g. "upgrade dependency X", "fix flaky test"). Applied in the new-task form; creating a task from a template just pre-fills fields. */
         TaskTemplate: {
@@ -1926,6 +2182,10 @@ export interface components {
             retry_backoff_secs?: number;
             /** @description Whether new runs for a task resume the previous run's provider session (claude provider only; other providers ignore it). On by default. Off means every run starts cold — useful for stages that should look at the work with fresh eyes (e.g. agent review). */
             resume_sessions?: boolean;
+            /** @description Whether this config's runs may decompose their task into subtasks via the create_subtask MCP tool (claude/qwen_code only). Off by default — a deliberate capability granted to a specific agent (the planner). */
+            subtasks_enabled?: boolean;
+            /** @description Per-parent cap on children this config may create. Default 10. */
+            max_subtasks?: number;
             /** @description JSON array of Claude plugin IDs ("<name>@<marketplace>") enabled for this agent config. Claude-provider only; defaults to "[]" (all plugins off). */
             enabled_plugins?: string;
             /** @description JSON array of Claude user-level MCP server names (from ~/.claude.json's global mcpServers) enabled for this agent config. Claude-provider only; defaults to "[]" (all MCP servers off). */

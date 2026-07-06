@@ -99,6 +99,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxRetries        *int64 `json:"max_retries"`
 		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
 		ResumeSessions    *bool  `json:"resume_sessions"`
+		SubtasksEnabled   *bool  `json:"subtasks_enabled"`
+		MaxSubtasks       *int64 `json:"max_subtasks"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -159,6 +161,14 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.ResumeSessions != nil && !*body.ResumeSessions {
 		resumeSessions = 0
 	}
+	subtasksEnabled := int64(0)
+	if body.SubtasksEnabled != nil && *body.SubtasksEnabled {
+		subtasksEnabled = 1
+	}
+	maxSubtasks := int64(10)
+	if body.MaxSubtasks != nil && *body.MaxSubtasks > 0 {
+		maxSubtasks = *body.MaxSubtasks
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -190,6 +200,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxRetries:        maxRetries,
 		RetryBackoffSecs:  retryBackoffSecs,
 		ResumeSessions:    resumeSessions,
+		SubtasksEnabled:   subtasksEnabled,
+		MaxSubtasks:       maxSubtasks,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -205,8 +217,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
 			CommandAllowlist: cfg.CommandAllowlist, CommandDenylist: cfg.CommandDenylist,
 			MaxRetries: cfg.MaxRetries, RetryBackoffSecs: cfg.RetryBackoffSecs,
-			ResumeSessions: cfg.ResumeSessions,
-			Enabled:        0, ID: cfg.ID,
+			ResumeSessions:  cfg.ResumeSessions,
+			SubtasksEnabled: cfg.SubtasksEnabled, MaxSubtasks: cfg.MaxSubtasks,
+			Enabled: 0, ID: cfg.ID,
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -239,6 +252,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MaxRetries        *int64 `json:"max_retries"`
 		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
 		ResumeSessions    *bool  `json:"resume_sessions"`
+		SubtasksEnabled   *bool  `json:"subtasks_enabled"`
+		MaxSubtasks       *int64 `json:"max_subtasks"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -314,6 +329,18 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			resumeSessions = 0
 		}
 	}
+	subtasksEnabled := existing.SubtasksEnabled
+	if body.SubtasksEnabled != nil {
+		if *body.SubtasksEnabled {
+			subtasksEnabled = 1
+		} else {
+			subtasksEnabled = 0
+		}
+	}
+	maxSubtasks := existing.MaxSubtasks
+	if body.MaxSubtasks != nil && *body.MaxSubtasks > 0 {
+		maxSubtasks = *body.MaxSubtasks
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -333,6 +360,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MaxRetries:        maxRetries,
 		RetryBackoffSecs:  retryBackoffSecs,
 		ResumeSessions:    resumeSessions,
+		SubtasksEnabled:   subtasksEnabled,
+		MaxSubtasks:       maxSubtasks,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {

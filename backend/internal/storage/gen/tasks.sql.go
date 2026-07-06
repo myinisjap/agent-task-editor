@@ -21,6 +21,17 @@ func (q *Queries) ClearActiveAgentRun(ctx context.Context, id string) error {
 	return err
 }
 
+const countSubtasks = `-- name: CountSubtasks :one
+SELECT COUNT(*) FROM tasks WHERE parent_task_id = ?
+`
+
+func (q *Queries) CountSubtasks(ctx context.Context, parentTaskID *string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSubtasks, parentTaskID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countTasksBySource = `-- name: CountTasksBySource :one
 SELECT COUNT(*) FROM tasks WHERE source = ? AND source_ref = ?
 `
@@ -40,7 +51,7 @@ func (q *Queries) CountTasksBySource(ctx context.Context, arg CountTasksBySource
 const createSourcedTask = `-- name: CreateSourcedTask :one
 INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id, attachments, source, source_ref)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type CreateSourcedTaskParams struct {
@@ -95,6 +106,74 @@ func (q *Queries) CreateSourcedTask(ctx context.Context, arg CreateSourcedTaskPa
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
+	)
+	return i, err
+}
+
+const createSubtask = `-- name: CreateSubtask :one
+INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id, attachments, parent_task_id, created_by_run_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
+`
+
+type CreateSubtaskParams struct {
+	ID             string  `json:"id"`
+	Title          string  `json:"title"`
+	Description    string  `json:"description"`
+	Type           string  `json:"type"`
+	Label          string  `json:"label"`
+	RepoID         string  `json:"repo_id"`
+	WorkflowID     string  `json:"workflow_id"`
+	ParentTaskID   *string `json:"parent_task_id"`
+	CreatedByRunID *string `json:"created_by_run_id"`
+}
+
+// Creates a child task under a parent. parent_task_id groups it; created_by_run_id
+// records the agent run that requested it. Inherits the parent's repo + workflow.
+func (q *Queries) CreateSubtask(ctx context.Context, arg CreateSubtaskParams) (Task, error) {
+	row := q.db.QueryRowContext(ctx, createSubtask,
+		arg.ID,
+		arg.Title,
+		arg.Description,
+		arg.Type,
+		arg.Label,
+		arg.RepoID,
+		arg.WorkflowID,
+		arg.ParentTaskID,
+		arg.CreatedByRunID,
+	)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.Type,
+		&i.Label,
+		&i.RepoID,
+		&i.WorkflowID,
+		&i.CurrentAgentRunID,
+		&i.AgentNotes,
+		&i.ActiveAgentRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Branch,
+		&i.WorktreePath,
+		&i.BaseRef,
+		&i.Attachments,
+		&i.GitState,
+		&i.Paused,
+		&i.TransientRetryCount,
+		&i.NextRetryAt,
+		&i.Source,
+		&i.SourceRef,
+		&i.Archived,
+		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -102,7 +181,7 @@ func (q *Queries) CreateSourcedTask(ctx context.Context, arg CreateSourcedTaskPa
 const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id, attachments)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type CreateTaskParams struct {
@@ -153,6 +232,9 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -167,7 +249,7 @@ func (q *Queries) DeleteTask(ctx context.Context, id string) error {
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks WHERE id = ?
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status FROM tasks WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
@@ -198,12 +280,15 @@ func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
 
 const listAgentPickupTasks = `-- name: ListAgentPickupTasks :many
-SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at, t.source, t.source_ref, t.archived, t.pr_url FROM tasks t
+SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at, t.source, t.source_ref, t.archived, t.pr_url, t.parent_task_id, t.created_by_run_id, t.merge_status FROM tasks t
 WHERE t.label IN (
     SELECT wt.from_label FROM workflow_transitions wt
     WHERE wt.workflow_id = t.workflow_id
@@ -218,8 +303,22 @@ AND t.active_agent_run_id IS NULL
 AND t.paused = 0
 AND t.archived = 0
 AND (t.next_retry_at IS NULL OR t.next_retry_at <= CURRENT_TIMESTAMP)
+AND NOT EXISTS (
+    SELECT 1 FROM task_dependencies d
+    JOIN tasks dt ON dt.id = d.depends_on_task_id
+    WHERE d.task_id = t.id
+      AND dt.archived = 0
+      AND NOT EXISTS (
+          SELECT 1 FROM workflow_labels wl
+          WHERE wl.workflow_id = dt.workflow_id
+            AND wl.name = dt.label
+            AND wl.is_terminal != 0
+      )
+)
 `
 
+// Dependency gate: never dispatch a task that still has an unsatisfied blocker.
+// A blocker is satisfied once it is archived or sits on a terminal label.
 func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx, listAgentPickupTasks)
 	if err != nil {
@@ -254,6 +353,9 @@ func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 			&i.SourceRef,
 			&i.Archived,
 			&i.PrUrl,
+			&i.ParentTaskID,
+			&i.CreatedByRunID,
+			&i.MergeStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -269,7 +371,7 @@ func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 }
 
 const listGhSyncEligibleTasks = `-- name: ListGhSyncEligibleTasks :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') ORDER BY created_at DESC
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status FROM tasks WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') ORDER BY created_at DESC
 `
 
 // Tasks worth polling GitHub for PR status: branch-bearing, not archived, and
@@ -309,6 +411,118 @@ func (q *Queries) ListGhSyncEligibleTasks(ctx context.Context) ([]Task, error) {
 			&i.SourceRef,
 			&i.Archived,
 			&i.PrUrl,
+			&i.ParentTaskID,
+			&i.CreatedByRunID,
+			&i.MergeStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSubtaskRollups = `-- name: ListSubtaskRollups :many
+SELECT
+    p.id AS parent_id,
+    COUNT(c.id) AS total,
+    SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM workflow_labels wl
+        WHERE wl.workflow_id = c.workflow_id AND wl.name = c.label AND wl.is_terminal != 0
+    ) THEN 1 ELSE 0 END) AS done,
+    SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts
+FROM tasks p
+JOIN tasks c ON c.parent_task_id = p.id
+GROUP BY p.id
+`
+
+type ListSubtaskRollupsRow struct {
+	ParentID  string   `json:"parent_id"`
+	Total     int64    `json:"total"`
+	Done      *float64 `json:"done"`
+	Conflicts *float64 `json:"conflicts"`
+}
+
+// Per-parent rollup counts, restricted to tasks that actually have children so
+// the board can render "3/5 done" badges in one query. A child counts as "done"
+// when it sits on a terminal label. Also surfaces how many children are in a
+// merge_conflict state so the parent card can flag it.
+func (q *Queries) ListSubtaskRollups(ctx context.Context) ([]ListSubtaskRollupsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSubtaskRollups)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSubtaskRollupsRow
+	for rows.Next() {
+		var i ListSubtaskRollupsRow
+		if err := rows.Scan(
+			&i.ParentID,
+			&i.Total,
+			&i.Done,
+			&i.Conflicts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSubtasks = `-- name: ListSubtasks :many
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC
+`
+
+// Direct children of a parent task, newest first.
+func (q *Queries) ListSubtasks(ctx context.Context, parentTaskID *string) ([]Task, error) {
+	rows, err := q.db.QueryContext(ctx, listSubtasks, parentTaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.Type,
+			&i.Label,
+			&i.RepoID,
+			&i.WorkflowID,
+			&i.CurrentAgentRunID,
+			&i.AgentNotes,
+			&i.ActiveAgentRunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Branch,
+			&i.WorktreePath,
+			&i.BaseRef,
+			&i.Attachments,
+			&i.GitState,
+			&i.Paused,
+			&i.TransientRetryCount,
+			&i.NextRetryAt,
+			&i.Source,
+			&i.SourceRef,
+			&i.Archived,
+			&i.PrUrl,
+			&i.ParentTaskID,
+			&i.CreatedByRunID,
+			&i.MergeStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -324,7 +538,7 @@ func (q *Queries) ListGhSyncEligibleTasks(ctx context.Context) ([]Task, error) {
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks ORDER BY created_at DESC
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status FROM tasks ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
@@ -361,6 +575,9 @@ func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
 			&i.SourceRef,
 			&i.Archived,
 			&i.PrUrl,
+			&i.ParentTaskID,
+			&i.CreatedByRunID,
+			&i.MergeStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -376,7 +593,7 @@ func (q *Queries) ListTasks(ctx context.Context) ([]Task, error) {
 }
 
 const listTasksByLabel = `-- name: ListTasksByLabel :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks WHERE label = ? ORDER BY created_at DESC
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status FROM tasks WHERE label = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListTasksByLabel(ctx context.Context, label string) ([]Task, error) {
@@ -413,6 +630,9 @@ func (q *Queries) ListTasksByLabel(ctx context.Context, label string) ([]Task, e
 			&i.SourceRef,
 			&i.Archived,
 			&i.PrUrl,
+			&i.ParentTaskID,
+			&i.CreatedByRunID,
+			&i.MergeStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -431,7 +651,7 @@ const resetTaskTransientRetry = `-- name: ResetTaskTransientRetry :one
 UPDATE tasks
 SET transient_retry_count = 0, next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 func (q *Queries) ResetTaskTransientRetry(ctx context.Context, id string) (Task, error) {
@@ -462,12 +682,15 @@ func (q *Queries) ResetTaskTransientRetry(ctx context.Context, id string) (Task,
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
 
 const searchTasks = `-- name: SearchTasks :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url FROM tasks
+SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status FROM tasks
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%' OR description LIKE '%' || ?1 || '%')
   AND (?2 = '' OR label = ?2)
   AND (?3 = '' OR repo_id = ?3)
@@ -535,6 +758,9 @@ func (q *Queries) SearchTasks(ctx context.Context, arg SearchTasksParams) ([]Tas
 			&i.SourceRef,
 			&i.Archived,
 			&i.PrUrl,
+			&i.ParentTaskID,
+			&i.CreatedByRunID,
+			&i.MergeStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -550,7 +776,7 @@ func (q *Queries) SearchTasks(ctx context.Context, arg SearchTasksParams) ([]Tas
 }
 
 const searchTasksPage = `-- name: SearchTasksPage :many
-SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at, t.source, t.source_ref, t.archived, t.pr_url FROM tasks t
+SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at, t.source, t.source_ref, t.archived, t.pr_url, t.parent_task_id, t.created_by_run_id, t.merge_status FROM tasks t
 WHERE (?1 = '' OR t.title LIKE '%' || ?1 || '%' OR t.description LIKE '%' || ?1 || '%')
   AND (?2 = '' OR t.label = ?2)
   AND (?3 = '' OR t.repo_id = ?3)
@@ -633,6 +859,9 @@ func (q *Queries) SearchTasksPage(ctx context.Context, arg SearchTasksPageParams
 			&i.SourceRef,
 			&i.Archived,
 			&i.PrUrl,
+			&i.ParentTaskID,
+			&i.CreatedByRunID,
+			&i.MergeStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -668,7 +897,7 @@ const setTaskArchived = `-- name: SetTaskArchived :one
 UPDATE tasks
 SET archived = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type SetTaskArchivedParams struct {
@@ -704,6 +933,56 @@ func (q *Queries) SetTaskArchived(ctx context.Context, arg SetTaskArchivedParams
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
+	)
+	return i, err
+}
+
+const setTaskMergeStatus = `-- name: SetTaskMergeStatus :one
+UPDATE tasks
+SET merge_status = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
+`
+
+type SetTaskMergeStatusParams struct {
+	MergeStatus string `json:"merge_status"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) SetTaskMergeStatus(ctx context.Context, arg SetTaskMergeStatusParams) (Task, error) {
+	row := q.db.QueryRowContext(ctx, setTaskMergeStatus, arg.MergeStatus, arg.ID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.Type,
+		&i.Label,
+		&i.RepoID,
+		&i.WorkflowID,
+		&i.CurrentAgentRunID,
+		&i.AgentNotes,
+		&i.ActiveAgentRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Branch,
+		&i.WorktreePath,
+		&i.BaseRef,
+		&i.Attachments,
+		&i.GitState,
+		&i.Paused,
+		&i.TransientRetryCount,
+		&i.NextRetryAt,
+		&i.Source,
+		&i.SourceRef,
+		&i.Archived,
+		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -712,7 +991,7 @@ const setTaskPR = `-- name: SetTaskPR :one
 UPDATE tasks
 SET git_state = ?, pr_url = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type SetTaskPRParams struct {
@@ -749,6 +1028,9 @@ func (q *Queries) SetTaskPR(ctx context.Context, arg SetTaskPRParams) (Task, err
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -757,7 +1039,7 @@ const setTaskPaused = `-- name: SetTaskPaused :one
 UPDATE tasks
 SET paused = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type SetTaskPausedParams struct {
@@ -793,6 +1075,9 @@ func (q *Queries) SetTaskPaused(ctx context.Context, arg SetTaskPausedParams) (T
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -801,7 +1086,7 @@ const setTaskTransientRetry = `-- name: SetTaskTransientRetry :one
 UPDATE tasks
 SET transient_retry_count = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type SetTaskTransientRetryParams struct {
@@ -838,6 +1123,9 @@ func (q *Queries) SetTaskTransientRetry(ctx context.Context, arg SetTaskTransien
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -869,7 +1157,7 @@ const updateTask = `-- name: UpdateTask :one
 UPDATE tasks
 SET title = ?, description = ?, type = ?, repo_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type UpdateTaskParams struct {
@@ -914,6 +1202,9 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -922,7 +1213,7 @@ const updateTaskAttachments = `-- name: UpdateTaskAttachments :one
 UPDATE tasks
 SET attachments = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type UpdateTaskAttachmentsParams struct {
@@ -958,6 +1249,9 @@ func (q *Queries) UpdateTaskAttachments(ctx context.Context, arg UpdateTaskAttac
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -966,7 +1260,7 @@ const updateTaskGitState = `-- name: UpdateTaskGitState :one
 UPDATE tasks
 SET git_state = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type UpdateTaskGitStateParams struct {
@@ -1002,6 +1296,9 @@ func (q *Queries) UpdateTaskGitState(ctx context.Context, arg UpdateTaskGitState
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -1010,7 +1307,7 @@ const updateTaskLabel = `-- name: UpdateTaskLabel :one
 UPDATE tasks
 SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type UpdateTaskLabelParams struct {
@@ -1047,6 +1344,9 @@ func (q *Queries) UpdateTaskLabel(ctx context.Context, arg UpdateTaskLabelParams
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }
@@ -1055,7 +1355,7 @@ const updateTaskNotes = `-- name: UpdateTaskNotes :one
 UPDATE tasks
 SET agent_notes = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url
+RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status
 `
 
 type UpdateTaskNotesParams struct {
@@ -1091,6 +1391,9 @@ func (q *Queries) UpdateTaskNotes(ctx context.Context, arg UpdateTaskNotesParams
 		&i.SourceRef,
 		&i.Archived,
 		&i.PrUrl,
+		&i.ParentTaskID,
+		&i.CreatedByRunID,
+		&i.MergeStatus,
 	)
 	return i, err
 }

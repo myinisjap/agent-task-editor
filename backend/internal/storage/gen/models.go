@@ -29,6 +29,8 @@ type AgentConfig struct {
 	MaxRetries        int64     `json:"max_retries"`
 	RetryBackoffSecs  int64     `json:"retry_backoff_secs"`
 	ResumeSessions    int64     `json:"resume_sessions"`
+	SubtasksEnabled   int64     `json:"subtasks_enabled"`
+	MaxSubtasks       int64     `json:"max_subtasks"`
 }
 
 type AgentLog struct {
@@ -94,6 +96,15 @@ type Task struct {
 	SourceRef           string     `json:"source_ref"`
 	Archived            int64      `json:"archived"`
 	PrUrl               string     `json:"pr_url"`
+	ParentTaskID        *string    `json:"parent_task_id"`
+	CreatedByRunID      *string    `json:"created_by_run_id"`
+	MergeStatus         string     `json:"merge_status"`
+}
+
+type TaskDependency struct {
+	TaskID          string    `json:"task_id"`
+	DependsOnTaskID string    `json:"depends_on_task_id"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type TaskLabelHistory struct {

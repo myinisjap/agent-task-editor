@@ -75,6 +75,39 @@ export type Task = {
   // came from ("owner/repo#123"). Both empty for manually created tasks.
   source?: string
   source_ref?: string
+  // Derived (read-time) dependency counts. blocked_by_count is the number of
+  // this task's blockers whose edges are still unsatisfied — while > 0 the task
+  // is never dispatched. blocking_count is how many tasks depend on this one.
+  blocked_by_count?: number
+  blocking_count?: number
+  // Subtask decomposition (Mechanism 2). parent_task_id is set on a child;
+  // created_by_run_id records the agent run that created it; merge_status tracks
+  // a child's branch merge-back into the parent ('' | pending | merged |
+  // merge_conflict). subtask_* are derived rollups on a parent.
+  parent_task_id?: string | null
+  created_by_run_id?: string | null
+  merge_status?: string
+  subtask_total?: number
+  subtask_done?: number
+  subtask_conflicts?: number
+}
+
+// DependencyEdge is one end of a task dependency edge (a blocker or a
+// dependent). `satisfied` is only meaningful for blockers.
+export type DependencyEdge = {
+  task_id: string
+  title: string
+  label: string
+  archived: boolean
+  satisfied: boolean
+}
+
+// TaskDependencies is both directions of a task's dependency edges.
+export type TaskDependencies = {
+  blocked_by: DependencyEdge[]
+  blocking: DependencyEdge[]
+  blocked_by_count: number
+  blocking_count: number
 }
 
 // Optional filters for GET /tasks. `q` is a case-insensitive substring match
@@ -222,6 +255,11 @@ export type AgentConfig = {
   // Whether new runs resume the previous run's provider session (claude
   // provider only; on by default). Off = every run starts cold ("fresh eyes").
   resume_sessions?: boolean
+  // Whether this config's runs can decompose their task into subtasks via the
+  // create_subtask MCP tool (claude/qwen_code only; off by default). max_subtasks
+  // caps children per parent.
+  subtasks_enabled?: boolean
+  max_subtasks?: number
   created_at: string
   updated_at: string
 }
@@ -337,6 +375,22 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ ids, action, ...opts }),
       }),
+    // Peer dependencies (dispatch gate). dependencies() lists both directions;
+    // addDependency() gates this task behind another (409 on cycle/duplicate,
+    // 400 on self/cross-workflow); removeDependency() drops the edge.
+    dependencies: (id: string) => request<TaskDependencies>(`/tasks/${id}/dependencies`),
+    addDependency: (id: string, dependsOnTaskId: string) =>
+      request<void>(`/tasks/${id}/dependencies`, {
+        method: 'POST',
+        body: JSON.stringify({ depends_on_task_id: dependsOnTaskId }),
+      }),
+    removeDependency: (id: string, depId: string) =>
+      request<void>(`/tasks/${id}/dependencies/${depId}`, { method: 'DELETE' }),
+    // Subtasks (Mechanism 2). subtasks() lists a parent's children; createSubtask
+    // adds one under the parent (lands on a human-gate label).
+    subtasks: (id: string) => request<Task[]>(`/tasks?parent_id=${encodeURIComponent(id)}`),
+    createSubtask: (id: string, body: { title: string; description?: string; type?: string; label?: string }) =>
+      request<Task>(`/tasks/${id}/subtasks`, { method: 'POST', body: JSON.stringify(body) }),
     reviewComments: (id: string) => request<ReviewComment[]>(`/tasks/${id}/review-comments`),
     addReviewComment: (id: string, body: { file_path: string; side: 'old' | 'new'; start_line: number; end_line: number; quoted_text?: string; body: string }) =>
       request<ReviewComment>(`/tasks/${id}/review-comments`, { method: 'POST', body: JSON.stringify(body) }),

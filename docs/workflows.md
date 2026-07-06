@@ -143,3 +143,75 @@ transitions:
 3. If the destination label has `agent_ignore = true`, agents cannot move tasks there (`ErrAgentIgnored`).
 4. Every successful transition is recorded in `task_label_history` with the trigger, actor ID, and optional note.
 5. Whenever `UpdateTaskLabel` runs (any transition), `active_agent_run_id` is automatically cleared — preventing stale dispatch locks.
+
+## Task Dependencies
+
+A task can declare **dependencies** on other tasks in the same workflow — a way
+to express "don't dispatch B until A is done" so multi-task work can be queued
+without babysitting the board.
+
+- **Dispatch-only gate.** A task with at least one *unsatisfied* blocker is never
+  picked up by the dispatcher. It is not paused, archived, or moved — it simply
+  sits on its current label until its blockers finish. Humans can still drag it
+  anywhere; dragging a blocked task into an agent-triggerable column pops a
+  confirmation, and the task stays un-dispatched (and visibly muted with a
+  "blocked by N" badge) until the block clears.
+- **Satisfied = terminal or archived.** A blocker satisfies its edge once it
+  reaches a label with `is_terminal = true`, **or** is archived. Archiving is the
+  existing "this is over" gesture; treating an archived blocker as forever-blocking
+  would create an invisible deadlock. (Un-archiving makes the edge unmet again.)
+- **Derived, never stored.** "Blocked" is computed at read time from the blocker's
+  current state — there is no status column to drift and no event required when a
+  blocker completes. The next dispatch sweep just sees the task as eligible.
+- **No cycles, no self-edges, no cross-workflow edges.** These are rejected when
+  the edge is created. A blocker whose workflow has no terminal label is also
+  rejected, since such an edge could never satisfy.
+- **Not parent/child.** A dependency is a peer relationship with no automation: a
+  dependent task always has its own work, and simply becomes dispatch-eligible on
+  its current label once its blockers finish. (Parent/child subtask decomposition
+  is a separate, future mechanism.)
+
+Manage dependencies from a task's detail page (the Dependencies section) or via
+`GET/POST /tasks/{id}/dependencies` and `DELETE /tasks/{id}/dependencies/{dep_id}`.
+Task list/detail responses carry derived `blocked_by_count` and `blocking_count`.
+
+## Subtasks (agent-driven decomposition)
+
+A planning agent can split a large task into structured child tasks instead of
+leaving prose in `agent_notes`. Subtasks build on the dependency gate above.
+
+- **Opt-in per agent config.** Only a config with `subtasks_enabled` (off by
+  default) exposes the `create_subtask` MCP tool; `max_subtasks` (default 10)
+  caps children per parent. Typically only the planner gets this. The
+  `create_subtask` tool writes live to `POST /tasks/{id}/subtasks`, so children
+  appear on the board mid-run.
+- **Human gate.** Children land on the workflow's first `agent_ignore` label
+  (the seed workflow: `not_ready`) so a human sanity-checks the decomposition
+  before agents fan out, then releases them (bulk-move out of the gate).
+- **Relationship.** `parent_task_id` groups a child under its parent (rollup,
+  provenance via `created_by_run_id`); an auto-created **parent→child dependency
+  edge** is the dispatch gate, so the parent isn't dispatched until every child
+  reaches a terminal label. Depth is limited to 1 — a subtask can't create
+  subtasks.
+- **Branch off parent, merge back.** A child's worktree is cut from the parent's
+  branch. When a child reaches a terminal label its branch is merged back into
+  the parent's branch (a plain merge commit); the child's worktree/branch are
+  then removed. Children never push to origin or open PRs — the parent's branch
+  (and its single eventual PR) is the only outward-facing artifact, and
+  `GET /tasks/{parent}/diff` shows the integrated result.
+- **Conflicts.** A conflicting merge-back is aborted cleanly and the child is
+  flagged `merge_conflict`. Because the child is terminal, the parent's edge is
+  satisfied and the parent becomes dispatch-eligible; the dispatcher hands the
+  parent's `work` agent the conflict context to resolve the merge on the parent
+  branch. A human can also resolve it manually.
+- **Auto-advance.** Once every child is terminal and merged cleanly, the parent
+  advances along its agent-success transition (`work → testing` in the seed
+  workflow), recorded in `task_label_history` with the `subtasks_complete`
+  trigger. If the parent is paused, has a run in flight, or has no agent-success
+  transition, the auto-advance is skipped and the parent is simply left
+  unblocked for a human or the next dispatch to drive.
+
+Manage subtasks from a task's detail page (the Subtasks section) or via
+`POST /tasks/{id}/subtasks` and `GET /tasks?parent_id=`. Task responses carry
+`parent_task_id`, `merge_status`, and derived `subtask_total`/`subtask_done`/
+`subtask_conflicts`.

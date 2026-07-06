@@ -8,10 +8,39 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // worktreeDir is the subdirectory under a repo where per-task worktrees live.
 const worktreeDir = ".ate-worktrees"
+
+// repoGitLocks serializes ref-mutating git operations within a single repo.
+// Git worktrees share one object/ref store, so concurrent commits, merges,
+// branch deletes, and worktree adds/removes across sibling worktrees can race on
+// the ref lock ("cannot lock ref 'HEAD'…"). The pool (safety-net commit / push)
+// and the subtask coordinator (merge-back / branch teardown) both take the
+// repo's lock around their git writes so those operations never overlap.
+var (
+	repoGitLockMu sync.Mutex
+	repoGitLocks  = map[string]*sync.Mutex{}
+)
+
+// RepoGitLock returns the per-repo git mutex, creating it on first use. Keyed by
+// the repo's main-clone path. An empty path returns a throwaway lock (callers
+// without a known repo path still get correct, if uncontended, behavior).
+func RepoGitLock(repoPath string) *sync.Mutex {
+	if repoPath == "" {
+		return &sync.Mutex{}
+	}
+	repoGitLockMu.Lock()
+	defer repoGitLockMu.Unlock()
+	l := repoGitLocks[repoPath]
+	if l == nil {
+		l = &sync.Mutex{}
+		repoGitLocks[repoPath] = l
+	}
+	return l
+}
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -37,11 +66,21 @@ func branchName(taskID, title string) string {
 // the worktree path, branch name, and the base ref it forked from. Idempotent:
 // if the worktree already exists on disk it is returned as-is.
 func provisionWorktree(ctx context.Context, repoPath, taskID, title string) (wtPath, branch, baseRef string, err error) {
+	return provisionWorktreeFrom(ctx, repoPath, taskID, title, "")
+}
+
+// provisionWorktreeFrom is provisionWorktree with an explicit base ref. When
+// baseOverride is non-empty the new branch is cut from it (used to branch a
+// subtask off its parent's branch); otherwise the repo's default branch is used.
+func provisionWorktreeFrom(ctx context.Context, repoPath, taskID, title, baseOverride string) (wtPath, branch, baseRef string, err error) {
 	branch = branchName(taskID, title)
 	wtPath = filepath.Join(repoPath, worktreeDir, taskID)
 
 	if fi, statErr := os.Stat(wtPath); statErr == nil && fi.IsDir() {
-		base, _ := defaultBaseRef(ctx, repoPath)
+		base := baseOverride
+		if base == "" {
+			base, _ = defaultBaseRef(ctx, repoPath)
+		}
 		return wtPath, branch, base, nil
 	}
 
@@ -49,9 +88,13 @@ func provisionWorktree(ctx context.Context, repoPath, taskID, title string) (wtP
 	// Best-effort: if there's no remote or no connectivity, proceed with local state.
 	_, _ = git(ctx, repoPath, "fetch", "--prune")
 
-	baseRef, err = defaultBaseRef(ctx, repoPath)
-	if err != nil {
-		return "", "", "", err
+	if baseOverride != "" {
+		baseRef = baseOverride
+	} else {
+		baseRef, err = defaultBaseRef(ctx, repoPath)
+		if err != nil {
+			return "", "", "", err
+		}
 	}
 
 	// Keep the worktrees dir out of the main tree's untracked listing.
@@ -135,6 +178,31 @@ func PushBranch(ctx context.Context, wtPath, branch string) error {
 		return fmt.Errorf("git push: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// MergeBranch merges branch into the current branch of the worktree at wtPath
+// as a plain merge commit (--no-ff, keeping per-child commits in history). It
+// reports conflicted=true (and leaves the tree clean via `git merge --abort`)
+// when the merge hits conflicts, so the caller can flag the child and hand the
+// resolution to the parent's agent. A non-conflict error is returned as err.
+func MergeBranch(ctx context.Context, wtPath, branch, msg, gitName, gitEmail string) (conflicted bool, files []string, err error) {
+	out, mErr := git(ctx, wtPath,
+		"-c", "user.name="+gitName, "-c", "user.email="+gitEmail,
+		"merge", "--no-ff", "-m", msg, branch)
+	if mErr == nil {
+		return false, nil, nil
+	}
+	// A merge that leaves conflict markers reports the conflicting paths via
+	// `git diff --name-only --diff-filter=U`. If there are none, the failure was
+	// something else (bad ref, etc.) — surface it as a real error.
+	confOut, _ := git(ctx, wtPath, "diff", "--name-only", "--diff-filter=U")
+	conflicts := strings.Fields(strings.TrimSpace(string(confOut)))
+	if len(conflicts) == 0 {
+		return false, nil, fmt.Errorf("git merge: %w: %s", mErr, strings.TrimSpace(string(out)))
+	}
+	// Abort so the parent's worktree is left clean for the resolution run.
+	_, _ = git(ctx, wtPath, "merge", "--abort")
+	return true, conflicts, nil
 }
 
 // RemoveWorktree tears down the task's worktree directory. The branch is kept.

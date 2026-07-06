@@ -42,6 +42,10 @@ type Pool struct {
 	// GitName/GitEmail are used for safety-net commits when the container has no git identity.
 	GitName  string
 	GitEmail string
+	// Subtasks coordinates child→parent merge-back (optional — nil disables it).
+	// Used here to skip pushing child branches and to flush/resolve merges once a
+	// parent's run completes.
+	Subtasks *SubtaskCoordinator
 
 	// running tracks the cancel func for each in-flight run so a human can stop
 	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
@@ -345,16 +349,24 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 	// Safety-net: capture any changes the agent left uncommitted in its worktree
 	// so the task's branch always reflects the run. No-op if the agent committed.
+	isSubtask := job.Input.Task.ParentID != ""
 	if finalStatus == "completed" && job.Input.RepoPath != "" {
+		// Serialize ref-mutating git ops against other tasks/merges in this repo.
+		lock := RepoGitLock(job.Input.Task.RepoPath)
+		lock.Lock()
 		msg := fmt.Sprintf("task %s: agent run %s", job.Input.Task.ID, job.RunID)
 		if err := commitIfDirty(ctx, job.Input.RepoPath, msg, p.GitName, p.GitEmail); err != nil {
 			log.Warn("pool: safety-net commit failed", "err", err)
 		}
-		if job.Input.RepoRemoteURL != "" && job.Input.Task.Branch != "" {
+		// Children never push to origin — their branch merges back into the
+		// parent's branch on terminal (see SubtaskCoordinator). Only push
+		// ordinary tasks.
+		if !isSubtask && job.Input.RepoRemoteURL != "" && job.Input.Task.Branch != "" {
 			if err := PushBranch(ctx, job.Input.RepoPath, job.Input.Task.Branch); err != nil {
 				log.Warn("pool: push branch failed", "branch", job.Input.Task.Branch, "err", err)
 			}
 		}
+		lock.Unlock()
 	}
 
 	// Resolve outcome → next label via workflow transitions.
@@ -415,6 +427,13 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// Clear rate-limit backoff on any non-rate-limited completion (success or normal failure).
 	if p.RateLimits != nil {
 		p.RateLimits.Unblock(job.Input.AgentConfig.ID)
+	}
+
+	// If this task is a parent with subtasks, settle merge-backs now that its run
+	// is done: resolve conflict-resolution merges the run committed, and flush any
+	// merges that were deferred while this run was in flight. No-op otherwise.
+	if p.Subtasks != nil && (finalStatus == "completed" || finalStatus == "failed") && !isSubtask && job.Input.Task.RepoPath != "" {
+		p.Subtasks.AfterParentRun(ctx, job.Input.Task.ID, job.Input.Task.RepoPath, finalStatus == "completed")
 	}
 
 	log.Info("pool: agent run finished", "status", finalStatus)

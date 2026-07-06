@@ -2,9 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
+	"time"
 )
 
 // result mirrors agent.Result for JSON serialisation.
@@ -100,6 +105,17 @@ func main() {
 		}
 	}
 
+	// create_subtask (Mechanism 2) is exposed only when the run's agent config
+	// opted in. Unlike the deferred result-file tools, it writes live through the
+	// backend REST API so children appear on the board mid-run.
+	subtasks := subtaskConfig{
+		enabled:     os.Getenv("SUBTASKS_ENABLED") == "1",
+		backendURL:  os.Getenv("BACKEND_URL"),
+		taskID:      os.Getenv("TASK_ID"),
+		apiToken:    os.Getenv("API_TOKEN"),
+		maxSubtasks: os.Getenv("MAX_SUBTASKS"),
+	}
+
 	enc := json.NewEncoder(os.Stdout)
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
@@ -140,76 +156,90 @@ func main() {
 			})
 
 		case "tools/list":
-			respond(map[string]any{
-				"tools": []map[string]any{
-					{
-						"name":        "get_task_transitions",
-						"description": "Returns the available workflow transitions from the task's current label. Call this first to know which outcome values are valid for signal_complete.",
-						"inputSchema": map[string]any{
-							"type":       "object",
-							"properties": map[string]any{},
-						},
-					},
-					{
-						"name":        "signal_complete",
-						"description": "Call when your work is done. Pass outcome='success' if the work succeeded or outcome='failure' if it did not. The system resolves the correct next workflow label automatically.",
-						"inputSchema": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"outcome": map[string]any{"type": "string", "enum": []string{"success", "failure"}, "description": "Whether the work succeeded or failed"},
-								"summary": map[string]any{"type": "string", "description": "Brief summary of what was done"},
-							},
-							"required": []string{"outcome", "summary"},
-						},
-					},
-					{
-						"name":        "request_human",
-						"description": "Pause and request human input before continuing.",
-						"inputSchema": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"message": map[string]any{"type": "string", "description": "Question or context for the human reviewer"},
-							},
-							"required": []string{"message"},
-						},
-					},
-					{
-						"name":        "update_task_notes",
-						"description": "Write structured notes to the task for subsequent agents to read. Use this to record plans, analysis, review findings, or any context that the next agent in the workflow should have.",
-						"inputSchema": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"notes":  map[string]any{"type": "string", "description": "The notes content (supports markdown)"},
-								"append": map[string]any{"type": "boolean", "description": "If true, append to existing notes instead of replacing"},
-							},
-							"required": []string{"notes"},
-						},
-					},
-					{
-						"name":        "store_info",
-						"description": "Store structured information about this run that will be visible in the task view after completion.",
-						"inputSchema": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"info": map[string]any{"type": "string", "description": "Information to store (markdown or plain text)"},
-							},
-							"required": []string{"info"},
-						},
-					},
-					{
-						"name":        "resolve_comment",
-						"description": "Mark an inline diff review comment (from the OPEN REVIEW COMMENTS section of your prompt) as addressed. Call once per comment after you have made the fix.",
-						"inputSchema": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"comment_id": map[string]any{"type": "string", "description": "The comment_id from the OPEN REVIEW COMMENTS section"},
-								"note":       map[string]any{"type": "string", "description": "One-line description of how the comment was addressed"},
-							},
-							"required": []string{"comment_id", "note"},
-						},
+			tools := []map[string]any{
+				{
+					"name":        "get_task_transitions",
+					"description": "Returns the available workflow transitions from the task's current label. Call this first to know which outcome values are valid for signal_complete.",
+					"inputSchema": map[string]any{
+						"type":       "object",
+						"properties": map[string]any{},
 					},
 				},
-			})
+				{
+					"name":        "signal_complete",
+					"description": "Call when your work is done. Pass outcome='success' if the work succeeded or outcome='failure' if it did not. The system resolves the correct next workflow label automatically.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"outcome": map[string]any{"type": "string", "enum": []string{"success", "failure"}, "description": "Whether the work succeeded or failed"},
+							"summary": map[string]any{"type": "string", "description": "Brief summary of what was done"},
+						},
+						"required": []string{"outcome", "summary"},
+					},
+				},
+				{
+					"name":        "request_human",
+					"description": "Pause and request human input before continuing.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"message": map[string]any{"type": "string", "description": "Question or context for the human reviewer"},
+						},
+						"required": []string{"message"},
+					},
+				},
+				{
+					"name":        "update_task_notes",
+					"description": "Write structured notes to the task for subsequent agents to read. Use this to record plans, analysis, review findings, or any context that the next agent in the workflow should have.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"notes":  map[string]any{"type": "string", "description": "The notes content (supports markdown)"},
+							"append": map[string]any{"type": "boolean", "description": "If true, append to existing notes instead of replacing"},
+						},
+						"required": []string{"notes"},
+					},
+				},
+				{
+					"name":        "store_info",
+					"description": "Store structured information about this run that will be visible in the task view after completion.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"info": map[string]any{"type": "string", "description": "Information to store (markdown or plain text)"},
+						},
+						"required": []string{"info"},
+					},
+				},
+				{
+					"name":        "resolve_comment",
+					"description": "Mark an inline diff review comment (from the OPEN REVIEW COMMENTS section of your prompt) as addressed. Call once per comment after you have made the fix.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"comment_id": map[string]any{"type": "string", "description": "The comment_id from the OPEN REVIEW COMMENTS section"},
+							"note":       map[string]any{"type": "string", "description": "One-line description of how the comment was addressed"},
+						},
+						"required": []string{"comment_id", "note"},
+					},
+				},
+			}
+			if subtasks.enabled {
+				tools = append(tools, map[string]any{
+					"name":        "create_subtask",
+					"description": "Split this task into a smaller child task that a later agent will execute. Children run on their own branch (cut from this task's branch) and merge back automatically. Use during planning to decompose large work. Children land on a human-review label; a human releases them. Capped at " + subtasks.maxSubtasks + " per task.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"title":       map[string]any{"type": "string", "description": "Short title of the subtask"},
+							"description": map[string]any{"type": "string", "description": "What the subtask should accomplish"},
+							"type":        map[string]any{"type": "string", "enum": []string{"feature", "bug", "chore", "spike"}, "description": "Task type (default feature)"},
+						},
+						"required": []string{"title", "description"},
+					},
+				})
+			}
+			respond(map[string]any{"tools": tools})
 
 		case "tools/call":
 			var params struct {
@@ -218,6 +248,16 @@ func main() {
 			}
 			if err := json.Unmarshal(req.Params, &params); err != nil {
 				respondErr(-32602, "invalid params")
+				continue
+			}
+
+			// create_subtask writes live to the backend rather than the result file.
+			if params.Name == "create_subtask" {
+				text := createSubtask(subtasks, params.Arguments, log)
+				respond(map[string]any{
+					"content": []map[string]any{{"type": "text", "text": text}},
+					"isError": false,
+				})
 				continue
 			}
 
@@ -329,6 +369,75 @@ func dispatchTool(name string, args json.RawMessage, st *toolState, transitions 
 	default:
 		return "unknown tool: " + name, nil
 	}
+}
+
+// subtaskConfig holds the backend coordinates for the create_subtask tool.
+type subtaskConfig struct {
+	enabled     bool
+	backendURL  string
+	taskID      string
+	apiToken    string
+	maxSubtasks string
+}
+
+// createSubtask posts a new child task to the backend REST API and returns a
+// human-readable text result for the agent (the created id, or an error). It is
+// live (synchronous) so the agent gets a real task id back mid-run.
+func createSubtask(cfg subtaskConfig, args json.RawMessage, log *slog.Logger) string {
+	if cfg.backendURL == "" || cfg.taskID == "" {
+		return "create_subtask is not configured on this server"
+	}
+	var a struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Type        string `json:"type"`
+	}
+	_ = json.Unmarshal(args, &a)
+	if a.Title == "" {
+		return "title is required"
+	}
+
+	payload, _ := json.Marshal(map[string]string{
+		"title":       a.Title,
+		"description": a.Description,
+		"type":        a.Type,
+	})
+	url := cfg.backendURL + "/api/v1/tasks/" + cfg.taskID + "/subtasks"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return "failed to build request: " + err.Error()
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.apiToken)
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Error("create_subtask request failed", "err", err)
+		return "failed to reach backend: " + err.Error()
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var created struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		}
+		_ = json.Unmarshal(respBody, &created)
+		return fmt.Sprintf("Created subtask %s on label %q.", created.ID, created.Label)
+	}
+	// Surface the backend's error message so the agent can adapt (e.g. cap hit).
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(respBody, &errResp)
+	if errResp.Error != "" {
+		return fmt.Sprintf("create_subtask failed (%d): %s", resp.StatusCode, errResp.Error)
+	}
+	return fmt.Sprintf("create_subtask failed (%d)", resp.StatusCode)
 }
 
 // fill copies the accumulated notes/stored-info/resolutions onto a terminal result.
