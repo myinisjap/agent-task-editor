@@ -6,6 +6,8 @@ Agent Task Editor lets you define custom workflows, assign AI agents to specific
 
 Each task moves through a directed state machine (the *workflow*). When a task lands on a label that an AI agent is configured to handle, the dispatcher picks it up within 5 seconds, creates a run record, streams live logs to the UI, and transitions the task to the next label when the agent signals it's done. Human-gated transitions require an explicit Approve or Reject click before the task moves on.
 
+![Drag a task into an agent column, watch it dispatch, review the diff, and approve](docs/img/hero-demo.gif)
+
 ---
 
 ## Features at a Glance
@@ -13,12 +15,36 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Kanban board** with drag-and-drop between columns
 - **Live log streaming** — agent stdout, tool calls, and tool results streamed in real time
 - **Log replay** — reconnecting clients receive all prior logs for the current run
+- **Per-task git worktrees** — concurrent agents on the same repo don't conflict
+- **One-click PR URL** — pre-filled GitHub compare URL with task description and agent notes
 - **Workflow editor** — create/edit labels, transitions, and trigger types; import/export YAML
 - **Agent config UI** — manage multiple AI configs, each targeting different workflow stages
-- **Git diff viewer** — per-repo diff of uncommitted changes
-- **Dashboard** — run counts, completion rate, and recent activity
+- **Git diff viewer** — per-task branch diff against the base ref
+- **Session resume** — re-runs on the same task continue the agent's previous conversation (`claude --resume`) with full prior context instead of starting cold; per-agent-config opt-out for stages that want fresh eyes
+- **Reply to a waiting agent** — when an agent asks for help (`request_human`), answer with text and it continues in the same session, without moving the task
+- **Inline diff review comments** — leave file/line-anchored comments on the diff; open comments are injected into every agent run's prompt until the agent resolves them via the `resolve_comment` MCP tool
+- **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
+- **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once a PR is detected as merged, the task's local branch and worktree are automatically cleaned up
+- **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks — see [docs/task-sources.md](docs/task-sources.md)
+- **Dashboard** — run counts, cost/token tracking, and recent activity
+- **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
+
+See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.
+
+---
+
+## Screenshots
+
+| | |
+|---|---|
+| **Board** — drag-and-drop Kanban across workflow columns | **Task detail** — live agent logs as they stream in |
+| ![Board](docs/img/board.png) | ![Task detail with live logs](docs/img/task-logs.png) |
+| **Diff viewer** — per-task diff with inline review comments | **Workflow editor** — visual + YAML, edit labels and transitions |
+| ![Diff viewer with inline comment](docs/img/diff-viewer.png) | ![Workflow editor](docs/img/workflow-editor.png) |
+| **Dashboard** — run counts, cost, and token usage | **Health** — provider and infrastructure readiness checks |
+| ![Dashboard](docs/img/dashboard.png) | ![Health page](docs/img/health.png) |
 
 ---
 
@@ -181,6 +207,7 @@ cd backend && go build -o mcp-server ./cmd/mcp-server
 | [docs/task-sources.md](docs/task-sources.md) | Importing GitHub Issues as tasks |
 | [docs/api.md](docs/api.md) | Full REST API endpoint reference |
 | [docs/websocket.md](docs/websocket.md) | Live log streaming WebSocket protocol |
+| [docs/screenshots.md](docs/screenshots.md) | How to regenerate the README/docs screenshots and hero GIF |
 
 ---
 
