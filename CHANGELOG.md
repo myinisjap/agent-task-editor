@@ -11,6 +11,8 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-06
+
 ### Added
 - Shift-click a task card's select checkbox to select every task between it and
   the last-clicked card in that column, instead of toggling one at a time.
