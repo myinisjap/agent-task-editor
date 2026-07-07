@@ -67,6 +67,11 @@ function shortPath(p: string): string {
   return parts.slice(-3).join('/')
 }
 
+/** Truncate a string to a max length, appending an ellipsis if shortened */
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) + '…' : s
+}
+
 /** Summarise a tool input object for display */
 function summariseInput(toolName: string, input: Record<string, unknown>): string {
   if (!input || typeof input !== 'object') return ''
@@ -245,6 +250,31 @@ function parseSystemInit(obj: Record<string, unknown>): ParsedLog {
   return { kind: 'system_event', event, detail }
 }
 
+/** Parse a background task lifecycle event (task_started / task_notification) */
+function parseTaskLifecycle(obj: Record<string, unknown>): ParsedLog | null {
+  const subtype = obj.subtype as string | undefined
+
+  if (subtype === 'task_started') {
+    const taskType = (obj.task_type ?? '') as string
+    const description = truncate(((obj.description ?? '') as string).trim(), 120)
+    const parts = ['Background task started']
+    if (taskType) parts.push(taskType)
+    if (description) parts.push(description)
+    return { kind: 'system_event', event: parts.join(' · ') }
+  }
+
+  if (subtype === 'task_notification') {
+    const status = (obj.status ?? 'unknown') as string
+    const summary = truncate(((obj.summary ?? '') as string).trim(), 120)
+    const isFailure = status !== 'completed'
+    const label = isFailure ? `Failed: Background task (${status})` : `Background task ${status}`
+    const event = summary ? `${label}: ${summary}` : label
+    return { kind: 'system_event', event }
+  }
+
+  return null
+}
+
 /** Parse a result/completion event */
 function parseResult(obj: Record<string, unknown>): ParsedLog | null {
   if (obj.type !== 'result') return null
@@ -266,6 +296,10 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
       // ponytail: hide all SDK system events (thinking_tokens, thinking, etc) — noise
       if (obj.type === 'system' && !(debug || !HIDDEN_SUBTYPES.has(obj.subtype as string))) return { kind: 'hidden' }
       if (obj.type === 'system' && obj.subtype === 'init') return parseSystemInit(obj)
+      if (obj.type === 'system' && (obj.subtype === 'task_started' || obj.subtype === 'task_notification')) {
+        const lifecycle = parseTaskLifecycle(obj)
+        if (lifecycle) return lifecycle
+      }
       const msg = parseMessage(obj)
       if (msg) return msg
       const toolUse = parseToolUse(obj)
@@ -285,6 +319,10 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
       // ponytail: hide all SDK system events — noise
       if (obj.type === 'system' && !(debug || !HIDDEN_SUBTYPES.has(obj.subtype as string))) return { kind: 'hidden' }
       if (obj.type === 'system' && obj.subtype === 'init') return parseSystemInit(obj)
+      if (obj.type === 'system' && (obj.subtype === 'task_started' || obj.subtype === 'task_notification')) {
+        const lifecycle = parseTaskLifecycle(obj)
+        if (lifecycle) return lifecycle
+      }
       if (obj.type === 'result') {
         const r = parseResult(obj)
         if (r) return r
@@ -304,6 +342,12 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
   // Filter internal SDK noise regardless of log type
   if (obj.type === 'system' && HIDDEN_SUBTYPES.has(obj.subtype as string) && !debug) {
     return { kind: 'hidden' }
+  }
+
+  // Background task lifecycle events (task_started / task_notification)
+  if (obj.type === 'system' && (obj.subtype === 'task_started' || obj.subtype === 'task_notification')) {
+    const lifecycle = parseTaskLifecycle(obj)
+    if (lifecycle) return lifecycle
   }
 
   // Try tool_use extraction
