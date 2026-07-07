@@ -186,14 +186,14 @@ Agent `Bash`/`run_bash` tool calls execute *inside the backend container*, again
 
 The backend image (`backend/Dockerfile`) ships with:
 
-- **Go 1.24** — the same toolchain version used to build this project's own `server`/`mcp-server` binaries, copied from the Dockerfile's `golang:1.24-alpine` builder stage into the final image (rather than installed via `apk`) so the agent-visible `go version` always matches exactly. `GOPATH`/`GOCACHE`/`GOMODCACHE` are set to writable locations under `/home/node` for the non-root `node` user.
-- **Node.js 22 / npm** — inherited from the `node:22-alpine` base image. Covers Vite, React, TypeScript projects and their usual workflows out of the box: `npm ci`, `npm run build`, `npm test`, `npx vitest`, etc.
+- **Go 1.26** — the same toolchain version used to build this project's own `server`/`mcp-server` binaries, copied from the Dockerfile's `golang:1.26-alpine` builder stage into the final image (rather than installed via `apk`) so the agent-visible `go version` always matches exactly. `GOPATH`/`GOCACHE`/`GOMODCACHE` are set to writable locations under `/home/node` for the non-root `node` user.
+- **Node.js 26 / npm** — inherited from the `node:26-alpine` base image. Covers Vite, React, TypeScript projects and their usual workflows out of the box: `npm ci`, `npm run build`, `npm test`, `npx vitest`, etc.
 - **`build-base`** (gcc, g++, make, musl-dev) — needed for `cgo` builds (this repo's own backend depends on `mattn/go-sqlite3`, which is cgo) and for any npm packages with native addons that need `node-gyp` compilation.
 - **`git`, `bash`, `github-cli` (`gh`)** — for cloning, diffing, committing, and interacting with GitHub from inside agent runs.
 
 ### Adding more languages/compilers
 
-To give agents the ability to build/test repos in another language, edit the **final stage** of `backend/Dockerfile` (the `FROM node:22-alpine` stage — don't touch the builder stage, which only compiles this project's own Go binaries) and add one of:
+To give agents the ability to build/test repos in another language, edit the **final stage** of `backend/Dockerfile` (the `FROM node:26-alpine` stage — don't touch the builder stage, which only compiles this project's own Go binaries) and add one of:
 
 - **Alpine packages**, e.g.:
   ```dockerfile
@@ -206,7 +206,7 @@ To give agents the ability to build/test repos in another language, edit the **f
   ```dockerfile
   FROM rust:1-alpine AS rust-builder
   ...
-  FROM node:22-alpine
+  FROM node:26-alpine
   COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
   COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
   ENV PATH="/usr/local/cargo/bin:${PATH}"

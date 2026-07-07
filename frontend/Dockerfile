@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 ARG INSECURE_SKIP_SSL_VERIFY=false
 WORKDIR /app
 COPY package*.json ./
