@@ -12,6 +12,12 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- The live agent-log view now renders background-task lifecycle events
+  (`task_started` / `task_notification`) as readable system-event rows instead
+  of dropping them: a start row shows the task type and a truncated description,
+  and a notification row shows completion status (flagged as `Failed:` for any
+  non-`completed` status) with a truncated summary. Handled across all three
+  stream shapes the parser accepts (#96).
 - Shift-click a task card's select checkbox to select every task between it and
   the last-clicked card in that column, instead of toggling one at a time.
 - README and `docs/overview.md` now include real screenshots (board, task detail
