@@ -25,6 +25,19 @@ this file's section for that version as the release notes.
   `RunHistoryList`.
 
 ### Added
+- **Per-agent-config run analytics** on the Dashboard (#47). A new "Agent
+  config performance" table breaks run history down by `agent_config_id`
+  instead of just provider: success rate (completed/failed/waiting_human
+  counts), average and p90 run duration, average "turns to done" per task,
+  a transient-retry snapshot (tasks with retries, avg retries per task), and
+  token/cost totals — so model/provider comparisons ("is opus-on-review
+  worth it?") are data-driven instead of vibes. Backed by three new sqlc
+  queries (`RunStatsByAgentConfig`, `ListRunDurationsByAgentConfig`,
+  `ListTaskLastAgentConfig`) added to the existing `/dashboard` endpoint as
+  `agent_config_stats`; no schema changes. See `docs/api.md` and
+  `docs/agents.md` for the two attribution/semantics caveats (turns-to-done
+  and retry counts are attributed to a task's *last* run's agent config, and
+  the retry snapshot is live/resettable, not a lifetime count).
 - The live agent-log view now renders background-task lifecycle events
   (`task_started` / `task_notification`) as readable system-event rows instead
   of dropping them: a start row shows the task type and a truncated description,

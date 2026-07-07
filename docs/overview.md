@@ -111,7 +111,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   by a label like `agent-ok`) are periodically imported as tasks, with a link
   back to the issue and dedupe on re-sweeps — see
   [task-sources.md](task-sources.md)
-- **Dashboard** — run counts, completion rate, recent activity
+- **Dashboard** — run counts, completion rate, cost/token tracking, and per-agent-config performance (success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — single `docker compose up` to run everything
@@ -133,6 +133,12 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 **Dashboard**
 
 ![Dashboard](img/dashboard.png)
+
+<!--
+  NOTE: this screenshot predates the per-agent-config performance table and
+  should be refreshed in a follow-up per docs/screenshots.md (requires a
+  clean seeded DB with some run history); not blocking for this change.
+-->
 
 **Health**
 

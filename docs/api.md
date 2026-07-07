@@ -506,6 +506,26 @@ Returns aggregated statistics:
   "cost_by_provider": [
     { "provider": "claude", "input_tokens": 12345, "output_tokens": 6789, "cost_usd": 0.42, "run_count": 10 }
   ],
+  "agent_config_stats": [
+    {
+      "agent_config_id": "...",
+      "agent_name": "opus-on-review",
+      "provider": "claude",
+      "run_count": 42,
+      "completed_count": 35,
+      "failed_count": 5,
+      "waiting_human_count": 2,
+      "success_rate_percent": 83.3,
+      "avg_duration_secs": 187.4,
+      "p90_duration_secs": 412.0,
+      "avg_turns_to_done": 1.6,
+      "avg_transient_retries": 0.3,
+      "tasks_with_retries": 4,
+      "input_tokens": 512345,
+      "output_tokens": 98765,
+      "cost_usd": 3.87
+    }
+  ],
   "claude_usage": {
     "available": true,
     "five_hour_percent": 42.5,
@@ -522,6 +542,32 @@ Returns aggregated statistics:
 - `cost_total` / `cost_by_provider` — aggregate token/cost usage across all
   runs in a terminal state (completed, failed, waiting_human), computed
   from data already recorded in this app's own database.
+- `agent_config_stats` — per-agent-config run analytics, sorted by
+  `run_count` descending, so you can see which model/provider/agent config
+  is actually performing rather than guessing. For each agent config still
+  present in the database it aggregates: completed/failed/waiting_human
+  counts and the resulting `success_rate_percent`; average and p90 run
+  duration (`avg_duration_secs` / `p90_duration_secs`, seconds); average
+  "turns to done" per task (`avg_turns_to_done` — how many runs a task
+  needed before reaching a terminal label); a transient-retry snapshot
+  (`avg_transient_retries`, `tasks_with_retries`); and token/cost totals.
+  Only runs in a terminal state with a still-existing `agent_config_id` are
+  included — same filtering as `cost_by_provider` (a run whose agent config
+  was later deleted has `agent_config_id` set `NULL` and can no longer be
+  attributed to any config). Two important caveats:
+  1. **Last-run attribution**: `avg_turns_to_done`,
+     `avg_transient_retries`, and `tasks_with_retries` are all computed by
+     attributing a *whole task* to the agent config of that task's **last**
+     run, not by proportionally splitting the task across every config it
+     passed through. A task retried under agent A and then finished by
+     agent B has all of its turns/retries counted only toward B.
+  2. **Live, resettable retry snapshot**: the retry fields read
+     `tasks.transient_retry_count` as it stands *right now* for tasks
+     currently sitting on a terminal label. That counter resets to `0` on
+     success or escalation to a human, so these numbers are a live snapshot
+     of "how many done tasks currently have a nonzero retry count", **not**
+     a lifetime/historical count of every transient retry that ever
+     happened for that agent config.
 - `claude_usage` — **live** rate-limit utilization for the current Claude
   account, fetched directly from Anthropic's OAuth usage endpoint (distinct
   from `cost_total`, which is derived from local run records). `available`

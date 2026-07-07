@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -32,12 +34,13 @@ func NewDashboardHandler(q *gen.Queries) *DashboardHandler {
 }
 
 type dashboardResponse struct {
-	LabelCounts       map[string]int      `json:"label_counts"`
-	ActiveAgents      []activeAgentRow    `json:"active_agents"`
-	InterventionQueue []interventionRow   `json:"intervention_queue"`
-	CostTotal         costTotals          `json:"cost_total"`
-	CostByProvider    []providerCostRow   `json:"cost_by_provider"`
-	ClaudeUsage       claudeUsageResponse `json:"claude_usage"`
+	LabelCounts       map[string]int       `json:"label_counts"`
+	ActiveAgents      []activeAgentRow     `json:"active_agents"`
+	InterventionQueue []interventionRow    `json:"intervention_queue"`
+	CostTotal         costTotals           `json:"cost_total"`
+	CostByProvider    []providerCostRow    `json:"cost_by_provider"`
+	AgentConfigStats  []agentConfigStatRow `json:"agent_config_stats"`
+	ClaudeUsage       claudeUsageResponse  `json:"claude_usage"`
 }
 
 // claudeUsageResponse is the live Claude account rate-limit utilization
@@ -71,6 +74,41 @@ type providerCostRow struct {
 	OutputTokens int64   `json:"output_tokens"`
 	CostUSD      float64 `json:"cost_usd"`
 	RunCount     int64   `json:"run_count"`
+}
+
+// agentConfigStatRow is a per-agent-config breakdown of run outcomes,
+// duration, turns-to-done, transient-retry frequency, and token/cost usage.
+// It answers "which agent config is actually performing?" by combining
+// agent_runs (status/duration/tokens/cost) with tasks.transient_retry_count.
+//
+// Two caveats apply and are surfaced in docs/api.md and docs/agents.md:
+//  1. AvgTurnsToDone and the retry fields are attributed entirely to a
+//     task's *last* run's agent config, not proportionally split across
+//     every config a task passed through (e.g. if a task was retried under
+//     agent A, then reassigned to agent B which finished it, all of that
+//     task's turns/retries count only toward B).
+//  2. TasksWithRetries/AvgTransientRetries are a live snapshot of
+//     tasks.transient_retry_count, which resets to 0 on success or
+//     escalation to a human — this is NOT a lifetime/historical retry
+//     count, just "how many tasks currently sitting done have a nonzero
+//     retry count right now".
+type agentConfigStatRow struct {
+	AgentConfigID       string  `json:"agent_config_id"`
+	AgentName           string  `json:"agent_name"`
+	Provider            string  `json:"provider"`
+	RunCount            int64   `json:"run_count"`
+	CompletedCount      int64   `json:"completed_count"`
+	FailedCount         int64   `json:"failed_count"`
+	WaitingHumanCount   int64   `json:"waiting_human_count"`
+	SuccessRatePercent  float64 `json:"success_rate_percent"`
+	AvgDurationSecs     float64 `json:"avg_duration_secs"`
+	P90DurationSecs     float64 `json:"p90_duration_secs"`
+	AvgTurnsToDone      float64 `json:"avg_turns_to_done"`
+	AvgTransientRetries float64 `json:"avg_transient_retries"`
+	TasksWithRetries    int64   `json:"tasks_with_retries"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CostUSD             float64 `json:"cost_usd"`
 }
 
 type activeAgentRow struct {
@@ -166,6 +204,12 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	agentConfigStats, err := h.agentConfigStats(ctx)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	JSON(w, http.StatusOK, dashboardResponse{
 		LabelCounts:       counts,
 		ActiveAgents:      activeRows,
@@ -175,9 +219,142 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 			OutputTokens: usageTotal.OutputTokens,
 			CostUSD:      usageTotal.CostUsd,
 		},
-		CostByProvider: providerRows,
-		ClaudeUsage:    h.claudeUsage(ctx),
+		CostByProvider:   providerRows,
+		AgentConfigStats: agentConfigStats,
+		ClaudeUsage:      h.claudeUsage(ctx),
 	})
+}
+
+// agentConfigStats builds the per-agent-config analytics table by combining
+// three queries:
+//   - RunStatsByAgentConfig: run outcome counts, avg duration, tokens/cost.
+//   - ListRunDurationsByAgentConfig: raw per-run durations, used here to
+//     compute p90 duration per config (SQLite has no percentile aggregate).
+//   - ListTaskLastAgentConfig: per-task last-run agent config, run count
+//     ("turns to done"), and the task's live transient_retry_count snapshot.
+//
+// See agentConfigStatRow's doc comment for the two attribution/semantic
+// caveats (last-run attribution; live/resettable retry snapshot) that apply
+// to AvgTurnsToDone, AvgTransientRetries, and TasksWithRetries.
+func (h *DashboardHandler) agentConfigStats(ctx context.Context) ([]agentConfigStatRow, error) {
+	stats, err := h.q.RunStatsByAgentConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(stats) == 0 {
+		return []agentConfigStatRow{}, nil
+	}
+
+	rows := make([]agentConfigStatRow, 0, len(stats))
+	byConfig := make(map[string]*agentConfigStatRow, len(stats))
+	for _, s := range stats {
+		row := agentConfigStatRow{
+			AgentConfigID:     s.AgentConfigID,
+			AgentName:         s.AgentName,
+			Provider:          s.Provider,
+			RunCount:          s.RunCount,
+			CompletedCount:    s.CompletedCount,
+			FailedCount:       s.FailedCount,
+			WaitingHumanCount: s.WaitingHumanCount,
+			AvgDurationSecs:   s.AvgDurationSecs,
+			InputTokens:       s.InputTokens,
+			OutputTokens:      s.OutputTokens,
+			CostUSD:           s.CostUsd,
+		}
+		if s.RunCount > 0 {
+			row.SuccessRatePercent = float64(s.CompletedCount) / float64(s.RunCount) * 100
+		}
+		rows = append(rows, row)
+	}
+	for i := range rows {
+		byConfig[rows[i].AgentConfigID] = &rows[i]
+	}
+
+	// p90 duration per agent config: durations arrive pre-sorted ascending
+	// per agent_config_id (see ListRunDurationsByAgentConfig's ORDER BY), so
+	// a single pass grouping consecutive rows is enough — no need to
+	// re-sort in Go.
+	durations, err := h.q.ListRunDurationsByAgentConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	durationsByConfig := make(map[string][]float64)
+	for _, d := range durations {
+		if d.AgentConfigID == nil {
+			continue
+		}
+		durationsByConfig[*d.AgentConfigID] = append(durationsByConfig[*d.AgentConfigID], d.DurationSecs)
+	}
+	for id, ds := range durationsByConfig {
+		row, ok := byConfig[id]
+		if !ok {
+			continue
+		}
+		row.P90DurationSecs = percentile90(ds)
+	}
+
+	// Turns-to-done and retry snapshot: attribute each done task entirely to
+	// the agent config of its last run (see agentConfigStatRow doc comment).
+	taskConfigs, err := h.q.ListTaskLastAgentConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type turnsAcc struct {
+		totalRuns      int64
+		totalRetries   int64
+		taskCount      int64
+		tasksWithRetry int64
+	}
+	turnsByConfig := make(map[string]*turnsAcc)
+	for _, tc := range taskConfigs {
+		if tc.LastAgentConfigID == nil {
+			continue
+		}
+		acc, ok := turnsByConfig[*tc.LastAgentConfigID]
+		if !ok {
+			acc = &turnsAcc{}
+			turnsByConfig[*tc.LastAgentConfigID] = acc
+		}
+		acc.totalRuns += tc.RunCount
+		acc.totalRetries += tc.TransientRetryCount
+		acc.taskCount++
+		if tc.TransientRetryCount > 0 {
+			acc.tasksWithRetry++
+		}
+	}
+	for id, acc := range turnsByConfig {
+		row, ok := byConfig[id]
+		if !ok || acc.taskCount == 0 {
+			continue
+		}
+		row.AvgTurnsToDone = float64(acc.totalRuns) / float64(acc.taskCount)
+		row.AvgTransientRetries = float64(acc.totalRetries) / float64(acc.taskCount)
+		row.TasksWithRetries = acc.tasksWithRetry
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].RunCount > rows[j].RunCount })
+	return rows, nil
+}
+
+// percentile90 returns the 90th-percentile value from a slice already sorted
+// ascending, using nearest-rank interpolation. Returns 0 for an empty slice.
+func percentile90(sorted []float64) float64 {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	if n == 1 {
+		return sorted[0]
+	}
+	// Nearest-rank: index = ceil(0.9 * n) - 1, clamped to the last element.
+	idx := int(math.Ceil(0.9*float64(n))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= n {
+		idx = n - 1
+	}
+	return sorted[idx]
 }
 
 // claudeUsage returns the current Claude account's rate-limit utilization,

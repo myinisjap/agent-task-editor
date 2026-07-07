@@ -2323,6 +2323,31 @@ export interface components {
                 cost_usd?: number;
                 run_count?: number;
             }[];
+            /** @description Per-agent-config run analytics, sorted by run_count descending. Only runs in a terminal status (completed/failed/waiting_human) with a still-existing agent_config are included, same filtering as cost_by_provider. Two caveats: (1) avg_turns_to_done and the retry fields are attributed entirely to a task's *last* run's agent config, not proportionally split across every config a task passed through; (2) avg_transient_retries and tasks_with_retries are a live snapshot of tasks.transient_retry_count, which resets to 0 on success or escalation to a human — not a lifetime/historical retry count. */
+            agent_config_stats?: {
+                agent_config_id?: string;
+                agent_name?: string;
+                provider?: string;
+                run_count?: number;
+                completed_count?: number;
+                failed_count?: number;
+                waiting_human_count?: number;
+                /** Format: double */
+                success_rate_percent?: number;
+                /** Format: double */
+                avg_duration_secs?: number;
+                /** Format: double */
+                p90_duration_secs?: number;
+                /** Format: double */
+                avg_turns_to_done?: number;
+                /** Format: double */
+                avg_transient_retries?: number;
+                tasks_with_retries?: number;
+                input_tokens?: number;
+                output_tokens?: number;
+                /** Format: double */
+                cost_usd?: number;
+            }[];
             /** @description Live Claude account rate-limit usage from Anthropic's OAuth usage endpoint (5-hour rolling window + weekly window). `available` is false when the server has no Claude OAuth credentials or the fetch failed; other fields are zero/absent in that case. */
             claude_usage?: {
                 available?: boolean;
