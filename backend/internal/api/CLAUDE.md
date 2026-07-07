@@ -10,10 +10,17 @@ GET  /ws                   (auth via ?token= query param)
 /api/v1/
   POST body limit: 1 MB
   tasks/*                  TasksHandler
-  workflows/*              WorkflowsHandler
-  agents/*                 AgentsHandler
-  repos/*                  ReposHandler
-  dashboard                DashboardHandler
+  tasks/{id}/dependencies/* DependenciesHandler (dispatch-gating peer task dependencies)
+  tasks/{id}/subtasks       SubtasksHandler (create_subtask MCP tool)
+  tasks/{id}/review-comments/* ReviewCommentsHandler (inline diff review comments)
+  templates/*               TemplatesHandler
+  uploads/{task_id}/{filename} UploadsHandler (serve attachment images)
+  workflows/*               WorkflowsHandler
+  agents/*                  AgentsHandler
+  repos/*                   ReposHandler
+  dashboard                 DashboardHandler
+  github/auth-status         GitHub CLI auth status
+  health/providers           HealthHandler (provider/onboarding readiness checks)
 ```
 
 ## Middleware Chain (in order)
