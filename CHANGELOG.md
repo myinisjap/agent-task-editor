@@ -22,6 +22,10 @@ this file's section for that version as the release notes.
     22 → 26 (backend runtime + frontend builder).
   - GitHub Actions: `actions/checkout` v4 → v7, `actions/setup-go` v5 → v6,
     `docker/metadata-action` v5 → v6, `softprops/action-gh-release` v2 → v3.
+  - CI now builds/tests on Go 1.26 (`setup-go`) to match the Docker builder,
+    and `govulncheck` is blocking again now that the toolchain is past 1.25.8
+    (the previously-suppressed stdlib CVEs are fixed there). Docs and CLAUDE
+    files updated to reflect the Go 1.26 / Node 26 container toolchain.
 
 ## [0.5.0] - 2026-07-07
 

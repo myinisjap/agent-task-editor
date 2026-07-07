@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.26'
           cache-dependency-path: backend/go.sum
       - run: go mod download
       - name: golangci-lint
@@ -51,20 +51,16 @@ jobs:
           name: backend-coverage
           path: backend/coverage.out
 
-      # NOTE: govulncheck's vulnerability DB moves independently of our
-      # release cadence, and it currently reports reachable stdlib CVEs
-      # (crypto/tls, crypto/x509, net/http, os, ...) that are only fixed in
-      # Go 1.25.8+; this repo is still pinned to Go 1.24 (go.mod, Dockerfile,
-      # and the setup-go step above). Until the Go toolchain is bumped, this
-      # step is intentionally non-blocking (continue-on-error) so it
-      # surfaces findings on every PR without failing unrelated changes on a
-      # pre-existing toolchain-lag issue. Flip continue-on-error to false
-      # once the Go version is upgraded past 1.25.8. Track in a follow-up
-      # issue.
+      # The stdlib CVEs (crypto/tls, crypto/x509, net/http, os, ...) that
+      # previously kept this step non-blocking were fixed in Go 1.25.8+. The
+      # toolchain that runs here — the setup-go step above and the Dockerfile
+      # builder — is now Go 1.26, so govulncheck analyzes against a patched
+      # stdlib and this step is blocking again. (The go.mod `go 1.24`
+      # directive stays as the language floor; it does not affect the stdlib
+      # version govulncheck sees, which comes from the running toolchain.)
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: govulncheck
-        continue-on-error: true
         run: govulncheck ./...
 
   frontend:
