@@ -12,13 +12,16 @@ agent-task-editor/
 ├── CHANGELOG.md              # Release history; drives GitHub Release notes
 ├── openapi.yaml              # Full REST API spec
 ├── docs/                     # Feature and usage documentation
+│   ├── README.md
 │   ├── overview.md
 │   ├── getting-started.md
 │   ├── workflows.md
 │   ├── agents.md
 │   ├── api.md
 │   ├── task-sources.md
-│   └── websocket.md
+│   ├── websocket.md
+│   ├── mcp-tools.md
+│   └── screenshots.md
 ├── backend/                  # Go 1.24 server
 │   ├── cmd/server/           # Main entrypoint
 │   ├── cmd/mcp-server/       # MCP sidecar (signal_complete / request_human)
@@ -26,6 +29,9 @@ agent-task-editor/
 │       ├── agent/            # Provider system, pool, dispatcher
 │       ├── api/              # Chi router, handlers, middleware
 │       ├── config/           # YAML + env var config
+│       ├── ghclient/         # Thin `gh` CLI wrapper (PR lookup/create, issue listing, repo name parsing)
+│       ├── ghsync/           # Background poller: refreshes task GitHub PR state via `gh` CLI
+│       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
 │       ├── tasksource/       # Task import from external trackers (GitHub Issues)
 │       ├── workflow/         # State machine engine

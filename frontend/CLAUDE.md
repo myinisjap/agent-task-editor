@@ -1,10 +1,10 @@
 # Frontend
 
-React 18 + TypeScript + Vite + Tailwind CSS. Single-page application served by nginx in Docker.
+React 19 + TypeScript + Vite + Tailwind CSS. Single-page application served by nginx in Docker.
 
 ## Stack
 
-- **React 18** with functional components and hooks
+- **React 19** with functional components and hooks
 - **TypeScript** — strict mode enabled
 - **Vite** — dev server (`:5173`) + production bundler
 - **Tailwind CSS** — utility-first styling
@@ -21,21 +21,33 @@ src/
 │   ├── ws.ts         WSClient class — connect, subscribe, event routing
 │   └── types.ts      Shared TypeScript type definitions
 ├── components/
-│   ├── board/        KanbanBoard, KanbanColumn, TaskCard, NewTaskModal
-│   ├── diff/         DiffViewer (syntax-highlighted git diff)
-│   └── shared/       Reusable UI primitives (Button, Badge, Modal, etc.)
+│   ├── DependenciesPanel.tsx  Task dependency list + add/remove UI
+│   ├── SubtasksPanel.tsx      Subtask checklist + add/remove UI
+│   ├── board/        AgentGroupColumn, AgentLogEntry, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
+│   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
+│   └── shared/        GitHubAuthWarning, NavSidebar, WorkflowFlowchart
 ├── pages/
 │   ├── BoardPage.tsx        Main Kanban board
 │   ├── TaskDetailPage.tsx   Task detail + live agent log stream
 │   ├── DashboardPage.tsx    Stats and recent activity
 │   ├── WorkflowPage.tsx     Workflow editor (labels + transitions)
-│   └── AgentConfigPage.tsx  Agent config management
+│   ├── AgentConfigPage.tsx  Agent config management
+│   ├── ReposPage.tsx        Repo management
+│   └── HealthPage.tsx       Provider readiness / health checks
 ├── stores/
 │   ├── tasks.ts      Task list state + WebSocket updates
 │   ├── agents.ts     Agent config state
+│   ├── repos.ts      Repo list state
+│   ├── theme.ts      Dark/light theme state (persisted, syncs root class)
 │   └── workflow.ts   Workflow + label state
 ├── lib/
-│   └── parseDiff.ts  Git unified diff parser
+│   ├── parseDiff.ts         Git unified diff parser
+│   ├── parseAgentLog.ts     Parses raw agent log content (plain text or JSON) into a structured summary/detail view
+│   ├── parseWorkflowYaml.ts Hand-rolled parser for the workflow YAML schema (labels/transitions)
+│   ├── validateWorkflow.ts  Structural validation of a parsed workflow (labels, transitions, reachability)
+│   ├── condensedBoard.ts    Groups workflow labels into condensed/agent-group board columns
+│   ├── diffComments.ts      Maps API review-comment wire type to the diff viewer's view model
+│   └── useIsMobile.ts       Hook for responsive breakpoint detection
 ├── App.tsx           Router setup
 └── main.tsx          Entry point
 ```

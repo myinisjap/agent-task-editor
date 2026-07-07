@@ -29,7 +29,11 @@ cmd/mcp-server/   Standalone MCP sidecar — stdio JSON-RPC 2.0
 internal/agent/   Provider interface, ClaudeRunner, AnthropicRunner, LLMRunner, Pool, Dispatcher
 internal/api/     Chi router, all HTTP handlers, middleware
 internal/config/  Config struct; loaded from YAML file then env vars override
+internal/ghclient/ Thin wrapper around the `gh` CLI (PR create/lookup, issue listing, GitHub URL parsing)
+internal/ghsync/  Background PR-state poller — refreshes task git_state from GitHub, cleans up merged branches
+internal/health/  Provider readiness checks (used by GET /health/providers)
 internal/storage/ SQLite DB, migrations, sqlc-generated queries, seed data
+internal/tasksource/ GitHub Issues importer — polls opted-in repos and creates tasks for new issues
 internal/workflow/ State machine engine — validates/executes label transitions
 internal/ws/      WebSocket hub + per-client connection management
 ```
