@@ -290,6 +290,13 @@ type ListAgentLogsPageParams struct {
 // regardless of timestamp text format. Positional params (?1 run_id, ?2 before
 // cursor, ?3 limit) are used instead of @named ones to sidestep a byte-offset
 // bug in sqlc's SQLite analyzer that corrupts long named-parameter queries.
+// (Related: the doc comments on RunStatsByAgentConfig, ListRunDurationsBy-
+// AgentConfig, and ListTaskLastAgentConfig below intentionally use plain
+// ASCII hyphens instead of em-dashes, because a multi-byte UTF-8 character
+// anywhere in one of those comments hits the same byte-offset-vs-rune
+// assumption and truncates/corrupts the generated SQL string constant in
+// internal/storage/gen/runs.sql.go - verified by re-running `sqlc generate`
+// after switching those three to ASCII-only dashes.)
 func (q *Queries) ListAgentLogsPage(ctx context.Context, arg ListAgentLogsPageParams) ([]AgentLog, error) {
 	rows, err := q.db.QueryContext(ctx, listAgentLogsPage, arg.AgentRunID, arg.Column2, arg.Limit)
 	if err != nil {
@@ -361,6 +368,50 @@ func (q *Queries) ListAgentRuns(ctx context.Context, taskID string) ([]AgentRun,
 	return items, nil
 }
 
+const listRunDurationsByAgentConfig = `-- name: ListRunDurationsByAgentConfig :many
+SELECT ar.agent_config_id AS agent_config_id,
+       CAST((julianday(ar.completed_at) - julianday(ar.started_at)) * 86400.0 AS REAL) AS duration_secs
+FROM agent_runs ar
+WHERE ar.status IN ('completed','failed','waiting_human')
+  AND ar.agent_config_id IS NOT NULL
+  AND ar.started_at IS NOT NULL
+  AND ar.completed_at IS NOT NULL
+ORDER BY ar.agent_config_id, duration_secs ASC
+`
+
+type ListRunDurationsByAgentConfigRow struct {
+	AgentConfigID *string `json:"agent_config_id"`
+	DurationSecs  float64 `json:"duration_secs"`
+}
+
+// Raw per-run duration (seconds) for terminal-state runs with a
+// still-existing agent_config, ordered by agent_config then duration
+// ascending so the caller can slice out a p90 per group in Go (SQLite has no
+// built-in percentile aggregate). Only rows with both started_at and
+// completed_at set are included - see RunStatsByAgentConfig for why.
+func (q *Queries) ListRunDurationsByAgentConfig(ctx context.Context) ([]ListRunDurationsByAgentConfigRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRunDurationsByAgentConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunDurationsByAgentConfigRow
+	for rows.Next() {
+		var i ListRunDurationsByAgentConfigRow
+		if err := rows.Scan(&i.AgentConfigID, &i.DurationSecs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskLabelHistory = `-- name: ListTaskLabelHistory :many
 SELECT id, task_id, from_label, to_label, "trigger", actor_id, note, created_at FROM task_label_history WHERE task_id = ? ORDER BY created_at ASC
 `
@@ -383,6 +434,68 @@ func (q *Queries) ListTaskLabelHistory(ctx context.Context, taskID string) ([]Ta
 			&i.ActorID,
 			&i.Note,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskLastAgentConfig = `-- name: ListTaskLastAgentConfig :many
+SELECT t.id AS task_id,
+       t.transient_retry_count AS transient_retry_count,
+       (
+         SELECT ar.agent_config_id FROM agent_runs ar
+         WHERE ar.task_id = t.id AND ar.agent_config_id IS NOT NULL
+         ORDER BY ar.created_at DESC, ar.id DESC
+         LIMIT 1
+       ) AS last_agent_config_id,
+       (
+         SELECT COUNT(*) FROM agent_runs ar
+         WHERE ar.task_id = t.id AND ar.agent_config_id IS NOT NULL
+       ) AS run_count
+FROM tasks t
+JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label
+WHERE wl.is_terminal != 0
+`
+
+type ListTaskLastAgentConfigRow struct {
+	TaskID              string  `json:"task_id"`
+	TransientRetryCount int64   `json:"transient_retry_count"`
+	LastAgentConfigID   *string `json:"last_agent_config_id"`
+	RunCount            int64   `json:"run_count"`
+}
+
+// For every task sitting on a terminal label, returns the agent_config_id of
+// its *last* run (by created_at/id, the same tiebreak used elsewhere), the
+// number of runs that task had under a still-existing agent_config (used to
+// compute "turns to done" per config), and the task's current
+// transient_retry_count. Note this is a live snapshot of
+// tasks.transient_retry_count, which resets to 0 on success or escalation -
+// it is NOT a lifetime/historical retry count. Turns-to-done and the retry
+// snapshot are both attributed entirely to the task's last agent config, not
+// proportionally split across every config the task passed through.
+func (q *Queries) ListTaskLastAgentConfig(ctx context.Context) ([]ListTaskLastAgentConfigRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskLastAgentConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTaskLastAgentConfigRow
+	for rows.Next() {
+		var i ListTaskLastAgentConfigRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.TransientRetryCount,
+			&i.LastAgentConfigID,
+			&i.RunCount,
 		); err != nil {
 			return nil, err
 		}
@@ -448,6 +561,84 @@ func (q *Queries) ListWaitingHumanRuns(ctx context.Context) ([]ListWaitingHumanR
 			&i.CostUsd,
 			&i.SessionID,
 			&i.TaskTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const runStatsByAgentConfig = `-- name: RunStatsByAgentConfig :many
+SELECT ac.id AS agent_config_id,
+       ac.name AS agent_name,
+       ac.provider AS provider,
+       COUNT(*) AS run_count,
+       CAST(COALESCE(SUM(CASE WHEN ar.status = 'completed' THEN 1 ELSE 0 END),0) AS INTEGER) AS completed_count,
+       CAST(COALESCE(SUM(CASE WHEN ar.status = 'failed' THEN 1 ELSE 0 END),0) AS INTEGER) AS failed_count,
+       CAST(COALESCE(SUM(CASE WHEN ar.status = 'waiting_human' THEN 1 ELSE 0 END),0) AS INTEGER) AS waiting_human_count,
+       CAST(COALESCE(AVG(CASE WHEN ar.started_at IS NOT NULL AND ar.completed_at IS NOT NULL
+                THEN (julianday(ar.completed_at) - julianday(ar.started_at)) * 86400.0
+                ELSE NULL END), 0) AS REAL) AS avg_duration_secs,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs ar
+JOIN agent_configs ac ON ac.id = ar.agent_config_id
+WHERE ar.status IN ('completed','failed','waiting_human')
+GROUP BY ac.id, ac.name, ac.provider
+ORDER BY run_count DESC
+`
+
+type RunStatsByAgentConfigRow struct {
+	AgentConfigID     string  `json:"agent_config_id"`
+	AgentName         string  `json:"agent_name"`
+	Provider          string  `json:"provider"`
+	RunCount          int64   `json:"run_count"`
+	CompletedCount    int64   `json:"completed_count"`
+	FailedCount       int64   `json:"failed_count"`
+	WaitingHumanCount int64   `json:"waiting_human_count"`
+	AvgDurationSecs   float64 `json:"avg_duration_secs"`
+	InputTokens       int64   `json:"input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostUsd           float64 `json:"cost_usd"`
+}
+
+// Per-agent-config run outcome, duration, and token/cost aggregates for the
+// dashboard's per-agent-config analytics table. Only runs in a terminal
+// status (completed/failed/waiting_human) with a still-existing agent_config
+// (agent_config_id IS NOT NULL - it's set NULL on config delete, see
+// agent_runs_new migration) are included, matching SumUsageByProvider's
+// filtering above. Duration is only averaged over rows that actually have
+// both started_at and completed_at (e.g. a run that failed before starting
+// has neither and would otherwise skew the average toward zero).
+func (q *Queries) RunStatsByAgentConfig(ctx context.Context) ([]RunStatsByAgentConfigRow, error) {
+	rows, err := q.db.QueryContext(ctx, runStatsByAgentConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunStatsByAgentConfigRow
+	for rows.Next() {
+		var i RunStatsByAgentConfigRow
+		if err := rows.Scan(
+			&i.AgentConfigID,
+			&i.AgentName,
+			&i.Provider,
+			&i.RunCount,
+			&i.CompletedCount,
+			&i.FailedCount,
+			&i.WaitingHumanCount,
+			&i.AvgDurationSecs,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
 		); err != nil {
 			return nil, err
 		}

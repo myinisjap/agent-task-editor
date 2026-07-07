@@ -104,6 +104,30 @@ The pricing table is intentionally approximate and small (a hardcoded Go map); i
 
 The Dashboard shows an aggregate total (tokens + cost) across all runs in a terminal state (`completed`/`failed`/`waiting_human`), plus a per-provider breakdown (via `agent_configs.provider`, joined on `agent_runs.agent_config_id`). The aggregate total query does not join on `agent_configs`, so it includes every terminal run regardless of its config. The per-provider breakdown *does* join on `agent_configs`, so runs whose agent config was later deleted (`agent_config_id` is set `NULL` on delete) are excluded from that breakdown, since they can no longer be attributed to a provider — a known limitation.
 
+The Dashboard also breaks cost/usage down further into a **per-agent-config
+performance table**: success rate (completed/failed/waiting_human counts),
+average and p90 run duration, average "turns to done" per task, a
+transient-retry snapshot, and tokens/cost — all grouped by `agent_config_id`
+instead of just `provider`, so you can compare individual agent configs
+against each other (e.g. "is opus-on-review worth it?") instead of only
+comparing at the provider level. Same terminal-state + still-existing
+`agent_config_id` filtering as the per-provider breakdown above (a run whose
+config was later deleted can't be attributed to any config, per-provider or
+per-config). Two known limitations apply here as well:
+
+- **Last-run attribution.** "Turns to done" and the retry snapshot are both
+  computed by attributing an entire task to the agent config of that task's
+  **last** run, not by proportionally splitting the task's history across
+  every config it passed through. If a task was retried under one agent
+  config and then finished by a different one, all of its turns/retries are
+  counted only against the config that finished it.
+- **Live, resettable retry snapshot.** The retry fields read
+  `tasks.transient_retry_count` as it stands right now for tasks currently
+  sitting on a terminal label. That counter resets to `0` on success or
+  escalation to a human, so this is a live snapshot ("how many done tasks
+  currently have a nonzero retry count"), not a lifetime/historical count of
+  every transient retry that config has ever triggered.
+
 ## Session Resume
 
 Each `claude`/`qwen_code` run's stream-json output carries a `session_id`; the

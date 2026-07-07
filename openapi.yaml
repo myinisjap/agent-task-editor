@@ -428,6 +428,38 @@ components:
               output_tokens: { type: integer }
               cost_usd:      { type: number, format: double }
               run_count:     { type: integer }
+        agent_config_stats:
+          type: array
+          description: >-
+            Per-agent-config run analytics, sorted by run_count descending.
+            Only runs in a terminal status (completed/failed/waiting_human)
+            with a still-existing agent_config are included, same filtering
+            as cost_by_provider. Two caveats: (1) avg_turns_to_done and the
+            retry fields are attributed entirely to a task's *last* run's
+            agent config, not proportionally split across every config a
+            task passed through; (2) avg_transient_retries and
+            tasks_with_retries are a live snapshot of
+            tasks.transient_retry_count, which resets to 0 on success or
+            escalation to a human — not a lifetime/historical retry count.
+          items:
+            type: object
+            properties:
+              agent_config_id:        { type: string }
+              agent_name:             { type: string }
+              provider:               { type: string }
+              run_count:              { type: integer }
+              completed_count:        { type: integer }
+              failed_count:           { type: integer }
+              waiting_human_count:    { type: integer }
+              success_rate_percent:   { type: number, format: double }
+              avg_duration_secs:      { type: number, format: double }
+              p90_duration_secs:      { type: number, format: double }
+              avg_turns_to_done:      { type: number, format: double }
+              avg_transient_retries:  { type: number, format: double }
+              tasks_with_retries:     { type: integer }
+              input_tokens:           { type: integer }
+              output_tokens:          { type: integer }
+              cost_usd:               { type: number, format: double }
         claude_usage:
           type: object
           description: >-

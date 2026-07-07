@@ -299,6 +299,32 @@ export type Dashboard = {
   // agent_config was later deleted are excluded (agent_config_id is set
   // NULL on delete, so they can no longer be attributed to a provider).
   cost_by_provider?: { provider: string; input_tokens: number; output_tokens: number; cost_usd: number; run_count: number }[]
+  // Per-agent-config run analytics, sorted by run_count descending. Same
+  // terminal-state + still-existing-agent_config filtering as
+  // cost_by_provider. Two caveats: (1) avg_turns_to_done and the retry
+  // fields are attributed to a task's *last* run's agent config only, not
+  // split across every config a task passed through; (2)
+  // avg_transient_retries/tasks_with_retries are a live snapshot of
+  // tasks.transient_retry_count, which resets on success/escalation — not a
+  // lifetime/historical retry count.
+  agent_config_stats?: {
+    agent_config_id: string
+    agent_name: string
+    provider: string
+    run_count: number
+    completed_count: number
+    failed_count: number
+    waiting_human_count: number
+    success_rate_percent: number
+    avg_duration_secs: number
+    p90_duration_secs: number
+    avg_turns_to_done: number
+    avg_transient_retries: number
+    tasks_with_retries: number
+    input_tokens: number
+    output_tokens: number
+    cost_usd: number
+  }[]
   // Live Claude account rate-limit usage from Anthropic's OAuth usage
   // endpoint (5-hour rolling window + weekly window). `available` is false
   // when the server has no Claude OAuth credentials or the fetch failed;
