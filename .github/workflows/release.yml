@@ -96,7 +96,7 @@ jobs:
           fi
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: ${{ steps.changelog.outputs.has_notes == 'true' && steps.changelog.outputs.notes_file || '' }}
           generate_release_notes: ${{ steps.changelog.outputs.has_notes != 'true' }}
