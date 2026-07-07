@@ -5,10 +5,12 @@ backend/bin/
 *.db-shm
 *.db-wal
 *.db.backup
+backend/coverage.out
 
 # Node
 frontend/node_modules/
 frontend/dist/
+frontend/coverage/
 
 # Editor
 .DS_Store

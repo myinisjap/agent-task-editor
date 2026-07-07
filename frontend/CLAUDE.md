@@ -54,11 +54,28 @@ VITE_API_TOKEN=                          # bearer token if API_TOKEN is set
 
 ```bash
 npm install
-npm run dev       # Vite dev server with HMR
-npm run build     # Production build to dist/
-npm run lint      # oxlint
-npx tsc --noEmit  # Type-check (no dedicated script)
+npm run dev            # Vite dev server with HMR
+npm run build          # Production build to dist/
+npm run lint           # oxlint
+npx tsc --noEmit       # Type-check (no dedicated script)
+npm run test:coverage  # vitest run --coverage
 ```
+
+## Code Generation
+
+`src/api/types.ts` is generated from the root `openapi.yaml` via
+`openapi-typescript`. Do not hand-edit it. After changing `openapi.yaml`, run:
+
+```bash
+npm run gen:api
+```
+
+CI regenerates the file and fails the build (`git diff --exit-code`) if it
+doesn't match what's committed, so the spec and the generated client types
+can't silently diverge.
+
+CI also uploads a `vitest run --coverage` report as a build artifact
+(`frontend-coverage`) on every run so coverage trends stay visible on PRs.
 
 ## Adding a New Page
 
