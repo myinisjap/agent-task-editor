@@ -11,7 +11,7 @@ RUN go build -o bin/server ./cmd/server && \
     go build -o bin/mcp-server ./cmd/mcp-server
 
 # Use node:22-alpine as the runtime so the claude CLI is available
-FROM node:22-alpine
+FROM node:26-alpine
 # Set to "true" to disable SSL verification for git/npm/Node.js (corporate TLS proxies).
 # Pass via: INSECURE_SKIP_SSL_VERIFY=true docker compose build
 ARG INSECURE_SKIP_SSL_VERIFY=false
