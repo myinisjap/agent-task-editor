@@ -11,6 +11,19 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Refactored `AgentConfigPage` and `TaskDetailPage`** (#62), the two largest
+  and most feature-churned pages in the frontend, into smaller, independently
+  readable units — no behavior change. `stores/agents.ts` now owns agent CRUD
+  plus model/claude-options fetching (previously inline in the page);
+  `AgentConfigPage` (836 → 233 lines) composes new `AgentConfigForm`,
+  `ModelSelector`, `PluginMcpPicker`, `CommandFilterEditor`, `AgentSidebar`,
+  and a shared `ChipPicker`. `TaskDetailPage` (1030 → 419 lines) composes new
+  `RunLogPane`/`useRunLogs` (log fetch/pagination/virtualizer/WS replay),
+  `DiffReviewPane`/`useDiffComments` (diff + inline review comments),
+  `TaskHeader`, `TaskActions` (approve/reject/reply panel), and
+  `RunHistoryList`.
+
 ### Added
 - The live agent-log view now renders background-task lifecycle events
   (`task_started` / `task_notification`) as readable system-event rows instead
