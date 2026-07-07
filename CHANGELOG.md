@@ -9,7 +9,7 @@ then push the matching tag (`git tag vx.y.z && git push origin vx.y.z`). The
 release workflow builds and pushes the images and creates a GitHub Release using
 this file's section for that version as the release notes.
 
-## [Unreleased]
+## [0.3.0] - 2026-07-07
 
 ### Fixed
 - **Agent config `resume_sessions`/`subtasks_enabled`/`enabled` round-tripped as raw
