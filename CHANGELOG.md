@@ -12,6 +12,14 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Fixed
+- **Agent config `resume_sessions`/`subtasks_enabled`/`enabled` round-tripped as raw
+  0/1 instead of JSON booleans.** `GET`/`POST`/`PUT` on `/api/v1/agents` serialized these
+  fields straight from their SQLite `INTEGER` storage, contradicting the OpenAPI schema's
+  `boolean` type; a client that echoed a fetched config back into an update (unchanged
+  fields included) would send `1`/`0` and get a generic `400 invalid request body`, since
+  the server strictly required JSON `true`/`false` on write. Responses now always emit
+  real booleans, and the write path additionally tolerates `0`/`1` for compatibility with
+  any existing callers.
 - **Frontend/backend healthchecks used `localhost`, which resolves to `::1` before
   `127.0.0.1` inside the containers**; since nginx (and the backend) only bind the IPv4
   wildcard address, the `::1` probe was refused and the containers reported `unhealthy`

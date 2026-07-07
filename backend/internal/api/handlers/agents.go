@@ -43,12 +43,46 @@ func (h *AgentsHandler) labelConflict(r *http.Request, labelsJSON string, exclud
 	return "", nil
 }
 
-func safeConfig(cfg gen.AgentConfig) gen.AgentConfig {
-	return cfg
+// agentConfigView mirrors gen.AgentConfig but serializes the SQLite
+// 0/1 flag columns as real JSON booleans, matching the OpenAPI schema
+// (clients that echo a GET response back into a PUT would otherwise send
+// bare 1/0, which fails strict bool decoding).
+type agentConfigView struct {
+	gen.AgentConfig
+	Enabled         bool `json:"enabled"`
+	ResumeSessions  bool `json:"resume_sessions"`
+	SubtasksEnabled bool `json:"subtasks_enabled"`
+}
+
+func safeConfig(cfg gen.AgentConfig) agentConfigView {
+	return agentConfigView{
+		AgentConfig:     cfg,
+		Enabled:         cfg.Enabled != 0,
+		ResumeSessions:  cfg.ResumeSessions != 0,
+		SubtasksEnabled: cfg.SubtasksEnabled != 0,
+	}
 }
 
 var knownProviders = map[string]bool{
 	"claude": true, "anthropic": true, "llm": true, "opencode": true, "qwen_code": true,
+}
+
+// flexBool unmarshals JSON true/false as well as numeric 0/1, since some
+// clients (e.g. hand-built requests) send booleans as numbers.
+type flexBool bool
+
+func (b *flexBool) UnmarshalJSON(data []byte) error {
+	var n json.Number
+	if err := json.Unmarshal(data, &n); err == nil {
+		*b = n.String() != "0"
+		return nil
+	}
+	var v bool
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*b = flexBool(v)
+	return nil
 }
 
 type AgentsHandler struct {
@@ -65,7 +99,7 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	safe := make([]gen.AgentConfig, len(configs))
+	safe := make([]agentConfigView, len(configs))
 	for i, c := range configs {
 		safe[i] = safeConfig(c)
 	}
@@ -83,24 +117,24 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name              string `json:"name"`
-		Provider          string `json:"provider"`
-		Model             string `json:"model"`
-		SystemPrompt      string `json:"system_prompt"`
-		Labels            string `json:"labels"`
-		Env               string `json:"env"`
-		MaxTokens         int64  `json:"max_tokens"`
-		TimeoutSecs       int64  `json:"timeout_secs"`
-		MaxTurns          int64  `json:"max_turns"`
-		EnabledPlugins    string `json:"enabled_plugins"`
-		EnabledMCPServers string `json:"enabled_mcp_servers"`
-		CommandAllowlist  string `json:"command_allowlist"`
-		CommandDenylist   string `json:"command_denylist"`
-		MaxRetries        *int64 `json:"max_retries"`
-		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
-		ResumeSessions    *bool  `json:"resume_sessions"`
-		SubtasksEnabled   *bool  `json:"subtasks_enabled"`
-		MaxSubtasks       *int64 `json:"max_subtasks"`
+		Name              string    `json:"name"`
+		Provider          string    `json:"provider"`
+		Model             string    `json:"model"`
+		SystemPrompt      string    `json:"system_prompt"`
+		Labels            string    `json:"labels"`
+		Env               string    `json:"env"`
+		MaxTokens         int64     `json:"max_tokens"`
+		TimeoutSecs       int64     `json:"timeout_secs"`
+		MaxTurns          int64     `json:"max_turns"`
+		EnabledPlugins    string    `json:"enabled_plugins"`
+		EnabledMCPServers string    `json:"enabled_mcp_servers"`
+		CommandAllowlist  string    `json:"command_allowlist"`
+		CommandDenylist   string    `json:"command_denylist"`
+		MaxRetries        *int64    `json:"max_retries"`
+		RetryBackoffSecs  *int64    `json:"retry_backoff_secs"`
+		ResumeSessions    *flexBool `json:"resume_sessions"`
+		SubtasksEnabled   *flexBool `json:"subtasks_enabled"`
+		MaxSubtasks       *int64    `json:"max_subtasks"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -226,34 +260,34 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("X-Label-Conflict", conflict)
-		JSON(w, http.StatusCreated, cfg)
+		JSON(w, http.StatusCreated, safeConfig(cfg))
 		return
 	}
 
-	JSON(w, http.StatusCreated, cfg)
+	JSON(w, http.StatusCreated, safeConfig(cfg))
 }
 
 func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name              string `json:"name"`
-		Provider          string `json:"provider"`
-		Model             string `json:"model"`
-		SystemPrompt      string `json:"system_prompt"`
-		Labels            string `json:"labels"`
-		Env               string `json:"env"`
-		MaxTokens         int64  `json:"max_tokens"`
-		TimeoutSecs       int64  `json:"timeout_secs"`
-		MaxTurns          int64  `json:"max_turns"`
-		Enabled           *bool  `json:"enabled"`
-		EnabledPlugins    string `json:"enabled_plugins"`
-		EnabledMCPServers string `json:"enabled_mcp_servers"`
-		CommandAllowlist  string `json:"command_allowlist"`
-		CommandDenylist   string `json:"command_denylist"`
-		MaxRetries        *int64 `json:"max_retries"`
-		RetryBackoffSecs  *int64 `json:"retry_backoff_secs"`
-		ResumeSessions    *bool  `json:"resume_sessions"`
-		SubtasksEnabled   *bool  `json:"subtasks_enabled"`
-		MaxSubtasks       *int64 `json:"max_subtasks"`
+		Name              string    `json:"name"`
+		Provider          string    `json:"provider"`
+		Model             string    `json:"model"`
+		SystemPrompt      string    `json:"system_prompt"`
+		Labels            string    `json:"labels"`
+		Env               string    `json:"env"`
+		MaxTokens         int64     `json:"max_tokens"`
+		TimeoutSecs       int64     `json:"timeout_secs"`
+		MaxTurns          int64     `json:"max_turns"`
+		Enabled           *flexBool `json:"enabled"`
+		EnabledPlugins    string    `json:"enabled_plugins"`
+		EnabledMCPServers string    `json:"enabled_mcp_servers"`
+		CommandAllowlist  string    `json:"command_allowlist"`
+		CommandDenylist   string    `json:"command_denylist"`
+		MaxRetries        *int64    `json:"max_retries"`
+		RetryBackoffSecs  *int64    `json:"retry_backoff_secs"`
+		ResumeSessions    *flexBool `json:"resume_sessions"`
+		SubtasksEnabled   *flexBool `json:"subtasks_enabled"`
+		MaxSubtasks       *int64    `json:"max_subtasks"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")

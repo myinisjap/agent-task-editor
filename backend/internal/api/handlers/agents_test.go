@@ -10,6 +10,16 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
+// agentConfigResponse mirrors what the API actually sends: gen.AgentConfig's
+// 0/1 flag columns serialize as real JSON booleans (see agentConfigView in
+// agents.go), not the raw int64s on the sqlc-generated struct.
+type agentConfigResponse struct {
+	gen.AgentConfig
+	Enabled         bool `json:"enabled"`
+	ResumeSessions  bool `json:"resume_sessions"`
+	SubtasksEnabled bool `json:"subtasks_enabled"`
+}
+
 // setupAgentsRouter returns a chi router wired with the agents routes.
 func setupAgentsRouter(t *testing.T) http.Handler {
 	t.Helper()
@@ -39,7 +49,7 @@ func TestAgentsCreate_EnabledPluginsAndMCPServers_DefaultOff(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var cfg gen.AgentConfig
+	var cfg agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -65,7 +75,7 @@ func TestAgentsCreate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var cfg gen.AgentConfig
+	var cfg agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -99,7 +109,7 @@ func TestAgentsUpdate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var created gen.AgentConfig
+	var created agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
@@ -113,7 +123,7 @@ func TestAgentsUpdate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var updated gen.AgentConfig
+	var updated agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
 		t.Fatalf("decode update response: %v", err)
 	}
@@ -148,7 +158,7 @@ func TestAgentsCreate_CommandFilters_DefaultOff(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var cfg gen.AgentConfig
+	var cfg agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -174,7 +184,7 @@ func TestAgentsCreate_CommandFilters_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var cfg gen.AgentConfig
+	var cfg agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -208,7 +218,7 @@ func TestAgentsUpdate_CommandFilters_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var created gen.AgentConfig
+	var created agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
@@ -222,7 +232,7 @@ func TestAgentsUpdate_CommandFilters_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var updated gen.AgentConfig
+	var updated agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
 		t.Fatalf("decode update response: %v", err)
 	}
@@ -256,7 +266,7 @@ func TestAgentsCreate_RetryPolicy_Defaults(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var cfg gen.AgentConfig
+	var cfg agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -282,7 +292,7 @@ func TestAgentsCreate_RetryPolicy_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var cfg gen.AgentConfig
+	var cfg agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -331,7 +341,7 @@ func TestAgentsUpdate_RetryPolicy_RejectsNegative(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var created gen.AgentConfig
+	var created agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
@@ -367,7 +377,7 @@ func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var created gen.AgentConfig
+	var created agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
@@ -381,7 +391,7 @@ func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var updated gen.AgentConfig
+	var updated agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
 		t.Fatalf("decode update response: %v", err)
 	}
@@ -400,7 +410,7 @@ func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var preserved gen.AgentConfig
+	var preserved agentConfigResponse
 	if err := json.NewDecoder(w.Body).Decode(&preserved); err != nil {
 		t.Fatalf("decode second update response: %v", err)
 	}
