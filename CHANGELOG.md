@@ -11,6 +11,13 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Fixed
+- **Frontend/backend healthchecks used `localhost`, which resolves to `::1` before
+  `127.0.0.1` inside the containers**; since nginx (and the backend) only bind the IPv4
+  wildcard address, the `::1` probe was refused and the containers reported `unhealthy`
+  despite serving traffic fine. Healthchecks in `docker-compose.yml` and
+  `docker-compose.release.yml` now target `127.0.0.1` directly.
+
 ## [0.2.0] - 2026-07-07
 
 ### Added
