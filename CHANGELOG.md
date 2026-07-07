@@ -11,6 +11,18 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Dependency maintenance** — consolidated the outstanding Dependabot updates
+  into a single batch:
+  - Frontend (npm): `typescript` 5.8 → 6.0, `@types/node` 24 → 26,
+    `@xyflow/react` 12.11.1 → 12.11.2, `@tailwindcss/vite` 4.3.1 → 4.3.2,
+    `oxlint` → 1.73.0.
+  - Backend (Go): `github.com/go-chi/chi/v5` 5.3.0 → 5.3.1.
+  - Docker base images: `golang` 1.24 → 1.26 (backend builder) and `node`
+    22 → 26 (backend runtime + frontend builder).
+  - GitHub Actions: `actions/checkout` v4 → v7, `actions/setup-go` v5 → v6,
+    `docker/metadata-action` v5 → v6, `softprops/action-gh-release` v2 → v3.
+
 ## [0.5.0] - 2026-07-07
 
 ### Added

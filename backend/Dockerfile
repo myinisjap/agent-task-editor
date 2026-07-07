@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache gcc musl-dev
 
 WORKDIR /app
@@ -10,8 +10,8 @@ COPY . .
 RUN go build -o bin/server ./cmd/server && \
     go build -o bin/mcp-server ./cmd/mcp-server
 
-# Use node:22-alpine as the runtime so the claude CLI is available
-FROM node:22-alpine
+# Use node:26-alpine as the runtime so the claude CLI is available
+FROM node:26-alpine
 # Set to "true" to disable SSL verification for git/npm/Node.js (corporate TLS proxies).
 # Pass via: INSECURE_SKIP_SSL_VERIFY=true docker compose build
 ARG INSECURE_SKIP_SSL_VERIFY=false
@@ -24,7 +24,7 @@ RUN npm install -g @anthropic-ai/claude-code
 ENV SHELL=/bin/sh
 
 # Bring in the same Go toolchain used to build this image's own server binary
-# (golang:1.24-alpine builder stage above) so agents can build/test/vet Go
+# (golang:1.26-alpine builder stage above) so agents can build/test/vet Go
 # repos they're assigned to work on. Copying from the builder stage (rather
 # than `apk add go`) guarantees the agent-visible Go version matches exactly
 # what compiled bin/server and bin/mcp-server.
@@ -34,7 +34,7 @@ ENV GOPATH=/home/node/go
 ENV GOCACHE=/home/node/.cache/go-build
 ENV GOMODCACHE=/home/node/go/pkg/mod
 
-# Node.js/npm/npx are already on PATH via the node:22-alpine base image, which
+# Node.js/npm/npx are already on PATH via the node:26-alpine base image, which
 # covers Vite/React/TS projects out of the box (npm ci, npm run build/test,
 # vitest, etc.). build-base (gcc, g++, make, musl-dev) above covers cgo builds
 # (this project's own backend uses mattn/go-sqlite3) and native npm modules
