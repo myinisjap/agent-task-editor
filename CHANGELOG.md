@@ -26,6 +26,28 @@ this file's section for that version as the release notes.
   plus a synced Features list between the two docs. `scripts/seed-demo.sh` seeds
   a throwaway demo repo and tasks for retaking these against a fresh
   `DB_PATH`-isolated instance.
+- **CI hardening** (#59). `ci.yml` now catches classes of drift and regression
+  that previously only surfaced in production:
+  - **`govulncheck ./...`** on the backend module on every PR (currently
+    `continue-on-error: true` — it reports several reachable stdlib CVEs fixed
+    only in Go 1.25.8+ while this repo is pinned to Go 1.24; flip it back to
+    blocking once the toolchain is upgraded).
+  - **Docker build check**: a new `docker-build` job runs `docker compose build`
+    so a broken Dockerfile is caught at PR time — the backend image's final
+    stage is also the agents' execution toolchain, not just a deployment
+    artifact.
+  - **Codegen drift checks**: `sqlc generate` and `npm run gen:api`
+    (openapi-typescript) now run in CI and fail the build (`git diff
+    --exit-code`) if `internal/storage/gen/` or `frontend/src/api/types.ts`
+    don't match their sources, so generated code can no longer silently drift
+    from `queries/*.sql`/migrations or `openapi.yaml`.
+  - **Dependabot** (`.github/dependabot.yml`) for Go modules, npm, GitHub
+    Actions, and the backend/frontend Dockerfiles, all on a weekly schedule.
+  - **Coverage**: `go test -coverprofile` and `vitest run --coverage`
+    (new `@vitest/coverage-v8` dependency + `test:coverage` script) now run on
+    every PR with a step summary and an uploaded `*-coverage` artifact for both
+    backend and frontend, so coverage trends are visible without a third-party
+    account/token.
 
 ## [0.3.0] - 2026-07-07
 

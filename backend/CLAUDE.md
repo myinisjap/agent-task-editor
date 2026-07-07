@@ -44,6 +44,15 @@ sqlc generate   # or: go generate ./...
 
 Generated output goes to `internal/storage/gen/`. Do not hand-edit files in `gen/`.
 
+CI runs `sqlc generate` (pinned to the sqlc version that produced the committed
+`gen/` output) and fails the build if `git diff` finds any drift — always run
+`sqlc generate` and commit the result after editing queries or migrations.
+
+CI also runs `govulncheck ./...` against the backend module. It currently
+reports reachable stdlib CVEs fixed only in Go 1.25.8+ (this repo is pinned to
+Go 1.24), so the step is non-blocking (`continue-on-error: true`) until the Go
+toolchain is upgraded — see the comment in `.github/workflows/ci.yml`.
+
 ## Database Migrations
 
 Files in `internal/storage/migrations/` follow the `NNN_name.up.sql` / `NNN_name.down.sql` pattern. Migrations run automatically at startup via `golang-migrate`. To add a migration:
