@@ -14,6 +14,12 @@ this file's section for that version as the release notes.
 ### Added
 - Shift-click a task card's select checkbox to select every task between it and
   the last-clicked card in that column, instead of toggling one at a time.
+- README and `docs/overview.md` now include real screenshots (board, task detail
+  with live logs, diff viewer with an inline comment, workflow editor, dashboard,
+  health page) and a hero GIF of the drag → dispatch → review → approve flow,
+  plus a synced Features list between the two docs. `scripts/seed-demo.sh` seeds
+  a throwaway demo repo and tasks for retaking these against a fresh
+  `DB_PATH`-isolated instance.
 
 ## [0.3.0] - 2026-07-07
 

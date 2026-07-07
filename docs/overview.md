@@ -2,6 +2,8 @@
 
 Agent Task Editor is a self-hosted Kanban-style task board where AI agents automatically work through tasks as they move across workflow columns. You define the workflow, assign AI agents to specific columns, and the system dispatches, runs, and tracks every agent invocation against your code repositories.
 
+![Board](img/board.png)
+
 ## Core Concepts
 
 ### Tasks
@@ -110,5 +112,28 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   back to the issue and dedupe on re-sweeps — see
   [task-sources.md](task-sources.md)
 - **Dashboard** — run counts, completion rate, recent activity
+- **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — single `docker compose up` to run everything
+
+## Screenshots
+
+**Task detail with live logs**
+
+![Task detail with live logs](img/task-logs.png)
+
+**Diff viewer with an inline review comment**
+
+![Diff viewer with inline comment](img/diff-viewer.png)
+
+**Workflow editor**
+
+![Workflow editor](img/workflow-editor.png)
+
+**Dashboard**
+
+![Dashboard](img/dashboard.png)
+
+**Health**
+
+![Health page](img/health.png)
