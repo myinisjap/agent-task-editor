@@ -152,6 +152,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 			// Dashboard
 			r.Get("/dashboard", dashH.Get)
+			r.Get("/dashboard/cost-by-task", dashH.CostByTask)
 		})
 	})
 

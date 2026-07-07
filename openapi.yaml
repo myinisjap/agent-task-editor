@@ -101,6 +101,17 @@ components:
         subtask_conflicts:
           type: integer
           description: "Derived: children whose merge-back is in conflict."
+        max_cost_usd:
+          type: number
+          format: double
+          description: >
+            Advisory per-task cost budget cap in USD, checked by the
+            dispatcher before each sweep-dispatch against the task's
+            cumulative recorded run cost (across every run, any status).
+            0 disables the cap (unlimited). If the matched agent config also
+            has a nonzero max_cost_usd, the effective budget is the lower of
+            the two. Not a mid-run kill switch — see AgentConfig.max_cost_usd
+            and docs/agents.md#cost-budgets.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
@@ -250,6 +261,19 @@ components:
             first. Fully enforced for anthropic, llm, and claude. NOT enforced for
             qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]"
             (no restriction).
+        max_cost_usd:
+          type: number
+          format: double
+          description: >
+            Advisory per-task cost budget cap in USD, checked by the dispatcher
+            before each sweep-dispatch against the task's cumulative recorded
+            run cost so far (across every run for the task, any status). 0
+            disables the cap (unlimited). Default 0. If the task itself also
+            has a nonzero max_cost_usd, the effective budget is the lower of
+            the two. NOT a mid-run kill switch — no provider supports killing
+            an in-flight run at a cost threshold; the guard only blocks the
+            *next* dispatch once the budget is already exhausted. See
+            docs/agents.md#cost-budgets.
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
 
@@ -460,6 +484,37 @@ components:
               input_tokens:           { type: integer }
               output_tokens:          { type: integer }
               cost_usd:               { type: number, format: double }
+        cost_by_day:
+          type: array
+          description: >-
+            Daily token/cost/run-count rollup, most recent day first, capped
+            at the last 30 days with recorded activity. Same terminal-status
+            filtering as cost_total.
+          items:
+            type: object
+            properties:
+              day:           { type: string, description: "ISO date (YYYY-MM-DD)" }
+              input_tokens:  { type: integer }
+              output_tokens: { type: integer }
+              cost_usd:      { type: number, format: double }
+              run_count:     { type: integer }
+        cost_by_task:
+          type: array
+          description: >-
+            Top 20 tasks by cumulative recorded cost. Unlike cost_total /
+            cost_by_provider / agent_config_stats, this includes runs in
+            EVERY status (not just terminal ones) — a cost rollup should
+            reflect every run that ran, including ones still in flight or
+            that failed, matching the same filtering the dispatcher's
+            cost-budget guard uses (see docs/agents.md#cost-budgets).
+          items:
+            type: object
+            properties:
+              task_id:       { type: string }
+              task_title:    { type: string }
+              input_tokens:  { type: integer }
+              output_tokens: { type: integer }
+              cost_usd:      { type: number, format: double }
         claude_usage:
           type: object
           description: >-
@@ -1447,6 +1502,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Dashboard" }
+
+  /dashboard/cost-by-task:
+    get:
+      summary: Per-task cost rollup (full, uncapped)
+      description: >
+        Returns { task_id, input_tokens, output_tokens, cost_usd } for every
+        task with at least one agent_runs row, across every run status (not
+        just terminal ones — see docs/agents.md#cost-budgets). Unlike
+        Dashboard.cost_by_task this has no top-N cap and omits task_title; it
+        backs the Board page's "Filtered cost" badge, which needs a cost
+        figure for every currently-visible task, not just the most expensive
+        ones.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    task_id:       { type: string }
+                    input_tokens:  { type: integer }
+                    output_tokens: { type: integer }
+                    cost_usd:      { type: number, format: double }
 
   /health/providers:
     get:

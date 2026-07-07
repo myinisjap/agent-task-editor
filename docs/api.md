@@ -83,7 +83,10 @@ New tasks start on the `not_ready` label regardless of input.
 Get a single task.
 
 ### `PATCH /tasks/{id}`
-Update task fields (title, description, type, repo_id).
+Update task fields (title, description, type, repo_id, max_cost_usd).
+`max_cost_usd` is an advisory per-task cost budget cap in USD (optional,
+defaults to 0/unlimited if omitted the field is preserved from the
+existing value) — see [agents.md#cost-budgets](agents.md#cost-budgets).
 
 ### `DELETE /tasks/{id}`
 Delete a task and all associated runs/logs. Also tears down the per-task git worktree and removes uploaded attachments.
@@ -420,6 +423,7 @@ Create an agent config.
   "max_turns": 50,
   "max_retries": 3,
   "retry_backoff_secs": 30,
+  "max_cost_usd": 0,
   "env": { "KEY": "value" }
 }
 ```
@@ -428,6 +432,13 @@ Create an agent config.
 provider errors (rate limits, network blips, upstream 5xx) — see
 [agents.md#retry-policy](agents.md#retry-policy). Both are optional on
 create/update and default to `3`/`30`.
+
+`max_cost_usd` is an advisory per-task cost budget cap in USD, checked by
+the dispatcher before each sweep-dispatch against the task's cumulative
+recorded run cost — see [agents.md#cost-budgets](agents.md#cost-budgets).
+Optional on create/update, defaults to `0` (unlimited). Tasks can also carry
+their own `max_cost_usd` (see `PATCH /tasks/{id}` below); when both are set
+the lower of the two applies.
 
 If a label conflict exists with an already-enabled config, the new config is created in disabled state. The response includes an `X-Label-Conflict` header with the conflicting config name.
 
@@ -526,6 +537,12 @@ Returns aggregated statistics:
       "cost_usd": 3.87
     }
   ],
+  "cost_by_day": [
+    { "day": "2026-07-07", "input_tokens": 45678, "output_tokens": 12345, "cost_usd": 0.31, "run_count": 6 }
+  ],
+  "cost_by_task": [
+    { "task_id": "...", "task_title": "Refactor auth flow", "input_tokens": 89012, "output_tokens": 23456, "cost_usd": 0.58 }
+  ],
   "claude_usage": {
     "available": true,
     "five_hour_percent": 42.5,
@@ -577,6 +594,21 @@ Returns aggregated statistics:
   `/dashboard` request itself to fail. See
   [`docs/providers/claude.md`](providers/claude.md) for details on the
   credential requirement.
+- `cost_by_day` — daily token/cost/run-count rollup, most recent day first,
+  capped at the last 30 days with recorded activity. Same terminal-status
+  filtering (`completed`/`failed`/`waiting_human`) as `cost_total`.
+- `cost_by_task` — the 20 highest-cost tasks by cumulative `cost_usd`.
+  Unlike `cost_total`/`cost_by_provider`/`agent_config_stats`, this
+  includes runs in **every** status (not just terminal ones), matching the
+  same filtering the dispatcher's cost-budget guard uses — see
+  [agents.md#cost-budgets](agents.md#cost-budgets).
+
+### `GET /dashboard/cost-by-task`
+Returns the full per-task cost rollup (no top-20 cap, no `task_title`) as a
+flat array: `[{ "task_id": "...", "input_tokens": 0, "output_tokens": 0,
+"cost_usd": 0.0 }]`. Same every-status filtering as `Dashboard.cost_by_task`
+above. Backs the Board page's "Filtered cost" badge, which needs a cost
+figure for every currently-visible task rather than just the top 20.
 
 ---
 

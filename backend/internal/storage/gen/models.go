@@ -31,6 +31,7 @@ type AgentConfig struct {
 	ResumeSessions    int64     `json:"resume_sessions"`
 	SubtasksEnabled   int64     `json:"subtasks_enabled"`
 	MaxSubtasks       int64     `json:"max_subtasks"`
+	MaxCostUsd        float64   `json:"max_cost_usd"`
 }
 
 type AgentLog struct {
@@ -99,6 +100,7 @@ type Task struct {
 	ParentTaskID        *string    `json:"parent_task_id"`
 	CreatedByRunID      *string    `json:"created_by_run_id"`
 	MergeStatus         string     `json:"merge_status"`
+	MaxCostUsd          float64    `json:"max_cost_usd"`
 }
 
 type TaskDependency struct {

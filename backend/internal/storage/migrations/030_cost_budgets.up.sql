@@ -1,0 +1,2 @@
+ALTER TABLE agent_configs ADD COLUMN max_cost_usd REAL NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN max_cost_usd REAL NOT NULL DEFAULT 0;

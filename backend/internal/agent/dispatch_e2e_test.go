@@ -158,6 +158,7 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	factory := func(AgentConfig) Provider { return fp }
 	d := NewDispatcher(db.SQL(), pool, engine, factory)
 	d.interval = 15 * time.Millisecond
+	d.Publisher = pub
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)

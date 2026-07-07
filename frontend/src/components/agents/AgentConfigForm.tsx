@@ -147,6 +147,17 @@ export default function AgentConfigForm({
           />
         </Field>
 
+        <Field label="Max cost per run (USD)" hint="Advisory per-task budget cap in USD, checked by the dispatcher before each dispatch against the task's cumulative run cost so far. 0 disables the cap (unlimited). Not a mid-run kill switch — costs are only known after a run completes.">
+          <input
+            type="number"
+            step="0.01"
+            value={form.max_cost_usd}
+            onChange={(e) => setForm((f) => ({ ...f, max_cost_usd: Number(e.target.value) }))}
+            className="input"
+            min={0}
+          />
+        </Field>
+
         <Field label="Resume sessions" hint="Claude provider only: re-runs on the same task continue the previous run's session (full prior context) instead of starting cold. Turn off for stages that should review with fresh eyes.">
           <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
             <input

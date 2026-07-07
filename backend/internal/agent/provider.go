@@ -185,6 +185,14 @@ type AgentConfig struct {
 	// MaxSubtasks caps how many children a single parent may have; enforced at
 	// the create endpoint. Defaults to 10.
 	MaxSubtasks int64
+	// MaxCostUSD is an advisory per-task cost budget cap in USD, checked by
+	// the dispatcher before each sweep-dispatch against the task's
+	// cumulative recorded run cost so far (see Dispatcher.dispatch). 0
+	// disables the cap (unlimited). This is NOT a mid-run kill switch — no
+	// provider supports killing an in-flight run at a cost threshold, so a
+	// single very expensive run can still exceed the budget; the guard only
+	// prevents the *next* dispatch once the budget is already exhausted.
+	MaxCostUSD float64
 }
 
 // Provider is the interface all agent backends must satisfy.

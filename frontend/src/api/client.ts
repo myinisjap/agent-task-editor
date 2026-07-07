@@ -90,6 +90,11 @@ export type Task = {
   subtask_total?: number
   subtask_done?: number
   subtask_conflicts?: number
+  // Advisory per-task cost budget cap in USD (see AgentConfig.max_cost_usd
+  // for the full semantics — the effective budget the dispatcher enforces
+  // is the lower of this and the matched agent config's cap). 0/undefined
+  // means unlimited from the task side.
+  max_cost_usd?: number
 }
 
 // DependencyEdge is one end of a task dependency edge (a blocker or a
@@ -260,6 +265,15 @@ export type AgentConfig = {
   // caps children per parent.
   subtasks_enabled?: boolean
   max_subtasks?: number
+  // Advisory per-task cost budget cap in USD, checked by the dispatcher
+  // before each sweep-dispatch against the task's cumulative recorded run
+  // cost so far (across every run for the task, not just terminal ones).
+  // 0 disables the cap (unlimited). If the task itself also has a nonzero
+  // max_cost_usd, the effective budget is the lower of the two. This is
+  // NOT a mid-run kill switch — no provider supports killing an in-flight
+  // run at a cost threshold, so a single expensive run can still exceed
+  // the budget; the guard only blocks the *next* dispatch.
+  max_cost_usd: number
   created_at: string
   updated_at: string
 }
@@ -325,6 +339,14 @@ export type Dashboard = {
     output_tokens: number
     cost_usd: number
   }[]
+  // Daily token/cost/run-count rollup, most recent day first, last 30 days
+  // with recorded activity. Same terminal-state filtering as cost_total.
+  cost_by_day?: { day: string; input_tokens: number; output_tokens: number; cost_usd: number; run_count: number }[]
+  // Top 20 tasks by cumulative recorded cost, across ALL runs regardless of
+  // status (unlike cost_total/cost_by_provider/agent_config_stats, which
+  // only count terminal-state runs) — a cost rollup should reflect every
+  // run that ran, including ones still in flight or that failed.
+  cost_by_task?: { task_id: string; task_title: string; input_tokens: number; output_tokens: number; cost_usd: number }[]
   // Live Claude account rate-limit usage from Anthropic's OAuth usage
   // endpoint (5-hour rolling window + weekly window). `available` is false
   // when the server has no Claude OAuth credentials or the fetch failed;
@@ -337,6 +359,13 @@ export type Dashboard = {
     weekly_resets_at?: string | null
   }
 }
+
+// TaskCost is a single row of the { task_id, cost_usd } cost rollup returned
+// by GET /dashboard/cost-by-task, used by the board page to compute the
+// total cost of the currently-selected filter. Unlike Dashboard.cost_by_task
+// this endpoint returns every task (no top-N cap, no title) since the board
+// needs a cost for every visible task, not just the most expensive ones.
+export type TaskCost = { task_id: string; input_tokens: number; output_tokens: number; cost_usd: number }
 
 export type ProviderCheckStatus = 'ok' | 'warn' | 'error'
 
@@ -372,7 +401,7 @@ export const api = {
       }
       return request<Task>('/tasks', { method: 'POST', body: JSON.stringify(body) })
     },
-    update: (id: string, body: { title?: string; description?: string; type?: string; repo_id?: string }) =>
+    update: (id: string, body: { title?: string; description?: string; type?: string; repo_id?: string; max_cost_usd?: number }) =>
       request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/tasks/${id}`, { method: 'DELETE' }),
     moveLabel: (id: string, to_label: string, note?: string) =>
@@ -517,6 +546,9 @@ export const api = {
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),
+    // Full per-task cost rollup (no top-N cap), used by the board page to
+    // compute the cost of the currently-selected filter.
+    costByTask: () => request<TaskCost[]>('/dashboard/cost-by-task'),
   },
   github: {
     authStatus: () => request<{ authed: boolean; note: string }>('/github/auth-status'),

@@ -446,20 +446,25 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Type        string `json:"type"`
-		RepoID      string `json:"repo_id"`
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		Type        string   `json:"type"`
+		RepoID      string   `json:"repo_id"`
+		MaxCostUsd  *float64 `json:"max_cost_usd"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if body.MaxCostUsd != nil && *body.MaxCostUsd < 0 {
+		Err(w, http.StatusBadRequest, "max_cost_usd must be >= 0")
+		return
+	}
 
 	taskID := chi.URLParam(r, "id")
 
-	// Fetch the existing task so we can preserve the repo_id if the caller
-	// didn't supply a new one.
+	// Fetch the existing task so we can preserve the repo_id/max_cost_usd if
+	// the caller didn't supply new values.
 	existing, err := h.q.GetTask(r.Context(), taskID)
 	if err != nil {
 		Err(w, http.StatusNotFound, "task not found")
@@ -476,11 +481,17 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		repoID = body.RepoID
 	}
 
+	maxCostUsd := existing.MaxCostUsd
+	if body.MaxCostUsd != nil {
+		maxCostUsd = *body.MaxCostUsd
+	}
+
 	task, err := h.q.UpdateTask(r.Context(), gen.UpdateTaskParams{
 		Title:       body.Title,
 		Description: body.Description,
 		Type:        body.Type,
 		RepoID:      repoID,
+		MaxCostUsd:  maxCostUsd,
 		ID:          taskID,
 	})
 	if err != nil {

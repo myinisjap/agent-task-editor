@@ -11,6 +11,38 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **Cost budgets per agent config / task, plus new cost analytics** (#42).
+  - `max_cost_usd` (migration 030) can be set on an agent config and/or on
+    an individual task as an advisory USD spending cap. Before each
+    sweep-dispatch, the dispatcher sums a task's recorded `cost_usd` across
+    every `agent_runs` row (any status — failed and in-flight runs count
+    too) and compares it against the effective budget (the lower of the
+    task's and its matched agent config's nonzero `max_cost_usd`; `0` means
+    unlimited from that source). If the budget is already met or exceeded,
+    the dispatcher skips starting a new run and instead creates a "phantom"
+    `agent_runs` row directly in `waiting_human` status (no provider
+    invocation), locks the task on it, and publishes `task.needs_human` with
+    a `"budget exhausted: $<spent> of $<budget>"` message — mirroring
+    `Pool.handleTransientFailure`'s escalation shape. This is **not** a
+    mid-run kill switch: no supported provider can be aborted at a cost
+    threshold, so a single expensive run can still land over budget; the
+    guard only blocks the *next* dispatch. `DispatchReply` (human-initiated
+    resume) is intentionally never budget-gated. See
+    `docs/agents.md#cost-budgets`.
+  - **Dashboard**: new "cost by day" table (last 30 days, newest first) and
+    "top tasks by cost" table (top 20 by cumulative recorded cost, any run
+    status), added to `GET /dashboard` as `cost_by_day`/`cost_by_task`.
+  - **Board page**: a "Filtered cost" badge near the filter bar sums
+    recorded cost across the currently-visible (filtered) tasks, backed by
+    a new lightweight `GET /dashboard/cost-by-task` endpoint (full per-task
+    rollup, no top-N cap).
+  - **Task detail**: shows a task's cumulative cost (summed client-side
+    over its already-fetched run list) next to its budget, if one is set,
+    and a `max_cost_usd` field in the task edit form.
+  - Agent config form gained a "Max cost per run (USD)" field alongside the
+    existing retry-policy fields.
+
 ### Changed
 - **Dependency maintenance** — consolidated the outstanding Dependabot updates
   into a single batch:

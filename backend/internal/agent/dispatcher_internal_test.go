@@ -48,6 +48,34 @@ func TestMatchConfig(t *testing.T) {
 	}
 }
 
+// TestEffectiveBudget covers the min-of-(task, config)-nonzero-values
+// semantics used by the dispatcher's cost-budget guard: a zero value from
+// either source means "no cap from that source", and when both are set the
+// stricter (lower) one wins.
+func TestEffectiveBudget(t *testing.T) {
+	tests := []struct {
+		name       string
+		taskBudget float64
+		cfgBudget  float64
+		wantBudget float64
+	}{
+		{"both zero: unlimited", 0, 0, 0},
+		{"only task set", 5, 0, 5},
+		{"only config set", 0, 10, 10},
+		{"both set, task lower wins", 5, 10, 5},
+		{"both set, config lower wins", 10, 5, 5},
+		{"both set, equal", 7.5, 7.5, 7.5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := effectiveBudget(tt.taskBudget, tt.cfgBudget)
+			if got != tt.wantBudget {
+				t.Fatalf("effectiveBudget(%v, %v) = %v, want %v", tt.taskBudget, tt.cfgBudget, got, tt.wantBudget)
+			}
+		})
+	}
+}
+
 // TestToAgentConfig_CommandFilters verifies that CommandAllowlist/CommandDenylist
 // JSON columns are unmarshalled into the corresponding AgentConfig slice fields,
 // and that malformed/empty JSON falls back to nil (no restriction) rather than

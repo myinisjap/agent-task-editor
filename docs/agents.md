@@ -26,6 +26,7 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude` provider only** (others ignore it). Default on. See [Session Resume](#session-resume) below. |
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
+| `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. See [Cost Budgets](#cost-budgets) below. |
 
 ## Providers
 
@@ -127,6 +128,72 @@ per-config). Two known limitations apply here as well:
   escalation to a human, so this is a live snapshot ("how many done tasks
   currently have a nonzero retry count"), not a lifetime/historical count of
   every transient retry that config has ever triggered.
+
+The Dashboard additionally shows a **cost-by-day table** (most recent 30
+days with recorded activity, newest first) and a **"top tasks by cost"
+table** (the 20 highest-cost tasks by cumulative `cost_usd` across every
+run, GET `/dashboard`'s `cost_by_day`/`cost_by_task` fields). Unlike the
+total/per-provider/per-agent-config breakdowns above, cost-by-day and
+cost-by-task deliberately include runs in **every** status, not just
+terminal ones — see [Cost Budgets](#cost-budgets) below for why. A
+lightweight `GET /dashboard/cost-by-task` endpoint (no top-N cap, no task
+titles) backs the Board page's "Filtered cost" badge, which sums recorded
+cost across whatever tasks the current board filters leave visible. The
+Task Detail page shows a task's own cumulative cost as a simple client-side
+sum over its already-fetched run list (`GET /tasks/{id}/runs`), next to its
+budget if one is set.
+
+## Cost Budgets
+
+`max_cost_usd` can be set on an agent config and/or on an individual task
+to give the dispatcher an advisory spending cap. **This is not a mid-run
+kill switch** — no supported provider (`claude`, `anthropic`, `opencode`,
+`qwen_code`, `llm`) exposes a way to abort an in-flight run once it crosses
+a cost threshold, so a single expensive run can still land over budget. The
+guard instead runs **before** each sweep-dispatch: if the task's
+cumulative recorded cost has already met or exceeded its effective budget,
+the dispatcher skips starting a new run.
+
+- **Effective budget.** If both the task's and its matched agent config's
+  `max_cost_usd` are set (nonzero), the **lower** of the two applies. If
+  only one is set, that one applies. If neither is set (both `0`), there is
+  no cap.
+- **Cumulative cost.** The dispatcher sums `cost_usd` across **every**
+  `agent_runs` row for the task, regardless of status — including failed
+  and in-flight runs — not just terminal-successful ones. A task that fails
+  repeatedly still accumulates real spend and shouldn't be able to dodge
+  its budget by never reaching a "done" run. This is a different filter
+  than the Dashboard's total/per-provider/per-agent-config aggregates,
+  which only count terminal-status runs (`completed`/`failed`/`waiting_human`) —
+  see [Cost & Usage Tracking](#cost--usage-tracking) above.
+- **Escalation.** When the budget is exhausted, the dispatcher does *not*
+  start a provider run. Instead it creates a "phantom" `agent_runs` row
+  directly in `waiting_human` status (no provider invocation happens), sets
+  it as the task's active/current run (locking the task exactly like a real
+  `waiting_human` run would), and publishes a `task.needs_human` WebSocket
+  event so the Dashboard's intervention queue and the Task Detail page pick
+  it up live — mirroring how `Pool.handleTransientFailure` escalates after
+  a retry budget is exhausted. The task's label is left unchanged;
+  `waiting_human` is a run status, not a workflow label. The run's `notes`
+  field (and the WS event's `message`) carry the exact string:
+
+  ```
+  budget exhausted: $<spent> of $<budget>
+  ```
+
+  formatted to two decimal places (e.g. `budget exhausted: $1.50 of $1.00`).
+
+- **Recovery.** The task stays locked on the phantom run until a human
+  acts — either raising the budget (on the task and/or its agent config)
+  or replying via the normal `request_human` reply flow, which starts a
+  fresh run through `DispatchReply`. **`DispatchReply` is intentionally
+  never budget-gated** — a human who is already actively intervening should
+  never be blocked by their own budget check.
+- **Scope.** The guard only runs in the sweep dispatch path
+  (`Dispatcher.dispatch`), not in `DispatchReply`. It only prevents the
+  *next* dispatch once a budget is already exhausted; it cannot stop the
+  run that pushes the task over budget in the first place, since a run's
+  cost is only known once it completes.
 
 ## Session Resume
 

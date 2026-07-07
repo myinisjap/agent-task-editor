@@ -135,6 +135,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ResumeSessions    *flexBool `json:"resume_sessions"`
 		SubtasksEnabled   *flexBool `json:"subtasks_enabled"`
 		MaxSubtasks       *int64    `json:"max_subtasks"`
+		MaxCostUsd        *float64  `json:"max_cost_usd"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -154,6 +155,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.RetryBackoffSecs != nil && *body.RetryBackoffSecs < 0 {
 		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
+		return
+	}
+	if body.MaxCostUsd != nil && *body.MaxCostUsd < 0 {
+		Err(w, http.StatusBadRequest, "max_cost_usd must be >= 0")
 		return
 	}
 	if body.Labels == "" {
@@ -203,6 +208,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.MaxSubtasks != nil && *body.MaxSubtasks > 0 {
 		maxSubtasks = *body.MaxSubtasks
 	}
+	maxCostUsd := float64(0)
+	if body.MaxCostUsd != nil {
+		maxCostUsd = *body.MaxCostUsd
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -236,6 +245,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ResumeSessions:    resumeSessions,
 		SubtasksEnabled:   subtasksEnabled,
 		MaxSubtasks:       maxSubtasks,
+		MaxCostUsd:        maxCostUsd,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -253,7 +263,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			MaxRetries: cfg.MaxRetries, RetryBackoffSecs: cfg.RetryBackoffSecs,
 			ResumeSessions:  cfg.ResumeSessions,
 			SubtasksEnabled: cfg.SubtasksEnabled, MaxSubtasks: cfg.MaxSubtasks,
-			Enabled: 0, ID: cfg.ID,
+			MaxCostUsd: cfg.MaxCostUsd,
+			Enabled:    0, ID: cfg.ID,
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -288,6 +299,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ResumeSessions    *flexBool `json:"resume_sessions"`
 		SubtasksEnabled   *flexBool `json:"subtasks_enabled"`
 		MaxSubtasks       *int64    `json:"max_subtasks"`
+		MaxCostUsd        *float64  `json:"max_cost_usd"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -303,6 +315,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.RetryBackoffSecs != nil && *body.RetryBackoffSecs < 0 {
 		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
+		return
+	}
+	if body.MaxCostUsd != nil && *body.MaxCostUsd < 0 {
+		Err(w, http.StatusBadRequest, "max_cost_usd must be >= 0")
 		return
 	}
 
@@ -375,6 +391,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.MaxSubtasks != nil && *body.MaxSubtasks > 0 {
 		maxSubtasks = *body.MaxSubtasks
 	}
+	maxCostUsd := existing.MaxCostUsd
+	if body.MaxCostUsd != nil {
+		maxCostUsd = *body.MaxCostUsd
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -396,6 +416,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ResumeSessions:    resumeSessions,
 		SubtasksEnabled:   subtasksEnabled,
 		MaxSubtasks:       maxSubtasks,
+		MaxCostUsd:        maxCostUsd,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {
