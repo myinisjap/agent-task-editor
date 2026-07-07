@@ -72,7 +72,7 @@ type Props = {
   condensed?: boolean
   transitions?: WorkflowTransition[]
   selectedIds?: Set<string>
-  onToggleSelect?: (taskId: string) => void
+  onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
 }
 
 export default function TaskBoard({

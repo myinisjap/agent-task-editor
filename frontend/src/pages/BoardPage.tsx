@@ -41,6 +41,8 @@ export default function BoardPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkError, setBulkError] = useState('')
+  // Anchor for shift-click range selection (last task explicitly clicked).
+  const [selectAnchor, setSelectAnchor] = useState<string | null>(null)
 
   const toggleCondensed = () => {
     setCondensed((prev) => {
@@ -120,11 +122,22 @@ export default function BoardPage() {
     setShowArchived(false)
   }
 
-  const toggleSelect = (taskId: string) => {
+  const toggleSelect = (taskId: string, orderedIds: string[], shiftKey?: boolean) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
+      if (shiftKey && selectAnchor) {
+        const from = orderedIds.indexOf(selectAnchor)
+        const to = orderedIds.indexOf(taskId)
+        if (from !== -1 && to !== -1) {
+          const [lo, hi] = from < to ? [from, to] : [to, from]
+          for (const id of orderedIds.slice(lo, hi + 1)) next.add(id)
+          setSelectAnchor(taskId)
+          return next
+        }
+      }
       if (next.has(taskId)) next.delete(taskId)
       else next.add(taskId)
+      setSelectAnchor(taskId)
       return next
     })
   }

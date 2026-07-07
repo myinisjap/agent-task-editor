@@ -36,7 +36,7 @@ export default function TaskCard({
   showColumnLabel?: string
   /** Multi-select state for bulk actions; checkbox is shown on hover or while selected */
   selected?: boolean
-  onToggleSelect?: (taskId: string) => void
+  onToggleSelect?: (taskId: string, shiftKey: boolean) => void
 }) {
   const navigate = useNavigate()
   const { upsert } = useTasksStore()
@@ -187,8 +187,11 @@ export default function TaskCard({
             <input
               type="checkbox"
               checked={!!selected}
-              onChange={() => onToggleSelect(task.id)}
-              onClick={(e) => e.stopPropagation()}
+              onChange={() => {}}
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleSelect(task.id, e.shiftKey)
+              }}
               onPointerDown={(e) => e.stopPropagation()}
               className={`mt-0.5 shrink-0 accent-indigo-500 cursor-pointer transition-opacity ${
                 selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'

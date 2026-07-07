@@ -17,7 +17,7 @@ type Props = {
   isTerminal?: boolean
   className?: string
   selectedIds?: Set<string>
-  onToggleSelect?: (taskId: string) => void
+  onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
 }
 
 export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect }: Props) {
@@ -56,7 +56,10 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             onDelete={() => handleDelete(task.id)}
             isEditable={isStartingColumn}
             selected={selectedIds?.has(task.id)}
-            onToggleSelect={onToggleSelect}
+            onToggleSelect={
+              onToggleSelect &&
+              ((taskId, shiftKey) => onToggleSelect(taskId, visibleTasks.map((t) => t.id), shiftKey))
+            }
           />
         ))}
         {tasks.length === 0 && (

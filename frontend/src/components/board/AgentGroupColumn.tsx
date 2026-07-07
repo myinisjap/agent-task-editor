@@ -11,7 +11,7 @@ type Props = {
   rateLimitedTaskIds?: Map<string, string>
   className?: string
   selectedIds?: Set<string>
-  onToggleSelect?: (taskId: string) => void
+  onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
 }
 
 /**
@@ -62,7 +62,10 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
             onDelete={() => handleDelete(task.id)}
             showColumnLabel={task.label}
             selected={selectedIds?.has(task.id)}
-            onToggleSelect={onToggleSelect}
+            onToggleSelect={
+              onToggleSelect &&
+              ((taskId, shiftKey) => onToggleSelect(taskId, tasks.map((t) => t.id), shiftKey))
+            }
           />
         ))}
         {tasks.length === 0 && (

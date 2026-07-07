@@ -9,6 +9,12 @@ then push the matching tag (`git tag vx.y.z && git push origin vx.y.z`). The
 release workflow builds and pushes the images and creates a GitHub Release using
 this file's section for that version as the release notes.
 
+## [Unreleased]
+
+### Added
+- Shift-click a task card's select checkbox to select every task between it and
+  the last-clicked card in that column, instead of toggling one at a time.
+
 ## [0.3.0] - 2026-07-07
 
 ### Fixed
