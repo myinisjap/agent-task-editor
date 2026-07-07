@@ -11,18 +11,7 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
-### Changed
-- **Refactored `AgentConfigPage` and `TaskDetailPage`** (#62), the two largest
-  and most feature-churned pages in the frontend, into smaller, independently
-  readable units — no behavior change. `stores/agents.ts` now owns agent CRUD
-  plus model/claude-options fetching (previously inline in the page);
-  `AgentConfigPage` (836 → 233 lines) composes new `AgentConfigForm`,
-  `ModelSelector`, `PluginMcpPicker`, `CommandFilterEditor`, `AgentSidebar`,
-  and a shared `ChipPicker`. `TaskDetailPage` (1030 → 419 lines) composes new
-  `RunLogPane`/`useRunLogs` (log fetch/pagination/virtualizer/WS replay),
-  `DiffReviewPane`/`useDiffComments` (diff + inline review comments),
-  `TaskHeader`, `TaskActions` (approve/reject/reply panel), and
-  `RunHistoryList`.
+## [0.5.0] - 2026-07-07
 
 ### Added
 - **Per-agent-config run analytics** on the Dashboard (#47). A new "Agent
@@ -44,14 +33,6 @@ this file's section for that version as the release notes.
   and a notification row shows completion status (flagged as `Failed:` for any
   non-`completed` status) with a truncated summary. Handled across all three
   stream shapes the parser accepts (#96).
-- Shift-click a task card's select checkbox to select every task between it and
-  the last-clicked card in that column, instead of toggling one at a time.
-- README and `docs/overview.md` now include real screenshots (board, task detail
-  with live logs, diff viewer with an inline comment, workflow editor, dashboard,
-  health page) and a hero GIF of the drag → dispatch → review → approve flow,
-  plus a synced Features list between the two docs. `scripts/seed-demo.sh` seeds
-  a throwaway demo repo and tasks for retaking these against a fresh
-  `DB_PATH`-isolated instance.
 - **CI hardening** (#59). `ci.yml` now catches classes of drift and regression
   that previously only surfaced in production:
   - **`govulncheck ./...`** on the backend module on every PR (currently
@@ -74,6 +55,31 @@ this file's section for that version as the release notes.
     every PR with a step summary and an uploaded `*-coverage` artifact for both
     backend and frontend, so coverage trends are visible without a third-party
     account/token.
+
+### Changed
+- **Refactored `AgentConfigPage` and `TaskDetailPage`** (#62), the two largest
+  and most feature-churned pages in the frontend, into smaller, independently
+  readable units — no behavior change. `stores/agents.ts` now owns agent CRUD
+  plus model/claude-options fetching (previously inline in the page);
+  `AgentConfigPage` (836 → 233 lines) composes new `AgentConfigForm`,
+  `ModelSelector`, `PluginMcpPicker`, `CommandFilterEditor`, `AgentSidebar`,
+  and a shared `ChipPicker`. `TaskDetailPage` (1030 → 419 lines) composes new
+  `RunLogPane`/`useRunLogs` (log fetch/pagination/virtualizer/WS replay),
+  `DiffReviewPane`/`useDiffComments` (diff + inline review comments),
+  `TaskHeader`, `TaskActions` (approve/reject/reply panel), and
+  `RunHistoryList`.
+
+## [0.4.0] - 2026-07-06
+
+### Added
+- Shift-click a task card's select checkbox to select every task between it and
+  the last-clicked card in that column, instead of toggling one at a time.
+- README and `docs/overview.md` now include real screenshots (board, task detail
+  with live logs, diff viewer with an inline comment, workflow editor, dashboard,
+  health page) and a hero GIF of the drag → dispatch → review → approve flow,
+  plus a synced Features list between the two docs. `scripts/seed-demo.sh` seeds
+  a throwaway demo repo and tasks for retaking these against a fresh
+  `DB_PATH`-isolated instance.
 
 ## [0.3.0] - 2026-07-07
 
