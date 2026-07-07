@@ -202,3 +202,109 @@ describe('parseLogContent — resilient JSON parsing', () => {
     expect(parsed).toEqual<ParsedLog>({ kind: 'text', text: 'not json at all' })
   })
 })
+
+describe('parseLogContent — background task lifecycle', () => {
+  it('formats a task_started event on type "system"', () => {
+    const content = JSON.stringify({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'balpvovru',
+      tool_use_id: 'toolu_01XNL6k279f4Qg1omGSRiagh',
+      description: 'cd backend && go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.29.0 2>&1 | tail -30',
+      task_type: 'local_bash',
+      uuid: '1360a879-adb5-4829-922b-a364e755f972',
+      session_id: '169901f6-db7c-43e9-9674-a376b4bd521e',
+    })
+    const parsed = parseLogContent('system', content)
+    expect(parsed.kind).toBe('system_event')
+    if (parsed.kind !== 'system_event') return
+    expect(parsed.event.startsWith('{')).toBe(false)
+    expect(parsed.event).toContain('local_bash')
+    expect(parsed.event).toContain('go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.29.0')
+    expect(parsed.event).toContain('Background task started')
+  })
+
+  it('formats a task_started event on type "stdout" (raw SDK JSON blob)', () => {
+    const content = JSON.stringify({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'balpvovru',
+      description: 'echo hello',
+      task_type: 'local_bash',
+    })
+    const parsed = parseLogContent('stdout', content)
+    expect(parsed.kind).toBe('system_event')
+    if (parsed.kind !== 'system_event') return
+    expect(parsed.event.startsWith('{')).toBe(false)
+    expect(parsed.event).toContain('echo hello')
+  })
+
+  it('truncates a long task_started description', () => {
+    const description = 'echo ' + 'x'.repeat(200)
+    const content = JSON.stringify({ type: 'system', subtype: 'task_started', task_type: 'local_bash', description })
+    const parsed = parseLogContent('system', content)
+    if (parsed.kind !== 'system_event') throw new Error('expected system_event')
+    expect(parsed.event).toContain('…')
+    // description portion should be capped at 120 chars + ellipsis
+    const descPart = parsed.event.split(' · ').pop() as string
+    expect(descPart.length).toBe(121)
+    expect(descPart.endsWith('…')).toBe(true)
+  })
+
+  it('formats a completed task_notification event on type "system"', () => {
+    const content = JSON.stringify({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'balpvovru',
+      tool_use_id: 'toolu_01XNL6k279f4Qg1omGSRiagh',
+      status: 'completed',
+      output_file: '',
+      summary: 'cd backend && go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.29.0 2>&1 | tail -30',
+      uuid: 'd56a3078-4b8a-4a89-a201-92b0a4d14306',
+      session_id: '169901f6-db7c-43e9-9674-a376b4bd521e',
+    })
+    const parsed = parseLogContent('system', content)
+    expect(parsed.kind).toBe('system_event')
+    if (parsed.kind !== 'system_event') return
+    expect(parsed.event.startsWith('{')).toBe(false)
+    expect(parsed.event).toContain('completed')
+    expect(parsed.event).toContain('go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.29.0')
+    expect(parsed.event.startsWith('Failed:')).toBe(false)
+  })
+
+  it('formats a task_notification event on type "stdout" (raw SDK JSON blob)', () => {
+    const content = JSON.stringify({
+      type: 'system',
+      subtype: 'task_notification',
+      status: 'completed',
+      summary: 'echo hello',
+    })
+    const parsed = parseLogContent('stdout', content)
+    expect(parsed.kind).toBe('system_event')
+    if (parsed.kind !== 'system_event') return
+    expect(parsed.event.startsWith('{')).toBe(false)
+    expect(parsed.event).toContain('echo hello')
+  })
+
+  it('flags a non-completed task_notification as a failure', () => {
+    const content = JSON.stringify({ type: 'system', subtype: 'task_notification', status: 'failed', summary: 'oops' })
+    const parsed = parseLogContent('system', content)
+    if (parsed.kind !== 'system_event') throw new Error('expected system_event')
+    expect(parsed.event.startsWith('Failed:')).toBe(true)
+    expect(parsed.event).toContain('failed')
+    expect(parsed.event).toContain('oops')
+  })
+
+  it('truncates a long task_notification summary', () => {
+    const summary = 'result-' + 'x'.repeat(200)
+    const content = JSON.stringify({ type: 'system', subtype: 'task_notification', status: 'completed', summary })
+    const parsed = parseLogContent('system', content)
+    if (parsed.kind !== 'system_event') throw new Error('expected system_event')
+    expect(parsed.event).toContain('…')
+    const prefix = 'Background task completed: '
+    expect(parsed.event.startsWith(prefix)).toBe(true)
+    const summaryPart = parsed.event.slice(prefix.length)
+    expect(summaryPart.length).toBe(121)
+    expect(summaryPart.endsWith('…')).toBe(true)
+  })
+})
