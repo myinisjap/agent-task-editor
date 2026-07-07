@@ -11,6 +11,8 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-07
+
 ### Added
 - **Dark / light theme toggle** (#87). The UI now ships an explicit theme switch in the
   sidebar; it defaults to the operating system's `prefers-color-scheme` and remembers your
