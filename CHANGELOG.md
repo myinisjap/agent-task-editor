@@ -20,6 +20,11 @@ this file's section for that version as the release notes.
   `PATH` inside the container was to install/mount it yourself. No backend
   Go code, health checks, or frontend changes were needed — `qwen_code` was
   already fully wired up; this only adds the missing in-image install path.
+### Security
+- Pinned the CI and Docker builder Go toolchain to `1.26.5` (was the floating
+  `1.26`) to pick up the fix for GO-2026-5856, a crypto/tls Encrypted Client
+  Hello privacy leak that the previous run's resolved `1.26.4` toolchain was
+  still vulnerable to, per `govulncheck`.
 
 ## [0.6.0] - 2026-07-07
 
