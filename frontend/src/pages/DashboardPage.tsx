@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type Dashboard } from '../api/client'
-import { wsClient } from '../api/ws'
+import { api } from '../api/client'
+import { useDashboard } from '../lib/useDashboard'
 
 const LABEL_COLORS: Record<string, string> = {
   not_ready:    '#6B7280',
@@ -16,31 +16,9 @@ const LABEL_COLORS: Record<string, string> = {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const [dash, setDash] = useState<Dashboard | null>(null)
+  const { dash, refresh } = useDashboard()
   const [rejectNote, setRejectNote] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<Record<string, boolean>>({})
-
-  const refresh = useCallback(() => {
-    api.dashboard.get().then(setDash).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  // Re-fetch on any task-level WS event
-  useEffect(() => {
-    return wsClient.on((event) => {
-      if (
-        event.type === 'task.label_changed' ||
-        event.type === 'task.agent_started' ||
-        event.type === 'task.agent_done' ||
-        event.type === 'task.needs_human'
-      ) {
-        refresh()
-      }
-    })
-  }, [refresh])
 
   const handleApprove = async (taskId: string) => {
     setPending((p) => ({ ...p, [taskId]: true }))

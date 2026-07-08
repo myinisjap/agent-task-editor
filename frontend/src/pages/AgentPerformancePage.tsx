@@ -1,32 +1,8 @@
-import { useEffect, useState, useCallback } from 'react'
-import { api, type Dashboard } from '../api/client'
-import { wsClient } from '../api/ws'
+import { useDashboard } from '../lib/useDashboard'
 import { formatDuration } from '../lib/format'
 
 export default function AgentPerformancePage() {
-  const [dash, setDash] = useState<Dashboard | null>(null)
-
-  const refresh = useCallback(() => {
-    api.dashboard.get().then(setDash).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  // Re-fetch on any task-level WS event
-  useEffect(() => {
-    return wsClient.on((event) => {
-      if (
-        event.type === 'task.label_changed' ||
-        event.type === 'task.agent_started' ||
-        event.type === 'task.agent_done' ||
-        event.type === 'task.needs_human'
-      ) {
-        refresh()
-      }
-    })
-  }, [refresh])
+  const { dash } = useDashboard()
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
