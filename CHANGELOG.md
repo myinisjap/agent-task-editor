@@ -11,6 +11,8 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-07
+
 ### Added
 - **Cost budgets per agent config / task, plus new cost analytics** (#42).
   - `max_cost_usd` (migration 030) can be set on an agent config and/or on
