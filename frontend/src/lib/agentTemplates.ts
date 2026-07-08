@@ -143,4 +143,4 @@ export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_a
   },
 ]
 
-export const PROVIDERS = ['claude', 'opencode', 'openai', 'llm', 'anthropic', 'qwen_code']
+export const PROVIDERS = ['claude', 'opencode', 'openai', 'llm', 'anthropic', 'qwen_code', 'gemini_cli', 'codex_cli']

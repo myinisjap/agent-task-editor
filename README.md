@@ -92,6 +92,16 @@ volumes:
 
 The `claude` CLI binary itself is baked into the backend image — you don't need to mount it from the host. You do need to authenticate on your host machine (`claude login`) so the credentials are present at `~/.claude` before starting the stack.
 
+### Build args: optional CLI providers, SSL verification
+
+Unlike `claude` (installed unconditionally), the Gemini CLI (`gemini_cli` provider) and Codex CLI (`codex_cli` provider) are **not** installed in the default backend image — they're gated behind build args so the image doesn't grow for users who don't need them:
+
+```bash
+INSTALL_GEMINI_CLI=true INSTALL_CODEX_CLI=true docker compose build
+```
+
+`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. See [docs/providers/gemini_cli.md](docs/providers/gemini_cli.md) and [docs/providers/codex_cli.md](docs/providers/codex_cli.md) for authentication setup once installed.
+
 ### Mount your repositories
 
 Agents run with their working directory set to the registered repo path. Add a volume for the projects you want agents to access:
@@ -119,7 +129,7 @@ See [docs/getting-started.md](docs/getting-started.md) for the full setup guide,
 
 ## Agent Provider Comparison
 
-Three providers are available. Choose based on your auth setup, billing preference, and tool requirements.
+Seven providers are available. Choose based on your auth setup, billing preference, and tool requirements.
 
 | Provider | Auth Required | CLI Dependency | Built-in Tools | Label Transitions | Notes |
 |---|---|---|---|---|---|
@@ -128,6 +138,8 @@ Three providers are available. Choose based on your auth setup, billing preferen
 | **`llm`** | API key (`LLM_API_KEY`) + `LLM_BASE_URL` | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Works with OpenAI, Azure OpenAI, Ollama, LM Studio, and any OpenAI-compatible endpoint. Same tool set as `anthropic`. Output quality varies by model/endpoint. |
 | **`opencode`** | Provider-specific (configured in `opencode` CLI) | ✅ `opencode` binary must be installed | Depends on opencode config | ❌ MCP tools not available | Label transitions require MCP, which opencode does not support. Runs complete without transitioning the task label. |
 | **`qwen_code`** | Qwen auth (configured in `qwen` CLI) | ✅ `qwen` binary must be installed | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Same MCP setup as the `claude` provider. |
+| **`gemini_cli`** | Google account login or `GEMINI_API_KEY`/`GOOGLE_API_KEY` | ✅ `gemini` CLI must be installed (see `INSTALL_GEMINI_CLI` build arg) | Gemini's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via a per-run isolated `GEMINI_CLI_HOME`, not a CLI flag. No cost figure reported (token counts only). Command allowlist/denylist not enforced. |
+| **`codex_cli`** | ChatGPT account login (`codex login`) or `OPENAI_API_KEY` | ✅ `codex` CLI must be installed (see `INSTALL_CODEX_CLI` build arg) | Codex's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via a per-run isolated `CODEX_HOME`, not a CLI flag. Runs fully unsandboxed/unattended (`--dangerously-bypass-approvals-and-sandbox`); command allowlist/denylist not enforced — Codex's own sandbox/approval system is bypassed instead. No cost figure reported (token counts only). |
 
 ### Key limitations to be aware of
 

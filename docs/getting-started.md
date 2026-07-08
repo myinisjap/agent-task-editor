@@ -92,7 +92,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 
 | Variable | Default | Description |
 |---|---|---|
-| `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude` and `qwen_code` providers). |
+| `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, `gemini_cli`, and `codex_cli` providers). |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API) |
 | `LLM_API_KEY` | _(empty)_ | API key for `llm` or `anthropic` provider |
 
@@ -164,6 +164,14 @@ Install the `opencode` binary and configure it. **MCP tools are not available.**
 ### Qwen Code (`qwen_code` provider)
 
 Install the `qwen` binary. MCP tools are supported (same setup as `claude`). See [providers/qwen_code.md](providers/qwen_code.md).
+
+### Gemini CLI (`gemini_cli` provider)
+
+Install the `gemini` binary (`npm i -g @google/gemini-cli`, or build the backend image with `INSTALL_GEMINI_CLI=true`) and authenticate (Google account login or `GEMINI_API_KEY`). MCP tools are supported via a per-run isolated `GEMINI_CLI_HOME`. See [providers/gemini_cli.md](providers/gemini_cli.md).
+
+### Codex CLI (`codex_cli` provider)
+
+Install the `codex` binary (`npm i -g @openai/codex`, or build the backend image with `INSTALL_CODEX_CLI=true`) and authenticate (`codex login` with ChatGPT, or `OPENAI_API_KEY`). MCP tools are supported via a per-run isolated `CODEX_HOME`. See [providers/codex_cli.md](providers/codex_cli.md).
 
 ## Mounting Repositories
 

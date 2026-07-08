@@ -1,6 +1,6 @@
 # internal/agent
 
-The agent package owns everything to do with running AI agents: the provider abstraction, three concrete providers, the worker pool, and the dispatcher.
+The agent package owns everything to do with running AI agents: the provider abstraction, several concrete providers (claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli), the worker pool, and the dispatcher.
 
 ## Files
 
@@ -108,13 +108,18 @@ govern automatic retries for **transient** provider errors only:
   implementing `Transient() bool` (both `ErrRateLimit` and `ErrTransient`) is
   treated as transient. HTTP providers (`anthropic.go`, `llm.go`) wrap
   network-level `Do()` errors and `5xx` responses as `ErrTransient`; `429` stays
-  `ErrRateLimit`. CLI providers (`claude.go`, `qwen.go`, `opencode.go`) classify
-  stdout/stderr via the **single** pattern table in `errclass.go`
-  (`ClassifyLine`) — connection resets, `502/503/504`, "timeout", `429`/rate
-  limit, and "Not logged in"/"Please run /login" all live in that one table with
-  per-pattern unit tests, so a CLI-wording change is a one-line edit. For the
-  claude/qwen providers, the typed stream-json `result` event
-  (`classifyResultMessage`) is preferred over raw line sniffing where present.
+  `ErrRateLimit`. CLI providers (`claude.go`, `qwen.go`, `opencode.go`,
+  `gemini.go`, `codex.go`) classify stdout/stderr via the **single** pattern
+  table in `errclass.go` (`ClassifyLine`) — connection resets, `502/503/504`,
+  "timeout", `429`/rate limit, and "Not logged in"/"Please run /login" all live
+  in that one table with per-pattern unit tests, so a CLI-wording change is a
+  one-line edit. For the claude/qwen providers, the typed stream-json `result`
+  event (`classifyResultMessage`) is preferred over raw line sniffing where
+  present; `gemini.go`/`codex.go` have their own dedicated
+  `classifyGeminiJSON`/`classifyCodexJSON` parsers instead, since neither CLI's
+  JSON event schema is compatible with claude/qwen's stream-json envelope, but
+  both still prefer their own typed terminal event's classification over raw
+  line sniffing the same way.
   An ambiguous run-timeout (context deadline exceeded) is also treated as
   transient without needing a log signal. A plain non-zero CLI exit with no such
   signal, or a `Result{Status:"failed"}` with no error at all, is a **genuine**
@@ -139,7 +144,10 @@ govern automatic retries for **transient** provider errors only:
 
 Each `claude`/`qwen_code` run's stream-json envelope carries a `session_id`;
 `classifyStreamJSON` extracts it, the Result carries it, and the pool persists
-it (`SetAgentRunSession`) on any outcome. `Dispatcher.startRun` looks up the
+it (`SetAgentRunSession`) on any outcome. `gemini_cli`/`codex_cli` runs record
+a session/thread id the same way (from their own `classifyGeminiJSON`/
+`classifyCodexJSON` parsers), but no provider actually resumes it except
+`claude`. `Dispatcher.startRun` looks up the
 latest session for (task, agent config) via `GetLatestTaskSession` — gated on
 `provider == "claude" && resume_sessions` — and sets `RunInput.ResumeSessionID`;
 `claude.go` then passes `--resume` with a **condensed prompt**
@@ -164,7 +172,8 @@ Humans leave persistent, file/line-anchored review comments on a task's diff
 dispatcher loads the task's **open** comments into
 `RunInput.OpenReviewComments`; `buildPrompt` renders them (with `comment_id`s)
 under `"OPEN REVIEW COMMENTS"`, so every provider sees them on every run until
-resolved. CLI providers with the MCP sidecar (`claude`, `qwen_code`) expose a
+resolved. CLI providers with the MCP sidecar (`claude`, `qwen_code`,
+`gemini_cli`, `codex_cli`) expose a
 `resolve_comment(comment_id, note)` tool; the sidecar accumulates resolutions
 in the result file and the pool applies them to the DB **only when the run
 completes successfully** (a failed run's claimed fixes never reached the

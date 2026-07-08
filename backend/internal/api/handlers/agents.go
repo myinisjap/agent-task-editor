@@ -65,6 +65,7 @@ func safeConfig(cfg gen.AgentConfig) agentConfigView {
 
 var knownProviders = map[string]bool{
 	"claude": true, "anthropic": true, "llm": true, "opencode": true, "qwen_code": true,
+	"gemini_cli": true, "codex_cli": true,
 }
 
 // flexBool unmarshals JSON true/false as well as numeric 0/1, since some
@@ -146,7 +147,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code", body.Provider))
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
 		return
 	}
 	if body.MaxRetries != nil && *body.MaxRetries < 0 {
@@ -306,7 +307,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Provider != "" && !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code", body.Provider))
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
 		return
 	}
 	if body.MaxRetries != nil && *body.MaxRetries < 0 {

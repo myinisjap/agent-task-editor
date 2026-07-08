@@ -23,6 +23,9 @@ export default function CommandFilterEditor({ provider, allowlist, denylist, onA
           {provider === 'opencode' && 'Not enforced for the opencode provider.'}
           {provider === 'claude' &&
             'Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist below instead.'}
+          {provider === 'gemini_cli' && 'Not enforced for the gemini_cli provider (no confirmed CLI allowlist flag).'}
+          {provider === 'codex_cli' &&
+            'Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md).'}
         </p>
       </Field>
 
@@ -38,6 +41,9 @@ export default function CommandFilterEditor({ provider, allowlist, denylist, onA
           Commands matching any pattern here are always denied, checked before the allowlist.{' '}
           {provider === 'opencode' && 'Not enforced for the opencode provider.'}
           {provider === 'qwen_code' && 'Not enforced for the qwen_code provider (no confirmed CLI denylist flag).'}
+          {provider === 'gemini_cli' && 'Not enforced for the gemini_cli provider (no confirmed CLI denylist flag).'}
+          {provider === 'codex_cli' &&
+            'Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md).'}
         </p>
       </Field>
     </>

@@ -156,15 +156,19 @@ export type AgentRun = {
   completed_at?: string
   created_at: string
   // Token usage / estimated cost for this run. 0 if the provider does not
-  // report usage (e.g. opencode currently). For the `claude` CLI provider,
-  // cost_usd is the CLI's own authoritative total_cost_usd figure (which may
-  // legitimately be 0 under a Claude Max subscription); for anthropic/llm
-  // providers it's computed from tokens via an internal pricing table.
+  // report usage (e.g. opencode currently). For the `claude`/`qwen_code`
+  // CLI providers, cost_usd is the CLI's own authoritative total_cost_usd
+  // figure (which may legitimately be 0 under a Claude Max subscription);
+  // for anthropic/llm providers it's computed from tokens via an internal
+  // pricing table. For `gemini_cli`/`codex_cli`, only input/output token
+  // counts are reported by the CLI's JSON output (no cost figure) — cost_usd
+  // is left at 0, not estimated.
   input_tokens?: number
   output_tokens?: number
   cost_usd?: number
   // Provider-side conversation session for this run (claude/qwen stream-json
-  // session_id). A later run on the same task can resume it (claude only).
+  // session_id, or the gemini_cli/codex_cli session/thread id). Only the
+  // `claude` provider currently resumes a prior session on a later run.
   session_id?: string
 }
 
@@ -252,17 +256,18 @@ export type AgentConfig = {
   // matching, not a sandbox. Denylist is always checked first.
   // Allowlist: fully enforced for anthropic, llm, qwen_code. NOT an effective
   // restriction for claude (CLI only auto-approves matches; see docs). Not enforced
-  // for opencode.
+  // for opencode, gemini_cli, or codex_cli (codex_cli has its own native
+  // sandbox/approval-mode system instead — see docs/providers/codex_cli.md).
   // Denylist: fully enforced for anthropic, llm, claude. NOT enforced for qwen_code
-  // (no confirmed CLI flag) or opencode.
+  // (no confirmed CLI flag), opencode, gemini_cli, or codex_cli.
   command_allowlist?: string
   command_denylist?: string
   // Whether new runs resume the previous run's provider session (claude
   // provider only; on by default). Off = every run starts cold ("fresh eyes").
   resume_sessions?: boolean
   // Whether this config's runs can decompose their task into subtasks via the
-  // create_subtask MCP tool (claude/qwen_code only; off by default). max_subtasks
-  // caps children per parent.
+  // create_subtask MCP tool (claude/qwen_code/gemini_cli/codex_cli only; off
+  // by default). max_subtasks caps children per parent.
   subtasks_enabled?: boolean
   max_subtasks?: number
   // Advisory per-task cost budget cap in USD, checked by the dispatcher

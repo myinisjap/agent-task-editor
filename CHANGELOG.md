@@ -42,6 +42,39 @@ this file's section for that version as the release notes.
     and a `max_cost_usd` field in the task edit form.
   - Agent config form gained a "Max cost per run (USD)" field alongside the
     existing retry-policy fields.
+- **Two new agent providers: `gemini_cli` (Google's Gemini CLI) and
+  `codex_cli` (OpenAI's Codex CLI)** (#84). Both follow the `qwen_code`
+  precedent — a headless CLI subprocess with structured JSON output and MCP
+  sidecar support (`signal_complete`/`request_human`/`update_task_notes`/
+  `store_info`/`resolve_comment`) — but each has its own dedicated JSON event
+  parser (`classifyGeminiJSON`/`classifyCodexJSON`) since neither CLI's
+  output schema is compatible with claude/qwen's stream-json envelope.
+  - `gemini_cli` runs `gemini -p ... --output-format stream-json --yolo`.
+    MCP servers are wired via a fresh, per-run isolated `GEMINI_CLI_HOME`
+    directory (a `settings.json` with `mcpServers`), since the Gemini CLI has
+    no per-invocation `--mcp-config` flag. Token usage is reported by the
+    CLI's terminal `result` event; no cost figure is reported, so `cost_usd`
+    is left at `0`. Command allowlist/denylist are not enforced (no
+    confirmed CLI flag).
+  - `codex_cli` runs `codex exec --json --dangerously-bypass-approvals-and-sandbox`.
+    MCP servers are wired via a fresh, per-run isolated `CODEX_HOME`
+    directory (a `config.toml` with `[mcp_servers.*]` sections), since Codex
+    only reads MCP config from a persistent config file. Token usage is
+    reported by the CLI's `turn.completed` event; no cost figure is
+    reported, so `cost_usd` is left at `0`. Command allowlist/denylist are
+    not enforced — Codex has its own native sandbox/approval-mode system
+    instead, which the `--dangerously-bypass-approvals-and-sandbox` flag
+    (required for headless operation) bypasses entirely.
+  - Both providers get a provider health-page row (binary-on-PATH +
+    heuristic auth detection: `GEMINI_API_KEY`/`GOOGLE_API_KEY`/
+    `~/.gemini/oauth_creds.json` for Gemini, `OPENAI_API_KEY`/
+    `~/.codex/auth.json` for Codex).
+  - The backend Docker image gains two new build args, both **default
+    `false`** (unlike `claude`, which is installed unconditionally):
+    `INSTALL_GEMINI_CLI` (`npm install -g @google/gemini-cli`) and
+    `INSTALL_CODEX_CLI` (`npm install -g @openai/codex`).
+  - New deep-dive docs: `docs/providers/gemini_cli.md`,
+    `docs/providers/codex_cli.md`.
 
 ### Changed
 - **Human-readable safety-net commit messages** (#63). The pool's automatic

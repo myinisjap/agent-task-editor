@@ -88,8 +88,8 @@ func TestClaudeCheck_AuthViaEnv(t *testing.T) {
 func TestProviderChecks_OnlyEmittedWhenUsed(t *testing.T) {
 	d := fakeDeps(nil, nil, nil, "/home/u", false)
 	checks := Checks(Input{}, d)
-	// No providers configured → no qwen/opencode/anthropic/llm rows.
-	for _, id := range []string{"qwen_cli", "opencode_cli", "anthropic_api", "llm_api"} {
+	// No providers configured → no qwen/opencode/anthropic/llm/gemini/codex rows.
+	for _, id := range []string{"qwen_cli", "opencode_cli", "anthropic_api", "llm_api", "gemini_cli", "codex_cli"} {
 		if hasID(checks, id) {
 			t.Fatalf("did not expect check %q when provider unused", id)
 		}
@@ -101,6 +101,92 @@ func TestProviderChecks_OnlyEmittedWhenUsed(t *testing.T) {
 	}
 	if find(t, checks, "qwen_cli").Status != StatusError {
 		t.Fatalf("qwen missing binary should be error")
+	}
+
+	checks = Checks(Input{Providers: map[string]bool{"gemini_cli": true, "codex_cli": true}}, d)
+	if !hasID(checks, "gemini_cli") || !hasID(checks, "codex_cli") {
+		t.Fatalf("expected gemini/codex checks when providers in use")
+	}
+}
+
+func TestGeminiCheck_MissingBinary(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+	got := find(t, Checks(Input{Providers: map[string]bool{"gemini_cli": true}}, d), "gemini_cli")
+	if got.Status != StatusError {
+		t.Fatalf("status = %q, want error", got.Status)
+	}
+	if got.Hint == "" {
+		t.Fatalf("expected a fix hint")
+	}
+}
+
+func TestGeminiCheck_InstalledButNoCreds(t *testing.T) {
+	d := fakeDeps(map[string]bool{"gemini": true}, nil, nil, "/home/u", false)
+	got := find(t, Checks(Input{Providers: map[string]bool{"gemini_cli": true}}, d), "gemini_cli")
+	if got.Status != StatusWarn {
+		t.Fatalf("status = %q, want warn", got.Status)
+	}
+}
+
+func TestGeminiCheck_AuthViaEnv(t *testing.T) {
+	env := map[string]string{"GEMINI_API_KEY": "k"}
+	d := fakeDeps(map[string]bool{"gemini": true}, nil, env, "/home/u", false)
+	got := find(t, Checks(Input{Providers: map[string]bool{"gemini_cli": true}}, d), "gemini_cli")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok", got.Status)
+	}
+
+	env = map[string]string{"GOOGLE_API_KEY": "k"}
+	d = fakeDeps(map[string]bool{"gemini": true}, nil, env, "/home/u", false)
+	got = find(t, Checks(Input{Providers: map[string]bool{"gemini_cli": true}}, d), "gemini_cli")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok (GOOGLE_API_KEY)", got.Status)
+	}
+}
+
+func TestGeminiCheck_AuthViaCredentialsFile(t *testing.T) {
+	files := map[string]bool{"/home/u/.gemini/oauth_creds.json": true}
+	d := fakeDeps(map[string]bool{"gemini": true}, files, nil, "/home/u", false)
+	got := find(t, Checks(Input{Providers: map[string]bool{"gemini_cli": true}}, d), "gemini_cli")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok", got.Status)
+	}
+}
+
+func TestCodexCheck_MissingBinary(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+	got := find(t, Checks(Input{Providers: map[string]bool{"codex_cli": true}}, d), "codex_cli")
+	if got.Status != StatusError {
+		t.Fatalf("status = %q, want error", got.Status)
+	}
+	if got.Hint == "" {
+		t.Fatalf("expected a fix hint")
+	}
+}
+
+func TestCodexCheck_InstalledButNoCreds(t *testing.T) {
+	d := fakeDeps(map[string]bool{"codex": true}, nil, nil, "/home/u", false)
+	got := find(t, Checks(Input{Providers: map[string]bool{"codex_cli": true}}, d), "codex_cli")
+	if got.Status != StatusWarn {
+		t.Fatalf("status = %q, want warn", got.Status)
+	}
+}
+
+func TestCodexCheck_AuthViaEnv(t *testing.T) {
+	env := map[string]string{"OPENAI_API_KEY": "k"}
+	d := fakeDeps(map[string]bool{"codex": true}, nil, env, "/home/u", false)
+	got := find(t, Checks(Input{Providers: map[string]bool{"codex_cli": true}}, d), "codex_cli")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok", got.Status)
+	}
+}
+
+func TestCodexCheck_AuthViaCredentialsFile(t *testing.T) {
+	files := map[string]bool{"/home/u/.codex/auth.json": true}
+	d := fakeDeps(map[string]bool{"codex": true}, files, nil, "/home/u", false)
+	got := find(t, Checks(Input{Providers: map[string]bool{"codex_cli": true}}, d), "codex_cli")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok", got.Status)
 	}
 }
 
