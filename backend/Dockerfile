@@ -22,16 +22,19 @@ RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl 
 # Install Claude Code CLI globally so 'claude' is on PATH
 RUN npm install -g @anthropic-ai/claude-code
 
-# Gemini CLI (gemini_cli provider) and Codex CLI (codex_cli provider) are
-# NOT installed by default — unlike claude above, both are gated behind
-# build args (default false) so the default image doesn't grow for users who
-# don't need them. Pass via:
+# Gemini CLI (gemini_cli provider), Codex CLI (codex_cli provider), and Qwen
+# CLI (qwen_code provider) are NOT installed by default — unlike claude
+# above, all three are gated behind build args (default false) so the
+# default image doesn't grow for users who don't need them. Pass via:
 #   INSTALL_GEMINI_CLI=true docker compose build
 #   INSTALL_CODEX_CLI=true docker compose build
+#   INSTALL_QWEN_CLI=true docker compose build
 ARG INSTALL_GEMINI_CLI=false
 ARG INSTALL_CODEX_CLI=false
+ARG INSTALL_QWEN_CLI=false
 RUN if [ "$INSTALL_GEMINI_CLI" = "true" ]; then npm install -g @google/gemini-cli; fi
 RUN if [ "$INSTALL_CODEX_CLI" = "true" ]; then npm install -g @openai/codex; fi
+RUN if [ "$INSTALL_QWEN_CLI" = "true" ]; then npm install -g @qwen-code/qwen-code; fi
 ENV SHELL=/bin/sh
 
 # Bring in the same Go toolchain used to build this image's own server binary
