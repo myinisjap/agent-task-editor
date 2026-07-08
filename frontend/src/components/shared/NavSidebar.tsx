@@ -3,12 +3,14 @@ import { NavLink } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
 
 const links = [
-  { to: '/',          label: 'Dashboard' },
-  { to: '/board',     label: 'Board' },
-  { to: '/workflow',  label: 'Workflow' },
-  { to: '/agents',    label: 'Agents' },
-  { to: '/repos',     label: 'Repos' },
-  { to: '/health',    label: 'Health' },
+  { to: '/',                      label: 'Dashboard' },
+  { to: '/dashboard/usage',       label: 'Cost & Usage' },
+  { to: '/dashboard/performance', label: 'Performance' },
+  { to: '/board',                 label: 'Board' },
+  { to: '/workflow',              label: 'Workflow' },
+  { to: '/agents',                label: 'Agents' },
+  { to: '/repos',                 label: 'Repos' },
+  { to: '/health',                label: 'Health' },
 ]
 
 export default function NavSidebar() {

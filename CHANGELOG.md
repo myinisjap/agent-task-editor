@@ -11,6 +11,22 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Split the Dashboard into three focused pages** to reduce clutter on a
+  single overloaded view. All three still read from the same `GET
+  /dashboard` payload — this is a frontend-only reorganization, no backend
+  or API changes.
+  - `/` (**Overview**) now shows only the operational, "what needs my
+    attention" sections: label count chips, active agents, and the human
+    intervention queue (approve/reject).
+  - `/dashboard/usage` (**Cost & Usage**, new page) holds the Claude
+    5h/weekly rate-limit usage bars and the full cost/token breakdown
+    (total, by provider, by day, by task).
+  - `/dashboard/performance` (**Agent Performance**, new page) holds the
+    per-agent-config performance table (success rate, avg/p90 duration,
+    avg turns, retries, cost).
+  - The sidebar nav gained two new top-level links, "Cost & Usage" and
+    "Performance", alongside the existing "Dashboard" link.
 ### Added
 - **Qwen CLI is now optionally installable in the backend Docker image.** The
   backend `Dockerfile` gains a new `INSTALL_QWEN_CLI` build arg (default
