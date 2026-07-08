@@ -27,6 +27,11 @@ this file's section for that version as the release notes.
     avg turns, retries, cost).
   - The sidebar nav gained two new top-level links, "Cost & Usage" and
     "Performance", alongside the existing "Dashboard" link.
+### Security
+- Pinned the CI and Docker builder Go toolchain to `1.26.5` (was the floating
+  `1.26`) to pick up the fix for GO-2026-5856, a crypto/tls Encrypted Client
+  Hello privacy leak that the previous run's resolved `1.26.4` toolchain was
+  still vulnerable to, per `govulncheck`.
 
 ## [0.6.0] - 2026-07-07
 
