@@ -47,7 +47,8 @@ type Input struct {
 	LLMBaseURL  string
 	LLMAPIKey   string
 	// Providers is the set of provider strings used by enabled agent configs
-	// (e.g. "claude", "anthropic", "llm", "qwen_code", "opencode").
+	// (e.g. "claude", "anthropic", "llm", "qwen_code", "opencode", "gemini_cli",
+	// "codex_cli").
 	Providers map[string]bool
 }
 
@@ -100,6 +101,12 @@ func Checks(in Input, d *Deps) []Check {
 	if in.Providers["opencode"] {
 		checks = append(checks, binaryCheck(deps, "opencode", "opencode CLI", "opencode provider",
 			"Install the opencode CLI and ensure it's on the server's PATH."))
+	}
+	if in.Providers["gemini_cli"] {
+		checks = append(checks, geminiCheck(deps))
+	}
+	if in.Providers["codex_cli"] {
+		checks = append(checks, codexCheck(deps))
 	}
 
 	checks = append(checks, mcpCheck(in, deps))
@@ -178,6 +185,80 @@ func llmCheck(in Input) Check {
 	c.Status = StatusOK
 	c.Detail = "LLM_API_KEY set; base URL " + in.LLMBaseURL
 	return c
+}
+
+// geminiCheck verifies the gemini CLI is installed and appears authenticated.
+// Authentication is detected heuristically (env var or the OAuth cache file
+// the CLI itself writes on `gemini` login) rather than by invoking the CLI.
+func geminiCheck(d Deps) Check {
+	c := Check{ID: "gemini_cli", Name: "Gemini CLI"}
+	if _, err := d.LookPath("gemini"); err != nil {
+		c.Status = StatusError
+		c.Detail = "gemini binary not found on PATH"
+		c.Hint = "Install the Gemini CLI (npm i -g @google/gemini-cli) so the gemini_cli provider can run."
+		return c
+	}
+	if geminiAuthenticated(d) {
+		c.Status = StatusOK
+		c.Detail = "gemini CLI installed and credentials found"
+		return c
+	}
+	c.Status = StatusWarn
+	c.Detail = "gemini CLI installed but no credentials detected"
+	c.Hint = "Run `gemini` once to log in with a Google account, or set GEMINI_API_KEY / GOOGLE_API_KEY. Runs may fail with an auth error."
+	return c
+}
+
+// geminiAuthenticated reports whether Gemini CLI credentials appear to be
+// present: a GEMINI_API_KEY/GOOGLE_API_KEY env var, or the OAuth credential
+// cache the CLI writes to ~/.gemini/oauth_creds.json on `gemini` login.
+func geminiAuthenticated(d Deps) bool {
+	if d.Getenv("GEMINI_API_KEY") != "" || d.Getenv("GOOGLE_API_KEY") != "" {
+		return true
+	}
+	if home, err := d.HomeDir(); err == nil {
+		if d.FileExists(home + "/.gemini/oauth_creds.json") {
+			return true
+		}
+	}
+	return false
+}
+
+// codexCheck verifies the codex CLI is installed and appears authenticated.
+// Authentication is detected heuristically (env var or the auth cache file
+// the CLI itself writes on `codex login`) rather than by invoking the CLI.
+func codexCheck(d Deps) Check {
+	c := Check{ID: "codex_cli", Name: "Codex CLI"}
+	if _, err := d.LookPath("codex"); err != nil {
+		c.Status = StatusError
+		c.Detail = "codex binary not found on PATH"
+		c.Hint = "Install the Codex CLI (npm i -g @openai/codex) so the codex_cli provider can run."
+		return c
+	}
+	if codexAuthenticated(d) {
+		c.Status = StatusOK
+		c.Detail = "codex CLI installed and credentials found"
+		return c
+	}
+	c.Status = StatusWarn
+	c.Detail = "codex CLI installed but no credentials detected"
+	c.Hint = "Run `codex login` to sign in with ChatGPT, or set OPENAI_API_KEY. Runs may fail with a 401 auth error."
+	return c
+}
+
+// codexAuthenticated reports whether Codex CLI credentials appear to be
+// present: an OPENAI_API_KEY env var, or the auth cache file the CLI writes
+// to ~/.codex/auth.json on `codex login`.
+func codexAuthenticated(d Deps) bool {
+	if d.Getenv("OPENAI_API_KEY") != "" {
+		return true
+	}
+	if home, err := d.HomeDir(); err == nil {
+		if d.FileExists(home + "/.codex/auth.json") {
+			return true
+		}
+	}
+	return false
 }
 
 // binaryCheck is the shared "is this CLI on PATH" check for qwen/opencode.

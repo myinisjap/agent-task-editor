@@ -21,10 +21,10 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `env` | JSON object of additional environment variables for the agent process |
 | `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 | `enabled_mcp_servers` | JSON array of Claude user-level MCP server names enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
-| `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
-| `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `opencode`; not enforced for `qwen_code`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
+| `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode`, `gemini_cli`, or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
+| `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `opencode`, `qwen_code`, `gemini_cli`, or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
 | `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude` provider only** (others ignore it). Default on. See [Session Resume](#session-resume) below. |
-| `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
+| `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`gemini_cli`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. See [Cost Budgets](#cost-budgets) below. |
 
@@ -36,6 +36,8 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `anthropic` | Anthropic Messages API (direct HTTP) | ❌ Native tools | [providers/anthropic.md](providers/anthropic.md) |
 | `opencode` | Opencode CLI (`opencode run --format json`) | ❌ None | [providers/opencode.md](providers/opencode.md) |
 | `qwen_code` | Qwen Code CLI (`qwen -p ...`) | ✅ All 5 | [providers/qwen_code.md](providers/qwen_code.md) |
+| `gemini_cli` | Gemini CLI (`gemini -p ...`) | ✅ All 5 | [providers/gemini_cli.md](providers/gemini_cli.md) |
+| `codex_cli` | Codex CLI (`codex exec --json ...`) | ✅ All 5 | [providers/codex_cli.md](providers/codex_cli.md) |
 | _(any other value)_ | OpenAI-compatible API at `LLM_BASE_URL` | ❌ Native tools | [providers/llm.md](providers/llm.md) |
 
 For per-provider deep-dives (credentials, tool availability, limitations, setup), see the [providers/](providers/) directory.
@@ -100,6 +102,8 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 | `anthropic` | Messages API `usage` field, summed across every turn of the agentic loop | `cost_usd` is *estimated* by multiplying tokens by a small, manually maintained USD-per-1M-token pricing table (`internal/agent/pricing.go`). Unknown models fall back to $0 rather than a guessed price. |
 | `llm` | OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`), summed across every turn | Same estimation approach and pricing table as `anthropic`. |
 | `opencode` | Not currently exposed in `opencode run --format json` output | Usage/cost is left at `0` — not estimated — until opencode's JSON schema includes a usage field. |
+| `gemini_cli` | CLI's terminal `result` stream-json event (`stats.input_tokens`/`stats.output_tokens`) | Token counts are used as-is; the Gemini CLI's JSON output reports no cost figure, so `cost_usd` is left at `0`, not estimated. |
+| `codex_cli` | CLI's `turn.completed` JSONL event (`usage.input_tokens`/`usage.output_tokens`) | Token counts are used as-is; the Codex CLI's JSON output reports no cost figure, so `cost_usd` is left at `0`, not estimated. |
 
 The pricing table is intentionally approximate and small (a hardcoded Go map); it will drift from live pricing over time and is not currently user-editable.
 
@@ -148,7 +152,7 @@ budget if one is set.
 `max_cost_usd` can be set on an agent config and/or on an individual task
 to give the dispatcher an advisory spending cap. **This is not a mid-run
 kill switch** — no supported provider (`claude`, `anthropic`, `opencode`,
-`qwen_code`, `llm`) exposes a way to abort an in-flight run once it crosses
+`qwen_code`, `gemini_cli`, `codex_cli`, `llm`) exposes a way to abort an in-flight run once it crosses
 a cost threshold, so a single expensive run can still land over budget. The
 guard instead runs **before** each sweep-dispatch: if the task's
 cumulative recorded cost has already met or exceeded its effective budget,
@@ -205,7 +209,10 @@ loop back to `work`, a re-run after a genuine failure, a reply to
 provider is invoked with `--resume <session_id>` so the new run continues the
 same conversation with full prior context, instead of re-deriving it from the
 repo. Currently `claude`-only; `qwen_code` records its session but is not
-resumed (no verified CLI flag semantics yet).
+resumed (no verified CLI flag semantics yet). `gemini_cli` and `codex_cli`
+also record a session/thread id (from their `init`/`thread.started` events)
+but likewise do not resume it — neither CLI's resume mechanism (`gemini
+--resume`, `codex exec resume`) has been wired up yet.
 
 Behavior details:
 
@@ -275,9 +282,9 @@ The system prompt is the agent config's `system_prompt` field (defaults to a gen
 3. **Notes writing instruction:** tells the agent to call `update_task_notes` before `signal_complete`, using `append:true` if prior notes were present
 4. **Completion instruction:** `"When your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"`
 
-## MCP Tools (claude and qwen_code providers)
+## MCP Tools (claude, qwen_code, gemini_cli, and codex_cli providers)
 
-When `MCP_SERVER_PATH` is set, the `claude` and `qwen_code` providers launch an MCP sidecar that exposes 5 tools:
+When `MCP_SERVER_PATH` is set, the `claude`, `qwen_code`, `gemini_cli`, and `codex_cli` providers launch an MCP sidecar that exposes 5 tools:
 
 | Tool | Description |
 |---|---|
@@ -300,7 +307,7 @@ For the `claude` provider only, each agent config can select which Claude Code p
 - **Enforcement at run time (`claude.go`):**
   - Plugins: the `claude` CLI is invoked with `--settings '{"enabledPlugins": {...}}'`, built by defaulting every discovered plugin to `false` and then setting `true` only for IDs present in `enabled_plugins`. A plugin selected but not present in the current discovery snapshot is still explicitly enabled (stale-inventory fallback).
   - MCP servers: for each name in `enabled_mcp_servers` (skipping the reserved `task-editor` name), its raw config entry is read from `~/.claude.json`'s global `mcpServers` map and merged into the `--mcp-config` file alongside the task-editor sidecar entry. A bare `mcp__<server>` entry is appended to `--allowedTools` per selected server so its tools aren't blocked — this wildcarding behavior is inferred from CLI docs and worth re-verifying against a live run if MCP tool calls are unexpectedly denied.
-- **Scope:** this is currently `claude`-provider-only. Other providers (`anthropic`, `opencode`, `qwen_code`, generic `llm`) have the same DB columns available but ignore them entirely.
+- **Scope:** this is currently `claude`-provider-only. Other providers (`anthropic`, `opencode`, `qwen_code`, `gemini_cli`, `codex_cli`, generic `llm`) have the same DB columns available but ignore them entirely.
 
 ## Command Allowlist / Denylist
 
@@ -331,6 +338,8 @@ concatenation, base64-decoded payloads, etc).
 | `claude` | Enforced natively by the `claude` CLI via `permissions.allow`/`permissions.deny` in the `--settings` JSON (same `Bash(pattern)` syntax as `--allowedTools`/`--disallowedTools`). Both allowlist and denylist supported; smoke-tested against a live `claude` binary. |
 | `qwen_code` | `command_allowlist` is enforced natively via `--allowed-tools Bash(pattern)` entries. `command_denylist` is **not enforced** — no confirmed `qwen` CLI denylist flag exists. |
 | `opencode` | **Not enforced at all** — opencode has no Bash tool wired up server-side; it manages tool permissions via its own global config. |
+| `gemini_cli` | **Not enforced at all** — no confirmed Gemini CLI allowlist/denylist flag exists. |
+| `codex_cli` | **Not enforced at all** — Codex has its own native sandbox/approval-mode system instead (`--sandbox`, `--ask-for-approval`), bypassed entirely by the `--dangerously-bypass-approvals-and-sandbox` flag this provider must pass for headless operation. See [providers/codex_cli.md](providers/codex_cli.md). |
 
 See the corresponding [provider docs](#providers) for details on each provider's mechanism.
 

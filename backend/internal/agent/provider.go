@@ -1,5 +1,6 @@
 // Package agent implements the agent runtime: provider interface, bounded pool,
-// dispatcher, and concrete backends (ClaudeRunner, LLMRunner, QwenRunner).
+// dispatcher, and concrete backends (ClaudeRunner, LLMRunner, QwenRunner,
+// GeminiRunner, CodexRunner).
 package agent
 
 import (

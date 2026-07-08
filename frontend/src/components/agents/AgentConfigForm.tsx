@@ -169,7 +169,7 @@ export default function AgentConfigForm({
           </label>
         </Field>
 
-        <Field label="Subtasks" hint="claude/qwen_code only: expose the create_subtask tool so this agent (typically the planner) can decompose its task into child tasks. Children branch off the parent's branch and merge back automatically. Off by default.">
+        <Field label="Subtasks" hint="claude/qwen_code/gemini_cli/codex_cli only: expose the create_subtask tool so this agent (typically the planner) can decompose its task into child tasks. Children branch off the parent's branch and merge back automatically. Off by default.">
           <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
             <input
               type="checkbox"

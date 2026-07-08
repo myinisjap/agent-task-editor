@@ -17,10 +17,15 @@ func TestClassifyLine(t *testing.T) {
 		{"request rejected", "Request rejected by API", ClassRateLimit},
 		{"rate limit words", "you hit the rate limit", ClassRateLimit},
 		{"rate_limit token", "error type rate_limit_error", ClassRateLimit},
+		{"gemini resource_exhausted", `{"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded"}`, ClassRateLimit},
 
 		// Auth.
 		{"not logged in", "Error: Not logged in", ClassAuth},
 		{"please run login", "Please run /login to continue", ClassAuth},
+		{"gemini invalid api key", "API key not valid. Please pass a valid API key.", ClassAuth},
+		{"gemini no auth method", "Please set an Auth method in your settings.json or specify GEMINI_API_KEY", ClassAuth},
+		{"codex missing bearer", "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header", ClassAuth},
+		{"codex 401", "HTTP error: 401 Unauthorized, url: wss://api.openai.com/v1/responses", ClassAuth},
 
 		// Transient.
 		{"connection reset", "read: connection reset by peer", ClassTransient},

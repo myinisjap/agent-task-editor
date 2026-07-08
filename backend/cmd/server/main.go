@@ -163,6 +163,18 @@ func main() {
 				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &agent.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+		case "gemini_cli":
+			var mcp *agent.MCPManager
+			if cfg.MCPBinary != "" {
+				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
+			}
+			return &agent.GeminiRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+		case "codex_cli":
+			var mcp *agent.MCPManager
+			if cfg.MCPBinary != "" {
+				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
+			}
+			return &agent.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		default:
 			return &agent.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 		}

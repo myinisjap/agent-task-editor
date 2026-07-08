@@ -81,6 +81,8 @@ Browser ──── REST + WebSocket ──── Backend (Go)
                                           │ AnthropicRunner   │ (Messages API)
                                           │ OpencodeRunner    │ (opencode CLI)
                                           │ QwenRunner        │ (qwen CLI + MCP)
+                                          │ GeminiRunner      │ (gemini CLI + MCP)
+                                          │ CodexRunner       │ (codex CLI + MCP)
                                           │ LLMRunner         │ (OpenAI-compat)
                                           └──────────────────┘
 ```
@@ -112,7 +114,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   back to the issue and dedupe on re-sweeps — see
   [task-sources.md](task-sources.md)
 - **Dashboard** — run counts, completion rate, cost/token tracking, and per-agent-config performance (success rate, duration, retries)
-- **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
+- **Provider health page** — readiness checks for the Claude/Qwen/Gemini/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — single `docker compose up` to run everything
 
