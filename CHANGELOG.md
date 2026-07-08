@@ -44,6 +44,15 @@ this file's section for that version as the release notes.
     existing retry-policy fields.
 
 ### Changed
+- **Human-readable safety-net commit messages** (#63). The pool's automatic
+  "safety-net" commit — created when an agent run completes with uncommitted
+  changes left in its worktree — now leads with the task title as the commit
+  subject (`<task title> (safety-net commit)`), with the task and run IDs
+  demoted to `Task:`/`Agent-Run:` trailer lines, instead of a message
+  consisting only of two bare UUIDs (`task <uuid>: agent run <uuid>`). These
+  commits land in PR history and on `main` after merge, so this makes that
+  history readable at a glance. (A configurable message template was
+  considered but left out of scope; the format is currently hardcoded.)
 - **Dependency maintenance** — consolidated the outstanding Dependabot updates
   into a single batch:
   - Frontend (npm): `@types/node` 24 → 26, `@xyflow/react` 12.11.1 → 12.11.2,

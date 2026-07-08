@@ -354,7 +354,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		// Serialize ref-mutating git ops against other tasks/merges in this repo.
 		lock := RepoGitLock(job.Input.Task.RepoPath)
 		lock.Lock()
-		msg := fmt.Sprintf("task %s: agent run %s", job.Input.Task.ID, job.RunID)
+		title := job.Input.Task.Title
+		if title == "" {
+			title = "(untitled task)"
+		}
+		msg := fmt.Sprintf("%s (safety-net commit)\n\nTask: %s\nAgent-Run: %s", title, job.Input.Task.ID, job.RunID)
 		if err := commitIfDirty(ctx, job.Input.RepoPath, msg, p.GitName, p.GitEmail); err != nil {
 			log.Warn("pool: safety-net commit failed", "err", err)
 		}
