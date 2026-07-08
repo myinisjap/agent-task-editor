@@ -1992,6 +1992,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/cost-by-task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-task cost rollup (full, uncapped)
+         * @description Returns { task_id, input_tokens, output_tokens, cost_usd } for every task with at least one agent_runs row, across every run status (not just terminal ones — see docs/agents.md#cost-budgets). Unlike Dashboard.cost_by_task this has no top-N cap and omits task_title; it backs the Board page's "Filtered cost" badge, which needs a cost figure for every currently-visible task, not just the most expensive ones.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            task_id?: string;
+                            input_tokens?: number;
+                            output_tokens?: number;
+                            /** Format: double */
+                            cost_usd?: number;
+                        }[];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/providers": {
         parameters: {
             query?: never;
@@ -2093,6 +2137,11 @@ export interface components {
             subtask_done?: number;
             /** @description Derived: children whose merge-back is in conflict. */
             subtask_conflicts?: number;
+            /**
+             * Format: double
+             * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost (across every run, any status). 0 disables the cap (unlimited). If the matched agent config also has a nonzero max_cost_usd, the effective budget is the lower of the two. Not a mid-run kill switch — see AgentConfig.max_cost_usd and docs/agents.md#cost-budgets.
+             */
+            max_cost_usd?: number;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -2194,6 +2243,11 @@ export interface components {
             command_allowlist?: string;
             /** @description JSON array of shell-command glob patterns ("*" wildcard). Commands matching any pattern here are always denied, regardless of command_allowlist. Checked first. Fully enforced for anthropic, llm, and claude. NOT enforced for qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]" (no restriction). */
             command_denylist?: string;
+            /**
+             * Format: double
+             * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost so far (across every run for the task, any status). 0 disables the cap (unlimited). Default 0. If the task itself also has a nonzero max_cost_usd, the effective budget is the lower of the two. NOT a mid-run kill switch — no provider supports killing an in-flight run at a cost threshold; the guard only blocks the *next* dispatch once the budget is already exhausted. See docs/agents.md#cost-budgets.
+             */
+            max_cost_usd?: number;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -2343,6 +2397,25 @@ export interface components {
                 /** Format: double */
                 avg_transient_retries?: number;
                 tasks_with_retries?: number;
+                input_tokens?: number;
+                output_tokens?: number;
+                /** Format: double */
+                cost_usd?: number;
+            }[];
+            /** @description Daily token/cost/run-count rollup, most recent day first, capped at the last 30 days with recorded activity. Same terminal-status filtering as cost_total. */
+            cost_by_day?: {
+                /** @description ISO date (YYYY-MM-DD) */
+                day?: string;
+                input_tokens?: number;
+                output_tokens?: number;
+                /** Format: double */
+                cost_usd?: number;
+                run_count?: number;
+            }[];
+            /** @description Top 20 tasks by cumulative recorded cost. Unlike cost_total / cost_by_provider / agent_config_stats, this includes runs in EVERY status (not just terminal ones) — a cost rollup should reflect every run that ran, including ones still in flight or that failed, matching the same filtering the dispatcher's cost-budget guard uses (see docs/agents.md#cost-budgets). */
+            cost_by_task?: {
+                task_id?: string;
+                task_title?: string;
                 input_tokens?: number;
                 output_tokens?: number;
                 /** Format: double */

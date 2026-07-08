@@ -189,6 +189,7 @@ func main() {
 	dispatcher.RateLimits = rateLimits
 	dispatcher.SetUploadDir(uploadDir)
 	dispatcher.Subtasks = subtaskCoord
+	dispatcher.Publisher = hub
 
 	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, pool, dispatcher)
 

@@ -170,6 +170,82 @@ export default function DashboardPage() {
               </table>
             </div>
           )}
+
+          {dash.cost_by_day && dash.cost_by_day.length > 0 && (
+            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden mt-3">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 border-b border-slate-800">
+                    <th className="text-left px-4 py-2">Day</th>
+                    <th className="text-right px-4 py-2">Runs</th>
+                    <th className="text-right px-4 py-2">Input tok</th>
+                    <th className="text-right px-4 py-2">Output tok</th>
+                    <th className="text-right px-4 py-2">Cost</th>
+                    <th className="text-left px-4 py-2 w-32"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const maxDayCost = Math.max(...dash.cost_by_day.map((d) => d.cost_usd), 0.0001)
+                    return dash.cost_by_day.map((d) => (
+                      <tr key={d.day} className="border-b border-slate-800 last:border-0">
+                        <td className="px-4 py-2.5 text-slate-200 text-xs">{d.day}</td>
+                        <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{d.run_count.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{d.input_tokens.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{d.output_tokens.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
+                          {d.cost_usd > 0 ? `$${d.cost_usd.toFixed(4)}` : '$0.00'}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="w-28 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-indigo-500"
+                              style={{ width: `${(d.cost_usd / maxDayCost) * 100}%` }}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {dash.cost_by_task && dash.cost_by_task.length > 0 && (
+            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden mt-3">
+              <div className="px-4 pt-3 pb-1 text-xs text-slate-500">Top tasks by cost</div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 border-b border-slate-800">
+                    <th className="text-left px-4 py-2">Task</th>
+                    <th className="text-right px-4 py-2">Input tok</th>
+                    <th className="text-right px-4 py-2">Output tok</th>
+                    <th className="text-right px-4 py-2">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dash.cost_by_task.map((tc) => (
+                    <tr key={tc.task_id} className="border-b border-slate-800 last:border-0">
+                      <td className="px-4 py-2.5 text-slate-200">
+                        <button
+                          onClick={() => navigate(`/tasks/${tc.task_id}`)}
+                          className="hover:text-white hover:underline truncate max-w-xs text-left"
+                        >
+                          {tc.task_title || tc.task_id}
+                        </button>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{tc.input_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{tc.output_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
+                        {tc.cost_usd > 0 ? `$${tc.cost_usd.toFixed(4)}` : '$0.00'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       )}
 

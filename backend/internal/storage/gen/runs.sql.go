@@ -757,6 +757,77 @@ func (q *Queries) SetAgentRunStarted(ctx context.Context, id string) (AgentRun, 
 	return i, err
 }
 
+const sumTaskCost = `-- name: SumTaskCost :one
+SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs WHERE task_id = ?
+`
+
+// Cumulative recorded cost for a task, across ALL runs regardless of status
+// (unlike SumUsageTotal/SumUsageByProvider/RunStatsByAgentConfig below,
+// which only count terminal-status runs). A cost budget must count spend
+// from every run that ran, including ones that failed or are mid-flight,
+// so a failing-then-retrying task cannot dodge its budget by never
+// reaching a terminal status. Used by the dispatcher's pre-dispatch
+// budget guard (see dispatch.go).
+func (q *Queries) SumTaskCost(ctx context.Context, taskID string) (float64, error) {
+	row := q.db.QueryRowContext(ctx, sumTaskCost, taskID)
+	var cost_usd float64
+	err := row.Scan(&cost_usd)
+	return cost_usd, err
+}
+
+const sumUsageByDay = `-- name: SumUsageByDay :many
+SELECT date(ar.completed_at) AS day,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
+       COUNT(*) AS run_count
+FROM agent_runs ar
+WHERE ar.status IN ('completed','failed','waiting_human') AND ar.completed_at IS NOT NULL
+GROUP BY date(ar.completed_at)
+ORDER BY day DESC
+LIMIT 30
+`
+
+type SumUsageByDayRow struct {
+	Day          interface{} `json:"day"`
+	InputTokens  int64       `json:"input_tokens"`
+	OutputTokens int64       `json:"output_tokens"`
+	CostUsd      float64     `json:"cost_usd"`
+	RunCount     int64       `json:"run_count"`
+}
+
+// Daily token/cost/run-count rollup for the dashboard's cost-by-day table,
+// most recent day first, capped at the last 30 days with recorded activity.
+func (q *Queries) SumUsageByDay(ctx context.Context) ([]SumUsageByDayRow, error) {
+	rows, err := q.db.QueryContext(ctx, sumUsageByDay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SumUsageByDayRow
+	for rows.Next() {
+		var i SumUsageByDayRow
+		if err := rows.Scan(
+			&i.Day,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
+			&i.RunCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sumUsageByProvider = `-- name: SumUsageByProvider :many
 SELECT ac.provider AS provider,
        CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
@@ -793,6 +864,55 @@ func (q *Queries) SumUsageByProvider(ctx context.Context) ([]SumUsageByProviderR
 			&i.OutputTokens,
 			&i.CostUsd,
 			&i.RunCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sumUsageByTask = `-- name: SumUsageByTask :many
+SELECT ar.task_id AS task_id,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs ar
+GROUP BY ar.task_id
+ORDER BY cost_usd DESC
+`
+
+type SumUsageByTaskRow struct {
+	TaskID       string  `json:"task_id"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUsd      float64 `json:"cost_usd"`
+}
+
+// Per-task token/cost rollup, across ALL runs regardless of status (see
+// SumTaskCost above for why - a task's "cost so far" should count every
+// run, not just terminal ones). Ordered by cost descending so the caller
+// can cheaply take a top-N slice for a "top tasks by cost" view.
+func (q *Queries) SumUsageByTask(ctx context.Context) ([]SumUsageByTaskRow, error) {
+	rows, err := q.db.QueryContext(ctx, sumUsageByTask)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SumUsageByTaskRow
+	for rows.Next() {
+		var i SumUsageByTaskRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
 		); err != nil {
 			return nil, err
 		}

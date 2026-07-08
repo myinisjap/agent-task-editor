@@ -34,6 +34,11 @@ type Dispatcher struct {
 	// subtask branching model). Used here to branch a child off its parent's
 	// branch and to inject merge-conflict context into a parent's run.
 	Subtasks *SubtaskCoordinator
+	// Publisher broadcasts WS events (optional — no-op when nil). Used by the
+	// cost-budget guard (see checkCostBudget) to publish task.needs_human
+	// when a sweep-dispatch is skipped for budget-exhaustion, mirroring how
+	// Pool.handleTransientFailure publishes the same event on escalation.
+	Publisher Publisher
 }
 
 // NewDispatcher creates a Dispatcher with a 5-second sweep interval.
@@ -113,9 +118,103 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		}
 	}
 
+	// Cost-budget guard: only gates the sweep path. DispatchReply (a human
+	// actively replying/intervening) is intentionally never budget-gated.
+	if blocked, err := d.checkCostBudget(ctx, t, *matched); err != nil {
+		log.Error("dispatcher: cost budget check", "err", err)
+	} else if blocked {
+		return
+	}
+
 	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
 		log.Error("dispatcher: start run", "err", err)
 	}
+}
+
+// effectiveBudget resolves the effective cost budget for a task from its
+// own max_cost_usd and its matched agent config's max_cost_usd. A value of
+// 0 means "no cap from that source" (consistent with max_retries=0 meaning
+// "disabled" elsewhere). When both are set, the lower (stricter) of the two
+// wins; when only one is set, that one wins; when neither is set, the
+// result is 0 (unlimited).
+func effectiveBudget(taskBudget, configBudget float64) float64 {
+	switch {
+	case taskBudget <= 0:
+		return configBudget
+	case configBudget <= 0:
+		return taskBudget
+	case taskBudget < configBudget:
+		return taskBudget
+	default:
+		return configBudget
+	}
+}
+
+// checkCostBudget compares a task's cumulative recorded run cost (across
+// every run regardless of status — see SumTaskCost) against its effective
+// cost budget (the min of the task's and its matched agent config's
+// max_cost_usd, whichever nonzero value is lower). If the budget is
+// exhausted, it escalates the task to waiting_human WITHOUT starting a new
+// provider run: waiting_human is a run-status, not a task label (the task
+// itself stays on its current label — see Pool.handleTransientFailure for
+// the analogous pattern), so this creates a "phantom" agent_runs row
+// directly in that status, locks it as the task's active run so the
+// dispatcher skips it on future sweeps, and publishes task.needs_human so
+// the dashboard/task-detail UI picks it up live, exactly like a real
+// waiting_human escalation. Returns true if dispatch should be skipped.
+func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig) (bool, error) {
+	budget := effectiveBudget(t.MaxCostUsd, matched.MaxCostUsd)
+	if budget <= 0 {
+		return false, nil
+	}
+
+	spent, err := d.q.SumTaskCost(ctx, t.ID)
+	if err != nil {
+		return false, fmt.Errorf("sum task cost: %w", err)
+	}
+	if spent < budget {
+		return false, nil
+	}
+
+	log := slog.With("component", "dispatcher", "task_id", t.ID)
+	msg := fmt.Sprintf("budget exhausted: $%.2f of $%.2f", spent, budget)
+	log.Warn("dispatcher: skipping dispatch, cost budget exhausted", "spent", spent, "budget", budget)
+
+	runID := uuid.NewString()
+	if _, err := d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID:            runID,
+		TaskID:        t.ID,
+		AgentConfigID: &matched.ID,
+	}); err != nil {
+		return true, fmt.Errorf("create budget-exhausted run: %w", err)
+	}
+	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status: "waiting_human",
+		Notes:  &msg,
+		ID:     runID,
+	}); err != nil {
+		return true, fmt.Errorf("set budget-exhausted run status: %w", err)
+	}
+	// Lock the task on this run, same as a real waiting_human escalation —
+	// stays locked until a human acts (raises the budget, or replies via
+	// DispatchReply, which is not budget-gated).
+	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                t.ID,
+	}); err != nil {
+		return true, fmt.Errorf("lock task on budget-exhausted run: %w", err)
+	}
+
+	if d.Publisher != nil {
+		d.Publisher.Publish("task.needs_human", map[string]any{
+			"task_id": t.ID,
+			"run_id":  runID,
+			"message": msg,
+		})
+	}
+
+	return true, nil
 }
 
 // Sentinel errors for DispatchReply, mapped to HTTP statuses by the handler.
@@ -501,6 +600,7 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 		ResumeSessions:    cfg.ResumeSessions != 0,
 		SubtasksEnabled:   cfg.SubtasksEnabled != 0,
 		MaxSubtasks:       cfg.MaxSubtasks,
+		MaxCostUSD:        cfg.MaxCostUsd,
 		Env:               env,
 		EnabledPlugins:    enabledPlugins,
 		EnabledMCPServers: enabledMCPServers,

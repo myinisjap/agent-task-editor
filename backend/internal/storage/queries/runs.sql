@@ -102,6 +102,44 @@ JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
 ORDER BY ar.created_at DESC;
 
+-- name: SumTaskCost :one
+-- Cumulative recorded cost for a task, across ALL runs regardless of status
+-- (unlike SumUsageTotal/SumUsageByProvider/RunStatsByAgentConfig below,
+-- which only count terminal-status runs). A cost budget must count spend
+-- from every run that ran, including ones that failed or are mid-flight,
+-- so a failing-then-retrying task cannot dodge its budget by never
+-- reaching a terminal status. Used by the dispatcher's pre-dispatch
+-- budget guard (see dispatch.go).
+SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs WHERE task_id = ?;
+
+-- name: SumUsageByDay :many
+-- Daily token/cost/run-count rollup for the dashboard's cost-by-day table,
+-- most recent day first, capped at the last 30 days with recorded activity.
+SELECT date(ar.completed_at) AS day,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
+       COUNT(*) AS run_count
+FROM agent_runs ar
+WHERE ar.status IN ('completed','failed','waiting_human') AND ar.completed_at IS NOT NULL
+GROUP BY date(ar.completed_at)
+ORDER BY day DESC
+LIMIT 30;
+
+-- name: SumUsageByTask :many
+-- Per-task token/cost rollup, across ALL runs regardless of status (see
+-- SumTaskCost above for why - a task's "cost so far" should count every
+-- run, not just terminal ones). Ordered by cost descending so the caller
+-- can cheaply take a top-N slice for a "top tasks by cost" view.
+SELECT ar.task_id AS task_id,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs ar
+GROUP BY ar.task_id
+ORDER BY cost_usd DESC;
+
 -- name: SumUsageTotal :one
 SELECT CAST(COALESCE(SUM(input_tokens),0) AS INTEGER) AS input_tokens,
        CAST(COALESCE(SUM(output_tokens),0) AS INTEGER) AS output_tokens,

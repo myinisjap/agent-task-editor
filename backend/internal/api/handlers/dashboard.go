@@ -40,6 +40,8 @@ type dashboardResponse struct {
 	CostTotal         costTotals           `json:"cost_total"`
 	CostByProvider    []providerCostRow    `json:"cost_by_provider"`
 	AgentConfigStats  []agentConfigStatRow `json:"agent_config_stats"`
+	CostByDay         []costByDayRow       `json:"cost_by_day"`
+	CostByTask        []taskCostRow        `json:"cost_by_task"`
 	ClaudeUsage       claudeUsageResponse  `json:"claude_usage"`
 }
 
@@ -109,6 +111,30 @@ type agentConfigStatRow struct {
 	InputTokens         int64   `json:"input_tokens"`
 	OutputTokens        int64   `json:"output_tokens"`
 	CostUSD             float64 `json:"cost_usd"`
+}
+
+// costByDayRow is a daily rollup of token/cost usage for the dashboard's
+// cost-by-day breakdown, most recent day first (see SumUsageByDay). "Per
+// week" is deliberately not a separate query — the day-level data is
+// granular enough for a human to visually aggregate, and adding a second
+// strftime-grouped query would be redundant for the same underlying rows.
+type costByDayRow struct {
+	Day          string  `json:"day"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+	RunCount     int64   `json:"run_count"`
+}
+
+// taskCostRow is a per-task token/cost rollup (see SumUsageByTask), used
+// both for the dashboard's "top tasks by cost" table and, via
+// GET /dashboard/cost-by-task, for the board page's per-filter cost badge.
+type taskCostRow struct {
+	TaskID       string  `json:"task_id"`
+	TaskTitle    string  `json:"task_title"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
 }
 
 type activeAgentRow struct {
@@ -210,6 +236,49 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	usageByDay, err := h.q.SumUsageByDay(ctx)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dayRows := make([]costByDayRow, 0, len(usageByDay))
+	for _, d := range usageByDay {
+		day, _ := d.Day.(string)
+		dayRows = append(dayRows, costByDayRow{
+			Day:          day,
+			InputTokens:  d.InputTokens,
+			OutputTokens: d.OutputTokens,
+			CostUSD:      d.CostUsd,
+			RunCount:     d.RunCount,
+		})
+	}
+
+	// Titles for the top-N-by-cost table, looked up from the already-fetched
+	// tasks slice above rather than a second query/join.
+	titleByID := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		titleByID[t.ID] = t.Title
+	}
+	taskCosts, err := h.q.SumUsageByTask(ctx)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	const topTasksByCost = 20
+	taskCostRows := make([]taskCostRow, 0, min(len(taskCosts), topTasksByCost))
+	for i, tc := range taskCosts {
+		if i >= topTasksByCost {
+			break
+		}
+		taskCostRows = append(taskCostRows, taskCostRow{
+			TaskID:       tc.TaskID,
+			TaskTitle:    titleByID[tc.TaskID],
+			InputTokens:  tc.InputTokens,
+			OutputTokens: tc.OutputTokens,
+			CostUSD:      tc.CostUsd,
+		})
+	}
+
 	JSON(w, http.StatusOK, dashboardResponse{
 		LabelCounts:       counts,
 		ActiveAgents:      activeRows,
@@ -221,8 +290,32 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		},
 		CostByProvider:   providerRows,
 		AgentConfigStats: agentConfigStats,
+		CostByDay:        dayRows,
+		CostByTask:       taskCostRows,
 		ClaudeUsage:      h.claudeUsage(ctx),
 	})
+}
+
+// CostByTask returns the full per-task cost rollup (no top-N cap, no
+// titles) as a lightweight { task_id, cost_usd } map source for the board
+// page's "cost of the currently-selected filter" badge, which needs cost
+// for every visible task, not just the top-N-by-cost the dashboard shows.
+func (h *DashboardHandler) CostByTask(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.q.SumUsageByTask(r.Context())
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]taskCostRow, 0, len(rows))
+	for _, tc := range rows {
+		out = append(out, taskCostRow{
+			TaskID:       tc.TaskID,
+			InputTokens:  tc.InputTokens,
+			OutputTokens: tc.OutputTokens,
+			CostUSD:      tc.CostUsd,
+		})
+	}
+	JSON(w, http.StatusOK, out)
 }
 
 // agentConfigStats builds the per-agent-config analytics table by combining

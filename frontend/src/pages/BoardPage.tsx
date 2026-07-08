@@ -4,7 +4,7 @@ import { useWorkflowStore } from '../stores/workflow'
 import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
-import { api, type BulkAction } from '../api/client'
+import { api, type BulkAction, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 
 const CONDENSED_STORAGE_KEY = 'board.condensed'
@@ -17,6 +17,10 @@ export default function BoardPage() {
   const { workflows, fetch: fetchWorkflows, setSelectedId, active } = useWorkflowStore()
   const { repos, fetch: fetchRepos } = useReposStore()
   const [runningTaskIds] = useState(() => new Set<string>())
+  // Per-task cumulative cost ($), keyed by task id — powers the "Filtered
+  // cost" badge below. Fetched once on mount and refreshed on agent-done
+  // events (the only time a task's recorded cost can change).
+  const [costByTask, setCostByTask] = useState<Record<string, number>>({})
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
   const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
   const [showNewTask, setShowNewTask] = useState(false)
@@ -67,6 +71,20 @@ export default function BoardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const refreshCostByTask = () => {
+    api.dashboard.costByTask()
+      .then((rows: TaskCost[]) => {
+        const map: Record<string, number> = {}
+        for (const r of rows) map[r.task_id] = r.cost_usd
+        setCostByTask(map)
+      })
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    refreshCostByTask()
+  }, [])
+
   useEffect(() => {
     const off = wsClient.on((event) => {
       if (event.type === 'task.label_changed' || event.type === 'task.updated' || event.type === 'task.created' || event.type === 'task.git_state_changed') {
@@ -89,6 +107,10 @@ export default function BoardPage() {
           next.delete(event.payload.task_id)
           return next
         })
+      }
+      if (event.type === 'task.agent_done') {
+        // A run just recorded its cost — refresh the per-task cost map.
+        refreshCostByTask()
       }
     })
     return off
@@ -113,6 +135,13 @@ export default function BoardPage() {
   }, [tasks, workflow, search, filterRepo, filterType, filterGitState, showArchived])
 
   const hasFilters = search !== '' || filterRepo !== '' || filterType !== '' || filterGitState !== '' || showArchived
+
+  // Sum of recorded cost across every currently-visible (filtered) task,
+  // using the task_id → cost_usd map from GET /dashboard/cost-by-task.
+  const filteredCost = useMemo(
+    () => filteredTasks.reduce((sum, t) => sum + (costByTask[t.id] ?? 0), 0),
+    [filteredTasks, costByTask]
+  )
 
   const clearFilters = () => {
     setSearch('')
@@ -244,6 +273,14 @@ export default function BoardPage() {
           >
             Clear filters
           </button>
+        )}
+        {filteredCost > 0 && (
+          <span
+            className="text-xs px-2.5 py-1 rounded border border-slate-700 bg-slate-800 text-slate-300"
+            title="Sum of recorded run cost across the currently-visible (filtered) tasks"
+          >
+            Filtered cost: ${filteredCost.toFixed(2)}
+          </span>
         )}
       </div>
 

@@ -1,4 +1,4 @@
-import type { Task, Repo } from '../../api/client'
+import type { Task, Repo, AgentRun } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 
@@ -27,6 +27,9 @@ export default function TaskHeader({
   setEditType,
   editRepoId,
   setEditRepoId,
+  editMaxCostUsd,
+  setEditMaxCostUsd,
+  runs,
   taskSaving,
   taskSaveError,
   onStartEdit,
@@ -52,6 +55,9 @@ export default function TaskHeader({
   setEditType: (v: string) => void
   editRepoId: string
   setEditRepoId: (v: string) => void
+  editMaxCostUsd: string
+  setEditMaxCostUsd: (v: string) => void
+  runs?: AgentRun[]
   taskSaving: boolean
   taskSaveError: string
   onStartEdit: () => void
@@ -65,6 +71,10 @@ export default function TaskHeader({
   onSyncGitState: () => void
   onBack: () => void
 }) {
+  // Cumulative cost across every run this task has had — a simple client-side
+  // SUM over the already-fetched runs list (all statuses, matching how the
+  // dispatcher's cost-budget guard counts spend; see docs/agents.md).
+  const cumulativeCost = (runs ?? []).reduce((sum, r) => sum + (r.cost_usd ?? 0), 0)
   return (
     <>
       <div className="flex items-center justify-between">
@@ -149,6 +159,19 @@ export default function TaskHeader({
               </select>
             </div>
           )}
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Max cost (USD)</label>
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              value={editMaxCostUsd}
+              onChange={(e) => setEditMaxCostUsd(e.target.value)}
+              placeholder="Unlimited"
+              className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400"
+            />
+            <p className="mt-1 text-xs text-slate-500">Advisory budget cap checked by the dispatcher before each dispatch. Empty/0 = unlimited.</p>
+          </div>
           {taskSaveError && (
             <p className="text-xs text-red-400">{taskSaveError}</p>
           )}
@@ -204,6 +227,12 @@ export default function TaskHeader({
           </span>
         </Row>
         <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+        <Row label="Cost">
+          <span className="text-xs text-slate-300">
+            ${cumulativeCost.toFixed(2)}
+            {task.max_cost_usd ? ` / $${task.max_cost_usd.toFixed(2)} budget` : ''}
+          </span>
+        </Row>
         {task.branch && (
           <>
             <Row label="Branch">
