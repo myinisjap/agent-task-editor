@@ -11,6 +11,16 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **Qwen CLI is now optionally installable in the backend Docker image.** The
+  backend `Dockerfile` gains a new `INSTALL_QWEN_CLI` build arg (default
+  `false`, mirroring `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`) that, when set
+  to `true`, `npm install -g @qwen-code/qwen-code`s the `qwen` binary the
+  `qwen_code` provider expects. Previously the only way to get `qwen` on
+  `PATH` inside the container was to install/mount it yourself. No backend
+  Go code, health checks, or frontend changes were needed — `qwen_code` was
+  already fully wired up; this only adds the missing in-image install path.
+
 ## [0.6.0] - 2026-07-07
 
 ### Added

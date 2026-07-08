@@ -22,6 +22,8 @@ Uses the same NDJSON stream-json parser as the `claude` provider (`classifyStrea
 
 The `qwen` binary must be installed and configured on the host (or container). Refer to Qwen Code's documentation for auth setup. No server-side API key is required (auth is managed by the binary).
 
+The `qwen` CLI is not installed in the backend image by default — build with `INSTALL_QWEN_CLI=true` to have the backend `Dockerfile` `npm install -g @qwen-code/qwen-code` for you (see the backend `Dockerfile`'s `INSTALL_QWEN_CLI` build arg), or install it yourself with `npm i -g @qwen-code/qwen-code` and mount it into the container.
+
 ## MCP Tools
 
 **All 5 MCP tools are supported** when `MCP_SERVER_PATH` is set — identical to the `claude` provider.
@@ -75,7 +77,7 @@ Like the `claude` provider, token usage and cost are parsed from the CLI's `resu
 
 ## Setup Checklist
 
-1. Install the `qwen` CLI and add it to `PATH` (or mount it into the container)
+1. Install the `qwen` CLI (`npm i -g @qwen-code/qwen-code`) and add it to `PATH` (or mount it into the container; see the backend `Dockerfile`'s `INSTALL_QWEN_CLI` build arg)
 2. Configure Qwen Code's auth via its own config
 3. Set `MCP_SERVER_PATH` to the path of the built `mcp-server` binary
 4. Create an agent config with `"provider": "qwen_code"`
