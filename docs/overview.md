@@ -113,7 +113,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   by a label like `agent-ok`) are periodically imported as tasks, with a link
   back to the issue and dedupe on re-sweeps — see
   [task-sources.md](task-sources.md)
-- **Dashboard** — run counts, completion rate, cost/token tracking, and per-agent-config performance (success rate, duration, retries)
+- **Dashboard** — split across three pages: an Overview (label counts, active agents, and the human intervention queue) at `/`, a Cost & Usage page at `/dashboard/usage` (Claude rate-limit usage, plus cost/token tracking by provider, day, and task), and an Agent Performance page at `/dashboard/performance` (per-agent-config success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude/Qwen/Gemini/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — single `docker compose up` to run everything
@@ -132,14 +132,20 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 
 ![Workflow editor](img/workflow-editor.png)
 
-**Dashboard**
+**Dashboard overview**
 
 ![Dashboard](img/dashboard.png)
 
 <!--
-  NOTE: this screenshot predates the per-agent-config performance table and
-  should be refreshed in a follow-up per docs/screenshots.md (requires a
-  clean seeded DB with some run history); not blocking for this change.
+  NOTE: this screenshot predates the dashboard split into Overview /
+  Cost & Usage / Performance pages and now only represents the Overview
+  page (label counts, active agents, intervention queue). It no longer
+  shows the cost/usage or per-agent-config performance tables, which moved
+  to /dashboard/usage and /dashboard/performance respectively. Refreshing
+  this screenshot, and adding new ones for the Cost & Usage and Agent
+  Performance pages, is a nice-to-have follow-up per docs/screenshots.md
+  (requires a clean seeded DB with some run history); not blocking for
+  this change.
 -->
 
 **Health**

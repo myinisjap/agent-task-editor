@@ -90,6 +90,14 @@ google-chrome --headless --disable-gpu --no-sandbox --window-size=1440,900 \
   --screenshot=docs/img/board.png http://localhost:5173/board
 ```
 
+Note: the dashboard is now split into three routes — `/` (Overview: label
+counts, active agents, intervention queue), `/dashboard/usage` (Cost &
+Usage), and `/dashboard/performance` (Agent Performance). `docs/img/dashboard.png`
+currently only captures the Overview page at `/`. Capturing
+`docs/img/dashboard-usage.png` and `docs/img/dashboard-performance.png` for
+the other two routes with the same single-shot approach is a nice-to-have
+follow-up, not required.
+
 The task detail page's **Logs** and **Diff** tabs are plain `useState`, not a
 URL param — a single-shot load always lands on Overview. Use
 `scripts/cdp_shot.py` instead, which drives headless Chrome over the

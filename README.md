@@ -26,7 +26,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once a PR is detected as merged, the task's local branch and worktree are automatically cleaned up
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks — see [docs/task-sources.md](docs/task-sources.md)
-- **Dashboard** — run counts, cost/token tracking, recent activity, and per-agent-config performance (success rate, duration, retries)
+- **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
@@ -43,7 +43,7 @@ See [docs/overview.md](docs/overview.md) for the full concepts and architecture 
 | ![Board](docs/img/board.png) | ![Task detail with live logs](docs/img/task-logs.png) |
 | **Diff viewer** — per-task diff with inline review comments | **Workflow editor** — visual + YAML, edit labels and transitions |
 | ![Diff viewer with inline comment](docs/img/diff-viewer.png) | ![Workflow editor](docs/img/workflow-editor.png) |
-| **Dashboard** — run counts, cost, and token usage | **Health** — provider and infrastructure readiness checks |
+| **Dashboard overview** — label counts, active agents, and the intervention queue | **Health** — provider and infrastructure readiness checks |
 | ![Dashboard](docs/img/dashboard.png) | ![Health page](docs/img/health.png) |
 
 ---
