@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -811,4 +814,87 @@ func containsTaskID(tasks []gen.Task, taskID string) bool {
 		}
 	}
 	return false
+}
+
+// initGitRepo creates a minimal git repo (with an initial commit) suitable
+// for use as a job's RepoPath in safety-net-commit tests.
+func initGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-m", "init")
+	return dir
+}
+
+// TestPool_SafetyNetCommit_HumanReadableMessage verifies that when the pool
+// captures uncommitted agent work on run completion, the resulting commit
+// message leads with the task title (not bare UUIDs) and demotes the task
+// and run IDs to trailer lines.
+func TestPool_SafetyNetCommit_HumanReadableMessage(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+	pool.GitName = "Test User"
+	pool.GitEmail = "test@example.com"
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	repoPath := initGitRepo(t)
+	// Leave an uncommitted change in the repo for the pool's safety-net
+	// commit to pick up.
+	if err := os.WriteFile(filepath.Join(repoPath, "agent-work.txt"), []byte("work\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	run("add", "-A")
+
+	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "success"}}
+	job := buildJob(runID, taskID, agCfgID, wfs[0].ID, repoPath, provider)
+	// buildJob's Task doesn't set RepoPath (only Input.RepoPath); the pool
+	// keys its git lock off Task.RepoPath, so set both to the same repo.
+	job.Input.Task.RepoPath = repoPath
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+
+	pool.Submit(job)
+
+	waitForLabel(t, q, taskID, "review-plan")
+	cancel()
+
+	out, err := exec.Command("git", "-C", repoPath, "log", "-1", "--format=%B").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git log: %v: %s", err, out)
+	}
+	msg := string(out)
+
+	if !strings.HasPrefix(msg, "Pool test task (safety-net commit)") {
+		t.Errorf("expected message to start with task title, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "Task: "+taskID) {
+		t.Errorf("expected Task trailer with task id %q, got:\n%s", taskID, msg)
+	}
+	if !strings.Contains(msg, "Agent-Run: "+runID) {
+		t.Errorf("expected Agent-Run trailer with run id %q, got:\n%s", runID, msg)
+	}
 }
