@@ -668,3 +668,27 @@ this endpoint for one-click on-demand snapshots. See
 `BACKUP_DIR`/`BACKUP_INTERVAL`/`BACKUP_KEEP` automatic local-snapshot
 scheduler, and a Litestream sidecar example for continuous offsite
 replication.
+
+---
+
+## WebSocket Auth
+
+### `POST /ws-ticket`
+Mints a random, single-use ticket for authenticating the `GET /ws` upgrade
+without putting the long-lived `API_TOKEN` in the URL (query strings are
+commonly captured by reverse-proxy access logs and browser history). Requires
+the same Bearer auth as the rest of `/api/v1` — minting a ticket already
+requires holding the token. No request body.
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/ws-ticket
+```
+
+```json
+{ "ticket": "opaque-random-string", "expires_in": "30s" }
+```
+
+The ticket is valid for ~30 seconds and is consumed on first use — connect
+with `ws://host/ws?ticket=<ticket>` before it expires; a replayed or expired
+ticket is rejected with `401`. See [websocket.md](websocket.md) for the full
+connection flow, including the deprecated `?token=` fallback.

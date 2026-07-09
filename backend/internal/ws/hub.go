@@ -17,11 +17,14 @@ type Event struct {
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[*Client]struct{}
+
+	// tickets issues/validates short-lived WS auth tickets (see ticket.go).
+	tickets *ticketStore
 }
 
 // NewHub creates an idle Hub. No goroutines are started.
 func NewHub() *Hub {
-	return &Hub{clients: make(map[*Client]struct{})}
+	return &Hub{clients: make(map[*Client]struct{}), tickets: newTicketStore()}
 }
 
 func (h *Hub) register(c *Client) {
