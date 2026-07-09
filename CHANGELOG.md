@@ -11,6 +11,27 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **Named API tokens / actor identity in label history** (#45).
+  - `API_TOKENS` env var (or `api_tokens` map in the YAML config) supports
+    multiple named bearer tokens (format `name1:token1,name2:token2`).
+    `BearerAuth` resolves a matching token to its name and stores it on the
+    request context (`middleware.ActorFromContext`); the legacy `API_TOKEN`
+    remains supported as an anonymous fallback (empty actor), so existing
+    deployments are unaffected.
+  - Human-triggered transitions (`PATCH /tasks/{id}/label`,
+    `POST /tasks/{id}/approve`, `POST /tasks/{id}/reject`, and the `move`
+    action of `POST /tasks/bulk`) now record the resolved actor name in
+    `task_label_history.actor_id` instead of always leaving it blank.
+  - New `GET /tasks/{id}/label-history` endpoint exposes the full
+    label-transition audit trail for a task.
+  - The task detail page's Overview tab now shows a "Label history" list
+    (trigger, from/to label, actor, and note) below the run history.
+  - Note: the `/ws` WebSocket endpoint still only supports the single
+    legacy `API_TOKEN` for its `?token=` query param check — it does not
+    resolve named actors (out of scope; it's not a human-triggered REST
+    transition).
+
 ## [0.7.0] - 2026-07-09
 
 ### Added

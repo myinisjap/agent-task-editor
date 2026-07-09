@@ -172,6 +172,22 @@ export type AgentRun = {
   session_id?: string
 }
 
+// TaskLabelHistoryEntry is one row of a task's label-transition audit trail
+// (task_label_history), oldest first. For human-triggered transitions,
+// actor_id is the resolved named-token actor (see backend BearerAuth /
+// ActorFromContext) — null/empty when the legacy shared token or no auth was
+// used. For agent-triggered transitions, actor_id is the agent run ID.
+export type TaskLabelHistoryEntry = {
+  id: string
+  task_id: string
+  from_label: string | null
+  to_label: string
+  trigger: string
+  actor_id: string | null
+  note: string | null
+  created_at: string
+}
+
 // ReviewComment is a persistent, file/line-anchored inline comment on a
 // task's diff. Open comments are injected into every agent run's prompt until
 // resolved (by the agent via the MCP resolve_comment tool, or by a human).
@@ -460,6 +476,9 @@ export const api = {
       request<void>(`/tasks/${id}/review-comments/${commentId}`, { method: 'DELETE' }),
     runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
+    // listLabelHistory returns the task's label-transition audit trail
+    // (oldest first), including the resolved actor for human transitions.
+    listLabelHistory: (id: string) => request<TaskLabelHistoryEntry[]>(`/tasks/${id}/label-history`),
     // cancelRun signals an in-flight run to stop. The pool marks the run
     // "cancelled" and pauses the task asynchronously, then broadcasts
     // task.agent_done, so callers rely on the WS event rather than the response.

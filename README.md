@@ -28,7 +28,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks — see [docs/task-sources.md](docs/task-sources.md)
 - **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
-- **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 
 See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.
@@ -161,7 +161,7 @@ Agent shell commands run inside the **backend** Docker container, against your b
 
 **Default settings are for localhost only.** Before exposing this to any non-localhost network:
 
-- [ ] Set `API_TOKEN` — without it, anyone who can reach port 8080 can create repos, dispatch agents, and run shell commands
+- [ ] Set `API_TOKEN` (or `API_TOKENS` for named, per-actor tokens — recommended so approvals are attributable in the audit trail) — without it, anyone who can reach port 8080 can create repos, dispatch agents, and run shell commands
 - [ ] Set `REPO_BASE_DIR` — without it, agents can be pointed at any path on the host
 - [ ] Set `CORS_ORIGINS` to your actual origin instead of `*`
 - [ ] Run behind a reverse proxy or VPN; do not expose port 8080 directly to the internet
@@ -175,6 +175,7 @@ The server binds to all interfaces (`:8080`) by default. In Docker, map it to `1
 | Variable | Default | Description |
 |---|---|---|
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth required |
+| `API_TOKENS` | _(empty)_ | Named bearer tokens (`name1:token1,name2:token2`) — resolves to an actor name recorded in the label history audit trail; see [docs/getting-started.md](docs/getting-started.md#authentication) |
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory |
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary; required for label transitions with the `claude` provider |
 | `LLM_API_KEY` | _(empty)_ | API key for the `anthropic` or `llm` provider |

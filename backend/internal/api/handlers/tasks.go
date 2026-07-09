@@ -544,7 +544,7 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taskID := chi.URLParam(r, "id")
-	if err := h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, "", body.Note); err != nil {
+	if err := h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, middleware.ActorFromContext(r.Context()), body.Note); err != nil {
 		handleTransitionError(w, err)
 		return
 	}
@@ -576,7 +576,7 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.Transition(r.Context(), taskID, target, workflow.TriggerHuman, "", body.Note); err != nil {
+	if err := h.engine.Transition(r.Context(), taskID, target, workflow.TriggerHuman, middleware.ActorFromContext(r.Context()), body.Note); err != nil {
 		handleTransitionError(w, err)
 		return
 	}
@@ -644,7 +644,7 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.engine.Transition(r.Context(), taskID, toLabel, workflow.TriggerHuman, "", body.Note); err != nil {
+	if err := h.engine.Transition(r.Context(), taskID, toLabel, workflow.TriggerHuman, middleware.ActorFromContext(r.Context()), body.Note); err != nil {
 		handleTransitionError(w, err)
 		return
 	}
@@ -1101,13 +1101,14 @@ func (h *TasksHandler) Bulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	actor := middleware.ActorFromContext(ctx)
 	results := make([]bulkResult, 0, len(body.IDs))
 	allOk := true
 	for _, id := range body.IDs {
 		var err error
 		switch body.Action {
 		case "move":
-			err = h.engine.Transition(ctx, id, body.ToLabel, workflow.TriggerHuman, "", body.Note)
+			err = h.engine.Transition(ctx, id, body.ToLabel, workflow.TriggerHuman, actor, body.Note)
 		case "pause", "resume":
 			paused := int64(0)
 			if body.Action == "pause" {
@@ -1162,6 +1163,20 @@ func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, runs)
+}
+
+// ListLabelHistory returns the task's label-transition audit trail, oldest
+// first. actor_id is the resolved named-token actor for human-triggered
+// transitions (see middleware.ActorFromContext), or the agent run ID for
+// agent-triggered transitions; it may be null/empty for anonymous/legacy
+// single-token auth or system-triggered transitions.
+func (h *TasksHandler) ListLabelHistory(w http.ResponseWriter, r *http.Request) {
+	history, err := h.q.ListTaskLabelHistory(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, history)
 }
 
 func (h *TasksHandler) GetRun(w http.ResponseWriter, r *http.Request) {

@@ -15,18 +15,23 @@ import (
 
 // Config holds all server configuration values.
 type Config struct {
-	DBPath             string        `yaml:"db_path"`
-	Port               string        `yaml:"port"`
-	CORSOrigins        string        `yaml:"cors_origins"`
-	APIToken           string        `yaml:"api_token"`
-	MCPBinary          string        `yaml:"mcp_server_path"`
-	LLMBaseURL         string        `yaml:"llm_base_url"`
-	LLMAPIKey          string        `yaml:"llm_api_key"`
-	MaxWorkers         int           `yaml:"max_workers"`
-	RepoBaseDir        string        `yaml:"repo_base_dir"`
-	UploadDir          string        `yaml:"upload_dir"`
-	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
-	IssueSyncInterval  time.Duration `yaml:"issue_sync_interval"`
+	DBPath      string `yaml:"db_path"`
+	Port        string `yaml:"port"`
+	CORSOrigins string `yaml:"cors_origins"`
+	APIToken    string `yaml:"api_token"`
+	// APITokens maps an actor name to a bearer token, allowing multiple
+	// named credentials so human-triggered transitions can record *who*
+	// approved them (see task_label_history.actor_id). APIToken above
+	// remains supported as a legacy/anonymous fallback (actor name "").
+	APITokens          map[string]string `yaml:"api_tokens"`
+	MCPBinary          string            `yaml:"mcp_server_path"`
+	LLMBaseURL         string            `yaml:"llm_base_url"`
+	LLMAPIKey          string            `yaml:"llm_api_key"`
+	MaxWorkers         int               `yaml:"max_workers"`
+	RepoBaseDir        string            `yaml:"repo_base_dir"`
+	UploadDir          string            `yaml:"upload_dir"`
+	GitHubSyncInterval time.Duration     `yaml:"github_sync_interval"`
+	IssueSyncInterval  time.Duration     `yaml:"issue_sync_interval"`
 
 	// BackupDir, if set, enables the built-in scheduler that periodically
 	// writes a rotated VACUUM INTO snapshot of the database to this
@@ -81,6 +86,25 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("API_TOKEN"); v != "" {
 		cfg.APIToken = v
+	}
+	if v := os.Getenv("API_TOKENS"); v != "" {
+		if cfg.APITokens == nil {
+			cfg.APITokens = make(map[string]string)
+		}
+		for _, pair := range strings.Split(v, ",") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			name, token, ok := strings.Cut(pair, ":")
+			name = strings.TrimSpace(name)
+			token = strings.TrimSpace(token)
+			if !ok || name == "" || token == "" {
+				slog.Warn("skipping malformed API_TOKENS entry", "entry", pair)
+				continue
+			}
+			cfg.APITokens[name] = token
+		}
 	}
 	if v := os.Getenv("MCP_SERVER_PATH"); v != "" {
 		cfg.MCPBinary = v
