@@ -32,6 +32,37 @@ this file's section for that version as the release notes.
     scheduler, a Litestream sidecar example for continuous offsite
     replication, and a restore procedure (stop backend, replace file,
     restart — migrations tolerate older snapshots by design).
+- **Qwen CLI is now optionally installable in the backend Docker image.** The
+  backend `Dockerfile` gains a new `INSTALL_QWEN_CLI` build arg (default
+  `false`, mirroring `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`) that, when set
+  to `true`, `npm install -g @qwen-code/qwen-code`s the `qwen` binary the
+  `qwen_code` provider expects. Previously the only way to get `qwen` on
+  `PATH` inside the container was to install/mount it yourself. No backend
+  Go code, health checks, or frontend changes were needed — `qwen_code` was
+  already fully wired up; this only adds the missing in-image install path.
+
+### Changed
+- **Split the Dashboard into three focused pages** to reduce clutter on a
+  single overloaded view. All three still read from the same `GET
+  /dashboard` payload — this is a frontend-only reorganization, no backend
+  or API changes.
+  - `/` (**Overview**) now shows only the operational, "what needs my
+    attention" sections: label count chips, active agents, and the human
+    intervention queue (approve/reject).
+  - `/dashboard/usage` (**Cost & Usage**, new page) holds the Claude
+    5h/weekly rate-limit usage bars and the full cost/token breakdown
+    (total, by provider, by day, by task).
+  - `/dashboard/performance` (**Agent Performance**, new page) holds the
+    per-agent-config performance table (success rate, avg/p90 duration,
+    avg turns, retries, cost).
+  - The sidebar nav gained two new top-level links, "Cost & Usage" and
+    "Performance", alongside the existing "Dashboard" link.
+
+### Security
+- Pinned the CI and Docker builder Go toolchain to `1.26.5` (was the floating
+  `1.26`) to pick up the fix for GO-2026-5856, a crypto/tls Encrypted Client
+  Hello privacy leak that the previous run's resolved `1.26.4` toolchain was
+  still vulnerable to, per `govulncheck`.
 
 ## [0.6.0] - 2026-07-07
 

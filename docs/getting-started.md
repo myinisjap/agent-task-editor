@@ -176,7 +176,7 @@ Install the `opencode` binary and configure it. **MCP tools are not available.**
 
 ### Qwen Code (`qwen_code` provider)
 
-Install the `qwen` binary. MCP tools are supported (same setup as `claude`). See [providers/qwen_code.md](providers/qwen_code.md).
+Install the `qwen` binary (`npm i -g @qwen-code/qwen-code`, or build the backend image with `INSTALL_QWEN_CLI=true`). MCP tools are supported (same setup as `claude`). See [providers/qwen_code.md](providers/qwen_code.md).
 
 ### Gemini CLI (`gemini_cli` provider)
 

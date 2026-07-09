@@ -26,7 +26,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once a PR is detected as merged, the task's local branch and worktree are automatically cleaned up
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks — see [docs/task-sources.md](docs/task-sources.md)
-- **Dashboard** — run counts, cost/token tracking, recent activity, and per-agent-config performance (success rate, duration, retries)
+- **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
@@ -43,7 +43,7 @@ See [docs/overview.md](docs/overview.md) for the full concepts and architecture 
 | ![Board](docs/img/board.png) | ![Task detail with live logs](docs/img/task-logs.png) |
 | **Diff viewer** — per-task diff with inline review comments | **Workflow editor** — visual + YAML, edit labels and transitions |
 | ![Diff viewer with inline comment](docs/img/diff-viewer.png) | ![Workflow editor](docs/img/workflow-editor.png) |
-| **Dashboard** — run counts, cost, and token usage | **Health** — provider and infrastructure readiness checks |
+| **Dashboard overview** — label counts, active agents, and the intervention queue | **Health** — provider and infrastructure readiness checks |
 | ![Dashboard](docs/img/dashboard.png) | ![Health page](docs/img/health.png) |
 
 ---
@@ -94,13 +94,13 @@ The `claude` CLI binary itself is baked into the backend image — you don't nee
 
 ### Build args: optional CLI providers, SSL verification
 
-Unlike `claude` (installed unconditionally), the Gemini CLI (`gemini_cli` provider) and Codex CLI (`codex_cli` provider) are **not** installed in the default backend image — they're gated behind build args so the image doesn't grow for users who don't need them:
+Unlike `claude` (installed unconditionally), the Gemini CLI (`gemini_cli` provider), Codex CLI (`codex_cli` provider), and Qwen CLI (`qwen_code` provider) are **not** installed in the default backend image — they're gated behind build args so the image doesn't grow for users who don't need them:
 
 ```bash
-INSTALL_GEMINI_CLI=true INSTALL_CODEX_CLI=true docker compose build
+INSTALL_GEMINI_CLI=true INSTALL_CODEX_CLI=true INSTALL_QWEN_CLI=true docker compose build
 ```
 
-`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. See [docs/providers/gemini_cli.md](docs/providers/gemini_cli.md) and [docs/providers/codex_cli.md](docs/providers/codex_cli.md) for authentication setup once installed.
+`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. See [docs/providers/gemini_cli.md](docs/providers/gemini_cli.md), [docs/providers/codex_cli.md](docs/providers/codex_cli.md), and [docs/providers/qwen_code.md](docs/providers/qwen_code.md) for authentication setup once installed.
 
 ### Mount your repositories
 
@@ -137,7 +137,7 @@ Seven providers are available. Choose based on your auth setup, billing preferen
 | **`anthropic`** | Anthropic API key (`LLM_API_KEY`) | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Billed per-token — separate from a Claude Max subscription. No `Glob`/`Grep` tools. |
 | **`llm`** | API key (`LLM_API_KEY`) + `LLM_BASE_URL` | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Works with OpenAI, Azure OpenAI, Ollama, LM Studio, and any OpenAI-compatible endpoint. Same tool set as `anthropic`. Output quality varies by model/endpoint. |
 | **`opencode`** | Provider-specific (configured in `opencode` CLI) | ✅ `opencode` binary must be installed | Depends on opencode config | ❌ MCP tools not available | Label transitions require MCP, which opencode does not support. Runs complete without transitioning the task label. |
-| **`qwen_code`** | Qwen auth (configured in `qwen` CLI) | ✅ `qwen` binary must be installed | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Same MCP setup as the `claude` provider. |
+| **`qwen_code`** | Qwen auth (configured in `qwen` CLI) | ✅ `qwen` binary must be installed (see `INSTALL_QWEN_CLI` build arg) | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Same MCP setup as the `claude` provider. |
 | **`gemini_cli`** | Google account login or `GEMINI_API_KEY`/`GOOGLE_API_KEY` | ✅ `gemini` CLI must be installed (see `INSTALL_GEMINI_CLI` build arg) | Gemini's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via a per-run isolated `GEMINI_CLI_HOME`, not a CLI flag. No cost figure reported (token counts only). Command allowlist/denylist not enforced. |
 | **`codex_cli`** | ChatGPT account login (`codex login`) or `OPENAI_API_KEY` | ✅ `codex` CLI must be installed (see `INSTALL_CODEX_CLI` build arg) | Codex's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via a per-run isolated `CODEX_HOME`, not a CLI flag. Runs fully unsandboxed/unattended (`--dangerously-bypass-approvals-and-sandbox`); command allowlist/denylist not enforced — Codex's own sandbox/approval system is bypassed instead. No cost figure reported (token counts only). |
 
