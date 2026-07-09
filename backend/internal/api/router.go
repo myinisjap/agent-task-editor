@@ -3,6 +3,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -15,7 +16,11 @@ import (
 )
 
 // NewRouter builds and returns the application router.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher) http.Handler {
+//
+// backupDir/backupInterval/backupKeep are only used to render the
+// auto_backup health check (informational) — the actual scheduler is
+// started separately in cmd/server/main.go.
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
@@ -28,7 +33,8 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	templatesH := handlers.NewTemplatesHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
-	healthH := handlers.NewHealthHandler(q, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey)
+	healthH := handlers.NewHealthHandler(q, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep)
+	backupH := handlers.NewBackupHandler(db)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -112,9 +118,14 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Get("/github/auth-status", handlers.GitHubAuthStatus)
 
 			// Provider / onboarding health — checks CLI binaries, API keys, MCP
-			// sidecar, gh auth, and REPO_BASE_DIR so first-run misconfiguration is
-			// visible at a glance instead of surfacing as failed agent runs.
+			// sidecar, gh auth, REPO_BASE_DIR, and automatic-backup config so
+			// first-run misconfiguration is visible at a glance instead of
+			// surfacing as failed agent runs.
 			r.Get("/health/providers", healthH.Providers)
+
+			// Streams a consistent point-in-time database snapshot (VACUUM INTO)
+			// as application/octet-stream. Plain bearer-gated; see docs/backup.md.
+			r.Get("/backup", backupH.Backup)
 
 			// Agent runs
 			r.Get("/tasks/{id}/runs", tasksH.ListRuns)

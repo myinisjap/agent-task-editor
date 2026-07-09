@@ -2045,7 +2045,7 @@ export interface paths {
         };
         /**
          * Provider / onboarding readiness checks
-         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, and REPO_BASE_DIR. Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
+         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, and auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
          */
         get: {
             parameters: {
@@ -2065,6 +2065,45 @@ export interface paths {
                         "application/json": {
                             checks?: components["schemas"]["ProviderCheck"][];
                         };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a consistent database snapshot
+         * @description Streams a consistent point-in-time snapshot of the SQLite database as application/octet-stream, generated via SQLite's VACUUM INTO (not a raw file copy), so it's safe to call even while the app is under active write load. See docs/backup.md for the full restore procedure, the optional BACKUP_DIR/BACKUP_INTERVAL/BACKUP_KEEP automatic local-snapshot scheduler, and a Litestream sidecar example for continuous offsite replication.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A SQLite database file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
                     };
                 };
             };

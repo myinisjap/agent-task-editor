@@ -96,6 +96,16 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API) |
 | `LLM_API_KEY` | _(empty)_ | API key for `llm` or `anthropic` provider |
 
+### Backup
+
+| Variable | Default | Description |
+|---|---|---|
+| `BACKUP_DIR` | _(empty)_ | If set, enables the built-in scheduler that periodically writes a rotated `VACUUM INTO` snapshot of the database to this directory. Empty = disabled (on-demand backup via `GET /api/v1/backup` and the Health page's "Download backup" button is always available regardless). |
+| `BACKUP_INTERVAL` | `24h` | How often the scheduler writes a new snapshot. Accepts Go duration strings. Only meaningful when `BACKUP_DIR` is set. |
+| `BACKUP_KEEP` | `7` | Number of most-recent snapshots to retain in `BACKUP_DIR` before pruning older ones. |
+
+See [backup.md](backup.md) for the full backup/restore guide.
+
 ### Other
 
 | Variable | Default | Description |
@@ -119,6 +129,9 @@ max_workers: 5
 repo_base_dir: /repos
 upload_dir: /data/uploads
 github_sync_interval: 30s
+backup_dir: /data/backups
+backup_interval: 24h
+backup_keep: 7
 ```
 
 ### Authentication

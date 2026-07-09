@@ -640,9 +640,31 @@ list of checks:
 - Checks covered: the `claude` CLI (present + authenticated), API keys for the
   `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for
   providers referenced by an **enabled** agent config), the MCP sidecar binary
-  (`MCP_SERVER_PATH`), gh auth (same probe as `/github/auth-status`), and
-  `REPO_BASE_DIR`.
+  (`MCP_SERVER_PATH`), gh auth (same probe as `/github/auth-status`),
+  `REPO_BASE_DIR`, and `auto_backup` (whether the automatic local-snapshot
+  scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)).
 - Checks are cheap and side-effect free (PATH lookups, credential/config-file
   existence, env/config values). No real agent invocation is made, so a green
   `claude` row means credentials were **found**, not that a live token was
   validated. Rendered by the frontend's **Health** page.
+
+---
+
+## Backup
+
+### `GET /backup`
+Streams a consistent point-in-time snapshot of the SQLite database as
+`application/octet-stream`, generated via SQLite's `VACUUM INTO` (not a raw
+file copy), so it's safe to call even while the app is under active write
+load. Requires the same Bearer auth as the rest of `/api/v1`.
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/backup -o backup-$(date +%F).db
+```
+
+The frontend's **Health** page also has a "Download backup" button that hits
+this endpoint for one-click on-demand snapshots. See
+[backup.md](backup.md) for the full restore procedure, the optional
+`BACKUP_DIR`/`BACKUP_INTERVAL`/`BACKUP_KEEP` automatic local-snapshot
+scheduler, and a Litestream sidecar example for continuous offsite
+replication.

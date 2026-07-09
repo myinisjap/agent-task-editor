@@ -11,6 +11,36 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **SQLite backup/restore story** (#89).
+  - `GET /api/v1/backup` streams a consistent point-in-time database
+    snapshot as `application/octet-stream`, generated via SQLite's
+    `VACUUM INTO` (not a raw file copy), so it's safe to call even while
+    the app is under active write load. Bearer-gated like the rest of
+    `/api/v1`.
+  - **Health page**: a new "Download backup" button hits the endpoint
+    directly from the browser (with the `Authorization` header set via
+    `fetch`, since a plain link can't) for one-click on-demand snapshots.
+  - Optional automatic local-backup scheduler: `BACKUP_DIR` (enables it),
+    `BACKUP_INTERVAL` (default `24h`), and `BACKUP_KEEP` (default `7`,
+    retention count) periodically write rotated `VACUUM INTO` snapshots to
+    a local directory, pruning older ones beyond the retention count.
+    Whether it's enabled is also surfaced as a new `auto_backup` check on
+    `GET /api/v1/health/providers` (and therefore the Health page).
+  - New `docs/backup.md` guide covering volume layout, the on-demand
+    endpoint, a manual `sqlite3 VACUUM INTO` fallback, the automatic
+    scheduler, a Litestream sidecar example for continuous offsite
+    replication, and a restore procedure (stop backend, replace file,
+    restart — migrations tolerate older snapshots by design).
+- **Qwen CLI is now optionally installable in the backend Docker image.** The
+  backend `Dockerfile` gains a new `INSTALL_QWEN_CLI` build arg (default
+  `false`, mirroring `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`) that, when set
+  to `true`, `npm install -g @qwen-code/qwen-code`s the `qwen` binary the
+  `qwen_code` provider expects. Previously the only way to get `qwen` on
+  `PATH` inside the container was to install/mount it yourself. No backend
+  Go code, health checks, or frontend changes were needed — `qwen_code` was
+  already fully wired up; this only adds the missing in-image install path.
+
 ### Changed
 - **Split the Dashboard into three focused pages** to reduce clutter on a
   single overloaded view. All three still read from the same `GET
@@ -27,15 +57,7 @@ this file's section for that version as the release notes.
     avg turns, retries, cost).
   - The sidebar nav gained two new top-level links, "Cost & Usage" and
     "Performance", alongside the existing "Dashboard" link.
-### Added
-- **Qwen CLI is now optionally installable in the backend Docker image.** The
-  backend `Dockerfile` gains a new `INSTALL_QWEN_CLI` build arg (default
-  `false`, mirroring `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`) that, when set
-  to `true`, `npm install -g @qwen-code/qwen-code`s the `qwen` binary the
-  `qwen_code` provider expects. Previously the only way to get `qwen` on
-  `PATH` inside the container was to install/mount it yourself. No backend
-  Go code, health checks, or frontend changes were needed — `qwen_code` was
-  already fully wired up; this only adds the missing in-image install path.
+
 ### Security
 - Pinned the CI and Docker builder Go toolchain to `1.26.5` (was the floating
   `1.26`) to pick up the fix for GO-2026-5856, a crypto/tls Encrypted Client

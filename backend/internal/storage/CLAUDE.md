@@ -16,6 +16,8 @@ SQLite database layer: connection management, schema migrations, sqlc-generated 
 
 SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read performance. The file path defaults to `agent-task-editor.db` (configurable via `DB_PATH`).
 
+`DB.Path()` returns the raw path passed to `Open` (no `?_foreign_keys=on&...` DSN suffix) — used by the backup handler/scheduler to locate a writable directory on the same filesystem as the live DB. `DB.Backup(ctx, dstPath)` writes a consistent point-in-time snapshot via `VACUUM INTO` (safe under concurrent write load, unlike a raw file copy of a WAL-mode database); `dstPath` must not already exist. Used by both `GET /api/v1/backup` (`internal/api/handlers/backup.go`) and the optional automatic-backup scheduler (`internal/backup`) — see `docs/backup.md`.
+
 ## Migrations
 
 Managed by `golang-migrate`. Files must follow the `NNN_description.up.sql` / `NNN_description.down.sql` naming pattern where `NNN` is a zero-padded integer.

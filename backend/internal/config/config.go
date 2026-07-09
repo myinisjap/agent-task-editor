@@ -27,6 +27,18 @@ type Config struct {
 	UploadDir          string        `yaml:"upload_dir"`
 	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
 	IssueSyncInterval  time.Duration `yaml:"issue_sync_interval"`
+
+	// BackupDir, if set, enables the built-in scheduler that periodically
+	// writes a rotated VACUUM INTO snapshot of the database to this
+	// directory (see internal/backup.Scheduler). Empty disables it — this
+	// is separate from the always-available GET /api/v1/backup endpoint.
+	BackupDir string `yaml:"backup_dir"`
+	// BackupInterval is how often the scheduler writes a new snapshot.
+	// Only meaningful when BackupDir is set.
+	BackupInterval time.Duration `yaml:"backup_interval"`
+	// BackupKeep is how many of the most recent snapshots to retain in
+	// BackupDir before pruning older ones.
+	BackupKeep int `yaml:"backup_keep"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -39,6 +51,8 @@ func Defaults() Config {
 		MaxWorkers:         5,
 		GitHubSyncInterval: 30 * time.Second,
 		IssueSyncInterval:  60 * time.Second,
+		BackupInterval:     24 * time.Hour,
+		BackupKeep:         7,
 	}
 }
 
@@ -105,6 +119,23 @@ func Load(path string) (Config, error) {
 			cfg.IssueSyncInterval = d
 		} else {
 			slog.Warn("invalid ISSUE_SYNC_INTERVAL; using default", "value", v, "default", cfg.IssueSyncInterval)
+		}
+	}
+	if v := os.Getenv("BACKUP_DIR"); v != "" {
+		cfg.BackupDir = v
+	}
+	if v := os.Getenv("BACKUP_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.BackupInterval = d
+		} else {
+			slog.Warn("invalid BACKUP_INTERVAL; using default", "value", v, "default", cfg.BackupInterval)
+		}
+	}
+	if v := os.Getenv("BACKUP_KEEP"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.BackupKeep = n
+		} else {
+			slog.Warn("invalid BACKUP_KEEP; using default", "value", v, "default", cfg.BackupKeep)
 		}
 	}
 
