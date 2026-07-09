@@ -18,6 +18,9 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `UploadDir` | `UPLOAD_DIR` | `upload_dir` | `uploads` (next to DB) |
 | `GitHubSyncInterval` | `GITHUB_SYNC_INTERVAL` | `github_sync_interval` | `30s` |
 | `IssueSyncInterval` | `ISSUE_SYNC_INTERVAL` | `issue_sync_interval` | `60s` |
+| `BackupDir` | `BACKUP_DIR` | `backup_dir` | _(empty, scheduler disabled)_ |
+| `BackupInterval` | `BACKUP_INTERVAL` | `backup_interval` | `24h` |
+| `BackupKeep` | `BACKUP_KEEP` | `backup_keep` | `7` |
 
 ## Loading Order
 
@@ -30,3 +33,4 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 - `REPO_BASE_DIR` empty is valid (warn-only at startup); production deployments should set it
 - `APIToken` empty means no authentication is required
 - `MCPBinary` empty means ClaudeRunner runs without MCP tools (`signal_complete`/`request_human` unavailable)
+- `BackupDir` empty disables the automatic local-snapshot scheduler (`internal/backup.Scheduler`); the on-demand `GET /api/v1/backup` endpoint and the Health page's "Download backup" button are always available regardless. See `docs/backup.md`.

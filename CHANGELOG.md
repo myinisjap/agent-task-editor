@@ -11,6 +11,28 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **SQLite backup/restore story** (#89).
+  - `GET /api/v1/backup` streams a consistent point-in-time database
+    snapshot as `application/octet-stream`, generated via SQLite's
+    `VACUUM INTO` (not a raw file copy), so it's safe to call even while
+    the app is under active write load. Bearer-gated like the rest of
+    `/api/v1`.
+  - **Health page**: a new "Download backup" button hits the endpoint
+    directly from the browser (with the `Authorization` header set via
+    `fetch`, since a plain link can't) for one-click on-demand snapshots.
+  - Optional automatic local-backup scheduler: `BACKUP_DIR` (enables it),
+    `BACKUP_INTERVAL` (default `24h`), and `BACKUP_KEEP` (default `7`,
+    retention count) periodically write rotated `VACUUM INTO` snapshots to
+    a local directory, pruning older ones beyond the retention count.
+    Whether it's enabled is also surfaced as a new `auto_backup` check on
+    `GET /api/v1/health/providers` (and therefore the Health page).
+  - New `docs/backup.md` guide covering volume layout, the on-demand
+    endpoint, a manual `sqlite3 VACUUM INTO` fallback, the automatic
+    scheduler, a Litestream sidecar example for continuous offsite
+    replication, and a restore procedure (stop backend, replace file,
+    restart — migrations tolerate older snapshots by design).
+
 ## [0.6.0] - 2026-07-07
 
 ### Added

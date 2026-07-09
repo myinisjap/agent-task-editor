@@ -561,4 +561,10 @@ export const api = {
   health: {
     providers: () => request<{ checks: ProviderCheck[] }>('/health/providers'),
   },
+  backup: {
+    // Raw binary download — not a JSON request<T>() call, mirrors
+    // workflows.exportYaml. Callers must fetch() this URL themselves with
+    // the Authorization header set (browsers can't set headers on <a href>).
+    url: () => `${BASE}/backup`,
+  },
 }

@@ -15,6 +15,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [task-sources.md](task-sources.md) | Importing GitHub Issues as tasks |
 | [api.md](api.md) | REST API reference |
 | [websocket.md](websocket.md) | WebSocket protocol and event types |
+| [backup.md](backup.md) | Backup, restore, and continuous replication |
 
 ## Quick Start
 

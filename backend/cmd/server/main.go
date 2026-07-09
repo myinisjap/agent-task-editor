@@ -14,6 +14,7 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
+	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -203,7 +204,7 @@ func main() {
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = hub
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, pool, dispatcher)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
@@ -228,10 +229,25 @@ func main() {
 	issueImporter := tasksource.New(db.SQL(), hub, cfg.IssueSyncInterval, tasksource.GitHubIssues{})
 	slog.Info("github issue import enabled", "interval", cfg.IssueSyncInterval)
 
+	// Automatic local backups: optional. When BACKUP_DIR is set, periodically
+	// writes a rotated VACUUM INTO snapshot to that directory. Always
+	// available regardless of this setting: GET /api/v1/backup (on-demand)
+	// and the Health page's "Download backup" button. See docs/backup.md.
+	var backupScheduler *backup.Scheduler
+	if cfg.BackupDir != "" {
+		backupScheduler = backup.New(db, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep)
+		slog.Info("automatic local backups enabled", "dir", cfg.BackupDir, "interval", cfg.BackupInterval, "keep", cfg.BackupKeep)
+	} else {
+		slog.Info("automatic local backups disabled; set BACKUP_DIR to enable (see docs/backup.md)")
+	}
+
 	go pool.Start(ctx)
 	go dispatcher.Run(ctx)
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)
+	if backupScheduler != nil {
+		go backupScheduler.Run(ctx)
+	}
 
 	go func() {
 		slog.Info("server starting", "port", cfg.Port)

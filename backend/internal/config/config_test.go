@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 )
@@ -18,6 +19,15 @@ func TestDefaults_PopulatesRequiredFields(t *testing.T) {
 	}
 	if cfg.MaxWorkers <= 0 {
 		t.Errorf("MaxWorkers must be positive, got %d", cfg.MaxWorkers)
+	}
+	if cfg.BackupDir != "" {
+		t.Errorf("BackupDir must default to empty (disabled), got %q", cfg.BackupDir)
+	}
+	if cfg.BackupInterval <= 0 {
+		t.Errorf("BackupInterval must have a positive default, got %v", cfg.BackupInterval)
+	}
+	if cfg.BackupKeep <= 0 {
+		t.Errorf("BackupKeep must have a positive default, got %d", cfg.BackupKeep)
 	}
 }
 
@@ -135,6 +145,67 @@ func TestLoad_EnvVarsOverrideYAML(t *testing.T) {
 	// Non-overridden YAML field is preserved
 	if cfg.DBPath != "file.db" {
 		t.Errorf("non-overridden YAML field should be preserved: expected file.db, got %s", cfg.DBPath)
+	}
+}
+
+func TestLoad_BackupEnvVarsOverrideDefaults(t *testing.T) {
+	t.Setenv("BACKUP_DIR", "/data/backups")
+	t.Setenv("BACKUP_INTERVAL", "12h")
+	t.Setenv("BACKUP_KEEP", "3")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.BackupDir != "/data/backups" {
+		t.Errorf("expected backup dir /data/backups, got %s", cfg.BackupDir)
+	}
+	if cfg.BackupInterval != 12*time.Hour {
+		t.Errorf("expected backup interval 12h, got %v", cfg.BackupInterval)
+	}
+	if cfg.BackupKeep != 3 {
+		t.Errorf("expected backup keep 3, got %d", cfg.BackupKeep)
+	}
+}
+
+func TestLoad_BackupFromYAML(t *testing.T) {
+	t.Setenv("BACKUP_DIR", "")
+	t.Setenv("BACKUP_INTERVAL", "")
+	t.Setenv("BACKUP_KEEP", "")
+
+	f, err := os.CreateTemp("", "config-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+
+	_, _ = f.WriteString("backup_dir: /data/backups\nbackup_interval: 6h\nbackup_keep: 14\n")
+	_ = f.Close()
+
+	cfg, err := config.Load(f.Name())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.BackupDir != "/data/backups" {
+		t.Errorf("expected backup dir /data/backups, got %s", cfg.BackupDir)
+	}
+	if cfg.BackupInterval != 6*time.Hour {
+		t.Errorf("expected backup interval 6h, got %v", cfg.BackupInterval)
+	}
+	if cfg.BackupKeep != 14 {
+		t.Errorf("expected backup keep 14, got %d", cfg.BackupKeep)
+	}
+}
+
+func TestLoad_InvalidBackupInterval_UsesDefault(t *testing.T) {
+	t.Setenv("BACKUP_INTERVAL", "not-a-duration")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.BackupInterval != config.Defaults().BackupInterval {
+		t.Errorf("expected default backup interval on invalid input, got %v", cfg.BackupInterval)
 	}
 }
 
