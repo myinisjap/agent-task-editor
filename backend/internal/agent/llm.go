@@ -108,14 +108,14 @@ var llmTools = []map[string]any{
 		"type": "function",
 		"function": map[string]any{
 			"name":        "signal_complete",
-			"description": "Call when your work is done. Advances the task to the next workflow stage.",
+			"description": "Call when your work is done. Pass outcome='success' if the work succeeded or outcome='failure' if it did not. The system resolves the correct next workflow label automatically.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"next_label": map[string]any{"type": "string", "description": "The workflow label to move the task to"},
-					"summary":    map[string]any{"type": "string", "description": "Brief summary of what was done"},
+					"outcome": map[string]any{"type": "string", "enum": []string{"success", "failure"}, "description": "Whether the work succeeded or failed"},
+					"summary": map[string]any{"type": "string", "description": "Brief summary of what was done"},
 				},
-				"required": []string{"next_label", "summary"},
+				"required": []string{"outcome", "summary"},
 			},
 		},
 	},
@@ -128,6 +128,60 @@ var llmTools = []map[string]any{
 				"type":       "object",
 				"properties": map[string]any{"message": map[string]any{"type": "string"}},
 				"required":   []string{"message"},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "get_task_transitions",
+			"description": "Returns the available workflow transitions from the task's current label. Call this first to know which outcome values are valid for signal_complete.",
+			"parameters": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "list_dir",
+			"description": "Recursively list files and directories under path (relative to repo root, empty for root). Skips .git, node_modules, and other dotdirs. Output is truncated past 2000 entries.",
+			"parameters": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"path": map[string]any{"type": "string", "description": "Directory path relative to repo root (empty for root)"}},
+				"required":   []string{},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "search",
+			"description": "Search the repository for a pattern using ripgrep. Optionally restrict to files matching glob. Output is truncated at 1 MB.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"pattern": map[string]any{"type": "string", "description": "Regex or literal pattern to search for"},
+					"glob":    map[string]any{"type": "string", "description": "Optional glob to restrict which files are searched, e.g. \"*.go\""},
+				},
+				"required": []string{"pattern"},
+			},
+		},
+	},
+	{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "str_replace",
+			"description": "Replace a substring in a file. The old string must appear exactly once in the file, or the call fails — provide enough surrounding context to make it unique. Prefer this over write_file for small edits.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{"type": "string", "description": "File path relative to repo root"},
+					"old":  map[string]any{"type": "string", "description": "Exact text to replace (must appear exactly once)"},
+					"new":  map[string]any{"type": "string", "description": "Replacement text"},
+				},
+				"required": []string{"path", "old", "new"},
 			},
 		},
 	},
@@ -201,7 +255,7 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 			var signal *Result
 			if !handled {
 				policy := CommandPolicy{Allowlist: input.AgentConfig.CommandAllowlist, Denylist: input.AgentConfig.CommandDenylist}
-				output, signal = r.executeTool(runCtx, input.RepoPath, policy, tc)
+				output, signal = r.executeTool(runCtx, input.RepoPath, policy, tc, input.Transitions)
 			}
 
 			logCh <- LogEntry{Type: LogToolResult, Content: output, At: time.Now()}
@@ -222,10 +276,10 @@ func (r *LLMRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEnt
 	return Result{Status: "failed"}, fmt.Errorf("exceeded max turns (%d)", maxTurns)
 }
 
-func (r *LLMRunner) executeTool(ctx context.Context, repoPath string, policy CommandPolicy, tc toolCall) (string, *Result) {
+func (r *LLMRunner) executeTool(ctx context.Context, repoPath string, policy CommandPolicy, tc toolCall, transitions []TransitionHint) (string, *Result) {
 	var args map[string]string
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-	return executeLLMTool(ctx, repoPath, policy, tc.Function.Name, args)
+	return executeLLMTool(ctx, repoPath, policy, tc.Function.Name, args, transitions)
 }
 
 type completionResponse struct {

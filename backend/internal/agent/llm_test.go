@@ -121,3 +121,144 @@ func TestLLMRunner_CapturesUsageAndCost(t *testing.T) {
 		t.Errorf("want CostUSD=%v, got %v", wantCost, res.CostUSD)
 	}
 }
+
+// TestLLMRunner_SignalCompleteReadsOutcome is a regression test for a bug
+// where llmTools advertised signal_complete's parameter as "next_label" but
+// executeLLMTool actually read "outcome" — meaning any well-behaved model
+// following the schema it was given would see its completion signal
+// silently dropped. This verifies the full loop now reads "outcome" per the
+// (now-corrected) tool schema and surfaces it on the returned Result.
+func TestLLMRunner_SignalCompleteReadsOutcome(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "",
+						"tool_calls": []map[string]any{
+							{
+								"id":   "call-1",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "signal_complete",
+									"arguments": `{"outcome":"success","summary":"all done"}`,
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	runner := &LLMRunner{APIKey: "test-key", BaseURL: srv.URL}
+	logCh := make(chan LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+
+	input := RunInput{
+		RunID:       "test-run",
+		Task:        Task{ID: "task-1", Title: "test task"},
+		AgentConfig: AgentConfig{MaxTurns: 5},
+		RepoPath:    t.TempDir(),
+	}
+
+	res, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Status != "completed" {
+		t.Fatalf("want Status=completed, got %q", res.Status)
+	}
+	if res.Outcome != "success" {
+		t.Fatalf("want Outcome=success (read from the 'outcome' arg), got %q", res.Outcome)
+	}
+	if res.Message == nil || *res.Message != "all done" {
+		t.Fatalf("unexpected message: %v", res.Message)
+	}
+}
+
+// TestLLMRunner_GetTaskTransitions verifies that input.Transitions is
+// threaded through to the native get_task_transitions tool and returned to
+// the model as JSON, matching the MCP sidecar's output shape.
+func TestLLMRunner_GetTaskTransitions(t *testing.T) {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		var resp map[string]any
+		if callCount == 1 {
+			resp = map[string]any{
+				"choices": []map[string]any{
+					{
+						"message": map[string]any{
+							"content": "",
+							"tool_calls": []map[string]any{
+								{
+									"id":   "call-1",
+									"type": "function",
+									"function": map[string]any{
+										"name":      "get_task_transitions",
+										"arguments": `{}`,
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+		} else {
+			resp = map[string]any{
+				"choices": []map[string]any{
+					{"message": map[string]any{"content": "done"}},
+				},
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	runner := &LLMRunner{APIKey: "test-key", BaseURL: srv.URL}
+	logCh := make(chan LogEntry, 256)
+	var toolResults []string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for entry := range logCh {
+			if entry.Type == LogToolResult {
+				toolResults = append(toolResults, entry.Content)
+			}
+		}
+	}()
+
+	input := RunInput{
+		RunID:       "test-run",
+		Task:        Task{ID: "task-1", Title: "test task"},
+		AgentConfig: AgentConfig{MaxTurns: 5},
+		RepoPath:    t.TempDir(),
+		Transitions: []TransitionHint{{ToLabel: "review", Path: "success"}},
+	}
+
+	_, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	<-done
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(toolResults) != 1 {
+		t.Fatalf("expected exactly one tool result, got %d: %v", len(toolResults), toolResults)
+	}
+	var got []TransitionHint
+	if err := json.Unmarshal([]byte(toolResults[0]), &got); err != nil {
+		t.Fatalf("expected valid JSON transitions, got %q: %v", toolResults[0], err)
+	}
+	if len(got) != 1 || got[0].ToLabel != "review" {
+		t.Fatalf("unexpected transitions: %+v", got)
+	}
+}

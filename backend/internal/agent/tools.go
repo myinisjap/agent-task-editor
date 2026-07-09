@@ -13,6 +13,19 @@ import (
 
 const bashOutputLimit = 1 << 20 // 1 MB
 
+// listDirMaxEntries caps the number of entries list_dir returns so a huge
+// tree can't blow past the model's context window; output notes truncation
+// when the cap is hit so the model doesn't assume it saw everything.
+const listDirMaxEntries = 2000
+
+// listDirIgnore holds directory names that list_dir never descends into,
+// mirroring common VCS/dependency directories that are never useful for an
+// agent editing a repo and can be enormous (node_modules especially).
+var listDirIgnore = map[string]bool{
+	".git":         true,
+	"node_modules": true,
+}
+
 // runAccumulators holds the cross-turn state that both AnthropicRunner and
 // LLMRunner thread through their agentic loops: info stored via store_info,
 // notes written via update_task_notes, and token usage summed across every
@@ -142,8 +155,10 @@ func matchCommandPattern(pattern, s string) bool {
 
 // executeLLMTool runs a single tool call for LLMRunner and AnthropicRunner.
 // Returns (output, nil) for file/shell tools, or (output, *Result) for
-// signal_complete and request_human which terminate the run.
-func executeLLMTool(ctx context.Context, repoPath string, policy CommandPolicy, name string, args map[string]string) (string, *Result) {
+// signal_complete and request_human which terminate the run. transitions is
+// the set of workflow transitions available from the task's current label,
+// used to answer get_task_transitions (mirrors the MCP sidecar's behavior).
+func executeLLMTool(ctx context.Context, repoPath string, policy CommandPolicy, name string, args map[string]string, transitions []TransitionHint) (string, *Result) {
 	switch name {
 	case "read_file":
 		path, err := safeRepoPath(repoPath, args["path"])
@@ -223,9 +238,164 @@ func executeLLMTool(ctx context.Context, repoPath string, policy CommandPolicy, 
 		msg := args["message"]
 		return "pausing for human input", &Result{Status: "waiting_human", Message: &msg}
 
+	case "get_task_transitions":
+		if len(transitions) == 0 {
+			return "No transitions configured for this label.", nil
+		}
+		data, err := json.Marshal(transitions)
+		if err != nil {
+			return fmt.Sprintf("error: %v", err), nil
+		}
+		return string(data), nil
+
+	case "list_dir":
+		return listDir(repoPath, args["path"])
+
+	case "search":
+		return searchRepo(ctx, repoPath, args["pattern"], args["glob"])
+
+	case "str_replace":
+		return strReplace(repoPath, args["path"], args["old"], args["new"])
+
 	default:
 		return fmt.Sprintf("unknown tool: %s", name), nil
 	}
+}
+
+// listDir returns a recursive listing of dir (relative to repoPath, or the
+// repo root if empty), skipping VCS/dependency directories and any directory
+// starting with "." Output is capped at listDirMaxEntries entries.
+func listDir(repoPath, relPath string) (string, *Result) {
+	dir := repoPath
+	if relPath != "" {
+		var err error
+		dir, err = safeRepoPath(repoPath, relPath)
+		if err != nil {
+			return fmt.Sprintf("error: %v", err), nil
+		}
+	}
+	if info, err := os.Stat(dir); err != nil {
+		return fmt.Sprintf("error: %v", err), nil
+	} else if !info.IsDir() {
+		return fmt.Sprintf("error: %q is not a directory", relPath), nil
+	}
+
+	var lines []string
+	truncated := false
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == dir {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() && (listDirIgnore[name] || (strings.HasPrefix(name, ".") && name != ".")) {
+			return filepath.SkipDir
+		}
+		if len(lines) >= listDirMaxEntries {
+			truncated = true
+			return filepath.SkipAll
+		}
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			rel = path
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			rel += "/"
+		}
+		lines = append(lines, rel)
+		return nil
+	})
+	if err != nil {
+		return fmt.Sprintf("error: %v", err), nil
+	}
+	out := strings.Join(lines, "\n")
+	if truncated {
+		out += fmt.Sprintf("\n[output truncated at %d entries]", listDirMaxEntries)
+	}
+	return out, nil
+}
+
+// searchRepo shells out to ripgrep (rg) to search the repository for
+// pattern, optionally restricted to files matching glob. search is
+// read-only (it cannot mutate the repo) and so is not gated by
+// CommandPolicy, unlike run_bash.
+func searchRepo(ctx context.Context, repoPath, pattern, glob string) (string, *Result) {
+	if pattern == "" {
+		return "error: pattern is required", nil
+	}
+	if _, err := exec.LookPath("rg"); err != nil {
+		return "error: ripgrep (rg) not found on PATH", nil
+	}
+	rgArgs := []string{"--line-number", "--no-heading", "--color=never"}
+	if glob != "" {
+		rgArgs = append(rgArgs, "-g", glob)
+	}
+	rgArgs = append(rgArgs, pattern, ".")
+
+	cmd := exec.CommandContext(ctx, "rg", rgArgs...)
+	cmd.Dir = repoPath
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Sprintf("error: %v", err), nil
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return fmt.Sprintf("error starting: %v", err), nil
+	}
+	out, _ := io.ReadAll(io.LimitReader(pipe, bashOutputLimit))
+	err = cmd.Wait()
+	result := string(out)
+	if len(out) == bashOutputLimit {
+		result += "\n[output truncated at 1 MB]"
+	}
+	if err != nil {
+		// rg exits 1 when there are no matches — that's not an error, just
+		// an empty result.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "no matches found", nil
+		}
+		return fmt.Sprintf("exit error: %v\n%s", err, result), nil
+	}
+	if result == "" {
+		return "no matches found", nil
+	}
+	return result, nil
+}
+
+// strReplace performs a single, exact-match string replacement in path. It
+// requires old to appear exactly once in the file's contents — zero or
+// multiple matches return an error rather than guessing, since silently
+// replacing the first/all occurrences risks corrupting the file on an
+// ambiguous match.
+func strReplace(repoPath, relPath, oldStr, newStr string) (string, *Result) {
+	path, err := safeRepoPath(repoPath, relPath)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err), nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err), nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err), nil
+	}
+	content := string(data)
+	count := strings.Count(content, oldStr)
+	if count == 0 {
+		return "error: old string not found in file", nil
+	}
+	if count > 1 {
+		return fmt.Sprintf("error: old string is not unique in file (found %d occurrences); provide more context to make it unique", count), nil
+	}
+	updated := strings.Replace(content, oldStr, newStr, 1)
+	if err := os.WriteFile(path, []byte(updated), info.Mode()); err != nil {
+		return fmt.Sprintf("error: %v", err), nil
+	}
+	return "ok", nil
 }
 
 // safeRepoPath joins repoPath and rel, then verifies the result is still

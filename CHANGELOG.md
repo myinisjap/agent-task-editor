@@ -11,6 +11,44 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **Grew the `anthropic`/`llm` providers' native tool-use loop toward parity
+  with the MCP-backed CLI providers** (#83).
+  - New editing tools: `str_replace(path, old, new)` (exact-match single
+    replacement, so small edits don't require a full-file `write_file`
+    rewrite within `max_tokens`), `list_dir(path?)` (recursive directory
+    listing skipping `.git`/`node_modules`/dotdirs, capped at 2000
+    entries), and `search(pattern, glob?)` (ripgrep-backed repo search,
+    capped at 1&nbsp;MB of output). `search`/`list_dir`/`list_files` are
+    read-only and are not gated by `command_allowlist`/`command_denylist`
+    (same treatment as `read_file`).
+  - New `get_task_transitions()` native tool, mirroring the MCP sidecar's
+    tool of the same name — the transition list was already computed and
+    passed to every run, it just wasn't exposed to these two providers'
+    tool loop until now.
+  - The backend Docker image now installs `ripgrep` (`rg`) by default,
+    required by the new `search` tool.
+  - Published a consolidated provider capability matrix in
+    `docs/agents.md` (`claude`, `qwen_code`, `gemini_cli`, `codex_cli`,
+    `anthropic`, `llm`, `opencode`), replacing scattered footnotes, and
+    re-tiered `opencode` as chat-grade/experimental pending a spike into
+    whether its project-scoped `opencode.json` config can inject the same
+    MCP sidecar the other CLI providers use.
+
+### Fixed
+- **`anthropic`/`llm` providers' `signal_complete` tool now actually
+  transitions the task.** The tool schema advertised to the model took a
+  `next_label` parameter (the exact label to move to), but the shared
+  dispatch code always read an `outcome` argument instead — so a model
+  faithfully following its own tool schema had its completion signal
+  silently dropped (`Result.Outcome` stayed empty, which the pool's
+  `resolveOutcome` cannot map to a transition), leaving the task stuck
+  needing human intervention instead of advancing. `signal_complete` now
+  takes `outcome: "success"|"failure"` for both providers, identical to
+  the MCP sidecar's version, and the label is resolved automatically as
+  intended. `docs/providers/anthropic.md` and `docs/providers/llm.md` are
+  updated accordingly.
+
 ## [0.7.0] - 2026-07-09
 
 ### Added

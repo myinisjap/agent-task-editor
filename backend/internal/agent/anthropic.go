@@ -99,14 +99,14 @@ var anthropicTools = []map[string]any{
 	},
 	{
 		"name":        "signal_complete",
-		"description": "Call when your work is done. Advances the task to the next workflow stage.",
+		"description": "Call when your work is done. Pass outcome='success' if the work succeeded or outcome='failure' if it did not. The system resolves the correct next workflow label automatically.",
 		"input_schema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"next_label": map[string]any{"type": "string", "description": "The workflow label to move the task to"},
-				"summary":    map[string]any{"type": "string", "description": "Brief summary of what was done"},
+				"outcome": map[string]any{"type": "string", "enum": []string{"success", "failure"}, "description": "Whether the work succeeded or failed"},
+				"summary": map[string]any{"type": "string", "description": "Brief summary of what was done"},
 			},
-			"required": []string{"next_label", "summary"},
+			"required": []string{"outcome", "summary"},
 		},
 	},
 	{
@@ -116,6 +116,48 @@ var anthropicTools = []map[string]any{
 			"type":       "object",
 			"properties": map[string]any{"message": map[string]any{"type": "string"}},
 			"required":   []string{"message"},
+		},
+	},
+	{
+		"name":        "get_task_transitions",
+		"description": "Returns the available workflow transitions from the task's current label. Call this first to know which outcome values are valid for signal_complete.",
+		"input_schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	},
+	{
+		"name":        "list_dir",
+		"description": "Recursively list files and directories under path (relative to repo root, empty for root). Skips .git, node_modules, and other dotdirs. Output is truncated past 2000 entries.",
+		"input_schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"path": map[string]any{"type": "string", "description": "Directory path relative to repo root (empty for root)"}},
+			"required":   []string{},
+		},
+	},
+	{
+		"name":        "search",
+		"description": "Search the repository for a pattern using ripgrep. Optionally restrict to files matching glob. Output is truncated at 1 MB.",
+		"input_schema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"pattern": map[string]any{"type": "string", "description": "Regex or literal pattern to search for"},
+				"glob":    map[string]any{"type": "string", "description": "Optional glob to restrict which files are searched, e.g. \"*.go\""},
+			},
+			"required": []string{"pattern"},
+		},
+	},
+	{
+		"name":        "str_replace",
+		"description": "Replace a substring in a file. The old string must appear exactly once in the file, or the call fails — provide enough surrounding context to make it unique. Prefer this over write_file for small edits.",
+		"input_schema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "description": "File path relative to repo root"},
+				"old":  map[string]any{"type": "string", "description": "Exact text to replace (must appear exactly once)"},
+				"new":  map[string]any{"type": "string", "description": "Replacement text"},
+			},
+			"required": []string{"path", "old", "new"},
 		},
 	},
 }
@@ -226,7 +268,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input RunInput, logCh chan<- 
 			var signal *Result
 			if !handled {
 				policy := CommandPolicy{Allowlist: input.AgentConfig.CommandAllowlist, Denylist: input.AgentConfig.CommandDenylist}
-				output, signal = executeLLMTool(runCtx, input.RepoPath, policy, tu.Name, strArgs)
+				output, signal = executeLLMTool(runCtx, input.RepoPath, policy, tu.Name, strArgs, input.Transitions)
 			}
 			logCh <- LogEntry{Type: LogToolResult, Content: output, At: time.Now()}
 
