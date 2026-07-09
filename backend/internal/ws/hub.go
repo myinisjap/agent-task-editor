@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 )
 
 // Event is the JSON envelope sent to every WebSocket client.
@@ -28,12 +30,14 @@ func (h *Hub) register(c *Client) {
 	h.mu.Lock()
 	h.clients[c] = struct{}{}
 	h.mu.Unlock()
+	metrics.WSConnectedClients.Inc()
 }
 
 func (h *Hub) unregister(c *Client) {
 	h.mu.Lock()
 	delete(h.clients, c)
 	h.mu.Unlock()
+	metrics.WSConnectedClients.Dec()
 }
 
 // Publish sends an event to connected clients.
@@ -66,6 +70,7 @@ func (h *Hub) Publish(eventType string, payload map[string]any) {
 		select {
 		case c.send <- msg:
 		default:
+			metrics.WSBroadcastDroppedTotal.Inc()
 			slog.Warn("ws client send buffer full, dropping event", "type", eventType)
 		}
 	}

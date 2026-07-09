@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 )
 
 // GHAuthStatus returns whether the gh CLI has valid auth credentials.
@@ -16,6 +18,7 @@ import (
 // ~/.config/gh volume mount).
 // Fallback: checks the GITHUB_TOKEN env var (gh picks it up automatically).
 func GHAuthStatus() (authed bool, note string) {
+	metrics.GhCallsTotal.WithLabelValues("auth_status").Inc()
 	cmd := exec.Command("gh", "auth", "status")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -31,6 +34,7 @@ func GHAuthStatus() (authed bool, note string) {
 // repo (org/repo format). Returns the normalised state ("pushed", "pr_open",
 // "pr_merged", "pr_closed"), the PR web URL, the PR number, and any error.
 func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL string, prNumber int, err error) {
+	metrics.GhCallsTotal.WithLabelValues("pr_list").Inc()
 	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
 		"--repo", repoName,
 		"--head", branch,
@@ -54,6 +58,7 @@ func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL 
 
 	if len(prs) == 0 {
 		// No PR yet — verify the branch actually exists on the remote.
+		metrics.GhCallsTotal.WithLabelValues("branch_check").Inc()
 		chk := exec.CommandContext(ctx, "gh", "api", "repos/"+repoName+"/branches/"+branch, "--silent")
 		if chk.Run() != nil {
 			return "", "", 0, nil // branch not on remote yet
@@ -98,6 +103,7 @@ func CreatePR(ctx context.Context, repoName, branch, base, title, body string) (
 	if base != "" {
 		args = append(args, "--base", base)
 	}
+	metrics.GhCallsTotal.WithLabelValues("pr_create").Inc()
 	out, err := exec.CommandContext(ctx, "gh", args...).CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(out))
@@ -142,6 +148,7 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 	if label != "" {
 		args = append(args, "--label", label)
 	}
+	metrics.GhCallsTotal.WithLabelValues("issue_list").Inc()
 	out, err := exec.CommandContext(ctx, "gh", args...).Output()
 	if err != nil {
 		return nil, err

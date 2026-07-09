@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -55,6 +56,9 @@ func (im *Importer) Run(ctx context.Context) {
 
 // Sweep imports new tasks for every issue-sync-enabled repo.
 func (im *Importer) Sweep(ctx context.Context) {
+	start := time.Now()
+	defer func() { metrics.TasksourceSweepDurationSeconds.Observe(time.Since(start).Seconds()) }()
+
 	log := slog.With("component", "tasksource")
 	repos, err := im.q.ListIssueSyncRepos(ctx)
 	if err != nil {

@@ -15,10 +15,15 @@ import (
 
 // Config holds all server configuration values.
 type Config struct {
-	DBPath             string        `yaml:"db_path"`
-	Port               string        `yaml:"port"`
-	CORSOrigins        string        `yaml:"cors_origins"`
-	APIToken           string        `yaml:"api_token"`
+	DBPath      string `yaml:"db_path"`
+	Port        string `yaml:"port"`
+	CORSOrigins string `yaml:"cors_origins"`
+	APIToken    string `yaml:"api_token"`
+	// MetricsToken optionally gates GET /metrics with its own bearer token,
+	// independent of APIToken. Empty (the default) leaves /metrics
+	// unauthenticated, matching most Prometheus scrape setups that can't
+	// easily carry a different token than other tooling.
+	MetricsToken       string        `yaml:"metrics_token"`
 	MCPBinary          string        `yaml:"mcp_server_path"`
 	LLMBaseURL         string        `yaml:"llm_base_url"`
 	LLMAPIKey          string        `yaml:"llm_api_key"`
@@ -81,6 +86,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("API_TOKEN"); v != "" {
 		cfg.APIToken = v
+	}
+	if v := os.Getenv("METRICS_TOKEN"); v != "" {
+		cfg.MetricsToken = v
 	}
 	if v := os.Getenv("MCP_SERVER_PATH"); v != "" {
 		cfg.MCPBinary = v

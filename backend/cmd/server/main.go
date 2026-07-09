@@ -42,6 +42,9 @@ func main() {
 	if cfg.APIToken != "" {
 		slog.Info("bearer auth enabled")
 	}
+	if cfg.MetricsToken != "" {
+		slog.Info("metrics endpoint bearer auth enabled")
+	}
 	if cfg.RepoBaseDir == "" {
 		slog.Warn("REPO_BASE_DIR is not set; any host path can be registered as a repo")
 	} else {
@@ -204,7 +207,7 @@ func main() {
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = hub
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
