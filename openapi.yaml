@@ -112,6 +112,23 @@ components:
             has a nonzero max_cost_usd, the effective budget is the lower of
             the two. Not a mid-run kill switch — see AgentConfig.max_cost_usd
             and docs/agents.md#cost-budgets.
+        priority:
+          type: integer
+          enum: [-1, 0, 1, 2]
+          description: >
+            Dispatch priority: -1=low, 0=normal (default), 1=high, 2=urgent.
+            ListAgentPickupTasks orders eligible tasks by priority DESC, then
+            created_at ASC, so higher-priority tasks are dispatched first when
+            there are more eligible tasks than free workers (MAX_WORKERS).
+        queue_position:
+          type: integer
+          nullable: true
+          description: >
+            Derived, read-time 0-based position in the current agent-pickup
+            queue (priority DESC, created_at ASC) among tasks eligible for
+            dispatch. Null/absent when the task is not currently
+            pickup-eligible (e.g. blocked, paused, archived, or not on an
+            agent-triggerable label).
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
@@ -630,6 +647,7 @@ paths:
                 type:        { type: string }
                 repo_id:     { type: string }
                 workflow_id: { type: string }
+                priority:    { type: integer, enum: [-1, 0, 1, 2], default: 0 }
       responses:
         "201":
           description: Created task
@@ -701,6 +719,7 @@ paths:
                 title:       { type: string }
                 description: { type: string }
                 type:        { type: string }
+                priority:    { type: integer, enum: [-1, 0, 1, 2] }
       responses:
         "200":
           content:

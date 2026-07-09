@@ -34,6 +34,8 @@ Key fields returned by task endpoints:
 | `archived` | boolean | Archived tasks are hidden from the default board view, skipped by the GitHub PR sweep, and never dispatched |
 | `active_agent_run_id` | UUID? | Set while an agent run is in progress |
 | `current_agent_run_id` | UUID? | ID of the most recent agent run |
+| `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
+| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first); absent when the task isn't currently pickup-eligible |
 
 ---
 
@@ -70,7 +72,8 @@ Create a task. Accepts JSON body or `multipart/form-data` (for image attachments
   "description": "string",
   "type": "feature | bug | chore | ...",
   "repo_id": "uuid (required)",
-  "workflow_id": "uuid (required)"
+  "workflow_id": "uuid (required)",
+  "priority": "-1 | 0 | 1 | 2 (optional, default 0)"
 }
 ```
 
@@ -83,10 +86,13 @@ New tasks start on the `not_ready` label regardless of input.
 Get a single task.
 
 ### `PATCH /tasks/{id}`
-Update task fields (title, description, type, repo_id, max_cost_usd).
+Update task fields (title, description, type, repo_id, max_cost_usd, priority).
 `max_cost_usd` is an advisory per-task cost budget cap in USD (optional,
 defaults to 0/unlimited if omitted the field is preserved from the
 existing value) — see [agents.md#cost-budgets](agents.md#cost-budgets).
+`priority` is one of `-1` (low), `0` (normal), `1` (high), `2` (urgent);
+omitted preserves the existing value — see
+[agents.md#task-priority](agents.md#task-priority).
 
 ### `DELETE /tasks/{id}`
 Delete a task and all associated runs/logs. Also tears down the per-task git worktree and removes uploaded attachments.

@@ -95,6 +95,16 @@ export type Task = {
   // is the lower of this and the matched agent config's cap). 0/undefined
   // means unlimited from the task side.
   max_cost_usd?: number
+  // Dispatch priority: -1=low, 0=normal (default), 1=high, 2=urgent.
+  // ListAgentPickupTasks orders eligible tasks by priority DESC, then
+  // created_at ASC, so higher-priority tasks are dispatched first when there
+  // are more eligible tasks than free workers (MAX_WORKERS).
+  priority?: number
+  // Derived, read-time 0-based position in the current agent-pickup queue
+  // (priority DESC, created_at ASC) among tasks eligible for dispatch.
+  // Null/absent when the task is not currently pickup-eligible (e.g.
+  // blocked, paused, archived, or not on an agent-triggerable label).
+  queue_position?: number | null
 }
 
 // DependencyEdge is one end of a task dependency edge (a blocker or a
@@ -400,13 +410,13 @@ export const api = {
       return { items: data ?? [], nextCursor: headers.get('X-Next-Cursor') || null }
     },
     get: (id: string) => request<Task>(`/tasks/${id}`),
-    create: (body: FormData | { title: string; description?: string; type?: string; repo_id: string; workflow_id: string }) => {
+    create: (body: FormData | { title: string; description?: string; type?: string; repo_id: string; workflow_id: string; priority?: number }) => {
       if (body instanceof FormData) {
         return request<Task>('/tasks', { method: 'POST', body, isFormData: true })
       }
       return request<Task>('/tasks', { method: 'POST', body: JSON.stringify(body) })
     },
-    update: (id: string, body: { title?: string; description?: string; type?: string; repo_id?: string; max_cost_usd?: number }) =>
+    update: (id: string, body: { title?: string; description?: string; type?: string; repo_id?: string; max_cost_usd?: number; priority?: number }) =>
       request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/tasks/${id}`, { method: 'DELETE' }),
     moveLabel: (id: string, to_label: string, note?: string) =>
