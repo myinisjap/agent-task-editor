@@ -11,6 +11,8 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-09
+
 ### Added
 - **SQLite backup/restore story** (#89).
   - `GET /api/v1/backup` streams a consistent point-in-time database
