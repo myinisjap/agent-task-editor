@@ -35,6 +35,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep)
 	backupH := handlers.NewBackupHandler(db)
+	wsTicketH := handlers.NewWSTicketHandler(hub)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -43,8 +44,10 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	r.Use(middleware.CORS(corsOrigins))
 
 	// WebSocket endpoint — mounted outside BearerAuth because browsers can't set
-	// request headers on a WS handshake. ServeWS performs its own constant-time
-	// token check via the ?token= query param, so it is not left unauthenticated.
+	// request headers on a WS handshake. ServeWS performs its own auth check via
+	// a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket below)
+	// or, as a deprecated fallback, a constant-time compare against ?token=, so
+	// it is not left unauthenticated.
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
 		ws.ServeWS(hub, w, req, bearerToken, corsOrigins, q)
 	})
@@ -126,6 +129,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Streams a consistent point-in-time database snapshot (VACUUM INTO)
 			// as application/octet-stream. Plain bearer-gated; see docs/backup.md.
 			r.Get("/backup", backupH.Backup)
+
+			// Mints a short-lived, single-use ticket for authenticating the
+			// WebSocket upgrade (GET /ws?ticket=...) without putting the
+			// long-lived API token in the URL. Bearer-gated: minting a ticket
+			// requires already holding the token. See docs/websocket.md.
+			r.Post("/ws-ticket", wsTicketH.IssueTicket)
 
 			// Agent runs
 			r.Get("/tasks/{id}/runs", tasksH.ListRuns)

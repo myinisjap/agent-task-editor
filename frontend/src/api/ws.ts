@@ -27,7 +27,7 @@ class WSClient {
   private subscriptions = new Set<string>()
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-  connect() {
+  async connect() {
     // Already connected or connecting — don't double-connect
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return
@@ -40,7 +40,29 @@ class WSClient {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const token = import.meta.env.VITE_API_TOKEN
     const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-    const url = `${proto}//${window.location.host}${base}/ws${token ? `?token=${token}` : ''}`
+
+    // If a token is configured, exchange it for a short-lived, single-use
+    // ticket via the bearer-authed REST endpoint rather than putting the
+    // long-lived token itself in the WS URL (query strings leak into
+    // reverse-proxy/access logs and browser history).
+    let ticketParam = ''
+    if (token) {
+      try {
+        const res = await fetch(`${base}/api/v1/ws-ticket`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.ok) {
+          const { ticket } = await res.json()
+          if (ticket) ticketParam = `?ticket=${encodeURIComponent(ticket)}`
+        }
+      } catch {
+        // Fall through with no ticket — the connection will 401 and the
+        // existing onclose reconnect loop will retry.
+      }
+    }
+
+    const url = `${proto}//${window.location.host}${base}/ws${ticketParam}`
     this.ws = new WebSocket(url)
 
     this.ws.onmessage = (e) => {

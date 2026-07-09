@@ -11,6 +11,21 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **Ticket-based WebSocket auth** (#51) — moves the long-lived `API_TOKEN`
+  out of the WebSocket URL, since query strings are commonly captured by
+  reverse-proxy access logs and browser history.
+  - New `POST /api/v1/ws-ticket` endpoint (normal Bearer auth) mints a
+    random (`crypto/rand`), single-use ticket valid for ~30 seconds.
+  - `GET /ws` now accepts `?ticket=<ticket>` and validates/consumes it —
+    a replayed or expired ticket is rejected with `401`.
+  - The frontend `WSClient` now fetches a ticket automatically before
+    opening the socket whenever `VITE_API_TOKEN` is set; `connect()` is
+    now `async`.
+  - `?token=<API_TOKEN>` is kept as a **deprecated fallback** for existing
+    setups/non-browser clients — each use is now logged as a warning
+    server-side — and may be removed in a future release.
+
 ## [0.7.0] - 2026-07-09
 
 ### Added
