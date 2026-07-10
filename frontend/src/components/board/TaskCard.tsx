@@ -7,6 +7,7 @@ import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { useReposStore } from '../../stores/repos'
 import GitStateBadge from './GitStateBadge'
+import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
 
 const TYPE_COLORS: Record<string, string> = {
   feature: 'bg-blue-900 text-blue-300',
@@ -51,6 +52,7 @@ export default function TaskCard({
   const [editTitle, setEditTitle] = useState(task.title)
   const [editDesc, setEditDesc] = useState(task.description ?? '')
   const [editType, setEditType] = useState(task.type)
+  const [editPriority, setEditPriority] = useState(task.priority ?? 0)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
 
@@ -70,6 +72,7 @@ export default function TaskCard({
     setEditTitle(task.title)
     setEditDesc(task.description ?? '')
     setEditType(task.type)
+    setEditPriority(task.priority ?? 0)
     setSaveError('')
     setEditing(true)
   }
@@ -90,6 +93,7 @@ export default function TaskCard({
         title: editTitle.trim(),
         description: editDesc.trim(),
         type: editType,
+        priority: editPriority,
       })
       upsert(updated)
       setEditing(false)
@@ -137,6 +141,17 @@ export default function TaskCard({
           >
             {TASK_TYPES.map((t) => (
               <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          <select
+            value={editPriority}
+            onChange={(e) => setEditPriority(Number(e.target.value))}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-slate-100 focus:outline-none focus:border-indigo-400"
+          >
+            {PRIORITY_LEVELS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
             ))}
           </select>
 
@@ -239,6 +254,28 @@ export default function TaskCard({
               title={`Waiting on ${task.blocked_by_count} unfinished dependency${(task.blocked_by_count ?? 0) === 1 ? '' : ' tasks'} — not dispatched until they finish`}
             >
               🔒 Blocked by {task.blocked_by_count}
+            </span>
+          )}
+          {!!task.priority && (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                task.priority >= 2
+                  ? 'bg-red-900/70 text-red-300'
+                  : task.priority === 1
+                    ? 'bg-orange-900/60 text-orange-300'
+                    : 'bg-slate-700 text-slate-400'
+              }`}
+              title={`Dispatch priority: ${priorityLabel(task.priority)}`}
+            >
+              {priorityLabel(task.priority)}
+            </span>
+          )}
+          {task.queue_position != null && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-medium"
+              title="Position in the current agent-pickup queue (priority order), waiting for a free worker"
+            >
+              #{task.queue_position + 1} in queue
             </span>
           )}
           {task.archived && (

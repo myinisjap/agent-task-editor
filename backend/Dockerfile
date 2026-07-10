@@ -17,7 +17,8 @@ FROM node:26-alpine
 ARG INSECURE_SKIP_SSL_VERIFY=false
 # su-exec drops privileges in the entrypoint; shadow provides usermod/groupmod
 # for the runtime PUID/PGID remap (see entrypoint.sh).
-RUN apk add --no-cache ca-certificates git github-cli bash build-base su-exec shadow
+# ripgrep (rg) backs the anthropic/llm providers' native `search` tool.
+RUN apk add --no-cache ca-certificates git github-cli bash build-base su-exec shadow ripgrep
 RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl false; fi
 # Install Claude Code CLI globally so 'claude' is on PATH
 RUN npm install -g @anthropic-ai/claude-code

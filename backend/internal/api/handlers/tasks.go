@@ -24,6 +24,27 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
+// Task priority levels. Stored as a plain INTEGER column (tasks.priority) so
+// ListAgentPickupTasks can order by a simple numeric ORDER BY priority DESC.
+// Higher values are dispatched first when there are more eligible tasks than
+// free workers; priority never preempts an already-running task.
+const (
+	PriorityLow    = -1
+	PriorityNormal = 0
+	PriorityHigh   = 1
+	PriorityUrgent = 2
+)
+
+// validPriority reports whether p is one of the known priority levels.
+func validPriority(p int) bool {
+	switch p {
+	case PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent:
+		return true
+	default:
+		return false
+	}
+}
+
 // taskResponse is a JSON-serialization wrapper for gen.Task that ensures the
 // Attachments field is emitted as a JSON array ([]string) rather than a raw
 // JSON string.  gen.Task stores Attachments as a string column containing a
@@ -45,6 +66,12 @@ type taskResponse struct {
 	SubtaskTotal     int64 `json:"subtask_total"`
 	SubtaskDone      int64 `json:"subtask_done"`
 	SubtaskConflicts int64 `json:"subtask_conflicts"`
+	// QueuePosition is a derived, read-time 0-based rank in the current
+	// agent-pickup queue (priority DESC, created_at ASC), among tasks
+	// currently eligible for dispatch. Nil when the task is not currently
+	// pickup-eligible (e.g. blocked, paused, archived, already running, or on
+	// a non-agent-triggerable label).
+	QueuePosition *int `json:"queue_position"`
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the
@@ -145,6 +172,33 @@ func applyRollup(resp taskResponse, rollups map[string]subtaskRollup) taskRespon
 	return resp
 }
 
+// queuePositionMap fetches the current agent-pickup queue (already ordered by
+// priority DESC, created_at ASC by ListAgentPickupTasks) and returns each
+// task's 0-based rank in it, keyed by task id. Tasks not currently eligible
+// for dispatch (blocked, paused, archived, already running, etc.) are absent
+// from the map. One query serves a whole page, mirroring dependencyCountMap.
+func (h *TasksHandler) queuePositionMap(ctx context.Context) map[string]int {
+	tasks, err := h.q.ListAgentPickupTasks(ctx)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]int, len(tasks))
+	for i, t := range tasks {
+		m[t.ID] = i
+	}
+	return m
+}
+
+// applyQueuePosition sets the derived queue position on a response from the
+// map, leaving it nil when the task is not currently pickup-eligible.
+func applyQueuePosition(resp taskResponse, positions map[string]int) taskResponse {
+	if p, ok := positions[resp.ID]; ok {
+		pos := p
+		resp.QueuePosition = &pos
+	}
+	return resp
+}
+
 // Pagination defaults and caps. List endpoints return at most a page at a time,
 // cursored on (created_at|timestamp, id). Callers pass ?limit= (clamped to the
 // max) and ?after=/?before= cursors; the response carries the next cursor in a
@@ -238,9 +292,10 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		counts := h.dependencyCountMap(r.Context())
 		rollups := h.subtaskRollupMap(r.Context())
+		positions := h.queuePositionMap(r.Context())
 		resp := toTaskResponses(children)
 		for i := range resp {
-			resp[i] = applyRollup(applyDepCounts(resp[i], counts), rollups)
+			resp[i] = applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions)
 		}
 		JSON(w, http.StatusOK, resp)
 		return
@@ -268,9 +323,10 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	counts := h.dependencyCountMap(r.Context())
 	rollups := h.subtaskRollupMap(r.Context())
+	positions := h.queuePositionMap(r.Context())
 	resp := toTaskResponses(tasks)
 	for i := range resp {
-		resp[i] = applyRollup(applyDepCounts(resp[i], counts), rollups)
+		resp[i] = applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions)
 	}
 	JSON(w, http.StatusOK, resp)
 }
@@ -292,6 +348,16 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		taskType = r.FormValue("type")
 		repoID = r.FormValue("repo_id")
 		workflowID = r.FormValue("workflow_id")
+
+		priority := PriorityNormal
+		if raw := r.FormValue("priority"); raw != "" {
+			p, perr := strconv.Atoi(raw)
+			if perr != nil || !validPriority(p) {
+				Err(w, http.StatusBadRequest, "priority must be one of -1 (low), 0 (normal), 1 (high), 2 (urgent)")
+				return
+			}
+			priority = p
+		}
 
 		// We need a task ID before saving files
 		taskID := uuid.NewString()
@@ -387,6 +453,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			RepoID:      repoID,
 			WorkflowID:  workflowID,
 			Attachments: string(attachmentsJSON),
+			Priority:    int64(priority),
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -403,6 +470,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Type        string `json:"type"`
 		RepoID      string `json:"repo_id"`
 		WorkflowID  string `json:"workflow_id"`
+		Priority    int    `json:"priority"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -415,6 +483,10 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.Type == "" {
 		body.Type = "feature"
 	}
+	if !validPriority(body.Priority) {
+		Err(w, http.StatusBadRequest, "priority must be one of -1 (low), 0 (normal), 1 (high), 2 (urgent)")
+		return
+	}
 
 	task, err := h.q.CreateTask(r.Context(), gen.CreateTaskParams{
 		ID:          uuid.NewString(),
@@ -425,6 +497,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		RepoID:      body.RepoID,
 		WorkflowID:  body.WorkflowID,
 		Attachments: "[]",
+		Priority:    int64(body.Priority),
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -441,6 +514,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context()))
 	resp = applyRollup(resp, h.subtaskRollupMap(r.Context()))
+	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
 	JSON(w, http.StatusOK, resp)
 }
 
@@ -451,6 +525,7 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Type        string   `json:"type"`
 		RepoID      string   `json:"repo_id"`
 		MaxCostUsd  *float64 `json:"max_cost_usd"`
+		Priority    *int     `json:"priority"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -460,10 +535,14 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "max_cost_usd must be >= 0")
 		return
 	}
+	if body.Priority != nil && !validPriority(*body.Priority) {
+		Err(w, http.StatusBadRequest, "priority must be one of -1 (low), 0 (normal), 1 (high), 2 (urgent)")
+		return
+	}
 
 	taskID := chi.URLParam(r, "id")
 
-	// Fetch the existing task so we can preserve the repo_id/max_cost_usd if
+	// Fetch the existing task so we can preserve the repo_id/max_cost_usd/priority if
 	// the caller didn't supply new values.
 	existing, err := h.q.GetTask(r.Context(), taskID)
 	if err != nil {
@@ -486,12 +565,18 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		maxCostUsd = *body.MaxCostUsd
 	}
 
+	priority := existing.Priority
+	if body.Priority != nil {
+		priority = int64(*body.Priority)
+	}
+
 	task, err := h.q.UpdateTask(r.Context(), gen.UpdateTaskParams{
 		Title:       body.Title,
 		Description: body.Description,
 		Type:        body.Type,
 		RepoID:      repoID,
 		MaxCostUsd:  maxCostUsd,
+		Priority:    priority,
 		ID:          taskID,
 	})
 	if err != nil {

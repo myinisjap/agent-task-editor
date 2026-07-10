@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -63,6 +64,7 @@ type runControl struct {
 
 // NewPool creates a new pool. Call Start to begin accepting jobs.
 func NewPool(maxWorkers int, db *sql.DB, engine *workflow.Engine, pub Publisher) *Pool {
+	metrics.PoolMaxWorkers.Set(float64(maxWorkers))
 	return &Pool{
 		maxWorkers: maxWorkers,
 		jobs:       make(chan Job, maxWorkers*4),
@@ -121,8 +123,10 @@ func (p *Pool) Start(ctx context.Context) {
 func (p *Pool) Submit(job Job) bool {
 	select {
 	case p.jobs <- job:
+		metrics.PoolQueueDepth.Set(float64(len(p.jobs)))
 		return true
 	default:
+		metrics.PoolSubmitRejectedTotal.Inc()
 		slog.Warn("pool: queue full, dropping job", "component", "pool", "run_id", job.RunID)
 		return false
 	}
@@ -150,6 +154,8 @@ func (p *Pool) runGuarded(ctx context.Context, job Job) {
 			log.Error("pool: agent run panicked", "panic", r, "stack", string(debug.Stack()))
 			_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{Status: "failed", ID: job.RunID})
 			_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
+			metrics.RunTerminalTotal.WithLabelValues("failed").Inc()
+			metrics.RunClassificationTotal.WithLabelValues(string(ClassGenuine)).Inc()
 		}
 	}()
 	p.run(ctx, job)
@@ -159,12 +165,15 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
 
 	log.Info("pool: agent run starting", "provider", job.Input.AgentConfig.Provider, "agent", job.Input.AgentConfig.Name)
+	startedAt := time.Now()
 
 	// Derive a cancellable context so a human can stop this run (see Cancel).
 	// It also inherits the worker ctx, so pool shutdown still tears the run down.
 	runCtx, cancel := context.WithCancel(ctx)
 	rc := p.registerRun(job.RunID, cancel)
+	metrics.PoolBusyWorkers.Inc()
 	defer func() {
+		metrics.PoolBusyWorkers.Dec()
 		cancel()
 		p.unregisterRun(job.RunID)
 	}()
@@ -177,6 +186,9 @@ func (p *Pool) run(ctx context.Context, job Job) {
 			ID:     job.RunID,
 		})
 		_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
+		metrics.RunTerminalTotal.WithLabelValues("failed").Inc()
+		metrics.RunClassificationTotal.WithLabelValues(string(ClassGenuine)).Inc()
+		metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
 		return
 	}
 	if p.pub != nil {
@@ -210,7 +222,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// re-dispatched. Checked before error classification because a cancelled
 	// provider typically returns a context/transient-looking error.
 	if rc.cancelled.Load() {
-		p.handleCancelled(job)
+		p.handleCancelled(job, startedAt)
 		return
 	}
 
@@ -231,6 +243,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		var rl *ErrRateLimit
 		if errors.As(err, &rl) {
 			log.Warn("pool: agent run rate limited", "classification", string(ClassRateLimit), "reset_at", rl.ResetAt, "msg", rl.Message)
+			metrics.RunClassificationTotal.WithLabelValues(string(ClassRateLimit)).Inc()
 			// Register the block in the rate-limit registry. This blocks the
 			// whole agent config (not just this task) from further dispatch
 			// for a while — separate from, and complementary to, the
@@ -257,14 +270,15 @@ func (p *Pool) run(ctx context.Context, job Job) {
 					"unblocked_at":    unblockStr,
 				})
 			}
-			p.handleTransientFailure(ctx, job, "rate limited: "+rl.Message)
+			p.handleTransientFailure(ctx, job, "rate limited: "+rl.Message, startedAt)
 			return
 		}
 
 		var te transientErr
 		if errors.As(err, &te) {
 			log.Warn("pool: agent run transient error", "classification", string(ClassTransient), "err", err)
-			p.handleTransientFailure(ctx, job, err.Error())
+			metrics.RunClassificationTotal.WithLabelValues(string(ClassTransient)).Inc()
+			p.handleTransientFailure(ctx, job, err.Error(), startedAt)
 			return
 		}
 
@@ -287,6 +301,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 	if result.Status == "failed" {
 		log.Warn("pool: agent run failed", "classification", string(classification), "final_status", finalStatus)
+		metrics.RunClassificationTotal.WithLabelValues(string(classification)).Inc()
 	}
 
 	// A genuine (non-transient) failure or a successful completion resets the
@@ -308,6 +323,17 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		ID:           job.RunID,
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)
+	}
+	metrics.RunTerminalTotal.WithLabelValues(finalStatus).Inc()
+	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
+	if result.CostUSD > 0 {
+		metrics.RunCostUSDTotal.WithLabelValues(job.Input.AgentConfig.Provider, job.Input.AgentConfig.Name).Add(result.CostUSD)
+	}
+	if result.InputTokens > 0 {
+		metrics.RunInputTokensTotal.WithLabelValues(job.Input.AgentConfig.Provider, job.Input.AgentConfig.Name).Add(float64(result.InputTokens))
+	}
+	if result.OutputTokens > 0 {
+		metrics.RunOutputTokensTotal.WithLabelValues(job.Input.AgentConfig.Provider, job.Input.AgentConfig.Name).Add(float64(result.OutputTokens))
 	}
 
 	// Mark review comments the agent resolved via the MCP resolve_comment tool.
@@ -450,7 +476,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 // run slot so the dispatcher can re-pick the task once eligible (either on
 // the next sweep, if no retry budget was consumed, or once next_retry_at
 // elapses).
-func (p *Pool) handleTransientFailure(ctx context.Context, job Job, reason string) {
+func (p *Pool) handleTransientFailure(ctx context.Context, job Job, reason string, startedAt time.Time) {
 	bg := context.Background()
 
 	maxRetries := job.Input.AgentConfig.MaxRetries
@@ -505,6 +531,8 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, reason strin
 	if _, err := p.q.SetAgentRunCompleted(bg, runParams); err != nil {
 		slog.Warn("pool: set run completed (transient)", "component", "pool", "run_id", job.RunID, "err", err)
 	}
+	metrics.RunTerminalTotal.WithLabelValues(finalStatus).Inc()
+	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
 
 	if finalStatus == "waiting_human" {
 		// waiting_human intentionally stays locked (active run not cleared)
@@ -541,7 +569,7 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, reason strin
 // human just killed. Pausing leaves the task on its label for a human to resume
 // when ready. Uses context.Background throughout since the run's own context is
 // already cancelled.
-func (p *Pool) handleCancelled(job Job) {
+func (p *Pool) handleCancelled(job Job, startedAt time.Time) {
 	bg := context.Background()
 	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
 
@@ -553,6 +581,8 @@ func (p *Pool) handleCancelled(job Job) {
 	}); err != nil {
 		log.Error("pool: set run cancelled", "err", err)
 	}
+	metrics.RunTerminalTotal.WithLabelValues("cancelled").Inc()
+	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
 
 	if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
 		log.Warn("pool: reset transient retry (cancel)", "err", err)

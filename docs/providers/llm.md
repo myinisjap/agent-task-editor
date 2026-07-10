@@ -39,7 +39,7 @@ LLM_API_KEY=sk-...
 
 ## MCP Tools
 
-**Not supported.** No CLI binary is invoked, so no `--mcp-config` is possible. Equivalent functionality is provided natively via the tool-use loop.
+**Not supported.** No CLI binary is invoked, so no `--mcp-config` is possible. Equivalent functionality — including `get_task_transitions` and `signal_complete(outcome, summary)` with the same `outcome: "success"|"failure"` shape as MCP — is provided natively via the tool-use loop. `resolve_comment` and `create_subtask` are not available natively. See [agents.md](../agents.md) for full MCP-vs-native parity across providers.
 
 ## Native Tools Available to Agent
 
@@ -47,14 +47,18 @@ LLM_API_KEY=sk-...
 |---|---|
 | `read_file(path)` | Read a file from the repo |
 | `write_file(path, content)` | Write/overwrite a file |
+| `str_replace(path, old, new)` | Replace a substring in a file; `old` must match exactly once, or the call fails |
+| `list_files(path?)` | List a single directory's immediate contents |
+| `list_dir(path?)` | Recursively list files/dirs under path (skips `.git`, `node_modules`, and other dotdirs; capped at 2000 entries) |
+| `search(pattern, glob?)` | Search the repo with ripgrep (`rg`), optionally restricted to files matching `glob`; capped at 1&nbsp;MB of output |
 | `run_bash(command)` | Run a shell command |
-| `list_files(path?)` | List directory contents |
+| `get_task_transitions()` | List available workflow transitions from the task's current label |
 | `store_info(info)` | Store run summary |
 | `update_task_notes(notes, append?)` | Write agent notes |
-| `signal_complete(next_label, summary)` | Complete the run |
+| `signal_complete(outcome, summary)` | Complete the run; `outcome` is `"success"` or `"failure"` and the label is resolved automatically, same as MCP |
 | `request_human(message)` | Pause for human input |
 
-**Note:** `signal_complete` here takes `next_label` (the exact label name), unlike the MCP version which takes `outcome: "success"|"failure"`.
+`search` requires `ripgrep` (`rg`) on `PATH`; the backend Docker image installs it by default. If `rg` isn't found, the tool returns `error: ripgrep (rg) not found on PATH` rather than failing the run. `search`, `list_dir`, and `list_files` are read-only and are **not** gated by the command allowlist/denylist (same treatment as `read_file`); `run_bash` is the only tool subject to that policy.
 
 ## Command Allowlist / Denylist
 

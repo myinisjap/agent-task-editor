@@ -27,8 +27,10 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once a PR is detected as merged, the task's local branch and worktree are automatically cleaned up
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks — see [docs/task-sources.md](docs/task-sources.md)
 - **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
+- **Task priority** — low/normal/high/urgent priority per task; the dispatcher's pickup queue is ordered priority-first, then oldest-first, with an "N in queue" hint on cards waiting for a free worker
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
-- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via `?token=` query param
+- **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 
 See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.
@@ -176,6 +178,7 @@ The server binds to all interfaces (`:8080`) by default. In Docker, map it to `1
 |---|---|---|
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth required |
 | `API_TOKENS` | _(empty)_ | Named bearer tokens (`name1:token1,name2:token2`) — resolves to an actor name recorded in the label history audit trail; see [docs/getting-started.md](docs/getting-started.md#authentication) |
+| `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated |
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory |
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary; required for label transitions with the `claude` provider |
 | `LLM_API_KEY` | _(empty)_ | API key for the `anthropic` or `llm` provider |

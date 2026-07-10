@@ -77,6 +77,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `DB_PATH` | `agent-task-editor.db` | SQLite database file path |
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth. Requests using this token are recorded anonymously (no actor name) in the label history audit trail — see `API_TOKENS` below for named tokens. |
 | `API_TOKENS` | _(empty)_ | Comma-separated named bearer tokens, format `name1:token1,name2:token2`. Any of these tokens authenticates like `API_TOKEN`, but the matching name is recorded as the actor in `task_label_history.actor_id` for human-triggered transitions (approve/reject/move label), and surfaced via `GET /tasks/{id}/label-history`. Can be combined with `API_TOKEN` (kept for backward compatibility as an anonymous fallback). If the same token string is reused across multiple names, the last one loaded wins. |
+| `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated (see [Metrics](#metrics)) |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins (e.g. `http://localhost:5173`) |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer ([task-sources.md](task-sources.md)) |
@@ -125,6 +126,7 @@ api_token: ""
 api_tokens:
   alice: tok-alice
   bob: tok-bob
+metrics_token: ""
 cors_origins: "*"
 mcp_server_path: /path/to/mcp-server
 llm_base_url: https://api.openai.com/v1
@@ -140,7 +142,7 @@ backup_keep: 7
 
 ### Authentication
 
-Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. WebSocket connections pass the token via `?token=<value>` since browsers cannot set custom headers on WebSocket upgrades.
+Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this automatically. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
 
 To identify *who* performed a human-triggered transition (approve/reject/move label) in the audit trail, set `API_TOKENS` (format `name1:token1,name2:token2`, or the `api_tokens` map in the YAML config) instead of, or alongside, `API_TOKEN`. Each named token authenticates the same way, but the resolved name is recorded as `actor_id` in `task_label_history` and returned by `GET /tasks/{id}/label-history`. `API_TOKEN` remains supported as a legacy/anonymous fallback — requests using it are recorded with an empty actor, exactly as before this feature existed. Note: the `/ws` WebSocket endpoint currently only supports the single legacy `API_TOKEN` for its `?token=` query param check, not named tokens.
 
@@ -151,6 +153,16 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_WS_BASE_URL=ws://localhost:8080
 VITE_API_TOKEN=your-token-here
 ```
+
+## Metrics
+
+`GET /metrics` exposes Prometheus text-exposition-format metrics (dispatcher/pool
+state, run/cost/token counters, WebSocket hub stats, GitHub sync sweep durations
+and `gh` call counts, plus standard Go runtime metrics) — point a Prometheus
+scrape config at it. It's served at the server root (not under `/api/v1`) and is
+**not** gated by `API_TOKEN`; set `METRICS_TOKEN` if you need to lock it down
+independently (e.g. when the backend port is reachable beyond your Prometheus
+instance). See [api.md](api.md#get-metrics) for the full metric list.
 
 ## Provider-Specific Setup
 

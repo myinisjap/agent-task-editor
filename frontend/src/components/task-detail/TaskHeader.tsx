@@ -1,6 +1,7 @@
 import type { Task, Repo, AgentRun } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
+import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -29,6 +30,8 @@ export default function TaskHeader({
   setEditRepoId,
   editMaxCostUsd,
   setEditMaxCostUsd,
+  editPriority,
+  setEditPriority,
   runs,
   taskSaving,
   taskSaveError,
@@ -57,6 +60,8 @@ export default function TaskHeader({
   setEditRepoId: (v: string) => void
   editMaxCostUsd: string
   setEditMaxCostUsd: (v: string) => void
+  editPriority: number
+  setEditPriority: (v: number) => void
   runs?: AgentRun[]
   taskSaving: boolean
   taskSaveError: string
@@ -172,6 +177,19 @@ export default function TaskHeader({
             />
             <p className="mt-1 text-xs text-slate-500">Advisory budget cap checked by the dispatcher before each dispatch. Empty/0 = unlimited.</p>
           </div>
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Priority</label>
+            <select
+              value={editPriority}
+              onChange={(e) => setEditPriority(Number(e.target.value))}
+              className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-400"
+            >
+              {PRIORITY_LEVELS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-slate-500">Dispatch order only — never preempts an already-running task.</p>
+          </div>
           {taskSaveError && (
             <p className="text-xs text-red-400">{taskSaveError}</p>
           )}
@@ -227,6 +245,12 @@ export default function TaskHeader({
           </span>
         </Row>
         <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+        <Row label="Priority">
+          <span className="text-xs text-slate-300">
+            {priorityLabel(task.priority)}
+            {task.queue_position != null ? ` — #${task.queue_position + 1} in dispatch queue` : ''}
+          </span>
+        </Row>
         <Row label="Cost">
           <span className="text-xs text-slate-300">
             ${cumulativeCost.toFixed(2)}

@@ -31,6 +31,86 @@ this file's section for that version as the release notes.
     legacy `API_TOKEN` for its `?token=` query param check — it does not
     resolve named actors (out of scope; it's not a human-triggered REST
     transition).
+- **Grew the `anthropic`/`llm` providers' native tool-use loop toward parity
+  with the MCP-backed CLI providers** (#83).
+  - New editing tools: `str_replace(path, old, new)` (exact-match single
+    replacement, so small edits don't require a full-file `write_file`
+    rewrite within `max_tokens`), `list_dir(path?)` (recursive directory
+    listing skipping `.git`/`node_modules`/dotdirs, capped at 2000
+    entries), and `search(pattern, glob?)` (ripgrep-backed repo search,
+    capped at 1&nbsp;MB of output). `search`/`list_dir`/`list_files` are
+    read-only and are not gated by `command_allowlist`/`command_denylist`
+    (same treatment as `read_file`).
+  - New `get_task_transitions()` native tool, mirroring the MCP sidecar's
+    tool of the same name — the transition list was already computed and
+    passed to every run, it just wasn't exposed to these two providers'
+    tool loop until now.
+  - The backend Docker image now installs `ripgrep` (`rg`) by default,
+    required by the new `search` tool.
+  - Published a consolidated provider capability matrix in
+    `docs/agents.md` (`claude`, `qwen_code`, `gemini_cli`, `codex_cli`,
+    `anthropic`, `llm`, `opencode`), replacing scattered footnotes, and
+    re-tiered `opencode` as chat-grade/experimental pending a spike into
+    whether its project-scoped `opencode.json` config can inject the same
+    MCP sidecar the other CLI providers use.
+- **Task priority ordering for dispatch** (#44).
+  - New `priority` column on tasks (`-1`=low, `0`=normal/default, `1`=high,
+    `2`=urgent). The dispatcher's pickup query (`ListAgentPickupTasks`) now
+    orders eligible tasks by `priority DESC, created_at ASC` instead of an
+    unspecified order, so higher-priority tasks are dispatched first
+    whenever there are more eligible tasks than free `MAX_WORKERS` slots.
+    Priority affects ordering only — it never preempts an already-running
+    task and doesn't bypass any other dispatch gate (paused, archived,
+    blocked dependency, retry backoff, cost budget).
+  - `POST /tasks` and `PATCH /tasks/{id}` accept an optional `priority`
+    field (`-1`/`0`/`1`/`2`); invalid values are rejected with 400.
+  - `GET /tasks` and `GET /tasks/{id}` now also surface a derived,
+    read-time `queue_position` — a task's current 0-based rank in the
+    priority-ordered pickup queue — null/absent when the task isn't
+    currently pickup-eligible.
+  - **UI**: a Priority selector on the new-task modal and the task card /
+    task-detail edit forms, a small priority badge on cards with a
+    non-default priority, and an "N in queue" hint on cards that are
+    eligible for dispatch but waiting on a free worker.
+  - See [docs/agents.md#task-priority](docs/agents.md#task-priority).
+- **Prometheus `/metrics` endpoint** (#88).
+  - `GET /metrics` exposes Prometheus text-exposition-format metrics: dispatcher/pool
+    state (eligible tasks, dispatched runs, queue depth, busy/max workers,
+    submit-rejections), run counters by terminal status and failure
+    classification plus a duration histogram per provider, cost/token
+    counters per provider/agent config, WebSocket hub stats (connected
+    clients, broadcast drops), and GitHub sync-loop stats (ghsync/issue-import
+    sweep durations, `gh` CLI call counts by command) — plus the standard Go
+    runtime/process collectors.
+  - Served at the server root (not under `/api/v1`) and **not** gated by
+    `API_TOKEN`; independently gated by the new optional `METRICS_TOKEN` env
+    var (unset by default, i.e. unauthenticated).
+- **Ticket-based WebSocket auth** (#51) — moves the long-lived `API_TOKEN`
+  out of the WebSocket URL, since query strings are commonly captured by
+  reverse-proxy access logs and browser history.
+  - New `POST /api/v1/ws-ticket` endpoint (normal Bearer auth) mints a
+    random (`crypto/rand`), single-use ticket valid for ~30 seconds.
+  - `GET /ws` now accepts `?ticket=<ticket>` and validates/consumes it —
+    a replayed or expired ticket is rejected with `401`.
+  - The frontend `WSClient` now fetches a ticket automatically before
+    opening the socket whenever `VITE_API_TOKEN` is set; `connect()` is
+    now `async`.
+  - `?token=<API_TOKEN>` is kept as a **deprecated fallback** for existing
+    setups/non-browser clients — each use is now logged as a warning
+    server-side — and may be removed in a future release.
+### Fixed
+- **`anthropic`/`llm` providers' `signal_complete` tool now actually
+  transitions the task.** The tool schema advertised to the model took a
+  `next_label` parameter (the exact label to move to), but the shared
+  dispatch code always read an `outcome` argument instead — so a model
+  faithfully following its own tool schema had its completion signal
+  silently dropped (`Result.Outcome` stayed empty, which the pool's
+  `resolveOutcome` cannot map to a transition), leaving the task stuck
+  needing human intervention instead of advancing. `signal_complete` now
+  takes `outcome: "success"|"failure"` for both providers, identical to
+  the MCP sidecar's version, and the label is resolved automatically as
+  intended. `docs/providers/anthropic.md` and `docs/providers/llm.md` are
+  updated accordingly.
 
 ## [0.7.0] - 2026-07-09
 

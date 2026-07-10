@@ -10,6 +10,7 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -54,6 +55,9 @@ func (s *Syncer) Run(ctx context.Context) {
 
 // sweep iterates all tasks and refreshes GitHub PR state for eligible ones.
 func (s *Syncer) sweep(ctx context.Context) {
+	start := time.Now()
+	defer func() { metrics.GhsyncSweepDurationSeconds.Observe(time.Since(start).Seconds()) }()
+
 	log := slog.With("component", "ghsync")
 	log.Info("ghsync: sweep start")
 	// Only tasks worth polling: branch-bearing, not archived, and not already in

@@ -23,15 +23,20 @@ type Config struct {
 	// named credentials so human-triggered transitions can record *who*
 	// approved them (see task_label_history.actor_id). APIToken above
 	// remains supported as a legacy/anonymous fallback (actor name "").
-	APITokens          map[string]string `yaml:"api_tokens"`
-	MCPBinary          string            `yaml:"mcp_server_path"`
-	LLMBaseURL         string            `yaml:"llm_base_url"`
-	LLMAPIKey          string            `yaml:"llm_api_key"`
-	MaxWorkers         int               `yaml:"max_workers"`
-	RepoBaseDir        string            `yaml:"repo_base_dir"`
-	UploadDir          string            `yaml:"upload_dir"`
-	GitHubSyncInterval time.Duration     `yaml:"github_sync_interval"`
-	IssueSyncInterval  time.Duration     `yaml:"issue_sync_interval"`
+	APITokens map[string]string `yaml:"api_tokens"`
+	// MetricsToken optionally gates GET /metrics with its own bearer token,
+	// independent of APIToken. Empty (the default) leaves /metrics
+	// unauthenticated, matching most Prometheus scrape setups that can't
+	// easily carry a different token than other tooling.
+	MetricsToken       string        `yaml:"metrics_token"`
+	MCPBinary          string        `yaml:"mcp_server_path"`
+	LLMBaseURL         string        `yaml:"llm_base_url"`
+	LLMAPIKey          string        `yaml:"llm_api_key"`
+	MaxWorkers         int           `yaml:"max_workers"`
+	RepoBaseDir        string        `yaml:"repo_base_dir"`
+	UploadDir          string        `yaml:"upload_dir"`
+	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
+	IssueSyncInterval  time.Duration `yaml:"issue_sync_interval"`
 
 	// BackupDir, if set, enables the built-in scheduler that periodically
 	// writes a rotated VACUUM INTO snapshot of the database to this
@@ -105,6 +110,9 @@ func Load(path string) (Config, error) {
 			}
 			cfg.APITokens[name] = token
 		}
+	}
+	if v := os.Getenv("METRICS_TOKEN"); v != "" {
+		cfg.MetricsToken = v
 	}
 	if v := os.Getenv("MCP_SERVER_PATH"); v != "" {
 		cfg.MCPBinary = v
