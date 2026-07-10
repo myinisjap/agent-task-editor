@@ -13,6 +13,21 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 )
 
+// ghRunner is the subset of *exec.Cmd used by the gh-calling functions below.
+// Abstracted out so tests can substitute a fake without shelling out to a
+// real gh binary.
+type ghRunner interface {
+	Output() ([]byte, error)
+	CombinedOutput() ([]byte, error)
+	Run() error
+}
+
+// runGH constructs the command used to invoke the gh CLI with the given
+// args. Overridable in tests.
+var runGH = func(ctx context.Context, args ...string) ghRunner {
+	return exec.CommandContext(ctx, "gh", args...)
+}
+
 // GHAuthStatus returns whether the gh CLI has valid auth credentials.
 // Primary: runs `gh auth status` to check for stored credentials (e.g. from the
 // ~/.config/gh volume mount).
@@ -35,7 +50,7 @@ func GHAuthStatus() (authed bool, note string) {
 // "pr_merged", "pr_closed"), the PR web URL, the PR number, and any error.
 func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL string, prNumber int, err error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_list").Inc()
-	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
+	cmd := runGH(ctx, "pr", "list",
 		"--repo", repoName,
 		"--head", branch,
 		"--state", "all",
@@ -59,7 +74,7 @@ func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL 
 	if len(prs) == 0 {
 		// No PR yet — verify the branch actually exists on the remote.
 		metrics.GhCallsTotal.WithLabelValues("branch_check").Inc()
-		chk := exec.CommandContext(ctx, "gh", "api", "repos/"+repoName+"/branches/"+branch, "--silent")
+		chk := runGH(ctx, "api", "repos/"+repoName+"/branches/"+branch, "--silent")
 		if chk.Run() != nil {
 			return "", "", 0, nil // branch not on remote yet
 		}
@@ -104,7 +119,7 @@ func CreatePR(ctx context.Context, repoName, branch, base, title, body string) (
 		args = append(args, "--base", base)
 	}
 	metrics.GhCallsTotal.WithLabelValues("pr_create").Inc()
-	out, err := exec.CommandContext(ctx, "gh", args...).CombinedOutput()
+	out, err := runGH(ctx, args...).CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(out))
 		// Handle the race where a PR appeared between our check and create.
@@ -149,7 +164,7 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 		args = append(args, "--label", label)
 	}
 	metrics.GhCallsTotal.WithLabelValues("issue_list").Inc()
-	out, err := exec.CommandContext(ctx, "gh", args...).Output()
+	out, err := runGH(ctx, args...).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +197,51 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 		})
 	}
 	return issues, nil
+}
+
+// AddIssueLabel adds a label to a GitHub issue via the gh CLI. Used by the
+// write-back feature to signal "an agent is already working on this" without
+// requiring the label to previously exist on the issue (it must already exist
+// on the repo, though — `gh issue edit --add-label` fails if the label itself
+// hasn't been created in the repo's label set).
+func AddIssueLabel(ctx context.Context, repoName string, issueNumber int, label string) error {
+	metrics.GhCallsTotal.WithLabelValues("issue_label_add").Inc()
+	out, err := runGH(ctx, "issue", "edit", fmt.Sprint(issueNumber),
+		"--repo", repoName,
+		"--add-label", label,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh issue edit --add-label: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// CommentOnIssue posts a comment on a GitHub issue via the gh CLI. Used by the
+// write-back feature to link the PR opened for an imported issue.
+func CommentOnIssue(ctx context.Context, repoName string, issueNumber int, body string) error {
+	metrics.GhCallsTotal.WithLabelValues("issue_comment").Inc()
+	out, err := runGH(ctx, "issue", "comment", fmt.Sprint(issueNumber),
+		"--repo", repoName,
+		"--body", body,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh issue comment: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// CloseIssueWithComment closes a GitHub issue and posts a comment in the same
+// call via the gh CLI. Used by the write-back feature once a task's PR merges.
+func CloseIssueWithComment(ctx context.Context, repoName string, issueNumber int, body string) error {
+	metrics.GhCallsTotal.WithLabelValues("issue_close").Inc()
+	out, err := runGH(ctx, "issue", "close", fmt.Sprint(issueNumber),
+		"--repo", repoName,
+		"--comment", body,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh issue close: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // ParseGitHubName extracts the "org/repo" name from a GitHub remote URL.

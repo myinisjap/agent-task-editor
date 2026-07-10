@@ -21,6 +21,19 @@ func (q *Queries) CountAgentLogs(ctx context.Context, agentRunID string) (int64,
 	return count, err
 }
 
+const countAgentLogsTotal = `-- name: CountAgentLogsTotal :one
+SELECT COUNT(*) FROM agent_logs
+`
+
+// Total row count across all runs, surfaced on the Health page alongside DB
+// file size so agent_logs bloat is observable before it becomes a problem.
+func (q *Queries) CountAgentLogsTotal(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAgentLogsTotal)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAgentLog = `-- name: CreateAgentLog :exec
 INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
 VALUES (?, ?, ?, ?, ?)
@@ -111,6 +124,32 @@ func (q *Queries) CreateTaskLabelHistory(ctx context.Context, arg CreateTaskLabe
 		arg.Note,
 	)
 	return err
+}
+
+const deleteOldAgentLogs = `-- name: DeleteOldAgentLogs :execrows
+DELETE FROM agent_logs
+WHERE agent_run_id IN (
+  SELECT id FROM agent_runs
+  WHERE status IN ('completed','failed','waiting_human')
+    AND completed_at IS NOT NULL
+    AND completed_at < ?1
+)
+`
+
+// Deletes agent_logs rows belonging to runs in a terminal status
+// (completed/failed/waiting_human) whose run completed_at is older than the
+// cutoff. Never touches logs for a run that is still pending/running (no
+// completed_at, or non-terminal status), so the active run and the WS
+// replay path (which reads the live run's logs) are unaffected. cutoff is
+// a DATETIME-comparable string (matching SQLite's CURRENT_TIMESTAMP text
+// format) computed by the caller from LOG_RETENTION_DAYS so the predicate
+// stays testable without relying on SQLite's date('now', ...).
+func (q *Queries) DeleteOldAgentLogs(ctx context.Context, completedAt *time.Time) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteOldAgentLogs, completedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getAgentRun = `-- name: GetAgentRun :one
@@ -515,6 +554,7 @@ SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
+  AND t.active_agent_run_id = ar.id
 ORDER BY ar.created_at DESC
 `
 
@@ -536,6 +576,13 @@ type ListWaitingHumanRunsRow struct {
 	TaskTitle     string     `json:"task_title"`
 }
 
+// Only surfaces a waiting_human run while it is still the task's active run.
+// A reply/approve/reject on a waiting_human run dispatches a new run and
+// repoints tasks.active_agent_run_id at it, but deliberately leaves the old
+// run's status as 'waiting_human' as a historical record (see ReplyRun's doc
+// comment in task_runs.go); without this join, that superseded run would
+// keep showing up in the dashboard's "needs your input" queue forever, even
+// after a new run for the same task is already active/running.
 func (q *Queries) ListWaitingHumanRuns(ctx context.Context) ([]ListWaitingHumanRunsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listWaitingHumanRuns)
 	if err != nil {

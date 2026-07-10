@@ -35,7 +35,7 @@ Key fields returned by task endpoints:
 | `active_agent_run_id` | UUID? | Set while an agent run is in progress |
 | `current_agent_run_id` | UUID? | ID of the most recent agent run |
 | `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
-| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first); absent when the task isn't currently pickup-eligible |
+| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
 
 ---
 
@@ -105,6 +105,31 @@ Move the task to a different label via the workflow engine. Goes through normal 
 ```
 
 Returns `400` if no transition exists, `403` if the transition requires human auth or the target label is `agent_ignore`.
+
+### `GET /tasks/{id}/label-history`
+Returns the task's label-transition audit trail (`task_label_history`), oldest first:
+
+```json
+[
+  {
+    "id": "...",
+    "task_id": "...",
+    "from_label": "in_review",
+    "to_label": "done",
+    "trigger": "human",
+    "actor_id": "alice",
+    "note": "looks good",
+    "created_at": "2026-01-01T00:00:00Z"
+  }
+]
+```
+
+`actor_id` is the resolved named-token actor (see `API_TOKENS` in
+[getting-started.md](getting-started.md)) for human-triggered transitions —
+`null`/empty when the legacy single shared `API_TOKEN` (or no auth) was used,
+since that token has no associated name. For agent-triggered transitions,
+`actor_id` is the agent run ID. `from_label` is `null` for the task's initial
+label assignment.
 
 ### `POST /tasks/{id}/approve`
 Human approval — follows the `success` human transition from the task's current label.
@@ -490,6 +515,22 @@ If `REPO_BASE_DIR` is set, `path` must be within that directory.
 ### `GET /repos/{id}`
 Get a repository record.
 
+### `PATCH /repos/{id}`
+Partial update. All fields are optional and merge with the repo's existing
+values; setting `remote_url` or `workflow_id` to an empty string clears it.
+
+```json
+{
+  "name": "string",
+  "path": "/absolute/path/to/repo",
+  "remote_url": "string|null",
+  "workflow_id": "string|null",
+  "issue_sync_enabled": true,
+  "issue_sync_label": "string",
+  "issue_writeback_enabled": true
+}
+```
+
 ### `DELETE /repos/{id}`
 Unregister a repository.
 
@@ -621,8 +662,14 @@ figure for every currently-visible task rather than just the top 20.
 ## Health
 
 ### `GET /healthz`
-Returns `200 OK` with `{"status":"ok"}`. Not auth-gated. (Served at the server
-root, **not** under `/api/v1`.)
+Liveness probe. Returns `200 OK` with `{"status":"ok","version":"<version>"}`.
+`version` is the running build's version: `"dev"` for local/unstamped builds,
+or the release tag (e.g. `"v1.4.0"`) for GHCR images, stamped at build time
+via `-ldflags "-X main.Version=<tag>"` (see `backend/Dockerfile`'s `VERSION`
+build-arg and `.github/workflows/release.yml`). (Served at the server root,
+**not** under `/api/v1`. Note: like the rest of the API, this route sits
+behind `API_TOKEN`/`API_TOKENS` when one is configured — despite the name,
+it is not exempt from bearer auth.)
 
 ### `GET /health/providers`
 Provider / onboarding readiness checks. Surfaces first-run misconfiguration at a
@@ -634,7 +681,9 @@ list of checks:
   "checks": [
     { "id": "claude_cli", "name": "Claude CLI", "status": "ok", "detail": "claude CLI installed and credentials found" },
     { "id": "mcp_sidecar", "name": "MCP sidecar", "status": "warn", "detail": "MCP_SERVER_PATH is not set", "hint": "Set MCP_SERVER_PATH to the mcp-server binary to enable signal_complete/request_human for claude/qwen agents." },
-    { "id": "repo_base_dir", "name": "Repo base directory", "status": "error", "detail": "REPO_BASE_DIR is set but does not exist: /repos", "hint": "Create the directory or point REPO_BASE_DIR at an existing path." }
+    { "id": "repo_base_dir", "name": "Repo base directory", "status": "error", "detail": "REPO_BASE_DIR is set but does not exist: /repos", "hint": "Create the directory or point REPO_BASE_DIR at an existing path." },
+    { "id": "version", "name": "Version", "status": "ok", "detail": "running v1.4.0" },
+    { "id": "update_check", "name": "Update available", "status": "warn", "detail": "update available: v1.5.0 (running v1.4.0)", "hint": "https://github.com/myinisjap/agent-task-editor/releases" }
   ]
 }
 ```
@@ -647,12 +696,21 @@ list of checks:
   `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for
   providers referenced by an **enabled** agent config), the MCP sidecar binary
   (`MCP_SERVER_PATH`), gh auth (same probe as `/github/auth-status`),
-  `REPO_BASE_DIR`, and `auto_backup` (whether the automatic local-snapshot
-  scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)).
+  `REPO_BASE_DIR`, `auto_backup` (whether the automatic local-snapshot
+  scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)), and
+  `version` (the running build's version — see `GET /healthz` above).
 - Checks are cheap and side-effect free (PATH lookups, credential/config-file
   existence, env/config values). No real agent invocation is made, so a green
   `claude` row means credentials were **found**, not that a live token was
   validated. Rendered by the frontend's **Health** page.
+- `update_check` is an **opt-in** row (env var `UPDATE_CHECK_ENABLED=true` /
+  YAML `update_check_enabled: true`, default `false`) that shells out to
+  `gh release view` to compare the running version against the latest
+  published GitHub release tag. Disabled by default so the app never "phones
+  home" without the operator explicitly enabling it. It is best-effort and
+  bounded by a short timeout: if `gh` is unavailable, unauthenticated, or
+  there's no network, it degrades to `warn` ("could not check for updates")
+  rather than `error`, and never blocks or fails the rest of the response.
 
 ### `GET /metrics`
 Prometheus text-exposition-format metrics for scraping (served at the server
@@ -696,7 +754,7 @@ In addition to the standard Go runtime/process collectors (`go_*`,
 **Sync loops**
 - `ate_ghsync_sweep_duration_seconds` (histogram) — GitHub PR-status sweep duration.
 - `ate_tasksource_sweep_duration_seconds` (histogram) — GitHub issue-import sweep duration.
-- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`), an early warning signal for GitHub API rate limiting.
+- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`, `issue_label_add`, `issue_comment`, `issue_close`), an early warning signal for GitHub API rate limiting.
 
 ---
 

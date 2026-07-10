@@ -75,7 +75,8 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 |---|---|---|
 | `PORT` | `8080` | Backend HTTP port |
 | `DB_PATH` | `agent-task-editor.db` | SQLite database file path |
-| `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth |
+| `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth. Requests using this token are recorded anonymously (no actor name) in the label history audit trail — see `API_TOKENS` below for named tokens. |
+| `API_TOKENS` | _(empty)_ | Comma-separated named bearer tokens, format `name1:token1,name2:token2`. Any of these tokens authenticates like `API_TOKEN`, but the matching name is recorded as the actor in `task_label_history.actor_id` for human-triggered transitions (approve/reject/move label), and surfaced via `GET /tasks/{id}/label-history`. Can be combined with `API_TOKEN` (kept for backward compatibility as an anonymous fallback). If the same token string is reused across multiple names, the last one loaded wins. |
 | `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated (see [Metrics](#metrics)) |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins (e.g. `http://localhost:5173`) |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
@@ -104,8 +105,10 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `BACKUP_DIR` | _(empty)_ | If set, enables the built-in scheduler that periodically writes a rotated `VACUUM INTO` snapshot of the database to this directory. Empty = disabled (on-demand backup via `GET /api/v1/backup` and the Health page's "Download backup" button is always available regardless). |
 | `BACKUP_INTERVAL` | `24h` | How often the scheduler writes a new snapshot. Accepts Go duration strings. Only meaningful when `BACKUP_DIR` is set. |
 | `BACKUP_KEEP` | `7` | Number of most-recent snapshots to retain in `BACKUP_DIR` before pruning older ones. |
+| `LOG_RETENTION_DAYS` | `0` | If set to a positive number, enables a built-in pruner that deletes `agent_logs` rows for terminal-status runs (`completed`/`failed`/`waiting_human`) older than this many days. `0` = keep forever (disabled, the default). |
+| `LOG_RETENTION_INTERVAL` | `1h` | How often the log pruner runs. Accepts Go duration strings. Only meaningful when `LOG_RETENTION_DAYS` is set. |
 
-See [backup.md](backup.md) for the full backup/restore guide.
+See [backup.md](backup.md) for the full backup/restore guide, including the "Agent log retention" section.
 
 ### Other
 
@@ -113,6 +116,7 @@ See [backup.md](backup.md) for the full backup/restore guide.
 |---|---|---|
 | `GITHUB_SYNC_INTERVAL` | `30s` | How often to poll GitHub for PR status updates. Accepts Go duration strings (e.g. `1m`, `5m`). |
 | `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `UPDATE_CHECK_ENABLED` | `false` | If `true`, the Health page's `update_check` row shells out to `gh release view` to compare the running version (`GET /healthz`) against the latest GitHub release and warns when one is available. Disabled by default so the app never phones home without opting in; degrades to a warning (never an error) when offline or `gh` isn't configured. See [api.md](api.md#get-healthproviders). |
 
 ### YAML Config File
 
@@ -122,6 +126,9 @@ If `CONFIG_FILE` points to a YAML file, values from it are used as defaults (env
 port: "8080"
 db_path: agent-task-editor.db
 api_token: ""
+api_tokens:
+  alice: tok-alice
+  bob: tok-bob
 metrics_token: ""
 cors_origins: "*"
 mcp_server_path: /path/to/mcp-server
@@ -138,7 +145,11 @@ backup_keep: 7
 
 ### Authentication
 
-Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this automatically. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
+Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this using a runtime token (see below), not a build-time one. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
+
+To identify *who* performed a human-triggered transition (approve/reject/move label) in the audit trail, set `API_TOKENS` (format `name1:token1,name2:token2`, or the `api_tokens` map in the YAML config) instead of, or alongside, `API_TOKEN`. Each named token authenticates the same way, but the resolved name is recorded as `actor_id` in `task_label_history` and returned by `GET /tasks/{id}/label-history`. `API_TOKEN` remains supported as a legacy/anonymous fallback — requests using it are recorded with an empty actor, exactly as before this feature existed. Note: the `/ws` WebSocket endpoint currently only supports the single legacy `API_TOKEN` for its `?token=` query param check, not named tokens.
+
+**Frontend token entry.** Once `API_TOKEN` is set on the backend, the first API request the UI makes will come back `401`, and the UI shows a simple one-field "enter API token" screen instead of a broken board. Enter the token once; it's stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on every subsequent request and WS ticket mint, for every page (board, task detail incl. the live log stream, workflows, agents, repos, health, backup download). A wrong or expired token sends you back to that screen rather than leaving the UI in a broken state. With `API_TOKEN` unset, no prompt ever appears. This is a runtime flow — it works with the prebuilt/GHCR image exactly the same as a locally built one, since nothing needs to be baked in at build time.
 
 The frontend reads `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` at build time. For the Docker image these default to `""` (same origin). For local development add a `.env.local` in `frontend/`:
 
@@ -147,6 +158,8 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_WS_BASE_URL=ws://localhost:8080
 VITE_API_TOKEN=your-token-here
 ```
+
+`VITE_API_TOKEN` is a **dev-only convenience**: if set, it seeds the runtime `localStorage` token the first time the app loads (so you don't have to click through the token prompt during `npm run dev`). It's not required, and it cannot be baked into the prebuilt GHCR image — that's exactly why the runtime prompt above exists.
 
 ## Metrics
 

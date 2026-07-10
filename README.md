@@ -25,13 +25,14 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Inline diff review comments** — leave file/line-anchored comments on the diff; open comments are injected into every agent run's prompt until the agent resolves them via the `resolve_comment` MCP tool
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once a PR is detected as merged, the task's local branch and worktree are automatically cleaned up
-- **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks — see [docs/task-sources.md](docs/task-sources.md)
+- **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks, and (opt-in, independently) status is written back to the source issue as the imported task progresses — a comment when its PR opens, an `agent-in-progress` label when it first leaves `not_ready`, and the issue closed with a comment when the PR merges — see [docs/task-sources.md](docs/task-sources.md)
 - **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Task priority** — low/normal/high/urgent priority per task; the dispatcher's pickup queue is ordered priority-first, then oldest-first, with an "N in queue" hint on cards waiting for a free worker
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
-- **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
+- **Installable as a PWA** — add the board to your phone's home screen for quick access
 
 See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.
 
@@ -71,6 +72,12 @@ which references the published images:
 
 Prefer plain Compose? `ATE_VERSION=v0.1.0 docker compose -f docker-compose.release.yml up -d`.
 
+Want the Gemini/Codex/Qwen CLIs preinstalled instead of building them yourself (see below)? Pass `--all-cli` to run the `-all-cli` backend image variant published alongside each release:
+
+```bash
+./run.sh --all-cli
+```
+
 Open **http://localhost:5173** in your browser.
 
 > **Repo file ownership.** The backend container remaps its runtime user to your
@@ -101,6 +108,8 @@ Unlike `claude` (installed unconditionally), the Gemini CLI (`gemini_cli` provid
 ```bash
 INSTALL_GEMINI_CLI=true INSTALL_CODEX_CLI=true INSTALL_QWEN_CLI=true docker compose build
 ```
+
+Running from prebuilt images instead of building locally? Every release also publishes a backend image with all three CLIs preinstalled, tagged with an `-all-cli` suffix (e.g. `ghcr.io/myinisjap/agent-task-editor-backend:latest-all-cli`). Run it with `./run.sh --all-cli`, or set `ATE_CLI_SUFFIX=-all-cli` if you're driving `docker-compose.release.yml` directly.
 
 `INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. See [docs/providers/gemini_cli.md](docs/providers/gemini_cli.md), [docs/providers/codex_cli.md](docs/providers/codex_cli.md), and [docs/providers/qwen_code.md](docs/providers/qwen_code.md) for authentication setup once installed.
 
@@ -163,7 +172,7 @@ Agent shell commands run inside the **backend** Docker container, against your b
 
 **Default settings are for localhost only.** Before exposing this to any non-localhost network:
 
-- [ ] Set `API_TOKEN` — without it, anyone who can reach port 8080 can create repos, dispatch agents, and run shell commands
+- [ ] Set `API_TOKEN` (or `API_TOKENS` for named, per-actor tokens — recommended so approvals are attributable in the audit trail) — without it, anyone who can reach port 8080 can create repos, dispatch agents, and run shell commands
 - [ ] Set `REPO_BASE_DIR` — without it, agents can be pointed at any path on the host
 - [ ] Set `CORS_ORIGINS` to your actual origin instead of `*`
 - [ ] Run behind a reverse proxy or VPN; do not expose port 8080 directly to the internet
@@ -177,6 +186,7 @@ The server binds to all interfaces (`:8080`) by default. In Docker, map it to `1
 | Variable | Default | Description |
 |---|---|---|
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth required |
+| `API_TOKENS` | _(empty)_ | Named bearer tokens (`name1:token1,name2:token2`) — resolves to an actor name recorded in the label history audit trail; see [docs/getting-started.md](docs/getting-started.md#authentication) |
 | `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated |
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory |
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary; required for label transitions with the `claude` provider |

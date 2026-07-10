@@ -76,9 +76,31 @@ LIMIT ?3;
 -- name: CountAgentLogs :one
 SELECT COUNT(*) FROM agent_logs WHERE agent_run_id = ?;
 
+-- name: CountAgentLogsTotal :one
+-- Total row count across all runs, surfaced on the Health page alongside DB
+-- file size so agent_logs bloat is observable before it becomes a problem.
+SELECT COUNT(*) FROM agent_logs;
+
 -- name: CreateAgentLog :exec
 INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
 VALUES (?, ?, ?, ?, ?);
+
+-- name: DeleteOldAgentLogs :execrows
+-- Deletes agent_logs rows belonging to runs in a terminal status
+-- (completed/failed/waiting_human) whose run completed_at is older than the
+-- cutoff. Never touches logs for a run that is still pending/running (no
+-- completed_at, or non-terminal status), so the active run and the WS
+-- replay path (which reads the live run's logs) are unaffected. cutoff is
+-- a DATETIME-comparable string (matching SQLite's CURRENT_TIMESTAMP text
+-- format) computed by the caller from LOG_RETENTION_DAYS so the predicate
+-- stays testable without relying on SQLite's date('now', ...).
+DELETE FROM agent_logs
+WHERE agent_run_id IN (
+  SELECT id FROM agent_runs
+  WHERE status IN ('completed','failed','waiting_human')
+    AND completed_at IS NOT NULL
+    AND completed_at < ?1
+);
 
 -- name: CreateTaskLabelHistory :exec
 INSERT INTO task_label_history (id, task_id, from_label, to_label, trigger, actor_id, note)
@@ -96,10 +118,18 @@ WHERE ar.status = 'running'
 ORDER BY ar.started_at DESC;
 
 -- name: ListWaitingHumanRuns :many
+-- Only surfaces a waiting_human run while it is still the task's active run.
+-- A reply/approve/reject on a waiting_human run dispatches a new run and
+-- repoints tasks.active_agent_run_id at it, but deliberately leaves the old
+-- run's status as 'waiting_human' as a historical record (see ReplyRun's doc
+-- comment in task_runs.go); without this join, that superseded run would
+-- keep showing up in the dashboard's "needs your input" queue forever, even
+-- after a new run for the same task is already active/running.
 SELECT ar.*, t.title as task_title
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
+  AND t.active_agent_run_id = ar.id
 ORDER BY ar.created_at DESC;
 
 -- name: SumTaskCost :one

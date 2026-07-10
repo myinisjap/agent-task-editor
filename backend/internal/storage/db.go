@@ -55,6 +55,21 @@ func (db *DB) Path() string {
 	return db.path
 }
 
+// Size returns the on-disk size in bytes of the SQLite database file at
+// db.Path() (the main file only, not -wal/-shm sidecars, since VACUUM
+// INTO/backups operate on the logical DB size which os.Stat on the main
+// file approximates well enough for a dashboard figure). Used by the Health
+// page to surface DB growth. Note: in WAL mode the main file can undercount
+// until a checkpoint occurs — acceptable for an observability figure, not
+// meant to be exact.
+func (db *DB) Size() (int64, error) {
+	fi, err := os.Stat(db.path)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
+}
+
 // Close closes the underlying database connection.
 func (db *DB) Close() error {
 	return db.sql.Close()

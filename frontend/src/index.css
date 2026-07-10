@@ -272,6 +272,12 @@
    component-level overrides can target dark mode explicitly if needed. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* `no-hover:` utility variant — targets devices/inputs that can't hover
+   (touchscreens), so hover-gated card controls (select checkbox, pause,
+   archive, edit, delete — see TaskCard.tsx) can be forced visible without a
+   pointer. See issue #147. */
+@custom-variant no-hover (@media (hover: none));
+
 .dark  { color-scheme: dark; }
 .light { color-scheme: light; }
 

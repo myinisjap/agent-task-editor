@@ -10,6 +10,7 @@ GET  /ws                   (auth via ?token= query param)
 /api/v1/
   POST body limit: 1 MB
   tasks/*                  TasksHandler
+  tasks/{id}/label-history  TasksHandler.ListLabelHistory (task_label_history audit trail)
   tasks/{id}/dependencies/* DependenciesHandler (dispatch-gating peer task dependencies)
   tasks/{id}/subtasks       SubtasksHandler (create_subtask MCP tool)
   tasks/{id}/review-comments/* ReviewCommentsHandler (inline diff review comments)
@@ -32,7 +33,12 @@ GET  /ws                   (auth via ?token= query param)
 3. `middleware.Logger` — structured slog request logging (method, path, status,
    duration, `request_id`)
 4. `middleware.CORS` — sets CORS headers; configured from `CORS_ORIGINS`
-5. `middleware.BearerAuth` — validates `Authorization: Bearer <token>` (skips if token empty)
+5. `middleware.BearerAuth` — validates `Authorization: Bearer <token>` against the
+   legacy single `bearerToken` and/or the `namedTokens` (`name -> token`) map from
+   `cfg.APITokens`; a named-token match is stored on the request context and
+   retrievable via `middleware.ActorFromContext` (see `handlers/tasks.go`'s
+   human-triggered transition handlers, which pass it as `actorID` to
+   `engine.Transition`). No-op if both are empty.
 6. Per-route 1 MB body limit on `/api/v1/*`
 
 ### Logging conventions

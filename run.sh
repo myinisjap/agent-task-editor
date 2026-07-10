@@ -8,6 +8,7 @@
 #   ./run.sh                       # pull + start :latest
 #   ATE_VERSION=v1.2.3 ./run.sh    # pin a specific release
 #   ./run.sh --repo-dir ~/code start
+#   ./run.sh --all-cli             # run the backend image with Gemini/Codex/Qwen CLIs preinstalled
 
 # Load .env if present (without overriding existing shell vars)
 if [[ -f "$(dirname "$0")/.env" ]]; then
@@ -21,13 +22,24 @@ export ATE_VERSION=${ATE_VERSION:-latest}
 
 export LLM_BASE_URL=${LLM_BASE_URL:-"http://host.docker.internal:8081/v1"}
 
-# Parse optional --repo-dir <path> before the command.
+# Parse optional --repo-dir <path> / --all-cli flags before the command.
+ALL_CLI=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-dir) REPO_BASE_DIR="$2"; shift 2 ;;
+    --all-cli) ALL_CLI=true; shift ;;
     *) break ;;
   esac
 done
+
+# --all-cli selects the backend image variant with the Gemini, Codex, and
+# Qwen CLIs preinstalled (see backend/Dockerfile's INSTALL_*_CLI build args)
+# instead of the default image, which only ships the Claude CLI.
+if [[ "$ALL_CLI" == "true" ]]; then
+  export ATE_CLI_SUFFIX="-all-cli"
+else
+  export ATE_CLI_SUFFIX=""
+fi
 
 if [[ -z "$REPO_BASE_DIR" ]]; then
   REPO_BASE_DIR="/tmp/repos"
@@ -91,7 +103,9 @@ case "$CMD" in
   start)
     $COMPOSE up -d --pull always
     echo ""
-    echo "  Running images: ghcr.io/myinisjap/agent-task-editor-{backend,frontend}:${ATE_VERSION}"
+    echo "  Running images:"
+    echo "    ghcr.io/myinisjap/agent-task-editor-backend:${ATE_VERSION}${ATE_CLI_SUFFIX}"
+    echo "    ghcr.io/myinisjap/agent-task-editor-frontend:${ATE_VERSION}"
     echo "  Board:   http://localhost:5173"
     echo "  API:     http://localhost:8080"
     echo ""
@@ -119,7 +133,7 @@ case "$CMD" in
     $COMPOSE exec --user node backend sh
     ;;
   *)
-    echo "Usage: $0 [--repo-dir <path>] [start|pull|stop|restart|logs|login|shell]"
+    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [start|pull|stop|restart|logs|login|shell]"
     exit 1
     ;;
 esac
