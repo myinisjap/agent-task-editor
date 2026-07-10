@@ -12,6 +12,13 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **`-all-cli` backend release image**. The release workflow now also builds
+  and publishes `ghcr.io/myinisjap/agent-task-editor-backend:{version,latest}-all-cli`,
+  a backend image with the Gemini, Codex, and Qwen CLIs preinstalled (the
+  `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`/`INSTALL_QWEN_CLI` build args, all
+  enabled) alongside the default Claude-only image. `run.sh` gained an
+  `--all-cli` flag to pull and run this variant instead of the default one
+  (plain Compose users can set `ATE_CLI_SUFFIX=-all-cli`).
 - **GitHub Issues write-back (task-sources v2)** (#81). New opt-in per-repo
   `issue_writeback_enabled` flag (independent of `issue_sync_enabled`) writes
   an imported task's status back to the GitHub issue it came from: a comment
