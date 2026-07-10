@@ -12,6 +12,30 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Running version + update-available check on the Health page** (#151).
+  - `cmd/server` now has a `Version` build var (default `"dev"`), stamped at
+    build time via `-ldflags "-X main.Version=<tag>"`.
+    `backend/Dockerfile` exposes this as an `ARG VERSION=dev`, and
+    `.github/workflows/release.yml` passes `VERSION=${{ github.ref_name }}`
+    as a Docker build-arg so release images are stamped with the git tag;
+    local `docker compose build` leaves it at the `dev` default.
+  - `GET /healthz` now returns `{"status":"ok","version":"<version>"}`
+    (previously just `{"status":"ok"}`, sourced from Go's VCS build info
+    rather than the release tag). `/healthz` was folded into
+    `HealthHandler` (a new `Healthz` method) so it can read the
+    injected version; it remains a fast, side-effect-free liveness probe.
+  - `GET /api/v1/health/providers` (and the frontend's **Health** page) now
+    includes a `version` check row showing the running build's version.
+  - New opt-in `update_check` row (`UPDATE_CHECK_ENABLED` env var /
+    `update_check_enabled` YAML key, default `false`) shells out to
+    `gh release view` to compare the running version against the latest
+    published GitHub release tag, warning when an update is available. It
+    is disabled by default so the app never phones home without the
+    operator explicitly opting in, and is best-effort: any failure (no
+    network, `gh` not installed/authenticated, dev build) degrades to a
+    `warn` status ("could not check for updates") rather than blocking or
+    failing the endpoint — bounded by a 5s timeout so a hung `gh` call
+    can't stall the Health page.
 - **Agent log retention / pruning, and DB size on the Health page** (#150).
   - `LOG_RETENTION_DAYS` (env or `log_retention_days` in the YAML config)
     enables a built-in pruner that periodically deletes `agent_logs` rows

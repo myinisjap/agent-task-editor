@@ -116,6 +116,7 @@ See [backup.md](backup.md) for the full backup/restore guide, including the "Age
 |---|---|---|
 | `GITHUB_SYNC_INTERVAL` | `30s` | How often to poll GitHub for PR status updates. Accepts Go duration strings (e.g. `1m`, `5m`). |
 | `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `UPDATE_CHECK_ENABLED` | `false` | If `true`, the Health page's `update_check` row shells out to `gh release view` to compare the running version (`GET /healthz`) against the latest GitHub release and warns when one is available. Disabled by default so the app never phones home without opting in; degrades to a warning (never an error) when offline or `gh` isn't configured. See [api.md](api.md#get-healthproviders). |
 
 ### YAML Config File
 
