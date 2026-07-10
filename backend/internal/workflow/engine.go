@@ -64,6 +64,12 @@ type Engine struct {
 	// terminal label. Used to push the task's branch and tear down its worktree.
 	// Failures are the callback's concern; the transition has already committed.
 	OnTerminal func(ctx context.Context, task gen.Task)
+	// OnLeaveNotReady, if set, is called after a task successfully transitions
+	// off the "not_ready" label for the first time (i.e. fromLabel ==
+	// "not_ready" && toLabel != "not_ready"). Used to apply an "agent is already
+	// working on this" signal to an imported task's source GitHub issue.
+	// Failures are the callback's concern; the transition has already committed.
+	OnLeaveNotReady func(ctx context.Context, task gen.Task)
 }
 
 // New creates a new Engine.
@@ -180,6 +186,11 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	if toIsTerminal && e.OnTerminal != nil {
 		task.Label = toLabel
 		e.OnTerminal(ctx, task)
+	}
+
+	if fromLabel == "not_ready" && toLabel != "not_ready" && e.OnLeaveNotReady != nil {
+		task.Label = toLabel
+		e.OnLeaveNotReady(ctx, task)
 	}
 
 	return nil

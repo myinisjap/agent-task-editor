@@ -12,6 +12,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
 
 // Publisher is satisfied by *ws.Hub — it sends events to all connected clients.
@@ -28,6 +29,7 @@ type Syncer struct {
 	q        *gen.Queries
 	hub      Publisher
 	interval time.Duration
+	wb       *writeback.Writeback
 
 	// getPR resolves the PR state for a branch. Defaults to
 	// ghclient.GetPRForBranch; overridable in tests.
@@ -40,6 +42,7 @@ func New(db *sql.DB, hub Publisher, interval time.Duration) *Syncer {
 		q:        gen.New(db),
 		hub:      hub,
 		interval: interval,
+		wb:       writeback.New(gen.New(db)),
 		getPR:    ghclient.GetPRForBranch,
 	}
 }
@@ -99,8 +102,9 @@ func (s *Syncer) sweep(ctx context.Context) {
 
 // repoInfo holds the resolved details for a task's repo needed during a sweep.
 type repoInfo struct {
-	ghName string // "org/repo"; empty means not a GitHub repo
-	path   string // local filesystem path to the repo's main clone
+	ghName string   // "org/repo"; empty means not a GitHub repo
+	path   string   // local filesystem path to the repo's main clone
+	repo   gen.Repo // full repo row, needed by the writeback hooks (e.g. IssueWritebackEnabled)
 }
 
 // resolveRepoInfo fetches the repo from DB and extracts the "org/repo" name
@@ -120,7 +124,7 @@ func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 	if !ok {
 		return repoInfo{}
 	}
-	return repoInfo{ghName: name, path: repo.Path}
+	return repoInfo{ghName: name, path: repo.Path, repo: repo}
 }
 
 // syncTask checks the PR state for a single task and updates it if changed.
@@ -143,11 +147,12 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 	if storeURL == "" {
 		storeURL = task.PrUrl
 	}
-	if _, err := s.q.SetTaskPR(ctx, gen.SetTaskPRParams{
+	updated, err := s.q.SetTaskPR(ctx, gen.SetTaskPRParams{
 		GitState: state,
 		PrUrl:    storeURL,
 		ID:       task.ID,
-	}); err != nil {
+	})
+	if err != nil {
 		log.Warn("ghsync: update git state", "err", err)
 		return
 	}
@@ -159,6 +164,16 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 		"git_state": state,
 		"pr_url":    storeURL,
 	})
+
+	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
+	// the task wasn't imported or the repo doesn't have it enabled). Both
+	// hooks are idempotent via task-row flags, so it's safe to call them
+	// unconditionally on every state change rather than only on the specific
+	// transition that first satisfies their condition.
+	if s.wb != nil {
+		s.wb.OnPROpened(ctx, updated, repo.repo)
+		s.wb.OnPRMerged(ctx, updated, repo.repo)
+	}
 
 	// Once GitHub confirms the PR is merged, the branch's work is preserved
 	// upstream and is no longer needed locally — clean it up. Closed-without-

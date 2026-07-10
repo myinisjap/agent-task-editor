@@ -17,6 +17,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
 
 // Task priority levels. Stored as a plain INTEGER column (tasks.priority) so
@@ -73,10 +74,19 @@ type TasksHandler struct {
 	uploadDir  string
 	canceller  RunCanceller
 	dispatcher ReplyDispatcher
+	wb         *writeback.Writeback
 }
 
 func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher) *TasksHandler {
-	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller, dispatcher: dispatcher}
+	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller, dispatcher: dispatcher, wb: writeback.New(q)}
+}
+
+// SetWriteback overrides the handler's writeback instance. Exported only for
+// tests in other packages that need to fake out the underlying `gh` calls
+// (e.g. to assert CreatePR/GitHubStatus/UpdateGitState fire the right
+// write-back hooks without shelling out to a real gh binary).
+func (h *TasksHandler) SetWriteback(wb *writeback.Writeback) {
+	h.wb = wb
 }
 
 // List returns a page of tasks, optionally narrowed by query parameters:

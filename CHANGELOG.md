@@ -12,6 +12,17 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **GitHub Issues write-back (task-sources v2)** (#81). New opt-in per-repo
+  `issue_writeback_enabled` flag (independent of `issue_sync_enabled`) writes
+  an imported task's status back to the GitHub issue it came from: a comment
+  linking the PR when the task first gets a `pr_url`, an `agent-in-progress`
+  label applied the first time the task leaves `not_ready`, and the issue
+  closed with a comment once the PR merges. All three are best-effort (a
+  failed `gh` call is logged, never fails the caller/sweep) and idempotent
+  via new per-task tracking columns (`writeback_in_progress_sent`,
+  `writeback_pr_commented`, `writeback_closed`), not by scraping issue
+  comments. Uses the same `gh` CLI auth as issue import and PR-state sync —
+  no new credential surface. See [docs/task-sources.md](docs/task-sources.md).
 - **Mobile polish: responsive Usage/AgentConfig pages, board swipe, and PWA install** (#148).
   - `UsagePage`'s cost-by-provider, cost-by-day, and cost-by-task tables are
     now wrapped in `overflow-x-auto` (previously `overflow-hidden`), so wide

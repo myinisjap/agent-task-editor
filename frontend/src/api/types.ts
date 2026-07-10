@@ -2336,6 +2336,7 @@ export interface paths {
                         workflow_id?: string | null;
                         issue_sync_enabled?: boolean;
                         issue_sync_label?: string;
+                        issue_writeback_enabled?: boolean;
                     };
                 };
             };
@@ -2950,6 +2951,8 @@ export interface components {
             issue_sync_enabled?: number;
             /** @description Only import issues carrying this label (empty = all open issues). */
             issue_sync_label?: string;
+            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the "agent-in-progress" label when a task first leaves not_ready, and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
+            issue_writeback_enabled?: number;
             /**
              * @description State of the repo's initial auto-clone. 'ready' for local repos and finished clones; 'cloning' while an async git clone is in progress (POST /repos returns immediately with this status); 'error' if the clone failed (see clone_error). Watch the repo.clone_done / repo.clone_failed WebSocket events for transitions out of 'cloning'.
              * @enum {string}
