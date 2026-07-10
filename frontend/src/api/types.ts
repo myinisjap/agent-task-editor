@@ -2123,6 +2123,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ws-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a short-lived WebSocket auth ticket
+         * @description Returns a random, single-use ticket valid for ~30 seconds, used to authenticate the GET /ws upgrade (?ticket=<ticket>) without putting the long-lived API token in the URL. Requires the same Bearer auth as the rest of /api/v1 — minting a ticket already requires holding the token. The ticket is consumed on first use; a replayed or expired ticket is rejected with 401. See docs/websocket.md for the full connection flow, including the deprecated ?token= fallback.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A freshly minted ticket */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description Opaque single-use token for GET /ws?ticket= */
+                            ticket?: string;
+                            /** @description Human-readable TTL (e.g. "30s") */
+                            expires_in?: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {

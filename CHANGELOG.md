@@ -32,6 +32,31 @@ this file's section for that version as the release notes.
     non-default priority, and an "N in queue" hint on cards that are
     eligible for dispatch but waiting on a free worker.
   - See [docs/agents.md#task-priority](docs/agents.md#task-priority).
+- **Prometheus `/metrics` endpoint** (#88).
+  - `GET /metrics` exposes Prometheus text-exposition-format metrics: dispatcher/pool
+    state (eligible tasks, dispatched runs, queue depth, busy/max workers,
+    submit-rejections), run counters by terminal status and failure
+    classification plus a duration histogram per provider, cost/token
+    counters per provider/agent config, WebSocket hub stats (connected
+    clients, broadcast drops), and GitHub sync-loop stats (ghsync/issue-import
+    sweep durations, `gh` CLI call counts by command) — plus the standard Go
+    runtime/process collectors.
+  - Served at the server root (not under `/api/v1`) and **not** gated by
+    `API_TOKEN`; independently gated by the new optional `METRICS_TOKEN` env
+    var (unset by default, i.e. unauthenticated).
+- **Ticket-based WebSocket auth** (#51) — moves the long-lived `API_TOKEN`
+  out of the WebSocket URL, since query strings are commonly captured by
+  reverse-proxy access logs and browser history.
+  - New `POST /api/v1/ws-ticket` endpoint (normal Bearer auth) mints a
+    random (`crypto/rand`), single-use ticket valid for ~30 seconds.
+  - `GET /ws` now accepts `?ticket=<ticket>` and validates/consumes it —
+    a replayed or expired ticket is rejected with `401`.
+  - The frontend `WSClient` now fetches a ticket automatically before
+    opening the socket whenever `VITE_API_TOKEN` is set; `connect()` is
+    now `async`.
+  - `?token=<API_TOKEN>` is kept as a **deprecated fallback** for existing
+    setups/non-browser clients — each use is now logged as a warning
+    server-side — and may be removed in a future release.
 
 ## [0.7.0] - 2026-07-09
 

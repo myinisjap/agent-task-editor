@@ -654,6 +654,50 @@ list of checks:
   `claude` row means credentials were **found**, not that a live token was
   validated. Rendered by the frontend's **Health** page.
 
+### `GET /metrics`
+Prometheus text-exposition-format metrics for scraping (served at the server
+root, **not** under `/api/v1`). Not gated by `API_TOKEN` — independently
+gated by the optional `METRICS_TOKEN` env var (unset by default, i.e.
+unauthenticated, since most Prometheus scrape configs can't easily carry a
+second, endpoint-specific token). When `METRICS_TOKEN` is set, requests must
+carry `Authorization: Bearer $METRICS_TOKEN`.
+
+```bash
+curl http://localhost:8080/metrics
+# or, if METRICS_TOKEN is set:
+curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:8080/metrics
+```
+
+In addition to the standard Go runtime/process collectors (`go_*`,
+`process_*`), the following application metrics are exposed:
+
+**Dispatcher / pool**
+- `ate_dispatch_eligible_tasks` (gauge) — tasks eligible for pickup on the most recent sweep.
+- `ate_dispatched_runs_total` (counter) — runs successfully started by the dispatcher.
+- `ate_pool_queue_depth` (gauge) — jobs currently queued in the worker pool.
+- `ate_pool_busy_workers` (gauge) — workers currently running a job.
+- `ate_pool_max_workers` (gauge) — configured `MAX_WORKERS`.
+- `ate_pool_submit_rejected_total` (counter) — jobs dropped because the queue was full.
+
+**Runs**
+- `ate_run_terminal_total{status}` (counter) — runs by terminal status (`completed`/`failed`/`cancelled`/`waiting_human`).
+- `ate_run_classification_total{classification}` (counter) — failed runs by classification (`genuine`/`transient`/`rate_limit`/`auth`).
+- `ate_run_duration_seconds{provider}` (histogram) — run duration from start to terminal outcome.
+
+**Cost / tokens**
+- `ate_run_cost_usd_total{provider,agent_config_name}` (counter).
+- `ate_run_input_tokens_total{provider,agent_config_name}` (counter).
+- `ate_run_output_tokens_total{provider,agent_config_name}` (counter).
+
+**WebSocket**
+- `ate_ws_connected_clients` (gauge) — currently connected WS clients.
+- `ate_ws_broadcast_dropped_total` (counter) — events dropped due to a full client send buffer.
+
+**Sync loops**
+- `ate_ghsync_sweep_duration_seconds` (histogram) — GitHub PR-status sweep duration.
+- `ate_tasksource_sweep_duration_seconds` (histogram) — GitHub issue-import sweep duration.
+- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`), an early warning signal for GitHub API rate limiting.
+
 ---
 
 ## Backup
@@ -674,3 +718,27 @@ this endpoint for one-click on-demand snapshots. See
 `BACKUP_DIR`/`BACKUP_INTERVAL`/`BACKUP_KEEP` automatic local-snapshot
 scheduler, and a Litestream sidecar example for continuous offsite
 replication.
+
+---
+
+## WebSocket Auth
+
+### `POST /ws-ticket`
+Mints a random, single-use ticket for authenticating the `GET /ws` upgrade
+without putting the long-lived `API_TOKEN` in the URL (query strings are
+commonly captured by reverse-proxy access logs and browser history). Requires
+the same Bearer auth as the rest of `/api/v1` — minting a ticket already
+requires holding the token. No request body.
+
+```bash
+curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/ws-ticket
+```
+
+```json
+{ "ticket": "opaque-random-string", "expires_in": "30s" }
+```
+
+The ticket is valid for ~30 seconds and is consumed on first use — connect
+with `ws://host/ws?ticket=<ticket>` before it expires; a replayed or expired
+ticket is rejected with `401`. See [websocket.md](websocket.md) for the full
+connection flow, including the deprecated `?token=` fallback.
