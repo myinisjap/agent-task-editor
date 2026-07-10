@@ -12,6 +12,28 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Claude CLI session/usage-limit 429s now retry at an exact reset time instead of generic backoff.**
+  - The claude provider's stream-json `"result"` event parsing
+    (`classifyStreamJSON` in `backend/internal/agent/claude.go`) now also
+    surfaces the raw result text and the structured `api_error_status`
+    field. `classifyResultMessage` treats `api_error_status == 429` as an
+    unconditional rate limit, fixing a gap where Claude's session-limit
+    message (e.g. `"You've hit your session limit · resets 6pm
+    (America/Chicago)"`) carried no `"429"`/`"rate limit"` substring in its
+    *text* and was previously mis-classified as a genuine failure (no
+    retry) instead of a rate limit.
+  - New `"session limit"`/`"usage limit"` patterns added to
+    `errclass.go`'s classification table as a text-based fallback.
+  - New `backend/internal/agent/claude_reset.go` (`parseClaudeResetTime`)
+    parses the `"resets <time>(am|pm) (<IANA timezone>)"` clue out of the
+    result text and resolves it to an absolute reset time, handling
+    same-day/next-day rollover and a +1 minute retry buffer. Blank-imports
+    `time/tzdata` so time zone parsing works in the production container
+    (which has no `/usr/share/zoneinfo`).
+  - `ClaudeRunner.runAttempt` now populates `ErrRateLimit.ResetAt` from this
+    parsed time; the pool (`pool.go`) already scheduled retries against an
+    exact `ResetAt` when present (falling back to exponential backoff
+    otherwise) — no pool/dispatcher changes were needed.
 - **`openapi.yaml` now documents all served `/api/v1` routes** (#140).
   - Added the 10 previously-undocumented paths: `PATCH /repos/{id}`,
     `POST /tasks/{id}/rerun`, `GET /tasks/{id}/github-status`,

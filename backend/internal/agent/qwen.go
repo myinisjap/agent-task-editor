@@ -157,20 +157,21 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 			if line == "" {
 				continue
 			}
-			entry, parsed, u, class, sid := classifyStreamJSON(line)
-			logCh <- entry
-			if parsed != "" {
+			ev := classifyStreamJSON(line)
+			logCh <- ev.Entry
+			if ev.Outcome != "" {
 				mu.Lock()
-				outcome = parsed
+				outcome = ev.Outcome
 				mu.Unlock()
 			}
-			if sid != "" {
+			if ev.SessionID != "" {
 				mu.Lock()
-				sessionID = sid
+				sessionID = ev.SessionID
 				mu.Unlock()
 			}
 			// Prefer the structured classification from the typed "result"
 			// event; fall back to sniffing the raw line. See errclass.go.
+			class := ev.Class
 			if class == ClassNone {
 				class = ClassifyLine(line)
 			}
@@ -184,9 +185,9 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 				transient = true
 				mu.Unlock()
 			}
-			if u != nil {
+			if ev.Usage != nil {
 				mu.Lock()
-				usage = u
+				usage = ev.Usage
 				mu.Unlock()
 			}
 		}

@@ -38,6 +38,11 @@ func TestMain(m *testing.M) {
 		// as-is rather than re-estimated.
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":111,"output_tokens":222},"total_cost_usd":0.05}`)
 		os.Exit(0)
+	case "session_limit_429":
+		// Simulate: claude hits its session limit — the exact sample JSON
+		// from the task, with a non-zero exit (as real 429s from the CLI do).
+		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"duration_ms":844,"duration_api_ms":0,"num_turns":1,"result":"You've hit your session limit ` + "·" + ` resets 6pm (America/Chicago)","stop_reason":"stop_sequence","session_id":"16228fd1-bcd9-4dee-b14d-7537b3bce8ea","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0},"modelUsage":{},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","uuid":"044c12cd-40a6-4e81-8ee8-e7da2e1f9c23"}`)
+		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }
@@ -156,25 +161,25 @@ func TestClaudeExitCode0_NoOutcome(t *testing.T) {
 func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"total_cost_usd":0.0789,"duration_ms":1500}`
 
-	entry, outcome, usage, _, _ := classifyStreamJSON(line)
+	ev := classifyStreamJSON(line)
 
-	if entry.Type != LogSystem {
-		t.Errorf("want LogSystem entry, got %v", entry.Type)
+	if ev.Entry.Type != LogSystem {
+		t.Errorf("want LogSystem entry, got %v", ev.Entry.Type)
 	}
-	if outcome != "success" {
-		t.Errorf("want outcome=success, got %q", outcome)
+	if ev.Outcome != "success" {
+		t.Errorf("want outcome=success, got %q", ev.Outcome)
 	}
-	if usage == nil {
+	if ev.Usage == nil {
 		t.Fatalf("want non-nil usage, got nil")
 	}
-	if usage.InputTokens != 123 {
-		t.Errorf("want InputTokens=123, got %d", usage.InputTokens)
+	if ev.Usage.InputTokens != 123 {
+		t.Errorf("want InputTokens=123, got %d", ev.Usage.InputTokens)
 	}
-	if usage.OutputTokens != 456 {
-		t.Errorf("want OutputTokens=456, got %d", usage.OutputTokens)
+	if ev.Usage.OutputTokens != 456 {
+		t.Errorf("want OutputTokens=456, got %d", ev.Usage.OutputTokens)
 	}
-	if usage.CostUSD != 0.0789 {
-		t.Errorf("want CostUSD=0.0789, got %v", usage.CostUSD)
+	if ev.Usage.CostUSD != 0.0789 {
+		t.Errorf("want CostUSD=0.0789, got %v", ev.Usage.CostUSD)
 	}
 }
 
@@ -185,13 +190,13 @@ func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 func TestClassifyStreamJSON_ResultNoUsage(t *testing.T) {
 	line := `{"type":"result","subtype":"success","result":"OUTCOME: success"}`
 
-	_, outcome, usage, _, _ := classifyStreamJSON(line)
+	ev := classifyStreamJSON(line)
 
-	if outcome != "success" {
-		t.Errorf("want outcome=success, got %q", outcome)
+	if ev.Outcome != "success" {
+		t.Errorf("want outcome=success, got %q", ev.Outcome)
 	}
-	if usage != nil {
-		t.Errorf("want nil usage, got %+v", usage)
+	if ev.Usage != nil {
+		t.Errorf("want nil usage, got %+v", ev.Usage)
 	}
 }
 
@@ -204,9 +209,9 @@ func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 		`{"type":"tool_result"}`,
 		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result"}]}}`,
 	} {
-		_, _, usage, _, _ := classifyStreamJSON(line)
-		if usage != nil {
-			t.Errorf("line %q: want nil usage, got %+v", line, usage)
+		ev := classifyStreamJSON(line)
+		if ev.Usage != nil {
+			t.Errorf("line %q: want nil usage, got %+v", line, ev.Usage)
 		}
 	}
 }
@@ -229,6 +234,59 @@ func TestClaudeRunner_PropagatesUsageFromResultMessage(t *testing.T) {
 	if result.CostUSD != 0.05 {
 		t.Errorf("want CostUSD=0.05, got %v", result.CostUSD)
 	}
+}
+
+// TestClaudeRunner_RateLimitResetAtFromResultText verifies that a session-
+// limit 429 (the exact stream-json sample from the task) is surfaced as an
+// *ErrRateLimit with ResetAt populated from the parsed "resets 6pm
+// (America/Chicago)" clue in the result text, roughly 1 minute after 6pm
+// Chicago time (today or tomorrow, depending on when the test runs).
+func TestClaudeRunner_RateLimitResetAtFromResultText(t *testing.T) {
+	runner := helperRunner("session_limit_429")
+	logCh := make(chan LogEntry, 256)
+
+	type outcome struct {
+		r   Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), makeInput("session_limit_429"), logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+	res := <-ch
+
+	var rl *ErrRateLimit
+	if !asErrRateLimit(res.err, &rl) {
+		t.Fatalf("want *ErrRateLimit, got err=%v", res.err)
+	}
+	if rl.ResetAt.IsZero() {
+		t.Fatalf("want non-zero ResetAt, got zero")
+	}
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	inChicago := rl.ResetAt.In(chicago)
+	if inChicago.Hour() != 18 || inChicago.Minute() != 1 {
+		t.Errorf("want 18:01 America/Chicago, got %v", inChicago)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+}
+
+// asErrRateLimit is a small errors.As wrapper local to this test file to
+// avoid importing "errors" solely for one call site.
+func asErrRateLimit(err error, target **ErrRateLimit) bool {
+	rl, ok := err.(*ErrRateLimit)
+	if !ok {
+		return false
+	}
+	*target = rl
+	return true
 }
 
 func contains(s, sub string) bool {
@@ -562,9 +620,9 @@ func TestClassifyStreamJSON_SessionID(t *testing.T) {
 		`not json at all`: "",
 	}
 	for line, want := range cases {
-		_, _, _, _, sid := classifyStreamJSON(line)
-		if sid != want {
-			t.Errorf("line %q: want session %q, got %q", line, want, sid)
+		ev := classifyStreamJSON(line)
+		if ev.SessionID != want {
+			t.Errorf("line %q: want session %q, got %q", line, want, ev.SessionID)
 		}
 	}
 }

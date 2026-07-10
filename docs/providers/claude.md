@@ -147,7 +147,31 @@ Token usage and cost are parsed from the CLI's `result` stream-json message (`us
 
 ## Rate Limit Handling
 
-The runner detects 429 responses in stdout/stderr (looks for `429`, `Request rejected`, `rate limit`) and returns `ErrRateLimit`. The dispatcher will back off and retry.
+The runner detects 429 responses in stdout/stderr (looks for `429`, `Request rejected`, `rate limit`, `session limit`, `usage limit`) and returns `ErrRateLimit`. The dispatcher will back off and retry.
+
+For the CLI's structured `stream-json` terminal `"result"` event, the runner also
+checks the `api_error_status` field directly (treating `429` as an unconditional
+rate limit regardless of wording) and parses Anthropic's session/usage-limit
+message text for an exact reset time, e.g.:
+
+```
+"You've hit your session limit · resets 6pm (America/Chicago)"
+```
+
+`parseClaudeResetTime` (in `claude_reset.go`) extracts the clock time and IANA
+zone, resolves it to the next occurrence of that wall-clock time (today or
+tomorrow, whichever is later than the current time), and adds a 1-minute
+buffer — the task is then rescheduled to retry ~1 minute after the limit
+actually resets, instead of always falling back to generic exponential
+backoff. If no reset clue can be parsed, `ErrRateLimit.ResetAt` is left zero
+and the pool falls back to `BlockWithBackoff` as before.
+
+`claude_reset.go` blank-imports `time/tzdata` to embed the IANA time zone
+database into the compiled binary — the production container
+(`node:26-alpine`) does not ship `/usr/share/zoneinfo`, so without this
+`time.LoadLocation("America/Chicago")` would fail there and reset-time
+parsing would silently degrade to backoff-only in production while working
+fine in local dev.
 
 ## Dashboard: Live Claude Usage Widget
 
