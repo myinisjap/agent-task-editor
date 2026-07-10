@@ -11,6 +11,8 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-10
+
 ### Added
 - **`-all-cli` backend release image**. The release workflow now also builds
   and publishes `ghcr.io/myinisjap/agent-task-editor-backend:{version,latest}-all-cli`,
