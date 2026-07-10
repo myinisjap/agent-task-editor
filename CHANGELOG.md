@@ -11,6 +11,22 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Dispatch queue visibility now gated on worker-pool saturation** (#152).
+  - The `queue_position` field on task responses — and the "N in queue"
+    badge it drives on `TaskCard` and the task detail header — is now only
+    populated when the worker pool has no free slot (all `MAX_WORKERS` busy).
+    Previously it was set for every pickup-eligible task regardless of
+    whether a worker was actually free, so a task about to be dispatched on
+    the very next sweep could misleadingly show as "waiting."
+  - New `Pool.Saturated() bool` reports whether every worker slot is
+    currently busy; the `RunCanceller` interface consumed by `TasksHandler`
+    gained a matching `Saturated() bool` method (implemented by the agent
+    pool, the interface's only real implementation).
+  - No new WebSocket events or polling — the badge still rides the existing
+    task fetch/refresh path (`GET /tasks`, `GET /tasks/{id}`) and clears
+    automatically once a task starts running or a worker frees up.
+
 ### Added
 - **Running version + update-available check on the Health page** (#151).
   - `cmd/server` now has a `Version` build var (default `"dev"`), stamped at

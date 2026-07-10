@@ -2318,7 +2318,7 @@ export interface components {
              * @enum {integer}
              */
             priority?: -1 | 0 | 1 | 2;
-            /** @description Derived, read-time 0-based position in the current agent-pickup queue (priority DESC, created_at ASC) among tasks eligible for dispatch. Null/absent when the task is not currently pickup-eligible (e.g. blocked, paused, archived, or not on an agent-triggerable label). */
+            /** @description Derived, read-time 0-based position in the current agent-pickup queue (priority DESC, created_at ASC) among tasks eligible for dispatch, computed only when the worker pool has no free slot (all MAX_WORKERS busy). Null/absent when the task is not currently pickup-eligible (e.g. blocked, paused, archived, or not on an agent-triggerable label) or when the pool has idle capacity and the task would be dispatched immediately. */
             queue_position?: number | null;
             /** Format: date-time */
             created_at?: string;

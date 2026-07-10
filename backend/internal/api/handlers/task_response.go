@@ -139,7 +139,16 @@ func applyRollup(resp taskResponse, rollups map[string]subtaskRollup) taskRespon
 // task's 0-based rank in it, keyed by task id. Tasks not currently eligible
 // for dispatch (blocked, paused, archived, already running, etc.) are absent
 // from the map. One query serves a whole page, mirroring dependencyCountMap.
+//
+// The map is only populated when the worker pool has no free slot (i.e. the
+// task would actually have to wait its turn). When the pool has idle
+// capacity — or no pool is wired at all (h.canceller nil, e.g. in tests) —
+// an eligible task will be picked up on the next sweep rather than sitting
+// in a real queue, so it's not surfaced as "queued" and this returns nil.
 func (h *TasksHandler) queuePositionMap(ctx context.Context) map[string]int {
+	if h.canceller == nil || !h.canceller.Saturated() {
+		return nil
+	}
 	tasks, err := h.q.ListAgentPickupTasks(ctx)
 	if err != nil {
 		return nil

@@ -46,15 +46,21 @@ type noopPub struct{}
 func (noopPub) Publish(string, map[string]any) {}
 
 // fakeCanceller records the run IDs it was asked to cancel and reports whether
-// each was "active" via the found map.
+// each was "active" via the found map. saturated controls what Saturated()
+// reports (defaults to false, i.e. pool has idle capacity).
 type fakeCanceller struct {
-	called []string
-	found  map[string]bool
+	called    []string
+	found     map[string]bool
+	saturated bool
 }
 
 func (c *fakeCanceller) Cancel(runID string) bool {
 	c.called = append(c.called, runID)
 	return c.found[runID]
+}
+
+func (c *fakeCanceller) Saturated() bool {
+	return c.saturated
 }
 
 // openTestDB creates a temp SQLite database, seeds the default workflow,
@@ -1135,11 +1141,40 @@ func TestTasks_Paused_ExcludedFromAgentPickup(t *testing.T) {
 	}
 }
 
+// setupQueuePositionRouter wires GET /tasks/{id} against a canceller whose
+// Saturated() reports the given value, so tests can assert queue_position
+// gating on pool saturation.
+func setupQueuePositionRouter(t *testing.T, saturated bool) (http.Handler, *gen.Queries, string, string) {
+	t.Helper()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), noopPub{})
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID:         repoID,
+		Name:       "test-repo",
+		Path:       t.TempDir(),
+		WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}, saturated: saturated}, nil)
+	r := chi.NewRouter()
+	r.Get("/tasks/{id}", h.Get)
+	return r, q, wfID, repoID
+}
+
 // TestTasks_Get_QueuePosition verifies GET /tasks/{id} surfaces a derived
-// queue_position for a task currently eligible for agent pickup, and omits it
-// (nil) for a task that is not eligible (paused).
+// queue_position for a task currently eligible for agent pickup when the
+// worker pool is saturated, and omits it (nil) for a task that is not
+// eligible (paused) regardless of saturation.
 func TestTasks_Get_QueuePosition(t *testing.T) {
-	r, q, wfID, repoID := setupTaskRouter(t)
+	r, q, wfID, repoID := setupQueuePositionRouter(t, true)
 	ctx := context.Background()
 
 	// "plan" is an agent-trigger label in the seeded default workflow.
@@ -1168,7 +1203,7 @@ func TestTasks_Get_QueuePosition(t *testing.T) {
 		t.Fatalf("pause task: %v", err)
 	}
 
-	// Eligible task should have a non-nil queue position.
+	// Eligible task should have a non-nil queue position when the pool is saturated.
 	req := httptest.NewRequest(http.MethodGet, "/tasks/"+eligible.ID, nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -1178,13 +1213,13 @@ func TestTasks_Get_QueuePosition(t *testing.T) {
 	var got apiTask
 	_ = json.NewDecoder(w.Body).Decode(&got)
 	if got.QueuePosition == nil {
-		t.Fatalf("expected non-nil queue_position for an eligible task")
+		t.Fatalf("expected non-nil queue_position for an eligible task when pool is saturated")
 	}
 	if *got.QueuePosition < 0 {
 		t.Errorf("expected a non-negative queue_position, got %d", *got.QueuePosition)
 	}
 
-	// Paused task should have a nil queue position.
+	// Paused task should have a nil queue position even when saturated.
 	req = httptest.NewRequest(http.MethodGet, "/tasks/"+notEligible.ID, nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -1195,6 +1230,38 @@ func TestTasks_Get_QueuePosition(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&gotPaused)
 	if gotPaused.QueuePosition != nil {
 		t.Errorf("expected nil queue_position for a paused (non-eligible) task, got %d", *gotPaused.QueuePosition)
+	}
+}
+
+// TestTasks_Get_QueuePosition_NotSaturated verifies that an eligible task's
+// queue_position stays nil when the worker pool has idle capacity — it will
+// be picked up on the next sweep rather than actually waiting, so the
+// "queued" badge should not be shown.
+func TestTasks_Get_QueuePosition_NotSaturated(t *testing.T) {
+	r, q, wfID, repoID := setupQueuePositionRouter(t, false)
+	ctx := context.Background()
+
+	eligible, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Eligible",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+eligible.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	_ = json.NewDecoder(w.Body).Decode(&got)
+	if got.QueuePosition != nil {
+		t.Errorf("expected nil queue_position for an eligible task when pool has idle capacity, got %d", *got.QueuePosition)
 	}
 }
 
