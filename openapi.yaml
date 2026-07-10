@@ -126,9 +126,11 @@ components:
           description: >
             Derived, read-time 0-based position in the current agent-pickup
             queue (priority DESC, created_at ASC) among tasks eligible for
-            dispatch. Null/absent when the task is not currently
-            pickup-eligible (e.g. blocked, paused, archived, or not on an
-            agent-triggerable label).
+            dispatch, computed only when the worker pool has no free slot
+            (all MAX_WORKERS busy). Null/absent when the task is not
+            currently pickup-eligible (e.g. blocked, paused, archived, or not
+            on an agent-triggerable label) or when the pool has idle
+            capacity and the task would be dispatched immediately.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 

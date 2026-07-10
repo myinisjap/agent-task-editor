@@ -35,7 +35,7 @@ Key fields returned by task endpoints:
 | `active_agent_run_id` | UUID? | Set while an agent run is in progress |
 | `current_agent_run_id` | UUID? | ID of the most recent agent run |
 | `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
-| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first); absent when the task isn't currently pickup-eligible |
+| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
 
 ---
 

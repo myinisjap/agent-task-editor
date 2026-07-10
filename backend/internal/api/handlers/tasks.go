@@ -177,7 +177,16 @@ func applyRollup(resp taskResponse, rollups map[string]subtaskRollup) taskRespon
 // task's 0-based rank in it, keyed by task id. Tasks not currently eligible
 // for dispatch (blocked, paused, archived, already running, etc.) are absent
 // from the map. One query serves a whole page, mirroring dependencyCountMap.
+//
+// The map is only populated when the worker pool has no free slot (i.e. the
+// task would actually have to wait its turn). When the pool has idle
+// capacity — or no pool is wired at all (h.canceller nil, e.g. in tests) —
+// an eligible task will be picked up on the next sweep rather than sitting
+// in a real queue, so it's not surfaced as "queued" and this returns nil.
 func (h *TasksHandler) queuePositionMap(ctx context.Context) map[string]int {
+	if h.canceller == nil || !h.canceller.Saturated() {
+		return nil
+	}
 	tasks, err := h.q.ListAgentPickupTasks(ctx)
 	if err != nil {
 		return nil
@@ -232,11 +241,17 @@ const maxUploadSize = 50 << 20
 // maxSingleFile is the maximum size per image file (10 MB).
 const maxSingleFile = 10 << 20
 
-// RunCanceller signals an in-flight agent run to stop. It is implemented by the
-// agent pool; it may be nil in contexts (e.g. some tests) where no pool is wired,
-// in which case CancelRun reports the run as no longer active.
+// RunCanceller signals an in-flight agent run to stop and reports whether the
+// worker pool is currently saturated (no free slot). It is implemented by the
+// agent pool; it may be nil in contexts (e.g. some tests) where no pool is
+// wired, in which case CancelRun reports the run as no longer active and
+// queuePositionMap treats the pool as never saturated (queue_position stays
+// nil for every task, since there's no pool to actually queue against).
 type RunCanceller interface {
 	Cancel(runID string) bool
+	// Saturated reports whether every worker slot is currently busy, i.e.
+	// an eligible task would have to wait for one to free up.
+	Saturated() bool
 }
 
 // ReplyDispatcher starts a new agent run carrying a human's answer to a
