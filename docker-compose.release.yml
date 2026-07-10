@@ -5,12 +5,17 @@
 # Or use ./run.sh, which injects the required env vars for you (repo mount,
 # GitHub token, Claude auth) and defaults ATE_VERSION to "latest".
 #
+# The backend image also ships an "-all-cli" variant with the Gemini, Codex,
+# and Qwen CLIs preinstalled (see backend/Dockerfile's INSTALL_*_CLI build
+# args). Select it by setting ATE_CLI_SUFFIX=-all-cli (run.sh does this for
+# you via --all-cli).
+#
 # The container remaps its runtime user to PUID/PGID at startup, so files agents
 # write to bind-mounted repos are owned by your host user. run.sh sets these from
 # `id -u`/`id -g`; they default to 1000:1000.
 services:
   backend:
-    image: ghcr.io/myinisjap/agent-task-editor-backend:${ATE_VERSION:-latest}
+    image: ghcr.io/myinisjap/agent-task-editor-backend:${ATE_VERSION:-latest}${ATE_CLI_SUFFIX:-}
     pull_policy: always
     ports:
       - "8080:8080"
