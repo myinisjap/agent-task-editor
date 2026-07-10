@@ -646,8 +646,14 @@ figure for every currently-visible task rather than just the top 20.
 ## Health
 
 ### `GET /healthz`
-Returns `200 OK` with `{"status":"ok"}`. Not auth-gated. (Served at the server
-root, **not** under `/api/v1`.)
+Liveness probe. Returns `200 OK` with `{"status":"ok","version":"<version>"}`.
+`version` is the running build's version: `"dev"` for local/unstamped builds,
+or the release tag (e.g. `"v1.4.0"`) for GHCR images, stamped at build time
+via `-ldflags "-X main.Version=<tag>"` (see `backend/Dockerfile`'s `VERSION`
+build-arg and `.github/workflows/release.yml`). (Served at the server root,
+**not** under `/api/v1`. Note: like the rest of the API, this route sits
+behind `API_TOKEN`/`API_TOKENS` when one is configured — despite the name,
+it is not exempt from bearer auth.)
 
 ### `GET /health/providers`
 Provider / onboarding readiness checks. Surfaces first-run misconfiguration at a
@@ -659,7 +665,9 @@ list of checks:
   "checks": [
     { "id": "claude_cli", "name": "Claude CLI", "status": "ok", "detail": "claude CLI installed and credentials found" },
     { "id": "mcp_sidecar", "name": "MCP sidecar", "status": "warn", "detail": "MCP_SERVER_PATH is not set", "hint": "Set MCP_SERVER_PATH to the mcp-server binary to enable signal_complete/request_human for claude/qwen agents." },
-    { "id": "repo_base_dir", "name": "Repo base directory", "status": "error", "detail": "REPO_BASE_DIR is set but does not exist: /repos", "hint": "Create the directory or point REPO_BASE_DIR at an existing path." }
+    { "id": "repo_base_dir", "name": "Repo base directory", "status": "error", "detail": "REPO_BASE_DIR is set but does not exist: /repos", "hint": "Create the directory or point REPO_BASE_DIR at an existing path." },
+    { "id": "version", "name": "Version", "status": "ok", "detail": "running v1.4.0" },
+    { "id": "update_check", "name": "Update available", "status": "warn", "detail": "update available: v1.5.0 (running v1.4.0)", "hint": "https://github.com/myinisjap/agent-task-editor/releases" }
   ]
 }
 ```
@@ -672,12 +680,21 @@ list of checks:
   `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for
   providers referenced by an **enabled** agent config), the MCP sidecar binary
   (`MCP_SERVER_PATH`), gh auth (same probe as `/github/auth-status`),
-  `REPO_BASE_DIR`, and `auto_backup` (whether the automatic local-snapshot
-  scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)).
+  `REPO_BASE_DIR`, `auto_backup` (whether the automatic local-snapshot
+  scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)), and
+  `version` (the running build's version — see `GET /healthz` above).
 - Checks are cheap and side-effect free (PATH lookups, credential/config-file
   existence, env/config values). No real agent invocation is made, so a green
   `claude` row means credentials were **found**, not that a live token was
   validated. Rendered by the frontend's **Health** page.
+- `update_check` is an **opt-in** row (env var `UPDATE_CHECK_ENABLED=true` /
+  YAML `update_check_enabled: true`, default `false`) that shells out to
+  `gh release view` to compare the running version against the latest
+  published GitHub release tag. Disabled by default so the app never "phones
+  home" without the operator explicitly enabling it. It is best-effort and
+  bounded by a short timeout: if `gh` is unavailable, unauthenticated, or
+  there's no network, it degrades to `warn` ("could not check for updates")
+  rather than `error`, and never blocks or fails the rest of the response.
 
 ### `GET /metrics`
 Prometheus text-exposition-format metrics for scraping (served at the server

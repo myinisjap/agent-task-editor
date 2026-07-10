@@ -25,6 +25,12 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
+// Version is the running build's version. Left as "dev" for local/unstamped
+// builds; release images set it via -ldflags "-X main.Version=<tag>" (see
+// backend/Dockerfile's VERSION build-arg and .github/workflows/release.yml).
+// Surfaced in GET /healthz and the Health page's "Version" row.
+var Version = "dev"
+
 func main() {
 	// Configure log level from LOG_LEVEL env var (default: INFO).
 	logLevel := slog.LevelInfo
@@ -40,6 +46,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	slog.Info("agent-task-editor starting", "version", Version)
 	if cfg.APIToken != "" {
 		slog.Info("bearer auth enabled")
 	}
@@ -208,7 +215,7 @@ func main() {
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = hub
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
