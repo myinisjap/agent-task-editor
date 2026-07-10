@@ -515,6 +515,21 @@ If `REPO_BASE_DIR` is set, `path` must be within that directory.
 ### `GET /repos/{id}`
 Get a repository record.
 
+### `PATCH /repos/{id}`
+Partial update. All fields are optional and merge with the repo's existing
+values; setting `remote_url` or `workflow_id` to an empty string clears it.
+
+```json
+{
+  "name": "string",
+  "path": "/absolute/path/to/repo",
+  "remote_url": "string|null",
+  "workflow_id": "string|null",
+  "issue_sync_enabled": true,
+  "issue_sync_label": "string"
+}
+```
+
 ### `DELETE /repos/{id}`
 Unregister a repository.
 

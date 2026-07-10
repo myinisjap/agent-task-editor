@@ -12,6 +12,20 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **`openapi.yaml` now documents all served `/api/v1` routes** (#140).
+  - Added the 10 previously-undocumented paths: `PATCH /repos/{id}`,
+    `POST /tasks/{id}/rerun`, `GET /tasks/{id}/github-status`,
+    `PATCH /tasks/{id}/git-state`, `PATCH /tasks/{id}/pause`,
+    `GET /uploads/{task_id}/{filename}`, `GET /github/auth-status`,
+    `GET /workflows/{id}/export.yaml`, `PUT /workflows/{id}/yaml`, and
+    `POST /workflows/import` — regenerated `frontend/src/api/types.ts` to
+    match.
+  - New `backend/internal/api/openapi_coverage_test.go` walks the router
+    with `chi.Walk` and fails, listing every offender, if any served
+    `/api/v1` route (or one of the small allow-listed root routes — `/ws`,
+    `/metrics`, `/healthz`) is missing from `openapi.yaml`, closing the one
+    direction the existing `gen:api`/sqlc codegen-drift checks didn't cover:
+    the spec silently falling behind the router it's meant to describe.
 - **Task cards and task detail now reachable on touch devices** (#147).
   - `TaskCard`'s select checkbox, pause, archive, edit, and delete controls
     were previously only revealed via `group-hover`, making them unreachable
