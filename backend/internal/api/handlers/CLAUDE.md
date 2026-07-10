@@ -6,7 +6,12 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 
 | File | Handler | Key Dependencies |
 |---|---|---|
-| `tasks.go` | `TasksHandler` | `gen.Queries`, `workflow.Engine` |
+| `tasks.go` | `TasksHandler` (CRUD, list/search, notes, label history, transitions) | `gen.Queries`, `workflow.Engine` |
+| `task_response.go` | helpers for `TasksHandler` (wire-format wrapper + derived dependency/subtask/queue-position fields) | — |
+| `task_uploads.go` | helper for `TasksHandler` (multipart attachment save) | — |
+| `task_bulk.go` | `TasksHandler` (pause/archive toggles + bulk action) | — |
+| `task_runs.go` | `TasksHandler` (run list/get/logs/cancel/reply) | `agent` (error sentinels) |
+| `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state) | `ghclient`, `agent.PushBranch` |
 | `workflows.go` | `WorkflowsHandler` | `gen.Queries`, `*sql.DB` (for YAML import transactions) |
 | `agents.go` | `AgentsHandler` | `gen.Queries` |
 | `repos.go` | `ReposHandler` | `gen.Queries`, `repoBaseDir string` |
@@ -49,7 +54,7 @@ Issue sync (`issue_sync_enabled` / `issue_sync_label`): enabling requires both a
 
 ## Response Helpers
 
-Defined in `helpers.go` (or inline):
+Defined in `respond.go`:
 
 ```go
 JSON(w, status, v)     // marshal v as JSON with status

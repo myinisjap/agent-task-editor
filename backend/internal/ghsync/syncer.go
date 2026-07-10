@@ -28,6 +28,10 @@ type Syncer struct {
 	q        *gen.Queries
 	hub      Publisher
 	interval time.Duration
+
+	// getPR resolves the PR state for a branch. Defaults to
+	// ghclient.GetPRForBranch; overridable in tests.
+	getPR func(ctx context.Context, repoName, branch string) (state, prURL string, prNumber int, err error)
 }
 
 // New creates a Syncer that polls on the given interval.
@@ -36,6 +40,7 @@ func New(db *sql.DB, hub Publisher, interval time.Duration) *Syncer {
 		q:        gen.New(db),
 		hub:      hub,
 		interval: interval,
+		getPR:    ghclient.GetPRForBranch,
 	}
 }
 
@@ -121,7 +126,7 @@ func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 // syncTask checks the PR state for a single task and updates it if changed.
 func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 	log := slog.With("component", "ghsync", "task_id", task.ID)
-	state, prURL, _, err := ghclient.GetPRForBranch(ctx, repo.ghName, task.Branch)
+	state, prURL, _, err := s.getPR(ctx, repo.ghName, task.Branch)
 	if err != nil {
 		log.Warn("ghsync: get PR for branch", "branch", task.Branch, "err", err)
 		return

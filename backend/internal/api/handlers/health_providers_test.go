@@ -16,7 +16,7 @@ func setupHealthRouter(t *testing.T, mcpBinary, repoBaseDir, llmBaseURL, llmAPIK
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, "", 24*time.Hour, 7)
+	h := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, "", 24*time.Hour, 7, "dev", false)
 
 	// Register the agents create route too, so tests can seed agent configs
 	// and observe how provider-specific checks are (de)emitted.
@@ -107,7 +107,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 	q := gen.New(db.SQL())
 
 	t.Run("disabled when BackupDir is empty", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7)
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", false)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -126,7 +126,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 	})
 
 	t.Run("ok when BackupDir is set", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "/data/backups", 24*time.Hour, 7)
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "/data/backups", 24*time.Hour, 7, "dev", false)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -167,4 +167,48 @@ func TestProvidersEndpoint_DBSizeCheck(t *testing.T) {
 	if !found {
 		t.Fatalf("expected db_size check to be present")
 	}
+}
+
+// TestProvidersEndpoint_VersionCheck verifies the version check surfaces the
+// running build's version, and that the update_check row only appears when
+// checkForUpdates is enabled.
+func TestProvidersEndpoint_VersionCheck(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+
+	t.Run("version row present with configured version", func(t *testing.T) {
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false)
+		r := chi.NewRouter()
+		r.Get("/health/providers", h.Providers)
+		resp := getProviders(t, r)
+
+		var found bool
+		for _, c := range resp.Checks {
+			if c.ID == "version" {
+				found = true
+				if c.Status != "ok" {
+					t.Errorf("expected version status=ok, got %q", c.Status)
+				}
+				if c.Detail != "running v1.2.3" {
+					t.Errorf("expected detail 'running v1.2.3', got %q", c.Detail)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("expected version check to be present")
+		}
+		if resp.has("update_check") {
+			t.Errorf("did not expect update_check row when checkForUpdates is disabled")
+		}
+	})
+
+	t.Run("update_check row present when checkForUpdates is enabled", func(t *testing.T) {
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", true)
+		r := chi.NewRouter()
+		r.Get("/health/providers", h.Providers)
+		resp := getProviders(t, r)
+		if !resp.has("update_check") {
+			t.Errorf("expected update_check row when checkForUpdates is enabled")
+		}
+	})
 }

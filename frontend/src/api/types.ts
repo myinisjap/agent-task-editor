@@ -2080,6 +2080,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Liveness probe
+         * @description Simple liveness probe, always 200 OK. Reports the running build's version ("dev" for local/unstamped builds, or the release tag e.g. "v1.4.0" for GHCR images, stamped at build time via `-ldflags "-X main.Version=<tag>"`). Deliberately fast/side-effect free — unlike /health/providers, it never shells out to gh or touches the network. Served at the server root, not under /api/v1.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Liveness status and running version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example ok */
+                            status?: string;
+                            /** @example v1.4.0 */
+                            version?: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/providers": {
         parameters: {
             query?: never;
@@ -2089,7 +2133,7 @@ export interface paths {
         };
         /**
          * Provider / onboarding readiness checks
-         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, and auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
+         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md), and version (the running build's version — see /healthz). Also includes an opt-in update_check row (UPDATE_CHECK_ENABLED, default false) that compares the running version against the latest GitHub release tag; best-effort and never fails the response (degrades to warn when offline or gh is unavailable). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
          */
         get: {
             parameters: {

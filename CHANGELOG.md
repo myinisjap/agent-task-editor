@@ -28,6 +28,53 @@ this file's section for that version as the release notes.
     automatically once a task starts running or a worker frees up.
 
 ### Added
+- **Running version + update-available check on the Health page** (#151).
+  - `cmd/server` now has a `Version` build var (default `"dev"`), stamped at
+    build time via `-ldflags "-X main.Version=<tag>"`.
+    `backend/Dockerfile` exposes this as an `ARG VERSION=dev`, and
+    `.github/workflows/release.yml` passes `VERSION=${{ github.ref_name }}`
+    as a Docker build-arg so release images are stamped with the git tag;
+    local `docker compose build` leaves it at the `dev` default.
+  - `GET /healthz` now returns `{"status":"ok","version":"<version>"}`
+    (previously just `{"status":"ok"}`, sourced from Go's VCS build info
+    rather than the release tag). `/healthz` was folded into
+    `HealthHandler` (a new `Healthz` method) so it can read the
+    injected version; it remains a fast, side-effect-free liveness probe.
+  - `GET /api/v1/health/providers` (and the frontend's **Health** page) now
+    includes a `version` check row showing the running build's version.
+  - New opt-in `update_check` row (`UPDATE_CHECK_ENABLED` env var /
+    `update_check_enabled` YAML key, default `false`) shells out to
+    `gh release view` to compare the running version against the latest
+    published GitHub release tag, warning when an update is available. It
+    is disabled by default so the app never phones home without the
+    operator explicitly opting in, and is best-effort: any failure (no
+    network, `gh` not installed/authenticated, dev build) degrades to a
+    `warn` status ("could not check for updates") rather than blocking or
+    failing the endpoint — bounded by a 5s timeout so a hung `gh` call
+    can't stall the Health page.
+- **Unit tests for `internal/ghclient` and `internal/ghsync`** (#154).
+  - `ghclient`: the `gh` CLI invocation is now routed through a small
+    package-level `runGH` seam (defaulting to the real `exec.CommandContext`)
+    so tests can feed canned `gh` output without shelling out to a real
+    binary. New `ghclient_test.go` covers `GetPRForBranch`'s state
+    normalization (`OPEN`/`MERGED`/`CLOSED` → `pr_open`/`pr_merged`/
+    `pr_closed`), the "no PR yet" branch-exists-vs-not paths, `CreatePR`'s
+    idempotent existing-PR short-circuit and the "already exists" race,
+    `ListOpenIssues`'s label filtering, and `ParseGitHubName` (HTTPS/SSH,
+    `.git` suffix, and junk-input rejection).
+  - `ghsync`: `Syncer` now has an unexported `getPR` field (defaulting to
+    `ghclient.GetPRForBranch` in `New`) so tests can drive `syncTask`/`sweep`
+    against a fake PR lookup while exercising the real merged-PR cleanup
+    path against a temp git repo. New `syncer_test.go` asserts that a
+    `pr_merged` transition removes the task's worktree and force-deletes its
+    local branch, that a `pr_closed`-without-merge transition leaves the
+    worktree/branch untouched, that a no-op sync doesn't publish or write,
+    that a previously-stored PR URL survives a state regression to a
+    URL-less state, and that `sweep` skips repos with no GitHub remote
+    without ever invoking the PR lookup.
+  - No exported API changed — both seams (`runGH`, `Syncer.getPR`) are
+    unexported implementation details with default values equal to prior
+    behavior.
 - **Agent log retention / pruning, and DB size on the Health page** (#150).
   - `LOG_RETENTION_DAYS` (env or `log_retention_days` in the YAML config)
     enables a built-in pruner that periodically deletes `agent_logs` rows
@@ -148,6 +195,19 @@ this file's section for that version as the release notes.
   - `?token=<API_TOKEN>` is kept as a **deprecated fallback** for existing
     setups/non-browser clients — each use is now logged as a warning
     server-side — and may be removed in a future release.
+
+### Changed
+- **Split the 1,400-line `handlers/tasks.go` into `tasks.go` /
+  `task_response.go` / `task_uploads.go` / `task_bulk.go` / `task_runs.go` /
+  `task_pr.go` by concern** (#156) — pure code-move refactor, no behavior,
+  route, or handler-signature changes. `tasks.go` keeps CRUD, list/search,
+  notes, and label transitions; `task_response.go` holds the wire-format
+  wrapper and derived dependency/subtask/queue-position helpers;
+  `task_uploads.go` holds the multipart attachment-save helper;
+  `task_bulk.go` holds pause/archive toggles and the bulk action;
+  `task_runs.go` holds the run list/get/logs/cancel/reply endpoints; and
+  `task_pr.go` holds diff/PR/PR-URL/GitHub-status/git-state.
+
 ### Fixed
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a

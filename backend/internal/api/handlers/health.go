@@ -4,34 +4,23 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"runtime/debug"
 )
 
-// version reads the VCS revision Go embeds at build time. No -ldflags needed:
-// `go build`/`go run` populate vcs.revision and vcs.modified automatically.
-func version() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown"
+// Healthz is a liveness probe: always 200 OK, reporting the running build's
+// version ("dev" for unstamped local builds, or the release tag for images
+// built with -ldflags "-X main.Version=..."). Deliberately simple/fast — it
+// must never block on network or external processes (see HealthHandler.
+// Providers for the richer, gh-shelling checks rendered on the Health page).
+//
+// GET /healthz
+func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
+	v := h.version
+	if v == "" {
+		v = "dev"
 	}
-	rev, modified := "unknown", ""
-	for _, s := range info.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			rev = s.Value
-		case "vcs.modified":
-			if s.Value == "true" {
-				modified = "-dirty"
-			}
-		}
-	}
-	return rev + modified
-}
-
-func Health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":  "ok",
-		"version": version(),
+		"version": v,
 	})
 }

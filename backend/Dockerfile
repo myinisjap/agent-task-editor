@@ -6,8 +6,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+# VERSION is stamped into cmd/server's `main.Version` via -ldflags, so
+# GET /healthz and the Health page's "Version" row report the running
+# release tag instead of the default "dev" (see .github/workflows/release.yml,
+# which passes VERSION=<git tag> as a build-arg). Left as "dev" for local
+# `docker compose build` invocations that don't set it.
+ARG VERSION=dev
 # Build both binaries — mcp-server is the signal_complete/request_human sidecar
-RUN go build -o bin/server ./cmd/server && \
+RUN go build -ldflags "-X main.Version=${VERSION}" -o bin/server ./cmd/server && \
     go build -o bin/mcp-server ./cmd/mcp-server
 
 # Use node:26-alpine as the runtime so the claude CLI is available
