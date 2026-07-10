@@ -1,4 +1,5 @@
 import type { Task, AgentLog } from './client'
+import { getApiToken, notifyUnauthorized } from './authToken'
 
 export type WSEvent =
   | { type: 'task.label_changed'; payload: { task_id: string; from: string; to: string; note?: string } }
@@ -38,7 +39,7 @@ class WSClient {
     }
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const token = import.meta.env.VITE_API_TOKEN
+    const token = getApiToken()
     const base = import.meta.env.BASE_URL.replace(/\/$/, '')
 
     // If a token is configured, exchange it for a short-lived, single-use
@@ -55,6 +56,10 @@ class WSClient {
         if (res.ok) {
           const { ticket } = await res.json()
           if (ticket) ticketParam = `?ticket=${encodeURIComponent(ticket)}`
+        } else if (res.status === 401) {
+          // Wrong/expired token — clear it and let ApiTokenGate prompt for a
+          // new one, even if the user is only on a WS-only page.
+          notifyUnauthorized()
         }
       } catch {
         // Fall through with no ticket — the connection will 401 and the

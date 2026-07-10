@@ -110,6 +110,16 @@ func (p *Pool) unregisterRun(runID string) {
 	p.mu.Unlock()
 }
 
+// Saturated reports whether every worker slot is currently busy running a
+// job. Used to gate the "queued" UI signal (see TasksHandler.queuePositionMap)
+// — a pickup-eligible task's position is only meaningful to surface as
+// "waiting" when there is no free worker to run it immediately.
+func (p *Pool) Saturated() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.running) >= p.maxWorkers
+}
+
 // Start launches worker goroutines. Blocks until ctx is cancelled.
 func (p *Pool) Start(ctx context.Context) {
 	for i := 0; i < p.maxWorkers; i++ {

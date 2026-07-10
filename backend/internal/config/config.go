@@ -19,6 +19,11 @@ type Config struct {
 	Port        string `yaml:"port"`
 	CORSOrigins string `yaml:"cors_origins"`
 	APIToken    string `yaml:"api_token"`
+	// APITokens maps an actor name to a bearer token, allowing multiple
+	// named credentials so human-triggered transitions can record *who*
+	// approved them (see task_label_history.actor_id). APIToken above
+	// remains supported as a legacy/anonymous fallback (actor name "").
+	APITokens map[string]string `yaml:"api_tokens"`
 	// MetricsToken optionally gates GET /metrics with its own bearer token,
 	// independent of APIToken. Empty (the default) leaves /metrics
 	// unauthenticated, matching most Prometheus scrape setups that can't
@@ -44,20 +49,40 @@ type Config struct {
 	// BackupKeep is how many of the most recent snapshots to retain in
 	// BackupDir before pruning older ones.
 	BackupKeep int `yaml:"backup_keep"`
+
+	// LogRetentionDays, if > 0, enables the built-in agent-log pruner: logs
+	// belonging to runs in a terminal status whose completed_at is older than
+	// this many days are deleted on a schedule (see internal/logretention).
+	// 0 (default) disables pruning entirely - behavior is unchanged from
+	// today (logs are kept forever) unless explicitly opted in.
+	LogRetentionDays int `yaml:"log_retention_days"`
+	// LogRetentionInterval is how often the pruner runs. Only meaningful when
+	// LogRetentionDays > 0.
+	LogRetentionInterval time.Duration `yaml:"log_retention_interval"`
+
+	// UpdateCheckEnabled, when true, opts into the Health page's "update
+	// available" check, which shells out to `gh release view` to compare the
+	// running version against the latest GitHub release tag. Disabled by
+	// default so the app never phones home without the operator explicitly
+	// opting in (and already having gh/network configured). See
+	// internal/health.updateCheck.
+	UpdateCheckEnabled bool `yaml:"update_check_enabled"`
 }
 
 // Defaults returns a Config populated with safe defaults.
 func Defaults() Config {
 	return Config{
-		DBPath:             "agent-task-editor.db",
-		Port:               "8080",
-		CORSOrigins:        "*",
-		LLMBaseURL:         "https://api.openai.com/v1",
-		MaxWorkers:         5,
-		GitHubSyncInterval: 30 * time.Second,
-		IssueSyncInterval:  60 * time.Second,
-		BackupInterval:     24 * time.Hour,
-		BackupKeep:         7,
+		DBPath:               "agent-task-editor.db",
+		Port:                 "8080",
+		CORSOrigins:          "*",
+		LLMBaseURL:           "https://api.openai.com/v1",
+		MaxWorkers:           5,
+		GitHubSyncInterval:   30 * time.Second,
+		IssueSyncInterval:    60 * time.Second,
+		BackupInterval:       24 * time.Hour,
+		BackupKeep:           7,
+		LogRetentionDays:     0,
+		LogRetentionInterval: 1 * time.Hour,
 	}
 }
 
@@ -86,6 +111,25 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("API_TOKEN"); v != "" {
 		cfg.APIToken = v
+	}
+	if v := os.Getenv("API_TOKENS"); v != "" {
+		if cfg.APITokens == nil {
+			cfg.APITokens = make(map[string]string)
+		}
+		for _, pair := range strings.Split(v, ",") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			name, token, ok := strings.Cut(pair, ":")
+			name = strings.TrimSpace(name)
+			token = strings.TrimSpace(token)
+			if !ok || name == "" || token == "" {
+				slog.Warn("skipping malformed API_TOKENS entry", "entry", pair)
+				continue
+			}
+			cfg.APITokens[name] = token
+		}
 	}
 	if v := os.Getenv("METRICS_TOKEN"); v != "" {
 		cfg.MetricsToken = v
@@ -144,6 +188,30 @@ func Load(path string) (Config, error) {
 			cfg.BackupKeep = n
 		} else {
 			slog.Warn("invalid BACKUP_KEEP; using default", "value", v, "default", cfg.BackupKeep)
+		}
+	}
+	if v := os.Getenv("LOG_RETENTION_DAYS"); v != "" {
+		// n >= 0 (unlike BackupKeep's n > 0): 0 is the valid "disabled"
+		// sentinel and must be settable via env explicitly, not just left at
+		// the zero-value default.
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.LogRetentionDays = n
+		} else {
+			slog.Warn("invalid LOG_RETENTION_DAYS; using default", "value", v, "default", cfg.LogRetentionDays)
+		}
+	}
+	if v := os.Getenv("LOG_RETENTION_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.LogRetentionInterval = d
+		} else {
+			slog.Warn("invalid LOG_RETENTION_INTERVAL; using default", "value", v, "default", cfg.LogRetentionInterval)
+		}
+	}
+	if v := os.Getenv("UPDATE_CHECK_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.UpdateCheckEnabled = b
+		} else {
+			slog.Warn("invalid UPDATE_CHECK_ENABLED; using default", "value", v, "default", cfg.UpdateCheckEnabled)
 		}
 	}
 

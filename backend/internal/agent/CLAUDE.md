@@ -18,8 +18,9 @@ The agent package owns everything to do with running AI agents: the provider abs
 | `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown; `RepoGitLock` (per-repo git serialization) |
 | `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (Mechanism 2, issue #82) |
 | `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure |
-| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `is429Line`/`isTransientLine` are thin wrappers; `classifyResultMessage` prefers the claude/qwen stream-json typed `result` event over raw line sniffing |
+| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `is429Line`/`isTransientLine` are thin wrappers; `classifyResultMessage` (in `claude.go`) prefers the claude/qwen stream-json typed `result` event's `api_error_status` field / text over raw line sniffing |
 | `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers |
+| `claude_reset.go` | `parseClaudeResetTime` — parses Claude's "resets 6pm (America/Chicago)"-style session/usage-limit text into an exact `ErrRateLimit.ResetAt` (+1min retry buffer), so the pool can schedule an exact retry instead of falling back to `BlockWithBackoff`. Blank-imports `time/tzdata` (embeds IANA tzdata into the binary — the prod container has no `/usr/share/zoneinfo`) |
 
 ## Branch-per-task / Worktrees
 

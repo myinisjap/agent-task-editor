@@ -31,6 +31,16 @@ func TestDefaults_PopulatesRequiredFields(t *testing.T) {
 	}
 }
 
+func TestDefaults_LogRetentionDisabledByDefault(t *testing.T) {
+	cfg := config.Defaults()
+	if cfg.LogRetentionDays != 0 {
+		t.Errorf("LogRetentionDays must default to 0 (disabled), got %d", cfg.LogRetentionDays)
+	}
+	if cfg.LogRetentionInterval <= 0 {
+		t.Errorf("LogRetentionInterval must have a positive default, got %v", cfg.LogRetentionInterval)
+	}
+}
+
 func TestLoad_EmptyPath_ReturnsDefaults(t *testing.T) {
 	cfg, err := config.Load("")
 	if err != nil {
@@ -206,6 +216,182 @@ func TestLoad_InvalidBackupInterval_UsesDefault(t *testing.T) {
 	}
 	if cfg.BackupInterval != config.Defaults().BackupInterval {
 		t.Errorf("expected default backup interval on invalid input, got %v", cfg.BackupInterval)
+	}
+}
+
+func TestLoad_LogRetentionEnvVarsOverrideDefaults(t *testing.T) {
+	t.Setenv("LOG_RETENTION_DAYS", "30")
+	t.Setenv("LOG_RETENTION_INTERVAL", "2h")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.LogRetentionDays != 30 {
+		t.Errorf("expected log retention days 30, got %d", cfg.LogRetentionDays)
+	}
+	if cfg.LogRetentionInterval != 2*time.Hour {
+		t.Errorf("expected log retention interval 2h, got %v", cfg.LogRetentionInterval)
+	}
+}
+
+func TestLoad_LogRetentionDaysZero_ExplicitlyDisables(t *testing.T) {
+	// 0 is a valid, explicit "disabled" value and must be settable via env,
+	// not just left at the zero-value default.
+	t.Setenv("LOG_RETENTION_DAYS", "0")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.LogRetentionDays != 0 {
+		t.Errorf("expected log retention days 0, got %d", cfg.LogRetentionDays)
+	}
+}
+
+func TestLoad_InvalidLogRetentionDays_UsesDefault(t *testing.T) {
+	t.Setenv("LOG_RETENTION_DAYS", "not-a-number")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.LogRetentionDays != config.Defaults().LogRetentionDays {
+		t.Errorf("expected default log retention days on invalid input, got %d", cfg.LogRetentionDays)
+	}
+}
+
+func TestLoad_InvalidLogRetentionInterval_UsesDefault(t *testing.T) {
+	t.Setenv("LOG_RETENTION_INTERVAL", "not-a-duration")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.LogRetentionInterval != config.Defaults().LogRetentionInterval {
+		t.Errorf("expected default log retention interval on invalid input, got %v", cfg.LogRetentionInterval)
+	}
+}
+
+func TestLoad_LogRetentionFromYAML(t *testing.T) {
+	t.Setenv("LOG_RETENTION_DAYS", "")
+	t.Setenv("LOG_RETENTION_INTERVAL", "")
+
+	f, err := os.CreateTemp("", "config-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+
+	_, _ = f.WriteString("log_retention_days: 14\nlog_retention_interval: 30m\n")
+	_ = f.Close()
+
+	cfg, err := config.Load(f.Name())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.LogRetentionDays != 14 {
+		t.Errorf("expected log retention days 14, got %d", cfg.LogRetentionDays)
+	}
+	if cfg.LogRetentionInterval != 30*time.Minute {
+		t.Errorf("expected log retention interval 30m, got %v", cfg.LogRetentionInterval)
+	}
+}
+
+func TestLoad_NoTokens_DefaultsToEmpty(t *testing.T) {
+	t.Setenv("API_TOKEN", "")
+	t.Setenv("API_TOKENS", "")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.APIToken != "" {
+		t.Errorf("expected empty APIToken by default, got %q", cfg.APIToken)
+	}
+	if len(cfg.APITokens) != 0 {
+		t.Errorf("expected empty/nil APITokens by default, got %v", cfg.APITokens)
+	}
+}
+
+func TestLoad_APITokensEnvVar_Parsed(t *testing.T) {
+	t.Setenv("API_TOKENS", "alice:tok1,bob:tok2")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.APITokens["alice"] != "tok1" {
+		t.Errorf("expected alice:tok1, got %q", cfg.APITokens["alice"])
+	}
+	if cfg.APITokens["bob"] != "tok2" {
+		t.Errorf("expected bob:tok2, got %q", cfg.APITokens["bob"])
+	}
+	if len(cfg.APITokens) != 2 {
+		t.Errorf("expected exactly 2 tokens, got %d: %v", len(cfg.APITokens), cfg.APITokens)
+	}
+}
+
+func TestLoad_APITokensEnvVar_TrimsWhitespaceAndSkipsMalformed(t *testing.T) {
+	t.Setenv("API_TOKENS", " alice : tok1 , malformed-entry, bob:tok2, ,")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.APITokens["alice"] != "tok1" {
+		t.Errorf("expected alice:tok1 (trimmed), got %q", cfg.APITokens["alice"])
+	}
+	if cfg.APITokens["bob"] != "tok2" {
+		t.Errorf("expected bob:tok2, got %q", cfg.APITokens["bob"])
+	}
+	if len(cfg.APITokens) != 2 {
+		t.Errorf("expected malformed entries to be skipped, got %v", cfg.APITokens)
+	}
+}
+
+func TestLoad_APITokensEnvVar_OverridesYAML(t *testing.T) {
+	f, err := os.CreateTemp("", "config-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+
+	_, _ = f.WriteString("api_tokens:\n  alice: yaml-tok\n  carol: carol-tok\n")
+	_ = f.Close()
+
+	t.Setenv("API_TOKENS", "alice:env-tok")
+
+	cfg, err := config.Load(f.Name())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.APITokens["alice"] != "env-tok" {
+		t.Errorf("expected env var to override YAML for alice, got %q", cfg.APITokens["alice"])
+	}
+	if cfg.APITokens["carol"] != "carol-tok" {
+		t.Errorf("expected non-overridden YAML entry to be preserved, got %q", cfg.APITokens["carol"])
+	}
+}
+
+func TestLoad_APITokensFromYAML(t *testing.T) {
+	t.Setenv("API_TOKENS", "")
+
+	f, err := os.CreateTemp("", "config-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+
+	_, _ = f.WriteString("api_tokens:\n  alice: tok1\n  bob: tok2\n")
+	_ = f.Close()
+
+	cfg, err := config.Load(f.Name())
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.APITokens["alice"] != "tok1" || cfg.APITokens["bob"] != "tok2" {
+		t.Errorf("expected tokens from YAML, got %v", cfg.APITokens)
 	}
 }
 

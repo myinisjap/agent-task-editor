@@ -17,12 +17,20 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
+	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/tasksource"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
+
+// Version is the running build's version. Left as "dev" for local/unstamped
+// builds; release images set it via -ldflags "-X main.Version=<tag>" (see
+// backend/Dockerfile's VERSION build-arg and .github/workflows/release.yml).
+// Surfaced in GET /healthz and the Health page's "Version" row.
+var Version = "dev"
 
 func main() {
 	// Configure log level from LOG_LEVEL env var (default: INFO).
@@ -39,6 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	slog.Info("agent-task-editor starting", "version", Version)
 	if cfg.APIToken != "" {
 		slog.Info("bearer auth enabled")
 	}
@@ -143,6 +152,22 @@ func main() {
 		}
 	}
 
+	// Status write-back to the source GitHub issue for imported tasks (opt-in
+	// per repo via issue_writeback_enabled). This instance backs the workflow
+	// engine's OnLeaveNotReady hook below; ghsync and the tasks handler
+	// construct their own writeback.Writeback internally (see ghsync.New and
+	// handlers.NewTasksHandler) since they own their own *gen.Queries.
+	// See docs/task-sources.md.
+	issueWriteback := writeback.New(termQ)
+	engine.OnLeaveNotReady = func(ctx context.Context, task gen.Task) {
+		repo, err := termQ.GetRepo(ctx, task.RepoID)
+		if err != nil {
+			slog.Warn("onLeaveNotReady: get repo", "task_id", task.ID, "err", err)
+			return
+		}
+		issueWriteback.OnLeaveNotReady(ctx, task, repo)
+	}
+
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
 	backendURL := "http://localhost:" + cfg.Port
 
@@ -207,7 +232,7 @@ func main() {
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = hub
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
@@ -244,12 +269,28 @@ func main() {
 		slog.Info("automatic local backups disabled; set BACKUP_DIR to enable (see docs/backup.md)")
 	}
 
+	// Agent-log retention: optional. When LOG_RETENTION_DAYS > 0, periodically
+	// deletes agent_logs rows for terminal-status runs (completed/failed/
+	// waiting_human) whose completed_at is older than that many days.
+	// Disabled by default so DB growth behavior is unchanged unless
+	// explicitly opted in. See docs/backup.md#agent-log-retention.
+	var logPruner *logretention.Pruner
+	if cfg.LogRetentionDays > 0 {
+		logPruner = logretention.New(termQ, cfg.LogRetentionDays, cfg.LogRetentionInterval)
+		slog.Info("agent log retention enabled", "retention_days", cfg.LogRetentionDays, "interval", cfg.LogRetentionInterval)
+	} else {
+		slog.Info("agent log retention disabled; set LOG_RETENTION_DAYS to enable (see docs/backup.md#agent-log-retention)")
+	}
+
 	go pool.Start(ctx)
 	go dispatcher.Run(ctx)
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)
 	if backupScheduler != nil {
 		go backupScheduler.Run(ctx)
+	}
+	if logPruner != nil {
+		go logPruner.Run(ctx)
 	}
 
 	go func() {
