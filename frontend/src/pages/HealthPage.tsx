@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type ProviderCheck, type ProviderCheckStatus } from '../api/client'
+import { api, authedRawFetch, type ProviderCheck, type ProviderCheckStatus } from '../api/client'
 
 const STATUS_META: Record<ProviderCheckStatus, { dot: string; label: string; labelCls: string }> = {
   ok: { dot: 'bg-green-500', label: 'Ready', labelCls: 'text-green-400' },
@@ -41,11 +41,7 @@ export default function HealthPage() {
     setBackupLoading(true)
     setBackupError('')
     try {
-      const res = await fetch(api.backup.url(), {
-        headers: import.meta.env.VITE_API_TOKEN
-          ? { Authorization: `Bearer ${import.meta.env.VITE_API_TOKEN}` }
-          : {},
-      })
+      const res = await authedRawFetch(api.backup.url())
       if (!res.ok) {
         const body = await res.json().catch(() => null) as { error?: string } | null
         throw new Error(body?.error ?? `${res.status} ${res.statusText}`)

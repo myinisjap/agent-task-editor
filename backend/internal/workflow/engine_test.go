@@ -310,3 +310,57 @@ func TestFeedbackLoop_ReviewToWork(t *testing.T) {
 		t.Errorf("expected work after rejection, got %s", updated.Label)
 	}
 }
+
+func TestTransition_OnLeaveNotReady_FiresOnceWhenLeavingNotReady(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+
+	var calls []string
+	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) {
+		calls = append(calls, task.ID)
+	}
+
+	task := createTestTask(t, db, "not_ready", wfID)
+
+	if err := engine.Transition(context.Background(), task.ID, "plan", workflow.TriggerHuman, "human-1", ""); err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+
+	if len(calls) != 1 || calls[0] != task.ID {
+		t.Fatalf("expected OnLeaveNotReady to fire once for task %s, got %v", task.ID, calls)
+	}
+}
+
+func TestTransition_OnLeaveNotReady_DoesNotFireOnOtherTransitions(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+
+	var calls []string
+	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) {
+		calls = append(calls, task.ID)
+	}
+
+	// review -> work is a feedback-loop transition unrelated to not_ready.
+	task := createTestTask(t, db, "review", wfID)
+	if err := engine.Transition(context.Background(), task.ID, "work", workflow.TriggerHuman, "reviewer-1", ""); err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+
+	if len(calls) != 0 {
+		t.Fatalf("expected OnLeaveNotReady not to fire for review->work, got %v", calls)
+	}
+}
+
+func TestTransition_OnLeaveNotReady_NilCallbackIsSafe(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+	// engine.OnLeaveNotReady left nil — Transition must not panic.
+
+	task := createTestTask(t, db, "not_ready", wfID)
+	if err := engine.Transition(context.Background(), task.ID, "plan", workflow.TriggerHuman, "human-1", ""); err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+}

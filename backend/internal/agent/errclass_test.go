@@ -18,6 +18,8 @@ func TestClassifyLine(t *testing.T) {
 		{"rate limit words", "you hit the rate limit", ClassRateLimit},
 		{"rate_limit token", "error type rate_limit_error", ClassRateLimit},
 		{"gemini resource_exhausted", `{"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded"}`, ClassRateLimit},
+		{"claude session limit", "You've hit your session limit · resets 6pm (America/Chicago)", ClassRateLimit},
+		{"claude usage limit", "You've hit your usage limit for this period", ClassRateLimit},
 
 		// Auth.
 		{"not logged in", "Error: Not logged in", ClassAuth},
@@ -126,10 +128,19 @@ func TestClassifyResultMessage(t *testing.T) {
 			line: `{"type":"result","subtype":"","is_error":true,"result":"upstream 503 service unavailable"}`,
 			want: ClassTransient,
 		},
+		{
+			// The exact sample from the task: Claude's session-limit message
+			// contains no "429"/"rate limit" substring in the text itself —
+			// only the structured api_error_status field carries the 429.
+			// classifyResultMessage must treat that field as authoritative.
+			name: "session limit result with api_error_status 429",
+			line: `{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You've hit your session limit · resets 6pm (America/Chicago)"}`,
+			want: ClassRateLimit,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, _, got, _ := classifyStreamJSON(tc.line)
+			got := classifyStreamJSON(tc.line).Class
 			if got != tc.want {
 				t.Errorf("classifyStreamJSON(%q) classification = %q, want %q", tc.line, got, tc.want)
 			}
@@ -147,7 +158,7 @@ func TestClassifyStreamJSON_NonResultNoClassification(t *testing.T) {
 		`{"type":"tool_result"}`,
 		`not json at all`,
 	} {
-		if _, _, _, class, _ := classifyStreamJSON(line); class != ClassNone {
+		if class := classifyStreamJSON(line).Class; class != ClassNone {
 			t.Errorf("line %q: want ClassNone, got %q", line, class)
 		}
 	}

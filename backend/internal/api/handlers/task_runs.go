@@ -12,11 +12,17 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
-// RunCanceller signals an in-flight agent run to stop. It is implemented by the
-// agent pool; it may be nil in contexts (e.g. some tests) where no pool is wired,
-// in which case CancelRun reports the run as no longer active.
+// RunCanceller signals an in-flight agent run to stop and reports whether the
+// worker pool is currently saturated (no free slot). It is implemented by the
+// agent pool; it may be nil in contexts (e.g. some tests) where no pool is
+// wired, in which case CancelRun reports the run as no longer active and
+// queuePositionMap treats the pool as never saturated (queue_position stays
+// nil for every task, since there's no pool to actually queue against).
 type RunCanceller interface {
 	Cancel(runID string) bool
+	// Saturated reports whether every worker slot is currently busy, i.e.
+	// an eligible task would have to wait for one to free up.
+	Saturated() bool
 }
 
 // ReplyDispatcher starts a new agent run carrying a human's answer to a

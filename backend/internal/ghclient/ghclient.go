@@ -199,6 +199,51 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 	return issues, nil
 }
 
+// AddIssueLabel adds a label to a GitHub issue via the gh CLI. Used by the
+// write-back feature to signal "an agent is already working on this" without
+// requiring the label to previously exist on the issue (it must already exist
+// on the repo, though — `gh issue edit --add-label` fails if the label itself
+// hasn't been created in the repo's label set).
+func AddIssueLabel(ctx context.Context, repoName string, issueNumber int, label string) error {
+	metrics.GhCallsTotal.WithLabelValues("issue_label_add").Inc()
+	out, err := runGH(ctx, "issue", "edit", fmt.Sprint(issueNumber),
+		"--repo", repoName,
+		"--add-label", label,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh issue edit --add-label: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// CommentOnIssue posts a comment on a GitHub issue via the gh CLI. Used by the
+// write-back feature to link the PR opened for an imported issue.
+func CommentOnIssue(ctx context.Context, repoName string, issueNumber int, body string) error {
+	metrics.GhCallsTotal.WithLabelValues("issue_comment").Inc()
+	out, err := runGH(ctx, "issue", "comment", fmt.Sprint(issueNumber),
+		"--repo", repoName,
+		"--body", body,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh issue comment: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// CloseIssueWithComment closes a GitHub issue and posts a comment in the same
+// call via the gh CLI. Used by the write-back feature once a task's PR merges.
+func CloseIssueWithComment(ctx context.Context, repoName string, issueNumber int, body string) error {
+	metrics.GhCallsTotal.WithLabelValues("issue_close").Inc()
+	out, err := runGH(ctx, "issue", "close", fmt.Sprint(issueNumber),
+		"--repo", repoName,
+		"--comment", body,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh issue close: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ParseGitHubName extracts the "org/repo" name from a GitHub remote URL.
 // It handles both HTTPS (https://github.com/org/repo[.git]) and SSH
 // (git@github.com:org/repo[.git]) formats.

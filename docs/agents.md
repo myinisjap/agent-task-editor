@@ -246,9 +246,13 @@ Priority can be set on task create/update via the API (`priority` field on
 `POST /tasks` and `PATCH /tasks/{id}`) and edited from the board (task card
 and task-detail edit forms). The board also surfaces a derived, read-time
 `queue_position` on each task response — its current 0-based rank in the
-priority-ordered pickup queue — shown as an "N in queue" hint on cards that
-are eligible but waiting for a free worker; it's absent for tasks not
-currently pickup-eligible.
+priority-ordered pickup queue — shown as an "N in queue" hint on cards. It is
+**only populated when the worker pool is saturated** (every `MAX_WORKERS`
+slot is busy with an in-flight run); a task that is pickup-eligible but would
+be dispatched immediately because a worker is free gets `null`, same as a
+task that isn't pickup-eligible at all (paused, archived, blocked, etc.).
+This keeps the badge meaning "actually waiting for a free worker" rather than
+just "technically eligible."
 
 ## Session Resume
 

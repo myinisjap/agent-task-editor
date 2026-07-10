@@ -35,7 +35,7 @@ Key fields returned by task endpoints:
 | `active_agent_run_id` | UUID? | Set while an agent run is in progress |
 | `current_agent_run_id` | UUID? | ID of the most recent agent run |
 | `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
-| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first); absent when the task isn't currently pickup-eligible |
+| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
 
 ---
 
@@ -515,6 +515,22 @@ If `REPO_BASE_DIR` is set, `path` must be within that directory.
 ### `GET /repos/{id}`
 Get a repository record.
 
+### `PATCH /repos/{id}`
+Partial update. All fields are optional and merge with the repo's existing
+values; setting `remote_url` or `workflow_id` to an empty string clears it.
+
+```json
+{
+  "name": "string",
+  "path": "/absolute/path/to/repo",
+  "remote_url": "string|null",
+  "workflow_id": "string|null",
+  "issue_sync_enabled": true,
+  "issue_sync_label": "string",
+  "issue_writeback_enabled": true
+}
+```
+
 ### `DELETE /repos/{id}`
 Unregister a repository.
 
@@ -738,7 +754,7 @@ In addition to the standard Go runtime/process collectors (`go_*`,
 **Sync loops**
 - `ate_ghsync_sweep_duration_seconds` (histogram) — GitHub PR-status sweep duration.
 - `ate_tasksource_sweep_duration_seconds` (histogram) — GitHub issue-import sweep duration.
-- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`), an early warning signal for GitHub API rate limiting.
+- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`, `issue_label_add`, `issue_comment`, `issue_close`), an early warning signal for GitHub API rate limiting.
 
 ---
 

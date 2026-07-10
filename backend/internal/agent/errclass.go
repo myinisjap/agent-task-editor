@@ -59,6 +59,16 @@ var classPatterns = []classPattern{
 	{"request rejected", ClassRateLimit},
 	{"rate limit", ClassRateLimit},
 	{"rate_limit", ClassRateLimit},
+	// Claude CLI session/usage limit messages (e.g. "You've hit your session
+	// limit · resets 6pm (America/Chicago)") carry no "429"/"rate limit"
+	// substring in the result text itself — the 429 lives in the separate
+	// api_error_status field instead (see classifyResultMessage in
+	// claude.go, which also checks that field directly). Match the wording
+	// here too so these are still classified as rate limits when
+	// encountered outside that structured field (e.g. in a raw
+	// stdout/stderr line).
+	{"session limit", ClassRateLimit},
+	{"usage limit", ClassRateLimit},
 	// Gemini CLI (Google API) rate-limit signal: gRPC-style status code
 	// returned in the JSON error body on quota exhaustion.
 	{"resource_exhausted", ClassRateLimit},

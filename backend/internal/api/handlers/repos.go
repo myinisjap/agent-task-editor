@@ -64,12 +64,13 @@ func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name             string  `json:"name"`
-		Path             string  `json:"path"`
-		RemoteURL        *string `json:"remote_url"`
-		WorkflowID       *string `json:"workflow_id"`
-		IssueSyncEnabled bool    `json:"issue_sync_enabled"`
-		IssueSyncLabel   string  `json:"issue_sync_label"`
+		Name                  string  `json:"name"`
+		Path                  string  `json:"path"`
+		RemoteURL             *string `json:"remote_url"`
+		WorkflowID            *string `json:"workflow_id"`
+		IssueSyncEnabled      bool    `json:"issue_sync_enabled"`
+		IssueSyncLabel        string  `json:"issue_sync_label"`
+		IssueWritebackEnabled bool    `json:"issue_writeback_enabled"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -180,14 +181,23 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		issueSyncEnabled = 1
 	}
+	issueWritebackEnabled := int64(0)
+	if body.IssueWritebackEnabled {
+		if remoteURL == "" {
+			Err(w, http.StatusBadRequest, "issue write-back requires a GitHub remote_url")
+			return
+		}
+		issueWritebackEnabled = 1
+	}
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
-		ID:               uuid.NewString(),
-		Name:             body.Name,
-		Path:             body.Path,
-		RemoteUrl:        body.RemoteURL,
-		WorkflowID:       body.WorkflowID,
-		IssueSyncEnabled: issueSyncEnabled,
-		IssueSyncLabel:   strings.TrimSpace(body.IssueSyncLabel),
+		ID:                    uuid.NewString(),
+		Name:                  body.Name,
+		Path:                  body.Path,
+		RemoteUrl:             body.RemoteURL,
+		WorkflowID:            body.WorkflowID,
+		IssueSyncEnabled:      issueSyncEnabled,
+		IssueSyncLabel:        strings.TrimSpace(body.IssueSyncLabel),
+		IssueWritebackEnabled: issueWritebackEnabled,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -299,12 +309,13 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name             *string `json:"name"`
-		Path             *string `json:"path"`
-		RemoteURL        *string `json:"remote_url"`
-		WorkflowID       *string `json:"workflow_id"`
-		IssueSyncEnabled *bool   `json:"issue_sync_enabled"`
-		IssueSyncLabel   *string `json:"issue_sync_label"`
+		Name                  *string `json:"name"`
+		Path                  *string `json:"path"`
+		RemoteURL             *string `json:"remote_url"`
+		WorkflowID            *string `json:"workflow_id"`
+		IssueSyncEnabled      *bool   `json:"issue_sync_enabled"`
+		IssueSyncLabel        *string `json:"issue_sync_label"`
+		IssueWritebackEnabled *bool   `json:"issue_writeback_enabled"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -355,6 +366,14 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		issueSyncLabel = strings.TrimSpace(*body.IssueSyncLabel)
 	}
 
+	issueWritebackEnabled := existing.IssueWritebackEnabled
+	if body.IssueWritebackEnabled != nil {
+		issueWritebackEnabled = 0
+		if *body.IssueWritebackEnabled {
+			issueWritebackEnabled = 1
+		}
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -362,6 +381,13 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if workflowID == nil || *workflowID == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a workflow (imported issues become tasks in that workflow)")
+			return
+		}
+	}
+
+	if issueWritebackEnabled != 0 {
+		if remoteURL == nil || *remoteURL == "" {
+			Err(w, http.StatusBadRequest, "issue write-back requires a GitHub remote_url")
 			return
 		}
 	}
@@ -396,13 +422,14 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo, err := h.q.UpdateRepo(r.Context(), gen.UpdateRepoParams{
-		ID:               id,
-		Name:             name,
-		Path:             path,
-		RemoteUrl:        remoteURL,
-		WorkflowID:       workflowID,
-		IssueSyncEnabled: issueSyncEnabled,
-		IssueSyncLabel:   issueSyncLabel,
+		ID:                    id,
+		Name:                  name,
+		Path:                  path,
+		RemoteUrl:             remoteURL,
+		WorkflowID:            workflowID,
+		IssueSyncEnabled:      issueSyncEnabled,
+		IssueSyncLabel:        issueSyncLabel,
+		IssueWritebackEnabled: issueWritebackEnabled,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

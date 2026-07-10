@@ -126,9 +126,11 @@ components:
           description: >
             Derived, read-time 0-based position in the current agent-pickup
             queue (priority DESC, created_at ASC) among tasks eligible for
-            dispatch. Null/absent when the task is not currently
-            pickup-eligible (e.g. blocked, paused, archived, or not on an
-            agent-triggerable label).
+            dispatch, computed only when the worker pool has no free slot
+            (all MAX_WORKERS busy). Null/absent when the task is not
+            currently pickup-eligible (e.g. blocked, paused, archived, or not
+            on an agent-triggerable label) or when the pool has idle
+            capacity and the task would be dispatched immediately.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
@@ -337,6 +339,15 @@ components:
           type: string
           description: >
             Only import issues carrying this label (empty = all open issues).
+        issue_writeback_enabled:
+          type: integer
+          description: >
+            1 = status write-back to the source GitHub issue is enabled for
+            this repo's imported tasks (requires remote_url; independent of
+            issue_sync_enabled): comments on the issue when a task's PR
+            opens, applies the "agent-in-progress" label when a task first
+            leaves not_ready, and closes the issue with a comment when the
+            PR merges. 0 = off. See docs/task-sources.md.
         clone_status:
           type: string
           enum: [ready, cloning, error]
@@ -806,6 +817,33 @@ paths:
               schema: { $ref: "#/components/schemas/Task" }
         "404": { description: Task not found }
 
+  /tasks/{id}/pause:
+    patch:
+      summary: Pause or unpause a task
+      description: >
+        A paused task is never picked up by the dispatcher, regardless of its
+        current label. Pausing does not change the task's label and does not
+        cancel any in-flight agent run; it only blocks future dispatch.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paused]
+              properties:
+                paused: { type: boolean }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+
   /tasks/{id}/dependencies:
     get:
       summary: List a task's dependency edges
@@ -980,6 +1018,23 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
 
+  /tasks/{id}/rerun:
+    post:
+      summary: Clear a task's active agent run so it can be re-dispatched
+      description: >
+        Clears active_agent_run_id without changing the task's label, letting
+        the dispatcher pick it up again on the next sweep. Does not cancel any
+        currently in-flight process; use POST /tasks/{id}/runs/{run_id}/cancel
+        for that first if needed.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Rerun requested }
+        "404": { description: Task not found }
+
   /tasks/{id}/review-comments:
     get:
       summary: List inline diff review comments on a task (open and resolved)
@@ -1138,6 +1193,57 @@ paths:
                   git_state: { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
         "400": { description: Task has no branch, or repo has no/invalid GitHub remote }
         "502": { description: gh pr create failed (e.g. not authenticated) }
+
+  /tasks/{id}/github-status:
+    get:
+      summary: Refresh and return the task's live GitHub PR state via the gh CLI
+      description: >
+        Queries gh for the current PR state of the task's branch and persists
+        it. If the live query fails, returns the previously stored git_state
+        and pr_url instead of erroring, with an additional error field
+        describing the failure. Returns git_state "none" without querying gh
+        if the task has no branch yet.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  git_state: { type: string, enum: ["", none, pushed, pr_open, pr_merged, pr_closed] }
+                  pr_url:    { type: string }
+                  error:     { type: string, nullable: true, description: "Present only when the live gh query failed" }
+        "400": { description: Repo has no/invalid GitHub remote }
+        "404": { description: Task not found }
+
+  /tasks/{id}/git-state:
+    patch:
+      summary: Manually set a task's git state
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [git_state]
+              properties:
+                git_state: { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "400": { description: Invalid git_state value }
 
   /tasks/{id}/label-history:
     get:
@@ -1395,6 +1501,26 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Workflow" }
 
+  /workflows/import:
+    post:
+      summary: Import a workflow from a YAML body
+      description: >
+        Creates a new workflow from a YAML document with the same shape
+        produced by GET /workflows/{id}/export.yaml (name, description,
+        labels, transitions). Fails if a workflow with the same name already
+        exists.
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema: { type: string }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workflow" }
+        "400": { description: Invalid YAML, missing name, or duplicate name }
+
   /workflows/{id}:
     parameters:
       - name: id
@@ -1419,6 +1545,52 @@ paths:
       summary: Delete a workflow
       responses:
         "204": { description: Deleted }
+
+  /workflows/{id}/export.yaml:
+    get:
+      summary: Export a workflow as YAML
+      description: >
+        Returns the workflow's name, description, labels, and transitions as
+        a portable YAML document (Content-Disposition: attachment), suitable
+        for re-importing via POST /workflows/import or PUT
+        /workflows/{id}/yaml.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: A YAML document describing the workflow
+          content:
+            application/yaml:
+              schema: { type: string }
+        "404": { description: Workflow not found }
+
+  /workflows/{id}/yaml:
+    put:
+      summary: Replace a workflow's labels and transitions from a YAML body
+      description: >
+        Same YAML shape as GET /workflows/{id}/export.yaml. Replaces the
+        workflow's name/description and fully replaces its labels and
+        transitions (delete-then-recreate).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workflow" }
+        "400": { description: Invalid YAML, missing name, or duplicate name }
+        "404": { description: Workflow not found }
 
   /agents:
     get:
@@ -1523,6 +1695,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Repo" }
+    patch:
+      summary: Update a repo
+      description: >
+        Partial update — all fields are optional and merge with the repo's
+        existing values. Setting remote_url or workflow_id to an empty string
+        clears it (nullable).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:                { type: string }
+                path:                { type: string }
+                remote_url:          { type: string, nullable: true }
+                workflow_id:         { type: string, nullable: true }
+                issue_sync_enabled:  { type: boolean }
+                issue_sync_label:    { type: string }
+                issue_writeback_enabled: { type: boolean }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+        "404": { description: Repo not found }
     delete:
       summary: Remove a repo
       responses:
@@ -1604,6 +1801,22 @@ paths:
                   status:  { type: string, example: "ok" }
                   version: { type: string, example: "v1.4.0" }
 
+  /github/auth-status:
+    get:
+      summary: Report whether the gh CLI is authenticated
+      description: >
+        Used by the frontend to warn on load when GitHub credentials are
+        missing, before a user hits a failed PR-creation attempt.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authed: { type: boolean }
+                  note:   { type: string }
+
   /health/providers:
     get:
       summary: Provider / onboarding readiness checks
@@ -1635,6 +1848,29 @@ paths:
                   checks:
                     type: array
                     items: { $ref: "#/components/schemas/ProviderCheck" }
+
+  /uploads/{task_id}/{filename}:
+    get:
+      summary: Download a task attachment file
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: filename
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The attachment file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400": { description: Invalid path component }
+        "404": { description: File not found }
 
   /backup:
     get:

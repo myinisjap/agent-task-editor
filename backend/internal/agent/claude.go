@@ -227,13 +227,14 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input RunInput, sidecarEn
 	logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("started claude pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg          sync.WaitGroup
-		outcome     string
-		sessionID   string
-		rateLimited bool
-		transient   bool
-		usage       *runUsage
-		mu          sync.Mutex
+		wg           sync.WaitGroup
+		outcome      string
+		sessionID    string
+		rateLimited  bool
+		rateLimitMsg string
+		transient    bool
+		usage        *runUsage
+		mu           sync.Mutex
 	)
 	wg.Add(2)
 
@@ -247,17 +248,17 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input RunInput, sidecarEn
 			if line == "" {
 				continue
 			}
-			entry, parsed, u, class, sid := classifyStreamJSON(line)
-			logCh <- entry
+			ev := classifyStreamJSON(line)
+			logCh <- ev.Entry
 			mu.Lock()
-			if parsed != "" {
-				outcome = parsed
+			if ev.Outcome != "" {
+				outcome = ev.Outcome
 			}
-			if u != nil {
-				usage = u
+			if ev.Usage != nil {
+				usage = ev.Usage
 			}
-			if sid != "" {
-				sessionID = sid
+			if ev.SessionID != "" {
+				sessionID = ev.SessionID
 				info.sawStream = true
 			}
 			if isResumeErrorLine(line) {
@@ -267,6 +268,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input RunInput, sidecarEn
 			// Prefer the structured classification from the typed "result"
 			// event; fall back to sniffing the raw line for non-result / non-
 			// JSON output. See errclass.go.
+			class := ev.Class
 			if class == ClassNone {
 				class = ClassifyLine(line)
 			}
@@ -274,6 +276,9 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input RunInput, sidecarEn
 			case ClassRateLimit:
 				mu.Lock()
 				rateLimited = true
+				if ev.ResultText != "" {
+					rateLimitMsg = ev.ResultText
+				}
 				mu.Unlock()
 			case ClassTransient:
 				mu.Lock()
@@ -330,10 +335,19 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input RunInput, sidecarEn
 		logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude exited: %v", err), At: time.Now()}
 		mu.Lock()
 		rl := rateLimited
+		rlMsg := rateLimitMsg
 		tr := transient
 		mu.Unlock()
 		if rl {
-			return Result{Status: "failed", SessionID: finalSession}, info, &ErrRateLimit{Message: "claude CLI 429: Request rejected by API rate limit"}
+			message := "claude CLI 429: Request rejected by API rate limit"
+			if rlMsg != "" {
+				message = rlMsg
+			}
+			resetAt := parseClaudeResetTime(rlMsg, time.Now())
+			if !resetAt.IsZero() {
+				logCh <- LogEntry{Type: LogSystem, Content: fmt.Sprintf("claude rate limit resets at %s (retrying then)", resetAt.Format(time.RFC3339)), At: time.Now()}
+			}
+			return Result{Status: "failed", SessionID: finalSession}, info, &ErrRateLimit{ResetAt: resetAt, Message: message}
 		}
 		if tr {
 			return Result{Status: "failed", SessionID: finalSession}, info, &ErrTransient{Cause: fmt.Errorf("claude CLI exited with transient infra error: %w", err)}
@@ -392,19 +406,46 @@ func applyUsage(res *Result, u *runUsage) {
 	res.CostUSD = u.CostUSD
 }
 
-// classifyStreamJSON parses one NDJSON line from claude --output-format stream-json.
-// Returns the log entry, an optional outcome ("success"/"failure") parsed
-// from an OUTCOME marker or the result subtype, the token usage / cost reported
-// by the CLI (non-nil for "result" messages only), a failure Classification
-// derived from the *structured* terminal "result" event (ClassNone for every
-// non-result message and for a clean success), and the conversation session_id
-// carried on the envelope (empty for non-stream-json lines). The classification
-// lets the CLI providers prefer the typed error event over sniffing arbitrary
-// log lines — see errclass.go.
-func classifyStreamJSON(line string) (LogEntry, string, *runUsage, Classification, string) {
+// streamEvent carries everything classifyStreamJSON extracted from one
+// NDJSON line, so callers needing more than the log entry (runAttempt's
+// rate-limit handling in particular) don't force every call site to grow a
+// positional-return tuple.
+type streamEvent struct {
+	Entry LogEntry
+	// Outcome is "success"/"failure" parsed from an OUTCOME marker or the
+	// result subtype (only set for "result" messages).
+	Outcome string
+	// Usage is the token usage / cost reported by the CLI (non-nil for
+	// "result" messages only).
+	Usage *runUsage
+	// Class is the failure Classification derived from the *structured*
+	// terminal "result" event (ClassNone for every non-result message and
+	// for a clean success). Lets the CLI providers prefer the typed error
+	// event over sniffing arbitrary log lines — see errclass.go.
+	Class Classification
+	// SessionID is the conversation session_id carried on the envelope
+	// (empty for non-stream-json lines).
+	SessionID string
+	// ResultText is the raw "result" field text of a "result" event (empty
+	// otherwise) — e.g. Claude's session-limit message "You've hit your
+	// session limit · resets 6pm (America/Chicago)". Used by the claude
+	// provider to derive an exact rate-limit reset time.
+	ResultText string
+	// APIErrorStatus is the "result" event's api_error_status field (0 if
+	// absent/not a result event) — the structured HTTP status code
+	// Anthropic returns alongside the human-readable result text. Preferred
+	// over text-sniffing when present since it's authoritative and immune
+	// to wording changes.
+	APIErrorStatus int
+}
+
+// classifyStreamJSON parses one NDJSON line from claude --output-format
+// stream-json into a streamEvent. See streamEvent's field docs for what each
+// field means and when it's populated.
+func classifyStreamJSON(line string) streamEvent {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil, ClassNone, ""
+		return streamEvent{Entry: LogEntry{Type: LogStdout, Content: line, At: time.Now()}}
 	}
 
 	// Every stream-json event (init, assistant, result, …) carries the
@@ -417,23 +458,21 @@ func classifyStreamJSON(line string) (LogEntry, string, *runUsage, Classificatio
 	msgType := strings.Trim(string(raw["type"]), `"`)
 	switch msgType {
 	case "assistant":
-		return LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, "", nil, ClassNone, sessionID
+		return streamEvent{Entry: LogEntry{Type: LogStdout, Content: extractAssistantText(raw), At: time.Now()}, SessionID: sessionID}
 	case "tool_use":
-		return LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, "", nil, ClassNone, sessionID
+		return streamEvent{Entry: LogEntry{Type: LogToolCall, Content: line, At: time.Now()}, SessionID: sessionID}
 	case "tool_result":
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil, ClassNone, sessionID
+		return streamEvent{Entry: LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, SessionID: sessionID}
 	case "user":
 		// Claude SDK wraps tool results in a user message: {"type":"user","message":{"role":"user","content":[{"type":"tool_result",...}]}}
-		return LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, "", nil, ClassNone, sessionID
+		return streamEvent{Entry: LogEntry{Type: LogToolResult, Content: line, At: time.Now()}, SessionID: sessionID}
 	case "result":
 		// Parse OUTCOME: success|failure from the result text; fall back to subtype.
-		var outcome string
-		if resultText, ok := raw["result"]; ok {
-			var text string
-			if err := json.Unmarshal(resultText, &text); err == nil {
-				outcome = extractOutcome(text)
-			}
+		var resultText string
+		if resultRaw, ok := raw["result"]; ok {
+			_ = json.Unmarshal(resultRaw, &resultText)
 		}
+		outcome := extractOutcome(resultText)
 		if outcome == "" {
 			subtype := strings.Trim(string(raw["subtype"]), `"`)
 			switch subtype {
@@ -443,10 +482,22 @@ func classifyStreamJSON(line string) (LogEntry, string, *runUsage, Classificatio
 				outcome = "failure"
 			}
 		}
+		var apiErrorStatus int
+		if v, ok := raw["api_error_status"]; ok {
+			_ = json.Unmarshal(v, &apiErrorStatus)
+		}
 		usage := extractResultUsage(raw)
-		return LogEntry{Type: LogSystem, Content: line, At: time.Now()}, outcome, usage, classifyResultMessage(raw), sessionID
+		return streamEvent{
+			Entry:          LogEntry{Type: LogSystem, Content: line, At: time.Now()},
+			Outcome:        outcome,
+			Usage:          usage,
+			Class:          classifyResultMessage(raw),
+			SessionID:      sessionID,
+			ResultText:     resultText,
+			APIErrorStatus: apiErrorStatus,
+		}
 	default:
-		return LogEntry{Type: LogStdout, Content: line, At: time.Now()}, "", nil, ClassNone, sessionID
+		return streamEvent{Entry: LogEntry{Type: LogStdout, Content: line, At: time.Now()}, SessionID: sessionID}
 	}
 }
 
@@ -464,6 +515,16 @@ func classifyResultMessage(raw map[string]json.RawMessage) Classification {
 	// A clean success carries no failure signal.
 	if !isErr && subtype != "error" && subtype != "error_max_turns" {
 		return ClassNone
+	}
+	// The structured api_error_status is authoritative when present — more
+	// robust than sniffing the human-readable result text, which can change
+	// wording across CLI releases (e.g. Claude's session-limit message
+	// carries no "429"/"rate limit" substring at all).
+	if v, ok := raw["api_error_status"]; ok {
+		var status int
+		if err := json.Unmarshal(v, &status); err == nil && status == 429 {
+			return ClassRateLimit
+		}
 	}
 	// Classify the structured error text, if any.
 	if v, ok := raw["result"]; ok {

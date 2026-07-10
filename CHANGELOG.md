@@ -12,6 +12,88 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Claude CLI session/usage-limit 429s now retry at an exact reset time instead of generic backoff.**
+  - The claude provider's stream-json `"result"` event parsing
+    (`classifyStreamJSON` in `backend/internal/agent/claude.go`) now also
+    surfaces the raw result text and the structured `api_error_status`
+    field. `classifyResultMessage` treats `api_error_status == 429` as an
+    unconditional rate limit, fixing a gap where Claude's session-limit
+    message (e.g. `"You've hit your session limit · resets 6pm
+    (America/Chicago)"`) carried no `"429"`/`"rate limit"` substring in its
+    *text* and was previously mis-classified as a genuine failure (no
+    retry) instead of a rate limit.
+  - New `"session limit"`/`"usage limit"` patterns added to
+    `errclass.go`'s classification table as a text-based fallback.
+  - New `backend/internal/agent/claude_reset.go` (`parseClaudeResetTime`)
+    parses the `"resets <time>(am|pm) (<IANA timezone>)"` clue out of the
+    result text and resolves it to an absolute reset time, handling
+    same-day/next-day rollover and a +1 minute retry buffer. Blank-imports
+    `time/tzdata` so time zone parsing works in the production container
+    (which has no `/usr/share/zoneinfo`).
+  - `ClaudeRunner.runAttempt` now populates `ErrRateLimit.ResetAt` from this
+    parsed time; the pool (`pool.go`) already scheduled retries against an
+    exact `ResetAt` when present (falling back to exponential backoff
+    otherwise) — no pool/dispatcher changes were needed.
+- **GitHub Issues write-back (task-sources v2)** (#81). New opt-in per-repo
+  `issue_writeback_enabled` flag (independent of `issue_sync_enabled`) writes
+  an imported task's status back to the GitHub issue it came from: a comment
+  linking the PR when the task first gets a `pr_url`, an `agent-in-progress`
+  label applied the first time the task leaves `not_ready`, and the issue
+  closed with a comment once the PR merges. All three are best-effort (a
+  failed `gh` call is logged, never fails the caller/sweep) and idempotent
+  via new per-task tracking columns (`writeback_in_progress_sent`,
+  `writeback_pr_commented`, `writeback_closed`), not by scraping issue
+  comments. Uses the same `gh` CLI auth as issue import and PR-state sync —
+  no new credential surface. See [docs/task-sources.md](docs/task-sources.md).
+- **Mobile polish: responsive Usage/AgentConfig pages, board swipe, and PWA install** (#148).
+  - `UsagePage`'s cost-by-provider, cost-by-day, and cost-by-task tables are
+    now wrapped in `overflow-x-auto` (previously `overflow-hidden`), so wide
+    tables scroll horizontally instead of overflowing the viewport at narrow
+    widths; `AgentPerformancePage`'s table already did this.
+  - `AgentSidebar` now collapses into an off-canvas drawer under the `md`
+    breakpoint (same fixed/backdrop/slide-in pattern as `NavSidebar`),
+    with a new mobile-only "Configs" header bar in `AgentConfigPage`
+    showing the selected agent's name and a button to open the drawer; the
+    drawer closes itself after selecting an agent, starting a new one, or
+    tapping the backdrop/✕.
+  - `TaskBoard`'s mobile single-column pager (both the condensed and
+    normal/expanded views) now supports left/right swipe to move between
+    columns, via a small new `useSwipe` hook (`frontend/src/lib/useSwipe.ts`,
+    native touch events, no new dependency) that ignores predominantly
+    vertical drags so it doesn't fight the column's own vertical scrolling.
+  - Added a web app manifest (`frontend/public/manifest.webmanifest`) plus
+    `icon-192.png`/`icon-512.png`/`icon-512-maskable.png`, linked from
+    `index.html` with relative paths so they resolve correctly both in dev
+    (`/`) and behind the `/tasks/` production base path; `nginx.conf` gained
+    `manifest-src 'self'` in its CSP and an explicit MIME-type mapping for
+    `.webmanifest` (not in the base `nginx:alpine` image's `mime.types`).
+    The app is now installable (Chrome "Install app" / Android "Add to Home
+    Screen") and launches directly to the board.
+- **`openapi.yaml` now documents all served `/api/v1` routes** (#140).
+  - Added the 10 previously-undocumented paths: `PATCH /repos/{id}`,
+    `POST /tasks/{id}/rerun`, `GET /tasks/{id}/github-status`,
+    `PATCH /tasks/{id}/git-state`, `PATCH /tasks/{id}/pause`,
+    `GET /uploads/{task_id}/{filename}`, `GET /github/auth-status`,
+    `GET /workflows/{id}/export.yaml`, `PUT /workflows/{id}/yaml`, and
+    `POST /workflows/import` — regenerated `frontend/src/api/types.ts` to
+    match.
+  - New `backend/internal/api/openapi_coverage_test.go` walks the router
+    with `chi.Walk` and fails, listing every offender, if any served
+    `/api/v1` route (or one of the small allow-listed root routes — `/ws`,
+    `/metrics`, `/healthz`) is missing from `openapi.yaml`, closing the one
+    direction the existing `gen:api`/sqlc codegen-drift checks didn't cover:
+    the spec silently falling behind the router it's meant to describe.
+- **Task cards and task detail now reachable on touch devices** (#147).
+  - `TaskCard`'s select checkbox, pause, archive, edit, and delete controls
+    were previously only revealed via `group-hover`, making them unreachable
+    on touch devices (no hover) and effectively blocking the bulk "Move
+    to…" toolbar action and per-card edit/pause from mobile. A new Tailwind
+    `no-hover:` variant (`@media (hover: none)`) now forces these controls
+    visible on devices without hover, leaving desktop's hover-reveal
+    behavior unchanged.
+  - The task detail Overview tab gained its own "Move to…" control next to
+    the Label row, letting a task's label be changed from any device
+    (mirrors the existing bulk "Move to…" toolbar action on the board).
 - **Running version + update-available check on the Health page** (#151).
   - `cmd/server` now has a `Version` build var (default `"dev"`), stamped at
     build time via `-ldflags "-X main.Version=<tag>"`.
@@ -181,6 +263,20 @@ this file's section for that version as the release notes.
     server-side — and may be removed in a future release.
 
 ### Changed
+- **Dispatch queue visibility now gated on worker-pool saturation** (#152).
+  - The `queue_position` field on task responses — and the "N in queue"
+    badge it drives on `TaskCard` and the task detail header — is now only
+    populated when the worker pool has no free slot (all `MAX_WORKERS` busy).
+    Previously it was set for every pickup-eligible task regardless of
+    whether a worker was actually free, so a task about to be dispatched on
+    the very next sweep could misleadingly show as "waiting."
+  - New `Pool.Saturated() bool` reports whether every worker slot is
+    currently busy; the `RunCanceller` interface consumed by `TasksHandler`
+    gained a matching `Saturated() bool` method (implemented by the agent
+    pool, the interface's only real implementation).
+  - No new WebSocket events or polling — the badge still rides the existing
+    task fetch/refresh path (`GET /tasks`, `GET /tasks/{id}`) and clears
+    automatically once a task starts running or a worker frees up.
 - **Split the 1,400-line `handlers/tasks.go` into `tasks.go` /
   `task_response.go` / `task_uploads.go` / `task_bulk.go` / `task_runs.go` /
   `task_pr.go` by concern** (#156) — pure code-move refactor, no behavior,
@@ -193,6 +289,35 @@ this file's section for that version as the release notes.
   `task_pr.go` holds diff/PR/PR-URL/GitHub-status/git-state.
 
 ### Fixed
+- **Frontend never sent the API token — enabling `API_TOKEN` broke the whole UI** (#138).
+  - `client.ts`'s `request()`/`requestWithHeaders()` built request headers
+    from only `Content-Type`; no `Authorization` header was ever attached,
+    despite `frontend/src/api/CLAUDE.md` claiming otherwise. Setting
+    `API_TOKEN` (item #1 on the security checklist) made every board/task/
+    agent call from the stock UI fail with 401.
+  - Even where a header *was* wired manually (`ws.ts`'s ticket mint,
+    `WorkflowPage.tsx`'s YAML export, `HealthPage.tsx`'s backup download),
+    it read the build-time `VITE_API_TOKEN` — a variable that can never be
+    baked into the prebuilt GHCR image, so release users could not enable
+    auth at all.
+  - Replaced this with a runtime token: a new `src/api/authToken.ts` stores
+    the token in `localStorage` (`ate_api_token`) and is the single source
+    of truth for it. Every REST call (via new `authedRawFetch` in
+    `client.ts`, used by `request()`/`requestWithHeaders()`/`agents.create`)
+    and the WS ticket mint (`ws.ts`) now attach
+    `Authorization: Bearer <token>` from this store.
+  - On any 401, the stored token is cleared and a new
+    `ApiTokenGate` component (`components/shared/ApiTokenGate.tsx`), mounted
+    once around the whole app in `App.tsx`, shows a minimal "enter API
+    token" screen; saving a token retries by reloading the page. With
+    `API_TOKEN` unset on the backend, no request ever 401s, so the prompt
+    never appears.
+  - `VITE_API_TOKEN` still works as a dev-only convenience: if set, it seeds
+    `localStorage` once (only when nothing is stored yet), so existing
+    `.env.local` setups keep working without going through the prompt.
+  - Docs updated: `frontend/src/api/CLAUDE.md`, `frontend/CLAUDE.md`, and
+    `docs/getting-started.md`'s Authentication section now describe the
+    runtime flow instead of the non-functional build-time one.
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a
   `next_label` parameter (the exact label to move to), but the shared
@@ -205,6 +330,16 @@ this file's section for that version as the release notes.
   the MCP sidecar's version, and the label is resolved automatically as
   intended. `docs/providers/anthropic.md` and `docs/providers/llm.md` are
   updated accordingly.
+- **Dashboard "Needs your input" queue kept showing tasks that were already
+  running again.** Replying to (or approving/rejecting) a `waiting_human`
+  run dispatches a new run and repoints the task's active run at it, but
+  deliberately leaves the old run's status as `waiting_human` as a
+  historical record. `ListWaitingHumanRuns` had no way to tell a
+  still-actionable `waiting_human` run apart from one that had already been
+  superseded, so the old run kept showing up in the intervention queue
+  forever, alongside the new run showing the same task as actively working.
+  The query now joins on `tasks.active_agent_run_id` and only returns a
+  `waiting_human` run while it's still the task's active run.
 
 ## [0.7.0] - 2026-07-09
 

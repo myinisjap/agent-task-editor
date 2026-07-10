@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
 
 // fakeHub records every Publish call for assertions.
@@ -75,7 +76,25 @@ func branchExists(t *testing.T, repoPath, branch string) bool {
 
 // newTestSyncer sets up a Syncer backed by a temp sqlite DB and the given
 // fake getPR function, bypassing New (which wires the real ghclient call).
+// fakeWriteback records calls made through the writeback seam, for tests
+// that want to assert ghsync fires the write-back hooks at the right times
+// without shelling out to a real (or even faked) `gh` binary.
+type fakeWriteback struct {
+	labelCalls   []string
+	commentCalls []string
+	closeCalls   []string
+}
+
 func newTestSyncer(t *testing.T, getPR func(ctx context.Context, repoName, branch string) (string, string, int, error)) (*Syncer, *gen.Queries, *fakeHub) {
+	t.Helper()
+	s, q, hub, _ := newTestSyncerWithWriteback(t, getPR)
+	return s, q, hub
+}
+
+// newTestSyncerWithWriteback is like newTestSyncer but also wires a
+// writeback.Writeback backed by fake gh-calling functions, and returns the
+// fake so tests can assert on what write-back actions fired.
+func newTestSyncerWithWriteback(t *testing.T, getPR func(ctx context.Context, repoName, branch string) (string, string, int, error)) (*Syncer, *gen.Queries, *fakeHub, *fakeWriteback) {
 	t.Helper()
 	f, err := os.CreateTemp("", "ghsync-*.db")
 	if err != nil {
@@ -92,13 +111,29 @@ func newTestSyncer(t *testing.T, getPR func(ctx context.Context, repoName, branc
 
 	q := gen.New(db.SQL())
 	hub := &fakeHub{}
+	fwb := &fakeWriteback{}
+	wb := writeback.NewWithClient(q,
+		func(ctx context.Context, repoName string, issueNumber int, label string) error {
+			fwb.labelCalls = append(fwb.labelCalls, label)
+			return nil
+		},
+		func(ctx context.Context, repoName string, issueNumber int, body string) error {
+			fwb.commentCalls = append(fwb.commentCalls, body)
+			return nil
+		},
+		func(ctx context.Context, repoName string, issueNumber int, body string) error {
+			fwb.closeCalls = append(fwb.closeCalls, body)
+			return nil
+		},
+	)
 	s := &Syncer{
 		q:        q,
 		hub:      hub,
 		interval: time.Hour,
+		wb:       wb,
 		getPR:    getPR,
 	}
-	return s, q, hub
+	return s, q, hub, fwb
 }
 
 // newTestWorkflow seeds a minimal workflow with a single non-terminal label
@@ -122,16 +157,28 @@ func newTestWorkflow(t *testing.T, q *gen.Queries) (string, string) {
 // given remote URL (may be nil for a non-GitHub / no-remote repo).
 func newTestRepo(t *testing.T, q *gen.Queries, wfID, path string, remoteURL *string) string {
 	t.Helper()
+	return newTestRepoWithWriteback(t, q, wfID, path, remoteURL, false)
+}
+
+// newTestRepoWithWriteback is like newTestRepo but lets the test opt the repo
+// into issue write-back.
+func newTestRepoWithWriteback(t *testing.T, q *gen.Queries, wfID, path string, remoteURL *string, writebackEnabled bool) string {
+	t.Helper()
 	ctx := context.Background()
 	repoID := uuid.NewString()
+	wb := int64(0)
+	if writebackEnabled {
+		wb = 1
+	}
 	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
-		ID:               repoID,
-		Name:             "widgets",
-		Path:             path,
-		RemoteUrl:        remoteURL,
-		WorkflowID:       &wfID,
-		IssueSyncEnabled: 0,
-		IssueSyncLabel:   "",
+		ID:                    repoID,
+		Name:                  "widgets",
+		Path:                  path,
+		RemoteUrl:             remoteURL,
+		WorkflowID:            &wfID,
+		IssueSyncEnabled:      0,
+		IssueSyncLabel:        "",
+		IssueWritebackEnabled: wb,
 	}); err != nil {
 		t.Fatalf("create repo: %v", err)
 	}
@@ -156,6 +203,51 @@ func newTestTask(t *testing.T, q *gen.Queries, repoID, wfID, label, branch, work
 	})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch:       branch,
+		WorktreePath: worktreePath,
+		BaseRef:      "main",
+		ID:           taskID,
+	}); err != nil {
+		t.Fatalf("set task worktree: %v", err)
+	}
+	if gitState != "" || prURL != "" {
+		if _, err := q.SetTaskPR(ctx, gen.SetTaskPRParams{
+			GitState: gitState,
+			PrUrl:    prURL,
+			ID:       taskID,
+		}); err != nil {
+			t.Fatalf("set task pr: %v", err)
+		}
+	}
+	task, err := q.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	return task
+}
+
+// newSourcedTestTask is like newTestTask but creates the task as if imported
+// from GitHub (source="github", source_ref set), so write-back hooks apply.
+func newSourcedTestTask(t *testing.T, q *gen.Queries, repoID, wfID, label, branch, worktreePath, gitState, prURL, sourceRef string) gen.Task {
+	t.Helper()
+	ctx := context.Background()
+	taskID := uuid.NewString()
+	_, err := q.CreateSourcedTask(ctx, gen.CreateSourcedTaskParams{
+		ID:          taskID,
+		Title:       "Test task",
+		Description: "",
+		Type:        "feature",
+		Label:       label,
+		RepoID:      repoID,
+		WorkflowID:  wfID,
+		Attachments: "[]",
+		Source:      "github",
+		SourceRef:   sourceRef,
+	})
+	if err != nil {
+		t.Fatalf("create sourced task: %v", err)
 	}
 	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
 		Branch:       branch,
@@ -370,5 +462,94 @@ func TestSweep_SkipsNonGitHubRepo(t *testing.T) {
 
 	if len(hub.calls) != 0 {
 		t.Fatalf("expected no publish calls, got %d", len(hub.calls))
+	}
+}
+
+func TestSyncTask_Writeback_PROpened(t *testing.T) {
+	ctx := context.Background()
+	repoPath := initRepo(t)
+	branch := "feature-branch"
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	gitWorktreeAdd(t, repoPath, branch, wtPath)
+
+	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+		return "pr_open", "https://github.com/acme/widgets/pull/9", 9, nil
+	}
+	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
+	wfID, label := newTestWorkflow(t, q)
+	repoID := newTestRepoWithWriteback(t, q, wfID, repoPath, ghURL(), true)
+	task := newSourcedTestTask(t, q, repoID, wfID, label, branch, wtPath, "pushed", "", "acme/widgets#9")
+	repo := s.resolveRepoInfo(ctx, repoID)
+
+	s.syncTask(ctx, task, repo)
+
+	if len(fwb.commentCalls) != 1 {
+		t.Fatalf("expected 1 PR-opened comment call, got %d: %v", len(fwb.commentCalls), fwb.commentCalls)
+	}
+	updated, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.WritebackPrCommented == 0 {
+		t.Error("expected writeback_pr_commented to be set")
+	}
+}
+
+func TestSyncTask_Writeback_PRMerged(t *testing.T) {
+	ctx := context.Background()
+	repoPath := initRepo(t)
+	branch := "feature-branch"
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	gitWorktreeAdd(t, repoPath, branch, wtPath)
+
+	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+		return "pr_merged", "https://github.com/acme/widgets/pull/9", 9, nil
+	}
+	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
+	wfID, label := newTestWorkflow(t, q)
+	repoID := newTestRepoWithWriteback(t, q, wfID, repoPath, ghURL(), true)
+	task := newSourcedTestTask(t, q, repoID, wfID, label, branch, wtPath, "pr_open", "https://github.com/acme/widgets/pull/9", "acme/widgets#9")
+	repo := s.resolveRepoInfo(ctx, repoID)
+
+	s.syncTask(ctx, task, repo)
+
+	if len(fwb.closeCalls) != 1 {
+		t.Fatalf("expected 1 close-with-comment call, got %d: %v", len(fwb.closeCalls), fwb.closeCalls)
+	}
+	// The PR-opened comment flag should also already be set at this point
+	// since the task had a PR URL before merging (it would have been marked on
+	// an earlier sweep); OnPROpened is a no-op here because PrUrl was already
+	// present when this sourced task was created, without going through
+	// OnPROpened — so double check the important flag, writeback_closed.
+	updated, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.WritebackClosed == 0 {
+		t.Error("expected writeback_closed to be set")
+	}
+}
+
+func TestSyncTask_Writeback_DisabledRepo_NoOp(t *testing.T) {
+	ctx := context.Background()
+	repoPath := initRepo(t)
+	branch := "feature-branch"
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	gitWorktreeAdd(t, repoPath, branch, wtPath)
+
+	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+		return "pr_open", "https://github.com/acme/widgets/pull/9", 9, nil
+	}
+	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
+	wfID, label := newTestWorkflow(t, q)
+	// Write-back NOT enabled on this repo.
+	repoID := newTestRepoWithWriteback(t, q, wfID, repoPath, ghURL(), false)
+	task := newSourcedTestTask(t, q, repoID, wfID, label, branch, wtPath, "pushed", "", "acme/widgets#9")
+	repo := s.resolveRepoInfo(ctx, repoID)
+
+	s.syncTask(ctx, task, repo)
+
+	if len(fwb.commentCalls) != 0 {
+		t.Fatalf("expected no writeback calls when repo has writeback disabled, got %v", fwb.commentCalls)
 	}
 }
