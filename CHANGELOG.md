@@ -11,6 +11,37 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Fixed
+- **Frontend never sent the API token — enabling `API_TOKEN` broke the whole UI** (#138).
+  - `client.ts`'s `request()`/`requestWithHeaders()` built request headers
+    from only `Content-Type`; no `Authorization` header was ever attached,
+    despite `frontend/src/api/CLAUDE.md` claiming otherwise. Setting
+    `API_TOKEN` (item #1 on the security checklist) made every board/task/
+    agent call from the stock UI fail with 401.
+  - Even where a header *was* wired manually (`ws.ts`'s ticket mint,
+    `WorkflowPage.tsx`'s YAML export, `HealthPage.tsx`'s backup download),
+    it read the build-time `VITE_API_TOKEN` — a variable that can never be
+    baked into the prebuilt GHCR image, so release users could not enable
+    auth at all.
+  - Replaced this with a runtime token: a new `src/api/authToken.ts` stores
+    the token in `localStorage` (`ate_api_token`) and is the single source
+    of truth for it. Every REST call (via new `authedRawFetch` in
+    `client.ts`, used by `request()`/`requestWithHeaders()`/`agents.create`)
+    and the WS ticket mint (`ws.ts`) now attach
+    `Authorization: Bearer <token>` from this store.
+  - On any 401, the stored token is cleared and a new
+    `ApiTokenGate` component (`components/shared/ApiTokenGate.tsx`), mounted
+    once around the whole app in `App.tsx`, shows a minimal "enter API
+    token" screen; saving a token retries by reloading the page. With
+    `API_TOKEN` unset on the backend, no request ever 401s, so the prompt
+    never appears.
+  - `VITE_API_TOKEN` still works as a dev-only convenience: if set, it seeds
+    `localStorage` once (only when nothing is stored yet), so existing
+    `.env.local` setups keep working without going through the prompt.
+  - Docs updated: `frontend/src/api/CLAUDE.md`, `frontend/CLAUDE.md`, and
+    `docs/getting-started.md`'s Authentication section now describe the
+    runtime flow instead of the non-functional build-time one.
+
 ### Changed
 - **Dispatch queue visibility now gated on worker-pool saturation** (#152).
   - The `queue_position` field on task responses — and the "N in queue"
