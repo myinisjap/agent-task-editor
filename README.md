@@ -32,6 +32,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
 - **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
+- **Installable as a PWA** — add the board to your phone's home screen for quick access
 
 See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.
 
