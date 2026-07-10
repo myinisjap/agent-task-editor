@@ -209,7 +209,7 @@ export default function TaskCard({
               }}
               onPointerDown={(e) => e.stopPropagation()}
               className={`mt-0.5 shrink-0 accent-indigo-500 cursor-pointer transition-opacity ${
-                selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 no-hover:opacity-100'
               }`}
               title="Select for bulk actions"
             />
@@ -324,7 +324,7 @@ export default function TaskCard({
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
-            className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none"
+            className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none"
             title={task.paused ? 'Resume task' : 'Pause task'}
           >
             {task.paused ? '▶' : '⏸'}
@@ -340,7 +340,7 @@ export default function TaskCard({
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
-            className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
+            className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
             title={task.archived ? 'Unarchive task' : 'Archive task — hide from the board'}
           >
             {task.archived ? '↩' : '🗄'}
@@ -349,7 +349,7 @@ export default function TaskCard({
             <button
               onClick={handleEditClick}
               onPointerDown={(e) => e.stopPropagation()}
-              className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
+              className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
               title="Edit task"
             >
               ✎
@@ -362,7 +362,7 @@ export default function TaskCard({
                 if (window.confirm('Delete this task?')) onDelete()
               }}
               onPointerDown={(e) => e.stopPropagation()}
-              className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none"
+              className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none"
               title="Delete task"
             >
               ✕
