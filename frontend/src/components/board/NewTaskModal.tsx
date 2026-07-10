@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import type { Repo, TaskTemplate, Workflow } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
+import { PRIORITY_LEVELS } from '../../lib/priority'
 
 type Props = {
   workflow: Workflow
@@ -14,6 +15,7 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [type, setType] = useState<'feature' | 'bug' | 'chore' | 'spike'>('feature')
+  const [priority, setPriority] = useState(0)
   const [repoId, setRepoId] = useState('')
   const [attachments, setAttachments] = useState<File[]>([])
   const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([])
@@ -111,6 +113,7 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
       fd.append('title', title.trim())
       fd.append('description', description.trim())
       fd.append('type', type)
+      fd.append('priority', String(priority))
       fd.append('repo_id', repoId)
       fd.append('workflow_id', workflow.id)
       attachments.forEach((f) => fd.append('attachments', f))
@@ -217,6 +220,19 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
                 <option value="bug">Bug</option>
                 <option value="chore">Chore</option>
                 <option value="spike">Spike</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5 flex-1">
+              <label className="text-xs font-medium text-slate-400">Priority</label>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(Number(e.target.value))}
+                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {PRIORITY_LEVELS.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
               </select>
             </div>
 

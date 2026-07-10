@@ -32,6 +32,7 @@ export default function TaskDetailPage() {
   const [editType, setEditType] = useState('')
   const [editRepoId, setEditRepoId] = useState('')
   const [editMaxCostUsd, setEditMaxCostUsd] = useState('')
+  const [editPriority, setEditPriority] = useState(0)
   const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
@@ -139,6 +140,7 @@ export default function TaskDetailPage() {
     setEditType(task.type)
     setEditRepoId(task.repo_id)
     setEditMaxCostUsd(task.max_cost_usd ? String(task.max_cost_usd) : '')
+    setEditPriority(task.priority ?? 0)
     setTaskSaveError('')
     setEditingTask(true)
   }
@@ -159,6 +161,7 @@ export default function TaskDetailPage() {
         type: editType,
         repo_id: editRepoId,
         max_cost_usd: editMaxCostUsd.trim() === '' ? 0 : Number(editMaxCostUsd),
+        priority: editPriority,
       })
       setTask(updated)
       setEditingTask(false)
@@ -343,6 +346,8 @@ export default function TaskDetailPage() {
               setEditRepoId={setEditRepoId}
               editMaxCostUsd={editMaxCostUsd}
               setEditMaxCostUsd={setEditMaxCostUsd}
+              editPriority={editPriority}
+              setEditPriority={setEditPriority}
               runs={runs}
               taskSaving={taskSaving}
               taskSaveError={taskSaveError}

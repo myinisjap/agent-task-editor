@@ -829,6 +829,82 @@ func TestListAgentPickupTasks_ExcludesFutureNextRetryAt(t *testing.T) {
 	}
 }
 
+// TestListAgentPickupTasks_OrdersByPriorityThenCreatedAt verifies the
+// dispatcher's pickup query returns eligible tasks ordered by priority
+// descending (urgent, high, normal, low) and, within the same priority,
+// oldest-created first.
+func TestListAgentPickupTasks_OrdersByPriorityThenCreatedAt(t *testing.T) {
+	db := openAgentTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID:         repoID,
+		Name:       "repo",
+		Path:       t.TempDir(),
+		WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	// Create tasks in a deliberately mixed order: normal, low, urgent, high,
+	// then a second normal-priority task created after the first normal one
+	// to verify the created_at ASC tiebreak within a priority level.
+	mkTask := func(title string, priority int64) string {
+		id := uuid.NewString()
+		if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+			ID:         id,
+			Title:      title,
+			WorkflowID: wfID,
+			RepoID:     repoID,
+			Label:      "plan",
+			Priority:   priority,
+		}); err != nil {
+			t.Fatalf("create task %s: %v", title, err)
+		}
+		// Ensure distinct created_at ordering across the fixtures below;
+		// SQLite's CURRENT_TIMESTAMP has second granularity.
+		time.Sleep(1100 * time.Millisecond)
+		return id
+	}
+
+	normal1 := mkTask("normal-1", 0)
+	low := mkTask("low", -1)
+	urgent := mkTask("urgent", 2)
+	high := mkTask("high", 1)
+	normal2 := mkTask("normal-2", 0)
+
+	tasks, err := q.ListAgentPickupTasks(ctx)
+	if err != nil {
+		t.Fatalf("list pickup tasks: %v", err)
+	}
+
+	var gotOrder []string
+	for _, tk := range tasks {
+		switch tk.ID {
+		case normal1, low, urgent, high, normal2:
+			gotOrder = append(gotOrder, tk.ID)
+		}
+	}
+
+	wantOrder := []string{urgent, high, normal1, normal2, low}
+	if len(gotOrder) != len(wantOrder) {
+		t.Fatalf("expected %d fixture tasks in pickup order, got %d: %v", len(wantOrder), len(gotOrder), gotOrder)
+	}
+	for i, id := range wantOrder {
+		if gotOrder[i] != id {
+			t.Errorf("position %d: expected task %s, got %s (full order %v)", i, id, gotOrder[i], gotOrder)
+		}
+	}
+}
+
 func containsTaskID(tasks []gen.Task, taskID string) bool {
 	for _, t := range tasks {
 		if t.ID == taskID {

@@ -101,6 +101,7 @@ type Task struct {
 	CreatedByRunID      *string    `json:"created_by_run_id"`
 	MergeStatus         string     `json:"merge_status"`
 	MaxCostUsd          float64    `json:"max_cost_usd"`
+	Priority            int64      `json:"priority"`
 }
 
 type TaskDependency struct {

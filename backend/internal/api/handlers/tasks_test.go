@@ -25,17 +25,19 @@ import (
 // The Attachments field is []string because the handler serialises the stored
 // JSON string as a proper JSON array, not a raw string.
 type apiTask struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Type        string   `json:"type"`
-	Label       string   `json:"label"`
-	RepoID      string   `json:"repo_id"`
-	WorkflowID  string   `json:"workflow_id"`
-	AgentNotes  string   `json:"agent_notes"`
-	Attachments []string `json:"attachments"`
-	Paused      bool     `json:"paused"`
-	Archived    bool     `json:"archived"`
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	Description   string   `json:"description"`
+	Type          string   `json:"type"`
+	Label         string   `json:"label"`
+	RepoID        string   `json:"repo_id"`
+	WorkflowID    string   `json:"workflow_id"`
+	AgentNotes    string   `json:"agent_notes"`
+	Attachments   []string `json:"attachments"`
+	Paused        bool     `json:"paused"`
+	Archived      bool     `json:"archived"`
+	Priority      int      `json:"priority"`
+	QueuePosition *int     `json:"queue_position"`
 }
 
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
@@ -306,6 +308,72 @@ func TestTasks_Create_MissingRepoAndWorkflow_Returns400(t *testing.T) {
 	}
 }
 
+func TestTasks_Create_WithPriority_OK(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	body := map[string]any{
+		"title":       "Urgent fix",
+		"repo_id":     repoID,
+		"workflow_id": wfID,
+		"priority":    2,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.Priority != 2 {
+		t.Errorf("expected priority 2, got %d", task.Priority)
+	}
+}
+
+func TestTasks_Create_DefaultPriority_IsNormal(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	body := map[string]string{"title": "No priority given", "repo_id": repoID, "workflow_id": wfID}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.Priority != 0 {
+		t.Errorf("expected default priority 0 (normal), got %d", task.Priority)
+	}
+}
+
+func TestTasks_Create_InvalidPriority_Returns400(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	body := map[string]any{
+		"title":       "Bad priority",
+		"repo_id":     repoID,
+		"workflow_id": wfID,
+		"priority":    99,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
 // ---------- List ----------
 
 func TestTasks_List_Empty(t *testing.T) {
@@ -427,6 +495,83 @@ func TestTasks_Update_OK(t *testing.T) {
 	}
 	if updated.Type != "bug" {
 		t.Errorf("expected type 'bug', got %q", updated.Type)
+	}
+}
+
+func TestTasks_Update_Priority_OK(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Original",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+
+	body := map[string]any{"priority": 1}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID, jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Priority != 1 {
+		t.Errorf("expected priority 1, got %d", updated.Priority)
+	}
+}
+
+func TestTasks_Update_PriorityOmitted_Preserved(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Original",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+		Priority:   2,
+	})
+
+	body := map[string]string{"title": "Renamed only"}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID, jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Priority != 2 {
+		t.Errorf("expected priority to be preserved at 2, got %d", updated.Priority)
+	}
+}
+
+func TestTasks_Update_InvalidPriority_Returns400(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Original",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+
+	body := map[string]any{"priority": -7}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID, jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", w.Code, w.Body)
 	}
 }
 
@@ -987,6 +1132,69 @@ func TestTasks_Paused_ExcludedFromAgentPickup(t *testing.T) {
 		if p.ID == task.ID {
 			t.Fatalf("expected paused task to be excluded from ListAgentPickupTasks")
 		}
+	}
+}
+
+// TestTasks_Get_QueuePosition verifies GET /tasks/{id} surfaces a derived
+// queue_position for a task currently eligible for agent pickup, and omits it
+// (nil) for a task that is not eligible (paused).
+func TestTasks_Get_QueuePosition(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	// "plan" is an agent-trigger label in the seeded default workflow.
+	eligible, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Eligible",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	notEligible, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Paused, not eligible",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if _, err := q.SetTaskPaused(ctx, gen.SetTaskPausedParams{Paused: 1, ID: notEligible.ID}); err != nil {
+		t.Fatalf("pause task: %v", err)
+	}
+
+	// Eligible task should have a non-nil queue position.
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+eligible.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	_ = json.NewDecoder(w.Body).Decode(&got)
+	if got.QueuePosition == nil {
+		t.Fatalf("expected non-nil queue_position for an eligible task")
+	}
+	if *got.QueuePosition < 0 {
+		t.Errorf("expected a non-negative queue_position, got %d", *got.QueuePosition)
+	}
+
+	// Paused task should have a nil queue position.
+	req = httptest.NewRequest(http.MethodGet, "/tasks/"+notEligible.ID, nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var gotPaused apiTask
+	_ = json.NewDecoder(w.Body).Decode(&gotPaused)
+	if gotPaused.QueuePosition != nil {
+		t.Errorf("expected nil queue_position for a paused (non-eligible) task, got %d", *gotPaused.QueuePosition)
 	}
 }
 

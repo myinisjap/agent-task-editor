@@ -12,6 +12,26 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Task priority ordering for dispatch** (#44).
+  - New `priority` column on tasks (`-1`=low, `0`=normal/default, `1`=high,
+    `2`=urgent). The dispatcher's pickup query (`ListAgentPickupTasks`) now
+    orders eligible tasks by `priority DESC, created_at ASC` instead of an
+    unspecified order, so higher-priority tasks are dispatched first
+    whenever there are more eligible tasks than free `MAX_WORKERS` slots.
+    Priority affects ordering only — it never preempts an already-running
+    task and doesn't bypass any other dispatch gate (paused, archived,
+    blocked dependency, retry backoff, cost budget).
+  - `POST /tasks` and `PATCH /tasks/{id}` accept an optional `priority`
+    field (`-1`/`0`/`1`/`2`); invalid values are rejected with 400.
+  - `GET /tasks` and `GET /tasks/{id}` now also surface a derived,
+    read-time `queue_position` — a task's current 0-based rank in the
+    priority-ordered pickup queue — null/absent when the task isn't
+    currently pickup-eligible.
+  - **UI**: a Priority selector on the new-task modal and the task card /
+    task-detail edit forms, a small priority badge on cards with a
+    non-default priority, and an "N in queue" hint on cards that are
+    eligible for dispatch but waiting on a free worker.
+  - See [docs/agents.md#task-priority](docs/agents.md#task-priority).
 - **Prometheus `/metrics` endpoint** (#88).
   - `GET /metrics` exposes Prometheus text-exposition-format metrics: dispatcher/pool
     state (eligible tasks, dispatched runs, queue depth, busy/max workers,
