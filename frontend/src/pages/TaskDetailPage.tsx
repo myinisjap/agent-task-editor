@@ -290,6 +290,24 @@ export default function TaskDetailPage() {
     }
   }
 
+  // "Move to…" control on the Overview tab — same call the board's drag/bulk
+  // "Move to…" actions use. Gives a touch-friendly path to change a task's
+  // label from any device (see issue #147).
+  const handleMoveLabel = async (toLabel: string) => {
+    if (!id || !toLabel || toLabel === task?.label) return
+    setActionPending(true)
+    try {
+      const updated = await api.tasks.moveLabel(id, toLabel)
+      setTask(updated)
+      refreshRuns()
+      refreshLabelHistory()
+    } catch (e: any) {
+      alert(e.message ?? String(e))
+    } finally {
+      setActionPending(false)
+    }
+  }
+
   const handleSyncGitState = () => {
     if (!id) return
     api.tasks.githubStatus(id)
@@ -370,6 +388,8 @@ export default function TaskDetailPage() {
               creatingPR={creatingPR}
               onSyncGitState={handleSyncGitState}
               onBack={() => navigate('/board')}
+              labels={workflow?.labels ?? []}
+              onMoveLabel={handleMoveLabel}
             />
 
             <SubtasksPanel

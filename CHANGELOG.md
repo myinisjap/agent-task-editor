@@ -11,6 +11,19 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
+### Added
+- **Task cards and task detail now reachable on touch devices** (#147).
+  - `TaskCard`'s select checkbox, pause, archive, edit, and delete controls
+    were previously only revealed via `group-hover`, making them unreachable
+    on touch devices (no hover) and effectively blocking the bulk "Move
+    to…" toolbar action and per-card edit/pause from mobile. A new Tailwind
+    `no-hover:` variant (`@media (hover: none)`) now forces these controls
+    visible on devices without hover, leaving desktop's hover-reveal
+    behavior unchanged.
+  - The task detail Overview tab gained its own "Move to…" control next to
+    the Label row, letting a task's label be changed from any device
+    (mirrors the existing bulk "Move to…" toolbar action on the board).
+
 ### Changed
 - **Dispatch queue visibility now gated on worker-pool saturation** (#152).
   - The `queue_position` field on task responses — and the "N in queue"
