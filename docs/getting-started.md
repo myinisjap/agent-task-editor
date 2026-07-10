@@ -145,9 +145,11 @@ backup_keep: 7
 
 ### Authentication
 
-Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this automatically. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
+Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this using a runtime token (see below), not a build-time one. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
 
 To identify *who* performed a human-triggered transition (approve/reject/move label) in the audit trail, set `API_TOKENS` (format `name1:token1,name2:token2`, or the `api_tokens` map in the YAML config) instead of, or alongside, `API_TOKEN`. Each named token authenticates the same way, but the resolved name is recorded as `actor_id` in `task_label_history` and returned by `GET /tasks/{id}/label-history`. `API_TOKEN` remains supported as a legacy/anonymous fallback — requests using it are recorded with an empty actor, exactly as before this feature existed. Note: the `/ws` WebSocket endpoint currently only supports the single legacy `API_TOKEN` for its `?token=` query param check, not named tokens.
+
+**Frontend token entry.** Once `API_TOKEN` is set on the backend, the first API request the UI makes will come back `401`, and the UI shows a simple one-field "enter API token" screen instead of a broken board. Enter the token once; it's stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on every subsequent request and WS ticket mint, for every page (board, task detail incl. the live log stream, workflows, agents, repos, health, backup download). A wrong or expired token sends you back to that screen rather than leaving the UI in a broken state. With `API_TOKEN` unset, no prompt ever appears. This is a runtime flow — it works with the prebuilt/GHCR image exactly the same as a locally built one, since nothing needs to be baked in at build time.
 
 The frontend reads `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` at build time. For the Docker image these default to `""` (same origin). For local development add a `.env.local` in `frontend/`:
 
@@ -156,6 +158,8 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_WS_BASE_URL=ws://localhost:8080
 VITE_API_TOKEN=your-token-here
 ```
+
+`VITE_API_TOKEN` is a **dev-only convenience**: if set, it seeds the runtime `localStorage` token the first time the app loads (so you don't have to click through the token prompt during `npm run dev`). It's not required, and it cannot be baked into the prebuilt GHCR image — that's exactly why the runtime prompt above exists.
 
 ## Metrics
 

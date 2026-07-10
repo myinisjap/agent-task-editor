@@ -1,11 +1,29 @@
+import { authHeaders, notifyUnauthorized } from './authToken'
+
 const BASE = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/v1`
+
+// authedRawFetch is a thin wrapper around fetch() that merges in the
+// Authorization header from the runtime token (see authToken.ts) and, on a
+// 401 response, clears the stored token and notifies ApiTokenGate so it can
+// prompt for a new one. It does not throw on non-2xx — callers handle that
+// themselves (request()/requestWithHeaders() below, or any other raw fetch()
+// call site that needs auth, e.g. HealthPage's backup download or
+// WorkflowPage's YAML export).
+export async function authedRawFetch(url: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(url, {
+    ...init,
+    headers: { ...authHeaders(), ...init?.headers },
+  })
+  if (res.status === 401) notifyUnauthorized()
+  return res
+}
 
 async function request<T>(path: string, init?: RequestInit & { isFormData?: boolean }): Promise<T> {
   const headers: Record<string, string> = {}
   if (!init?.isFormData) {
     headers['Content-Type'] = 'application/json'
   }
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await authedRawFetch(`${BASE}${path}`, {
     headers: { ...headers, ...init?.headers },
     ...init,
   })
@@ -21,7 +39,7 @@ async function request<T>(path: string, init?: RequestInit & { isFormData?: bool
 // callers can read pagination cursors (X-Next-Cursor / X-Prev-Cursor /
 // X-Has-More) that the list endpoints return alongside the array body.
 async function requestWithHeaders<T>(path: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await authedRawFetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
   })
@@ -541,7 +559,7 @@ export const api = {
     list: () => request<AgentConfig[]>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
     create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
-      const res = await fetch(`${BASE}/agents`, {
+      const res = await authedRawFetch(`${BASE}/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -592,8 +610,9 @@ export const api = {
   },
   backup: {
     // Raw binary download — not a JSON request<T>() call, mirrors
-    // workflows.exportYaml. Callers must fetch() this URL themselves with
-    // the Authorization header set (browsers can't set headers on <a href>).
+    // workflows.exportYaml. Callers must fetch() this URL themselves via
+    // authedRawFetch (browsers can't set headers on <a href>, and downloads
+    // need the same Authorization header as everything else).
     url: () => `${BASE}/backup`,
   },
 }
