@@ -34,7 +34,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	templatesH := handlers.NewTemplatesHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
-	healthH := handlers.NewHealthHandler(q, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep)
+	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep)
 	backupH := handlers.NewBackupHandler(db)
 	wsTicketH := handlers.NewWSTicketHandler(hub)
 

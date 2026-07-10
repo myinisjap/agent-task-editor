@@ -49,20 +49,32 @@ type Config struct {
 	// BackupKeep is how many of the most recent snapshots to retain in
 	// BackupDir before pruning older ones.
 	BackupKeep int `yaml:"backup_keep"`
+
+	// LogRetentionDays, if > 0, enables the built-in agent-log pruner: logs
+	// belonging to runs in a terminal status whose completed_at is older than
+	// this many days are deleted on a schedule (see internal/logretention).
+	// 0 (default) disables pruning entirely - behavior is unchanged from
+	// today (logs are kept forever) unless explicitly opted in.
+	LogRetentionDays int `yaml:"log_retention_days"`
+	// LogRetentionInterval is how often the pruner runs. Only meaningful when
+	// LogRetentionDays > 0.
+	LogRetentionInterval time.Duration `yaml:"log_retention_interval"`
 }
 
 // Defaults returns a Config populated with safe defaults.
 func Defaults() Config {
 	return Config{
-		DBPath:             "agent-task-editor.db",
-		Port:               "8080",
-		CORSOrigins:        "*",
-		LLMBaseURL:         "https://api.openai.com/v1",
-		MaxWorkers:         5,
-		GitHubSyncInterval: 30 * time.Second,
-		IssueSyncInterval:  60 * time.Second,
-		BackupInterval:     24 * time.Hour,
-		BackupKeep:         7,
+		DBPath:               "agent-task-editor.db",
+		Port:                 "8080",
+		CORSOrigins:          "*",
+		LLMBaseURL:           "https://api.openai.com/v1",
+		MaxWorkers:           5,
+		GitHubSyncInterval:   30 * time.Second,
+		IssueSyncInterval:    60 * time.Second,
+		BackupInterval:       24 * time.Hour,
+		BackupKeep:           7,
+		LogRetentionDays:     0,
+		LogRetentionInterval: 1 * time.Hour,
 	}
 }
 
@@ -168,6 +180,23 @@ func Load(path string) (Config, error) {
 			cfg.BackupKeep = n
 		} else {
 			slog.Warn("invalid BACKUP_KEEP; using default", "value", v, "default", cfg.BackupKeep)
+		}
+	}
+	if v := os.Getenv("LOG_RETENTION_DAYS"); v != "" {
+		// n >= 0 (unlike BackupKeep's n > 0): 0 is the valid "disabled"
+		// sentinel and must be settable via env explicitly, not just left at
+		// the zero-value default.
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.LogRetentionDays = n
+		} else {
+			slog.Warn("invalid LOG_RETENTION_DAYS; using default", "value", v, "default", cfg.LogRetentionDays)
+		}
+	}
+	if v := os.Getenv("LOG_RETENTION_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.LogRetentionInterval = d
+		} else {
+			slog.Warn("invalid LOG_RETENTION_INTERVAL; using default", "value", v, "default", cfg.LogRetentionInterval)
 		}
 	}
 

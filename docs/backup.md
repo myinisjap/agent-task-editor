@@ -107,6 +107,46 @@ offsite/durable retention, either:
 - Use the Litestream sidecar described below, which continuously replicates
   the *live* database (not just periodic snapshots) to S3-compatible storage.
 
+## Agent log retention
+
+Every stream-json line produced by every agent run is persisted to the
+`agent_logs` table forever by default. On a busy, long-lived board this is
+the table most likely to bloat the SQLite file, which in turn slows down
+`VACUUM INTO` backups (see above) and log-list queries.
+
+Set `LOG_RETENTION_DAYS` to a positive number to enable a built-in pruner
+that periodically deletes `agent_logs` rows belonging to runs in a
+**terminal status** (`completed`, `failed`, or `waiting_human`) whose run
+`completed_at` is older than that many days:
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOG_RETENTION_DAYS` | `0` | Delete logs for terminal-status runs older than this many days. `0` = keep forever (pruning disabled, the default — no behavior change unless explicitly opted in). |
+| `LOG_RETENTION_INTERVAL` | `1h` | How often the pruner runs. Only meaningful when `LOG_RETENTION_DAYS > 0`. Accepts Go duration strings. |
+
+```yaml
+environment:
+  - LOG_RETENTION_DAYS=30
+  - LOG_RETENTION_INTERVAL=1h
+```
+
+The pruner **never touches a run that's still `pending`/`running`** — the
+delete predicate requires both a terminal status and a non-null
+`completed_at`, so the currently-active run's logs and the WebSocket replay
+path (which reads the live run's logs) are always unaffected.
+
+This release scopes retention to age-based pruning only
+(`LOG_RETENTION_DAYS`). A per-run row cap (`LOG_MAX_ROWS_PER_RUN`, capping
+retained rows per run to the newest N regardless of age) was considered but
+descoped as a possible fast-follow, since it requires iterating every
+terminal run and adds complexity/perf risk that age-based pruning alone
+doesn't.
+
+The current database file size and total `agent_logs` row count are also
+surfaced as a `db_size` check on `GET /api/v1/health/providers` (and
+therefore the frontend's **Health** page), so bloat is observable before
+it's a problem — independent of whether retention is enabled.
+
 ## Litestream sidecar (continuous offsite replication)
 
 For continuous, near-real-time replication to S3-compatible storage, run

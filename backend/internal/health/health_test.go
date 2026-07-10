@@ -2,6 +2,7 @@ package health
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -256,6 +257,66 @@ func TestGHCheck(t *testing.T) {
 	d = fakeDeps(nil, nil, nil, "/home/u", false)
 	if find(t, Checks(Input{}, d), "gh_auth").Status != StatusWarn {
 		t.Fatalf("unauthed gh should warn")
+	}
+}
+
+func TestDBSizeCheck(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+
+	// Unreadable/zero size: warn, but never error (a large DB isn't itself a
+	// failure state).
+	got := find(t, Checks(Input{}, d), "db_size")
+	if got.Status != StatusWarn {
+		t.Fatalf("status = %q, want warn when size is 0/unreadable", got.Status)
+	}
+
+	got = find(t, Checks(Input{DBSizeBytes: 44_356_812, AgentLogsCount: 118204}, d), "db_size")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok", got.Status)
+	}
+	if !strings.Contains(got.Detail, "MB") {
+		t.Errorf("expected human-readable MB size in detail, got %q", got.Detail)
+	}
+	if !strings.Contains(got.Detail, "118,204") {
+		t.Errorf("expected thousands-separated row count in detail, got %q", got.Detail)
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KB"},
+		{1536, "1.5 KB"},
+		{1024 * 1024, "1.0 MB"},
+		{1024 * 1024 * 1024, "1.0 GB"},
+	}
+	for _, c := range cases {
+		if got := formatBytes(c.in); got != c.want {
+			t.Errorf("formatBytes(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestFormatCount(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{7, "7"},
+		{999, "999"},
+		{1000, "1,000"},
+		{118204, "118,204"},
+		{1234567, "1,234,567"},
+	}
+	for _, c := range cases {
+		if got := formatCount(c.in); got != c.want {
+			t.Errorf("formatCount(%d) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 

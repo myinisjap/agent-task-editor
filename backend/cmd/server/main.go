@@ -17,6 +17,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
+	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/tasksource"
@@ -244,12 +245,28 @@ func main() {
 		slog.Info("automatic local backups disabled; set BACKUP_DIR to enable (see docs/backup.md)")
 	}
 
+	// Agent-log retention: optional. When LOG_RETENTION_DAYS > 0, periodically
+	// deletes agent_logs rows for terminal-status runs (completed/failed/
+	// waiting_human) whose completed_at is older than that many days.
+	// Disabled by default so DB growth behavior is unchanged unless
+	// explicitly opted in. See docs/backup.md#agent-log-retention.
+	var logPruner *logretention.Pruner
+	if cfg.LogRetentionDays > 0 {
+		logPruner = logretention.New(termQ, cfg.LogRetentionDays, cfg.LogRetentionInterval)
+		slog.Info("agent log retention enabled", "retention_days", cfg.LogRetentionDays, "interval", cfg.LogRetentionInterval)
+	} else {
+		slog.Info("agent log retention disabled; set LOG_RETENTION_DAYS to enable (see docs/backup.md#agent-log-retention)")
+	}
+
 	go pool.Start(ctx)
 	go dispatcher.Run(ctx)
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)
 	if backupScheduler != nil {
 		go backupScheduler.Run(ctx)
+	}
+	if logPruner != nil {
+		go logPruner.Run(ctx)
 	}
 
 	go func() {

@@ -5,12 +5,14 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
 // HealthHandler serves provider/onboarding readiness checks.
 type HealthHandler struct {
 	q              *gen.Queries
+	db             *storage.DB
 	mcpBinary      string
 	repoBaseDir    string
 	llmBaseURL     string
@@ -21,9 +23,12 @@ type HealthHandler struct {
 }
 
 // NewHealthHandler constructs a HealthHandler from the relevant server config.
-func NewHealthHandler(q *gen.Queries, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int) *HealthHandler {
+// db is used only to read the on-disk database file size for the dbSizeCheck
+// (informational; see internal/health.dbSizeCheck).
+func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int) *HealthHandler {
 	return &HealthHandler{
 		q:              q,
+		db:             db,
 		mcpBinary:      mcpBinary,
 		repoBaseDir:    repoBaseDir,
 		llmBaseURL:     llmBaseURL,
@@ -49,6 +54,20 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// DB size + agent_logs row count require a live read, so they're gathered
+	// here (best-effort; a failure to stat the file just yields 0, surfaced
+	// as a warn by dbSizeCheck) rather than inside health.Checks itself.
+	var dbSize int64
+	if h.db != nil {
+		if sz, err := h.db.Size(); err == nil {
+			dbSize = sz
+		}
+	}
+	var logCount int64
+	if n, err := h.q.CountAgentLogsTotal(r.Context()); err == nil {
+		logCount = n
+	}
+
 	checks := health.Checks(health.Input{
 		MCPBinary:      h.mcpBinary,
 		RepoBaseDir:    h.repoBaseDir,
@@ -58,6 +77,8 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		BackupDir:      h.backupDir,
 		BackupInterval: h.backupInterval,
 		BackupKeep:     h.backupKeep,
+		DBSizeBytes:    dbSize,
+		AgentLogsCount: logCount,
 	}, nil)
 
 	JSON(w, http.StatusOK, map[string]any{"checks": checks})
