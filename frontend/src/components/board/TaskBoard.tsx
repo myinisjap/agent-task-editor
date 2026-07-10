@@ -8,6 +8,7 @@ import TaskColumn from './TaskColumn'
 import AgentGroupColumn from './AgentGroupColumn'
 import { computeCondensedGroups } from '../../lib/condensedBoard'
 import { useIsMobile } from '../../lib/useIsMobile'
+import { useSwipe } from '../../lib/useSwipe'
 
 // Extracted to module level so React sees a stable component type across renders.
 // If defined inside TaskBoard's function body, React would create a new type on
@@ -166,6 +167,18 @@ export default function TaskBoard({
     if (clampedCondensed !== mobileCondensedIndex) setMobileCondensedIndex(clampedCondensed)
   }, [clampedCondensed, mobileCondensedIndex])
 
+  // Swipe handlers for the mobile single-column pager — swipe left/right to
+  // move between columns, clamped to valid bounds (no disabled-state concept
+  // for swipes, so clamp directly here).
+  const condensedSwipe = useSwipe({
+    onSwipeLeft: () => setMobileCondensedIndex((i) => Math.min(groups.length - 1, i + 1)),
+    onSwipeRight: () => setMobileCondensedIndex((i) => Math.max(0, i - 1)),
+  })
+  const normalSwipe = useSwipe({
+    onSwipeLeft: () => setMobileNormalIndex((i) => Math.min(sortedLabels.length - 1, i + 1)),
+    onSwipeRight: () => setMobileNormalIndex((i) => Math.max(0, i - 1)),
+  })
+
   if (condensed && transitions.length > 0) {
     if (isMobile && groups.length > 0) {
       const currentGroup = groups[clampedCondensed]
@@ -185,7 +198,12 @@ export default function TaskBoard({
               onNext={() => setMobileCondensedIndex((i) => i + 1)}
               onDotClick={setMobileCondensedIndex}
             />
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div
+              className="flex-1 min-h-0 overflow-y-auto"
+              style={{ touchAction: 'pan-y' }}
+              onTouchStart={condensedSwipe.onTouchStart}
+              onTouchEnd={condensedSwipe.onTouchEnd}
+            >
               {currentGroup.kind === 'single' ? (
                 <TaskColumn
                   label={currentGroup.label}
@@ -272,7 +290,12 @@ export default function TaskBoard({
             onNext={() => setMobileNormalIndex((i) => i + 1)}
             onDotClick={setMobileNormalIndex}
           />
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div
+            className="flex-1 min-h-0 overflow-y-auto"
+            style={{ touchAction: 'pan-y' }}
+            onTouchStart={normalSwipe.onTouchStart}
+            onTouchEnd={normalSwipe.onTouchEnd}
+          >
             <TaskColumn
               label={currentLabel}
               tasks={byLabel(currentLabel.name)}

@@ -34,6 +34,41 @@ this file's section for that version as the release notes.
     parsed time; the pool (`pool.go`) already scheduled retries against an
     exact `ResetAt` when present (falling back to exponential backoff
     otherwise) — no pool/dispatcher changes were needed.
+- **GitHub Issues write-back (task-sources v2)** (#81). New opt-in per-repo
+  `issue_writeback_enabled` flag (independent of `issue_sync_enabled`) writes
+  an imported task's status back to the GitHub issue it came from: a comment
+  linking the PR when the task first gets a `pr_url`, an `agent-in-progress`
+  label applied the first time the task leaves `not_ready`, and the issue
+  closed with a comment once the PR merges. All three are best-effort (a
+  failed `gh` call is logged, never fails the caller/sweep) and idempotent
+  via new per-task tracking columns (`writeback_in_progress_sent`,
+  `writeback_pr_commented`, `writeback_closed`), not by scraping issue
+  comments. Uses the same `gh` CLI auth as issue import and PR-state sync —
+  no new credential surface. See [docs/task-sources.md](docs/task-sources.md).
+- **Mobile polish: responsive Usage/AgentConfig pages, board swipe, and PWA install** (#148).
+  - `UsagePage`'s cost-by-provider, cost-by-day, and cost-by-task tables are
+    now wrapped in `overflow-x-auto` (previously `overflow-hidden`), so wide
+    tables scroll horizontally instead of overflowing the viewport at narrow
+    widths; `AgentPerformancePage`'s table already did this.
+  - `AgentSidebar` now collapses into an off-canvas drawer under the `md`
+    breakpoint (same fixed/backdrop/slide-in pattern as `NavSidebar`),
+    with a new mobile-only "Configs" header bar in `AgentConfigPage`
+    showing the selected agent's name and a button to open the drawer; the
+    drawer closes itself after selecting an agent, starting a new one, or
+    tapping the backdrop/✕.
+  - `TaskBoard`'s mobile single-column pager (both the condensed and
+    normal/expanded views) now supports left/right swipe to move between
+    columns, via a small new `useSwipe` hook (`frontend/src/lib/useSwipe.ts`,
+    native touch events, no new dependency) that ignores predominantly
+    vertical drags so it doesn't fight the column's own vertical scrolling.
+  - Added a web app manifest (`frontend/public/manifest.webmanifest`) plus
+    `icon-192.png`/`icon-512.png`/`icon-512-maskable.png`, linked from
+    `index.html` with relative paths so they resolve correctly both in dev
+    (`/`) and behind the `/tasks/` production base path; `nginx.conf` gained
+    `manifest-src 'self'` in its CSP and an explicit MIME-type mapping for
+    `.webmanifest` (not in the base `nginx:alpine` image's `mime.types`).
+    The app is now installable (Chrome "Install app" / Android "Add to Home
+    Screen") and launches directly to the board.
 - **`openapi.yaml` now documents all served `/api/v1` routes** (#140).
   - Added the 10 previously-undocumented paths: `PATCH /repos/{id}`,
     `POST /tasks/{id}/rerun`, `GET /tasks/{id}/github-status`,
@@ -295,6 +330,16 @@ this file's section for that version as the release notes.
   the MCP sidecar's version, and the label is resolved automatically as
   intended. `docs/providers/anthropic.md` and `docs/providers/llm.md` are
   updated accordingly.
+- **Dashboard "Needs your input" queue kept showing tasks that were already
+  running again.** Replying to (or approving/rejecting) a `waiting_human`
+  run dispatches a new run and repoints the task's active run at it, but
+  deliberately leaves the old run's status as `waiting_human` as a
+  historical record. `ListWaitingHumanRuns` had no way to tell a
+  still-actionable `waiting_human` run apart from one that had already been
+  superseded, so the old run kept showing up in the intervention queue
+  forever, alongside the new run showing the same task as actively working.
+  The query now joins on `tasks.active_agent_run_id` and only returns a
+  `waiting_human` run while it's still the task's active run.
 
 ## [0.7.0] - 2026-07-09
 

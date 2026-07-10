@@ -65,9 +65,91 @@ The importer sweeps on a fixed interval, configurable via the
 `ISSUE_SYNC_INTERVAL` env var / `issue_sync_interval` YAML key (Go duration
 syntax, default `60s`).
 
-## Roadmap (v2)
+## Status write-back
 
-Status write-back is intentionally out of scope for v1: commenting on the
-issue when the task's PR opens, and closing the issue when `git_state`
-reaches `pr_merged`. The `source`/`source_ref` fields exist so this can be
-added without schema changes.
+Alongside issue import, a repo can opt in to writing task status back to the
+GitHub issue an imported task originated from — so people watching the
+tracker get a signal that an agent is already working on it, without having
+to check the board.
+
+| Repo field | Meaning |
+|---|---|
+| `issue_writeback_enabled` | `1` to turn write-back on for this repo's imported tasks |
+
+Only one prerequisite is enforced when enabling write-back:
+
+1. **`remote_url`** must be set and point at GitHub, same as issue sync —
+   write-back shells out to the `gh` CLI (same auth as import/PR sync).
+
+Write-back is **independent of `issue_sync_enabled`** at the API/DB level —
+you can enable one without the other. In practice they're used together,
+since write-back only ever applies to tasks with a `source`/`source_ref`
+(i.e. tasks the importer created); manually created tasks are never written
+back to, even if they happen to reference an issue in their description.
+
+Via the API:
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"issue_writeback_enabled": true}'
+```
+
+### Triggers
+
+Three independent triggers fire the write-back actions below. Each is
+best-effort: a failed `gh` call is logged and swallowed, never surfaced to
+the human clicking a button or blocking a background sweep.
+
+1. **Task leaves `not_ready`** (optional intermediate signal) — the first
+   time a task's label moves off `not_ready` (agent- or human-triggered), the
+   source issue gets an `agent-in-progress` label via
+   `gh issue edit --add-label agent-in-progress`. This label name is
+   currently **fixed, not configurable** per repo; a future request could add
+   a per-repo custom label field, but v2 ships a sensible default. If the
+   repo doesn't already have an `agent-in-progress` label defined, the `gh`
+   call fails — this is logged and ignored, and (unlike the two triggers
+   below) is **not retried**: this is explicitly the optional signal, and
+   retrying a call that's already failed on every future sweep/transition
+   forever is worse than an occasional missed label.
+2. **PR opened** — the first time a task gets a non-empty `pr_url`, the
+   source issue gets a comment linking the PR
+   (`gh issue comment --body "..."`).
+3. **PR merged** — the first time a task's `git_state` becomes `pr_merged`,
+   the source issue is closed with a comment linking the merged PR
+   (`gh issue close --comment "..."`).
+
+Triggers #2 and #3 fire from every code path that can move a task into that
+state: the background `ghsync` PR-status sweep, the `POST
+/tasks/{id}/pr` (`CreatePR`) and `POST /tasks/{id}/github-status`
+(`GitHubStatus`) handlers, and — for the merged trigger only — the manual
+`PATCH /tasks/{id}/git-state` (`UpdateGitState`) override, since a human
+marking a task `pr_merged` by hand should still close the issue. Both are
+safe to call unconditionally on every state (re)write, since the underlying
+DB flag (see below) makes repeat calls a no-op; a failed `gh` call leaves the
+flag unset, so the next sweep or handler call naturally retries.
+
+### Idempotency
+
+What's already been written back is tracked on the **task row**, not by
+scraping the issue's existing comments — three flags
+(`writeback_in_progress_sent`, `writeback_pr_commented`, `writeback_closed`)
+that each get set once their corresponding action has succeeded and never
+reset. This is cheaper than an extra `gh issue view --comments` call on every
+sweep, and survives a human editing or deleting the marker comment on
+GitHub.
+
+Because the flags live on the task row, **deleting an imported task and
+letting it re-import** (see the Deduplication section above) resets them —
+the new task row starts with all three flags unset. If the source issue
+already carries an old marker comment from the deleted task, a second PR
+against the re-imported task can produce a duplicate-looking comment/label
+sequence on the same GitHub issue. This is a known, accepted edge case, in
+the same spirit as the existing re-import caveat above — avoid deleting
+imported tasks with write-back enabled once they have PR activity.
+
+Comments posted by this feature include an HTML comment marker
+(`<!-- agent-task-editor:writeback -->`) so a human glancing at the issue can
+tell an agent-task-editor write-back apart from their own comments. This
+marker plays no role in idempotency (which is DB-flag based, not
+comment-scraping based) — it's purely for human legibility.

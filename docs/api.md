@@ -526,7 +526,8 @@ values; setting `remote_url` or `workflow_id` to an empty string clears it.
   "remote_url": "string|null",
   "workflow_id": "string|null",
   "issue_sync_enabled": true,
-  "issue_sync_label": "string"
+  "issue_sync_label": "string",
+  "issue_writeback_enabled": true
 }
 ```
 
@@ -753,7 +754,7 @@ In addition to the standard Go runtime/process collectors (`go_*`,
 **Sync loops**
 - `ate_ghsync_sweep_duration_seconds` (histogram) — GitHub PR-status sweep duration.
 - `ate_tasksource_sweep_duration_seconds` (histogram) — GitHub issue-import sweep duration.
-- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`), an early warning signal for GitHub API rate limiting.
+- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`, `issue_label_add`, `issue_comment`, `issue_close`), an early warning signal for GitHub API rate limiting.
 
 ---
 

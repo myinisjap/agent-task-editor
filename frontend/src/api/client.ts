@@ -338,6 +338,11 @@ export type Repo = {
   // issue_sync_label (empty = all open issues) are imported as tasks.
   issue_sync_enabled?: number
   issue_sync_label?: string
+  // Status write-back: when enabled (1, requires remote_url), imported tasks
+  // comment on their source issue when a PR opens, get an "agent-in-progress"
+  // label when they first leave not_ready, and close the issue with a
+  // comment when the PR merges. Independent of issue_sync_enabled.
+  issue_writeback_enabled?: number
 }
 
 export type ModelList = {
@@ -581,9 +586,9 @@ export const api = {
   repos: {
     list: () => request<Repo[]>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean }) =>
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),

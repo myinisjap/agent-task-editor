@@ -196,6 +196,13 @@ func (h *TasksHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
+	// the task wasn't imported or the repo doesn't have it enabled).
+	if h.wb != nil {
+		h.wb.OnPROpened(r.Context(), updated, repo)
+		h.wb.OnPRMerged(r.Context(), updated, repo)
+	}
+
 	JSON(w, http.StatusOK, map[string]any{
 		"pr_url":    prURL,
 		"git_state": updated.GitState,
@@ -282,6 +289,14 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
+	// the task wasn't imported or the repo doesn't have it enabled).
+	if h.wb != nil {
+		h.wb.OnPROpened(r.Context(), updated, repo)
+		h.wb.OnPRMerged(r.Context(), updated, repo)
+	}
+
 	JSON(w, http.StatusOK, map[string]any{
 		"git_state": updated.GitState,
 		"pr_url":    updated.PrUrl,
@@ -312,5 +327,15 @@ func (h *TasksHandler) UpdateGitState(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// A human manually marking a task pr_merged should still close the source
+	// issue if the repo has write-back enabled — treat this the same as the
+	// automatic pr_merged detection in ghsync/CreatePR/GitHubStatus.
+	if h.wb != nil && body.GitState == "pr_merged" {
+		if repo, rerr := h.q.GetRepo(r.Context(), task.RepoID); rerr == nil {
+			h.wb.OnPRMerged(r.Context(), task, repo)
+		}
+	}
+
 	JSON(w, http.StatusOK, toTaskResponse(task))
 }

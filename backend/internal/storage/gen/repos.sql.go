@@ -10,19 +10,20 @@ import (
 )
 
 const createRepo = `-- name: CreateRepo :one
-INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error
+INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled
 `
 
 type CreateRepoParams struct {
-	ID               string  `json:"id"`
-	Name             string  `json:"name"`
-	Path             string  `json:"path"`
-	RemoteUrl        *string `json:"remote_url"`
-	WorkflowID       *string `json:"workflow_id"`
-	IssueSyncEnabled int64   `json:"issue_sync_enabled"`
-	IssueSyncLabel   string  `json:"issue_sync_label"`
+	ID                    string  `json:"id"`
+	Name                  string  `json:"name"`
+	Path                  string  `json:"path"`
+	RemoteUrl             *string `json:"remote_url"`
+	WorkflowID            *string `json:"workflow_id"`
+	IssueSyncEnabled      int64   `json:"issue_sync_enabled"`
+	IssueSyncLabel        string  `json:"issue_sync_label"`
+	IssueWritebackEnabled int64   `json:"issue_writeback_enabled"`
 }
 
 func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, error) {
@@ -34,6 +35,7 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		arg.WorkflowID,
 		arg.IssueSyncEnabled,
 		arg.IssueSyncLabel,
+		arg.IssueWritebackEnabled,
 	)
 	var i Repo
 	err := row.Scan(
@@ -47,6 +49,7 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		&i.IssueSyncLabel,
 		&i.CloneStatus,
 		&i.CloneError,
+		&i.IssueWritebackEnabled,
 	)
 	return i, err
 }
@@ -61,7 +64,7 @@ func (q *Queries) DeleteRepo(ctx context.Context, id string) error {
 }
 
 const getRepo = `-- name: GetRepo :one
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error FROM repos WHERE id = ?
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled FROM repos WHERE id = ?
 `
 
 func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
@@ -78,12 +81,13 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 		&i.IssueSyncLabel,
 		&i.CloneStatus,
 		&i.CloneError,
+		&i.IssueWritebackEnabled,
 	)
 	return i, err
 }
 
 const listIssueSyncRepos = `-- name: ListIssueSyncRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
@@ -106,6 +110,7 @@ func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
 			&i.IssueSyncLabel,
 			&i.CloneStatus,
 			&i.CloneError,
+			&i.IssueWritebackEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -121,7 +126,7 @@ func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
 }
 
 const listRepos = `-- name: ListRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error FROM repos ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled FROM repos ORDER BY created_at DESC
 `
 
 func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
@@ -144,6 +149,7 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 			&i.IssueSyncLabel,
 			&i.CloneStatus,
 			&i.CloneError,
+			&i.IssueWritebackEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -177,19 +183,20 @@ func (q *Queries) SetRepoCloneStatus(ctx context.Context, arg SetRepoCloneStatus
 
 const updateRepo = `-- name: UpdateRepo :one
 UPDATE repos
-SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?
+SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?
 WHERE id = ?
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled
 `
 
 type UpdateRepoParams struct {
-	Name             string  `json:"name"`
-	Path             string  `json:"path"`
-	RemoteUrl        *string `json:"remote_url"`
-	WorkflowID       *string `json:"workflow_id"`
-	IssueSyncEnabled int64   `json:"issue_sync_enabled"`
-	IssueSyncLabel   string  `json:"issue_sync_label"`
-	ID               string  `json:"id"`
+	Name                  string  `json:"name"`
+	Path                  string  `json:"path"`
+	RemoteUrl             *string `json:"remote_url"`
+	WorkflowID            *string `json:"workflow_id"`
+	IssueSyncEnabled      int64   `json:"issue_sync_enabled"`
+	IssueSyncLabel        string  `json:"issue_sync_label"`
+	IssueWritebackEnabled int64   `json:"issue_writeback_enabled"`
+	ID                    string  `json:"id"`
 }
 
 func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, error) {
@@ -200,6 +207,7 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		arg.WorkflowID,
 		arg.IssueSyncEnabled,
 		arg.IssueSyncLabel,
+		arg.IssueWritebackEnabled,
 		arg.ID,
 	)
 	var i Repo
@@ -214,6 +222,7 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		&i.IssueSyncLabel,
 		&i.CloneStatus,
 		&i.CloneError,
+		&i.IssueWritebackEnabled,
 	)
 	return i, err
 }

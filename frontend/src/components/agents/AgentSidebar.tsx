@@ -16,6 +16,8 @@ export default function AgentSidebar({
   setShowTemplates,
   creatingTemplate,
   onApplyTemplate,
+  isOpen,
+  onClose,
 }: {
   agents: AgentConfig[]
   selected: AgentConfig | null
@@ -31,9 +33,24 @@ export default function AgentSidebar({
   setShowTemplates: (updater: (v: boolean) => boolean) => void
   creatingTemplate: boolean
   onApplyTemplate: (t: typeof TEMPLATES[0]) => void
+  isOpen: boolean
+  onClose: () => void
 }) {
   return (
-    <div className="w-56 shrink-0 border-r border-slate-800 overflow-y-auto flex flex-col">
+    <>
+      {/* Backdrop — only on mobile when drawer is open */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          onClick={onClose}
+        />
+      )}
+
+      <div
+        className={`fixed inset-y-0 left-0 z-40 w-64 max-w-[80vw] bg-slate-950 border-r border-slate-800 overflow-y-auto flex flex-col transition-transform duration-200 ease-in-out
+          md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0
+          ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
+      >
       <div className="p-4 flex items-center justify-between border-b border-slate-800">
         <span className="text-sm font-medium text-slate-300">Agent Configs</span>
         <div className="flex items-center gap-1.5">
@@ -45,12 +62,19 @@ export default function AgentSidebar({
           </button>
           {!multiMode && (
             <button
-              onClick={onNew}
+              onClick={() => { onNew(); onClose() }}
               className="text-xs px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600 text-white"
             >
               + New
             </button>
           )}
+          <button
+            onClick={onClose}
+            aria-label="Close configs"
+            className="md:hidden text-slate-400 hover:text-slate-100 p-1 rounded"
+          >
+            ✕
+          </button>
         </div>
       </div>
 
@@ -97,6 +121,7 @@ export default function AgentSidebar({
                   })
                 } else {
                   onSelect(a)
+                  onClose()
                 }
               }}
               className={`w-full text-left text-sm px-3 py-2 rounded flex items-start gap-2 ${
@@ -166,6 +191,7 @@ export default function AgentSidebar({
           )}
         </div>
       )}
-    </div>
+      </div>
+    </>
   )
 }

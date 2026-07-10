@@ -554,6 +554,7 @@ SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
+  AND t.active_agent_run_id = ar.id
 ORDER BY ar.created_at DESC
 `
 
@@ -575,6 +576,13 @@ type ListWaitingHumanRunsRow struct {
 	TaskTitle     string     `json:"task_title"`
 }
 
+// Only surfaces a waiting_human run while it is still the task's active run.
+// A reply/approve/reject on a waiting_human run dispatches a new run and
+// repoints tasks.active_agent_run_id at it, but deliberately leaves the old
+// run's status as 'waiting_human' as a historical record (see ReplyRun's doc
+// comment in task_runs.go); without this join, that superseded run would
+// keep showing up in the dashboard's "needs your input" queue forever, even
+// after a new run for the same task is already active/running.
 func (q *Queries) ListWaitingHumanRuns(ctx context.Context) ([]ListWaitingHumanRunsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listWaitingHumanRuns)
 	if err != nil {

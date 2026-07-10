@@ -300,6 +300,90 @@ func TestListOpenIssues_LabelFiltering(t *testing.T) {
 	})
 }
 
+func TestAddIssueLabel(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "edit") || !argsContain(args, "--add-label") || !argsContain(args, "agent-in-progress") {
+				t.Fatalf("expected issue edit --add-label call, got %v", args)
+			}
+			if !argsContain(args, "--repo") || !argsContain(args, "acme/widgets") {
+				t.Fatalf("expected --repo acme/widgets in args, got %v", args)
+			}
+			return fakeCmd{output: []byte("")}
+		},
+	})
+
+	if err := AddIssueLabel(context.Background(), "acme/widgets", 42, "agent-in-progress"); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}
+
+func TestAddIssueLabel_Error(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			return fakeCmd{output: []byte("label not found"), err: errors.New("exit status 1")}
+		},
+	})
+
+	if err := AddIssueLabel(context.Background(), "acme/widgets", 42, "does-not-exist"); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestCommentOnIssue(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "comment") || !argsContain(args, "--body") {
+				t.Fatalf("expected issue comment --body call, got %v", args)
+			}
+			return fakeCmd{output: []byte("https://github.com/acme/widgets/issues/42#issuecomment-1")}
+		},
+	})
+
+	if err := CommentOnIssue(context.Background(), "acme/widgets", 42, "PR opened: https://github.com/acme/widgets/pull/7"); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}
+
+func TestCommentOnIssue_Error(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			return fakeCmd{output: []byte("not found"), err: errors.New("exit status 1")}
+		},
+	})
+
+	if err := CommentOnIssue(context.Background(), "acme/widgets", 42, "body"); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestCloseIssueWithComment(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "close") || !argsContain(args, "--comment") {
+				t.Fatalf("expected issue close --comment call, got %v", args)
+			}
+			return fakeCmd{output: []byte("")}
+		},
+	})
+
+	if err := CloseIssueWithComment(context.Background(), "acme/widgets", 42, "merged: https://github.com/acme/widgets/pull/7"); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}
+
+func TestCloseIssueWithComment_Error(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			return fakeCmd{output: []byte("already closed"), err: errors.New("exit status 1")}
+		},
+	})
+
+	if err := CloseIssueWithComment(context.Background(), "acme/widgets", 42, "body"); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
 func equalStrSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
