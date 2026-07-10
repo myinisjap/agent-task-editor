@@ -155,6 +155,19 @@ this file's section for that version as the release notes.
   - `?token=<API_TOKEN>` is kept as a **deprecated fallback** for existing
     setups/non-browser clients — each use is now logged as a warning
     server-side — and may be removed in a future release.
+
+### Changed
+- **Split the 1,400-line `handlers/tasks.go` into `tasks.go` /
+  `task_response.go` / `task_uploads.go` / `task_bulk.go` / `task_runs.go` /
+  `task_pr.go` by concern** (#156) — pure code-move refactor, no behavior,
+  route, or handler-signature changes. `tasks.go` keeps CRUD, list/search,
+  notes, and label transitions; `task_response.go` holds the wire-format
+  wrapper and derived dependency/subtask/queue-position helpers;
+  `task_uploads.go` holds the multipart attachment-save helper;
+  `task_bulk.go` holds pause/archive toggles and the bulk action;
+  `task_runs.go` holds the run list/get/logs/cancel/reply endpoints; and
+  `task_pr.go` holds diff/PR/PR-URL/GitHub-status/git-state.
+
 ### Fixed
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a
