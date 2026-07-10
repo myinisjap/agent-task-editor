@@ -9,6 +9,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -20,7 +21,7 @@ import (
 // backupDir/backupInterval/backupKeep are only used to render the
 // auto_backup health check (informational) — the actual scheduler is
 // started separately in cmd/server/main.go.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
@@ -35,6 +36,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep)
 	backupH := handlers.NewBackupHandler(db)
+	wsTicketH := handlers.NewWSTicketHandler(hub)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -43,11 +45,20 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	r.Use(middleware.CORS(corsOrigins))
 
 	// WebSocket endpoint — mounted outside BearerAuth because browsers can't set
-	// request headers on a WS handshake. ServeWS performs its own constant-time
-	// token check via the ?token= query param, so it is not left unauthenticated.
+	// request headers on a WS handshake. ServeWS performs its own auth check via
+	// a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket below)
+	// or, as a deprecated fallback, a constant-time compare against ?token=, so
+	// it is not left unauthenticated.
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
 		ws.ServeWS(hub, w, req, bearerToken, corsOrigins, q)
 	})
+
+	// Prometheus scrape endpoint — mounted outside the main API's BearerAuth
+	// group (and outside /api/v1) so self-hosters don't need to hand the
+	// primary API_TOKEN to their Prometheus scrape config. Gated by its own,
+	// independent METRICS_TOKEN (empty by default, i.e. unauthenticated,
+	// matching most Prometheus setups) via the same BearerAuth middleware.
+	r.With(middleware.BearerAuth(metricsToken)).Get("/metrics", metrics.Handler().ServeHTTP)
 
 	// Everything below requires the Bearer token (when one is configured).
 	r.Group(func(r chi.Router) {
@@ -126,6 +137,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Streams a consistent point-in-time database snapshot (VACUUM INTO)
 			// as application/octet-stream. Plain bearer-gated; see docs/backup.md.
 			r.Get("/backup", backupH.Backup)
+
+			// Mints a short-lived, single-use ticket for authenticating the
+			// WebSocket upgrade (GET /ws?ticket=...) without putting the
+			// long-lived API token in the URL. Bearer-gated: minting a ticket
+			// requires already holding the token. See docs/websocket.md.
+			r.Post("/ws-ticket", wsTicketH.IssueTicket)
 
 			// Agent runs
 			r.Get("/tasks/{id}/runs", tasksH.ListRuns)

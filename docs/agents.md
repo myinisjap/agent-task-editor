@@ -67,7 +67,7 @@ Notes:
 
 The dispatcher runs a background goroutine that sweeps the database every 5 seconds:
 
-1. Queries `ListAgentPickupTasks` — tasks whose label appears in any agent-triggerable transition AND whose `active_agent_run_id IS NULL`.
+1. Queries `ListAgentPickupTasks` — tasks whose label appears in any agent-triggerable transition AND whose `active_agent_run_id IS NULL`, ordered by `priority` (urgent → high → normal → low) then oldest first. See [Task Priority](#task-priority) below.
 2. Loads all agent configs, matches each task to the first config whose `labels` array contains the task's label.
 3. Creates an `agent_runs` record with status `pending`.
 4. Sets the task's `active_agent_run_id` (and updates `current_agent_run_id`) — this prevents the next sweep from double-dispatching.
@@ -219,6 +219,36 @@ the dispatcher skips starting a new run.
   *next* dispatch once a budget is already exhausted; it cannot stop the
   run that pushes the task over budget in the first place, since a run's
   cost is only known once it completes.
+
+## Task Priority
+
+Every task has a `priority` (plain `INTEGER` column, default `0`), one of
+four levels:
+
+| Value | Level |
+|---|---|
+| `-1` | Low |
+| `0`  | Normal (default) |
+| `1`  | High |
+| `2`  | Urgent |
+
+`ListAgentPickupTasks` — the query the dispatcher's sweep uses to find
+eligible tasks (see [Dispatcher](#dispatcher) above) — orders its results by
+`priority DESC, created_at ASC`. This only matters when there are more
+eligible tasks than free `MAX_WORKERS` slots: with idle capacity, every
+eligible task is dispatched anyway regardless of priority. Priority affects
+**ordering only** — it does not preempt, pause, or cancel a task whose run is
+already `running`, and it does not bypass any other dispatch gate (paused,
+archived, blocked by an unsatisfied dependency, backed-off transient retry,
+or an exhausted cost budget).
+
+Priority can be set on task create/update via the API (`priority` field on
+`POST /tasks` and `PATCH /tasks/{id}`) and edited from the board (task card
+and task-detail edit forms). The board also surfaces a derived, read-time
+`queue_position` on each task response — its current 0-based rank in the
+priority-ordered pickup queue — shown as an "N in queue" hint on cards that
+are eligible but waiting for a free worker; it's absent for tasks not
+currently pickup-eligible.
 
 ## Session Resume
 

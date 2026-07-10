@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -79,6 +80,7 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 		return
 	}
 	slog.Debug("dispatcher sweep", "component", "dispatcher", "pending_tasks", len(tasks))
+	metrics.DispatchEligibleTasks.Set(float64(len(tasks)))
 	if len(tasks) == 0 {
 		return
 	}
@@ -466,6 +468,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", ErrPoolSaturated
 	}
 
+	metrics.DispatchedRunsTotal.Inc()
 	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", matched.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled, "resume_session", resumeSessionID != "", "human_reply", opts.humanReply != nil)
 	return runID, nil
 }

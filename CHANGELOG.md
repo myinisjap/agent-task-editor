@@ -34,7 +34,51 @@ this file's section for that version as the release notes.
     re-tiered `opencode` as chat-grade/experimental pending a spike into
     whether its project-scoped `opencode.json` config can inject the same
     MCP sidecar the other CLI providers use.
-
+- **Task priority ordering for dispatch** (#44).
+  - New `priority` column on tasks (`-1`=low, `0`=normal/default, `1`=high,
+    `2`=urgent). The dispatcher's pickup query (`ListAgentPickupTasks`) now
+    orders eligible tasks by `priority DESC, created_at ASC` instead of an
+    unspecified order, so higher-priority tasks are dispatched first
+    whenever there are more eligible tasks than free `MAX_WORKERS` slots.
+    Priority affects ordering only — it never preempts an already-running
+    task and doesn't bypass any other dispatch gate (paused, archived,
+    blocked dependency, retry backoff, cost budget).
+  - `POST /tasks` and `PATCH /tasks/{id}` accept an optional `priority`
+    field (`-1`/`0`/`1`/`2`); invalid values are rejected with 400.
+  - `GET /tasks` and `GET /tasks/{id}` now also surface a derived,
+    read-time `queue_position` — a task's current 0-based rank in the
+    priority-ordered pickup queue — null/absent when the task isn't
+    currently pickup-eligible.
+  - **UI**: a Priority selector on the new-task modal and the task card /
+    task-detail edit forms, a small priority badge on cards with a
+    non-default priority, and an "N in queue" hint on cards that are
+    eligible for dispatch but waiting on a free worker.
+  - See [docs/agents.md#task-priority](docs/agents.md#task-priority).
+- **Prometheus `/metrics` endpoint** (#88).
+  - `GET /metrics` exposes Prometheus text-exposition-format metrics: dispatcher/pool
+    state (eligible tasks, dispatched runs, queue depth, busy/max workers,
+    submit-rejections), run counters by terminal status and failure
+    classification plus a duration histogram per provider, cost/token
+    counters per provider/agent config, WebSocket hub stats (connected
+    clients, broadcast drops), and GitHub sync-loop stats (ghsync/issue-import
+    sweep durations, `gh` CLI call counts by command) — plus the standard Go
+    runtime/process collectors.
+  - Served at the server root (not under `/api/v1`) and **not** gated by
+    `API_TOKEN`; independently gated by the new optional `METRICS_TOKEN` env
+    var (unset by default, i.e. unauthenticated).
+- **Ticket-based WebSocket auth** (#51) — moves the long-lived `API_TOKEN`
+  out of the WebSocket URL, since query strings are commonly captured by
+  reverse-proxy access logs and browser history.
+  - New `POST /api/v1/ws-ticket` endpoint (normal Bearer auth) mints a
+    random (`crypto/rand`), single-use ticket valid for ~30 seconds.
+  - `GET /ws` now accepts `?ticket=<ticket>` and validates/consumes it —
+    a replayed or expired ticket is rejected with `401`.
+  - The frontend `WSClient` now fetches a ticket automatically before
+    opening the socket whenever `VITE_API_TOKEN` is set; `connect()` is
+    now `async`.
+  - `?token=<API_TOKEN>` is kept as a **deprecated fallback** for existing
+    setups/non-browser clients — each use is now logged as a warning
+    server-side — and may be removed in a future release.
 ### Fixed
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a

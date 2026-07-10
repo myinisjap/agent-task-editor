@@ -66,6 +66,11 @@ export interface paths {
                         type?: string;
                         repo_id: string;
                         workflow_id: string;
+                        /**
+                         * @default 0
+                         * @enum {integer}
+                         */
+                        priority?: -1 | 0 | 1 | 2;
                     };
                 };
             };
@@ -230,6 +235,8 @@ export interface paths {
                         title?: string;
                         description?: string;
                         type?: string;
+                        /** @enum {integer} */
+                        priority?: -1 | 0 | 1 | 2;
                     };
                 };
             };
@@ -2116,6 +2123,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ws-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a short-lived WebSocket auth ticket
+         * @description Returns a random, single-use ticket valid for ~30 seconds, used to authenticate the GET /ws upgrade (?ticket=<ticket>) without putting the long-lived API token in the URL. Requires the same Bearer auth as the rest of /api/v1 — minting a ticket already requires holding the token. The ticket is consumed on first use; a replayed or expired ticket is rejected with 401. See docs/websocket.md for the full connection flow, including the deprecated ?token= fallback.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A freshly minted ticket */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description Opaque single-use token for GET /ws?ticket= */
+                            ticket?: string;
+                            /** @description Human-readable TTL (e.g. "30s") */
+                            expires_in?: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2181,6 +2232,13 @@ export interface components {
              * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost (across every run, any status). 0 disables the cap (unlimited). If the matched agent config also has a nonzero max_cost_usd, the effective budget is the lower of the two. Not a mid-run kill switch — see AgentConfig.max_cost_usd and docs/agents.md#cost-budgets.
              */
             max_cost_usd?: number;
+            /**
+             * @description Dispatch priority: -1=low, 0=normal (default), 1=high, 2=urgent. ListAgentPickupTasks orders eligible tasks by priority DESC, then created_at ASC, so higher-priority tasks are dispatched first when there are more eligible tasks than free workers (MAX_WORKERS).
+             * @enum {integer}
+             */
+            priority?: -1 | 0 | 1 | 2;
+            /** @description Derived, read-time 0-based position in the current agent-pickup queue (priority DESC, created_at ASC) among tasks eligible for dispatch. Null/absent when the task is not currently pickup-eligible (e.g. blocked, paused, archived, or not on an agent-triggerable label). */
+            queue_position?: number | null;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
