@@ -297,6 +297,16 @@ this file's section for that version as the release notes.
   the MCP sidecar's version, and the label is resolved automatically as
   intended. `docs/providers/anthropic.md` and `docs/providers/llm.md` are
   updated accordingly.
+- **Dashboard "Needs your input" queue kept showing tasks that were already
+  running again.** Replying to (or approving/rejecting) a `waiting_human`
+  run dispatches a new run and repoints the task's active run at it, but
+  deliberately leaves the old run's status as `waiting_human` as a
+  historical record. `ListWaitingHumanRuns` had no way to tell a
+  still-actionable `waiting_human` run apart from one that had already been
+  superseded, so the old run kept showing up in the intervention queue
+  forever, alongside the new run showing the same task as actively working.
+  The query now joins on `tasks.active_agent_run_id` and only returns a
+  `waiting_human` run while it's still the task's active run.
 
 ## [0.7.0] - 2026-07-09
 
