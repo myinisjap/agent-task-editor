@@ -72,6 +72,12 @@ which references the published images:
 
 Prefer plain Compose? `ATE_VERSION=v0.1.0 docker compose -f docker-compose.release.yml up -d`.
 
+Want the Gemini/Codex/Qwen CLIs preinstalled instead of building them yourself (see below)? Pass `--all-cli` to run the `-all-cli` backend image variant published alongside each release:
+
+```bash
+./run.sh --all-cli
+```
+
 Open **http://localhost:5173** in your browser.
 
 > **Repo file ownership.** The backend container remaps its runtime user to your
@@ -102,6 +108,8 @@ Unlike `claude` (installed unconditionally), the Gemini CLI (`gemini_cli` provid
 ```bash
 INSTALL_GEMINI_CLI=true INSTALL_CODEX_CLI=true INSTALL_QWEN_CLI=true docker compose build
 ```
+
+Running from prebuilt images instead of building locally? Every release also publishes a backend image with all three CLIs preinstalled, tagged with an `-all-cli` suffix (e.g. `ghcr.io/myinisjap/agent-task-editor-backend:latest-all-cli`). Run it with `./run.sh --all-cli`, or set `ATE_CLI_SUFFIX=-all-cli` if you're driving `docker-compose.release.yml` directly.
 
 `INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. See [docs/providers/gemini_cli.md](docs/providers/gemini_cli.md), [docs/providers/codex_cli.md](docs/providers/codex_cli.md), and [docs/providers/qwen_code.md](docs/providers/qwen_code.md) for authentication setup once installed.
 
