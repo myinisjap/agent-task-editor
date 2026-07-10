@@ -7,10 +7,24 @@ const STATUS_META: Record<ProviderCheckStatus, { dot: string; label: string; lab
   error: { dot: 'bg-red-500', label: 'Not ready', labelCls: 'text-red-400' },
 }
 
+// backupFilenameFromContentDisposition extracts the filename from a
+// Content-Disposition: attachment; filename="..." header value, falling
+// back to a client-side timestamped name if the header is missing/unparseable.
+function backupFilenameFromContentDisposition(header: string | null): string {
+  if (header) {
+    const match = /filename="?([^";]+)"?/.exec(header)
+    if (match?.[1]) return match[1]
+  }
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  return `agent-task-editor-backup-${ts}.db`
+}
+
 export default function HealthPage() {
   const [checks, setChecks] = useState<ProviderCheck[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [backupLoading, setBackupLoading] = useState(false)
+  const [backupError, setBackupError] = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
@@ -22,6 +36,36 @@ export default function HealthPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const downloadBackup = useCallback(async () => {
+    setBackupLoading(true)
+    setBackupError('')
+    try {
+      const res = await fetch(api.backup.url(), {
+        headers: import.meta.env.VITE_API_TOKEN
+          ? { Authorization: `Bearer ${import.meta.env.VITE_API_TOKEN}` }
+          : {},
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error ?? `${res.status} ${res.statusText}`)
+      }
+      const blob = await res.blob()
+      const filename = backupFilenameFromContentDisposition(res.headers.get('Content-Disposition'))
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setBackupError(`Backup failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBackupLoading(false)
+    }
+  }, [])
 
   const problems = (checks ?? []).filter((c) => c.status !== 'ok').length
 
@@ -84,6 +128,29 @@ export default function HealthPage() {
             </div>
           )
         })}
+      </div>
+
+      <div className="mt-8 pt-6 border-t border-slate-800">
+        <h2 className="text-base font-semibold text-slate-100 mb-1">Backup</h2>
+        <p className="text-sm text-slate-400 mb-3">
+          Download a consistent point-in-time snapshot of the database. Safe to run while
+          the app is in use. See <code className="text-slate-300">docs/backup.md</code> for
+          the restore procedure and automatic/scheduled backup options.
+        </p>
+
+        {backupError && (
+          <div className="mb-3 bg-red-900/40 border border-red-700 text-red-200 text-sm px-3 py-2 rounded-lg">
+            {backupError}
+          </div>
+        )}
+
+        <button
+          onClick={downloadBackup}
+          disabled={backupLoading}
+          className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
+        >
+          {backupLoading ? 'Preparing backup…' : 'Download backup'}
+        </button>
       </div>
     </div>
   )

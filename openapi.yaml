@@ -112,6 +112,23 @@ components:
             has a nonzero max_cost_usd, the effective budget is the lower of
             the two. Not a mid-run kill switch — see AgentConfig.max_cost_usd
             and docs/agents.md#cost-budgets.
+        priority:
+          type: integer
+          enum: [-1, 0, 1, 2]
+          description: >
+            Dispatch priority: -1=low, 0=normal (default), 1=high, 2=urgent.
+            ListAgentPickupTasks orders eligible tasks by priority DESC, then
+            created_at ASC, so higher-priority tasks are dispatched first when
+            there are more eligible tasks than free workers (MAX_WORKERS).
+        queue_position:
+          type: integer
+          nullable: true
+          description: >
+            Derived, read-time 0-based position in the current agent-pickup
+            queue (priority DESC, created_at ASC) among tasks eligible for
+            dispatch. Null/absent when the task is not currently
+            pickup-eligible (e.g. blocked, paused, archived, or not on an
+            agent-triggerable label).
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
@@ -630,6 +647,7 @@ paths:
                 type:        { type: string }
                 repo_id:     { type: string }
                 workflow_id: { type: string }
+                priority:    { type: integer, enum: [-1, 0, 1, 2], default: 0 }
       responses:
         "201":
           description: Created task
@@ -701,6 +719,7 @@ paths:
                 title:       { type: string }
                 description: { type: string }
                 type:        { type: string }
+                priority:    { type: integer, enum: [-1, 0, 1, 2] }
       responses:
         "200":
           content:
@@ -1537,11 +1556,13 @@ paths:
         instead of surfacing as a failed agent run. Checks the claude CLI
         (present + authenticated), API keys for the anthropic/llm providers,
         qwen/opencode binaries (only for providers referenced by an enabled
-        agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, and
-        REPO_BASE_DIR. Checks are cheap and side-effect free (PATH lookups,
-        credential/config-file existence, env/config values) — no real agent
-        invocation is performed, so a green result means "ready as far as we can
-        tell", not a live token validation.
+        agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth,
+        REPO_BASE_DIR, and auto_backup (whether the automatic local-snapshot
+        scheduler is enabled via BACKUP_DIR — see docs/backup.md). Checks are
+        cheap and side-effect free (PATH lookups, credential/config-file
+        existence, env/config values) — no real agent invocation is performed,
+        so a green result means "ready as far as we can tell", not a live
+        token validation.
       responses:
         "200":
           description: Ordered list of readiness checks
@@ -1553,3 +1574,49 @@ paths:
                   checks:
                     type: array
                     items: { $ref: "#/components/schemas/ProviderCheck" }
+
+  /backup:
+    get:
+      summary: Download a consistent database snapshot
+      description: >
+        Streams a consistent point-in-time snapshot of the SQLite database as
+        application/octet-stream, generated via SQLite's VACUUM INTO (not a
+        raw file copy), so it's safe to call even while the app is under
+        active write load. See docs/backup.md for the full restore procedure,
+        the optional BACKUP_DIR/BACKUP_INTERVAL/BACKUP_KEEP automatic
+        local-snapshot scheduler, and a Litestream sidecar example for
+        continuous offsite replication.
+      responses:
+        "200":
+          description: A SQLite database file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /ws-ticket:
+    post:
+      summary: Mint a short-lived WebSocket auth ticket
+      description: >
+        Returns a random, single-use ticket valid for ~30 seconds, used to
+        authenticate the GET /ws upgrade (?ticket=<ticket>) without putting
+        the long-lived API token in the URL. Requires the same Bearer auth as
+        the rest of /api/v1 — minting a ticket already requires holding the
+        token. The ticket is consumed on first use; a replayed or expired
+        ticket is rejected with 401. See docs/websocket.md for the full
+        connection flow, including the deprecated ?token= fallback.
+      responses:
+        "200":
+          description: A freshly minted ticket
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket:
+                    type: string
+                    description: Opaque single-use token for GET /ws?ticket=
+                  expires_in:
+                    type: string
+                    description: Human-readable TTL (e.g. "30s")

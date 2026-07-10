@@ -76,6 +76,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `PORT` | `8080` | Backend HTTP port |
 | `DB_PATH` | `agent-task-editor.db` | SQLite database file path |
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth |
+| `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated (see [Metrics](#metrics)) |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins (e.g. `http://localhost:5173`) |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer ([task-sources.md](task-sources.md)) |
@@ -96,6 +97,16 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API) |
 | `LLM_API_KEY` | _(empty)_ | API key for `llm` or `anthropic` provider |
 
+### Backup
+
+| Variable | Default | Description |
+|---|---|---|
+| `BACKUP_DIR` | _(empty)_ | If set, enables the built-in scheduler that periodically writes a rotated `VACUUM INTO` snapshot of the database to this directory. Empty = disabled (on-demand backup via `GET /api/v1/backup` and the Health page's "Download backup" button is always available regardless). |
+| `BACKUP_INTERVAL` | `24h` | How often the scheduler writes a new snapshot. Accepts Go duration strings. Only meaningful when `BACKUP_DIR` is set. |
+| `BACKUP_KEEP` | `7` | Number of most-recent snapshots to retain in `BACKUP_DIR` before pruning older ones. |
+
+See [backup.md](backup.md) for the full backup/restore guide.
+
 ### Other
 
 | Variable | Default | Description |
@@ -111,6 +122,7 @@ If `CONFIG_FILE` points to a YAML file, values from it are used as defaults (env
 port: "8080"
 db_path: agent-task-editor.db
 api_token: ""
+metrics_token: ""
 cors_origins: "*"
 mcp_server_path: /path/to/mcp-server
 llm_base_url: https://api.openai.com/v1
@@ -119,11 +131,14 @@ max_workers: 5
 repo_base_dir: /repos
 upload_dir: /data/uploads
 github_sync_interval: 30s
+backup_dir: /data/backups
+backup_interval: 24h
+backup_keep: 7
 ```
 
 ### Authentication
 
-Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. WebSocket connections pass the token via `?token=<value>` since browsers cannot set custom headers on WebSocket upgrades.
+Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this automatically. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
 
 The frontend reads `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` at build time. For the Docker image these default to `""` (same origin). For local development add a `.env.local` in `frontend/`:
 
@@ -132,6 +147,16 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_WS_BASE_URL=ws://localhost:8080
 VITE_API_TOKEN=your-token-here
 ```
+
+## Metrics
+
+`GET /metrics` exposes Prometheus text-exposition-format metrics (dispatcher/pool
+state, run/cost/token counters, WebSocket hub stats, GitHub sync sweep durations
+and `gh` call counts, plus standard Go runtime metrics) — point a Prometheus
+scrape config at it. It's served at the server root (not under `/api/v1`) and is
+**not** gated by `API_TOKEN`; set `METRICS_TOKEN` if you need to lock it down
+independently (e.g. when the backend port is reachable beyond your Prometheus
+instance). See [api.md](api.md#get-metrics) for the full metric list.
 
 ## Provider-Specific Setup
 

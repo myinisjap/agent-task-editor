@@ -24,24 +24,20 @@ Function names mirror HTTP semantics: `getTasks`, `createTask`, `updateTask`, `d
 ### Key Methods
 
 ```ts
-ws.connect()                        // open connection, start reconnect loop
-ws.subscribe(taskId: string)        // send subscribe message
-ws.unsubscribe(taskId: string)      // send unsubscribe message
-ws.onLog(taskId, handler)           // register agent.log listener for a task
-ws.onEvent(type, handler)           // register listener for non-log events
-ws.offLog(taskId)                   // remove log listener
-ws.offEvent(type)                   // remove event listener
+wsClient.connect()                   // async — open connection (fetches a ticket first; see Auth below)
+wsClient.on(handler)                 // register a handler for every WSEvent; returns an unsubscribe fn
+wsClient.subscribeTask(taskId)       // send subscribe message
+wsClient.unsubscribeTask(taskId)     // send unsubscribe message
 ```
 
 ### Reconnect Behaviour
 
-Uses exponential back-off: 1s, 2s, 4s, 8s, … up to 30s. On reconnect, re-sends all active subscriptions so no events are missed. Reconnect is automatic unless `ws.close()` is called explicitly.
+On `close`, reconnects after a flat 3s delay via `setTimeout(() => this.connect(), 3000)`. On `open`, re-sends all active subscriptions so no events are missed.
 
 ### Event Routing
 
-- `agent.log` events are matched by `payload.task_id` and delivered only to the matching `onLog` handler
-- All other events (`task.label_changed`, `task.agent_started`, `task.agent_done`, `task.needs_human`) are delivered to `onEvent` handlers registered for that type
+All events are delivered to every handler registered via `on()`; callers filter by `event.type` themselves (see `TaskDetailPage`, `BoardPage`, `useRunLogs`, etc. for examples).
 
-### Token
+### Auth
 
-Appended as `?token=<VITE_API_TOKEN>` on the WebSocket URL if the env var is set.
+If `VITE_API_TOKEN` is set, `connect()` first `POST`s `/api/v1/ws-ticket` (with the token as a Bearer header) to mint a short-lived, single-use ticket, then opens the socket as `?ticket=<ticket>`. This keeps the long-lived token out of the WS URL — query strings leak into reverse-proxy/access logs and browser history. `connect()` is therefore `async`; callers that fire-and-forget it (e.g. `main.tsx`) are unaffected. If the ticket fetch fails, `connect()` falls through and opens the socket without a ticket — the server rejects with 401 and the existing reconnect loop retries.

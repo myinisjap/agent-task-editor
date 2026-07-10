@@ -4,11 +4,21 @@ The WebSocket endpoint provides real-time updates for task state changes and liv
 
 ## Connection
 
-```
-ws://host/ws[?token=<API_TOKEN>]
-```
+Browsers cannot set custom headers on a WebSocket upgrade request, so auth travels via the query string instead. If `API_TOKEN` is set, connect in two steps:
 
-If `API_TOKEN` is set, you must pass it via the `token` query parameter. Browsers cannot set custom headers on WebSocket upgrade requests.
+1. `POST /api/v1/ws-ticket` (normal Bearer auth) — mints a random, single-use ticket valid for ~30s:
+   ```json
+   { "ticket": "opaque-random-string", "expires_in": "30s" }
+   ```
+2. Open the socket with that ticket:
+   ```
+   ws://host/ws?ticket=<ticket>
+   ```
+   The ticket is consumed on first use — a replayed or expired ticket is rejected with `401`.
+
+This keeps the long-lived `API_TOKEN` out of the WebSocket URL, since query strings are commonly captured by reverse-proxy access logs and browser history.
+
+**Deprecated fallback:** `ws://host/ws?token=<API_TOKEN>` still works (checked with a constant-time compare) for existing setups that haven't migrated, but it puts the durable token in the URL and may be removed in a future release. Prefer the ticket flow above. Each use of the fallback is logged server-side as a warning.
 
 The connection is kept alive with a server-side ping every 25 seconds.
 
@@ -193,7 +203,7 @@ The frontend `WSClient` (`frontend/src/api/ws.ts`) handles:
 - **Auto-reconnect** with exponential back-off (1s → 2s → 4s → … up to 30s)
 - **Re-subscribe** — all active subscriptions are re-sent after a reconnect
 - **Event routing** — listeners registered per `task_id` receive matching `agent.log` entries; global listeners receive all other events
-- **Token injection** — appends `?token=` automatically from `VITE_API_TOKEN` if set
+- **Ticket fetch** — if `VITE_API_TOKEN` is set, `connect()` first `POST`s `/api/v1/ws-ticket` (Bearer-authed) and opens the socket with the returned `?ticket=`; if that fetch fails it falls through and connects without a ticket (the server 401s and the reconnect loop retries)
 
 ## Hub Architecture
 
