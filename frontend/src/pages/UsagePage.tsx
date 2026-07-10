@@ -60,7 +60,7 @@ export default function UsagePage() {
           </div>
 
           {dash.cost_by_provider && dash.cost_by_provider.length > 0 && (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs text-slate-500 border-b border-slate-800">
@@ -89,7 +89,7 @@ export default function UsagePage() {
           )}
 
           {dash.cost_by_day && dash.cost_by_day.length > 0 && (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden mt-3">
+            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mt-3">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs text-slate-500 border-b border-slate-800">
@@ -130,7 +130,7 @@ export default function UsagePage() {
           )}
 
           {dash.cost_by_task && dash.cost_by_task.length > 0 && (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden mt-3">
+            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mt-3">
               <div className="px-4 pt-3 pb-1 text-xs text-slate-500">Top tasks by cost</div>
               <table className="w-full text-sm">
                 <thead>

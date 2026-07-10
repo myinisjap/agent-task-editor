@@ -12,6 +12,30 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Mobile polish: responsive Usage/AgentConfig pages, board swipe, and PWA install** (#148).
+  - `UsagePage`'s cost-by-provider, cost-by-day, and cost-by-task tables are
+    now wrapped in `overflow-x-auto` (previously `overflow-hidden`), so wide
+    tables scroll horizontally instead of overflowing the viewport at narrow
+    widths; `AgentPerformancePage`'s table already did this.
+  - `AgentSidebar` now collapses into an off-canvas drawer under the `md`
+    breakpoint (same fixed/backdrop/slide-in pattern as `NavSidebar`),
+    with a new mobile-only "Configs" header bar in `AgentConfigPage`
+    showing the selected agent's name and a button to open the drawer; the
+    drawer closes itself after selecting an agent, starting a new one, or
+    tapping the backdrop/✕.
+  - `TaskBoard`'s mobile single-column pager (both the condensed and
+    normal/expanded views) now supports left/right swipe to move between
+    columns, via a small new `useSwipe` hook (`frontend/src/lib/useSwipe.ts`,
+    native touch events, no new dependency) that ignores predominantly
+    vertical drags so it doesn't fight the column's own vertical scrolling.
+  - Added a web app manifest (`frontend/public/manifest.webmanifest`) plus
+    `icon-192.png`/`icon-512.png`/`icon-512-maskable.png`, linked from
+    `index.html` with relative paths so they resolve correctly both in dev
+    (`/`) and behind the `/tasks/` production base path; `nginx.conf` gained
+    `manifest-src 'self'` in its CSP and an explicit MIME-type mapping for
+    `.webmanifest` (not in the base `nginx:alpine` image's `mime.types`).
+    The app is now installable (Chrome "Install app" / Android "Add to Home
+    Screen") and launches directly to the board.
 - **`openapi.yaml` now documents all served `/api/v1` routes** (#140).
   - Added the 10 previously-undocumented paths: `PATCH /repos/{id}`,
     `POST /tasks/{id}/rerun`, `GET /tasks/{id}/github-status`,
