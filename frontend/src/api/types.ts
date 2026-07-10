@@ -66,6 +66,11 @@ export interface paths {
                         type?: string;
                         repo_id: string;
                         workflow_id: string;
+                        /**
+                         * @default 0
+                         * @enum {integer}
+                         */
+                        priority?: -1 | 0 | 1 | 2;
                     };
                 };
             };
@@ -230,6 +235,8 @@ export interface paths {
                         title?: string;
                         description?: string;
                         type?: string;
+                        /** @enum {integer} */
+                        priority?: -1 | 0 | 1 | 2;
                     };
                 };
             };
@@ -2045,7 +2052,7 @@ export interface paths {
         };
         /**
          * Provider / onboarding readiness checks
-         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, and REPO_BASE_DIR. Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
+         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, and auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
          */
         get: {
             parameters: {
@@ -2071,6 +2078,89 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a consistent database snapshot
+         * @description Streams a consistent point-in-time snapshot of the SQLite database as application/octet-stream, generated via SQLite's VACUUM INTO (not a raw file copy), so it's safe to call even while the app is under active write load. See docs/backup.md for the full restore procedure, the optional BACKUP_DIR/BACKUP_INTERVAL/BACKUP_KEEP automatic local-snapshot scheduler, and a Litestream sidecar example for continuous offsite replication.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A SQLite database file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ws-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a short-lived WebSocket auth ticket
+         * @description Returns a random, single-use ticket valid for ~30 seconds, used to authenticate the GET /ws upgrade (?ticket=<ticket>) without putting the long-lived API token in the URL. Requires the same Bearer auth as the rest of /api/v1 — minting a ticket already requires holding the token. The ticket is consumed on first use; a replayed or expired ticket is rejected with 401. See docs/websocket.md for the full connection flow, including the deprecated ?token= fallback.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A freshly minted ticket */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description Opaque single-use token for GET /ws?ticket= */
+                            ticket?: string;
+                            /** @description Human-readable TTL (e.g. "30s") */
+                            expires_in?: string;
+                        };
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -2142,6 +2232,13 @@ export interface components {
              * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost (across every run, any status). 0 disables the cap (unlimited). If the matched agent config also has a nonzero max_cost_usd, the effective budget is the lower of the two. Not a mid-run kill switch — see AgentConfig.max_cost_usd and docs/agents.md#cost-budgets.
              */
             max_cost_usd?: number;
+            /**
+             * @description Dispatch priority: -1=low, 0=normal (default), 1=high, 2=urgent. ListAgentPickupTasks orders eligible tasks by priority DESC, then created_at ASC, so higher-priority tasks are dispatched first when there are more eligible tasks than free workers (MAX_WORKERS).
+             * @enum {integer}
+             */
+            priority?: -1 | 0 | 1 | 2;
+            /** @description Derived, read-time 0-based position in the current agent-pickup queue (priority DESC, created_at ASC) among tasks eligible for dispatch. Null/absent when the task is not currently pickup-eligible (e.g. blocked, paused, archived, or not on an agent-triggerable label). */
+            queue_position?: number | null;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */

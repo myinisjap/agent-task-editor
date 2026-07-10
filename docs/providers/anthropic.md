@@ -24,16 +24,17 @@ This is billed per-token — separate from a Claude Max subscription. The `claud
 
 ## MCP Tools
 
-**Not supported.** No `--mcp-config` flag is used. Instead, equivalent functionality is provided natively:
+**Not supported.** No `--mcp-config` flag is used. Instead, equivalent functionality is provided natively, with the same call shape as the MCP version:
 
 | Native Tool | Equivalent MCP Tool |
 |---|---|
-| `signal_complete(next_label, summary)` | `mcp__task-editor__signal_complete` |
+| `get_task_transitions()` | `mcp__task-editor__get_task_transitions` |
+| `signal_complete(outcome, summary)` | `mcp__task-editor__signal_complete` |
 | `request_human(message)` | `mcp__task-editor__request_human` |
 | `update_task_notes(notes, append?)` | `mcp__task-editor__update_task_notes` |
 | `store_info(info)` | `mcp__task-editor__store_info` |
 
-**Note:** The `anthropic` provider's `signal_complete` tool takes a `next_label` parameter (the exact label name to move to), unlike the MCP version which takes `outcome: "success"|"failure"` and resolves the label automatically.
+`resolve_comment` and `create_subtask` are not available natively. See [agents.md](../agents.md) for full MCP-vs-native parity across providers.
 
 ## Native Tools Available to Agent
 
@@ -41,12 +42,18 @@ This is billed per-token — separate from a Claude Max subscription. The `claud
 |---|---|
 | `read_file(path)` | Read a file from the repo |
 | `write_file(path, content)` | Write/overwrite a file |
+| `str_replace(path, old, new)` | Replace a substring in a file; `old` must match exactly once, or the call fails |
+| `list_files(path?)` | List a single directory's immediate contents |
+| `list_dir(path?)` | Recursively list files/dirs under path (skips `.git`, `node_modules`, and other dotdirs; capped at 2000 entries) |
+| `search(pattern, glob?)` | Search the repo with ripgrep (`rg`), optionally restricted to files matching `glob`; capped at 1&nbsp;MB of output |
 | `run_bash(command)` | Run a shell command |
-| `list_files(path?)` | List directory contents |
+| `get_task_transitions()` | List available workflow transitions from the task's current label |
 | `store_info(info)` | Store run summary |
 | `update_task_notes(notes, append?)` | Write agent notes |
-| `signal_complete(next_label, summary)` | Complete the run |
+| `signal_complete(outcome, summary)` | Complete the run; `outcome` is `"success"` or `"failure"` and the label is resolved automatically, same as MCP |
 | `request_human(message)` | Pause for human input |
+
+`search` requires `ripgrep` (`rg`) on `PATH`; the backend Docker image installs it by default. If `rg` isn't found, the tool returns `error: ripgrep (rg) not found on PATH` rather than failing the run. `search`, `list_dir`, and `list_files` are read-only and are **not** gated by the command allowlist/denylist (same treatment as `read_file`); `run_bash` is the only tool subject to that policy.
 
 ## Command Allowlist / Denylist
 
@@ -79,7 +86,6 @@ Token usage (`input_tokens`/`output_tokens`) is summed from the Messages API's `
 - Direct API access without the Claude CLI installed
 - Environments where the CLI isn't available (e.g. minimal containers)
 - Per-token billing scenarios (not Claude Max)
-- When you need precise control over which label to transition to (via `next_label`)
 
 ## Setup Checklist
 

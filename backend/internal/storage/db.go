@@ -2,9 +2,11 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
+	"os"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/sqlite3"
@@ -17,7 +19,8 @@ var migrationsFS embed.FS
 
 // DB wraps a *sql.DB and exposes query methods.
 type DB struct {
-	sql *sql.DB
+	sql  *sql.DB
+	path string
 }
 
 // Open opens (or creates) the SQLite database at path and runs all pending migrations.
@@ -37,7 +40,7 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
-	return &DB{sql: sqlDB}, nil
+	return &DB{sql: sqlDB, path: path}, nil
 }
 
 // SQL returns the underlying *sql.DB for use with sqlc-generated code.
@@ -45,9 +48,35 @@ func (db *DB) SQL() *sql.DB {
 	return db.sql
 }
 
+// Path returns the filesystem path of the database file, as passed to Open
+// (no DSN query parameters). Used by the backup handler/scheduler to locate
+// a writable directory on the same filesystem as the live DB.
+func (db *DB) Path() string {
+	return db.path
+}
+
 // Close closes the underlying database connection.
 func (db *DB) Close() error {
 	return db.sql.Close()
+}
+
+// Backup writes a consistent point-in-time snapshot of the database to a new
+// file at dstPath, using SQLite's VACUUM INTO. This is safe to run while the
+// database is under concurrent write load (unlike a raw file copy of a
+// WAL-mode database), because SQLite guarantees VACUUM INTO produces a
+// complete, self-consistent copy.
+//
+// dstPath must not already exist — VACUUM INTO refuses to overwrite an
+// existing file. Callers should target a fresh/unique filename and clean it
+// up afterward.
+func (db *DB) Backup(ctx context.Context, dstPath string) error {
+	if _, err := os.Stat(dstPath); err == nil {
+		return fmt.Errorf("backup destination already exists: %s", dstPath)
+	}
+	if _, err := db.sql.ExecContext(ctx, "VACUUM INTO ?", dstPath); err != nil {
+		return fmt.Errorf("vacuum into %s: %w", dstPath, err)
+	}
+	return nil
 }
 
 func runMigrations(db *sql.DB) error {

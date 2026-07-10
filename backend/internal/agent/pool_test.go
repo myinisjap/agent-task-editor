@@ -13,9 +13,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // testPub records published event types.
@@ -296,6 +298,8 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 
 	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "success"}}
 
+	beforeCompleted := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("completed"))
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)
 
@@ -316,6 +320,12 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 	}
 	if !pub.hasEvent("task.agent_done") {
 		t.Errorf("expected task.agent_done event")
+	}
+
+	// ate_run_terminal_total{status="completed"} should have incremented by one.
+	afterCompleted := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("completed"))
+	if afterCompleted-beforeCompleted != 1 {
+		t.Errorf("expected RunTerminalTotal{completed} to increment by 1, got delta %v", afterCompleted-beforeCompleted)
 	}
 }
 
@@ -442,6 +452,9 @@ func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 
 	provider := &mockProvider{result: agent.Result{Status: "failed"}}
 
+	beforeFailed := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("failed"))
+	beforeGenuine := testutil.ToFloat64(metrics.RunClassificationTotal.WithLabelValues(string(agent.ClassGenuine)))
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)
 
@@ -453,6 +466,15 @@ func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 	run, _ := q.GetAgentRun(context.Background(), runID)
 	if run.Status != "failed" {
 		t.Errorf("expected status 'failed', got %q", run.Status)
+	}
+
+	afterFailed := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("failed"))
+	if afterFailed-beforeFailed != 1 {
+		t.Errorf("expected RunTerminalTotal{failed} to increment by 1, got delta %v", afterFailed-beforeFailed)
+	}
+	afterGenuine := testutil.ToFloat64(metrics.RunClassificationTotal.WithLabelValues(string(agent.ClassGenuine)))
+	if afterGenuine-beforeGenuine != 1 {
+		t.Errorf("expected RunClassificationTotal{genuine} to increment by 1, got delta %v", afterGenuine-beforeGenuine)
 	}
 }
 
@@ -804,6 +826,82 @@ func TestListAgentPickupTasks_ExcludesFutureNextRetryAt(t *testing.T) {
 	}
 	if !containsTaskID(tasks, taskID) {
 		t.Fatalf("expected task %s to be pickup-eligible after reset", taskID)
+	}
+}
+
+// TestListAgentPickupTasks_OrdersByPriorityThenCreatedAt verifies the
+// dispatcher's pickup query returns eligible tasks ordered by priority
+// descending (urgent, high, normal, low) and, within the same priority,
+// oldest-created first.
+func TestListAgentPickupTasks_OrdersByPriorityThenCreatedAt(t *testing.T) {
+	db := openAgentTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID:         repoID,
+		Name:       "repo",
+		Path:       t.TempDir(),
+		WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	// Create tasks in a deliberately mixed order: normal, low, urgent, high,
+	// then a second normal-priority task created after the first normal one
+	// to verify the created_at ASC tiebreak within a priority level.
+	mkTask := func(title string, priority int64) string {
+		id := uuid.NewString()
+		if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+			ID:         id,
+			Title:      title,
+			WorkflowID: wfID,
+			RepoID:     repoID,
+			Label:      "plan",
+			Priority:   priority,
+		}); err != nil {
+			t.Fatalf("create task %s: %v", title, err)
+		}
+		// Ensure distinct created_at ordering across the fixtures below;
+		// SQLite's CURRENT_TIMESTAMP has second granularity.
+		time.Sleep(1100 * time.Millisecond)
+		return id
+	}
+
+	normal1 := mkTask("normal-1", 0)
+	low := mkTask("low", -1)
+	urgent := mkTask("urgent", 2)
+	high := mkTask("high", 1)
+	normal2 := mkTask("normal-2", 0)
+
+	tasks, err := q.ListAgentPickupTasks(ctx)
+	if err != nil {
+		t.Fatalf("list pickup tasks: %v", err)
+	}
+
+	var gotOrder []string
+	for _, tk := range tasks {
+		switch tk.ID {
+		case normal1, low, urgent, high, normal2:
+			gotOrder = append(gotOrder, tk.ID)
+		}
+	}
+
+	wantOrder := []string{urgent, high, normal1, normal2, low}
+	if len(gotOrder) != len(wantOrder) {
+		t.Fatalf("expected %d fixture tasks in pickup order, got %d: %v", len(wantOrder), len(gotOrder), gotOrder)
+	}
+	for i, id := range wantOrder {
+		if gotOrder[i] != id {
+			t.Errorf("position %d: expected task %s, got %s (full order %v)", i, id, gotOrder[i], gotOrder)
+		}
 	}
 }
 

@@ -33,6 +33,7 @@ sql:
       - "internal/storage/migrations/028_task_dependencies.up.sql"
       - "internal/storage/migrations/029_subtasks.up.sql"
       - "internal/storage/migrations/030_cost_budgets.up.sql"
+      - "internal/storage/migrations/031_task_priority.up.sql"
     gen:
       go:
         package: "gen"

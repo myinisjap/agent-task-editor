@@ -10,9 +10,9 @@ The MCP (Model Context Protocol) sidecar is a small process (`mcp-server`) that 
 | `qwen_code` | ✅ Yes (when `MCP_SERVER_PATH` is set) |
 | `gemini_cli` | ✅ Yes (when `MCP_SERVER_PATH` is set) — via a per-run `GEMINI_CLI_HOME` settings.json, not a CLI flag |
 | `codex_cli` | ✅ Yes (when `MCP_SERVER_PATH` is set) — via a per-run `CODEX_HOME` config.toml, not a CLI flag |
-| `anthropic` | ❌ No — uses native Go tool loop |
+| `anthropic` | ❌ No — uses native Go tool loop (`get_task_transitions`, `signal_complete`, `request_human`, `update_task_notes`, `store_info` are implemented natively with the same call shape; `resolve_comment`/`create_subtask` are not available). See [providers/anthropic.md](providers/anthropic.md). |
 | `opencode` | ❌ No — opencode has no `--mcp-config` flag |
-| `llm` | ❌ No — uses native Go tool loop |
+| `llm` | ❌ No — uses native Go tool loop (same native equivalents as `anthropic`). See [providers/llm.md](providers/llm.md). |
 
 ## How It Works
 

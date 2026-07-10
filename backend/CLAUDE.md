@@ -28,6 +28,7 @@ cmd/server/       Main binary — wires config, DB, engine, pool, dispatcher, ro
 cmd/mcp-server/   Standalone MCP sidecar — stdio JSON-RPC 2.0
 internal/agent/   Provider interface, ClaudeRunner, AnthropicRunner, LLMRunner, Pool, Dispatcher
 internal/api/     Chi router, all HTTP handlers, middleware
+internal/backup/  Optional scheduler: periodic rotated local DB snapshots (BACKUP_DIR/BACKUP_INTERVAL/BACKUP_KEEP)
 internal/config/  Config struct; loaded from YAML file then env vars override
 internal/ghclient/ Thin wrapper around the `gh` CLI (PR create/lookup, issue listing, GitHub URL parsing)
 internal/ghsync/  Background PR-state poller — refreshes task git_state from GitHub, cleans up merged branches

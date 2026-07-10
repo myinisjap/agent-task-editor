@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -9,21 +10,27 @@ import (
 
 // HealthHandler serves provider/onboarding readiness checks.
 type HealthHandler struct {
-	q           *gen.Queries
-	mcpBinary   string
-	repoBaseDir string
-	llmBaseURL  string
-	llmAPIKey   string
+	q              *gen.Queries
+	mcpBinary      string
+	repoBaseDir    string
+	llmBaseURL     string
+	llmAPIKey      string
+	backupDir      string
+	backupInterval time.Duration
+	backupKeep     int
 }
 
 // NewHealthHandler constructs a HealthHandler from the relevant server config.
-func NewHealthHandler(q *gen.Queries, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey string) *HealthHandler {
+func NewHealthHandler(q *gen.Queries, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int) *HealthHandler {
 	return &HealthHandler{
-		q:           q,
-		mcpBinary:   mcpBinary,
-		repoBaseDir: repoBaseDir,
-		llmBaseURL:  llmBaseURL,
-		llmAPIKey:   llmAPIKey,
+		q:              q,
+		mcpBinary:      mcpBinary,
+		repoBaseDir:    repoBaseDir,
+		llmBaseURL:     llmBaseURL,
+		llmAPIKey:      llmAPIKey,
+		backupDir:      backupDir,
+		backupInterval: backupInterval,
+		backupKeep:     backupKeep,
 	}
 }
 
@@ -43,11 +50,14 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	checks := health.Checks(health.Input{
-		MCPBinary:   h.mcpBinary,
-		RepoBaseDir: h.repoBaseDir,
-		LLMBaseURL:  h.llmBaseURL,
-		LLMAPIKey:   h.llmAPIKey,
-		Providers:   providers,
+		MCPBinary:      h.mcpBinary,
+		RepoBaseDir:    h.repoBaseDir,
+		LLMBaseURL:     h.llmBaseURL,
+		LLMAPIKey:      h.llmAPIKey,
+		Providers:      providers,
+		BackupDir:      h.backupDir,
+		BackupInterval: h.backupInterval,
+		BackupKeep:     h.backupKeep,
 	}, nil)
 
 	JSON(w, http.StatusOK, map[string]any{"checks": checks})

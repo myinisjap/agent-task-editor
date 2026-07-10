@@ -10,8 +10,10 @@
 package health
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 )
@@ -50,6 +52,13 @@ type Input struct {
 	// (e.g. "claude", "anthropic", "llm", "qwen_code", "opencode", "gemini_cli",
 	// "codex_cli").
 	Providers map[string]bool
+
+	// BackupDir/BackupInterval/BackupKeep mirror config.Config's automatic
+	// local-backup scheduler settings, used only to render the auto_backup
+	// check below — this package never touches the filesystem for backups.
+	BackupDir      string
+	BackupInterval time.Duration
+	BackupKeep     int
 }
 
 // Deps are the environment interactions the checks depend on, injectable so the
@@ -112,6 +121,7 @@ func Checks(in Input, d *Deps) []Check {
 	checks = append(checks, mcpCheck(in, deps))
 	checks = append(checks, ghCheck(deps))
 	checks = append(checks, repoBaseDirCheck(in, deps))
+	checks = append(checks, autoBackupCheck(in))
 
 	return checks
 }
@@ -327,5 +337,22 @@ func repoBaseDirCheck(in Input, d Deps) Check {
 	}
 	c.Status = StatusOK
 	c.Detail = "repo paths restricted to " + in.RepoBaseDir
+	return c
+}
+
+// autoBackupCheck surfaces whether the built-in scheduled local-snapshot
+// backup (BACKUP_DIR/BACKUP_INTERVAL/BACKUP_KEEP) is enabled. This is
+// informational only — the on-demand GET /api/v1/backup endpoint and the
+// Health page's "Download backup" button work regardless of this setting.
+func autoBackupCheck(in Input) Check {
+	c := Check{ID: "auto_backup", Name: "Automatic local backups"}
+	if in.BackupDir == "" {
+		c.Status = StatusWarn
+		c.Detail = "BACKUP_DIR is not set — scheduled local snapshots are disabled"
+		c.Hint = "Set BACKUP_DIR to enable scheduled snapshots; see docs/backup.md."
+		return c
+	}
+	c.Status = StatusOK
+	c.Detail = fmt.Sprintf("writing snapshots to %s every %s, keeping the newest %d", in.BackupDir, in.BackupInterval, in.BackupKeep)
 	return c
 }
