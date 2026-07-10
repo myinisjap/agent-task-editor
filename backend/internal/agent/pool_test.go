@@ -13,9 +13,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // testPub records published event types.
@@ -296,6 +298,8 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 
 	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "success"}}
 
+	beforeCompleted := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("completed"))
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)
 
@@ -316,6 +320,12 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 	}
 	if !pub.hasEvent("task.agent_done") {
 		t.Errorf("expected task.agent_done event")
+	}
+
+	// ate_run_terminal_total{status="completed"} should have incremented by one.
+	afterCompleted := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("completed"))
+	if afterCompleted-beforeCompleted != 1 {
+		t.Errorf("expected RunTerminalTotal{completed} to increment by 1, got delta %v", afterCompleted-beforeCompleted)
 	}
 }
 
@@ -442,6 +452,9 @@ func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 
 	provider := &mockProvider{result: agent.Result{Status: "failed"}}
 
+	beforeFailed := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("failed"))
+	beforeGenuine := testutil.ToFloat64(metrics.RunClassificationTotal.WithLabelValues(string(agent.ClassGenuine)))
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)
 
@@ -453,6 +466,15 @@ func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 	run, _ := q.GetAgentRun(context.Background(), runID)
 	if run.Status != "failed" {
 		t.Errorf("expected status 'failed', got %q", run.Status)
+	}
+
+	afterFailed := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("failed"))
+	if afterFailed-beforeFailed != 1 {
+		t.Errorf("expected RunTerminalTotal{failed} to increment by 1, got delta %v", afterFailed-beforeFailed)
+	}
+	afterGenuine := testutil.ToFloat64(metrics.RunClassificationTotal.WithLabelValues(string(agent.ClassGenuine)))
+	if afterGenuine-beforeGenuine != 1 {
+		t.Errorf("expected RunClassificationTotal{genuine} to increment by 1, got delta %v", afterGenuine-beforeGenuine)
 	}
 }
 

@@ -12,6 +12,18 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Prometheus `/metrics` endpoint** (#88).
+  - `GET /metrics` exposes Prometheus text-exposition-format metrics: dispatcher/pool
+    state (eligible tasks, dispatched runs, queue depth, busy/max workers,
+    submit-rejections), run counters by terminal status and failure
+    classification plus a duration histogram per provider, cost/token
+    counters per provider/agent config, WebSocket hub stats (connected
+    clients, broadcast drops), and GitHub sync-loop stats (ghsync/issue-import
+    sweep durations, `gh` CLI call counts by command) — plus the standard Go
+    runtime/process collectors.
+  - Served at the server root (not under `/api/v1`) and **not** gated by
+    `API_TOKEN`; independently gated by the new optional `METRICS_TOKEN` env
+    var (unset by default, i.e. unauthenticated).
 - **Ticket-based WebSocket auth** (#51) — moves the long-lived `API_TOKEN`
   out of the WebSocket URL, since query strings are commonly captured by
   reverse-proxy access logs and browser history.

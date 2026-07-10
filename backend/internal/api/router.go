@@ -9,6 +9,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -20,7 +21,7 @@ import (
 // backupDir/backupInterval/backupKeep are only used to render the
 // auto_backup health check (informational) — the actual scheduler is
 // started separately in cmd/server/main.go.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
@@ -51,6 +52,13 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
 		ws.ServeWS(hub, w, req, bearerToken, corsOrigins, q)
 	})
+
+	// Prometheus scrape endpoint — mounted outside the main API's BearerAuth
+	// group (and outside /api/v1) so self-hosters don't need to hand the
+	// primary API_TOKEN to their Prometheus scrape config. Gated by its own,
+	// independent METRICS_TOKEN (empty by default, i.e. unauthenticated,
+	// matching most Prometheus setups) via the same BearerAuth middleware.
+	r.With(middleware.BearerAuth(metricsToken)).Get("/metrics", metrics.Handler().ServeHTTP)
 
 	// Everything below requires the Bearer token (when one is configured).
 	r.Group(func(r chi.Router) {
