@@ -16,7 +16,7 @@ func setupHealthRouter(t *testing.T, mcpBinary, repoBaseDir, llmBaseURL, llmAPIK
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, "", 24*time.Hour, 7)
+	h := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, "", 24*time.Hour, 7)
 
 	// Register the agents create route too, so tests can seed agent configs
 	// and observe how provider-specific checks are (de)emitted.
@@ -67,7 +67,7 @@ func TestProvidersEndpoint_NoConfigs(t *testing.T) {
 	router := setupHealthRouter(t, "", "", "", "")
 	resp := getProviders(t, router)
 
-	for _, id := range []string{"claude_cli", "mcp_sidecar", "gh_auth", "repo_base_dir", "auto_backup"} {
+	for _, id := range []string{"claude_cli", "mcp_sidecar", "gh_auth", "repo_base_dir", "auto_backup", "db_size"} {
 		if !resp.has(id) {
 			t.Errorf("expected always-present check %q", id)
 		}
@@ -107,7 +107,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 	q := gen.New(db.SQL())
 
 	t.Run("disabled when BackupDir is empty", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, "", "", "", "", "", 24*time.Hour, 7)
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -126,7 +126,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 	})
 
 	t.Run("ok when BackupDir is set", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, "", "", "", "", "/data/backups", 24*time.Hour, 7)
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "/data/backups", 24*time.Hour, 7)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -143,4 +143,28 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 			t.Fatalf("expected auto_backup check to be present")
 		}
 	})
+}
+
+// TestProvidersEndpoint_DBSizeCheck verifies the db_size check reports the
+// on-disk database file size (necessarily > 0 bytes since Open() runs
+// migrations, which write to the file).
+func TestProvidersEndpoint_DBSizeCheck(t *testing.T) {
+	router := setupHealthRouter(t, "", "", "", "")
+	resp := getProviders(t, router)
+
+	var found bool
+	for _, c := range resp.Checks {
+		if c.ID == "db_size" {
+			found = true
+			if c.Status != "ok" {
+				t.Errorf("expected db_size status=ok for a real DB file, got %q (detail: %q)", c.Status, c.Detail)
+			}
+			if c.Detail == "" {
+				t.Errorf("expected a non-empty db_size detail")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected db_size check to be present")
+	}
 }

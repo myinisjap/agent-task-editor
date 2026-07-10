@@ -76,9 +76,31 @@ LIMIT ?3;
 -- name: CountAgentLogs :one
 SELECT COUNT(*) FROM agent_logs WHERE agent_run_id = ?;
 
+-- name: CountAgentLogsTotal :one
+-- Total row count across all runs, surfaced on the Health page alongside DB
+-- file size so agent_logs bloat is observable before it becomes a problem.
+SELECT COUNT(*) FROM agent_logs;
+
 -- name: CreateAgentLog :exec
 INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
 VALUES (?, ?, ?, ?, ?);
+
+-- name: DeleteOldAgentLogs :execrows
+-- Deletes agent_logs rows belonging to runs in a terminal status
+-- (completed/failed/waiting_human) whose run completed_at is older than the
+-- cutoff. Never touches logs for a run that is still pending/running (no
+-- completed_at, or non-terminal status), so the active run and the WS
+-- replay path (which reads the live run's logs) are unaffected. cutoff is
+-- a DATETIME-comparable string (matching SQLite's CURRENT_TIMESTAMP text
+-- format) computed by the caller from LOG_RETENTION_DAYS so the predicate
+-- stays testable without relying on SQLite's date('now', ...).
+DELETE FROM agent_logs
+WHERE agent_run_id IN (
+  SELECT id FROM agent_runs
+  WHERE status IN ('completed','failed','waiting_human')
+    AND completed_at IS NOT NULL
+    AND completed_at < ?1
+);
 
 -- name: CreateTaskLabelHistory :exec
 INSERT INTO task_label_history (id, task_id, from_label, to_label, trigger, actor_id, note)

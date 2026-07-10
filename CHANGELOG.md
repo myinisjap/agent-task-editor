@@ -12,6 +12,40 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Agent log retention / pruning, and DB size on the Health page** (#150).
+  - `LOG_RETENTION_DAYS` (env or `log_retention_days` in the YAML config)
+    enables a built-in pruner that periodically deletes `agent_logs` rows
+    belonging to runs in a terminal status (`completed`/`failed`/
+    `waiting_human`) whose `completed_at` is older than that many days.
+    Default is `0` (keep everything forever) — this is opt-in and does not
+    change existing behavior unless explicitly configured, matching how
+    `BACKUP_DIR` gates the backup scheduler. `LOG_RETENTION_INTERVAL`
+    (default `1h`) controls how often the pruner runs.
+  - The delete predicate requires both a terminal status *and* a non-null
+    `completed_at`, so a still-`pending`/`running` run's logs — and the
+    WebSocket replay path, which reads the live run's logs — are never
+    touched.
+  - New migration `032_log_retention` adds
+    `idx_agent_logs_run_timestamp(agent_run_id, timestamp)` to keep the
+    periodic prune scan cheap; new sqlc queries `DeleteOldAgentLogs` and
+    `CountAgentLogsTotal`.
+  - New `internal/logretention.Pruner`, modeled directly on
+    `internal/backup.Scheduler`, wired into `cmd/server/main.go` alongside
+    the backup scheduler.
+  - Scope note: this release implements age-based retention
+    (`LOG_RETENTION_DAYS`) only. A per-run row cap
+    (`LOG_MAX_ROWS_PER_RUN`, capping retained rows per run to the newest N
+    regardless of age) was considered but descoped as a possible
+    fast-follow — it requires iterating every terminal run and adds
+    complexity/perf risk that age-based pruning alone avoids.
+  - `GET /api/v1/health/providers` (and the frontend's **Health** page) now
+    includes a `db_size` check reporting the SQLite file size and total
+    `agent_logs` row count, so bloat is observable before it slows down
+    `VACUUM INTO` backups or log-list queries — independent of whether
+    retention is enabled.
+  - See the new "Agent log retention" section in [docs/backup.md](docs/backup.md)
+    and the updated env var table in
+    [docs/getting-started.md](docs/getting-started.md).
 - **Named API tokens / actor identity in label history** (#45).
   - `API_TOKENS` env var (or `api_tokens` map in the YAML config) supports
     multiple named bearer tokens (format `name1:token1,name2:token2`).

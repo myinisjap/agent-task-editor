@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
@@ -59,6 +60,14 @@ type Input struct {
 	BackupDir      string
 	BackupInterval time.Duration
 	BackupKeep     int
+
+	// DBSizeBytes/AgentLogsCount are live values read by the caller (this
+	// package never touches the filesystem or DB) used only to render the
+	// db_size check below, so bloat is observable on the Health page before
+	// it becomes a problem (see internal/logretention for the opt-in pruner
+	// that keeps this number bounded).
+	DBSizeBytes    int64
+	AgentLogsCount int64
 }
 
 // Deps are the environment interactions the checks depend on, injectable so the
@@ -122,6 +131,7 @@ func Checks(in Input, d *Deps) []Check {
 	checks = append(checks, ghCheck(deps))
 	checks = append(checks, repoBaseDirCheck(in, deps))
 	checks = append(checks, autoBackupCheck(in))
+	checks = append(checks, dbSizeCheck(in))
 
 	return checks
 }
@@ -355,4 +365,59 @@ func autoBackupCheck(in Input) Check {
 	c.Status = StatusOK
 	c.Detail = fmt.Sprintf("writing snapshots to %s every %s, keeping the newest %d", in.BackupDir, in.BackupInterval, in.BackupKeep)
 	return c
+}
+
+// dbSizeCheck is purely informational: it surfaces the SQLite file size and
+// the agent_logs row count so bloat is visible before it slows down backups
+// or log-list queries (see internal/logretention for the opt-in pruner).
+// Never StatusError - a large DB isn't a failure state on its own. Status is
+// StatusWarn only when the size couldn't be read at all (e.g. DBSizeBytes is
+// 0 because the caller's os.Stat failed), so the row still communicates
+// something is off instead of silently showing "0 B".
+func dbSizeCheck(in Input) Check {
+	c := Check{ID: "db_size", Name: "Database size"}
+	if in.DBSizeBytes <= 0 {
+		c.Status = StatusWarn
+		c.Detail = "could not read database file size"
+		return c
+	}
+	c.Status = StatusOK
+	c.Detail = fmt.Sprintf("%s, %s agent_logs rows", formatBytes(in.DBSizeBytes), formatCount(in.AgentLogsCount))
+	return c
+}
+
+// formatBytes renders n as a human-readable size using binary (1024) units,
+// e.g. "42.3 MB". No existing helper for this in the codebase.
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	units := []string{"KB", "MB", "GB", "TB", "PB"}
+	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), units[exp])
+}
+
+// formatCount renders n with thousands separators, e.g. "118,204".
+func formatCount(n int64) string {
+	s := fmt.Sprintf("%d", n)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	if neg {
+		return "-" + string(out)
+	}
+	return string(out)
 }
