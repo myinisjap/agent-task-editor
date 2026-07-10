@@ -32,15 +32,36 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 
 | Provider string | Description | MCP Tools | Details |
 |---|---|---|---|
-| `claude` | Claude CLI subprocess (`claude -p ...`) | ✅ All 5 | [providers/claude.md](providers/claude.md) |
-| `anthropic` | Anthropic Messages API (direct HTTP) | ❌ Native tools | [providers/anthropic.md](providers/anthropic.md) |
+| `claude` | Claude CLI subprocess (`claude -p ...`) | ✅ All 5 (MCP sidecar) | [providers/claude.md](providers/claude.md) |
+| `anthropic` | Anthropic Messages API (direct HTTP) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/anthropic.md](providers/anthropic.md) |
 | `opencode` | Opencode CLI (`opencode run --format json`) | ❌ None | [providers/opencode.md](providers/opencode.md) |
-| `qwen_code` | Qwen Code CLI (`qwen -p ...`) | ✅ All 5 | [providers/qwen_code.md](providers/qwen_code.md) |
-| `gemini_cli` | Gemini CLI (`gemini -p ...`) | ✅ All 5 | [providers/gemini_cli.md](providers/gemini_cli.md) |
-| `codex_cli` | Codex CLI (`codex exec --json ...`) | ✅ All 5 | [providers/codex_cli.md](providers/codex_cli.md) |
-| _(any other value)_ | OpenAI-compatible API at `LLM_BASE_URL` | ❌ Native tools | [providers/llm.md](providers/llm.md) |
+| `qwen_code` | Qwen Code CLI (`qwen -p ...`) | ✅ All 5 (MCP sidecar) | [providers/qwen_code.md](providers/qwen_code.md) |
+| `gemini_cli` | Gemini CLI (`gemini -p ...`) | ✅ All 5 (MCP sidecar) | [providers/gemini_cli.md](providers/gemini_cli.md) |
+| `codex_cli` | Codex CLI (`codex exec --json ...`) | ✅ All 5 (MCP sidecar) | [providers/codex_cli.md](providers/codex_cli.md) |
+| _(any other value)_ | OpenAI-compatible API at `LLM_BASE_URL` | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/llm.md](providers/llm.md) |
 
 For per-provider deep-dives (credentials, tool availability, limitations, setup), see the [providers/](providers/) directory.
+
+### Capability Matrix
+
+A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`gemini_cli`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`).
+
+| Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` | `llm` | `opencode` |
+|---|---|---|---|---|---|---|---|
+| Task-editor tools (5: transitions, complete, request-human, notes, store-info) | ✅ MCP | ✅ MCP | ✅ MCP | ✅ MCP | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | ❌ text marker only (`OUTCOME: success`/`failure`) |
+| Repo-editing tools | ✅ full CLI toolset | ✅ own CLI toolset | ✅ own CLI toolset | ✅ own CLI toolset | ⚠️ `read_file`/`write_file`/`str_replace`/`list_files`/`list_dir`/`search`/`run_bash` | ⚠️ same as `anthropic` | ✅ own (outside our control) |
+| `search`/grep-style tool | via CLI's own tools | via CLI's own tools | via CLI's own tools | via CLI's own tools | ✅ `search` (ripgrep-backed) | ✅ `search` (ripgrep-backed) | via CLI's own tools |
+| Command allowlist / denylist | ✅ / ✅ | ✅ / ❌ | ❌ / ❌ | ❌ / ❌ (native sandbox instead) | ✅ / ✅ (Go) | ✅ / ✅ (Go) | ❌ / ❌ |
+| Cost & tokens | ✅ authoritative | ✅ authoritative | ⚠️ tokens only, no cost | ⚠️ tokens only, no cost | ⚠️ estimated (pricing table) | ⚠️ estimated (pricing table) | ❌ zero (not exposed by CLI) |
+| Image attachments | ✅ `--image` | ❌ (CLI gap) | — (see provider doc) | — (see provider doc) | ❌ (not yet implemented) | ❌ (not yet implemented, backend-dependent) | ❌ |
+| Plugins + user MCP servers | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `max_turns` | ✅ | ✅ | ✅ | ✅ | ✅ (loop) | ✅ (loop) | ❌ not enforced |
+| Session resume | ✅ `session_id` + `--resume` | ⚠️ session recorded, not resumed (no verified CLI flag) | ⚠️ thread id recorded, not resumed | ⚠️ thread id recorded, not resumed | ✅ achievable (persist messages) — not yet implemented | ✅ achievable (persist messages) — not yet implemented | ❓ unverified |
+
+Notes:
+- `anthropic`/`llm` gained `get_task_transitions`, `list_dir`, `search`, and `str_replace` as native tools; `signal_complete` now takes `outcome: "success"|"failure"` — identical to the MCP version (previously it took a raw `next_label`, which was a bug: the schema advertised `next_label` but the implementation always read `outcome`, silently dropping the model's completion signal).
+- `opencode`'s MCP-via-project-config path (writing a per-run `opencode.json` pointing at the same sidecar) is unexplored; see the provider doc for current status. Until proven out, treat `opencode` as the chat-grade/experimental tier of the providers above.
+- Image attachments and session-continuity-via-persisted-messages for `anthropic`/`llm` are tracked as follow-up work, not implemented here.
 
 ## Dispatcher
 

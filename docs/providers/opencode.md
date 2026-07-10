@@ -2,6 +2,8 @@
 
 The `opencode` provider runs the [opencode](https://opencode.ai) CLI. **MCP tools are not supported** — opencode has no `--mcp-config` flag. Agents must signal completion by printing `OUTCOME: success` or `OUTCOME: failure` in their text output.
 
+**Status: chat-grade / experimental** relative to `claude`/`qwen_code`/`gemini_cli`/`codex_cli`/`anthropic`/`llm` — see the [capability matrix in agents.md](../agents.md#capability-matrix). Whether opencode's project-scoped config (`opencode.json`) can be used to inject the same `mcp-server` sidecar used by the other CLI providers (closing the MCP-tools and command-policy gaps below) is an open question that has not yet been investigated; until it is, treat this provider as second-class for task-editor integration purposes even though its own repo-editing toolset is otherwise capable.
+
 ## Provider String
 
 ```
