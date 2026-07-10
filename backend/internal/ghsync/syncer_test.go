@@ -143,7 +143,7 @@ func newTestTask(t *testing.T, q *gen.Queries, repoID, wfID, label, branch, work
 	t.Helper()
 	ctx := context.Background()
 	taskID := uuid.NewString()
-	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+	_, err := q.CreateTask(ctx, gen.CreateTaskParams{
 		ID:          taskID,
 		Title:       "Test task",
 		Description: "",
@@ -174,7 +174,7 @@ func newTestTask(t *testing.T, q *gen.Queries, repoID, wfID, label, branch, work
 			t.Fatalf("set task pr: %v", err)
 		}
 	}
-	task, err = q.GetTask(ctx, taskID)
+	task, err := q.GetTask(ctx, taskID)
 	if err != nil {
 		t.Fatalf("get task: %v", err)
 	}
