@@ -28,8 +28,8 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks — see [docs/task-sources.md](docs/task-sources.md)
 - **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
-- **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
 - **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
+- **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 
 See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.

@@ -138,7 +138,7 @@ backup_keep: 7
 
 ### Authentication
 
-Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. WebSocket connections pass the token via `?token=<value>` since browsers cannot set custom headers on WebSocket upgrades.
+Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this automatically. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
 
 The frontend reads `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` at build time. For the Docker image these default to `""` (same origin). For local development add a `.env.local` in `frontend/`:
 
