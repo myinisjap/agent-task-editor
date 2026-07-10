@@ -11,22 +11,6 @@ this file's section for that version as the release notes.
 
 ## [Unreleased]
 
-### Changed
-- **Dispatch queue visibility now gated on worker-pool saturation** (#152).
-  - The `queue_position` field on task responses — and the "N in queue"
-    badge it drives on `TaskCard` and the task detail header — is now only
-    populated when the worker pool has no free slot (all `MAX_WORKERS` busy).
-    Previously it was set for every pickup-eligible task regardless of
-    whether a worker was actually free, so a task about to be dispatched on
-    the very next sweep could misleadingly show as "waiting."
-  - New `Pool.Saturated() bool` reports whether every worker slot is
-    currently busy; the `RunCanceller` interface consumed by `TasksHandler`
-    gained a matching `Saturated() bool` method (implemented by the agent
-    pool, the interface's only real implementation).
-  - No new WebSocket events or polling — the badge still rides the existing
-    task fetch/refresh path (`GET /tasks`, `GET /tasks/{id}`) and clears
-    automatically once a task starts running or a worker frees up.
-
 ### Added
 - **`openapi.yaml` now documents all served `/api/v1` routes** (#140).
   - Added the 10 previously-undocumented paths: `PATCH /repos/{id}`,
@@ -42,6 +26,17 @@ this file's section for that version as the release notes.
     `/metrics`, `/healthz`) is missing from `openapi.yaml`, closing the one
     direction the existing `gen:api`/sqlc codegen-drift checks didn't cover:
     the spec silently falling behind the router it's meant to describe.
+- **Task cards and task detail now reachable on touch devices** (#147).
+  - `TaskCard`'s select checkbox, pause, archive, edit, and delete controls
+    were previously only revealed via `group-hover`, making them unreachable
+    on touch devices (no hover) and effectively blocking the bulk "Move
+    to…" toolbar action and per-card edit/pause from mobile. A new Tailwind
+    `no-hover:` variant (`@media (hover: none)`) now forces these controls
+    visible on devices without hover, leaving desktop's hover-reveal
+    behavior unchanged.
+  - The task detail Overview tab gained its own "Move to…" control next to
+    the Label row, letting a task's label be changed from any device
+    (mirrors the existing bulk "Move to…" toolbar action on the board).
 - **Running version + update-available check on the Health page** (#151).
   - `cmd/server` now has a `Version` build var (default `"dev"`), stamped at
     build time via `-ldflags "-X main.Version=<tag>"`.
@@ -211,6 +206,20 @@ this file's section for that version as the release notes.
     server-side — and may be removed in a future release.
 
 ### Changed
+- **Dispatch queue visibility now gated on worker-pool saturation** (#152).
+  - The `queue_position` field on task responses — and the "N in queue"
+    badge it drives on `TaskCard` and the task detail header — is now only
+    populated when the worker pool has no free slot (all `MAX_WORKERS` busy).
+    Previously it was set for every pickup-eligible task regardless of
+    whether a worker was actually free, so a task about to be dispatched on
+    the very next sweep could misleadingly show as "waiting."
+  - New `Pool.Saturated() bool` reports whether every worker slot is
+    currently busy; the `RunCanceller` interface consumed by `TasksHandler`
+    gained a matching `Saturated() bool` method (implemented by the agent
+    pool, the interface's only real implementation).
+  - No new WebSocket events or polling — the badge still rides the existing
+    task fetch/refresh path (`GET /tasks`, `GET /tasks/{id}`) and clears
+    automatically once a task starts running or a worker frees up.
 - **Split the 1,400-line `handlers/tasks.go` into `tasks.go` /
   `task_response.go` / `task_uploads.go` / `task_bulk.go` / `task_runs.go` /
   `task_pr.go` by concern** (#156) — pure code-move refactor, no behavior,
@@ -223,6 +232,35 @@ this file's section for that version as the release notes.
   `task_pr.go` holds diff/PR/PR-URL/GitHub-status/git-state.
 
 ### Fixed
+- **Frontend never sent the API token — enabling `API_TOKEN` broke the whole UI** (#138).
+  - `client.ts`'s `request()`/`requestWithHeaders()` built request headers
+    from only `Content-Type`; no `Authorization` header was ever attached,
+    despite `frontend/src/api/CLAUDE.md` claiming otherwise. Setting
+    `API_TOKEN` (item #1 on the security checklist) made every board/task/
+    agent call from the stock UI fail with 401.
+  - Even where a header *was* wired manually (`ws.ts`'s ticket mint,
+    `WorkflowPage.tsx`'s YAML export, `HealthPage.tsx`'s backup download),
+    it read the build-time `VITE_API_TOKEN` — a variable that can never be
+    baked into the prebuilt GHCR image, so release users could not enable
+    auth at all.
+  - Replaced this with a runtime token: a new `src/api/authToken.ts` stores
+    the token in `localStorage` (`ate_api_token`) and is the single source
+    of truth for it. Every REST call (via new `authedRawFetch` in
+    `client.ts`, used by `request()`/`requestWithHeaders()`/`agents.create`)
+    and the WS ticket mint (`ws.ts`) now attach
+    `Authorization: Bearer <token>` from this store.
+  - On any 401, the stored token is cleared and a new
+    `ApiTokenGate` component (`components/shared/ApiTokenGate.tsx`), mounted
+    once around the whole app in `App.tsx`, shows a minimal "enter API
+    token" screen; saving a token retries by reloading the page. With
+    `API_TOKEN` unset on the backend, no request ever 401s, so the prompt
+    never appears.
+  - `VITE_API_TOKEN` still works as a dev-only convenience: if set, it seeds
+    `localStorage` once (only when nothing is stored yet), so existing
+    `.env.local` setups keep working without going through the prompt.
+  - Docs updated: `frontend/src/api/CLAUDE.md`, `frontend/CLAUDE.md`, and
+    `docs/getting-started.md`'s Authentication section now describe the
+    runtime flow instead of the non-functional build-time one.
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a
   `next_label` parameter (the exact label to move to), but the shared
