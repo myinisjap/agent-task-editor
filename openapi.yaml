@@ -339,6 +339,15 @@ components:
           type: string
           description: >
             Only import issues carrying this label (empty = all open issues).
+        issue_writeback_enabled:
+          type: integer
+          description: >
+            1 = status write-back to the source GitHub issue is enabled for
+            this repo's imported tasks (requires remote_url; independent of
+            issue_sync_enabled): comments on the issue when a task's PR
+            opens, applies the "agent-in-progress" label when a task first
+            leaves not_ready, and closes the issue with a comment when the
+            PR merges. 0 = off. See docs/task-sources.md.
         clone_status:
           type: string
           enum: [ready, cloning, error]
@@ -1704,6 +1713,7 @@ paths:
                 workflow_id:         { type: string, nullable: true }
                 issue_sync_enabled:  { type: boolean }
                 issue_sync_label:    { type: string }
+                issue_writeback_enabled: { type: boolean }
       responses:
         "200":
           content:

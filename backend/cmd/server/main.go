@@ -22,6 +22,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/tasksource"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
@@ -149,6 +150,22 @@ func main() {
 		if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
 			slog.Warn("onTerminal: remove worktree", "task_id", task.ID, "err", err)
 		}
+	}
+
+	// Status write-back to the source GitHub issue for imported tasks (opt-in
+	// per repo via issue_writeback_enabled). This instance backs the workflow
+	// engine's OnLeaveNotReady hook below; ghsync and the tasks handler
+	// construct their own writeback.Writeback internally (see ghsync.New and
+	// handlers.NewTasksHandler) since they own their own *gen.Queries.
+	// See docs/task-sources.md.
+	issueWriteback := writeback.New(termQ)
+	engine.OnLeaveNotReady = func(ctx context.Context, task gen.Task) {
+		repo, err := termQ.GetRepo(ctx, task.RepoID)
+		if err != nil {
+			slog.Warn("onLeaveNotReady: get repo", "task_id", task.ID, "err", err)
+			return
+		}
+		issueWriteback.OnLeaveNotReady(ctx, task, repo)
 	}
 
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
