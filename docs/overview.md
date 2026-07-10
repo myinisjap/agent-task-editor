@@ -115,7 +115,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   [task-sources.md](task-sources.md)
 - **Dashboard** — split across three pages: an Overview (label counts, active agents, and the human intervention queue) at `/`, a Cost & Usage page at `/dashboard/usage` (Claude rate-limit usage, plus cost/token tracking by provider, day, and task), and an Agent Performance page at `/dashboard/performance` (per-agent-config success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude/Qwen/Gemini/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
-- **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via `?token=` query param
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions (approve/reject/move label) record *who* performed them in the `task_label_history` audit trail (`GET /tasks/{id}/label-history`); WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — single `docker compose up` to run everything
 
 ## Screenshots

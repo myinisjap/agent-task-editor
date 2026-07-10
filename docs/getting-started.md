@@ -75,7 +75,8 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 |---|---|---|
 | `PORT` | `8080` | Backend HTTP port |
 | `DB_PATH` | `agent-task-editor.db` | SQLite database file path |
-| `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth |
+| `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth. Requests using this token are recorded anonymously (no actor name) in the label history audit trail — see `API_TOKENS` below for named tokens. |
+| `API_TOKENS` | _(empty)_ | Comma-separated named bearer tokens, format `name1:token1,name2:token2`. Any of these tokens authenticates like `API_TOKEN`, but the matching name is recorded as the actor in `task_label_history.actor_id` for human-triggered transitions (approve/reject/move label), and surfaced via `GET /tasks/{id}/label-history`. Can be combined with `API_TOKEN` (kept for backward compatibility as an anonymous fallback). If the same token string is reused across multiple names, the last one loaded wins. |
 | `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated (see [Metrics](#metrics)) |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins (e.g. `http://localhost:5173`) |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
@@ -122,6 +123,9 @@ If `CONFIG_FILE` points to a YAML file, values from it are used as defaults (env
 port: "8080"
 db_path: agent-task-editor.db
 api_token: ""
+api_tokens:
+  alice: tok-alice
+  bob: tok-bob
 metrics_token: ""
 cors_origins: "*"
 mcp_server_path: /path/to/mcp-server
@@ -139,6 +143,8 @@ backup_keep: 7
 ### Authentication
 
 Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this automatically. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
+
+To identify *who* performed a human-triggered transition (approve/reject/move label) in the audit trail, set `API_TOKENS` (format `name1:token1,name2:token2`, or the `api_tokens` map in the YAML config) instead of, or alongside, `API_TOKEN`. Each named token authenticates the same way, but the resolved name is recorded as `actor_id` in `task_label_history` and returned by `GET /tasks/{id}/label-history`. `API_TOKEN` remains supported as a legacy/anonymous fallback — requests using it are recorded with an empty actor, exactly as before this feature existed. Note: the `/ws` WebSocket endpoint currently only supports the single legacy `API_TOKEN` for its `?token=` query param check, not named tokens.
 
 The frontend reads `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` at build time. For the Docker image these default to `""` (same origin). For local development add a `.env.local` in `frontend/`:
 

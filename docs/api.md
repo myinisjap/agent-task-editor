@@ -106,6 +106,31 @@ Move the task to a different label via the workflow engine. Goes through normal 
 
 Returns `400` if no transition exists, `403` if the transition requires human auth or the target label is `agent_ignore`.
 
+### `GET /tasks/{id}/label-history`
+Returns the task's label-transition audit trail (`task_label_history`), oldest first:
+
+```json
+[
+  {
+    "id": "...",
+    "task_id": "...",
+    "from_label": "in_review",
+    "to_label": "done",
+    "trigger": "human",
+    "actor_id": "alice",
+    "note": "looks good",
+    "created_at": "2026-01-01T00:00:00Z"
+  }
+]
+```
+
+`actor_id` is the resolved named-token actor (see `API_TOKENS` in
+[getting-started.md](getting-started.md)) for human-triggered transitions —
+`null`/empty when the legacy single shared `API_TOKEN` (or no auth) was used,
+since that token has no associated name. For agent-triggered transitions,
+`actor_id` is the agent run ID. `from_label` is `null` for the task's initial
+label assignment.
+
 ### `POST /tasks/{id}/approve`
 Human approval — follows the `success` human transition from the task's current label.
 

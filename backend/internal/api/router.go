@@ -21,7 +21,7 @@ import (
 // backupDir/backupInterval/backupKeep are only used to render the
 // auto_backup health check (informational) — the actual scheduler is
 // started separately in cmd/server/main.go.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
@@ -48,7 +48,10 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	// request headers on a WS handshake. ServeWS performs its own auth check via
 	// a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket below)
 	// or, as a deprecated fallback, a constant-time compare against ?token=, so
-	// it is not left unauthenticated.
+	// it is not left unauthenticated. Note: this only supports the single
+	// legacy bearerToken — it does not resolve named actors from namedTokens
+	// (out of scope; WS auth is not a human-triggered REST transition, so it
+	// doesn't need to record an actor).
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
 		ws.ServeWS(hub, w, req, bearerToken, corsOrigins, q)
 	})
@@ -58,11 +61,11 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	// primary API_TOKEN to their Prometheus scrape config. Gated by its own,
 	// independent METRICS_TOKEN (empty by default, i.e. unauthenticated,
 	// matching most Prometheus setups) via the same BearerAuth middleware.
-	r.With(middleware.BearerAuth(metricsToken)).Get("/metrics", metrics.Handler().ServeHTTP)
+	r.With(middleware.BearerAuth(metricsToken, nil)).Get("/metrics", metrics.Handler().ServeHTTP)
 
 	// Everything below requires the Bearer token (when one is configured).
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.BearerAuth(bearerToken))
+		r.Use(middleware.BearerAuth(bearerToken, namedTokens))
 
 		r.Get("/healthz", handlers.Health)
 
@@ -137,6 +140,9 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Streams a consistent point-in-time database snapshot (VACUUM INTO)
 			// as application/octet-stream. Plain bearer-gated; see docs/backup.md.
 			r.Get("/backup", backupH.Backup)
+
+			// Label history — audit trail of transitions (who/what triggered them)
+			r.Get("/tasks/{id}/label-history", tasksH.ListLabelHistory)
 
 			// Mints a short-lived, single-use ticket for authenticating the
 			// WebSocket upgrade (GET /ws?ticket=...) without putting the

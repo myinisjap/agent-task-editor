@@ -410,6 +410,28 @@ components:
             unless the config's resume_sessions is off). Empty for
             providers/runs without a session.
 
+    TaskLabelHistory:
+      type: object
+      description: >-
+        One row of a task's label-transition audit trail
+        (task_label_history), oldest first.
+      properties:
+        id:         { type: string }
+        task_id:    { type: string }
+        from_label: { type: string, nullable: true }
+        to_label:   { type: string }
+        trigger:    { type: string, enum: [agent, human, subtasks_complete] }
+        actor_id:
+          type: string
+          nullable: true
+          description: >-
+            For human-triggered transitions, the resolved named-token actor
+            (see BearerAuth / API_TOKENS) — null/empty when the legacy
+            shared API_TOKEN or no auth was used. For agent-triggered
+            transitions, the agent run ID.
+        note:       { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
     AgentLog:
       type: object
       properties:
@@ -1116,6 +1138,20 @@ paths:
                   git_state: { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
         "400": { description: Task has no branch, or repo has no/invalid GitHub remote }
         "502": { description: gh pr create failed (e.g. not authenticated) }
+
+  /tasks/{id}/label-history:
+    get:
+      summary: Get a task's label-transition audit trail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TaskLabelHistory" } }
 
   /tasks/{id}/runs:
     get:

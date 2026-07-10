@@ -19,6 +19,11 @@ type Config struct {
 	Port        string `yaml:"port"`
 	CORSOrigins string `yaml:"cors_origins"`
 	APIToken    string `yaml:"api_token"`
+	// APITokens maps an actor name to a bearer token, allowing multiple
+	// named credentials so human-triggered transitions can record *who*
+	// approved them (see task_label_history.actor_id). APIToken above
+	// remains supported as a legacy/anonymous fallback (actor name "").
+	APITokens map[string]string `yaml:"api_tokens"`
 	// MetricsToken optionally gates GET /metrics with its own bearer token,
 	// independent of APIToken. Empty (the default) leaves /metrics
 	// unauthenticated, matching most Prometheus scrape setups that can't
@@ -86,6 +91,25 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("API_TOKEN"); v != "" {
 		cfg.APIToken = v
+	}
+	if v := os.Getenv("API_TOKENS"); v != "" {
+		if cfg.APITokens == nil {
+			cfg.APITokens = make(map[string]string)
+		}
+		for _, pair := range strings.Split(v, ",") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			name, token, ok := strings.Cut(pair, ":")
+			name = strings.TrimSpace(name)
+			token = strings.TrimSpace(token)
+			if !ok || name == "" || token == "" {
+				slog.Warn("skipping malformed API_TOKENS entry", "entry", pair)
+				continue
+			}
+			cfg.APITokens[name] = token
+		}
 	}
 	if v := os.Getenv("METRICS_TOKEN"); v != "" {
 		cfg.MetricsToken = v

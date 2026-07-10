@@ -1003,6 +1003,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/label-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a task's label-transition audit trail */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskLabelHistory"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs": {
         parameters: {
             query?: never;
@@ -2430,6 +2467,20 @@ export interface components {
             cost_usd?: number;
             /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */
             session_id?: string;
+        };
+        /** @description One row of a task's label-transition audit trail (task_label_history), oldest first. */
+        TaskLabelHistory: {
+            id?: string;
+            task_id?: string;
+            from_label?: string | null;
+            to_label?: string;
+            /** @enum {string} */
+            trigger?: "agent" | "human" | "subtasks_complete";
+            /** @description For human-triggered transitions, the resolved named-token actor (see BearerAuth / API_TOKENS) — null/empty when the legacy shared API_TOKEN or no auth was used. For agent-triggered transitions, the agent run ID. */
+            actor_id?: string | null;
+            note?: string | null;
+            /** Format: date-time */
+            created_at?: string;
         };
         AgentLog: {
             id?: string;

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { api, type Task, type AgentRun, type Workflow, type Repo } from '../api/client'
+import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { useAgentsStore } from '../stores/agents'
 import DependenciesPanel from '../components/DependenciesPanel'
@@ -8,6 +8,7 @@ import SubtasksPanel from '../components/SubtasksPanel'
 import TaskHeader from '../components/task-detail/TaskHeader'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
+import LabelHistoryList from '../components/task-detail/LabelHistoryList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
@@ -19,6 +20,7 @@ export default function TaskDetailPage() {
   const navigate = useNavigate()
   const [task, setTask] = useState<Task | null>(null)
   const [runs, setRuns] = useState<AgentRun[]>([])
+  const [labelHistory, setLabelHistory] = useState<TaskLabelHistoryEntry[]>([])
   const [selectedRun, setSelectedRun] = useState<string | null>(null)
   const [rejectNote, setRejectNote] = useState('')
   const [replyText, setReplyText] = useState('')
@@ -54,6 +56,11 @@ export default function TaskDetailPage() {
     }).catch(() => {})
   }, [id])
 
+  const refreshLabelHistory = useCallback(() => {
+    if (!id) return
+    api.tasks.listLabelHistory(id).then((h) => setLabelHistory(h ?? [])).catch(() => {})
+  }, [id])
+
   // Fetch agent configs for name lookup
   useEffect(() => {
     fetchAgents()
@@ -67,10 +74,11 @@ export default function TaskDetailPage() {
   // Initial load
   useEffect(() => {
     if (!id) return
-    Promise.all([api.tasks.get(id), api.tasks.runs(id)])
-      .then(([t, r]) => {
+    Promise.all([api.tasks.get(id), api.tasks.runs(id), api.tasks.listLabelHistory(id)])
+      .then(([t, r, h]) => {
         setTask(t)
         setRuns(r ?? [])
+        setLabelHistory(h ?? [])
         if (r && r.length > 0) setSelectedRun(r[0].id)
       })
   }, [id])
@@ -93,6 +101,7 @@ export default function TaskDetailPage() {
       if (event.type === 'task.label_changed' && event.payload.task_id === id) {
         setEditingTask(false)
         refreshTask()
+        refreshLabelHistory()
       } else if (event.type === 'task.agent_started' && event.payload.task_id === id) {
         refreshRuns()
         refreshTask()
@@ -118,7 +127,7 @@ export default function TaskDetailPage() {
       off()
       wsClient.unsubscribeTask(id)
     }
-  }, [id, refreshTask, refreshRuns, refreshComments])
+  }, [id, refreshTask, refreshRuns, refreshComments, refreshLabelHistory])
 
   const activeRun = runs.find((r) => r.id === selectedRun)
   const needsHuman = activeRun?.status === 'waiting_human'
@@ -385,6 +394,8 @@ export default function TaskDetailPage() {
               onRerun={handleRerun}
               actionPending={actionPending}
             />
+
+            <LabelHistoryList history={labelHistory} />
           </div>
         )}
 

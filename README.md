@@ -30,7 +30,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Task priority** — low/normal/high/urgent priority per task; the dispatcher's pickup queue is ordered priority-first, then oldest-first, with an "N in queue" hint on cards waiting for a free worker
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
-- **Bearer token auth** — optional `API_TOKEN`; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 
 See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.
@@ -163,7 +163,7 @@ Agent shell commands run inside the **backend** Docker container, against your b
 
 **Default settings are for localhost only.** Before exposing this to any non-localhost network:
 
-- [ ] Set `API_TOKEN` — without it, anyone who can reach port 8080 can create repos, dispatch agents, and run shell commands
+- [ ] Set `API_TOKEN` (or `API_TOKENS` for named, per-actor tokens — recommended so approvals are attributable in the audit trail) — without it, anyone who can reach port 8080 can create repos, dispatch agents, and run shell commands
 - [ ] Set `REPO_BASE_DIR` — without it, agents can be pointed at any path on the host
 - [ ] Set `CORS_ORIGINS` to your actual origin instead of `*`
 - [ ] Run behind a reverse proxy or VPN; do not expose port 8080 directly to the internet
@@ -177,6 +177,7 @@ The server binds to all interfaces (`:8080`) by default. In Docker, map it to `1
 | Variable | Default | Description |
 |---|---|---|
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth required |
+| `API_TOKENS` | _(empty)_ | Named bearer tokens (`name1:token1,name2:token2`) — resolves to an actor name recorded in the label history audit trail; see [docs/getting-started.md](docs/getting-started.md#authentication) |
 | `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated |
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory |
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary; required for label transitions with the `claude` provider |
