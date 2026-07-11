@@ -4,12 +4,30 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-To cut a release, add a `## [x.y.z] - YYYY-MM-DD` section below with the changes,
-then push the matching tag (`git tag vx.y.z && git push origin vx.y.z`). The
-release workflow builds and pushes the images and creates a GitHub Release using
-this file's section for that version as the release notes.
+To cut a release, run the "Release" workflow manually from the Actions tab and
+pick a version bump (patch/minor/major) — it moves this file's `[Unreleased]`
+section under a new version heading, commits that to main, tags it, then
+builds and pushes the images and creates a GitHub Release using that section
+as the release notes. The `[Unreleased]` section must have content or the
+workflow fails.
+
+Alternatively, for hotfixes where you want to hand-edit this file yourself,
+add a `## [x.y.z] - YYYY-MM-DD` section below with the changes and push the
+matching tag directly (`git tag vx.y.z && git push origin vx.y.z`), which
+triggers the same build/release steps.
 
 ## [Unreleased]
+
+### Added
+- **Manually-triggered releases.** The "Release" GitHub Actions workflow now
+  accepts a `workflow_dispatch` trigger with a patch/minor/major version-bump
+  choice. Running it moves `CHANGELOG.md`'s `[Unreleased]` section under a new
+  version heading, commits that to `main`, creates and pushes the matching
+  tag, then runs the existing image build and GitHub Release steps — all in
+  the same workflow run, since a tag pushed by the default `GITHUB_TOKEN`
+  does not trigger a separate workflow run. The workflow fails fast if
+  `[Unreleased]` has no content. Pushing a tag directly (`git tag vx.y.z &&
+  git push origin vx.y.z`) still works unchanged for hotfixes.
 
 ## [0.8.0] - 2026-07-10
 
