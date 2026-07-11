@@ -10,13 +10,25 @@ export LLM_API_KEY=${LLM_API_KEY:-"your_api_key_here"}
 export LLM_BASE_URL=${LLM_BASE_URL:-"http://localhost:8081/v1"}
 export LLM_MODEL=${LLM_MODEL:-"gemma-4-12B-it-qat-UD-Q4_K_XL"}
 
-# Parse optional --repo-dir <path> before the command.
+# Parse optional --repo-dir <path> / --all-cli flags before the command.
+ALL_CLI=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-dir) REPO_BASE_DIR="$2"; shift 2 ;;
+    --all-cli) ALL_CLI=true; shift ;;
     *) break ;;
   esac
 done
+
+# --all-cli builds the backend image with the Gemini, Codex, and Qwen CLIs
+# installed alongside Claude (see backend/Dockerfile's INSTALL_*_CLI build
+# args, wired through docker-compose.yml) instead of the default Claude-only
+# image. Mirrors run.sh --all-cli, which selects the prebuilt `-all-cli` tag.
+if [[ "$ALL_CLI" == "true" ]]; then
+  export INSTALL_GEMINI_CLI=true
+  export INSTALL_CODEX_CLI=true
+  export INSTALL_QWEN_CLI=true
+fi
 
 if [[ -z "$REPO_BASE_DIR" ]]; then
   REPO_BASE_DIR="/tmp/repos"
@@ -137,7 +149,7 @@ case "$CMD" in
     wait $BACKEND_PID $FRONTEND_PID
     ;;
   *)
-    echo "Usage: $0 [--repo-dir <path>] [start|stop|restart|logs|login|shell|dev]"
+    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [start|stop|restart|logs|login|shell|dev]"
     exit 1
     ;;
 esac

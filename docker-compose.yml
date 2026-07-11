@@ -9,6 +9,13 @@ services:
         # TLS-inspecting proxies (affects npm install of claude-code at build time
         # and git clone / npm / claude CLI at runtime).
         INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
+        # Set to true (or pass --all-cli to dev.sh) to also install the
+        # Gemini, Codex, and Qwen CLIs in the locally-built backend image —
+        # off by default so a plain `docker compose up --build` stays small
+        # and only ships the Claude CLI.
+        INSTALL_GEMINI_CLI: ${INSTALL_GEMINI_CLI:-false}
+        INSTALL_CODEX_CLI: ${INSTALL_CODEX_CLI:-false}
+        INSTALL_QWEN_CLI: ${INSTALL_QWEN_CLI:-false}
     ports:
       - "8080:8080"
     # Lets the container reach services published on the host (e.g. a separate

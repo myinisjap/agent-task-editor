@@ -19,6 +19,16 @@ triggers the same build/release steps.
 ## [Unreleased]
 
 ### Added
+- **`dev.sh --all-cli`.** `dev.sh` (build-from-source) now supports the same
+  `--all-cli` flag as `run.sh` (prebuilt-image runner): it sets
+  `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`/`INSTALL_QWEN_CLI=true` before
+  invoking `docker compose up --build`, so a locally-built backend image also
+  gets the Gemini, Codex, and Qwen CLIs installed alongside Claude.
+  `docker-compose.yml`'s backend `build.args` now forwards these three
+  build args (previously only `INSECURE_SKIP_SSL_VERIFY` was wired through);
+  all default to `false` so a plain `dev.sh start` keeps the smaller
+  Claude-only image. Only affects the Docker `start`/`restart` paths — `dev.sh
+  dev` runs local processes with no Dockerfile involved.
 - **Manually-triggered releases.** The "Release" GitHub Actions workflow now
   accepts a `workflow_dispatch` trigger with a patch/minor/major version-bump
   choice. Running it moves `CHANGELOG.md`'s `[Unreleased]` section under a new
