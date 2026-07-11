@@ -2,8 +2,8 @@ FROM node:26-alpine AS builder
 ARG INSECURE_SKIP_SSL_VERIFY=false
 WORKDIR /app
 COPY package*.json ./
-RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl false; fi
-RUN npm ci
+RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl false; fi && \
+    npm ci
 COPY . .
 RUN npm run build
 
