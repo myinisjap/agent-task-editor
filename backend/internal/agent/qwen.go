@@ -41,7 +41,7 @@ func (r *QwenRunner) binary() string {
 // buildQwenArgs constructs the CLI argument list for the qwen binary given
 // the run input and (optional) prepared MCP config. Extracted as a
 // standalone function so the arg-construction logic (in particular the
-// --max-turns default/override behavior) can be unit tested without
+// --max-session-turns default/override behavior) can be unit tested without
 // spawning a subprocess — mirrors buildClaudeArgs in claude.go.
 func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 	maxTurns := input.AgentConfig.MaxTurns
@@ -54,7 +54,7 @@ func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 		"--system-prompt", buildSystemPrompt(input),
 		"--output-format", "stream-json",
 		"--approval-mode", "yolo",
-		"--max-turns", strconv.FormatInt(maxTurns, 10),
+		"--max-session-turns", strconv.FormatInt(maxTurns, 10),
 	}
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)

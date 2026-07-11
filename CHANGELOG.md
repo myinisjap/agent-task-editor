@@ -29,6 +29,13 @@ triggers the same build/release steps.
   `[Unreleased]` has no content. Pushing a tag directly (`git tag vx.y.z &&
   git push origin vx.y.z`) still works unchanged for hotfixes.
 
+### Fixed
+- **`qwen_code` provider runs failed immediately with `Unknown arguments: max-turns, maxTurns`.**
+  `buildQwenArgs` (`backend/internal/agent/qwen.go`) was passing `--max-turns`,
+  but the `qwen` CLI's turn-budget flag is `--max-session-turns` — every run
+  was rejected by the CLI's argument parser before any work happened. Fixed
+  the flag name; docs and unit tests updated to match.
+
 ## [0.8.0] - 2026-07-10
 
 ### Added
