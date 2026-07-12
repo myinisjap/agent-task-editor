@@ -620,4 +620,11 @@ export const api = {
     // need the same Authorization header as everything else).
     url: () => `${BASE}/backup`,
   },
+  uploads: {
+    // Raw binary download — mirrors backup.url(). Callers must fetch() this
+    // URL themselves via authedRawFetch since <img>/window.open can't carry
+    // an Authorization header, and BASE_URL must be respected for prod
+    // deployments served under a sub-path (e.g. nginx `/tasks/`).
+    downloadUrl: (rel: string) => `${BASE}/uploads/${rel}`,
+  },
 }
