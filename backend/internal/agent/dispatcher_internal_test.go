@@ -14,37 +14,68 @@ func disabledCfg(name, labelsJSON string) gen.AgentConfig {
 	return gen.AgentConfig{ID: name, Name: name, Labels: labelsJSON, Enabled: 0}
 }
 
-func TestMatchConfig(t *testing.T) {
+func TestMatchConfigs(t *testing.T) {
 	tests := []struct {
 		name    string
 		configs []gen.AgentConfig
 		label   string
-		want    string // matched config name, "" for nil
+		want    []string // matched config names, in expected order; nil for no matches
 	}{
-		{"no match", []gen.AgentConfig{cfg("a", `["plan"]`)}, "review", ""},
-		{"single match", []gen.AgentConfig{cfg("a", `["plan","review"]`)}, "review", "a"},
-		// configs are newest-first; first match wins on ambiguity.
-		{"ambiguous picks first", []gen.AgentConfig{cfg("new", `["review"]`), cfg("old", `["review"]`)}, "review", "new"},
+		{"no match", []gen.AgentConfig{cfg("a", `["plan"]`)}, "review", nil},
+		{"single match", []gen.AgentConfig{cfg("a", `["plan","review"]`)}, "review", []string{"a"}},
+		// configs are newest-first; both matches returned in slice order.
+		{"multiple matches returned in order", []gen.AgentConfig{cfg("new", `["review"]`), cfg("old", `["review"]`)}, "review", []string{"new", "old"}},
 		// unparseable labels are skipped, not fatal — the valid config still matches.
-		{"skips bad json", []gen.AgentConfig{cfg("broken", `not json`), cfg("good", `["review"]`)}, "review", "good"},
-		{"all bad json", []gen.AgentConfig{cfg("broken", `{`)}, "review", ""},
+		{"skips bad json", []gen.AgentConfig{cfg("broken", `not json`), cfg("good", `["review"]`)}, "review", []string{"good"}},
+		{"all bad json", []gen.AgentConfig{cfg("broken", `{`)}, "review", nil},
 		// disabled configs are skipped even if their label matches.
-		{"skips disabled", []gen.AgentConfig{disabledCfg("off", `["review"]`)}, "review", ""},
-		{"disabled then enabled", []gen.AgentConfig{disabledCfg("off", `["review"]`), cfg("on", `["review"]`)}, "review", "on"},
+		{"skips disabled", []gen.AgentConfig{disabledCfg("off", `["review"]`)}, "review", nil},
+		{"disabled then enabled", []gen.AgentConfig{disabledCfg("off", `["review"]`), cfg("on", `["review"]`)}, "review", []string{"on"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchConfig(tt.configs, tt.label)
-			if tt.want == "" {
-				if got != nil {
-					t.Fatalf("want nil, got %q", got.Name)
-				}
-				return
+			got := matchConfigs(tt.configs, tt.label)
+			if len(got) != len(tt.want) {
+				t.Fatalf("want %v, got %v", tt.want, namesOf(got))
 			}
-			if got == nil || got.Name != tt.want {
-				t.Fatalf("want %q, got %v", tt.want, got)
+			for i, w := range tt.want {
+				if got[i].Name != w {
+					t.Fatalf("want %v, got %v", tt.want, namesOf(got))
+				}
 			}
 		})
+	}
+}
+
+func namesOf(configs []*gen.AgentConfig) []string {
+	names := make([]string, len(configs))
+	for i, c := range configs {
+		names[i] = c.Name
+	}
+	return names
+}
+
+// TestMatchConfigs_PriorityOrdering verifies matchConfigs preserves whatever
+// order the input slice is given in — the priority-asc/created_at-desc sort
+// happens in SQL (ListAgentConfigs), not in matchConfigs itself, so this
+// confirms matchConfigs doesn't re-sort or otherwise disturb that order.
+func TestMatchConfigs_PriorityOrdering(t *testing.T) {
+	// Simulates the SQL order for three configs sharing a label with
+	// priorities 0, 0, 1 (tie broken by created_at DESC, i.e. newest first).
+	configs := []gen.AgentConfig{
+		cfg("newest-prio0", `["review"]`),
+		cfg("oldest-prio0", `["review"]`),
+		cfg("prio1-backup", `["review"]`),
+	}
+	got := matchConfigs(configs, "review")
+	want := []string{"newest-prio0", "oldest-prio0", "prio1-backup"}
+	if len(got) != len(want) {
+		t.Fatalf("want %v, got %v", want, namesOf(got))
+	}
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Fatalf("want %v, got %v", want, namesOf(got))
+		}
 	}
 }
 

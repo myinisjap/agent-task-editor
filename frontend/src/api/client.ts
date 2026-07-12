@@ -284,6 +284,11 @@ export type AgentConfig = {
   max_tokens: number
   timeout_secs: number
   max_turns: number
+  // Dispatch failover order among configs sharing a label: lower is tried
+  // first, ties broken by newest created_at. The first non-rate-limited
+  // match wins, so a higher-priority-number config acts as a backup when
+  // the primary is rate-limit/usage-blocked. Default 0.
+  priority: number
   // Retry policy for transient provider errors (rate limits, network blips,
   // upstream 5xx) — distinct from genuine task failures. max_retries=0
   // disables auto-retry (today's unbounded-immediate-redispatch behavior).

@@ -19,6 +19,14 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Agent config priority / failover.** Agent configs now have a `priority`
+  (lower runs first). When multiple enabled configs share a label, dispatch
+  tries them in priority order and skips any that are currently
+  rate-limited/out of usage credits, so a lower-priority config
+  automatically takes over for a primary that's blocked, and fails back once
+  the block expires.
+
 ## [0.9.0] - 2026-07-12
 
 ### Added

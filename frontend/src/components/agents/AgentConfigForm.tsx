@@ -136,6 +136,15 @@ export default function AgentConfigForm({
           />
         </Field>
 
+        <Field label="Priority" hint="Lower runs first; higher-priority-number configs on the same label act as backups when the primary is rate-limited.">
+          <input
+            type="number"
+            value={form.priority ?? 0}
+            onChange={(e) => setForm((f) => ({ ...f, priority: Number(e.target.value) }))}
+            className="input"
+          />
+        </Field>
+
         <Field label="Retry backoff (secs)" hint="Base backoff before a retry is re-dispatched; doubles each attempt, capped at 10 min.">
           <input
             type="number"
