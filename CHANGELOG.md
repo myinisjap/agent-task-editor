@@ -4,19 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-To cut a release, run the "Release" workflow manually from the Actions tab and
-pick a version bump (patch/minor/major) — it moves this file's `[Unreleased]`
-section under a new version heading, commits that to main, tags it, then
-builds and pushes the images and creates a GitHub Release using that section
-as the release notes. The `[Unreleased]` section must have content or the
-workflow fails.
+To cut a release, run the "Prepare Release" workflow manually from the Actions
+tab and pick a version bump (patch/minor/major) — it moves this file's
+`[Unreleased]` section under a new version heading, commits that to main, then
+tags it. That tag push triggers the separate "Release" workflow, which builds
+and pushes the images and creates a GitHub Release using that section as the
+release notes. The `[Unreleased]` section must have content or "Prepare
+Release" fails.
 
 Alternatively, for hotfixes where you want to hand-edit this file yourself,
 add a `## [x.y.z] - YYYY-MM-DD` section below with the changes and push the
 matching tag directly (`git tag vx.y.z && git push origin vx.y.z`), which
-triggers the same build/release steps.
+triggers the "Release" workflow the same way.
 
 ## [Unreleased]
+
+### Fixed
+- **Manually-triggered releases built and published images twice.** The
+  "Release" workflow's `prepare-release` job pushed the version tag using a
+  GitHub App installation token (needed to push past `main`'s branch
+  protection), but App-token pushes aren't subject to GitHub's same-workflow
+  loop-prevention the way default-`GITHUB_TOKEN` pushes are — so that tag
+  push retriggered the very same workflow via its `push: tags: v*` trigger,
+  running the image build/publish/release jobs a second time for the same
+  tag. Split into two workflows: `.github/workflows/prepare-release.yml`
+  (`workflow_dispatch` only — bumps the changelog and pushes the tag) and
+  the trimmed `.github/workflows/release.yml` (`push: tags: v*` only —
+  builds/publishes images and creates the GitHub Release). The tag push
+  from the first now triggers the second exactly once; the
+  `git tag vx.y.z && git push origin vx.y.z` hotfix path is unaffected.
 
 ### Added
 - **Container-local `qwen_code` config.** The backend now reads qwen settings

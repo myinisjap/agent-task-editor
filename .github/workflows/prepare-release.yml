@@ -1,0 +1,110 @@
+name: Prepare Release
+
+# Bumps CHANGELOG.md's [Unreleased] section under a new version heading,
+# commits that to main, then creates and pushes the matching semver tag.
+# That tag push is what actually cuts the release — it triggers release.yml
+# (on: push: tags: v*), which builds/publishes the images and creates the
+# GitHub Release.
+#
+# This is deliberately a separate workflow from release.yml (not one
+# combined workflow): the tag above is pushed using a GitHub App
+# installation token (not the default GITHUB_TOKEN), specifically so it can
+# push past main's branch protection. Unlike GITHUB_TOKEN pushes, App-token
+# pushes are NOT subject to GitHub's same-workflow loop-prevention, so this
+# job's tag push reliably fires release.yml on its own — no need to also
+# invoke the build/publish jobs from here (that used to cause every
+# manually-triggered release to build and publish twice: once from this job
+# and once again from the tag push it caused).
+#
+# For hotfixes where you want to hand-edit CHANGELOG.md yourself before
+# tagging, skip this workflow and push a tag directly:
+#   git tag v1.2.3 && git push origin v1.2.3
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump type
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write   # push changelog commit + tag to main
+
+jobs:
+  prepare-release:
+    name: Bump changelog & tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.MYINISJAP_RELEASER_CLIENT }}
+          private-key: ${{ secrets.MYINISJAP_RELEASER_SECRET }}
+
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Check [Unreleased] section has content
+        run: |
+          section="$(awk '/^## \[Unreleased\]/{flag=1;next}/^## \[/{flag=0}flag' CHANGELOG.md)"
+          if [ -z "$(echo "$section" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md's [Unreleased] section is empty; add release notes before cutting a release."
+            exit 1
+          fi
+
+      - name: Compute next version
+        id: version
+        run: |
+          latest_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          latest_tag="${latest_tag:-v0.0.0}"
+          version="${latest_tag#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          new_tag="v${major}.${minor}.${patch}"
+          if git rev-parse "$new_tag" >/dev/null 2>&1; then
+            echo "::error::Tag $new_tag already exists."
+            exit 1
+          fi
+          echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "tag=$new_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Move [Unreleased] notes under the new version heading
+        run: |
+          awk -v ver="${{ steps.version.outputs.version }}" -v date="$(date +%Y-%m-%d)" '
+            /^## \[Unreleased\]/ {
+              print
+              print ""
+              print "## [" ver "] - " date
+              next
+            }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+
+      - name: Commit and push changelog to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin HEAD:main
+
+      - name: Create and push tag
+        run: |
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
