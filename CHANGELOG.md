@@ -19,6 +19,8 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-12
+
 ### Added
 - **Container-local `qwen_code` config.** The backend now reads qwen settings
   from a repo-managed `backend/qwen-config/settings.json` (mounted read-write as
