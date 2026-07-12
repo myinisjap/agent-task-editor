@@ -19,21 +19,6 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
-### Fixed
-- **Manually-triggered releases built and published images twice.** The
-  "Release" workflow's `prepare-release` job pushed the version tag using a
-  GitHub App installation token (needed to push past `main`'s branch
-  protection), but App-token pushes aren't subject to GitHub's same-workflow
-  loop-prevention the way default-`GITHUB_TOKEN` pushes are — so that tag
-  push retriggered the very same workflow via its `push: tags: v*` trigger,
-  running the image build/publish/release jobs a second time for the same
-  tag. Split into two workflows: `.github/workflows/prepare-release.yml`
-  (`workflow_dispatch` only — bumps the changelog and pushes the tag) and
-  the trimmed `.github/workflows/release.yml` (`push: tags: v*` only —
-  builds/publishes images and creates the GitHub Release). The tag push
-  from the first now triggers the second exactly once; the
-  `git tag vx.y.z && git push origin vx.y.z` hotfix path is unaffected.
-
 ### Added
 - **Container-local `qwen_code` config.** The backend now reads qwen settings
   from a repo-managed `backend/qwen-config/settings.json` (mounted read-write as
@@ -72,6 +57,19 @@ triggers the "Release" workflow the same way.
   but the `qwen` CLI's turn-budget flag is `--max-session-turns` — every run
   was rejected by the CLI's argument parser before any work happened. Fixed
   the flag name; docs and unit tests updated to match.
+- **Manually-triggered releases built and published images twice.** The
+  "Release" workflow's `prepare-release` job pushed the version tag using a
+  GitHub App installation token (needed to push past `main`'s branch
+  protection), but App-token pushes aren't subject to GitHub's same-workflow
+  loop-prevention the way default-`GITHUB_TOKEN` pushes are — so that tag
+  push retriggered the very same workflow via its `push: tags: v*` trigger,
+  running the image build/publish/release jobs a second time for the same
+  tag. Split into two workflows: `.github/workflows/prepare-release.yml`
+  (`workflow_dispatch` only — bumps the changelog and pushes the tag) and
+  the trimmed `.github/workflows/release.yml` (`push: tags: v*` only —
+  builds/publishes images and creates the GitHub Release). The tag push
+  from the first now triggers the second exactly once; the
+  `git tag vx.y.z && git push origin vx.y.z` hotfix path is unaffected.
 
 ## [0.8.0] - 2026-07-10
 
