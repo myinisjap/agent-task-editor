@@ -119,7 +119,10 @@ export default function AgentConfigPage() {
     try {
       const payload = { ...form, env: sanitizeEnv(form.env) }
       if (selected) {
-        await updateAgent(selected.id, { ...payload, enabled: !!selected.enabled })
+        const { labelConflict } = await updateAgent(selected.id, { ...payload, enabled: !!selected.enabled })
+        if (labelConflict) {
+          alert(`Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`)
+        }
       } else {
         const { labelConflict } = await createAgent(payload)
         if (labelConflict) {
@@ -138,8 +141,8 @@ export default function AgentConfigPage() {
     if (!selected) return
     setSaving(true)
     try {
-      const updated = await updateAgent(selected.id, { ...form, enabled: !selected.enabled })
-      selectAgent(updated)
+      const { config } = await updateAgent(selected.id, { ...form, enabled: !selected.enabled })
+      selectAgent(config)
     } catch (e: any) {
       alert(e.message)
     } finally {

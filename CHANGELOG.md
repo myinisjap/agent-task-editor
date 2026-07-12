@@ -27,6 +27,15 @@ triggers the "Release" workflow the same way.
   automatically takes over for a primary that's blocked, and fails back once
   the block expires.
 
+### Fixed
+- **Editing an enabled agent config no longer blocks on a shared-label
+  "conflict".** `PUT /agents/{id}` used to reject enabling a config with a
+  `409` if another enabled config already used the same label — a leftover
+  guard from before priority-based failover, which relies on exactly that
+  setup. Enabling now succeeds and surfaces the sharing config via the
+  `X-Label-Conflict` header (matching `POST /agents` behavior), and the
+  frontend shows it as an informational note instead of a blocking alert.
+
 ## [0.9.0] - 2026-07-12
 
 ### Added

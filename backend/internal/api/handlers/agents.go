@@ -337,20 +337,20 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabled := existing.Enabled
+	var conflict string
 	if body.Enabled != nil {
 		if *body.Enabled {
-			// check for label conflicts before enabling
+			// Priority-based failover allows multiple enabled configs to share
+			// a label, so a conflict is informational only — surfaced to the
+			// caller via X-Label-Conflict, same as Create.
 			labelsToCheck := body.Labels
 			if labelsToCheck == "" {
 				labelsToCheck = existing.Labels
 			}
-			conflict, cerr := h.labelConflict(r, labelsToCheck, chi.URLParam(r, "id"))
+			var cerr error
+			conflict, cerr = h.labelConflict(r, labelsToCheck, chi.URLParam(r, "id"))
 			if cerr != nil {
 				Err(w, http.StatusInternalServerError, cerr.Error())
-				return
-			}
-			if conflict != "" {
-				Err(w, http.StatusConflict, fmt.Sprintf("label conflict with active config %q — disable it first", conflict))
 				return
 			}
 			enabled = 1
@@ -435,6 +435,9 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if conflict != "" {
+		w.Header().Set("X-Label-Conflict", conflict)
 	}
 	JSON(w, http.StatusOK, safeConfig(cfg))
 }
