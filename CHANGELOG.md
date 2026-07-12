@@ -19,6 +19,8 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-12
+
 ### Added
 - **Agent config priority / failover.** Agent configs now have a `priority`
   (lower runs first). When multiple enabled configs share a label, dispatch
