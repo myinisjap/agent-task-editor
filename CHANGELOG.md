@@ -229,6 +229,17 @@ this file's section for that version as the release notes.
     setups/non-browser clients — each use is now logged as a warning
     server-side — and may be removed in a future release.
 
+### Fixed
+- **`/healthz` no longer requires `API_TOKEN`** (#139). It was accidentally
+  mounted inside the BearerAuth middleware group in `router.go`,
+  contradicting `docs/api.md`/`internal/api/CLAUDE.md` (which documented it
+  as unauthenticated) and breaking the `docker-compose.yml`/
+  `docker-compose.release.yml` healthchecks (plain `wget --spider`, no auth
+  header) whenever `API_TOKEN` was set — the backend container would report
+  unhealthy forever. Moved `/healthz` out of the BearerAuth group (alongside
+  `/ws` and `/metrics`); added a router test locking in that it returns 200
+  with no `Authorization` header even when a bearer token is configured.
+
 ### Changed
 - **Dispatch queue visibility now gated on worker-pool saturation** (#152).
   - The `queue_position` field on task responses — and the "N in queue"

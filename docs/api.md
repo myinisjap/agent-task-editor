@@ -666,9 +666,11 @@ Liveness probe. Returns `200 OK` with `{"status":"ok","version":"<version>"}`.
 or the release tag (e.g. `"v1.4.0"`) for GHCR images, stamped at build time
 via `-ldflags "-X main.Version=<tag>"` (see `backend/Dockerfile`'s `VERSION`
 build-arg and `.github/workflows/release.yml`). (Served at the server root,
-**not** under `/api/v1`. Note: like the rest of the API, this route sits
-behind `API_TOKEN`/`API_TOKENS` when one is configured — despite the name,
-it is not exempt from bearer auth.)
+**not** under `/api/v1`, and mounted **outside** `API_TOKEN`/`API_TOKENS`
+bearer auth — like `/metrics`, it's intentionally unauthenticated so
+container/orchestrator healthchecks (see `docker-compose.yml`) work without
+needing to inject the token. It returns only a static status/version and
+leaks no sensitive data.)
 
 ### `GET /health/providers`
 Provider / onboarding readiness checks. Surfaces first-run misconfiguration at a
