@@ -582,8 +582,20 @@ export const api = {
       const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
       return { config, labelConflict }
     },
-    update: (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }) =>
-      request<AgentConfig>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+      const res = await authedRawFetch(`${BASE}/agents/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        throw new Error(err.error ?? res.statusText)
+      }
+      const config: AgentConfig = await res.json()
+      const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
+      return { config, labelConflict }
+    },
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
     models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),
     claudeOptions: () => request<ClaudeOptions>('/agents/claude-options'),

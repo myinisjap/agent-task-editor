@@ -11,7 +11,7 @@ type AgentsState = {
   fetchModels: (provider: string) => Promise<ModelList | null>
   fetchClaudeOptions: () => Promise<void>
   create: (payload: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>) => Promise<{ config: AgentConfig; labelConflict?: string }>
-  update: (id: string, payload: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }) => Promise<AgentConfig>
+  update: (id: string, payload: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }) => Promise<{ config: AgentConfig; labelConflict?: string }>
   delete: (id: string) => Promise<void>
 }
 
@@ -64,9 +64,9 @@ export const useAgentsStore = create<AgentsState>((set) => ({
   },
 
   update: async (id, payload) => {
-    const updated = await api.agents.update(id, payload)
+    const result = await api.agents.update(id, payload)
     await useAgentsStore.getState().fetch()
-    return updated
+    return result
   },
 
   delete: async (id) => {
