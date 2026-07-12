@@ -19,6 +19,17 @@ triggers the same build/release steps.
 ## [Unreleased]
 
 ### Added
+- **Container-local `qwen_code` config.** The backend now reads qwen settings
+  from a repo-managed `backend/qwen-config/settings.json` (mounted read-write as
+  the single `settings.json` under `QWEN_HOME=/home/node/qwen-home`) instead of
+  the host's `~/.qwen`. This lets the container point the model `baseUrl` at
+  `host.docker.internal:8081` (the host-published model server) while a host
+  qwen install keeps `localhost` — the two no longer share, so neither breaks
+  the other. `QWEN_RUNTIME_DIR=/tmp/qwen` and an entrypoint `chown` keep qwen's
+  own startup writes (e.g. `output-language.md`) off the read-only-ish config
+  and out of the repo. Provider API-key fields ship as the non-secret
+  placeholder `local-no-auth` (the local server ignores the value but requires
+  the env key to be present).
 - **`dev.sh --all-cli`.** `dev.sh` (build-from-source) now supports the same
   `--all-cli` flag as `run.sh` (prebuilt-image runner): it sets
   `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`/`INSTALL_QWEN_CLI=true` before
