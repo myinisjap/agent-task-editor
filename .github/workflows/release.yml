@@ -59,11 +59,19 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.MYINISJAP_RELEASER_CLIENT }}
+          private-key: ${{ secrets.MYINISJAP_RELEASER_SECRET }}
+
       - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
           fetch-tags: true
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Check [Unreleased] section has content
         run: |
