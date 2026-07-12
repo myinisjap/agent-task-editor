@@ -137,6 +137,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		SubtasksEnabled   *flexBool `json:"subtasks_enabled"`
 		MaxSubtasks       *int64    `json:"max_subtasks"`
 		MaxCostUsd        *float64  `json:"max_cost_usd"`
+		Priority          *int64    `json:"priority"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -213,6 +214,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.MaxCostUsd != nil {
 		maxCostUsd = *body.MaxCostUsd
 	}
+	priority := int64(0)
+	if body.Priority != nil {
+		priority = *body.Priority
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -247,6 +252,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		SubtasksEnabled:   subtasksEnabled,
 		MaxSubtasks:       maxSubtasks,
 		MaxCostUsd:        maxCostUsd,
+		Priority:          priority,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -264,8 +270,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			MaxRetries: cfg.MaxRetries, RetryBackoffSecs: cfg.RetryBackoffSecs,
 			ResumeSessions:  cfg.ResumeSessions,
 			SubtasksEnabled: cfg.SubtasksEnabled, MaxSubtasks: cfg.MaxSubtasks,
-			MaxCostUsd: cfg.MaxCostUsd,
-			Enabled:    0, ID: cfg.ID,
+			MaxCostUsd: cfg.MaxCostUsd, Priority: cfg.Priority,
+			Enabled: 0, ID: cfg.ID,
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -301,6 +307,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		SubtasksEnabled   *flexBool `json:"subtasks_enabled"`
 		MaxSubtasks       *int64    `json:"max_subtasks"`
 		MaxCostUsd        *float64  `json:"max_cost_usd"`
+		Priority          *int64    `json:"priority"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -396,6 +403,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.MaxCostUsd != nil {
 		maxCostUsd = *body.MaxCostUsd
 	}
+	priority := existing.Priority
+	if body.Priority != nil {
+		priority = *body.Priority
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -418,6 +429,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		SubtasksEnabled:   subtasksEnabled,
 		MaxSubtasks:       maxSubtasks,
 		MaxCostUsd:        maxCostUsd,
+		Priority:          priority,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {

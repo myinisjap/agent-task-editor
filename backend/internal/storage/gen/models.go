@@ -32,6 +32,7 @@ type AgentConfig struct {
 	SubtasksEnabled   int64     `json:"subtasks_enabled"`
 	MaxSubtasks       int64     `json:"max_subtasks"`
 	MaxCostUsd        float64   `json:"max_cost_usd"`
+	Priority          int64     `json:"priority"`
 }
 
 type AgentLog struct {
