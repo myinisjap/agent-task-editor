@@ -3,19 +3,27 @@ import { render, screen } from '@testing-library/react'
 import type { Task } from '../../api/client'
 import type TaskHeaderType from './TaskHeader'
 
-// Regression test for #145 — attachment URLs used to hardcode
-// `/api/v1/uploads/...` instead of going through the same BASE_URL-aware
-// base that src/api/client.ts's exported `BASE` constant uses. When the app
-// is served from a non-root base (e.g. the production `/tasks/` base set in
-// vite.config.ts), the hardcoded path 404'd. Fixed in TaskHeader.tsx
-// (imports `BASE` from client.ts instead of hardcoding the prefix).
+// Regression test for #145 / #178 — attachment URLs must go through the same
+// BASE_URL-aware base that src/api/client.ts's exported `BASE` constant uses,
+// not a hardcoded `/api/v1/uploads/...` path (which 404'd under a non-root
+// base like the production `/tasks/` base set in vite.config.ts).
+//
+// As of #178 attachments are fetched through the authed client
+// (`authedRawFetch`) and rendered as object (`blob:`) URLs, so they also carry
+// the Authorization header when API_TOKEN is set (#138). The regression
+// assertion is therefore that `authedRawFetch` is invoked with a
+// BASE_URL-prefixed uploads URL; the rendered <img src> is an opaque blob URL.
 //
 // `BASE` is computed once at module-evaluation time from
 // `import.meta.env.BASE_URL`, so exercising a non-default BASE_URL requires
 // `vi.stubEnv` + `vi.resetModules()` + a dynamic import *before* any other
 // test in this file (or another file) has already imported client.ts/
 // TaskHeader.tsx with the default env — see client.test.ts for the same
-// pattern applied to client.ts directly.
+// pattern applied to client.ts directly. Because of this we deliberately do
+// NOT `vi.mock` client.ts (a mock factory runs once and would freeze BASE at
+// its first value); instead we stub the global `fetch` that the real
+// `authedRawFetch` calls and assert on the URL it receives.
+
 function baseTask(overrides: Partial<Task> = {}): Task {
   return {
     id: 't1',
@@ -71,49 +79,61 @@ function renderHeader(TaskHeader: typeof TaskHeaderType, task: Task) {
   )
 }
 
-describe('TaskHeader attachment URLs (#145)', () => {
+describe('TaskHeader attachment URLs (#145 / #178)', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>
+
   beforeEach(() => {
     vi.resetModules()
+    // The real authedRawFetch calls global fetch — stub it with a blob response.
+    fetchSpy = vi.fn(async () => ({ ok: true, blob: async () => new Blob(['x']) }) as Response)
+    vi.stubGlobal('fetch', fetchSpy)
+    // jsdom doesn't implement the object-URL API the component relies on.
+    URL.createObjectURL = vi.fn(() => 'blob:mock-url')
+    URL.revokeObjectURL = vi.fn()
   })
 
   afterEach(() => {
     vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
+
+  // The URL passed to fetch is the first positional argument.
+  const fetchedUrls = () => fetchSpy.mock.calls.map((c) => c[0])
 
   // Production builds set `base: '/tasks/'` in vite.config.ts, so BASE_URL is
   // NOT always '/' — simulate that deployment shape here rather than relying
   // on the test runner's (root, '/') default, which would let this
   // regression test pass by accident.
-  it('prefixes attachment <img src> with a non-root BASE_URL', async () => {
+  it('fetches attachments through a non-root BASE_URL via the authed client', async () => {
     vi.stubEnv('BASE_URL', '/tasks/')
     const { default: TaskHeader } = await import('./TaskHeader')
-    const expectedPrefix = '/tasks/api/v1/uploads/'
 
     renderHeader(TaskHeader, baseTask({ attachments: ['foo.png'] }))
 
-    const img = screen.getByAltText('attachment') as HTMLImageElement
-    expect(img.getAttribute('src')).toBe(`${expectedPrefix}foo.png`)
+    const img = (await screen.findByAltText('attachment')) as HTMLImageElement
+    expect(fetchedUrls()).toContain('/tasks/api/v1/uploads/foo.png')
+    expect(img.getAttribute('src')).toBe('blob:mock-url')
   })
 
-  it('opens the same BASE_URL-prefixed path on click', async () => {
+  it('opens the blob URL in a new tab on click', async () => {
     vi.stubEnv('BASE_URL', '/tasks/')
-    const { default: TaskHeader } = await import('./TaskHeader')
-    const expectedUrl = '/tasks/api/v1/uploads/foo.png'
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const { default: TaskHeader } = await import('./TaskHeader')
 
     renderHeader(TaskHeader, baseTask({ attachments: ['foo.png'] }))
-    screen.getByAltText('attachment').click()
+    ;(await screen.findByAltText('attachment')).click()
 
-    expect(openSpy).toHaveBeenCalledWith(expectedUrl, '_blank')
-    openSpy.mockRestore()
+    expect(openSpy).toHaveBeenCalledWith('blob:mock-url', '_blank')
   })
 
-  it('still resolves attachment URLs correctly at the default (root) BASE_URL', async () => {
+  it('resolves attachment URLs correctly at the default (root) BASE_URL', async () => {
+    vi.stubEnv('BASE_URL', '/')
     const { default: TaskHeader } = await import('./TaskHeader')
 
     renderHeader(TaskHeader, baseTask({ attachments: ['foo.png'] }))
 
-    const img = screen.getByAltText('attachment') as HTMLImageElement
-    expect(img.getAttribute('src')).toBe('/api/v1/uploads/foo.png')
+    await screen.findByAltText('attachment')
+    expect(fetchedUrls()).toContain('/api/v1/uploads/foo.png')
   })
 })

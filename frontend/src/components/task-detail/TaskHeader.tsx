@@ -1,13 +1,8 @@
-import { BASE, type Task, type Repo, type AgentRun, type WorkflowLabel } from '../../api/client'
+import { useEffect, useRef, useState } from 'react'
+import { api, authedRawFetch, type Task, type Repo, type AgentRun, type WorkflowLabel } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
-
-// Attachment files are served from the same API base client.ts uses
-// (BASE_URL-prefixed) — see #145, where a hardcoded '/api/v1/uploads/...'
-// path 404'd under a non-root BASE_URL (e.g. the production '/tasks/' base
-// set in vite.config.ts).
-const UPLOADS_BASE = `${BASE}/uploads`
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -90,6 +85,56 @@ export default function TaskHeader({
   // SUM over the already-fetched runs list (all statuses, matching how the
   // dispatcher's cost-budget guard counts spend; see docs/agents.md).
   const cumulativeCost = (runs ?? []).reduce((sum, r) => sum + (r.cost_usd ?? 0), 0)
+
+  // Attachments are fetched through the authed client and rendered as blob
+  // URLs — a bare <img src="/api/v1/uploads/..."> can't carry the
+  // Authorization header (see #138) and ignores the BASE_URL prefix used in
+  // prod deployments served under a sub-path (e.g. nginx `/tasks/`).
+  const blobUrlMapRef = useRef<Map<string, string>>(new Map())
+  const [blobUrlVersion, setBlobUrlVersion] = useState(0)
+  const attachments = task.attachments
+
+  useEffect(() => {
+    // Revoke any previously-created blob URLs before fetching the new set.
+    for (const url of blobUrlMapRef.current.values()) {
+      URL.revokeObjectURL(url)
+    }
+    blobUrlMapRef.current = new Map()
+    setBlobUrlVersion((v) => v + 1)
+
+    if (!attachments || attachments.length === 0) return
+
+    let cancelled = false
+    void (async () => {
+      for (const rel of attachments) {
+        try {
+          const res = await authedRawFetch(api.uploads.downloadUrl(rel))
+          if (cancelled || !res.ok) continue
+          const blob = await res.blob()
+          if (cancelled) return
+          const blobUrl = URL.createObjectURL(blob)
+          blobUrlMapRef.current.set(rel, blobUrl)
+          setBlobUrlVersion((v) => v + 1)
+        } catch {
+          // Attachments are decorative — skip on failure, no error toast.
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.id, attachments])
+
+  useEffect(() => {
+    return () => {
+      for (const url of blobUrlMapRef.current.values()) {
+        URL.revokeObjectURL(url)
+      }
+    }
+  }, [])
+
   return (
     <>
       <div className="flex items-center justify-between">
@@ -232,17 +277,21 @@ export default function TaskHeader({
             <p className="text-sm text-slate-400 mt-2">{task.description}</p>
           )}
           {task.attachments && task.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-3">
-              {task.attachments.map((rel) => (
-                <img
-                  key={rel}
-                  src={`${UPLOADS_BASE}/${rel}`}
-                  alt="attachment"
-                  className="max-h-48 rounded border border-slate-700 cursor-pointer hover:border-slate-500 transition-colors"
-                  onClick={() => window.open(`${UPLOADS_BASE}/${rel}`, '_blank')}
-                  title="Click to open full size"
-                />
-              ))}
+            <div className="flex flex-wrap gap-2 mt-3" data-blob-url-version={blobUrlVersion}>
+              {task.attachments.map((rel) => {
+                const blobUrl = blobUrlMapRef.current.get(rel)
+                if (!blobUrl) return null
+                return (
+                  <img
+                    key={rel}
+                    src={blobUrl}
+                    alt="attachment"
+                    className="max-h-48 rounded border border-slate-700 cursor-pointer hover:border-slate-500 transition-colors"
+                    onClick={() => window.open(blobUrl, '_blank')}
+                    title="Click to open full size"
+                  />
+                )
+              })}
             </div>
           )}
         </div>
