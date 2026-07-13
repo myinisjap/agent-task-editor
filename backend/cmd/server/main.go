@@ -50,6 +50,10 @@ func main() {
 	slog.Info("agent-task-editor starting", "version", Version)
 	if cfg.APIToken != "" {
 		slog.Info("bearer auth enabled")
+	} else if cfg.CORSOrigins == "*" {
+		slog.Warn("API is unauthenticated (API_TOKEN not set) and CORS_ORIGINS=* — any website open in your browser can call this API from localhost (drive-by CSRF-style request execution, no auth needed). Set API_TOKEN and a specific CORS_ORIGINS before exposing this beyond a trusted single-user machine; see README.md#security")
+	} else {
+		slog.Warn("API is unauthenticated (API_TOKEN not set); anyone who can reach this port can register repos, create agent configs, and trigger shell-executing agent runs. Set API_TOKEN before exposing this beyond a trusted single-user machine; see README.md#security")
 	}
 	if cfg.MetricsToken != "" {
 		slog.Info("metrics endpoint bearer auth enabled")

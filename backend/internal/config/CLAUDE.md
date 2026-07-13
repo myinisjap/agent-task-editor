@@ -8,7 +8,7 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 |---|---|---|---|
 | `DBPath` | `DB_PATH` | `db_path` | `agent-task-editor.db` |
 | `Port` | `PORT` | `port` | `8080` |
-| `CORSOrigins` | `CORS_ORIGINS` | `cors_origins` | `*` |
+| `CORSOrigins` | `CORS_ORIGINS` | `cors_origins` | `http://localhost:5173,http://localhost:8080` |
 | `APIToken` | `API_TOKEN` | `api_token` | _(empty)_ |
 | `APITokens` | `API_TOKENS` | `api_tokens` | _(empty map)_ |
 | `MetricsToken` | `METRICS_TOKEN` | `metrics_token` | _(empty)_ |
@@ -45,3 +45,4 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 - `MetricsToken` empty (the default) leaves `GET /metrics` unauthenticated, independent of `APIToken`/`APITokens` — most Prometheus scrape setups can't easily carry a different token than other tooling.
 - `MCPBinary` empty means ClaudeRunner runs without MCP tools (`signal_complete`/`request_human` unavailable)
 - `BackupDir` empty disables the automatic local-snapshot scheduler (`internal/backup.Scheduler`); the on-demand `GET /api/v1/backup` endpoint and the Health page's "Download backup" button are always available regardless. See `docs/backup.md`.
+- `CORSOrigins` defaults to the known local dev/prod origins (`http://localhost:5173,http://localhost:8080`), not `*`; the wildcard is still available by setting `CORS_ORIGINS=*` explicitly. An empty `APIToken` now also triggers a startup `slog.Warn` in `cmd/server/main.go` (warn-only, matching the `REPO_BASE_DIR` pattern), escalated to a stronger message when `CORSOrigins == "*"` as well.

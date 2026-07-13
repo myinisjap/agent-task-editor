@@ -19,6 +19,16 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+- **Safer default `CORS_ORIGINS` and a startup warning for unauthenticated
+  deployments.** The default `CORS_ORIGINS` is now
+  `http://localhost:5173,http://localhost:8080` instead of `*`, closing a
+  drive-by cross-origin attack where any web page open in the operator's
+  browser could call the unauthenticated local API. Set `CORS_ORIGINS=*`
+  explicitly to restore the old wide-open behavior. Starting with no
+  `API_TOKEN` now logs a `slog.Warn`; the warning escalates when
+  `CORS_ORIGINS=*` is also set.
+
 ### Fixed
 - **Editing an enabled agent config no longer blocks on a shared-label
   "conflict".** `PUT /agents/{id}` used to reject enabling a config with a
