@@ -30,6 +30,11 @@ triggers the "Release" workflow the same way.
   count of 1; defaults to once a day, keeping the newest 7 snapshots (same
   as the previous env-var defaults). Whether the scheduler is enabled at all
   remains a deploy-time-only choice (`BACKUP_DIR`). See docs/backup.md.
+### Fixed
+- **New Task modal no longer shows a horizontal scrollbar.** The Type/Priority/Repo
+  select row could grow wider than the modal when a repo name was long, since flex
+  children default to a content-based minimum width; the columns and selects now
+  shrink properly instead of forcing overflow.
 
 ## [0.11.0] - 2026-07-13
 
