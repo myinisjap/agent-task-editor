@@ -85,11 +85,12 @@ npm run build          # Production build to dist/
 npm run lint           # oxlint
 npx tsc --noEmit       # Type-check (no dedicated script)
 npm run test:coverage  # vitest run --coverage
+npm run e2e            # Playwright E2E smoke tests (stack must already be running)
 ```
 
 ## Testing
 
-Vitest covers two layers:
+Three layers:
 
 - **Pure-function tests** in `src/lib/*.test.ts` (parsers, validators — no DOM).
 - **Component tests** (Vitest + Testing Library, `jsdom` environment — see the
@@ -97,6 +98,22 @@ Vitest covers two layers:
   components: `src/pages/*.test.tsx`, `src/components/**/*.test.tsx`. These
   render real component trees and assert on behavior (drag-to-move, bulk
   actions, tab switching, button enablement), not snapshots.
+- **E2E smoke tests** (`e2e/*.spec.ts`, Playwright + Chromium, `frontend/playwright.config.ts`)
+  running against the real, built docker-compose stack
+  (`http://localhost:5173/tasks/`) — not `npm run dev`, and nothing mocked.
+  Covers board load, task creation, task-detail navigation, and the Logs
+  tab's WS log pane mount. Kept to one linear flow per the scope note that
+  originally deferred this layer (see #155/#182) — fast and non-flaky, not a
+  full E2E suite. Requires the stack to already be running
+  (`./dev.sh start` or `docker compose up -d --build --wait`) and a
+  registered repo; `e2e/global-setup.ts` seeds one automatically via the
+  backend API (mirroring `scripts/seed-demo.sh`), but the repo *directory*
+  itself must exist on disk under `REPO_BASE_DIR` before the stack starts
+  (see `e2e/README.md`). Run with `npm run e2e` (`npm run e2e:install` once,
+  first time, to fetch the Chromium browser). Wired into CI as its own job
+  (`.github/workflows/ci.yml`, `e2e`), independent of the `frontend`/
+  `backend`/`docker-build` jobs so a slow or flaky E2E run never gates the
+  fast unit-test feedback loop.
 
 Common mocking patterns used by the component tests:
 - `vi.mock('../../api/client', ...)` (relative to the test file) to replace
@@ -117,12 +134,6 @@ Common mocking patterns used by the component tests:
   `getBoundingClientRect` stubs on the draggable/droppable elements so
   dnd-kit's collision detection has real geometry — see
   `src/components/board/TaskBoard.test.tsx`.
-
-Playwright E2E smoke tests (a handful of flows against the docker-compose
-stack) were considered but deferred — see the tracking issue (#155) for
-scope notes; the component-test layer above covers the acceptance criteria's
-named areas (board drag-to-move, bulk actions, task-detail tabs) without new
-CI infrastructure.
 
 ## Code Generation
 

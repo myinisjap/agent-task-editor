@@ -112,3 +112,53 @@ jobs:
       # ${VAR:-default} fallback.
       - name: docker compose build
         run: docker compose build
+
+  e2e:
+    name: E2E smoke tests (Playwright)
+    runs-on: ubuntu-latest
+    # Independent of the frontend/backend/docker-build jobs so a slow or
+    # flaky E2E run never gates the fast unit-test feedback loop above.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      # The demo repo dir must exist on the runner's filesystem *before*
+      # `docker compose up`, since REPO_BASE_DIR is bind-mounted host-dir ->
+      # same container path — the backend container needs to see this
+      # directory already populated when it starts.
+      - name: Seed demo repo directory
+        run: |
+          mkdir -p /tmp/repos/demo-repo
+          git -C /tmp/repos/demo-repo init -q
+          git -C /tmp/repos/demo-repo -c user.name=demo -c user.email=demo@example.com \
+            commit -q --allow-empty -m "Initial commit"
+
+      # No .env file needed — every var in docker-compose.yml has a
+      # ${VAR:-default} fallback, and these smoke tests never trigger a
+      # real agent run, so no LLM/GitHub credentials are required either.
+      - name: Start stack
+        run: docker compose up -d --build --wait
+      - name: Run Playwright E2E suite
+        run: npm run e2e
+        working-directory: frontend
+      - name: docker compose logs
+        if: always()
+        run: docker compose logs
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v
