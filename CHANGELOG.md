@@ -19,6 +19,33 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Frontend component smoke tests (Vitest + Testing Library)** (#155).
+  - New `jsdom`-backed component-test layer (`@testing-library/react` +
+    `@testing-library/jest-dom` + `@testing-library/user-event`) alongside
+    the existing pure-function tests in `src/lib`; wired into the same
+    `npm run test:coverage` CI step, no new CI job/infra needed.
+  - Coverage added for: `TaskBoard` drag-to-move (real `@dnd-kit` drag
+    simulated via mouse events) including optimistic-update rollback on a
+    rejected `moveLabel` call and the blocked-task move confirmation;
+    `BoardPage` bulk actions (pause/archive/move-to, plus the
+    partial-failure error banner); `TaskDetailPage` tab switching
+    (Overview/Logs/Diff); `TaskActions` approve/reject/reply enablement
+    rules.
+  - New regression tests for review findings #138 (missing `Authorization`
+    header on most API calls — since superseded on `main` by the runtime
+    API-token flow, see `authToken.ts`) and #145 (attachment URLs ignoring
+    `BASE_URL`, fixed alongside this change — see `[0.7.0]`'s Fixed section).
+    #147 (hover-only board-card controls on touch) has a best-effort
+    DOM-presence test only — jsdom can't simulate real hover/touch, so full
+    verification is deferred to a future Playwright E2E layer (considered
+    for this issue but descoped to keep this change to the component-test
+    layer; see the issue for scope notes).
+  - Minor testability-only production changes: `RunLogPane`/`DiffReviewPane`
+    root elements got a `data-testid` hook; `client.ts` now exports its
+    `BASE` constant so `TaskHeader` can share it instead of hardcoding an
+    API path.
+
 ### Changed
 - **Safer default `CORS_ORIGINS` and a startup warning for unauthenticated
   deployments.** The default `CORS_ORIGINS` is now
@@ -28,6 +55,12 @@ triggers the "Release" workflow the same way.
   explicitly to restore the old wide-open behavior. Starting with no
   `API_TOKEN` now logs a `slog.Warn`; the warning escalates when
   `CORS_ORIGINS=*` is also set.
+- Documented 5 previously-undocumented WebSocket events (`task.updated`,
+  `task.review_comments_changed`, `task.subtask_conflict`,
+  `repo.clone_done`, `repo.clone_failed`), the dependencies/subtasks REST
+  endpoints, the `cancelled` run status, and refreshed stale `CLAUDE.md`
+  notes on `METRICS_TOKEN` and WebSocket ticket-based auth. Docs-only, no
+  behavior change.
 
 ### Fixed
 - **Editing an enabled agent config no longer blocks on a shared-label
@@ -37,14 +70,6 @@ triggers the "Release" workflow the same way.
   setup. Enabling now succeeds and surfaces the sharing config via the
   `X-Label-Conflict` header (matching `POST /agents` behavior), and the
   frontend shows it as an informational note instead of a blocking alert.
-
-### Changed
-- Documented 5 previously-undocumented WebSocket events (`task.updated`,
-  `task.review_comments_changed`, `task.subtask_conflict`,
-  `repo.clone_done`, `repo.clone_failed`), the dependencies/subtasks REST
-  endpoints, the `cancelled` run status, and refreshed stale `CLAUDE.md`
-  notes on `METRICS_TOKEN` and WebSocket ticket-based auth. Docs-only, no
-  behavior change.
 
 ## [0.10.0] - 2026-07-12
 
@@ -437,6 +462,20 @@ triggers the "Release" workflow the same way.
   - Docs updated: `frontend/src/api/CLAUDE.md`, `frontend/CLAUDE.md`, and
     `docs/getting-started.md`'s Authentication section now describe the
     runtime flow instead of the non-functional build-time one.
+  - Also fixed a latent header-merge bug in `request()`/`requestWithHeaders()`
+    (`...init` was spread after `headers:`, so a caller-supplied
+    `init.headers` — e.g. `workflows.updateYaml`/`importYaml`'s
+    `application/yaml` Content-Type override — silently dropped the whole
+    merged headers object, including the Authorization header). Found and
+    fixed alongside the frontend component-test layer (#155), which now
+    pins both behaviors with regression tests.
+- **Frontend: task attachment links ignored `BASE_URL`** (#145).
+  `TaskHeader`'s attachment thumbnails/links hardcoded `/api/v1/uploads/...`
+  instead of using the same `BASE_URL`-aware API root `src/api/client.ts`
+  computes, so attachments 404'd whenever the app was served from a
+  non-root base (e.g. the production `/tasks/` base set in
+  `vite.config.ts`). `client.ts` now exports its `BASE` constant and
+  `TaskHeader` uses it. Also found and fixed alongside #155's test layer.
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a
   `next_label` parameter (the exact label to move to), but the shared

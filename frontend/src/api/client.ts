@@ -1,6 +1,11 @@
 import { authHeaders, notifyUnauthorized } from './authToken'
 
-const BASE = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/v1`
+// BASE is the API root, BASE_URL-prefixed so the app works when served from
+// a non-root base (e.g. the production '/tasks/' base set in
+// vite.config.ts). Exported so other modules that need to build API-relative
+// URLs (e.g. TaskHeader's attachment links, see #145) share this single
+// source of truth instead of re-deriving it (and risking drift).
+export const BASE = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/v1`
 
 // authedRawFetch is a thin wrapper around fetch() that merges in the
 // Authorization header from the runtime token (see authToken.ts) and, on a
@@ -19,13 +24,22 @@ export async function authedRawFetch(url: string, init?: RequestInit): Promise<R
 }
 
 async function request<T>(path: string, init?: RequestInit & { isFormData?: boolean }): Promise<T> {
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { ...authHeaders() }
   if (!init?.isFormData) {
     headers['Content-Type'] = 'application/json'
   }
+  // `headers` must be spread AFTER `...init` — init still carries its own
+  // (unmerged) `headers` key, which would otherwise clobber the merged
+  // object below if spread last. This was a latent bug even before
+  // authHeaders() existed (it happened to be unobservable when the only
+  // thing at stake was Content-Type, since callers that pass a custom
+  // `init.headers` were always overriding an equivalent single-key
+  // default) — see #138, where it meant a caller-supplied `init.headers`
+  // (e.g. workflows.updateYaml/importYaml's 'application/yaml'
+  // Content-Type) silently dropped the Authorization header entirely.
   const res = await authedRawFetch(`${BASE}${path}`, {
-    headers: { ...headers, ...init?.headers },
     ...init,
+    headers: { ...headers, ...init?.headers },
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
@@ -40,8 +54,8 @@ async function request<T>(path: string, init?: RequestInit & { isFormData?: bool
 // X-Has-More) that the list endpoints return alongside the array body.
 async function requestWithHeaders<T>(path: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
   const res = await authedRawFetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
@@ -571,7 +585,7 @@ export const api = {
     create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
       })
       if (!res.ok) {
