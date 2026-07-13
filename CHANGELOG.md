@@ -19,6 +19,8 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-13
+
 ### Fixed
 - **Agent rework loops no longer run unbounded.** A reviewer/tester that keeps
   reporting the same finding used to send a task back along its `failure`
