@@ -19,6 +19,12 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Fixed
+- **New Task modal no longer shows a horizontal scrollbar.** The Type/Priority/Repo
+  select row could grow wider than the modal when a repo name was long, since flex
+  children default to a content-based minimum width; the columns and selects now
+  shrink properly instead of forcing overflow.
+
 ## [0.11.0] - 2026-07-13
 
 ### Fixed
