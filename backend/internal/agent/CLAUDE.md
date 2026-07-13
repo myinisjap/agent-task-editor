@@ -181,6 +181,34 @@ completes successfully** (a failed run's claimed fixes never reached the
 branch), then publishes `task.review_comments_changed`. Humans can also
 resolve/reopen comments directly in the UI.
 
+## Rework-Loop Feedback & Circuit Breaker
+
+A run that completes with `outcome='failure'` sends the task back along its
+failure transition (e.g. `agent-review → work`). Because every transition clears
+the dispatch lock, that path is otherwise unbounded — a reviewer stuck on the
+same finding re-triggers a Worker forever. Two mechanisms in `pool.go` (the
+`completed` branch of `run()`) contain this:
+
+- **Failure findings become feedback.** On a `failure` outcome the run's summary
+  (`result.Message`) is written to the run's `feedback` (`SetAgentRunFeedback`).
+  The next dispatch reads `prior.Feedback` and `buildPrompt` renders it under
+  `"FEEDBACK FROM PRIOR REVIEW"` — a *fix request*, distinct from the
+  `"NOTES FROM PRIOR AGENT"` (`PriorPlan`) block the default Worker prompt treats
+  as an implementation plan. Without this, findings only reached the next Worker
+  as a "plan", so the Worker saw already-committed code, judged it done, and
+  advanced without addressing them (the observed infinite loop).
+- **`failureLoopExceeded` + `escalateFailureLoop`.** Before firing the failure
+  transition, the pool counts how many times this exact `(fromLabel → toLabel)`
+  agent transition already appears in the tail of `task_label_history` — the
+  window resets on any human-triggered transition or any exit from `fromLabel` to
+  a *different* label (a success/progress move). Once the count reaches
+  `failureLoopThreshold` (3), the task is escalated to `waiting_human` instead of
+  transitioning again: the run is re-written `waiting_human` (usage preserved),
+  the task is re-locked on that run (the `completed` path already cleared the
+  lock), and `task.needs_human` is published — mirroring the transient-retry and
+  cost-budget escalations. This is history-derived (no new column), so it needs
+  no migration and a human move naturally resets the budget.
+
 ## Dispatch / Active Run Locking
 
 `active_agent_run_id` prevents double-dispatch:

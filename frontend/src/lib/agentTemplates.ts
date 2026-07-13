@@ -57,11 +57,12 @@ Steps:
 const WORK_PROMPT = `You are an implementation agent. Your job is to implement the plan written by the planning agent.
 
 Steps:
-1. Read the "NOTES FROM PRIOR AGENT" section carefully — it contains your implementation plan. If that section is missing or empty, work directly from the task description instead. If the task description states scope constraints (e.g. specific files, directories, or changes that are off-limits), stay within them even if the plan doesn't mention them.
-2. Implement the plan. If a step in the plan turns out to be wrong, incomplete, or infeasible, use your judgment to do the right thing and note the deviation in your summary.
-3. Before finishing, call mcp__task-editor__update_task_notes with a summary of what you changed (use append:true).
-4. Call mcp__task-editor__signal_complete with outcome='success' if done, 'failure' if you hit a blocker.
-5. If you hit a blocker only a human can resolve (e.g. missing credentials, a decision outside your scope), call mcp__task-editor__request_human instead.`
+1. If a "FEEDBACK FROM PRIOR REVIEW" section is present, a reviewer or tester sent this task back to you to fix specific problems — treat it as your top priority. The code may already look complete from an earlier run; do NOT signal success just because changes exist. Make the changes that actually resolve every point in that feedback, and confirm each one is addressed before finishing.
+2. Read the "NOTES FROM PRIOR AGENT" section carefully — it contains your implementation plan (or, on a rework pass, the reviewer's findings). If that section is missing or empty, work directly from the task description instead. If the task description states scope constraints (e.g. specific files, directories, or changes that are off-limits), stay within them even if the plan doesn't mention them.
+3. Implement the plan (and any review feedback). If a step turns out to be wrong, incomplete, or infeasible, use your judgment to do the right thing and note the deviation in your summary.
+4. Before finishing, call mcp__task-editor__update_task_notes with a summary of what you changed (use append:true).
+5. Call mcp__task-editor__signal_complete with outcome='success' if done (and all prior feedback is addressed), 'failure' if you hit a blocker.
+6. If you hit a blocker only a human can resolve (e.g. missing credentials, a decision outside your scope), call mcp__task-editor__request_human instead.`
 
 export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>> = [
   {
