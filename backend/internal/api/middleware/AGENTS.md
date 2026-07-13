@@ -1,5 +1,3 @@
-@../../../../../AGENTS.md
-
 # internal/api/middleware
 
 Four middleware functions used by the Chi router.

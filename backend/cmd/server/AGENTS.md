@@ -1,5 +1,3 @@
-@../../../../AGENTS.md
-
 # cmd/server
 
 Main server entrypoint. Reads config, opens the database, wires all subsystems together, and starts the HTTP server.

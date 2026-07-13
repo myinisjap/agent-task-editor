@@ -1,5 +1,3 @@
-@../../../../AGENTS.md
-
 # frontend/src/api
 
 Four files that form the complete backend communication layer.

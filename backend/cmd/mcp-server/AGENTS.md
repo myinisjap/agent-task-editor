@@ -1,5 +1,3 @@
-@../../../../AGENTS.md
-
 # cmd/mcp-server
 
 A minimal MCP (Model Context Protocol) server that the `claude` provider runs as a sidecar subprocess. Communication is over stdio using JSON-RPC 2.0 (newline-delimited JSON).

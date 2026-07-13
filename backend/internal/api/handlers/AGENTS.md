@@ -1,5 +1,3 @@
-@../../../../../AGENTS.md
-
 # internal/api/handlers
 
 One file per resource group. All handlers receive a `*gen.Queries` for database access plus resource-specific dependencies.
