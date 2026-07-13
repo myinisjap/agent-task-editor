@@ -37,6 +37,11 @@ type Config struct {
 	UploadDir          string        `yaml:"upload_dir"`
 	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
 	IssueSyncInterval  time.Duration `yaml:"issue_sync_interval"`
+	// ScheduleInterval is how often the task-schedule sweep runs (see
+	// internal/schedule.Scheduler), checking every enabled task_schedule for
+	// due firings. Cron expressions are minute-granularity, so this only
+	// needs to be frequent enough to reliably catch each minute boundary.
+	ScheduleInterval time.Duration `yaml:"schedule_interval"`
 
 	// BackupDir, if set, enables the built-in scheduler that periodically
 	// writes a rotated VACUUM INTO snapshot of the database to this
@@ -79,6 +84,7 @@ func Defaults() Config {
 		MaxWorkers:           5,
 		GitHubSyncInterval:   30 * time.Second,
 		IssueSyncInterval:    60 * time.Second,
+		ScheduleInterval:     30 * time.Second,
 		BackupInterval:       24 * time.Hour,
 		BackupKeep:           7,
 		LogRetentionDays:     0,
@@ -171,6 +177,13 @@ func Load(path string) (Config, error) {
 			cfg.IssueSyncInterval = d
 		} else {
 			slog.Warn("invalid ISSUE_SYNC_INTERVAL; using default", "value", v, "default", cfg.IssueSyncInterval)
+		}
+	}
+	if v := os.Getenv("SCHEDULE_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.ScheduleInterval = d
+		} else {
+			slog.Warn("invalid SCHEDULE_INTERVAL; using default", "value", v, "default", cfg.ScheduleInterval)
 		}
 	}
 	if v := os.Getenv("BACKUP_DIR"); v != "" {

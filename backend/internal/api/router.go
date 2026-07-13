@@ -35,6 +35,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
+	schedulesH := handlers.NewSchedulesHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates)
@@ -124,6 +125,13 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Get("/templates/{id}", templatesH.Get)
 			r.Put("/templates/{id}", templatesH.Update)
 			r.Delete("/templates/{id}", templatesH.Delete)
+
+			// Task schedules — fire a template on a cron expression against a repo
+			r.Get("/schedules", schedulesH.List)
+			r.Post("/schedules", schedulesH.Create)
+			r.Get("/schedules/{id}", schedulesH.Get)
+			r.Put("/schedules/{id}", schedulesH.Update)
+			r.Delete("/schedules/{id}", schedulesH.Delete)
 
 			// Inline diff review comments — persisted, injected into agent prompts while open
 			r.Get("/tasks/{id}/review-comments", reviewH.List)

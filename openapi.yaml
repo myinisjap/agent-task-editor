@@ -178,6 +178,27 @@ components:
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
+    TaskSchedule:
+      type: object
+      description: >
+        Recurring instantiation of a task_template against a repo on a cron
+        expression. A sweep fires due, enabled schedules and creates a task
+        (source="schedule"), skipping firing while an open task from a prior
+        firing of the same schedule still exists. target_label defaults to
+        "not_ready" (a human promotes the created task); setting it to a live
+        agent label instead makes the schedule fully unattended — pair with a
+        cost budget on the template's agent config as a safety net.
+      properties:
+        id:            { type: string }
+        template_id:   { type: string }
+        repo_id:       { type: string }
+        cron_expr:     { type: string, description: "Standard 5-field cron: minute hour day-of-month month day-of-week" }
+        target_label:  { type: string, description: "Label the created task starts on; default 'not_ready'" }
+        enabled:       { type: boolean }
+        last_run_at:   { type: string, format: date-time, nullable: true }
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+
     WorkflowLabel:
       type: object
       properties:
@@ -1489,6 +1510,76 @@ paths:
         "409": { description: A template with that name already exists }
     delete:
       summary: Delete a task template
+      responses:
+        "204": { description: Deleted }
+
+  /schedules:
+    get:
+      summary: List task schedules
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TaskSchedule" } }
+    post:
+      summary: Create a task schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_id, repo_id, cron_expr]
+              properties:
+                template_id:  { type: string }
+                repo_id:      { type: string }
+                cron_expr:    { type: string }
+                target_label: { type: string, default: not_ready }
+                enabled:      { type: boolean, default: true }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskSchedule" }
+        "400": { description: Missing/invalid template_id, repo_id, or cron_expr }
+        "404": { description: Template or repo not found }
+
+  /schedules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a task schedule
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskSchedule" }
+        "404": { description: Schedule not found }
+    put:
+      summary: Update a task schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cron_expr]
+              properties:
+                cron_expr:    { type: string }
+                target_label: { type: string, default: not_ready }
+                enabled:      { type: boolean, default: true }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskSchedule" }
+        "400": { description: Invalid cron_expr }
+        "404": { description: Schedule not found }
+    delete:
+      summary: Delete a task schedule
       responses:
         "204": { description: Deleted }
 
