@@ -60,6 +60,13 @@ type AgentRun struct {
 	SessionID     string     `json:"session_id"`
 }
 
+type BackupSetting struct {
+	ID              int64     `json:"id"`
+	IntervalSeconds int64     `json:"interval_seconds"`
+	Keep            int64     `json:"keep"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type Repo struct {
 	ID                    string    `json:"id"`
 	Name                  string    `json:"name"`

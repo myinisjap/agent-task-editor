@@ -40,6 +40,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates)
 	backupH := handlers.NewBackupHandler(db)
+	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	wsTicketH := handlers.NewWSTicketHandler(hub)
 
 	r := chi.NewRouter()
@@ -154,6 +155,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Streams a consistent point-in-time database snapshot (VACUUM INTO)
 			// as application/octet-stream. Plain bearer-gated; see docs/backup.md.
 			r.Get("/backup", backupH.Backup)
+
+			// Automatic local-backup scheduler settings (interval/retention
+			// count) — see docs/backup.md. Whether the scheduler is enabled at
+			// all remains a deploy-time choice (BACKUP_DIR).
+			r.Get("/backup/settings", backupSettingsH.Get)
+			r.Put("/backup/settings", backupSettingsH.Update)
 
 			// Label history — audit trail of transitions (who/what triggered them)
 			r.Get("/tasks/{id}/label-history", tasksH.ListLabelHistory)

@@ -76,6 +76,17 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		logCount = n
 	}
 
+	// Prefer the DB-backed settings (editable at runtime via
+	// PUT /api/v1/backup/settings) over the deploy-time config defaults, so
+	// this check reflects what the scheduler will actually do on its next
+	// run rather than going stale after a settings change. Falls back to the
+	// config defaults if no settings row exists yet or the read fails.
+	backupInterval, backupKeep := h.backupInterval, h.backupKeep
+	if row, err := h.q.GetBackupSettings(r.Context()); err == nil {
+		backupInterval = time.Duration(row.IntervalSeconds) * time.Second
+		backupKeep = int(row.Keep)
+	}
+
 	checks := health.Checks(health.Input{
 		MCPBinary:       h.mcpBinary,
 		RepoBaseDir:     h.repoBaseDir,
@@ -83,8 +94,8 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		LLMAPIKey:       h.llmAPIKey,
 		Providers:       providers,
 		BackupDir:       h.backupDir,
-		BackupInterval:  h.backupInterval,
-		BackupKeep:      h.backupKeep,
+		BackupInterval:  backupInterval,
+		BackupKeep:      backupKeep,
 		DBSizeBytes:     dbSize,
 		AgentLogsCount:  logCount,
 		Version:         h.version,

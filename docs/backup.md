@@ -97,6 +97,32 @@ Whether automatic backups are currently enabled is also surfaced as an
 therefore on the frontend's **Health** page), so a misconfigured or disabled
 scheduler is visible at a glance rather than a silent gap.
 
+### Changing the interval/retention count at runtime
+
+`BACKUP_INTERVAL`/`BACKUP_KEEP` above only set the *initial* values (seeded
+into the database on first migration). Once the app is running, both are
+editable without a restart via `GET`/`PUT /api/v1/backup/settings` — the
+**Health** page has a "Automatic backup schedule" form that calls these
+endpoints:
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/backup/settings
+curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"interval_seconds": 3600, "keep": 7}' \
+  http://localhost:8080/api/v1/backup/settings
+```
+
+| Field | Minimum | Default | Description |
+|---|---|---|---|
+| `interval_seconds` | `600` (10 minutes) | `86400` (once a day) | How often to write a new snapshot. |
+| `keep` | `1` | `7` | Number of most-recent snapshots to retain before pruning older ones. |
+
+The scheduler re-reads these on its own timer, so a change here takes effect
+on the very next scheduled run — no restart needed. This only controls how
+often the scheduler runs and how many snapshots it keeps; whether the
+scheduler is enabled at all remains the deploy-time-only `BACKUP_DIR` choice
+above.
+
 **This is local-disk rotation only** — snapshots stay on the same host/volume
 as the live database, so they don't protect against the loss of that
 volume (disk failure, host loss, accidental volume deletion). For

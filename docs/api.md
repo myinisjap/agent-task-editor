@@ -914,6 +914,26 @@ this endpoint for one-click on-demand snapshots. See
 scheduler, and a Litestream sidecar example for continuous offsite
 replication.
 
+### `GET /backup/settings` / `PUT /backup/settings`
+Reads/updates the DB-backed interval (`interval_seconds`) and retention
+count (`keep`) for the automatic local-backup scheduler. Changes take effect
+on the scheduler's next scheduled run without a restart. `interval_seconds`
+must be at least `600` (10 minutes); `keep` must be at least `1`. Defaults
+to `86400` (once a day) / `7`, matching the scheduler's previous
+env-var-only defaults. Whether the scheduler is enabled at all remains a
+deploy-time-only choice (`BACKUP_DIR`) — this endpoint only controls how
+often it runs and how many snapshots it keeps once enabled.
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/backup/settings
+curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"interval_seconds": 3600, "keep": 7}' \
+  http://localhost:8080/api/v1/backup/settings
+```
+
+The frontend's **Health** page has an "Automatic backup schedule" form that
+calls these endpoints. See [backup.md](backup.md#changing-the-intervalretention-count-at-runtime).
+
 ---
 
 ## WebSocket Auth
