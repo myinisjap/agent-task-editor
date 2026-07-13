@@ -199,6 +199,18 @@ components:
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
 
+    BackupSettings:
+      type: object
+      description: >
+        DB-backed settings for the automatic local-backup scheduler (see
+        docs/backup.md). Changes take effect on the scheduler's next
+        scheduled run without a restart. Whether the scheduler is enabled at
+        all remains a deploy-time-only choice (BACKUP_DIR).
+      properties:
+        interval_seconds: { type: integer, description: "How often to write a new snapshot, in seconds. Minimum 600 (10 minutes). Default 86400 (once a day)." }
+        keep:             { type: integer, description: "Number of most-recent snapshots to retain before pruning older ones. Minimum 1. Default 7." }
+        updated_at:       { type: string, format: date-time }
+
     WorkflowLabel:
       type: object
       properties:
@@ -1989,6 +2001,42 @@ paths:
               schema:
                 type: string
                 format: binary
+
+  /backup/settings:
+    get:
+      summary: Get automatic-backup scheduler settings
+      description: >
+        Returns the current interval/retention-count settings for the
+        automatic local-backup scheduler. Whether the scheduler is enabled
+        at all remains a deploy-time-only choice (BACKUP_DIR); this only
+        covers how often it runs and how many snapshots it keeps. See
+        docs/backup.md.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupSettings" }
+    put:
+      summary: Update automatic-backup scheduler settings
+      description: >
+        Persists new interval/retention-count settings. Takes effect on the
+        scheduler's next scheduled run without a process restart.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [interval_seconds, keep]
+              properties:
+                interval_seconds: { type: integer, description: "Minimum 600 (10 minutes)." }
+                keep:             { type: integer, description: "Minimum 1." }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupSettings" }
+        "400": { description: "interval_seconds below 600, or keep below 1" }
 
   /ws-ticket:
     post:

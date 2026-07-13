@@ -2890,6 +2890,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backup/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get automatic-backup scheduler settings
+         * @description Returns the current interval/retention-count settings for the automatic local-backup scheduler. Whether the scheduler is enabled at all remains a deploy-time-only choice (BACKUP_DIR); this only covers how often it runs and how many snapshots it keeps. See docs/backup.md.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BackupSettings"];
+                    };
+                };
+            };
+        };
+        /**
+         * Update automatic-backup scheduler settings
+         * @description Persists new interval/retention-count settings. Takes effect on the scheduler's next scheduled run without a process restart.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description Minimum 600 (10 minutes). */
+                        interval_seconds: number;
+                        /** @description Minimum 1. */
+                        keep: number;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BackupSettings"];
+                    };
+                };
+                /** @description interval_seconds below 600, or keep below 1 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ws-ticket": {
         parameters: {
             query?: never;
@@ -3060,6 +3136,15 @@ export interface components {
             last_run_at?: string | null;
             /** Format: date-time */
             created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        /** @description DB-backed settings for the automatic local-backup scheduler (see docs/backup.md). Changes take effect on the scheduler's next scheduled run without a restart. Whether the scheduler is enabled at all remains a deploy-time-only choice (BACKUP_DIR). */
+        BackupSettings: {
+            /** @description How often to write a new snapshot, in seconds. Minimum 600 (10 minutes). Default 86400 (once a day). */
+            interval_seconds?: number;
+            /** @description Number of most-recent snapshots to retain before pruning older ones. Minimum 1. Default 7. */
+            keep?: number;
             /** Format: date-time */
             updated_at?: string;
         };

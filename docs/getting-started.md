@@ -103,9 +103,9 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 
 | Variable | Default | Description |
 |---|---|---|
-| `BACKUP_DIR` | _(empty)_ | If set, enables the built-in scheduler that periodically writes a rotated `VACUUM INTO` snapshot of the database to this directory. Empty = disabled (on-demand backup via `GET /api/v1/backup` and the Health page's "Download backup" button is always available regardless). |
-| `BACKUP_INTERVAL` | `24h` | How often the scheduler writes a new snapshot. Accepts Go duration strings. Only meaningful when `BACKUP_DIR` is set. |
-| `BACKUP_KEEP` | `7` | Number of most-recent snapshots to retain in `BACKUP_DIR` before pruning older ones. |
+| `BACKUP_DIR` | _(empty)_ | If set, enables the built-in scheduler that periodically writes a rotated `VACUUM INTO` snapshot of the database to this directory. Empty = disabled (on-demand backup via `GET /api/v1/backup` and the Health page's "Download backup" button is always available regardless). This is the only backup setting that requires a restart to change. |
+| `BACKUP_INTERVAL` | `24h` | **Initial** value only — seeds the DB-backed setting on first migration. How often the scheduler writes a new snapshot. Accepts Go duration strings. Only meaningful when `BACKUP_DIR` is set. Editable afterwards without a restart via `PUT /api/v1/backup/settings` or the Health page (10-minute minimum). |
+| `BACKUP_KEEP` | `7` | **Initial** value only — seeds the DB-backed setting on first migration. Number of most-recent snapshots to retain in `BACKUP_DIR` before pruning older ones. Editable afterwards without a restart via `PUT /api/v1/backup/settings` or the Health page. |
 | `LOG_RETENTION_DAYS` | `0` | If set to a positive number, enables a built-in pruner that deletes `agent_logs` rows for terminal-status runs (`completed`/`failed`/`waiting_human`) older than this many days. `0` = keep forever (disabled, the default). |
 | `LOG_RETENTION_INTERVAL` | `1h` | How often the log pruner runs. Accepts Go duration strings. Only meaningful when `LOG_RETENTION_DAYS` is set. |
 

@@ -466,6 +466,16 @@ export type ProviderCheck = {
   hint?: string
 }
 
+// BackupSettings mirrors the backend's DB-backed automatic-backup scheduler
+// settings (see docs/backup.md). interval_seconds/keep are editable via
+// PUT /api/v1/backup/settings; whether the scheduler is enabled at all
+// remains a deploy-time-only choice (BACKUP_DIR), not exposed here.
+export type BackupSettings = {
+  interval_seconds: number
+  keep: number
+  updated_at: string
+}
+
 export const api = {
   tasks: {
     // list returns a single page of tasks (newest first). Pass `after` (a
@@ -675,6 +685,9 @@ export const api = {
     // authedRawFetch (browsers can't set headers on <a href>, and downloads
     // need the same Authorization header as everything else).
     url: () => `${BASE}/backup`,
+    getSettings: () => request<BackupSettings>('/backup/settings'),
+    updateSettings: (body: { interval_seconds: number; keep: number }) =>
+      request<BackupSettings>('/backup/settings', { method: 'PUT', body: JSON.stringify(body) }),
   },
   uploads: {
     // Raw binary download — mirrors backup.url(). Callers must fetch() this

@@ -7,6 +7,14 @@ const STATUS_META: Record<ProviderCheckStatus, { dot: string; label: string; lab
   error: { dot: 'bg-red-500', label: 'Not ready', labelCls: 'text-red-400' },
 }
 
+// MIN_INTERVAL_SECONDS mirrors the backend's floor (backup.MinInterval /
+// minIntervalSeconds) — kept in lockstep so the form can reject an
+// out-of-range value before round-tripping to the server.
+const MIN_INTERVAL_SECONDS = 600
+// DEFAULT_INTERVAL_SECONDS mirrors the backend's out-of-the-box default
+// (once a day), used only as a fallback while settings are still loading.
+const DEFAULT_INTERVAL_SECONDS = 86400
+
 // backupFilenameFromContentDisposition extracts the filename from a
 // Content-Disposition: attachment; filename="..." header value, falling
 // back to a client-side timestamped name if the header is missing/unparseable.
@@ -26,6 +34,16 @@ export default function HealthPage() {
   const [backupLoading, setBackupLoading] = useState(false)
   const [backupError, setBackupError] = useState('')
 
+  // Backup schedule settings (interval/retention count) — see docs/backup.md.
+  // intervalMinutes is the form's editable unit (minutes); the API works in
+  // seconds, so it's converted at the load/save boundary.
+  const [intervalMinutes, setIntervalMinutes] = useState(String(DEFAULT_INTERVAL_SECONDS / 60))
+  const [keep, setKeep] = useState('7')
+  const [settingsLoading, setSettingsLoading] = useState(true)
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const [settingsError, setSettingsError] = useState('')
+  const [settingsSaved, setSettingsSaved] = useState(false)
+
   const load = useCallback(() => {
     setLoading(true)
     setError('')
@@ -35,7 +53,47 @@ export default function HealthPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  const loadSettings = useCallback(() => {
+    setSettingsLoading(true)
+    setSettingsError('')
+    api.backup.getSettings()
+      .then((s) => {
+        setIntervalMinutes(String(Math.round(s.interval_seconds / 60)))
+        setKeep(String(s.keep))
+      })
+      .catch((e) => setSettingsError(String(e)))
+      .finally(() => setSettingsLoading(false))
+  }, [])
+
   useEffect(() => { load() }, [load])
+  useEffect(() => { loadSettings() }, [loadSettings])
+
+  const saveSettings = useCallback(async () => {
+    setSettingsSaving(true)
+    setSettingsError('')
+    setSettingsSaved(false)
+    try {
+      const minutes = Number(intervalMinutes)
+      const keepCount = Number(keep)
+      if (!Number.isFinite(minutes) || minutes * 60 < MIN_INTERVAL_SECONDS) {
+        throw new Error('Backup frequency must be at least 10 minutes')
+      }
+      if (!Number.isFinite(keepCount) || keepCount < 1) {
+        throw new Error('Backups to keep must be at least 1')
+      }
+      const updated = await api.backup.updateSettings({
+        interval_seconds: Math.round(minutes * 60),
+        keep: Math.round(keepCount),
+      })
+      setIntervalMinutes(String(Math.round(updated.interval_seconds / 60)))
+      setKeep(String(updated.keep))
+      setSettingsSaved(true)
+    } catch (e) {
+      setSettingsError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSettingsSaving(false)
+    }
+  }, [intervalMinutes, keep])
 
   const downloadBackup = useCallback(async () => {
     setBackupLoading(true)
@@ -147,6 +205,66 @@ export default function HealthPage() {
         >
           {backupLoading ? 'Preparing backup…' : 'Download backup'}
         </button>
+      </div>
+
+      <div className="mt-8 pt-6 border-t border-slate-800">
+        <h2 className="text-base font-semibold text-slate-100 mb-1">Automatic backup schedule</h2>
+        <p className="text-sm text-slate-400 mb-3">
+          How often the built-in scheduler writes a snapshot, and how many of the most
+          recent snapshots to keep before pruning older ones. Only takes effect if automatic
+          backups are enabled (<code className="text-slate-300">BACKUP_DIR</code> set) — see
+          the "Automatic local backups" check above and <code className="text-slate-300">docs/backup.md</code>.
+          Defaults to once a day, keeping the newest 7 snapshots.
+        </p>
+
+        {settingsError && (
+          <div className="mb-3 bg-red-900/40 border border-red-700 text-red-200 text-sm px-3 py-2 rounded-lg">
+            {settingsError}
+          </div>
+        )}
+        {settingsSaved && !settingsError && (
+          <div className="mb-3 bg-green-900/30 border border-green-700 text-green-300 text-sm px-3 py-2 rounded-lg">
+            Backup settings saved.
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-end gap-4 mb-3">
+          <label className="flex flex-col gap-1 text-sm text-slate-300">
+            Backup frequency (minutes)
+            <input
+              type="number"
+              min={10}
+              step={1}
+              value={intervalMinutes}
+              onChange={(e) => setIntervalMinutes(e.target.value)}
+              disabled={settingsLoading || settingsSaving}
+              className="w-40 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+            />
+            <span className="text-xs text-slate-500">Minimum 10 minutes.</span>
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm text-slate-300">
+            Backups to keep
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={keep}
+              onChange={(e) => setKeep(e.target.value)}
+              disabled={settingsLoading || settingsSaving}
+              className="w-40 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+            />
+            <span className="text-xs text-slate-500">Minimum 1.</span>
+          </label>
+
+          <button
+            onClick={saveSettings}
+            disabled={settingsLoading || settingsSaving}
+            className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
+          >
+            {settingsSaving ? 'Saving…' : 'Save backup settings'}
+          </button>
+        </div>
       </div>
     </div>
   )

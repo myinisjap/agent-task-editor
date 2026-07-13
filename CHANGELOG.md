@@ -19,6 +19,18 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Automatic-backup schedule settings, editable from the Health page.**
+  Previously the automatic local-backup scheduler's interval and retention
+  count were only configurable via `BACKUP_INTERVAL`/`BACKUP_KEEP` env vars
+  at deploy time. They're now also DB-backed and editable at runtime via the
+  new `GET`/`PUT /api/v1/backup/settings` endpoints and a form on the
+  **Health** page — changes take effect on the scheduler's next run without
+  a restart. Enforces a 10-minute minimum interval and a minimum retention
+  count of 1; defaults to once a day, keeping the newest 7 snapshots (same
+  as the previous env-var defaults). Whether the scheduler is enabled at all
+  remains a deploy-time-only choice (`BACKUP_DIR`). See docs/backup.md.
+
 ## [0.11.0] - 2026-07-13
 
 ### Fixed

@@ -38,6 +38,7 @@ sql:
       - "internal/storage/migrations/033_issue_writeback.up.sql"
       - "internal/storage/migrations/034_agent_config_priority.up.sql"
       - "internal/storage/migrations/035_task_schedules.up.sql"
+      - "internal/storage/migrations/036_backup_settings.up.sql"
     gen:
       go:
         package: "gen"
