@@ -1,3 +1,5 @@
+@../../../../AGENTS.md
+
 # internal/agent
 
 The agent package owns everything to do with running AI agents: the provider abstraction, several concrete providers (claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli), the worker pool, and the dispatcher.

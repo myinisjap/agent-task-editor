@@ -1,3 +1,5 @@
+@../../../../AGENTS.md
+
 # internal/storage
 
 SQLite database layer: connection management, schema migrations, sqlc-generated queries, and seed data.

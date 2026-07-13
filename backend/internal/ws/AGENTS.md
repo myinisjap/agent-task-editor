@@ -1,3 +1,5 @@
+@../../../../AGENTS.md
+
 # internal/ws
 
 WebSocket hub and per-client connection management.

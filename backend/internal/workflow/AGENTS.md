@@ -1,3 +1,5 @@
+@../../../../AGENTS.md
+
 # internal/workflow
 
 The state machine engine that validates and executes label transitions for tasks.

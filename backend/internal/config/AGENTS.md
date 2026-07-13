@@ -1,3 +1,5 @@
+@../../../../AGENTS.md
+
 # internal/config
 
 Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) with environment variables taking precedence over file values.

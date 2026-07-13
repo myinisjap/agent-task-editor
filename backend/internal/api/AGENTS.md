@@ -1,3 +1,5 @@
+@../../../../AGENTS.md
+
 # internal/api
 
 Chi v5 router wired in `router.go`. All HTTP handlers and middleware live under this package.
