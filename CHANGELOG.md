@@ -38,7 +38,10 @@ triggers the "Release" workflow the same way.
   makes the schedule fully unattended — the UI flags this combination and
   recommends pairing it with a cost budget on the target agent config as a
   safety net. New `SCHEDULE_INTERVAL` env var (default `30s`) controls the
-  sweep's poll interval. See `docs/task-templates.md`.
+  sweep's poll interval. `POST`/`PUT /schedules` validate that `target_label`
+  is actually one of the schedule's repo's workflow labels (`400` otherwise),
+  and the Templates page's schedule editor picks the label from that
+  workflow's label list instead of free text. See `docs/task-templates.md`.
 
 ### Fixed
 - **Editing an enabled agent config no longer blocks on a shared-label

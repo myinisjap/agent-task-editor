@@ -171,6 +171,93 @@ func TestSchedules_Create_InvalidCron_Returns400(t *testing.T) {
 	}
 }
 
+func TestSchedules_Create_UnknownTargetLabel_Returns400(t *testing.T) {
+	r, tmplID, repoID := setupSchedulesRouter(t)
+	_, code := createSchedule(t, r, map[string]any{
+		"template_id":  tmplID,
+		"repo_id":      repoID,
+		"cron_expr":    "0 6 * * 1",
+		"target_label": "not-a-real-label",
+	})
+	if code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", code)
+	}
+}
+
+func TestSchedules_Create_ValidTargetLabel_Returns201(t *testing.T) {
+	r, tmplID, repoID := setupSchedulesRouter(t)
+	sched, code := createSchedule(t, r, map[string]any{
+		"template_id":  tmplID,
+		"repo_id":      repoID,
+		"cron_expr":    "0 6 * * 1",
+		"target_label": "work",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", code)
+	}
+	if sched.TargetLabel != "work" {
+		t.Errorf("target_label = %q, want work", sched.TargetLabel)
+	}
+}
+
+func TestSchedules_Create_RepoWithoutWorkflow_Returns400(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID:   repoID,
+		Name: "no-workflow-repo",
+		Path: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	tmpl, err := q.CreateTaskTemplate(context.Background(), gen.CreateTaskTemplateParams{
+		ID:          uuid.NewString(),
+		Name:        "tmpl2",
+		Title:       "Upgrade dependencies",
+		Description: "Run the upgrade script.",
+		Type:        "chore",
+	})
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+
+	h := handlers.NewSchedulesHandler(q)
+	r := chi.NewRouter()
+	r.Post("/schedules", h.Create)
+
+	_, code := createSchedule(t, r, map[string]any{
+		"template_id": tmpl.ID,
+		"repo_id":     repoID,
+		"cron_expr":   "0 6 * * 1",
+	})
+	if code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", code)
+	}
+}
+
+func TestSchedules_Update_UnknownTargetLabel_Returns400(t *testing.T) {
+	r, tmplID, repoID := setupSchedulesRouter(t)
+	sched, _ := createSchedule(t, r, map[string]any{
+		"template_id": tmplID,
+		"repo_id":     repoID,
+		"cron_expr":   "0 6 * * 1",
+	})
+
+	body := map[string]any{
+		"cron_expr":    "0 * * * *",
+		"target_label": "not-a-real-label",
+	}
+	req := httptest.NewRequest(http.MethodPut, "/schedules/"+sched.ID, jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
 func TestSchedules_Get(t *testing.T) {
 	r, tmplID, repoID := setupSchedulesRouter(t)
 	sched, _ := createSchedule(t, r, map[string]any{
@@ -207,7 +294,7 @@ func TestSchedules_Update(t *testing.T) {
 
 	body := map[string]any{
 		"cron_expr":    "0 * * * *",
-		"target_label": "agent-active",
+		"target_label": "work",
 		"enabled":      false,
 	}
 	req := httptest.NewRequest(http.MethodPut, "/schedules/"+sched.ID, jsonBody(t, body))
@@ -224,8 +311,8 @@ func TestSchedules_Update(t *testing.T) {
 	if updated.CronExpr != "0 * * * *" {
 		t.Errorf("cron_expr = %q, want %q", updated.CronExpr, "0 * * * *")
 	}
-	if updated.TargetLabel != "agent-active" {
-		t.Errorf("target_label = %q, want agent-active", updated.TargetLabel)
+	if updated.TargetLabel != "work" {
+		t.Errorf("target_label = %q, want work", updated.TargetLabel)
 	}
 	if updated.Enabled {
 		t.Errorf("expected enabled=false after update")

@@ -45,7 +45,7 @@ curl -X POST http://localhost:8080/api/v1/schedules \
 | `template_id` | Which template to instantiate |
 | `repo_id` | Which repo the created task belongs to (must have a workflow assigned) |
 | `cron_expr` | Standard 5-field cron: `minute hour day-of-month month day-of-week`. Supports `*`, single values, comma lists, and `*/N` steps. |
-| `target_label` | The label the created task starts on. Default `not_ready`. |
+| `target_label` | The label the created task starts on. Default `not_ready`. Must be one of the repo's workflow's labels — `POST`/`PUT` reject an unrecognized label with `400`. |
 | `enabled` | Whether the schedule fires at all |
 
 The UI's schedule editor (embedded in the Templates page, per template)

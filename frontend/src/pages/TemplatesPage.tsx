@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type TaskTemplate, type TaskSchedule, type Repo } from '../api/client'
+import { api, type TaskTemplate, type TaskSchedule, type Repo, type Workflow } from '../api/client'
 
 type TemplateForm = { name: string; title: string; description: string; type: string }
 
@@ -26,6 +26,7 @@ export default function TemplatesPage() {
   const [templates, setTemplates] = useState<TaskTemplate[]>([])
   const [repos, setRepos] = useState<Repo[]>([])
   const [schedules, setSchedules] = useState<TaskSchedule[]>([])
+  const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -44,11 +45,12 @@ export default function TemplatesPage() {
 
   function reload() {
     setLoading(true)
-    Promise.all([api.templates.list(), api.repos.list(), api.schedules.list()])
-      .then(([t, r, s]) => {
+    Promise.all([api.templates.list(), api.repos.list(), api.schedules.list(), api.workflows.list()])
+      .then(([t, r, s, w]) => {
         setTemplates(t ?? [])
         setRepos(r ?? [])
         setSchedules(s ?? [])
+        setWorkflows(w ?? [])
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))
@@ -299,6 +301,7 @@ export default function TemplatesPage() {
                 <SchedulePanel
                   templateId={tpl.id}
                   repos={repos}
+                  workflows={workflows}
                   schedules={schedules.filter((s) => s.template_id === tpl.id)}
                   onChange={reload}
                 />
@@ -314,11 +317,13 @@ export default function TemplatesPage() {
 function SchedulePanel({
   templateId,
   repos,
+  workflows,
   schedules,
   onChange,
 }: {
   templateId: string
   repos: Repo[]
+  workflows: Workflow[]
   schedules: TaskSchedule[]
   onChange: () => void
 }) {
@@ -329,6 +334,22 @@ function SchedulePanel({
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // target_label must be one of the selected repo's workflow's labels (the
+  // API rejects anything else with a 400) — drive the picker off that
+  // repo's actual labels rather than free text.
+  const selectedRepo = repos.find((r) => r.id === repoId)
+  const workflowLabels = selectedRepo?.workflow_id
+    ? (workflows.find((w) => w.id === selectedRepo.workflow_id)?.labels ?? [])
+    : []
+
+  useEffect(() => {
+    if (workflowLabels.length === 0) return
+    if (!workflowLabels.some((l) => l.name === targetLabel)) {
+      setTargetLabel(workflowLabels.some((l) => l.name === 'not_ready') ? 'not_ready' : workflowLabels[0].name)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repoId])
 
   function handlePresetChange(key: string) {
     setPreset(key)
@@ -446,12 +467,23 @@ function SchedulePanel({
             <label className="text-xs font-medium text-slate-400">
               Target label <span className="text-slate-600">(default not_ready)</span>
             </label>
-            <input
-              value={targetLabel}
-              onChange={(e) => setTargetLabel(e.target.value)}
-              placeholder="not_ready"
-              className={inputCls}
-            />
+            {workflowLabels.length > 0 ? (
+              <select value={targetLabel} onChange={(e) => setTargetLabel(e.target.value)} className={inputCls}>
+                {workflowLabels
+                  .slice()
+                  .sort((a, b) => a.sort_order - b.sort_order)
+                  .map((l) => (
+                    <option key={l.id} value={l.name}>{l.name}</option>
+                  ))}
+              </select>
+            ) : (
+              <input
+                value={targetLabel}
+                disabled
+                placeholder="select a repo with a workflow first"
+                className={inputCls + ' opacity-50 cursor-not-allowed'}
+              />
+            )}
           </div>
           <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer self-end">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="accent-indigo-500" />
@@ -473,7 +505,7 @@ function SchedulePanel({
         <div className="flex justify-end">
           <button
             type="submit"
-            disabled={saving || !repoId || !cronExpr.trim()}
+            disabled={saving || !repoId || !cronExpr.trim() || workflowLabels.length === 0}
             className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
           >
             {saving ? 'Adding…' : 'Add Schedule'}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -51,6 +52,28 @@ type scheduleBody struct {
 	Enabled     *bool  `json:"enabled"`
 }
 
+// validateTargetLabelForRepo checks that label is one of the workflow labels
+// configured for repo's workflow. A schedule's target_label is applied
+// directly to the created task's label, so an unrecognized label would
+// silently create a task the dispatcher/UI can't place anywhere in the
+// workflow. ok is false (with no error) when the label simply isn't valid or
+// the repo has no workflow assigned; err is non-nil only for lookup failures.
+func (h *SchedulesHandler) validateTargetLabelForRepo(ctx context.Context, repo gen.Repo, label string) (ok bool, msg string, err error) {
+	if repo.WorkflowID == nil || *repo.WorkflowID == "" {
+		return false, "repo has no workflow assigned", nil
+	}
+	labels, err := h.q.ListWorkflowLabels(ctx, *repo.WorkflowID)
+	if err != nil {
+		return false, "", err
+	}
+	for _, l := range labels {
+		if l.Name == label {
+			return true, "", nil
+		}
+	}
+	return false, "target_label is not a label in the repo's workflow", nil
+}
+
 func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body scheduleBody
 	if err := decode(r, &body); err != nil {
@@ -73,12 +96,20 @@ func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "template not found")
 		return
 	}
-	if _, err := h.q.GetRepo(r.Context(), body.RepoID); err != nil {
+	repo, err := h.q.GetRepo(r.Context(), body.RepoID)
+	if err != nil {
 		Err(w, http.StatusNotFound, "repo not found")
 		return
 	}
 	if body.TargetLabel == "" {
 		body.TargetLabel = "not_ready"
+	}
+	if ok, msg, err := h.validateTargetLabelForRepo(r.Context(), repo, body.TargetLabel); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !ok {
+		Err(w, http.StatusBadRequest, msg)
+		return
 	}
 	enabled := true
 	if body.Enabled != nil {
@@ -113,6 +144,27 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.TargetLabel == "" {
 		body.TargetLabel = "not_ready"
 	}
+
+	// repo_id is immutable after creation (see CreateTaskSchedule), so the
+	// workflow to validate target_label against is the existing schedule's repo.
+	existing, err := h.q.GetTaskSchedule(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "schedule not found")
+		return
+	}
+	repo, err := h.q.GetRepo(r.Context(), existing.RepoID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if ok, msg, err := h.validateTargetLabelForRepo(r.Context(), repo, body.TargetLabel); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !ok {
+		Err(w, http.StatusBadRequest, msg)
+		return
+	}
+
 	enabled := true
 	if body.Enabled != nil {
 		enabled = *body.Enabled
