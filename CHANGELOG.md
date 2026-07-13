@@ -19,6 +19,33 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Fixed
+- **Agent rework loops no longer run unbounded.** A reviewer/tester that keeps
+  reporting the same finding used to send a task back along its `failure`
+  transition (e.g. `agent-review → work`) indefinitely — every transition clears
+  the dispatch lock, so nothing capped the cycle until a human paused the task.
+  The pool now:
+  - **Routes failure findings as feedback, not a plan.** When a run completes
+    with `outcome='failure'`, its summary is stored on the run's `feedback` so
+    the next agent receives it under "FEEDBACK FROM PRIOR REVIEW" (a fix
+    request) instead of only under "NOTES FROM PRIOR AGENT" (which the default
+    Worker prompt treats as an implementation plan — the reason the next Worker
+    kept "verifying" already-committed code and advancing without fixing
+    anything).
+  - **Breaks the loop after a threshold.** If the same agent failure-path
+    transition has already fired 3 times in a row — no human action and no
+    success exit from the origin label in between — the task is escalated to
+    `waiting_human` (run parked in `waiting_human`, task re-locked,
+    `task.needs_human` published) rather than re-dispatched again.
+- **Default Worker template prompt** now prioritizes any "FEEDBACK FROM PRIOR
+  REVIEW" section and explicitly warns against signalling success just because
+  code already exists from a prior run.
+- **Closed a double-dispatch race on run completion.** The pool used to clear a
+  task's active-run lock *before* performing the outcome transition; a dispatcher
+  sweep landing in that window could start a second run for the same task. The
+  lock is now cleared by the transition's atomic compare-and-swap (or explicitly
+  only when no transition happens), eliminating the window.
+
 ### Added
 - **Frontend component smoke tests (Vitest + Testing Library)** (#155).
   - New `jsdom`-backed component-test layer (`@testing-library/react` +
