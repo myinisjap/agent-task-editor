@@ -393,6 +393,42 @@ Delete a template. Returns `204`.
 
 ---
 
+## Task Schedules
+
+Recurring instantiation of a task template against a repo on a cron
+expression. A background sweep fires due, enabled schedules and creates a
+task, skipping the firing while an open task from a prior firing of the same
+schedule still exists. See [task-templates.md](task-templates.md) for the
+full behavior (dedup semantics, cron format, `not_ready` vs. unattended
+agent-label targets).
+
+### `GET /schedules`
+List all schedules.
+
+### `POST /schedules`
+Create a schedule. `template_id`, `repo_id`, and `cron_expr` are required.
+`400` if `cron_expr` fails to parse, if `template_id`/`repo_id` is missing,
+if the repo has no workflow assigned, or if `target_label` isn't one of that
+workflow's labels; `404` if `template_id` or `repo_id` doesn't exist.
+`target_label` defaults to `not_ready`; `enabled` defaults to `true`.
+
+```json
+{ "template_id": "uuid", "repo_id": "uuid", "cron_expr": "0 6 * * 1", "target_label": "not_ready", "enabled": true }
+```
+
+### `GET /schedules/{id}`
+Get a single schedule.
+
+### `PUT /schedules/{id}`
+Update a schedule's `cron_expr`/`target_label`/`enabled` (template/repo are
+immutable after creation). `400` on invalid `cron_expr` or a `target_label`
+that isn't one of the schedule's repo's workflow labels; `404` if missing.
+
+### `DELETE /schedules/{id}`
+Delete a schedule. Returns `204`.
+
+---
+
 ## Agent Runs
 
 ### AgentRun Object

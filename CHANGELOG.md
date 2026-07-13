@@ -56,6 +56,28 @@ triggers the "Release" workflow the same way.
   frontend shows it as an informational note instead of a blocking alert.
 
 ### Added
+- **Recurring scheduled tasks from templates.** New `task_schedules` table
+  (migration 035) links a task template to a repo and a cron expression. A
+  background sweep (`internal/schedule`, same poll-loop shape as the GitHub
+  Issues importer) fires due, enabled schedules and creates a task from the
+  linked template, skipping the firing while an *open* task from a prior
+  firing of the same schedule still exists (dedup by `source = "schedule"` /
+  `source_ref`, "open" = not archived and not on a terminal workflow label) —
+  so a weekly "upgrade deps" schedule never stacks on top of last week's
+  unfinished run. Cron parsing/evaluation is a small dependency-free 5-field
+  parser (`internal/cronexpr`) supporting `*`, comma lists, and `*/N` steps.
+  New `/schedules` REST endpoints (list/create/get/update/delete), a new
+  **Templates** page in the UI (`/templates`) with a per-template schedule
+  editor offering hourly/daily/weekly-on-Monday cron presets plus raw cron
+  entry. `target_label` defaults to `not_ready` (human review before an
+  agent picks it up); setting it directly to a live agent label instead
+  makes the schedule fully unattended — the UI flags this combination and
+  recommends pairing it with a cost budget on the target agent config as a
+  safety net. New `SCHEDULE_INTERVAL` env var (default `30s`) controls the
+  sweep's poll interval. `POST`/`PUT /schedules` validate that `target_label`
+  is actually one of the schedule's repo's workflow labels (`400` otherwise),
+  and the Templates page's schedule editor picks the label from that
+  workflow's label list instead of free text. See `docs/task-templates.md`.
 - **Frontend component smoke tests (Vitest + Testing Library)** (#155).
   - New `jsdom`-backed component-test layer (`@testing-library/react` +
     `@testing-library/jest-dom` + `@testing-library/user-event`) alongside

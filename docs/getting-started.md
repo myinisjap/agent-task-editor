@@ -81,6 +81,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8080` | Comma-separated allowed origins; set to `*` explicitly to allow any origin (not recommended outside trusted single-user localhost use) |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer ([task-sources.md](task-sources.md)) |
+| `SCHEDULE_INTERVAL` | `30s` | Poll interval for the recurring task-schedule sweep ([task-templates.md](task-templates.md#recurring-schedules)) |
 | `CONFIG_FILE` | _(empty)_ | Path to a YAML config file (all keys are optional) |
 
 ### Repository Access

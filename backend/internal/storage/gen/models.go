@@ -142,6 +142,18 @@ type TaskReviewComment struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type TaskSchedule struct {
+	ID          string     `json:"id"`
+	TemplateID  string     `json:"template_id"`
+	RepoID      string     `json:"repo_id"`
+	CronExpr    string     `json:"cron_expr"`
+	TargetLabel string     `json:"target_label"`
+	Enabled     bool       `json:"enabled"`
+	LastRunAt   *time.Time `json:"last_run_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
 type TaskTemplate struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`

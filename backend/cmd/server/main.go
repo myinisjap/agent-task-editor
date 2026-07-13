@@ -18,6 +18,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
+	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/tasksource"
@@ -261,6 +262,11 @@ func main() {
 	issueImporter := tasksource.New(db.SQL(), hub, cfg.IssueSyncInterval, tasksource.GitHubIssues{})
 	slog.Info("github issue import enabled", "interval", cfg.IssueSyncInterval)
 
+	// Recurring task schedules: fires task_templates on a cron expression
+	// against a repo, deduped by an open task from a prior firing.
+	taskScheduler := schedule.New(db.SQL(), hub, cfg.ScheduleInterval)
+	slog.Info("task schedule sweep enabled", "interval", cfg.ScheduleInterval)
+
 	// Automatic local backups: optional. When BACKUP_DIR is set, periodically
 	// writes a rotated VACUUM INTO snapshot to that directory. Always
 	// available regardless of this setting: GET /api/v1/backup (on-demand)
@@ -290,6 +296,7 @@ func main() {
 	go dispatcher.Run(ctx)
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)
+	go taskScheduler.Run(ctx)
 	if backupScheduler != nil {
 		go backupScheduler.Run(ctx)
 	}
