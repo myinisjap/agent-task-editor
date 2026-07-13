@@ -533,6 +533,49 @@ func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
 	}
 }
 
+// TestPool_Saturated verifies Saturated() reports false while a single-worker
+// pool is idle, true once its one slot is occupied by an in-flight run, and
+// false again once that run finishes and the worker frees up.
+func TestPool_Saturated(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	if pool.Saturated() {
+		t.Fatal("expected an idle pool to not be saturated")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go pool.Start(ctx)
+
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProvider{}))
+
+	waitForStatus(t, q, runID, "running")
+	if !pool.Saturated() {
+		t.Error("expected pool to be saturated while its only worker is busy")
+	}
+
+	if !pool.Cancel(runID) {
+		t.Fatal("expected Cancel to find the active run")
+	}
+	waitForStatus(t, q, runID, "cancelled")
+
+	// Give the worker goroutine a moment to unregister the finished run.
+	deadline := time.Now().Add(2 * time.Second)
+	for pool.Saturated() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if pool.Saturated() {
+		t.Error("expected pool to no longer be saturated once the run finished")
+	}
+}
+
 func TestPool_WaitingHuman_PublishesEvent(t *testing.T) {
 	db := openAgentTestDB(t)
 	pub := &testPub{}

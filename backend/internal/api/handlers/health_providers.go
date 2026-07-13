@@ -11,31 +11,39 @@ import (
 
 // HealthHandler serves provider/onboarding readiness checks.
 type HealthHandler struct {
-	q              *gen.Queries
-	db             *storage.DB
-	mcpBinary      string
-	repoBaseDir    string
-	llmBaseURL     string
-	llmAPIKey      string
-	backupDir      string
-	backupInterval time.Duration
-	backupKeep     int
+	q               *gen.Queries
+	db              *storage.DB
+	mcpBinary       string
+	repoBaseDir     string
+	llmBaseURL      string
+	llmAPIKey       string
+	backupDir       string
+	backupInterval  time.Duration
+	backupKeep      int
+	version         string
+	checkForUpdates bool
 }
 
 // NewHealthHandler constructs a HealthHandler from the relevant server config.
 // db is used only to read the on-disk database file size for the dbSizeCheck
-// (informational; see internal/health.dbSizeCheck).
-func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int) *HealthHandler {
+// (informational; see internal/health.dbSizeCheck). version is the running
+// build's version string (see cmd/server's ldflags-stamped Version var);
+// checkForUpdates opts into the best-effort "update available" check (see
+// internal/health.updateCheck), gated by UPDATE_CHECK_ENABLED so the health
+// endpoint never phones home by default.
+func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int, version string, checkForUpdates bool) *HealthHandler {
 	return &HealthHandler{
-		q:              q,
-		db:             db,
-		mcpBinary:      mcpBinary,
-		repoBaseDir:    repoBaseDir,
-		llmBaseURL:     llmBaseURL,
-		llmAPIKey:      llmAPIKey,
-		backupDir:      backupDir,
-		backupInterval: backupInterval,
-		backupKeep:     backupKeep,
+		q:               q,
+		db:              db,
+		mcpBinary:       mcpBinary,
+		repoBaseDir:     repoBaseDir,
+		llmBaseURL:      llmBaseURL,
+		llmAPIKey:       llmAPIKey,
+		backupDir:       backupDir,
+		backupInterval:  backupInterval,
+		backupKeep:      backupKeep,
+		version:         version,
+		checkForUpdates: checkForUpdates,
 	}
 }
 
@@ -69,16 +77,18 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	checks := health.Checks(health.Input{
-		MCPBinary:      h.mcpBinary,
-		RepoBaseDir:    h.repoBaseDir,
-		LLMBaseURL:     h.llmBaseURL,
-		LLMAPIKey:      h.llmAPIKey,
-		Providers:      providers,
-		BackupDir:      h.backupDir,
-		BackupInterval: h.backupInterval,
-		BackupKeep:     h.backupKeep,
-		DBSizeBytes:    dbSize,
-		AgentLogsCount: logCount,
+		MCPBinary:       h.mcpBinary,
+		RepoBaseDir:     h.repoBaseDir,
+		LLMBaseURL:      h.llmBaseURL,
+		LLMAPIKey:       h.llmAPIKey,
+		Providers:       providers,
+		BackupDir:       h.backupDir,
+		BackupInterval:  h.backupInterval,
+		BackupKeep:      h.backupKeep,
+		DBSizeBytes:     dbSize,
+		AgentLogsCount:  logCount,
+		Version:         h.version,
+		CheckForUpdates: h.checkForUpdates,
 	}, nil)
 
 	JSON(w, http.StatusOK, map[string]any{"checks": checks})

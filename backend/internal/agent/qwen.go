@@ -41,7 +41,7 @@ func (r *QwenRunner) binary() string {
 // buildQwenArgs constructs the CLI argument list for the qwen binary given
 // the run input and (optional) prepared MCP config. Extracted as a
 // standalone function so the arg-construction logic (in particular the
-// --max-turns default/override behavior) can be unit tested without
+// --max-session-turns default/override behavior) can be unit tested without
 // spawning a subprocess — mirrors buildClaudeArgs in claude.go.
 func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 	maxTurns := input.AgentConfig.MaxTurns
@@ -54,7 +54,7 @@ func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 		"--system-prompt", buildSystemPrompt(input),
 		"--output-format", "stream-json",
 		"--approval-mode", "yolo",
-		"--max-turns", strconv.FormatInt(maxTurns, 10),
+		"--max-session-turns", strconv.FormatInt(maxTurns, 10),
 	}
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
@@ -157,20 +157,21 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 			if line == "" {
 				continue
 			}
-			entry, parsed, u, class, sid := classifyStreamJSON(line)
-			logCh <- entry
-			if parsed != "" {
+			ev := classifyStreamJSON(line)
+			logCh <- ev.Entry
+			if ev.Outcome != "" {
 				mu.Lock()
-				outcome = parsed
+				outcome = ev.Outcome
 				mu.Unlock()
 			}
-			if sid != "" {
+			if ev.SessionID != "" {
 				mu.Lock()
-				sessionID = sid
+				sessionID = ev.SessionID
 				mu.Unlock()
 			}
 			// Prefer the structured classification from the typed "result"
 			// event; fall back to sniffing the raw line. See errclass.go.
+			class := ev.Class
 			if class == ClassNone {
 				class = ClassifyLine(line)
 			}
@@ -184,9 +185,9 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 				transient = true
 				mu.Unlock()
 			}
-			if u != nil {
+			if ev.Usage != nil {
 				mu.Lock()
-				usage = u
+				usage = ev.Usage
 				mu.Unlock()
 			}
 		}

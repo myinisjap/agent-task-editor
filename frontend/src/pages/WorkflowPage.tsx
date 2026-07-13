@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type Workflow } from '../api/client'
+import { api, authedRawFetch, type Workflow } from '../api/client'
 import { useWorkflowStore } from '../stores/workflow'
 import WorkflowFlowchart from '../components/shared/WorkflowFlowchart'
 import { parseWorkflowYaml } from '../lib/parseWorkflowYaml'
@@ -120,11 +120,7 @@ export default function WorkflowPage() {
       setError(err instanceof Error ? err.message : 'Failed to load workflow')
     })
 
-    fetch(api.workflows.exportYaml(id), {
-      headers: import.meta.env.VITE_API_TOKEN
-        ? { Authorization: `Bearer ${import.meta.env.VITE_API_TOKEN}` }
-        : {},
-    })
+    authedRawFetch(api.workflows.exportYaml(id))
       .then((r) => {
         if (!r.ok) throw new Error(`Failed to load YAML (${r.status})`)
         return r.text()

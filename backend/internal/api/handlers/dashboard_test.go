@@ -223,3 +223,131 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 		t.Errorf("expected cost_usd ~0.012, got %v", row.CostUSD)
 	}
 }
+
+// TestDashboardGet_InterventionQueueExcludesSupersededRuns verifies that a
+// waiting_human run only appears in the dashboard's intervention_queue while
+// it is still the task's active run. Replying to (or approving/rejecting) a
+// waiting_human run dispatches a new run and repoints
+// tasks.active_agent_run_id at it, but deliberately leaves the old run's
+// status as 'waiting_human' as a historical record — that superseded run
+// must not keep showing up as "needs your input" once a new run is active.
+func TestDashboardGet_InterventionQueueExcludesSupersededRuns(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "repo", Path: t.TempDir(), WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	// Task A: still has its waiting_human run as the active run (nobody has
+	// replied yet) — should appear in the intervention queue.
+	waitingTask, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "waiting task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create waiting task: %v", err)
+	}
+	waitingRun, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID: uuid.NewString(), TaskID: waitingTask.ID,
+	})
+	if err != nil {
+		t.Fatalf("create waiting run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(ctx, gen.UpdateAgentRunStatusParams{
+		Status: "waiting_human", ID: waitingRun.ID,
+	}); err != nil {
+		t.Fatalf("set waiting run status: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &waitingRun.ID, ActiveAgentRunID: &waitingRun.ID, ID: waitingTask.ID,
+	}); err != nil {
+		t.Fatalf("set waiting task active run: %v", err)
+	}
+
+	// Task B: had a waiting_human run that a human already replied to, which
+	// dispatched a new run now sitting at 'running' and holding
+	// active_agent_run_id. The old run keeps its 'waiting_human' status per
+	// ReplyRun's documented behavior, but must be excluded here.
+	repliedTask, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "replied task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create replied task: %v", err)
+	}
+	supersededRun, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID: uuid.NewString(), TaskID: repliedTask.ID,
+	})
+	if err != nil {
+		t.Fatalf("create superseded run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(ctx, gen.UpdateAgentRunStatusParams{
+		Status: "waiting_human", ID: supersededRun.ID,
+	}); err != nil {
+		t.Fatalf("set superseded run status: %v", err)
+	}
+	cfg, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: uuid.NewString(), Name: "worker", Provider: "claude", Model: "sonnet",
+		Labels: `["work"]`, Env: "{}", MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
+		EnabledPlugins: "[]", EnabledMcpServers: "[]", CommandAllowlist: "[]", CommandDenylist: "[]",
+		MaxRetries: 3, RetryBackoffSecs: 30, ResumeSessions: 1, SubtasksEnabled: 0, MaxSubtasks: 10,
+	})
+	if err != nil {
+		t.Fatalf("create agent config: %v", err)
+	}
+	newRun, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID: uuid.NewString(), TaskID: repliedTask.ID, AgentConfigID: &cfg.ID,
+	})
+	if err != nil {
+		t.Fatalf("create new run: %v", err)
+	}
+	if _, err := q.SetAgentRunStarted(ctx, newRun.ID); err != nil {
+		t.Fatalf("start new run: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &newRun.ID, ActiveAgentRunID: &newRun.ID, ID: repliedTask.ID,
+	}); err != nil {
+		t.Fatalf("set replied task active run: %v", err)
+	}
+
+	h := handlers.NewDashboardHandler(q)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		ActiveAgents []struct {
+			RunID  string `json:"run_id"`
+			TaskID string `json:"task_id"`
+		} `json:"active_agents"`
+		InterventionQueue []struct {
+			RunID  string `json:"run_id"`
+			TaskID string `json:"task_id"`
+		} `json:"intervention_queue"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(body.InterventionQueue) != 1 || body.InterventionQueue[0].RunID != waitingRun.ID {
+		t.Errorf("expected intervention_queue to contain only the still-active waiting run %q, got %+v",
+			waitingRun.ID, body.InterventionQueue)
+	}
+	if len(body.ActiveAgents) != 1 || body.ActiveAgents[0].RunID != newRun.ID {
+		t.Errorf("expected active_agents to contain only the new run %q, got %+v",
+			newRun.ID, body.ActiveAgents)
+	}
+}

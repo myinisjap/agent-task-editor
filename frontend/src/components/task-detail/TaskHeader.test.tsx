@@ -65,6 +65,8 @@ function renderHeader(TaskHeader: typeof TaskHeaderType, task: Task) {
       creatingPR={false}
       onSyncGitState={noop}
       onBack={noop}
+      labels={[]}
+      onMoveLabel={noop}
     />,
   )
 }

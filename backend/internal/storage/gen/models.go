@@ -32,6 +32,7 @@ type AgentConfig struct {
 	SubtasksEnabled   int64     `json:"subtasks_enabled"`
 	MaxSubtasks       int64     `json:"max_subtasks"`
 	MaxCostUsd        float64   `json:"max_cost_usd"`
+	Priority          int64     `json:"priority"`
 }
 
 type AgentLog struct {
@@ -60,48 +61,52 @@ type AgentRun struct {
 }
 
 type Repo struct {
-	ID               string    `json:"id"`
-	Name             string    `json:"name"`
-	Path             string    `json:"path"`
-	RemoteUrl        *string   `json:"remote_url"`
-	WorkflowID       *string   `json:"workflow_id"`
-	CreatedAt        time.Time `json:"created_at"`
-	IssueSyncEnabled int64     `json:"issue_sync_enabled"`
-	IssueSyncLabel   string    `json:"issue_sync_label"`
-	CloneStatus      string    `json:"clone_status"`
-	CloneError       string    `json:"clone_error"`
+	ID                    string    `json:"id"`
+	Name                  string    `json:"name"`
+	Path                  string    `json:"path"`
+	RemoteUrl             *string   `json:"remote_url"`
+	WorkflowID            *string   `json:"workflow_id"`
+	CreatedAt             time.Time `json:"created_at"`
+	IssueSyncEnabled      int64     `json:"issue_sync_enabled"`
+	IssueSyncLabel        string    `json:"issue_sync_label"`
+	CloneStatus           string    `json:"clone_status"`
+	CloneError            string    `json:"clone_error"`
+	IssueWritebackEnabled int64     `json:"issue_writeback_enabled"`
 }
 
 type Task struct {
-	ID                  string     `json:"id"`
-	Title               string     `json:"title"`
-	Description         string     `json:"description"`
-	Type                string     `json:"type"`
-	Label               string     `json:"label"`
-	RepoID              string     `json:"repo_id"`
-	WorkflowID          string     `json:"workflow_id"`
-	CurrentAgentRunID   *string    `json:"current_agent_run_id"`
-	AgentNotes          string     `json:"agent_notes"`
-	ActiveAgentRunID    *string    `json:"active_agent_run_id"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
-	Branch              string     `json:"branch"`
-	WorktreePath        string     `json:"worktree_path"`
-	BaseRef             string     `json:"base_ref"`
-	Attachments         string     `json:"attachments"`
-	GitState            string     `json:"git_state"`
-	Paused              int64      `json:"paused"`
-	TransientRetryCount int64      `json:"transient_retry_count"`
-	NextRetryAt         *time.Time `json:"next_retry_at"`
-	Source              string     `json:"source"`
-	SourceRef           string     `json:"source_ref"`
-	Archived            int64      `json:"archived"`
-	PrUrl               string     `json:"pr_url"`
-	ParentTaskID        *string    `json:"parent_task_id"`
-	CreatedByRunID      *string    `json:"created_by_run_id"`
-	MergeStatus         string     `json:"merge_status"`
-	MaxCostUsd          float64    `json:"max_cost_usd"`
-	Priority            int64      `json:"priority"`
+	ID                      string     `json:"id"`
+	Title                   string     `json:"title"`
+	Description             string     `json:"description"`
+	Type                    string     `json:"type"`
+	Label                   string     `json:"label"`
+	RepoID                  string     `json:"repo_id"`
+	WorkflowID              string     `json:"workflow_id"`
+	CurrentAgentRunID       *string    `json:"current_agent_run_id"`
+	AgentNotes              string     `json:"agent_notes"`
+	ActiveAgentRunID        *string    `json:"active_agent_run_id"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	Branch                  string     `json:"branch"`
+	WorktreePath            string     `json:"worktree_path"`
+	BaseRef                 string     `json:"base_ref"`
+	Attachments             string     `json:"attachments"`
+	GitState                string     `json:"git_state"`
+	Paused                  int64      `json:"paused"`
+	TransientRetryCount     int64      `json:"transient_retry_count"`
+	NextRetryAt             *time.Time `json:"next_retry_at"`
+	Source                  string     `json:"source"`
+	SourceRef               string     `json:"source_ref"`
+	Archived                int64      `json:"archived"`
+	PrUrl                   string     `json:"pr_url"`
+	ParentTaskID            *string    `json:"parent_task_id"`
+	CreatedByRunID          *string    `json:"created_by_run_id"`
+	MergeStatus             string     `json:"merge_status"`
+	MaxCostUsd              float64    `json:"max_cost_usd"`
+	Priority                int64      `json:"priority"`
+	WritebackInProgressSent int64      `json:"writeback_in_progress_sent"`
+	WritebackPrCommented    int64      `json:"writeback_pr_commented"`
+	WritebackClosed         int64      `json:"writeback_closed"`
 }
 
 type TaskDependency struct {

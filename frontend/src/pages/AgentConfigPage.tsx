@@ -29,6 +29,7 @@ export default function AgentConfigPage() {
   const [multiMode, setMultiMode] = useState(false)
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set())
   const [bulkSaving, setBulkSaving] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
 
@@ -65,6 +66,7 @@ export default function AgentConfigPage() {
       max_tokens: a.max_tokens,
       timeout_secs: a.timeout_secs,
       max_turns: a.max_turns,
+      priority: a.priority ?? 0,
       max_retries: a.max_retries,
       retry_backoff_secs: a.retry_backoff_secs,
       resume_sessions: a.resume_sessions ?? true,
@@ -117,7 +119,10 @@ export default function AgentConfigPage() {
     try {
       const payload = { ...form, env: sanitizeEnv(form.env) }
       if (selected) {
-        await updateAgent(selected.id, { ...payload, enabled: !!selected.enabled })
+        const { labelConflict } = await updateAgent(selected.id, { ...payload, enabled: !!selected.enabled })
+        if (labelConflict) {
+          alert(`Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`)
+        }
       } else {
         const { labelConflict } = await createAgent(payload)
         if (labelConflict) {
@@ -136,8 +141,8 @@ export default function AgentConfigPage() {
     if (!selected) return
     setSaving(true)
     try {
-      const updated = await updateAgent(selected.id, { ...form, enabled: !selected.enabled })
-      selectAgent(updated)
+      const { config } = await updateAgent(selected.id, { ...form, enabled: !selected.enabled })
+      selectAgent(config)
     } catch (e: any) {
       alert(e.message)
     } finally {
@@ -162,6 +167,7 @@ export default function AgentConfigPage() {
             max_tokens: a.max_tokens,
             timeout_secs: a.timeout_secs,
             max_turns: a.max_turns,
+            priority: a.priority ?? 0,
             max_retries: a.max_retries,
             retry_backoff_secs: a.retry_backoff_secs,
             resume_sessions: a.resume_sessions ?? true,
@@ -198,38 +204,55 @@ export default function AgentConfigPage() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <AgentSidebar
-        agents={agents}
-        selected={selected}
-        onSelect={selectAgent}
-        onNew={newAgent}
-        multiMode={multiMode}
-        setMultiMode={setMultiMode}
-        multiSelected={multiSelected}
-        setMultiSelected={setMultiSelected}
-        onBulkToggle={handleBulkToggle}
-        bulkSaving={bulkSaving}
-        showTemplates={showTemplates}
-        setShowTemplates={setShowTemplates}
-        creatingTemplate={creatingTemplate}
-        onApplyTemplate={applyTemplate}
-      />
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Mobile-only header bar: shows selected agent + button to open the configs drawer */}
+      <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950">
+        <span className="text-sm text-slate-300 truncate">
+          {selected ? selected.name : 'New agent'}
+        </span>
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
+        >
+          Configs
+        </button>
+      </div>
 
-      <AgentConfigForm
-        selected={selected}
-        form={form}
-        setForm={setForm}
-        availableLabels={availableLabels}
-        modelList={modelList}
-        fetchingModels={fetchingModels}
-        claudeOptions={claudeOptions}
-        saving={saving}
-        deleting={deleting}
-        onSave={handleSave}
-        onDelete={handleDelete}
-        onToggleEnabled={handleToggleEnabled}
-      />
+      <div className="flex-1 flex overflow-hidden">
+        <AgentSidebar
+          agents={agents}
+          selected={selected}
+          onSelect={selectAgent}
+          onNew={newAgent}
+          multiMode={multiMode}
+          setMultiMode={setMultiMode}
+          multiSelected={multiSelected}
+          setMultiSelected={setMultiSelected}
+          onBulkToggle={handleBulkToggle}
+          bulkSaving={bulkSaving}
+          showTemplates={showTemplates}
+          setShowTemplates={setShowTemplates}
+          creatingTemplate={creatingTemplate}
+          onApplyTemplate={applyTemplate}
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+        />
+
+        <AgentConfigForm
+          selected={selected}
+          form={form}
+          setForm={setForm}
+          availableLabels={availableLabels}
+          modelList={modelList}
+          fetchingModels={fetchingModels}
+          claudeOptions={claudeOptions}
+          saving={saving}
+          deleting={deleting}
+          onSave={handleSave}
+          onDelete={handleDelete}
+          onToggleEnabled={handleToggleEnabled}
+        />
+      </div>
     </div>
   )
 }

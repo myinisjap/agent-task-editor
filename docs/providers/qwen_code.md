@@ -10,7 +10,7 @@ The `qwen_code` provider runs the Qwen Code CLI in headless mode. It has the sam
 
 ## How It Works
 
-Runs: `qwen -p <prompt> --system-prompt <system> --output-format stream-json --approval-mode yolo --max-turns <max_turns> [--mcp-config <tempfile>] [--allowed-tools ...]`
+Runs: `qwen -p <prompt> --system-prompt <system> --output-format stream-json --approval-mode yolo --max-session-turns <max_turns> [--mcp-config <tempfile>] [--allowed-tools ...]`
 
 `<max_turns>` comes from the agent config's `max_turns` field (defaults to `50` when unset or `0`), mirroring the `claude` provider.
 

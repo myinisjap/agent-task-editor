@@ -63,7 +63,7 @@ Tasks carry an `agent_notes` field — persistent markdown that agents write via
 Agents can call `store_info` to persist a summary of what they did. This content is stored in the agent run record and displayed in the task detail view in the UI after the run completes. Unlike `agent_notes` (which carry forward to the next agent), stored info is per-run.
 
 ### Agent Runs
-Each time an agent is dispatched for a task, an **agent run** record is created. Runs have statuses: `pending → running → completed | failed | waiting_human`. Live stdout/tool call output is streamed over WebSocket and persisted to the database for replay on reconnect.
+Each time an agent is dispatched for a task, an **agent run** record is created. Runs have statuses: `pending → running → completed | failed | waiting_human | cancelled` (`cancelled` results from the run-cancel kill switch). Live stdout/tool call output is streamed over WebSocket and persisted to the database for replay on reconnect.
 
 ## Architecture
 
@@ -111,8 +111,11 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   worktree) are automatically cleaned up (remote branches are left untouched)
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered
   by a label like `agent-ok`) are periodically imported as tasks, with a link
-  back to the issue and dedupe on re-sweeps — see
-  [task-sources.md](task-sources.md)
+  back to the issue and dedupe on re-sweeps; a second, independent per-repo
+  opt-in (`issue_writeback_enabled`) writes task status back to the source
+  issue — a comment when its PR opens, an `agent-in-progress` label when it
+  first leaves `not_ready`, and the issue closed with a comment when the PR
+  merges — see [task-sources.md](task-sources.md)
 - **Dashboard** — split across three pages: an Overview (label counts, active agents, and the human intervention queue) at `/`, a Cost & Usage page at `/dashboard/usage` (Claude rate-limit usage, plus cost/token tracking by provider, day, and task), and an Agent Performance page at `/dashboard/performance` (per-agent-config success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude/Qwen/Gemini/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions (approve/reject/move label) record *who* performed them in the `task_label_history` audit trail (`GET /tasks/{id}/label-history`); WebSocket auth via `?token=` query param

@@ -570,3 +570,112 @@ func TestE2E_ReplyResumesSession(t *testing.T) {
 		t.Errorf("expected replied-to run to stay waiting_human, got %q", firstRun.Status)
 	}
 }
+
+// seedTaskWithTwoConfigs creates a repo, two enabled "ready"-triggered agent
+// configs (priorities 0 and 1, so config0 is tried first), and a task on
+// "ready". Returns the task id plus both config ids.
+func (h *e2eHarness) seedTaskWithTwoConfigs(t *testing.T, wfID string) (taskID, config0ID, config1ID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	repoID := uuid.NewString()
+	if _, err := h.q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "repo", Path: h.repo, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	config0ID = uuid.NewString()
+	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: config0ID, Name: "primary", Provider: "fake", Model: "none",
+		Labels: `["ready"]`, Env: `{}`, MaxRetries: 1, RetryBackoffSecs: 1,
+		Priority: 0,
+	}); err != nil {
+		t.Fatalf("create agent config 0: %v", err)
+	}
+	config1ID = uuid.NewString()
+	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: config1ID, Name: "backup", Provider: "fake", Model: "none",
+		Labels: `["ready"]`, Env: `{}`, MaxRetries: 1, RetryBackoffSecs: 1,
+		Priority: 1,
+	}); err != nil {
+		t.Fatalf("create agent config 1: %v", err)
+	}
+
+	taskID = uuid.NewString()
+	if _, err := h.q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: taskID, Title: "do the thing", WorkflowID: wfID, RepoID: repoID, Label: "ready",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	return taskID, config0ID, config1ID
+}
+
+// TestE2E_FailoverToBackupConfig covers the priority-based failover feature:
+// two enabled configs share a label (priorities 0 and 1); when the
+// priority-0 config is rate-limit-blocked, dispatch skips it and starts the
+// run on the priority-1 backup instead. When both are blocked, no run is
+// created at all.
+func TestE2E_FailoverToBackupConfig(t *testing.T) {
+	step := fakeStep{
+		result:  Result{Status: "completed", Outcome: "success"},
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	fp := &fakeProvider{steps: []fakeStep{step}}
+	h := newE2EHarness(t, fp)
+	h.disp.RateLimits = NewRateLimitRegistry()
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID, config0ID, config1ID := h.seedTaskWithTwoConfigs(t, wfID)
+
+	// Block the primary (priority 0) config before the dispatcher ever sweeps.
+	h.disp.RateLimits.Block(config0ID, time.Now().Add(time.Hour))
+
+	select {
+	case <-step.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider was never invoked — dispatcher did not pick up the task")
+	}
+	close(step.release)
+
+	locked := h.pollTask(t, taskID, func(tk gen.Task) bool { return tk.ActiveAgentRunID != nil }, "run to be created")
+	run, err := h.q.GetAgentRun(context.Background(), *locked.ActiveAgentRunID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.AgentConfigID == nil || *run.AgentConfigID != config1ID {
+		t.Fatalf("expected run to use backup config %q, got %v", config1ID, run.AgentConfigID)
+	}
+}
+
+// TestE2E_FailoverAllBlocked_NoDispatch covers the case where every config
+// matching a task's label is rate-limited: dispatch must skip the sweep
+// entirely rather than creating a run.
+func TestE2E_FailoverAllBlocked_NoDispatch(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+	h := newE2EHarness(t, fp)
+	h.disp.RateLimits = NewRateLimitRegistry()
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID, config0ID, config1ID := h.seedTaskWithTwoConfigs(t, wfID)
+
+	h.disp.RateLimits.Block(config0ID, time.Now().Add(time.Hour))
+	h.disp.RateLimits.Block(config1ID, time.Now().Add(time.Hour))
+
+	// Give the dispatcher several sweeps' worth of time to (not) act.
+	time.Sleep(200 * time.Millisecond)
+
+	task, err := h.q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Fatalf("expected no run created while all matching configs are blocked, got active run %q", *task.ActiveAgentRunID)
+	}
+	runs, err := h.q.ListAgentRuns(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("expected 0 runs while all matching configs are blocked, got %d", len(runs))
+	}
+}

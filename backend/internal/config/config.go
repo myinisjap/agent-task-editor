@@ -59,6 +59,14 @@ type Config struct {
 	// LogRetentionInterval is how often the pruner runs. Only meaningful when
 	// LogRetentionDays > 0.
 	LogRetentionInterval time.Duration `yaml:"log_retention_interval"`
+
+	// UpdateCheckEnabled, when true, opts into the Health page's "update
+	// available" check, which shells out to `gh release view` to compare the
+	// running version against the latest GitHub release tag. Disabled by
+	// default so the app never phones home without the operator explicitly
+	// opting in (and already having gh/network configured). See
+	// internal/health.updateCheck.
+	UpdateCheckEnabled bool `yaml:"update_check_enabled"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -66,7 +74,7 @@ func Defaults() Config {
 	return Config{
 		DBPath:               "agent-task-editor.db",
 		Port:                 "8080",
-		CORSOrigins:          "*",
+		CORSOrigins:          "http://localhost:5173,http://localhost:8080",
 		LLMBaseURL:           "https://api.openai.com/v1",
 		MaxWorkers:           5,
 		GitHubSyncInterval:   30 * time.Second,
@@ -197,6 +205,13 @@ func Load(path string) (Config, error) {
 			cfg.LogRetentionInterval = d
 		} else {
 			slog.Warn("invalid LOG_RETENTION_INTERVAL; using default", "value", v, "default", cfg.LogRetentionInterval)
+		}
+	}
+	if v := os.Getenv("UPDATE_CHECK_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.UpdateCheckEnabled = b
+		} else {
+			slog.Warn("invalid UPDATE_CHECK_ENABLED; using default", "value", v, "default", cfg.UpdateCheckEnabled)
 		}
 	}
 

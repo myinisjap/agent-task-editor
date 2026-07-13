@@ -6,8 +6,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+# VERSION is stamped into cmd/server's `main.Version` via -ldflags, so
+# GET /healthz and the Health page's "Version" row report the running
+# release tag instead of the default "dev" (see .github/workflows/release.yml,
+# which passes VERSION=<git tag> as a build-arg). Left as "dev" for local
+# `docker compose build` invocations that don't set it.
+ARG VERSION=dev
 # Build both binaries — mcp-server is the signal_complete/request_human sidecar
-RUN go build -o bin/server ./cmd/server && \
+RUN go build -ldflags "-X main.Version=${VERSION}" -o bin/server ./cmd/server && \
     go build -o bin/mcp-server ./cmd/mcp-server
 
 # Use node:26-alpine as the runtime so the claude CLI is available
@@ -66,10 +72,13 @@ RUN mkdir -p /data /home/node/go /home/node/.cache/go-build && \
     chown node: /home/node/.gitconfig
 
 WORKDIR /app
+# entrypoint rarely changes, so copy it before the binaries (which change every
+# code edit) to keep this chmod layer cached across rebuilds.
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY --from=builder /app/bin/server .
 COPY --from=builder /app/bin/mcp-server .
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chown -R node: /app && chmod +x /usr/local/bin/entrypoint.sh
+RUN chown -R node: /app
 
 # Stays root so the entrypoint can remap the node user (PUID/PGID) and chown the
 # state dirs; it then drops to node via su-exec before running the server.

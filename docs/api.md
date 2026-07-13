@@ -35,7 +35,7 @@ Key fields returned by task endpoints:
 | `active_agent_run_id` | UUID? | Set while an agent run is in progress |
 | `current_agent_run_id` | UUID? | ID of the most recent agent run |
 | `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
-| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first); absent when the task isn't currently pickup-eligible |
+| `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
 
 ---
 
@@ -279,6 +279,91 @@ like `PATCH /tasks/{id}/label`. Response is `200` if every task succeeded,
 
 ---
 
+## Task Dependencies
+
+Peer task dependencies are a pure dispatch gate: a task with an unsatisfied
+blocker is never picked up by the dispatcher, but humans can still move it
+anywhere. Blocked-ness is derived at read time from the blocker's
+label/archived state — it is never stored. Adding or removing an edge
+publishes `task.updated` (see [websocket.md](websocket.md)) for both affected
+tasks.
+
+### `GET /tasks/{id}/dependencies`
+List a task's dependency edges in both directions.
+
+```json
+{
+  "blocked_by": [
+    { "task_id": "uuid", "title": "...", "label": "...", "archived": false, "satisfied": true }
+  ],
+  "blocking": [
+    { "task_id": "uuid", "title": "...", "label": "...", "archived": false, "satisfied": false }
+  ],
+  "blocked_by_count": 1,
+  "blocking_count": 1
+}
+```
+
+`blocked_by_count` is the number of *unsatisfied* blockers. `satisfied` on
+`blocking` entries is always `false` — it isn't meaningful from this task's
+perspective (a dependent's satisfaction is relative to its own other
+blockers), the field is only present for shape symmetry with `blocked_by`.
+
+### `POST /tasks/{id}/dependencies`
+Add a dependency edge: this task depends on (is blocked by) `depends_on_task_id`.
+
+```json
+{ "depends_on_task_id": "uuid" }
+```
+
+Returns `204 No Content`. `400` if the two tasks are the same task, are in
+different workflows, or the blocker's workflow has no terminal label (such an
+edge could never be satisfied). `409` if the edge already exists, or if adding
+it would create a cycle — the error message includes the cycle path, e.g.
+`"dependency would create a cycle: A → B → C → A"`.
+
+### `DELETE /tasks/{id}/dependencies/{dep_id}`
+Remove a dependency edge. Idempotent — returns `204` even if the edge didn't
+exist.
+
+---
+
+## Subtasks
+
+Agent-driven child tasks (the `create_subtask` MCP tool posts here live during
+a planning run so children appear on the board mid-run and the agent gets real
+task ids back). Humans can also call this directly.
+
+### `POST /tasks/{id}/subtasks`
+Create a child task under the parent named in the path.
+
+```json
+{
+  "title": "string (required)",
+  "description": "string",
+  "type": "feature | bug | ...",
+  "label": "optional agent_ignore label override"
+}
+```
+
+- Depth limit 1 — a subtask cannot itself have subtasks (`400` if the parent
+  is itself a subtask).
+- The child lands on the workflow's first `agent_ignore` (human-gate) label by
+  default, or the first label overall if the workflow has none. `label` can
+  override this, but only to another `agent_ignore` label (`400` otherwise).
+- Per-parent subtask cap: `10` by default, or the creating agent config's
+  `max_subtasks` if the config that produced the parent's active run has
+  `subtasks_enabled` and sets `max_subtasks` (`403` if `subtasks_enabled` is
+  off for that config). Returns `422` if the cap is already reached.
+- Auto-creates a parent→child dependency edge (see Task Dependencies above) so
+  the parent can't be dispatched again until every child finishes.
+- Publishes `task.created` (with `parent_id`) and `task.updated` (for the
+  parent) — see [websocket.md](websocket.md).
+
+Returns `201` with the created task object (same shape as `POST /tasks`).
+
+---
+
 ## Task Templates
 
 Reusable pre-filled `title`/`description`/`type` for recurring shapes of work
@@ -496,6 +581,20 @@ Returns:
 }
 ```
 
+### `GET /agents/claude-options`
+Returns the Claude plugins and user-level MCP servers discovered on this
+machine (from `~/.claude/plugins/installed_plugins.json` and the global
+`mcpServers` key in `~/.claude.json`), for the frontend to present as
+per-agent-config selection options. Claude-provider-specific for now; other
+providers have no equivalent.
+
+```json
+{
+  "plugins": [{ "id": "string", "name": "string", "marketplace": "string" }],
+  "mcp_servers": ["string"]
+}
+```
+
 ---
 
 ## Repositories
@@ -514,6 +613,22 @@ If `REPO_BASE_DIR` is set, `path` must be within that directory.
 
 ### `GET /repos/{id}`
 Get a repository record.
+
+### `PATCH /repos/{id}`
+Partial update. All fields are optional and merge with the repo's existing
+values; setting `remote_url` or `workflow_id` to an empty string clears it.
+
+```json
+{
+  "name": "string",
+  "path": "/absolute/path/to/repo",
+  "remote_url": "string|null",
+  "workflow_id": "string|null",
+  "issue_sync_enabled": true,
+  "issue_sync_label": "string",
+  "issue_writeback_enabled": true
+}
+```
 
 ### `DELETE /repos/{id}`
 Unregister a repository.
@@ -646,8 +761,16 @@ figure for every currently-visible task rather than just the top 20.
 ## Health
 
 ### `GET /healthz`
-Returns `200 OK` with `{"status":"ok"}`. Not auth-gated. (Served at the server
-root, **not** under `/api/v1`.)
+Liveness probe. Returns `200 OK` with `{"status":"ok","version":"<version>"}`.
+`version` is the running build's version: `"dev"` for local/unstamped builds,
+or the release tag (e.g. `"v1.4.0"`) for GHCR images, stamped at build time
+via `-ldflags "-X main.Version=<tag>"` (see `backend/Dockerfile`'s `VERSION`
+build-arg and `.github/workflows/release.yml`). (Served at the server root,
+**not** under `/api/v1`, and mounted **outside** `API_TOKEN`/`API_TOKENS`
+bearer auth — like `/metrics`, it's intentionally unauthenticated so
+container/orchestrator healthchecks (see `docker-compose.yml`) work without
+needing to inject the token. It returns only a static status/version and
+leaks no sensitive data.)
 
 ### `GET /health/providers`
 Provider / onboarding readiness checks. Surfaces first-run misconfiguration at a
@@ -659,7 +782,9 @@ list of checks:
   "checks": [
     { "id": "claude_cli", "name": "Claude CLI", "status": "ok", "detail": "claude CLI installed and credentials found" },
     { "id": "mcp_sidecar", "name": "MCP sidecar", "status": "warn", "detail": "MCP_SERVER_PATH is not set", "hint": "Set MCP_SERVER_PATH to the mcp-server binary to enable signal_complete/request_human for claude/qwen agents." },
-    { "id": "repo_base_dir", "name": "Repo base directory", "status": "error", "detail": "REPO_BASE_DIR is set but does not exist: /repos", "hint": "Create the directory or point REPO_BASE_DIR at an existing path." }
+    { "id": "repo_base_dir", "name": "Repo base directory", "status": "error", "detail": "REPO_BASE_DIR is set but does not exist: /repos", "hint": "Create the directory or point REPO_BASE_DIR at an existing path." },
+    { "id": "version", "name": "Version", "status": "ok", "detail": "running v1.4.0" },
+    { "id": "update_check", "name": "Update available", "status": "warn", "detail": "update available: v1.5.0 (running v1.4.0)", "hint": "https://github.com/myinisjap/agent-task-editor/releases" }
   ]
 }
 ```
@@ -672,12 +797,21 @@ list of checks:
   `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for
   providers referenced by an **enabled** agent config), the MCP sidecar binary
   (`MCP_SERVER_PATH`), gh auth (same probe as `/github/auth-status`),
-  `REPO_BASE_DIR`, and `auto_backup` (whether the automatic local-snapshot
-  scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)).
+  `REPO_BASE_DIR`, `auto_backup` (whether the automatic local-snapshot
+  scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)), and
+  `version` (the running build's version — see `GET /healthz` above).
 - Checks are cheap and side-effect free (PATH lookups, credential/config-file
   existence, env/config values). No real agent invocation is made, so a green
   `claude` row means credentials were **found**, not that a live token was
   validated. Rendered by the frontend's **Health** page.
+- `update_check` is an **opt-in** row (env var `UPDATE_CHECK_ENABLED=true` /
+  YAML `update_check_enabled: true`, default `false`) that shells out to
+  `gh release view` to compare the running version against the latest
+  published GitHub release tag. Disabled by default so the app never "phones
+  home" without the operator explicitly enabling it. It is best-effort and
+  bounded by a short timeout: if `gh` is unavailable, unauthenticated, or
+  there's no network, it degrades to `warn` ("could not check for updates")
+  rather than `error`, and never blocks or fails the rest of the response.
 
 ### `GET /metrics`
 Prometheus text-exposition-format metrics for scraping (served at the server
@@ -721,7 +855,7 @@ In addition to the standard Go runtime/process collectors (`go_*`,
 **Sync loops**
 - `ate_ghsync_sweep_duration_seconds` (histogram) — GitHub PR-status sweep duration.
 - `ate_tasksource_sweep_duration_seconds` (histogram) — GitHub issue-import sweep duration.
-- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`), an early warning signal for GitHub API rate limiting.
+- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`, `issue_label_add`, `issue_comment`, `issue_close`), an early warning signal for GitHub API rate limiting.
 
 ---
 

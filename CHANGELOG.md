@@ -4,10 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-To cut a release, add a `## [x.y.z] - YYYY-MM-DD` section below with the changes,
-then push the matching tag (`git tag vx.y.z && git push origin vx.y.z`). The
-release workflow builds and pushes the images and creates a GitHub Release using
-this file's section for that version as the release notes.
+To cut a release, run the "Prepare Release" workflow manually from the Actions
+tab and pick a version bump (patch/minor/major) — it moves this file's
+`[Unreleased]` section under a new version heading, commits that to main, then
+tags it. That tag push triggers the separate "Release" workflow, which builds
+and pushes the images and creates a GitHub Release using that section as the
+release notes. The `[Unreleased]` section must have content or "Prepare
+Release" fails.
+
+Alternatively, for hotfixes where you want to hand-edit this file yourself,
+add a `## [x.y.z] - YYYY-MM-DD` section below with the changes and push the
+matching tag directly (`git tag vx.y.z && git push origin vx.y.z`), which
+triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
@@ -24,19 +32,248 @@ this file's section for that version as the release notes.
     partial-failure error banner); `TaskDetailPage` tab switching
     (Overview/Logs/Diff); `TaskActions` approve/reject/reply enablement
     rules.
-  - New regression tests for three review findings, all of which failed
-    against the pre-fix code and are fixed alongside this change (see
-    "Fixed" below): #138 (missing `Authorization` header on most API
-    calls), #145 (attachment URLs ignoring `BASE_URL`). #147 (hover-only
-    board-card controls on touch) has a best-effort DOM-presence test only —
-    jsdom can't simulate real hover/touch, so full verification is deferred
-    to a future Playwright E2E layer (considered for this issue but
-    descoped to keep this change to the component-test layer; see the
-    issue for scope notes).
+  - New regression tests for review findings #138 (missing `Authorization`
+    header on most API calls — since superseded on `main` by the runtime
+    API-token flow, see `authToken.ts`) and #145 (attachment URLs ignoring
+    `BASE_URL`, fixed alongside this change — see `[0.7.0]`'s Fixed section).
+    #147 (hover-only board-card controls on touch) has a best-effort
+    DOM-presence test only — jsdom can't simulate real hover/touch, so full
+    verification is deferred to a future Playwright E2E layer (considered
+    for this issue but descoped to keep this change to the component-test
+    layer; see the issue for scope notes).
   - Minor testability-only production changes: `RunLogPane`/`DiffReviewPane`
     root elements got a `data-testid` hook; `client.ts` now exports its
     `BASE` constant so `TaskHeader` can share it instead of hardcoding an
     API path.
+
+### Changed
+- **Safer default `CORS_ORIGINS` and a startup warning for unauthenticated
+  deployments.** The default `CORS_ORIGINS` is now
+  `http://localhost:5173,http://localhost:8080` instead of `*`, closing a
+  drive-by cross-origin attack where any web page open in the operator's
+  browser could call the unauthenticated local API. Set `CORS_ORIGINS=*`
+  explicitly to restore the old wide-open behavior. Starting with no
+  `API_TOKEN` now logs a `slog.Warn`; the warning escalates when
+  `CORS_ORIGINS=*` is also set.
+- Documented 5 previously-undocumented WebSocket events (`task.updated`,
+  `task.review_comments_changed`, `task.subtask_conflict`,
+  `repo.clone_done`, `repo.clone_failed`), the dependencies/subtasks REST
+  endpoints, the `cancelled` run status, and refreshed stale `CLAUDE.md`
+  notes on `METRICS_TOKEN` and WebSocket ticket-based auth. Docs-only, no
+  behavior change.
+
+### Fixed
+- **Editing an enabled agent config no longer blocks on a shared-label
+  "conflict".** `PUT /agents/{id}` used to reject enabling a config with a
+  `409` if another enabled config already used the same label — a leftover
+  guard from before priority-based failover, which relies on exactly that
+  setup. Enabling now succeeds and surfaces the sharing config via the
+  `X-Label-Conflict` header (matching `POST /agents` behavior), and the
+  frontend shows it as an informational note instead of a blocking alert.
+
+## [0.10.0] - 2026-07-12
+
+### Added
+- **Agent config priority / failover.** Agent configs now have a `priority`
+  (lower runs first). When multiple enabled configs share a label, dispatch
+  tries them in priority order and skips any that are currently
+  rate-limited/out of usage credits, so a lower-priority config
+  automatically takes over for a primary that's blocked, and fails back once
+  the block expires.
+
+## [0.9.0] - 2026-07-12
+
+### Added
+- **Container-local `qwen_code` config.** The backend now reads qwen settings
+  from a repo-managed `backend/qwen-config/settings.json` (mounted read-write as
+  the single `settings.json` under `QWEN_HOME=/home/node/qwen-home`) instead of
+  the host's `~/.qwen`. This lets the container point the model `baseUrl` at
+  `host.docker.internal:8081` (the host-published model server) while a host
+  qwen install keeps `localhost` — the two no longer share, so neither breaks
+  the other. `QWEN_RUNTIME_DIR=/tmp/qwen` and an entrypoint `chown` keep qwen's
+  own startup writes (e.g. `output-language.md`) off the read-only-ish config
+  and out of the repo. Provider API-key fields ship as the non-secret
+  placeholder `local-no-auth` (the local server ignores the value but requires
+  the env key to be present).
+- **`dev.sh --all-cli`.** `dev.sh` (build-from-source) now supports the same
+  `--all-cli` flag as `run.sh` (prebuilt-image runner): it sets
+  `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`/`INSTALL_QWEN_CLI=true` before
+  invoking `docker compose up --build`, so a locally-built backend image also
+  gets the Gemini, Codex, and Qwen CLIs installed alongside Claude.
+  `docker-compose.yml`'s backend `build.args` now forwards these three
+  build args (previously only `INSECURE_SKIP_SSL_VERIFY` was wired through);
+  all default to `false` so a plain `dev.sh start` keeps the smaller
+  Claude-only image. Only affects the Docker `start`/`restart` paths — `dev.sh
+  dev` runs local processes with no Dockerfile involved.
+- **Manually-triggered releases.** The "Release" GitHub Actions workflow now
+  accepts a `workflow_dispatch` trigger with a patch/minor/major version-bump
+  choice. Running it moves `CHANGELOG.md`'s `[Unreleased]` section under a new
+  version heading, commits that to `main`, creates and pushes the matching
+  tag, then runs the existing image build and GitHub Release steps — all in
+  the same workflow run, since a tag pushed by the default `GITHUB_TOKEN`
+  does not trigger a separate workflow run. The workflow fails fast if
+  `[Unreleased]` has no content. Pushing a tag directly (`git tag vx.y.z &&
+  git push origin vx.y.z`) still works unchanged for hotfixes.
+
+### Fixed
+- **`qwen_code` provider runs failed immediately with `Unknown arguments: max-turns, maxTurns`.**
+  `buildQwenArgs` (`backend/internal/agent/qwen.go`) was passing `--max-turns`,
+  but the `qwen` CLI's turn-budget flag is `--max-session-turns` — every run
+  was rejected by the CLI's argument parser before any work happened. Fixed
+  the flag name; docs and unit tests updated to match.
+- **Manually-triggered releases built and published images twice.** The
+  "Release" workflow's `prepare-release` job pushed the version tag using a
+  GitHub App installation token (needed to push past `main`'s branch
+  protection), but App-token pushes aren't subject to GitHub's same-workflow
+  loop-prevention the way default-`GITHUB_TOKEN` pushes are — so that tag
+  push retriggered the very same workflow via its `push: tags: v*` trigger,
+  running the image build/publish/release jobs a second time for the same
+  tag. Split into two workflows: `.github/workflows/prepare-release.yml`
+  (`workflow_dispatch` only — bumps the changelog and pushes the tag) and
+  the trimmed `.github/workflows/release.yml` (`push: tags: v*` only —
+  builds/publishes images and creates the GitHub Release). The tag push
+  from the first now triggers the second exactly once; the
+  `git tag vx.y.z && git push origin vx.y.z` hotfix path is unaffected.
+
+## [0.8.0] - 2026-07-10
+
+### Added
+- **`-all-cli` backend release image**. The release workflow now also builds
+  and publishes `ghcr.io/myinisjap/agent-task-editor-backend:{version,latest}-all-cli`,
+  a backend image with the Gemini, Codex, and Qwen CLIs preinstalled (the
+  `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`/`INSTALL_QWEN_CLI` build args, all
+  enabled) alongside the default Claude-only image. `run.sh` gained an
+  `--all-cli` flag to pull and run this variant instead of the default one
+  (plain Compose users can set `ATE_CLI_SUFFIX=-all-cli`).
+- **Claude CLI session/usage-limit 429s now retry at an exact reset time instead of generic backoff.**
+  - The claude provider's stream-json `"result"` event parsing
+    (`classifyStreamJSON` in `backend/internal/agent/claude.go`) now also
+    surfaces the raw result text and the structured `api_error_status`
+    field. `classifyResultMessage` treats `api_error_status == 429` as an
+    unconditional rate limit, fixing a gap where Claude's session-limit
+    message (e.g. `"You've hit your session limit · resets 6pm
+    (America/Chicago)"`) carried no `"429"`/`"rate limit"` substring in its
+    *text* and was previously mis-classified as a genuine failure (no
+    retry) instead of a rate limit.
+  - New `"session limit"`/`"usage limit"` patterns added to
+    `errclass.go`'s classification table as a text-based fallback.
+  - New `backend/internal/agent/claude_reset.go` (`parseClaudeResetTime`)
+    parses the `"resets <time>(am|pm) (<IANA timezone>)"` clue out of the
+    result text and resolves it to an absolute reset time, handling
+    same-day/next-day rollover and a +1 minute retry buffer. Blank-imports
+    `time/tzdata` so time zone parsing works in the production container
+    (which has no `/usr/share/zoneinfo`).
+  - `ClaudeRunner.runAttempt` now populates `ErrRateLimit.ResetAt` from this
+    parsed time; the pool (`pool.go`) already scheduled retries against an
+    exact `ResetAt` when present (falling back to exponential backoff
+    otherwise) — no pool/dispatcher changes were needed.
+- **GitHub Issues write-back (task-sources v2)** (#81). New opt-in per-repo
+  `issue_writeback_enabled` flag (independent of `issue_sync_enabled`) writes
+  an imported task's status back to the GitHub issue it came from: a comment
+  linking the PR when the task first gets a `pr_url`, an `agent-in-progress`
+  label applied the first time the task leaves `not_ready`, and the issue
+  closed with a comment once the PR merges. All three are best-effort (a
+  failed `gh` call is logged, never fails the caller/sweep) and idempotent
+  via new per-task tracking columns (`writeback_in_progress_sent`,
+  `writeback_pr_commented`, `writeback_closed`), not by scraping issue
+  comments. Uses the same `gh` CLI auth as issue import and PR-state sync —
+  no new credential surface. See [docs/task-sources.md](docs/task-sources.md).
+- **Mobile polish: responsive Usage/AgentConfig pages, board swipe, and PWA install** (#148).
+  - `UsagePage`'s cost-by-provider, cost-by-day, and cost-by-task tables are
+    now wrapped in `overflow-x-auto` (previously `overflow-hidden`), so wide
+    tables scroll horizontally instead of overflowing the viewport at narrow
+    widths; `AgentPerformancePage`'s table already did this.
+  - `AgentSidebar` now collapses into an off-canvas drawer under the `md`
+    breakpoint (same fixed/backdrop/slide-in pattern as `NavSidebar`),
+    with a new mobile-only "Configs" header bar in `AgentConfigPage`
+    showing the selected agent's name and a button to open the drawer; the
+    drawer closes itself after selecting an agent, starting a new one, or
+    tapping the backdrop/✕.
+  - `TaskBoard`'s mobile single-column pager (both the condensed and
+    normal/expanded views) now supports left/right swipe to move between
+    columns, via a small new `useSwipe` hook (`frontend/src/lib/useSwipe.ts`,
+    native touch events, no new dependency) that ignores predominantly
+    vertical drags so it doesn't fight the column's own vertical scrolling.
+  - Added a web app manifest (`frontend/public/manifest.webmanifest`) plus
+    `icon-192.png`/`icon-512.png`/`icon-512-maskable.png`, linked from
+    `index.html` with relative paths so they resolve correctly both in dev
+    (`/`) and behind the `/tasks/` production base path; `nginx.conf` gained
+    `manifest-src 'self'` in its CSP and an explicit MIME-type mapping for
+    `.webmanifest` (not in the base `nginx:alpine` image's `mime.types`).
+    The app is now installable (Chrome "Install app" / Android "Add to Home
+    Screen") and launches directly to the board.
+- **`openapi.yaml` now documents all served `/api/v1` routes** (#140).
+  - Added the 10 previously-undocumented paths: `PATCH /repos/{id}`,
+    `POST /tasks/{id}/rerun`, `GET /tasks/{id}/github-status`,
+    `PATCH /tasks/{id}/git-state`, `PATCH /tasks/{id}/pause`,
+    `GET /uploads/{task_id}/{filename}`, `GET /github/auth-status`,
+    `GET /workflows/{id}/export.yaml`, `PUT /workflows/{id}/yaml`, and
+    `POST /workflows/import` — regenerated `frontend/src/api/types.ts` to
+    match.
+  - New `backend/internal/api/openapi_coverage_test.go` walks the router
+    with `chi.Walk` and fails, listing every offender, if any served
+    `/api/v1` route (or one of the small allow-listed root routes — `/ws`,
+    `/metrics`, `/healthz`) is missing from `openapi.yaml`, closing the one
+    direction the existing `gen:api`/sqlc codegen-drift checks didn't cover:
+    the spec silently falling behind the router it's meant to describe.
+- **Task cards and task detail now reachable on touch devices** (#147).
+  - `TaskCard`'s select checkbox, pause, archive, edit, and delete controls
+    were previously only revealed via `group-hover`, making them unreachable
+    on touch devices (no hover) and effectively blocking the bulk "Move
+    to…" toolbar action and per-card edit/pause from mobile. A new Tailwind
+    `no-hover:` variant (`@media (hover: none)`) now forces these controls
+    visible on devices without hover, leaving desktop's hover-reveal
+    behavior unchanged.
+  - The task detail Overview tab gained its own "Move to…" control next to
+    the Label row, letting a task's label be changed from any device
+    (mirrors the existing bulk "Move to…" toolbar action on the board).
+- **Running version + update-available check on the Health page** (#151).
+  - `cmd/server` now has a `Version` build var (default `"dev"`), stamped at
+    build time via `-ldflags "-X main.Version=<tag>"`.
+    `backend/Dockerfile` exposes this as an `ARG VERSION=dev`, and
+    `.github/workflows/release.yml` passes `VERSION=${{ github.ref_name }}`
+    as a Docker build-arg so release images are stamped with the git tag;
+    local `docker compose build` leaves it at the `dev` default.
+  - `GET /healthz` now returns `{"status":"ok","version":"<version>"}`
+    (previously just `{"status":"ok"}`, sourced from Go's VCS build info
+    rather than the release tag). `/healthz` was folded into
+    `HealthHandler` (a new `Healthz` method) so it can read the
+    injected version; it remains a fast, side-effect-free liveness probe.
+  - `GET /api/v1/health/providers` (and the frontend's **Health** page) now
+    includes a `version` check row showing the running build's version.
+  - New opt-in `update_check` row (`UPDATE_CHECK_ENABLED` env var /
+    `update_check_enabled` YAML key, default `false`) shells out to
+    `gh release view` to compare the running version against the latest
+    published GitHub release tag, warning when an update is available. It
+    is disabled by default so the app never phones home without the
+    operator explicitly opting in, and is best-effort: any failure (no
+    network, `gh` not installed/authenticated, dev build) degrades to a
+    `warn` status ("could not check for updates") rather than blocking or
+    failing the endpoint — bounded by a 5s timeout so a hung `gh` call
+    can't stall the Health page.
+- **Unit tests for `internal/ghclient` and `internal/ghsync`** (#154).
+  - `ghclient`: the `gh` CLI invocation is now routed through a small
+    package-level `runGH` seam (defaulting to the real `exec.CommandContext`)
+    so tests can feed canned `gh` output without shelling out to a real
+    binary. New `ghclient_test.go` covers `GetPRForBranch`'s state
+    normalization (`OPEN`/`MERGED`/`CLOSED` → `pr_open`/`pr_merged`/
+    `pr_closed`), the "no PR yet" branch-exists-vs-not paths, `CreatePR`'s
+    idempotent existing-PR short-circuit and the "already exists" race,
+    `ListOpenIssues`'s label filtering, and `ParseGitHubName` (HTTPS/SSH,
+    `.git` suffix, and junk-input rejection).
+  - `ghsync`: `Syncer` now has an unexported `getPR` field (defaulting to
+    `ghclient.GetPRForBranch` in `New`) so tests can drive `syncTask`/`sweep`
+    against a fake PR lookup while exercising the real merged-PR cleanup
+    path against a temp git repo. New `syncer_test.go` asserts that a
+    `pr_merged` transition removes the task's worktree and force-deletes its
+    local branch, that a `pr_closed`-without-merge transition leaves the
+    worktree/branch untouched, that a no-op sync doesn't publish or write,
+    that a previously-stored PR URL survives a state regression to a
+    URL-less state, and that `sweep` skips repos with no GitHub remote
+    without ever invoking the PR lookup.
+  - No exported API changed — both seams (`runGH`, `Syncer.getPR`) are
+    unexported implementation details with default values equal to prior
+    behavior.
 - **Agent log retention / pruning, and DB size on the Health page** (#150).
   - `LOG_RETENTION_DAYS` (env or `log_retention_days` in the YAML config)
     enables a built-in pruner that periodically deletes `agent_logs` rows
@@ -157,20 +394,81 @@ this file's section for that version as the release notes.
   - `?token=<API_TOKEN>` is kept as a **deprecated fallback** for existing
     setups/non-browser clients — each use is now logged as a warning
     server-side — and may be removed in a future release.
+
 ### Fixed
-- **Frontend: most API requests were missing the `Authorization` header**
-  (#138). `src/api/client.ts`'s shared `request()`/`requestWithHeaders()`
-  helpers — used by every `api.*` call except the WS ticket fetch and two
-  ad-hoc raw-`fetch()` call sites (workflow YAML export, backup download) —
-  never attached the `Authorization: Bearer <VITE_API_TOKEN>` header, so the
-  frontend would get `401`s on nearly all requests as soon as `API_TOKEN`
-  auth was enabled. Also fixed a related latent header-merge bug in the same
-  helpers (`...init` was spread after `headers:`, so a caller-supplied
-  `init.headers` — e.g. `workflows.updateYaml`/`importYaml`'s
-  `application/yaml` Content-Type override — silently dropped the whole
-  merged headers object, including the new Authorization header). Found and
-  fixed while adding the frontend component-test layer (#155), which now
-  pins both behaviors with regression tests.
+- **`/healthz` no longer requires `API_TOKEN`** (#139). It was accidentally
+  mounted inside the BearerAuth middleware group in `router.go`,
+  contradicting `docs/api.md`/`internal/api/CLAUDE.md` (which documented it
+  as unauthenticated) and breaking the `docker-compose.yml`/
+  `docker-compose.release.yml` healthchecks (plain `wget --spider`, no auth
+  header) whenever `API_TOKEN` was set — the backend container would report
+  unhealthy forever. Moved `/healthz` out of the BearerAuth group (alongside
+  `/ws` and `/metrics`); added a router test locking in that it returns 200
+  with no `Authorization` header even when a bearer token is configured.
+
+### Changed
+- **Dispatch queue visibility now gated on worker-pool saturation** (#152).
+  - The `queue_position` field on task responses — and the "N in queue"
+    badge it drives on `TaskCard` and the task detail header — is now only
+    populated when the worker pool has no free slot (all `MAX_WORKERS` busy).
+    Previously it was set for every pickup-eligible task regardless of
+    whether a worker was actually free, so a task about to be dispatched on
+    the very next sweep could misleadingly show as "waiting."
+  - New `Pool.Saturated() bool` reports whether every worker slot is
+    currently busy; the `RunCanceller` interface consumed by `TasksHandler`
+    gained a matching `Saturated() bool` method (implemented by the agent
+    pool, the interface's only real implementation).
+  - No new WebSocket events or polling — the badge still rides the existing
+    task fetch/refresh path (`GET /tasks`, `GET /tasks/{id}`) and clears
+    automatically once a task starts running or a worker frees up.
+- **Split the 1,400-line `handlers/tasks.go` into `tasks.go` /
+  `task_response.go` / `task_uploads.go` / `task_bulk.go` / `task_runs.go` /
+  `task_pr.go` by concern** (#156) — pure code-move refactor, no behavior,
+  route, or handler-signature changes. `tasks.go` keeps CRUD, list/search,
+  notes, and label transitions; `task_response.go` holds the wire-format
+  wrapper and derived dependency/subtask/queue-position helpers;
+  `task_uploads.go` holds the multipart attachment-save helper;
+  `task_bulk.go` holds pause/archive toggles and the bulk action;
+  `task_runs.go` holds the run list/get/logs/cancel/reply endpoints; and
+  `task_pr.go` holds diff/PR/PR-URL/GitHub-status/git-state.
+
+### Fixed
+- **Frontend never sent the API token — enabling `API_TOKEN` broke the whole UI** (#138).
+  - `client.ts`'s `request()`/`requestWithHeaders()` built request headers
+    from only `Content-Type`; no `Authorization` header was ever attached,
+    despite `frontend/src/api/CLAUDE.md` claiming otherwise. Setting
+    `API_TOKEN` (item #1 on the security checklist) made every board/task/
+    agent call from the stock UI fail with 401.
+  - Even where a header *was* wired manually (`ws.ts`'s ticket mint,
+    `WorkflowPage.tsx`'s YAML export, `HealthPage.tsx`'s backup download),
+    it read the build-time `VITE_API_TOKEN` — a variable that can never be
+    baked into the prebuilt GHCR image, so release users could not enable
+    auth at all.
+  - Replaced this with a runtime token: a new `src/api/authToken.ts` stores
+    the token in `localStorage` (`ate_api_token`) and is the single source
+    of truth for it. Every REST call (via new `authedRawFetch` in
+    `client.ts`, used by `request()`/`requestWithHeaders()`/`agents.create`)
+    and the WS ticket mint (`ws.ts`) now attach
+    `Authorization: Bearer <token>` from this store.
+  - On any 401, the stored token is cleared and a new
+    `ApiTokenGate` component (`components/shared/ApiTokenGate.tsx`), mounted
+    once around the whole app in `App.tsx`, shows a minimal "enter API
+    token" screen; saving a token retries by reloading the page. With
+    `API_TOKEN` unset on the backend, no request ever 401s, so the prompt
+    never appears.
+  - `VITE_API_TOKEN` still works as a dev-only convenience: if set, it seeds
+    `localStorage` once (only when nothing is stored yet), so existing
+    `.env.local` setups keep working without going through the prompt.
+  - Docs updated: `frontend/src/api/CLAUDE.md`, `frontend/CLAUDE.md`, and
+    `docs/getting-started.md`'s Authentication section now describe the
+    runtime flow instead of the non-functional build-time one.
+  - Also fixed a latent header-merge bug in `request()`/`requestWithHeaders()`
+    (`...init` was spread after `headers:`, so a caller-supplied
+    `init.headers` — e.g. `workflows.updateYaml`/`importYaml`'s
+    `application/yaml` Content-Type override — silently dropped the whole
+    merged headers object, including the Authorization header). Found and
+    fixed alongside the frontend component-test layer (#155), which now
+    pins both behaviors with regression tests.
 - **Frontend: task attachment links ignored `BASE_URL`** (#145).
   `TaskHeader`'s attachment thumbnails/links hardcoded `/api/v1/uploads/...`
   instead of using the same `BASE_URL`-aware API root `src/api/client.ts`
@@ -190,6 +488,16 @@ this file's section for that version as the release notes.
   the MCP sidecar's version, and the label is resolved automatically as
   intended. `docs/providers/anthropic.md` and `docs/providers/llm.md` are
   updated accordingly.
+- **Dashboard "Needs your input" queue kept showing tasks that were already
+  running again.** Replying to (or approving/rejecting) a `waiting_human`
+  run dispatches a new run and repoints the task's active run at it, but
+  deliberately leaves the old run's status as `waiting_human` as a
+  historical record. `ListWaitingHumanRuns` had no way to tell a
+  still-actionable `waiting_human` run apart from one that had already been
+  superseded, so the old run kept showing up in the intervention queue
+  forever, alongside the new run showing the same task as actively working.
+  The query now joins on `tasks.active_agent_run_id` and only returns a
+  `waiting_human` run while it's still the task's active run.
 
 ## [0.7.0] - 2026-07-09
 

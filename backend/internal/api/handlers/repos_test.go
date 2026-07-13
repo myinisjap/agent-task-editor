@@ -530,6 +530,98 @@ func TestReposUpdate_IssueSyncRoundTrip(t *testing.T) {
 	}
 }
 
+// TestReposCreate_IssueWritebackRequiresRemote verifies that enabling issue
+// write-back without a GitHub remote_url is rejected. Unlike issue sync, it
+// does NOT require a workflow (write-back doesn't create tasks).
+func TestReposCreate_IssueWritebackRequiresRemote(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	// No remote_url → 400.
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":                    "myorg/myrepo",
+		"path":                    repoDir,
+		"issue_writeback_enabled": true,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 without remote_url, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Remote URL present, no workflow → still fine (write-back doesn't need one).
+	w = postJSON(t, router, "/repos", map[string]any{
+		"name":                    "myorg/myrepo",
+		"path":                    repoDir,
+		"remote_url":              "https://github.com/myorg/myrepo",
+		"issue_writeback_enabled": true,
+	})
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected 201 with remote_url but no workflow, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReposUpdate_IssueWritebackRoundTrip enables issue write-back via PATCH
+// and checks the setting persists (and survives a PATCH that doesn't mention
+// it), mirroring TestReposUpdate_IssueSyncRoundTrip.
+func TestReposUpdate_IssueWritebackRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":       "myorg/myrepo",
+		"path":       repoDir,
+		"remote_url": "https://github.com/myorg/myrepo",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	// Enable issue write-back.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{
+		"issue_writeback_enabled": true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_writeback_enabled"]; got != float64(1) {
+		t.Errorf("issue_writeback_enabled = %v, want 1", got)
+	}
+
+	// A PATCH that doesn't mention the field must not reset it.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch 2: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_writeback_enabled"]; got != float64(1) {
+		t.Errorf("issue_writeback_enabled after unrelated patch = %v, want 1", got)
+	}
+
+	// Disabling clears the flag.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"issue_writeback_enabled": false})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch 3: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_writeback_enabled"]; got != float64(0) {
+		t.Errorf("issue_writeback_enabled after disable = %v, want 0", got)
+	}
+}
+
 // TestReposList_Empty verifies a 200 with an empty array when no repos exist.
 func TestReposList_Empty(t *testing.T) {
 	router, _ := setupReposRouter(t, "")

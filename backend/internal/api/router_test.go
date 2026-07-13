@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,7 +41,33 @@ func newTestRouter(t *testing.T, apiToken, metricsToken string) http.Handler {
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken)
+	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, "dev", false)
+}
+
+// TestHealthzEndpoint_UnauthenticatedEvenWithAPIToken verifies GET /healthz
+// is reachable without a bearer token even when API_TOKEN is configured —
+// it's mounted outside the BearerAuth group so container orchestrators
+// (docker/k8s) can healthcheck without needing the token. See docs/api.md.
+func TestHealthzEndpoint_UnauthenticatedEvenWithAPIToken(t *testing.T) {
+	r := newTestRouter(t, "api-secret", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Status != "ok" {
+		t.Errorf("expected status %q, got %q", "ok", body.Status)
+	}
 }
 
 // TestMetricsEndpoint_UnauthenticatedByDefault verifies GET /metrics is

@@ -364,6 +364,52 @@ export interface paths {
         };
         trace?: never;
     };
+    "/tasks/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Pause or unpause a task
+         * @description A paused task is never picked up by the dispatcher, regardless of its current label. Pausing does not change the task's label and does not cancel any in-flight agent run; it only blocks future dispatch.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        paused: boolean;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/tasks/{id}/dependencies": {
         parameters: {
             query?: never;
@@ -711,6 +757,52 @@ export interface paths {
         };
         trace?: never;
     };
+    "/tasks/{id}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear a task's active agent run so it can be re-dispatched
+         * @description Clears active_agent_run_id without changing the task's label, letting the dispatcher pick it up again on the next sweep. Does not cancel any currently in-flight process; use POST /tasks/{id}/runs/{run_id}/cancel for that first if needed.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Rerun requested */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/review-comments": {
         parameters: {
             query?: never;
@@ -1001,6 +1093,117 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/github-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Refresh and return the task's live GitHub PR state via the gh CLI
+         * @description Queries gh for the current PR state of the task's branch and persists it. If the live query fails, returns the previously stored git_state and pr_url instead of erroring, with an additional error field describing the failure. Returns git_state "none" without querying gh if the task has no branch yet.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            git_state?: "" | "none" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
+                            pr_url?: string;
+                            /** @description Present only when the live gh query failed */
+                            error?: string | null;
+                        };
+                    };
+                };
+                /** @description Repo has no/invalid GitHub remote */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/git-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Manually set a task's git state */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        git_state: "" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid git_state value */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         trace?: never;
     };
     "/tasks/{id}/label-history": {
@@ -1541,6 +1744,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workflows/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import a workflow from a YAML body
+         * @description Creates a new workflow from a YAML document with the same shape produced by GET /workflows/{id}/export.yaml (name, description, labels, transitions). Fails if a workflow with the same name already exists.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Workflow"];
+                    };
+                };
+                /** @description Invalid YAML */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows/{id}": {
         parameters: {
             query?: never;
@@ -1616,6 +1868,112 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workflows/{id}/export.yaml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export a workflow as YAML
+         * @description Returns the workflow's name, description, labels, and transitions as a portable YAML document (Content-Disposition: attachment), suitable for re-importing via POST /workflows/import or PUT /workflows/{id}/yaml.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A YAML document describing the workflow */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/yaml": string;
+                    };
+                };
+                /** @description Workflow not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workflows/{id}/yaml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a workflow's labels and transitions from a YAML body
+         * @description Same YAML shape as GET /workflows/{id}/export.yaml. Replaces the workflow's name/description and fully replaces its labels and transitions (delete-then-recreate).
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Workflow"];
+                    };
+                };
+                /** @description Invalid YAML */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Workflow not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1956,7 +2314,50 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update a repo
+         * @description Partial update — all fields are optional and merge with the repo's existing values. Setting remote_url or workflow_id to an empty string clears it (nullable).
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        name?: string;
+                        path?: string;
+                        remote_url?: string | null;
+                        workflow_id?: string | null;
+                        issue_sync_enabled?: boolean;
+                        issue_sync_label?: string;
+                        issue_writeback_enabled?: boolean;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Repo"];
+                    };
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         trace?: never;
     };
     "/repos/{id}/tree": {
@@ -2080,6 +2481,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Liveness probe
+         * @description Simple liveness probe, always 200 OK. Reports the running build's version ("dev" for local/unstamped builds, or the release tag e.g. "v1.4.0" for GHCR images, stamped at build time via `-ldflags "-X main.Version=<tag>"`). Deliberately fast/side-effect free — unlike /health/providers, it never shells out to gh or touches the network. Served at the server root, not under /api/v1.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Liveness status and running version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example ok */
+                            status?: string;
+                            /** @example v1.4.0 */
+                            version?: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/auth-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Report whether the gh CLI is authenticated
+         * @description Used by the frontend to warn on load when GitHub credentials are missing, before a user hits a failed PR-creation attempt.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            authed?: boolean;
+                            note?: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/providers": {
         parameters: {
             query?: never;
@@ -2089,7 +2575,7 @@ export interface paths {
         };
         /**
          * Provider / onboarding readiness checks
-         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, and auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
+         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md), and version (the running build's version — see /healthz). Also includes an opt-in update_check row (UPDATE_CHECK_ENABLED, default false) that compares the running version against the latest GitHub release tag; best-effort and never fails the response (degrades to warn when offline or gh is unavailable). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
          */
         get: {
             parameters: {
@@ -2110,6 +2596,59 @@ export interface paths {
                             checks?: components["schemas"]["ProviderCheck"][];
                         };
                     };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/uploads/{task_id}/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download a task attachment file */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    task_id: string;
+                    filename: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The attachment file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description Invalid path component */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description File not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -2274,7 +2813,7 @@ export interface components {
              * @enum {integer}
              */
             priority?: -1 | 0 | 1 | 2;
-            /** @description Derived, read-time 0-based position in the current agent-pickup queue (priority DESC, created_at ASC) among tasks eligible for dispatch. Null/absent when the task is not currently pickup-eligible (e.g. blocked, paused, archived, or not on an agent-triggerable label). */
+            /** @description Derived, read-time 0-based position in the current agent-pickup queue (priority DESC, created_at ASC) among tasks eligible for dispatch, computed only when the worker pool has no free slot (all MAX_WORKERS busy). Null/absent when the task is not currently pickup-eligible (e.g. blocked, paused, archived, or not on an agent-triggerable label) or when the pool has idle capacity and the task would be dispatched immediately. */
             queue_position?: number | null;
             /** Format: date-time */
             created_at?: string;
@@ -2359,6 +2898,8 @@ export interface components {
             max_tokens?: number;
             timeout_secs?: number;
             max_turns?: number;
+            /** @description Dispatch failover order among configs sharing a label: lower is tried first; ties broken by newest created_at. At dispatch the first non-rate-limited match wins, so a higher-priority-value config acts as a backup when the primary is rate-limit/usage-blocked. Default 0. */
+            priority?: number;
             /** @description Number of automatic consecutive retries allowed for a task after a transient provider error (rate limit, network blip, upstream 5xx) before it is left failed / escalated to waiting_human for a human to intervene. 0 disables auto-retry. Default 3. */
             max_retries?: number;
             /** @description Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (base * 2^attempt, capped at 10 minutes) is applied on top of this base. Default 30. */
@@ -2412,6 +2953,8 @@ export interface components {
             issue_sync_enabled?: number;
             /** @description Only import issues carrying this label (empty = all open issues). */
             issue_sync_label?: string;
+            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the "agent-in-progress" label when a task first leaves not_ready, and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
+            issue_writeback_enabled?: number;
             /**
              * @description State of the repo's initial auto-clone. 'ready' for local repos and finished clones; 'cloning' while an async git clone is in progress (POST /repos returns immediately with this status); 'error' if the clone failed (see clone_error). Watch the repo.clone_done / repo.clone_failed WebSocket events for transitions out of 'cloning'.
              * @enum {string}

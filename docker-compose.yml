@@ -9,6 +9,13 @@ services:
         # TLS-inspecting proxies (affects npm install of claude-code at build time
         # and git clone / npm / claude CLI at runtime).
         INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
+        # Set to true (or pass --all-cli to dev.sh) to also install the
+        # Gemini, Codex, and Qwen CLIs in the locally-built backend image —
+        # off by default so a plain `docker compose up --build` stays small
+        # and only ships the Claude CLI.
+        INSTALL_GEMINI_CLI: ${INSTALL_GEMINI_CLI:-false}
+        INSTALL_CODEX_CLI: ${INSTALL_CODEX_CLI:-false}
+        INSTALL_QWEN_CLI: ${INSTALL_QWEN_CLI:-false}
     ports:
       - "8080:8080"
     # Lets the container reach services published on the host (e.g. a separate
@@ -39,6 +46,12 @@ services:
       # Local model via a separate container (OpenAI-compatible API, e.g. llama.cpp
       # server). host.docker.internal reaches ports the model publishes on the host.
       - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8081/v1}
+      # qwen_code provider config. Not the shared host ~/.qwen (whose baseUrl is
+      # localhost:8081 — the backend itself, from in here). QWEN_HOME points qwen
+      # at the mounted /etc/qwen/settings.json instead; QWEN_RUNTIME_DIR sends
+      # qwen's ephemeral writes to a writable path so /etc/qwen can stay read-only.
+      - QWEN_HOME=/home/node/qwen-home
+      - QWEN_RUNTIME_DIR=/tmp/qwen
       # Optional: GitHub token as a fallback if ~/.config/gh isn't mounted.
       # gh CLI picks this up automatically; set it here to enable PR state sync
       # without mounting the gh config directory.
@@ -68,6 +81,11 @@ services:
       # then this mount shares that credential with the container.
       # The :ro flag makes it read-only (the container never writes new auth).
       - ${HOME}/.config/gh:/home/node/.config/gh:ro
+      # qwen container config (see QWEN_HOME above). Only settings.json is shared
+      # from the host (editable at backend/qwen-config/settings.json); the rest of
+      # /etc/qwen is the container's writable layer, so qwen's own startup writes
+      # (output-language.md, logs) go there instead of into the repo.
+      - ${QWEN_CONFIG_FILE:-./backend/qwen-config/settings.json}:/home/node/qwen-home/settings.json
       # Repos directory — mounted at the same path so host paths work as-is.
       - ${REPO_BASE_DIR:-/tmp/repos}:${REPO_BASE_DIR:-/tmp/repos}
 

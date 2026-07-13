@@ -1,4 +1,4 @@
-import { BASE, type Task, type Repo, type AgentRun } from '../../api/client'
+import { BASE, type Task, type Repo, type AgentRun, type WorkflowLabel } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
@@ -51,6 +51,8 @@ export default function TaskHeader({
   creatingPR,
   onSyncGitState,
   onBack,
+  labels,
+  onMoveLabel,
 }: {
   task: Task
   repos: Repo[]
@@ -81,6 +83,8 @@ export default function TaskHeader({
   creatingPR: boolean
   onSyncGitState: () => void
   onBack: () => void
+  labels: WorkflowLabel[]
+  onMoveLabel: (toLabel: string) => void
 }) {
   // Cumulative cost across every run this task has had — a simple client-side
   // SUM over the already-fetched runs list (all statuses, matching how the
@@ -249,6 +253,27 @@ export default function TaskHeader({
           <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white bg-slate-600">
             {task.label}
           </span>
+          {labels.length > 1 && (
+            <select
+              defaultValue=""
+              disabled={actionPending}
+              onChange={(e) => {
+                if (e.target.value) {
+                  onMoveLabel(e.target.value)
+                  e.target.value = ''
+                }
+              }}
+              className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
+            >
+              <option value="" disabled>Move to…</option>
+              {[...labels]
+                .filter((l) => l.name !== task.label)
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((l) => (
+                  <option key={l.id} value={l.name}>{l.name}</option>
+                ))}
+            </select>
+          )}
         </Row>
         <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
         <Row label="Priority">

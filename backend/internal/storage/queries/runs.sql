@@ -118,10 +118,18 @@ WHERE ar.status = 'running'
 ORDER BY ar.started_at DESC;
 
 -- name: ListWaitingHumanRuns :many
+-- Only surfaces a waiting_human run while it is still the task's active run.
+-- A reply/approve/reject on a waiting_human run dispatches a new run and
+-- repoints tasks.active_agent_run_id at it, but deliberately leaves the old
+-- run's status as 'waiting_human' as a historical record (see ReplyRun's doc
+-- comment in task_runs.go); without this join, that superseded run would
+-- keep showing up in the dashboard's "needs your input" queue forever, even
+-- after a new run for the same task is already active/running.
 SELECT ar.*, t.title as task_title
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
+  AND t.active_agent_run_id = ar.id
 ORDER BY ar.created_at DESC;
 
 -- name: SumTaskCost :one

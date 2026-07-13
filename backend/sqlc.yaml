@@ -35,6 +35,8 @@ sql:
       - "internal/storage/migrations/030_cost_budgets.up.sql"
       - "internal/storage/migrations/031_task_priority.up.sql"
       - "internal/storage/migrations/032_log_retention.up.sql"
+      - "internal/storage/migrations/033_issue_writeback.up.sql"
+      - "internal/storage/migrations/034_agent_config_priority.up.sql"
     gen:
       go:
         package: "gen"

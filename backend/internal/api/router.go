@@ -20,8 +20,11 @@ import (
 //
 // backupDir/backupInterval/backupKeep are only used to render the
 // auto_backup health check (informational) — the actual scheduler is
-// started separately in cmd/server/main.go.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string) http.Handler {
+// started separately in cmd/server/main.go. version/checkForUpdates
+// configure the /healthz and /health/providers "Version"/"Update available"
+// rows — see internal/health and cmd/server/main.go's ldflags-stamped
+// Version var.
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
@@ -34,7 +37,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	templatesH := handlers.NewTemplatesHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
-	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep)
+	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates)
 	backupH := handlers.NewBackupHandler(db)
 	wsTicketH := handlers.NewWSTicketHandler(hub)
 
@@ -63,11 +66,14 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	// matching most Prometheus setups) via the same BearerAuth middleware.
 	r.With(middleware.BearerAuth(metricsToken, nil)).Get("/metrics", metrics.Handler().ServeHTTP)
 
+	// Liveness probe — mounted outside BearerAuth so container orchestrators
+	// (docker/k8s) can healthcheck without needing API_TOKEN. Returns only a
+	// static {status, version}; leaks nothing sensitive. See docs/api.md.
+	r.Get("/healthz", healthH.Healthz)
+
 	// Everything below requires the Bearer token (when one is configured).
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.BearerAuth(bearerToken, namedTokens))
-
-		r.Get("/healthz", handlers.Health)
 
 		r.Route("/api/v1", func(r chi.Router) {
 			// Limit request bodies to 1 MB to prevent memory exhaustion.

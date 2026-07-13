@@ -1,3 +1,5 @@
+import { authHeaders, notifyUnauthorized } from './authToken'
+
 // BASE is the API root, BASE_URL-prefixed so the app works when served from
 // a non-root base (e.g. the production '/tasks/' base set in
 // vite.config.ts). Exported so other modules that need to build API-relative
@@ -5,14 +7,20 @@
 // source of truth instead of re-deriving it (and risking drift).
 export const BASE = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/v1`
 
-// authHeaders returns the Authorization header (Bearer VITE_API_TOKEN) when a
-// token is configured, or {} otherwise. Mirrors the header ws.ts already sets
-// when minting a WS ticket, and the ad-hoc raw fetch() calls in
-// WorkflowPage/HealthPage — see #138 (these request()/requestWithHeaders()
-// helpers, used by every other api.* call, previously omitted it entirely).
-function authHeaders(): Record<string, string> {
-  const token = import.meta.env.VITE_API_TOKEN
-  return token ? { Authorization: `Bearer ${token}` } : {}
+// authedRawFetch is a thin wrapper around fetch() that merges in the
+// Authorization header from the runtime token (see authToken.ts) and, on a
+// 401 response, clears the stored token and notifies ApiTokenGate so it can
+// prompt for a new one. It does not throw on non-2xx — callers handle that
+// themselves (request()/requestWithHeaders() below, or any other raw fetch()
+// call site that needs auth, e.g. HealthPage's backup download or
+// WorkflowPage's YAML export).
+export async function authedRawFetch(url: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(url, {
+    ...init,
+    headers: { ...authHeaders(), ...init?.headers },
+  })
+  if (res.status === 401) notifyUnauthorized()
+  return res
 }
 
 async function request<T>(path: string, init?: RequestInit & { isFormData?: boolean }): Promise<T> {
@@ -29,7 +37,7 @@ async function request<T>(path: string, init?: RequestInit & { isFormData?: bool
   // default) — see #138, where it meant a caller-supplied `init.headers`
   // (e.g. workflows.updateYaml/importYaml's 'application/yaml'
   // Content-Type) silently dropped the Authorization header entirely.
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await authedRawFetch(`${BASE}${path}`, {
     ...init,
     headers: { ...headers, ...init?.headers },
   })
@@ -45,9 +53,9 @@ async function request<T>(path: string, init?: RequestInit & { isFormData?: bool
 // callers can read pagination cursors (X-Next-Cursor / X-Prev-Cursor /
 // X-Has-More) that the list endpoints return alongside the array body.
 async function requestWithHeaders<T>(path: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await authedRawFetch(`${BASE}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...init?.headers },
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
@@ -290,6 +298,11 @@ export type AgentConfig = {
   max_tokens: number
   timeout_secs: number
   max_turns: number
+  // Dispatch failover order among configs sharing a label: lower is tried
+  // first, ties broken by newest created_at. The first non-rate-limited
+  // match wins, so a higher-priority-number config acts as a backup when
+  // the primary is rate-limit/usage-blocked. Default 0.
+  priority: number
   // Retry policy for transient provider errors (rate limits, network blips,
   // upstream 5xx) — distinct from genuine task failures. max_retries=0
   // disables auto-retry (today's unbounded-immediate-redispatch behavior).
@@ -344,6 +357,11 @@ export type Repo = {
   // issue_sync_label (empty = all open issues) are imported as tasks.
   issue_sync_enabled?: number
   issue_sync_label?: string
+  // Status write-back: when enabled (1, requires remote_url), imported tasks
+  // comment on their source issue when a PR opens, get an "agent-in-progress"
+  // label when they first leave not_ready, and close the issue with a
+  // comment when the PR merges. Independent of issue_sync_enabled.
+  issue_writeback_enabled?: number
 }
 
 export type ModelList = {
@@ -565,7 +583,7 @@ export const api = {
     list: () => request<AgentConfig[]>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
     create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
-      const res = await fetch(`${BASE}/agents`, {
+      const res = await authedRawFetch(`${BASE}/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
@@ -578,8 +596,20 @@ export const api = {
       const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
       return { config, labelConflict }
     },
-    update: (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }) =>
-      request<AgentConfig>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+      const res = await authedRawFetch(`${BASE}/agents/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        throw new Error(err.error ?? res.statusText)
+      }
+      const config: AgentConfig = await res.json()
+      const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
+      return { config, labelConflict }
+    },
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
     models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),
     claudeOptions: () => request<ClaudeOptions>('/agents/claude-options'),
@@ -587,9 +617,9 @@ export const api = {
   repos: {
     list: () => request<Repo[]>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean }) =>
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
@@ -616,8 +646,9 @@ export const api = {
   },
   backup: {
     // Raw binary download — not a JSON request<T>() call, mirrors
-    // workflows.exportYaml. Callers must fetch() this URL themselves with
-    // the Authorization header set (browsers can't set headers on <a href>).
+    // workflows.exportYaml. Callers must fetch() this URL themselves via
+    // authedRawFetch (browsers can't set headers on <a href>, and downloads
+    // need the same Authorization header as everything else).
     url: () => `${BASE}/backup`,
   },
 }

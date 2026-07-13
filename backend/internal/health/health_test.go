@@ -320,6 +320,105 @@ func TestFormatCount(t *testing.T) {
 	}
 }
 
+func TestVersionCheck(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+
+	got := find(t, Checks(Input{}, d), "version")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok", got.Status)
+	}
+	if got.Detail != "running dev (unreleased build)" {
+		t.Errorf("expected dev detail, got %q", got.Detail)
+	}
+
+	got = find(t, Checks(Input{Version: "v1.4.0"}, d), "version")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok", got.Status)
+	}
+	if got.Detail != "running v1.4.0" {
+		t.Errorf("expected 'running v1.4.0', got %q", got.Detail)
+	}
+}
+
+func TestUpdateCheck_DisabledByDefault(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+	checks := Checks(Input{Version: "v1.0.0"}, d)
+	if hasID(checks, "update_check") {
+		t.Fatalf("did not expect update_check row when CheckForUpdates is false")
+	}
+}
+
+func TestUpdateCheck_UpToDate(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+	d.LatestGitHubRelease = func() (string, bool) { return "v1.4.0", true }
+	got := find(t, Checks(Input{Version: "v1.4.0", CheckForUpdates: true}, d), "update_check")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %q, want ok", got.Status)
+	}
+	if !strings.Contains(got.Detail, "up to date") {
+		t.Errorf("expected 'up to date' in detail, got %q", got.Detail)
+	}
+}
+
+func TestUpdateCheck_UpdateAvailable(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+	d.LatestGitHubRelease = func() (string, bool) { return "v1.5.0", true }
+	got := find(t, Checks(Input{Version: "v1.4.0", CheckForUpdates: true}, d), "update_check")
+	if got.Status != StatusWarn {
+		t.Fatalf("status = %q, want warn", got.Status)
+	}
+	if !strings.Contains(got.Detail, "update available: v1.5.0") {
+		t.Errorf("expected 'update available: v1.5.0' in detail, got %q", got.Detail)
+	}
+	if got.Hint == "" {
+		t.Errorf("expected a hint linking to releases")
+	}
+}
+
+func TestUpdateCheck_FailsSoft(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+	d.LatestGitHubRelease = func() (string, bool) { return "", false }
+	got := find(t, Checks(Input{Version: "v1.4.0", CheckForUpdates: true}, d), "update_check")
+	if got.Status != StatusWarn {
+		t.Fatalf("status = %q, want warn (never error)", got.Status)
+	}
+	if !strings.Contains(got.Detail, "could not check for updates") {
+		t.Errorf("expected 'could not check for updates' in detail, got %q", got.Detail)
+	}
+}
+
+func TestUpdateCheck_DevBuildIsInformationalOnly(t *testing.T) {
+	d := fakeDeps(nil, nil, nil, "/home/u", false)
+	d.LatestGitHubRelease = func() (string, bool) { return "v1.5.0", true }
+	got := find(t, Checks(Input{Version: "dev", CheckForUpdates: true}, d), "update_check")
+	if got.Status != StatusWarn {
+		t.Fatalf("status = %q, want warn for a dev build", got.Status)
+	}
+	if !strings.Contains(got.Detail, "v1.5.0") {
+		t.Errorf("expected latest tag mentioned in detail, got %q", got.Detail)
+	}
+}
+
+func TestSemverCompare(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"v1.0.0", "v1.0.0", 0},
+		{"1.0.0", "v1.0.0", 0},
+		{"v1.0.0", "v1.0.1", -1},
+		{"v1.0.1", "v1.0.0", 1},
+		{"v1.4.0", "v1.5.0", -1},
+		{"v2.0.0", "v1.9.9", 1},
+		{"v1.4.0-rc1", "v1.4.0", 0},
+	}
+	for _, c := range cases {
+		if got := semverCompare(c.a, c.b); got != c.want {
+			t.Errorf("semverCompare(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func TestRepoBaseDirCheck(t *testing.T) {
 	d := fakeDeps(nil, nil, nil, "/home/u", false)
 	if find(t, Checks(Input{}, d), "repo_base_dir").Status != StatusWarn {

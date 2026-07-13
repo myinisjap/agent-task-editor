@@ -19,6 +19,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
 
 // apiTask mirrors the JSON wire format returned by the tasks handler.
@@ -46,15 +47,21 @@ type noopPub struct{}
 func (noopPub) Publish(string, map[string]any) {}
 
 // fakeCanceller records the run IDs it was asked to cancel and reports whether
-// each was "active" via the found map.
+// each was "active" via the found map. saturated controls what Saturated()
+// reports (defaults to false, i.e. pool has idle capacity).
 type fakeCanceller struct {
-	called []string
-	found  map[string]bool
+	called    []string
+	found     map[string]bool
+	saturated bool
 }
 
 func (c *fakeCanceller) Cancel(runID string) bool {
 	c.called = append(c.called, runID)
 	return c.found[runID]
+}
+
+func (c *fakeCanceller) Saturated() bool {
+	return c.saturated
 }
 
 // openTestDB creates a temp SQLite database, seeds the default workflow,
@@ -118,8 +125,66 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Patch("/tasks/{id}/pause", h.SetPaused)
 	r.Patch("/tasks/{id}/archive", h.SetArchived)
 	r.Post("/tasks/{id}/pr", h.CreatePR)
+	r.Patch("/tasks/{id}/git-state", h.UpdateGitState)
 
 	return r, q, wfID, repoID
+}
+
+// setupTaskRouterWithWriteback is like setupTaskRouter but also wires a
+// writeback.Writeback backed by fake gh-calling functions onto the handler,
+// returning the fake so tests can assert on write-back actions without
+// shelling out to a real gh binary.
+func setupTaskRouterWithWriteback(t *testing.T) (http.Handler, *gen.Queries, string, string, *fakeWriteback) {
+	t.Helper()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), noopPub{})
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID:         repoID,
+		Name:       "test-repo",
+		Path:       t.TempDir(),
+		WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+
+	fwb := &fakeWriteback{}
+	h.SetWriteback(writeback.NewWithClient(q,
+		func(ctx context.Context, repoName string, issueNumber int, label string) error {
+			fwb.labelCalls = append(fwb.labelCalls, label)
+			return nil
+		},
+		func(ctx context.Context, repoName string, issueNumber int, body string) error {
+			fwb.commentCalls = append(fwb.commentCalls, body)
+			return nil
+		},
+		func(ctx context.Context, repoName string, issueNumber int, body string) error {
+			fwb.closeCalls = append(fwb.closeCalls, body)
+			return nil
+		},
+	))
+
+	r := chi.NewRouter()
+	r.Patch("/tasks/{id}/git-state", h.UpdateGitState)
+	r.Post("/tasks/{id}/pr", h.CreatePR)
+	r.Get("/tasks/{id}/github-status", h.GitHubStatus)
+
+	return r, q, wfID, repoID, fwb
+}
+
+// fakeWriteback records calls made through the writeback seam, mirroring the
+// same helper used by internal/ghsync's tests.
+type fakeWriteback struct {
+	labelCalls   []string
+	commentCalls []string
+	closeCalls   []string
 }
 
 // setupCancelRouter wires just the cancel route against a caller-supplied
@@ -1135,11 +1200,40 @@ func TestTasks_Paused_ExcludedFromAgentPickup(t *testing.T) {
 	}
 }
 
+// setupQueuePositionRouter wires GET /tasks/{id} against a canceller whose
+// Saturated() reports the given value, so tests can assert queue_position
+// gating on pool saturation.
+func setupQueuePositionRouter(t *testing.T, saturated bool) (http.Handler, *gen.Queries, string, string) {
+	t.Helper()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), noopPub{})
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID:         repoID,
+		Name:       "test-repo",
+		Path:       t.TempDir(),
+		WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}, saturated: saturated}, nil)
+	r := chi.NewRouter()
+	r.Get("/tasks/{id}", h.Get)
+	return r, q, wfID, repoID
+}
+
 // TestTasks_Get_QueuePosition verifies GET /tasks/{id} surfaces a derived
-// queue_position for a task currently eligible for agent pickup, and omits it
-// (nil) for a task that is not eligible (paused).
+// queue_position for a task currently eligible for agent pickup when the
+// worker pool is saturated, and omits it (nil) for a task that is not
+// eligible (paused) regardless of saturation.
 func TestTasks_Get_QueuePosition(t *testing.T) {
-	r, q, wfID, repoID := setupTaskRouter(t)
+	r, q, wfID, repoID := setupQueuePositionRouter(t, true)
 	ctx := context.Background()
 
 	// "plan" is an agent-trigger label in the seeded default workflow.
@@ -1168,7 +1262,7 @@ func TestTasks_Get_QueuePosition(t *testing.T) {
 		t.Fatalf("pause task: %v", err)
 	}
 
-	// Eligible task should have a non-nil queue position.
+	// Eligible task should have a non-nil queue position when the pool is saturated.
 	req := httptest.NewRequest(http.MethodGet, "/tasks/"+eligible.ID, nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -1178,13 +1272,13 @@ func TestTasks_Get_QueuePosition(t *testing.T) {
 	var got apiTask
 	_ = json.NewDecoder(w.Body).Decode(&got)
 	if got.QueuePosition == nil {
-		t.Fatalf("expected non-nil queue_position for an eligible task")
+		t.Fatalf("expected non-nil queue_position for an eligible task when pool is saturated")
 	}
 	if *got.QueuePosition < 0 {
 		t.Errorf("expected a non-negative queue_position, got %d", *got.QueuePosition)
 	}
 
-	// Paused task should have a nil queue position.
+	// Paused task should have a nil queue position even when saturated.
 	req = httptest.NewRequest(http.MethodGet, "/tasks/"+notEligible.ID, nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -1195,6 +1289,38 @@ func TestTasks_Get_QueuePosition(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&gotPaused)
 	if gotPaused.QueuePosition != nil {
 		t.Errorf("expected nil queue_position for a paused (non-eligible) task, got %d", *gotPaused.QueuePosition)
+	}
+}
+
+// TestTasks_Get_QueuePosition_NotSaturated verifies that an eligible task's
+// queue_position stays nil when the worker pool has idle capacity — it will
+// be picked up on the next sweep rather than actually waiting, so the
+// "queued" badge should not be shown.
+func TestTasks_Get_QueuePosition_NotSaturated(t *testing.T) {
+	r, q, wfID, repoID := setupQueuePositionRouter(t, false)
+	ctx := context.Background()
+
+	eligible, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Eligible",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+eligible.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	_ = json.NewDecoder(w.Body).Decode(&got)
+	if got.QueuePosition != nil {
+		t.Errorf("expected nil queue_position for an eligible task when pool has idle capacity, got %d", *got.QueuePosition)
 	}
 }
 
@@ -1586,5 +1712,134 @@ func TestTasks_ReplyRun_DispatcherNotWaiting(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// ---------- Write-back wiring (UpdateGitState) ----------
+
+func TestUpdateGitState_PRMerged_TriggersWriteback(t *testing.T) {
+	r, q, wfID, repoID, fwb := setupTaskRouterWithWriteback(t)
+
+	remote := "https://github.com/acme/widgets"
+	if _, err := q.UpdateRepo(context.Background(), gen.UpdateRepoParams{
+		ID:                    repoID,
+		Name:                  "test-repo",
+		Path:                  t.TempDir(),
+		RemoteUrl:             &remote,
+		WorkflowID:            &wfID,
+		IssueWritebackEnabled: 1,
+	}); err != nil {
+		t.Fatalf("update repo: %v", err)
+	}
+
+	task, err := q.CreateSourcedTask(context.Background(), gen.CreateSourcedTaskParams{
+		ID:          uuid.NewString(),
+		Title:       "Imported task",
+		WorkflowID:  wfID,
+		RepoID:      repoID,
+		Label:       "work",
+		Attachments: "[]",
+		Source:      "github",
+		SourceRef:   "acme/widgets#5",
+	})
+	if err != nil {
+		t.Fatalf("create sourced task: %v", err)
+	}
+	if _, err := q.SetTaskPR(context.Background(), gen.SetTaskPRParams{
+		GitState: "pr_open",
+		PrUrl:    "https://github.com/acme/widgets/pull/5",
+		ID:       task.ID,
+	}); err != nil {
+		t.Fatalf("set task pr: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/git-state", strings.NewReader(`{"git_state":"pr_merged"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	if len(fwb.closeCalls) != 1 {
+		t.Fatalf("expected 1 close-with-comment call, got %d: %v", len(fwb.closeCalls), fwb.closeCalls)
+	}
+
+	updated, err := q.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.WritebackClosed == 0 {
+		t.Error("expected writeback_closed to be set")
+	}
+}
+
+func TestUpdateGitState_PRMerged_WritebackDisabled_NoOp(t *testing.T) {
+	r, q, wfID, repoID, fwb := setupTaskRouterWithWriteback(t)
+
+	// Write-back not enabled on this repo.
+	task, err := q.CreateSourcedTask(context.Background(), gen.CreateSourcedTaskParams{
+		ID:          uuid.NewString(),
+		Title:       "Imported task",
+		WorkflowID:  wfID,
+		RepoID:      repoID,
+		Label:       "work",
+		Attachments: "[]",
+		Source:      "github",
+		SourceRef:   "acme/widgets#5",
+	})
+	if err != nil {
+		t.Fatalf("create sourced task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/git-state", strings.NewReader(`{"git_state":"pr_merged"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	if len(fwb.closeCalls) != 0 {
+		t.Fatalf("expected no close-with-comment calls, got %v", fwb.closeCalls)
+	}
+}
+
+func TestUpdateGitState_NonMergedState_NoWriteback(t *testing.T) {
+	r, q, wfID, repoID, fwb := setupTaskRouterWithWriteback(t)
+
+	remote := "https://github.com/acme/widgets"
+	if _, err := q.UpdateRepo(context.Background(), gen.UpdateRepoParams{
+		ID:                    repoID,
+		Name:                  "test-repo",
+		Path:                  t.TempDir(),
+		RemoteUrl:             &remote,
+		WorkflowID:            &wfID,
+		IssueWritebackEnabled: 1,
+	}); err != nil {
+		t.Fatalf("update repo: %v", err)
+	}
+
+	task, err := q.CreateSourcedTask(context.Background(), gen.CreateSourcedTaskParams{
+		ID:          uuid.NewString(),
+		Title:       "Imported task",
+		WorkflowID:  wfID,
+		RepoID:      repoID,
+		Label:       "work",
+		Attachments: "[]",
+		Source:      "github",
+		SourceRef:   "acme/widgets#5",
+	})
+	if err != nil {
+		t.Fatalf("create sourced task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/git-state", strings.NewReader(`{"git_state":"pr_open"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	if len(fwb.closeCalls) != 0 {
+		t.Fatalf("expected no close-with-comment calls for a non-merged state, got %v", fwb.closeCalls)
 	}
 }

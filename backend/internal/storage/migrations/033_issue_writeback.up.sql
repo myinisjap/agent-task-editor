@@ -1,0 +1,4 @@
+ALTER TABLE repos ADD COLUMN issue_writeback_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN writeback_in_progress_sent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN writeback_pr_commented INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN writeback_closed INTEGER NOT NULL DEFAULT 0;

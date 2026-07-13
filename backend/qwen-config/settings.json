@@ -1,0 +1,77 @@
+{
+  "env": {
+    "QWEN_CUSTOM_API_KEY_OPENAI_HTTP_LOCALHOST_8081_79256FE524D8": "local-no-auth",
+    "QWEN_CUSTOM_API_KEY_ANTHROPIC_HTTP_LOCALHOST_8081_EF06A2C3D538": "local-no-auth"
+  },
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "gemma-4-12B-it-qat-UD-Q4_K_XL",
+        "name": "gemma-4-12B-it-qat-UD-Q4_K_XL",
+        "baseUrl": "http://host.docker.internal:8081",
+        "envKey": "QWEN_CUSTOM_API_KEY_OPENAI_HTTP_LOCALHOST_8081_79256FE524D8",
+        "generationConfig": {
+          "extra_body": {
+            "enable_thinking": true
+          },
+          "modalities": {
+            "image": true,
+            "video": true
+          }
+        }
+      }
+    ],
+    "anthropic": [
+      {
+        "id": "gemma-4-12B-it-qat-UD-Q4_K_XL",
+        "name": "gemma-4-12B-it-qat-UD-Q4_K_XL",
+        "baseUrl": "http://host.docker.internal:8081",
+        "envKey": "QWEN_CUSTOM_API_KEY_ANTHROPIC_HTTP_LOCALHOST_8081_EF06A2C3D538",
+        "generationConfig": {
+          "extra_body": {
+            "enable_thinking": true
+          },
+          "modalities": {
+            "image": true,
+            "video": true
+          }
+        }
+      },
+      {
+        "id": "qwen3.6-35b-a3b",
+        "name": "qwen3.6-35b-a3b",
+        "baseUrl": "http://host.docker.internal:8081",
+        "envKey": "QWEN_CUSTOM_API_KEY_ANTHROPIC_HTTP_LOCALHOST_8081_EF06A2C3D538",
+        "generationConfig": {
+          "extra_body": {
+            "enable_thinking": true
+          },
+          "modalities": {
+            "image": true,
+            "video": true
+          }
+        }
+      }
+    ]
+  },
+  "security": {
+    "auth": {
+      "selectedType": "anthropic"
+    }
+  },
+  "model": {
+    "name": "qwen3.6-35b-a3b",
+    "baseUrl": "http://host.docker.internal:8081"
+  },
+  "$version": 4,
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(git reset *)",
+      "Bash(go *)"
+    ]
+  },
+  "ui": {
+    "autoModeAcknowledged": true
+  }
+}

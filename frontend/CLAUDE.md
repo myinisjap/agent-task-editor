@@ -19,13 +19,14 @@ src/
 ├── api/
 │   ├── client.ts     REST API client functions + TypeScript types
 │   ├── ws.ts         WSClient class — connect, subscribe, event routing
+│   ├── authToken.ts  Runtime API bearer token (localStorage) + 401 pub/sub
 │   └── types.ts      Shared TypeScript type definitions
 ├── components/
 │   ├── DependenciesPanel.tsx  Task dependency list + add/remove UI
 │   ├── SubtasksPanel.tsx      Subtask checklist + add/remove UI
 │   ├── board/        AgentGroupColumn, AgentLogEntry, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
-│   └── shared/        GitHubAuthWarning, NavSidebar, WorkflowFlowchart
+│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, WorkflowFlowchart
 ├── pages/
 │   ├── BoardPage.tsx        Main Kanban board
 │   ├── TaskDetailPage.tsx   Task detail + live agent log stream
@@ -59,8 +60,19 @@ Set in `.env.local` for local dev (not committed):
 ```
 VITE_API_BASE_URL=http://localhost:8080   # empty = same origin (Docker)
 VITE_WS_BASE_URL=ws://localhost:8080     # empty = same origin (Docker)
-VITE_API_TOKEN=                          # bearer token if API_TOKEN is set
+VITE_API_TOKEN=                          # dev-only: seeds localStorage once if set
 ```
+
+`VITE_API_TOKEN` is a **build-time** convenience only — it's used to seed the
+runtime token in `localStorage` the first time the app loads if nothing is
+stored yet (so `.env.local` dev setups don't need to click through the token
+prompt). It is **not** the mechanism used in production or the prebuilt
+Docker image, since a build-time env var can never be baked into a published
+image. The actual runtime token flow lives in `src/api/authToken.ts`: when
+the backend has `API_TOKEN` set and a request comes back 401, `ApiTokenGate`
+(`src/components/shared/ApiTokenGate.tsx`) prompts for a token, stores it in
+`localStorage`, and every subsequent request/WS-ticket mint sends it as
+`Authorization: Bearer <token>`.
 
 ## Development
 

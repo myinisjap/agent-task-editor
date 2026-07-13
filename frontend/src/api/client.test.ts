@@ -1,18 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { setApiToken, clearApiToken } from './authToken'
 
 // Regression test for #138 — a request going out through client.ts's
 // request()/requestWithHeaders() helpers must carry the Authorization header
-// when VITE_API_TOKEN is configured. The WS client (ws.ts) and two ad-hoc raw
-// fetch() call sites (WorkflowPage's YAML export, HealthPage's backup
-// download) already did this manually; the shared `request()`/
-// `requestWithHeaders()` helpers used by every other `api.*` call (tasks,
-// repos, workflows, agents, ...) omitted it entirely — fixed alongside this
-// test (see authHeaders() in client.ts).
+// when a runtime API token is stored (see authToken.ts). The WS client
+// (ws.ts) and two ad-hoc raw fetch() call sites (WorkflowPage's YAML export,
+// HealthPage's backup download) already did this manually; the shared
+// `request()`/`requestWithHeaders()` helpers used by every other `api.*`
+// call (tasks, repos, workflows, agents, ...) omitted it entirely — fixed
+// alongside this test (see authedRawFetch()/authHeaders() in client.ts).
 describe('client.ts Authorization header (#138)', () => {
   const originalFetch = globalThis.fetch
 
   beforeEach(() => {
-    vi.resetModules()
+    clearApiToken()
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -23,11 +24,11 @@ describe('client.ts Authorization header (#138)', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch
-    vi.unstubAllEnvs()
+    clearApiToken()
   })
 
-  it('sends an Authorization: Bearer header when VITE_API_TOKEN is set', async () => {
-    vi.stubEnv('VITE_API_TOKEN', 'secret-token')
+  it('sends an Authorization: Bearer header when a runtime token is stored', async () => {
+    setApiToken('secret-token')
     const { api } = await import('./client')
 
     await api.repos.list()
@@ -39,7 +40,7 @@ describe('client.ts Authorization header (#138)', () => {
   })
 
   it('sends the header via requestWithHeaders() too (e.g. tasks.list, a paginated endpoint)', async () => {
-    vi.stubEnv('VITE_API_TOKEN', 'secret-token')
+    setApiToken('secret-token')
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -55,8 +56,7 @@ describe('client.ts Authorization header (#138)', () => {
     expect(headers.get('Authorization')).toBe('Bearer secret-token')
   })
 
-  it('omits the Authorization header when VITE_API_TOKEN is unset (unauthenticated mode still works)', async () => {
-    vi.stubEnv('VITE_API_TOKEN', '')
+  it('omits the Authorization header when no runtime token is stored (unauthenticated mode still works)', async () => {
     const { api } = await import('./client')
 
     await api.repos.list()
@@ -74,7 +74,7 @@ describe('client.ts Authorization header (#138)', () => {
   // authHeaders() but only became observable once there was an
   // Authorization header to lose).
   it('keeps the Authorization header when the caller also passes a custom Content-Type header', async () => {
-    vi.stubEnv('VITE_API_TOKEN', 'secret-token')
+    setApiToken('secret-token')
     const { api } = await import('./client')
 
     await api.workflows.updateYaml('wf-1', 'name: test')
