@@ -63,7 +63,7 @@ Tasks carry an `agent_notes` field — persistent markdown that agents write via
 Agents can call `store_info` to persist a summary of what they did. This content is stored in the agent run record and displayed in the task detail view in the UI after the run completes. Unlike `agent_notes` (which carry forward to the next agent), stored info is per-run.
 
 ### Agent Runs
-Each time an agent is dispatched for a task, an **agent run** record is created. Runs have statuses: `pending → running → completed | failed | waiting_human`. Live stdout/tool call output is streamed over WebSocket and persisted to the database for replay on reconnect.
+Each time an agent is dispatched for a task, an **agent run** record is created. Runs have statuses: `pending → running → completed | failed | waiting_human | cancelled` (`cancelled` results from the run-cancel kill switch). Live stdout/tool call output is streamed over WebSocket and persisted to the database for replay on reconnect.
 
 ## Architecture
 

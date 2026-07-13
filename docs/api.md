@@ -279,6 +279,91 @@ like `PATCH /tasks/{id}/label`. Response is `200` if every task succeeded,
 
 ---
 
+## Task Dependencies
+
+Peer task dependencies are a pure dispatch gate: a task with an unsatisfied
+blocker is never picked up by the dispatcher, but humans can still move it
+anywhere. Blocked-ness is derived at read time from the blocker's
+label/archived state — it is never stored. Adding or removing an edge
+publishes `task.updated` (see [websocket.md](websocket.md)) for both affected
+tasks.
+
+### `GET /tasks/{id}/dependencies`
+List a task's dependency edges in both directions.
+
+```json
+{
+  "blocked_by": [
+    { "task_id": "uuid", "title": "...", "label": "...", "archived": false, "satisfied": true }
+  ],
+  "blocking": [
+    { "task_id": "uuid", "title": "...", "label": "...", "archived": false, "satisfied": false }
+  ],
+  "blocked_by_count": 1,
+  "blocking_count": 1
+}
+```
+
+`blocked_by_count` is the number of *unsatisfied* blockers. `satisfied` on
+`blocking` entries is always `false` — it isn't meaningful from this task's
+perspective (a dependent's satisfaction is relative to its own other
+blockers), the field is only present for shape symmetry with `blocked_by`.
+
+### `POST /tasks/{id}/dependencies`
+Add a dependency edge: this task depends on (is blocked by) `depends_on_task_id`.
+
+```json
+{ "depends_on_task_id": "uuid" }
+```
+
+Returns `204 No Content`. `400` if the two tasks are the same task, are in
+different workflows, or the blocker's workflow has no terminal label (such an
+edge could never be satisfied). `409` if the edge already exists, or if adding
+it would create a cycle — the error message includes the cycle path, e.g.
+`"dependency would create a cycle: A → B → C → A"`.
+
+### `DELETE /tasks/{id}/dependencies/{dep_id}`
+Remove a dependency edge. Idempotent — returns `204` even if the edge didn't
+exist.
+
+---
+
+## Subtasks
+
+Agent-driven child tasks (the `create_subtask` MCP tool posts here live during
+a planning run so children appear on the board mid-run and the agent gets real
+task ids back). Humans can also call this directly.
+
+### `POST /tasks/{id}/subtasks`
+Create a child task under the parent named in the path.
+
+```json
+{
+  "title": "string (required)",
+  "description": "string",
+  "type": "feature | bug | ...",
+  "label": "optional agent_ignore label override"
+}
+```
+
+- Depth limit 1 — a subtask cannot itself have subtasks (`400` if the parent
+  is itself a subtask).
+- The child lands on the workflow's first `agent_ignore` (human-gate) label by
+  default, or the first label overall if the workflow has none. `label` can
+  override this, but only to another `agent_ignore` label (`400` otherwise).
+- Per-parent subtask cap: `10` by default, or the creating agent config's
+  `max_subtasks` if the config that produced the parent's active run has
+  `subtasks_enabled` and sets `max_subtasks` (`403` if `subtasks_enabled` is
+  off for that config). Returns `422` if the cap is already reached.
+- Auto-creates a parent→child dependency edge (see Task Dependencies above) so
+  the parent can't be dispatched again until every child finishes.
+- Publishes `task.created` (with `parent_id`) and `task.updated` (for the
+  parent) — see [websocket.md](websocket.md).
+
+Returns `201` with the created task object (same shape as `POST /tasks`).
+
+---
+
 ## Task Templates
 
 Reusable pre-filled `title`/`description`/`type` for recurring shapes of work
@@ -496,6 +581,20 @@ Returns:
 }
 ```
 
+### `GET /agents/claude-options`
+Returns the Claude plugins and user-level MCP servers discovered on this
+machine (from `~/.claude/plugins/installed_plugins.json` and the global
+`mcpServers` key in `~/.claude.json`), for the frontend to present as
+per-agent-config selection options. Claude-provider-specific for now; other
+providers have no equivalent.
+
+```json
+{
+  "plugins": [{ "id": "string", "name": "string", "marketplace": "string" }],
+  "mcp_servers": ["string"]
+}
+```
+
 ---
 
 ## Repositories
@@ -667,9 +766,11 @@ Liveness probe. Returns `200 OK` with `{"status":"ok","version":"<version>"}`.
 or the release tag (e.g. `"v1.4.0"`) for GHCR images, stamped at build time
 via `-ldflags "-X main.Version=<tag>"` (see `backend/Dockerfile`'s `VERSION`
 build-arg and `.github/workflows/release.yml`). (Served at the server root,
-**not** under `/api/v1`. Note: like the rest of the API, this route sits
-behind `API_TOKEN`/`API_TOKENS` when one is configured — despite the name,
-it is not exempt from bearer auth.)
+**not** under `/api/v1`, and mounted **outside** `API_TOKEN`/`API_TOKENS`
+bearer auth — like `/metrics`, it's intentionally unauthenticated so
+container/orchestrator healthchecks (see `docker-compose.yml`) work without
+needing to inject the token. It returns only a static status/version and
+leaks no sensitive data.)
 
 ### `GET /health/providers`
 Provider / onboarding readiness checks. Surfaces first-run misconfiguration at a

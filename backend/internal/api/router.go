@@ -66,11 +66,14 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	// matching most Prometheus setups) via the same BearerAuth middleware.
 	r.With(middleware.BearerAuth(metricsToken, nil)).Get("/metrics", metrics.Handler().ServeHTTP)
 
+	// Liveness probe — mounted outside BearerAuth so container orchestrators
+	// (docker/k8s) can healthcheck without needing API_TOKEN. Returns only a
+	// static {status, version}; leaks nothing sensitive. See docs/api.md.
+	r.Get("/healthz", healthH.Healthz)
+
 	// Everything below requires the Bearer token (when one is configured).
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.BearerAuth(bearerToken, namedTokens))
-
-		r.Get("/healthz", healthH.Healthz)
 
 		r.Route("/api/v1", func(r chi.Router) {
 			// Limit request bodies to 1 MB to prevent memory exhaustion.

@@ -5,23 +5,27 @@ Chi v5 router wired in `router.go`. All HTTP handlers and middleware live under 
 ## Router Structure
 
 ```
-GET  /healthz              (no auth)
-GET  /ws                   (auth via ?token= query param)
+GET  /healthz               (no auth)
+GET  /ws                    (auth via single-use ?ticket=, see POST /ws-ticket below; deprecated ?token= fallback still accepted)
+GET  /metrics                (Prometheus scrape; gated by its own METRICS_TOKEN, outside /api/v1 and outside the main bearer group)
 /api/v1/
-  POST body limit: 1 MB
-  tasks/*                  TasksHandler
-  tasks/{id}/label-history  TasksHandler.ListLabelHistory (task_label_history audit trail)
-  tasks/{id}/dependencies/* DependenciesHandler (dispatch-gating peer task dependencies)
-  tasks/{id}/subtasks       SubtasksHandler (create_subtask MCP tool)
+  POST body limit: 1 MB (50 MB for POST /tasks, which handles image uploads via multipart)
+  POST /ws-ticket             WSTicketHandler (mints single-use WS auth ticket; bearer-gated)
+  GET  /backup                 BackupHandler (point-in-time DB snapshot; see docs/backup.md)
+  tasks/*                     TasksHandler
+  tasks/{id}/runs/*            TasksHandler (list/get/logs/cancel/reply)
+  tasks/{id}/label-history     TasksHandler.ListLabelHistory (task_label_history audit trail)
+  tasks/{id}/dependencies/*    DependenciesHandler (dispatch-gating peer task dependencies)
+  tasks/{id}/subtasks          SubtasksHandler (create_subtask MCP tool)
   tasks/{id}/review-comments/* ReviewCommentsHandler (inline diff review comments)
-  templates/*               TemplatesHandler
+  templates/*                  TemplatesHandler
   uploads/{task_id}/{filename} UploadsHandler (serve attachment images)
-  workflows/*               WorkflowsHandler
-  agents/*                  AgentsHandler
-  repos/*                   ReposHandler
-  dashboard                 DashboardHandler
-  github/auth-status         GitHub CLI auth status
-  health/providers           HealthHandler (provider/onboarding readiness checks)
+  workflows/*                  WorkflowsHandler
+  agents/*                     AgentsHandler
+  repos/*                      ReposHandler
+  dashboard/*                  DashboardHandler
+  github/auth-status           GitHub CLI auth status
+  health/providers             HealthHandler (provider/onboarding readiness checks)
 ```
 
 ## Middleware Chain (in order)

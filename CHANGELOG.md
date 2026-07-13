@@ -38,6 +38,14 @@ triggers the "Release" workflow the same way.
   `X-Label-Conflict` header (matching `POST /agents` behavior), and the
   frontend shows it as an informational note instead of a blocking alert.
 
+### Changed
+- Documented 5 previously-undocumented WebSocket events (`task.updated`,
+  `task.review_comments_changed`, `task.subtask_conflict`,
+  `repo.clone_done`, `repo.clone_failed`), the dependencies/subtasks REST
+  endpoints, the `cancelled` run status, and refreshed stale `CLAUDE.md`
+  notes on `METRICS_TOKEN` and WebSocket ticket-based auth. Docs-only, no
+  behavior change.
+
 ## [0.10.0] - 2026-07-12
 
 ### Added
@@ -361,6 +369,17 @@ triggers the "Release" workflow the same way.
   - `?token=<API_TOKEN>` is kept as a **deprecated fallback** for existing
     setups/non-browser clients — each use is now logged as a warning
     server-side — and may be removed in a future release.
+
+### Fixed
+- **`/healthz` no longer requires `API_TOKEN`** (#139). It was accidentally
+  mounted inside the BearerAuth middleware group in `router.go`,
+  contradicting `docs/api.md`/`internal/api/CLAUDE.md` (which documented it
+  as unauthenticated) and breaking the `docker-compose.yml`/
+  `docker-compose.release.yml` healthchecks (plain `wget --spider`, no auth
+  header) whenever `API_TOKEN` was set — the backend container would report
+  unhealthy forever. Moved `/healthz` out of the BearerAuth group (alongside
+  `/ws` and `/metrics`); added a router test locking in that it returns 200
+  with no `Authorization` header even when a bearer token is configured.
 
 ### Changed
 - **Dispatch queue visibility now gated on worker-pool saturation** (#152).
