@@ -46,7 +46,7 @@ export default function DiffReviewPane({
   }, [taskId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="h-full overflow-y-auto p-4">
+    <div className="h-full overflow-y-auto p-4" data-testid="diff-review-pane">
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs text-slate-500">Changes on this task's branch</p>
         <div className="flex items-center gap-3">

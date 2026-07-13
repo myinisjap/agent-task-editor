@@ -73,6 +73,43 @@ npx tsc --noEmit       # Type-check (no dedicated script)
 npm run test:coverage  # vitest run --coverage
 ```
 
+## Testing
+
+Vitest covers two layers:
+
+- **Pure-function tests** in `src/lib/*.test.ts` (parsers, validators — no DOM).
+- **Component tests** (Vitest + Testing Library, `jsdom` environment — see the
+  `test` block in `vite.config.ts` and `src/test/setup.ts`) for pages and
+  components: `src/pages/*.test.tsx`, `src/components/**/*.test.tsx`. These
+  render real component trees and assert on behavior (drag-to-move, bulk
+  actions, tab switching, button enablement), not snapshots.
+
+Common mocking patterns used by the component tests:
+- `vi.mock('../../api/client', ...)` (relative to the test file) to replace
+  `api.*` calls with `vi.fn()`s — see `src/test/mockApi.ts` for a factory
+  covering the full `api` surface if a test needs more than a couple of
+  methods stubbed.
+- Zustand stores (`useTasksStore`, `useWorkflowStore`, `useReposStore`, ...)
+  are seeded directly via `.setState(...)` — but note that a page's own
+  mount-time `fetch()` effects (calling the mocked `api.*.list()`) will
+  overwrite that seed once they resolve, so also mock the underlying API
+  call to resolve with the same fixture when a component fetches on mount.
+- `wsClient` (`../../api/ws`) is mocked to a no-op
+  (`{ on: () => () => {}, subscribeTask: vi.fn(), unsubscribeTask: vi.fn() }`)
+  to avoid a real WebSocket connection.
+- Dragging (`@dnd-kit`) is simulated with real `fireEvent.mouseDown` /
+  `mouseMove` / `mouseUp` sequences (dnd-kit's `MouseSensor` listens for
+  native mouse events, not React synthetic pointer events) plus
+  `getBoundingClientRect` stubs on the draggable/droppable elements so
+  dnd-kit's collision detection has real geometry — see
+  `src/components/board/TaskBoard.test.tsx`.
+
+Playwright E2E smoke tests (a handful of flows against the docker-compose
+stack) were considered but deferred — see the tracking issue (#155) for
+scope notes; the component-test layer above covers the acceptance criteria's
+named areas (board drag-to-move, bulk actions, task-detail tabs) without new
+CI infrastructure.
+
 ## Code Generation
 
 `src/api/types.ts` is generated from the root `openapi.yaml` via

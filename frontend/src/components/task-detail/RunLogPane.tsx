@@ -22,7 +22,7 @@ export default function RunLogPane({ taskId, runId, isRunning }: {
   } = useRunLogs(taskId, runId, isRunning)
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" data-testid="run-log-pane">
       <p className="text-slate-500 text-xs py-3 px-3 font-sans flex items-center gap-2 shrink-0">
         {isRunning && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
         {runId ? `Run ${runId.slice(0, 8)}` : 'No agent runs yet'}

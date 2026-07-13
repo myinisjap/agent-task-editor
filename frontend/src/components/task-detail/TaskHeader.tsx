@@ -1,7 +1,13 @@
-import type { Task, Repo, AgentRun } from '../../api/client'
+import { BASE, type Task, type Repo, type AgentRun } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
+
+// Attachment files are served from the same API base client.ts uses
+// (BASE_URL-prefixed) — see #145, where a hardcoded '/api/v1/uploads/...'
+// path 404'd under a non-root BASE_URL (e.g. the production '/tasks/' base
+// set in vite.config.ts).
+const UPLOADS_BASE = `${BASE}/uploads`
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -226,10 +232,10 @@ export default function TaskHeader({
               {task.attachments.map((rel) => (
                 <img
                   key={rel}
-                  src={`/api/v1/uploads/${rel}`}
+                  src={`${UPLOADS_BASE}/${rel}`}
                   alt="attachment"
                   className="max-h-48 rounded border border-slate-700 cursor-pointer hover:border-slate-500 transition-colors"
-                  onClick={() => window.open(`/api/v1/uploads/${rel}`, '_blank')}
+                  onClick={() => window.open(`${UPLOADS_BASE}/${rel}`, '_blank')}
                   title="Click to open full size"
                 />
               ))}

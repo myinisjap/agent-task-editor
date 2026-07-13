@@ -12,6 +12,31 @@ this file's section for that version as the release notes.
 ## [Unreleased]
 
 ### Added
+- **Frontend component smoke tests (Vitest + Testing Library)** (#155).
+  - New `jsdom`-backed component-test layer (`@testing-library/react` +
+    `@testing-library/jest-dom` + `@testing-library/user-event`) alongside
+    the existing pure-function tests in `src/lib`; wired into the same
+    `npm run test:coverage` CI step, no new CI job/infra needed.
+  - Coverage added for: `TaskBoard` drag-to-move (real `@dnd-kit` drag
+    simulated via mouse events) including optimistic-update rollback on a
+    rejected `moveLabel` call and the blocked-task move confirmation;
+    `BoardPage` bulk actions (pause/archive/move-to, plus the
+    partial-failure error banner); `TaskDetailPage` tab switching
+    (Overview/Logs/Diff); `TaskActions` approve/reject/reply enablement
+    rules.
+  - New regression tests for three review findings, all of which failed
+    against the pre-fix code and are fixed alongside this change (see
+    "Fixed" below): #138 (missing `Authorization` header on most API
+    calls), #145 (attachment URLs ignoring `BASE_URL`). #147 (hover-only
+    board-card controls on touch) has a best-effort DOM-presence test only —
+    jsdom can't simulate real hover/touch, so full verification is deferred
+    to a future Playwright E2E layer (considered for this issue but
+    descoped to keep this change to the component-test layer; see the
+    issue for scope notes).
+  - Minor testability-only production changes: `RunLogPane`/`DiffReviewPane`
+    root elements got a `data-testid` hook; `client.ts` now exports its
+    `BASE` constant so `TaskHeader` can share it instead of hardcoding an
+    API path.
 - **Agent log retention / pruning, and DB size on the Health page** (#150).
   - `LOG_RETENTION_DAYS` (env or `log_retention_days` in the YAML config)
     enables a built-in pruner that periodically deletes `agent_logs` rows
@@ -133,6 +158,26 @@ this file's section for that version as the release notes.
     setups/non-browser clients — each use is now logged as a warning
     server-side — and may be removed in a future release.
 ### Fixed
+- **Frontend: most API requests were missing the `Authorization` header**
+  (#138). `src/api/client.ts`'s shared `request()`/`requestWithHeaders()`
+  helpers — used by every `api.*` call except the WS ticket fetch and two
+  ad-hoc raw-`fetch()` call sites (workflow YAML export, backup download) —
+  never attached the `Authorization: Bearer <VITE_API_TOKEN>` header, so the
+  frontend would get `401`s on nearly all requests as soon as `API_TOKEN`
+  auth was enabled. Also fixed a related latent header-merge bug in the same
+  helpers (`...init` was spread after `headers:`, so a caller-supplied
+  `init.headers` — e.g. `workflows.updateYaml`/`importYaml`'s
+  `application/yaml` Content-Type override — silently dropped the whole
+  merged headers object, including the new Authorization header). Found and
+  fixed while adding the frontend component-test layer (#155), which now
+  pins both behaviors with regression tests.
+- **Frontend: task attachment links ignored `BASE_URL`** (#145).
+  `TaskHeader`'s attachment thumbnails/links hardcoded `/api/v1/uploads/...`
+  instead of using the same `BASE_URL`-aware API root `src/api/client.ts`
+  computes, so attachments 404'd whenever the app was served from a
+  non-root base (e.g. the production `/tasks/` base set in
+  `vite.config.ts`). `client.ts` now exports its `BASE` constant and
+  `TaskHeader` uses it. Also found and fixed alongside #155's test layer.
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a
   `next_label` parameter (the exact label to move to), but the shared
