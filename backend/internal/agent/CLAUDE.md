@@ -204,17 +204,25 @@ same finding re-triggers a Worker forever. Two mechanisms in `pool.go` (the
   a *different* label (a success/progress move). Once the count reaches
   `failureLoopThreshold` (3), the task is escalated to `waiting_human` instead of
   transitioning again: the run is re-written `waiting_human` (usage preserved),
-  the task is re-locked on that run (the `completed` path already cleared the
-  lock), and `task.needs_human` is published — mirroring the transient-retry and
-  cost-budget escalations. This is history-derived (no new column), so it needs
-  no migration and a human move naturally resets the budget.
+  the task is left locked on that run (the completion path clears the lock only
+  in the branches that own that responsibility — see below — not before the
+  escalation), and `task.needs_human` is published — mirroring the
+  transient-retry and cost-budget escalations. This is history-derived (no new
+  column), so it needs no migration and a human move naturally resets the budget.
 
 ## Dispatch / Active Run Locking
 
 `active_agent_run_id` prevents double-dispatch:
 - Dispatcher sets it when creating a run
-- Pool clears it on `completed` / `failed` / `cancelled`
-- Pool leaves it set on `waiting_human`
+- Pool clears it on `failed` / `cancelled`, and on a `completed` run that has no
+  resolvable outcome or whose transition is rejected
+- On a `completed` run that transitions, the pool does **not** pre-clear the
+  lock — `engine.Transition`'s compare-and-swap clears `active_agent_run_id`
+  atomically as part of the label move. Pre-clearing would open a window for the
+  dispatcher to re-pick the task between the clear and the transition landing (a
+  real double-dispatch race, widened by any DB work done in between such as the
+  failure-feedback/loop-check above).
+- Pool leaves it set on `waiting_human` (including the rework-loop escalation)
 - `UpdateTaskLabel` (any workflow transition) always clears it via SQL
 
 A task's `paused` flag (a persisted DB column, set via `PATCH

@@ -415,12 +415,6 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		resolvedLabel = p.resolveOutcome(ctx, job.Input.Task, result.Outcome)
 	}
 
-	// Clear the active-run slot so the dispatcher can re-pick the task.
-	// waiting_human intentionally stays locked until a human acts.
-	if finalStatus == "failed" || finalStatus == "completed" {
-		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
-	}
-
 	if p.pub != nil {
 		p.pub.Publish("task.agent_done", map[string]any{
 			"task_id": job.Input.Task.ID,
@@ -429,6 +423,14 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		})
 	}
 
+	// The active-run lock must be cleared so the dispatcher can re-pick the task —
+	// but NOT before a transition that clears it itself. `engine.Transition` clears
+	// active_agent_run_id atomically as part of its compare-and-swap, so a blanket
+	// pre-clear here would open a window in which the dispatcher re-picks the task
+	// between the clear and the transition landing (a real double-dispatch race).
+	// Instead, each branch below clears the lock exactly when it owns that
+	// responsibility; a successful transition (and the waiting_human escalation,
+	// which intentionally stays locked) leaves it to the branch.
 	switch finalStatus {
 	case "completed":
 		if resolvedLabel != "" {
@@ -459,15 +461,22 @@ func (p *Pool) run(ctx context.Context, job Job) {
 					}
 				}
 				if p.failureLoopExceeded(ctx, job.Input.Task.ID, job.Input.Task.Label, resolvedLabel, log) {
+					// Escalation keeps the task locked on this run (waiting_human),
+					// so the lock is deliberately left set — do not clear it.
 					p.escalateFailureLoop(ctx, job, result, resolvedLabel, log)
 					break
 				}
 			}
 			if err := p.engine.Transition(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
+				// The transition didn't land (e.g. rejected or a concurrent move),
+				// so it did not clear the lock — clear it here so the finished run
+				// doesn't leave the task stuck locked.
 				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
+				_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 			}
 		} else {
-			// No resolved label — block re-dispatch until a human acts.
+			// No resolved label — unlock and block re-dispatch until a human acts.
+			_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 			if p.pub != nil {
 				p.pub.Publish("task.needs_human", map[string]any{
 					"task_id": job.Input.Task.ID,
@@ -476,6 +485,12 @@ func (p *Pool) run(ctx context.Context, job Job) {
 				})
 			}
 		}
+
+	case "failed":
+		// Genuine failure — the task stays on its current label; unlock it so the
+		// next sweep re-picks it (transient failures never reach here; they are
+		// handled by handleTransientFailure, which owns their lock/backoff).
+		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 
 	case "waiting_human":
 		msg := ""
@@ -744,11 +759,10 @@ func (p *Pool) failureLoopExceeded(ctx context.Context, taskID, fromLabel, toLab
 // escalateFailureLoop diverts a task stuck in a rework loop to waiting_human
 // instead of firing the failure transition again. The run has already been
 // persisted as `completed` with its usage; this re-writes it as waiting_human
-// (preserving usage from result) with an explanatory note, re-locks the task on
-// this run so the dispatcher won't re-pick it (the completed path already
-// cleared the lock), and publishes task.needs_human — mirroring the
-// transient-retry and cost-budget escalations, which also park a run in
-// waiting_human and leave the task locked until a human acts.
+// (preserving usage from result) with an explanatory note and publishes
+// task.needs_human. The task's active-run lock is left as-is (this run) — the
+// caller never cleared it — so the task stays locked until a human acts,
+// mirroring the transient-retry and cost-budget escalations.
 func (p *Pool) escalateFailureLoop(ctx context.Context, job Job, result Result, toLabel string, log *slog.Logger) {
 	msg := fmt.Sprintf("Stuck in a rework loop: the %q → %q failure path fired %d times without the task clearing review. Human intervention required.", job.Input.Task.Label, toLabel, failureLoopThreshold)
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
@@ -761,13 +775,6 @@ func (p *Pool) escalateFailureLoop(ctx context.Context, job Job, result Result, 
 		ID:           job.RunID,
 	}); err != nil {
 		log.Warn("pool: failure-loop escalation: set run status", "err", err)
-	}
-	if err := p.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-		CurrentAgentRunID: &job.RunID,
-		ActiveAgentRunID:  &job.RunID,
-		ID:                job.Input.Task.ID,
-	}); err != nil {
-		log.Warn("pool: failure-loop escalation: re-lock task", "err", err)
 	}
 	if p.pub != nil {
 		p.pub.Publish("task.needs_human", map[string]any{

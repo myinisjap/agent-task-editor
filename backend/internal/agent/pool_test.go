@@ -564,6 +564,15 @@ func TestPool_FailureLoop_EscalatesAfterThreshold(t *testing.T) {
 	// Three prior loops == threshold, so this run must escalate instead of looping.
 	insertFailureHistory(t, q, taskID, "agent-review", "work", 3)
 
+	// Model the dispatcher having locked the task on this run (the pool unit-test
+	// harness submits jobs directly, bypassing the dispatcher that normally sets
+	// this). The escalation must LEAVE this lock in place.
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("lock task on run: %v", err)
+	}
+
 	finding := "same medium issue, again"
 	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "failure", Message: &finding}}
 
@@ -578,17 +587,10 @@ func TestPool_FailureLoop_EscalatesAfterThreshold(t *testing.T) {
 	if task.Label != "agent-review" {
 		t.Errorf("expected task to stay on 'agent-review', got %q", task.Label)
 	}
-	// Re-locked on this run so the dispatcher won't immediately re-pick it. The
-	// re-lock lands just after the status flip, so poll briefly.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if task, _ = q.GetTask(context.Background(), taskID); task.ActiveAgentRunID != nil && *task.ActiveAgentRunID == runID {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	// Still locked on this run (the escalation never clears the lock) so the
+	// dispatcher won't re-pick it until a human acts.
 	if task.ActiveAgentRunID == nil || *task.ActiveAgentRunID != runID {
-		t.Errorf("expected task re-locked on run %s, got %v", runID, task.ActiveAgentRunID)
+		t.Errorf("expected task still locked on run %s, got %v", runID, task.ActiveAgentRunID)
 	}
 	cancel()
 

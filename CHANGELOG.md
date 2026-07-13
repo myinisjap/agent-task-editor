@@ -40,6 +40,11 @@ triggers the "Release" workflow the same way.
 - **Default Worker template prompt** now prioritizes any "FEEDBACK FROM PRIOR
   REVIEW" section and explicitly warns against signalling success just because
   code already exists from a prior run.
+- **Closed a double-dispatch race on run completion.** The pool used to clear a
+  task's active-run lock *before* performing the outcome transition; a dispatcher
+  sweep landing in that window could start a second run for the same task. The
+  lock is now cleared by the transition's atomic compare-and-swap (or explicitly
+  only when no transition happens), eliminating the window.
 
 ### Added
 - **Frontend component smoke tests (Vitest + Testing Library)** (#155).
