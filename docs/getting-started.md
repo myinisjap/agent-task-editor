@@ -78,7 +78,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth. Requests using this token are recorded anonymously (no actor name) in the label history audit trail — see `API_TOKENS` below for named tokens. |
 | `API_TOKENS` | _(empty)_ | Comma-separated named bearer tokens, format `name1:token1,name2:token2`. Any of these tokens authenticates like `API_TOKEN`, but the matching name is recorded as the actor in `task_label_history.actor_id` for human-triggered transitions (approve/reject/move label), and surfaced via `GET /tasks/{id}/label-history`. Can be combined with `API_TOKEN` (kept for backward compatibility as an anonymous fallback). If the same token string is reused across multiple names, the last one loaded wins. |
 | `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated (see [Metrics](#metrics)) |
-| `CORS_ORIGINS` | `*` | Comma-separated allowed origins (e.g. `http://localhost:5173`) |
+| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8080` | Comma-separated allowed origins; set to `*` explicitly to allow any origin (not recommended outside trusted single-user localhost use) |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer ([task-sources.md](task-sources.md)) |
 | `SCHEDULE_INTERVAL` | `30s` | Poll interval for the recurring task-schedule sweep ([task-templates.md](task-templates.md#recurring-schedules)) |

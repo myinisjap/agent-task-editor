@@ -444,6 +444,17 @@ triggers the "Release" workflow the same way.
     setups/non-browser clients — each use is now logged as a warning
     server-side — and may be removed in a future release.
 
+### Fixed
+- **`/healthz` no longer requires `API_TOKEN`** (#139). It was accidentally
+  mounted inside the BearerAuth middleware group in `router.go`,
+  contradicting `docs/api.md`/`internal/api/CLAUDE.md` (which documented it
+  as unauthenticated) and breaking the `docker-compose.yml`/
+  `docker-compose.release.yml` healthchecks (plain `wget --spider`, no auth
+  header) whenever `API_TOKEN` was set — the backend container would report
+  unhealthy forever. Moved `/healthz` out of the BearerAuth group (alongside
+  `/ws` and `/metrics`); added a router test locking in that it returns 200
+  with no `Authorization` header even when a bearer token is configured.
+
 ### Changed
 - **Dispatch queue visibility now gated on worker-pool saturation** (#152).
   - The `queue_position` field on task responses — and the "N in queue"
@@ -500,6 +511,20 @@ triggers the "Release" workflow the same way.
   - Docs updated: `frontend/src/api/CLAUDE.md`, `frontend/CLAUDE.md`, and
     `docs/getting-started.md`'s Authentication section now describe the
     runtime flow instead of the non-functional build-time one.
+  - Also fixed a latent header-merge bug in `request()`/`requestWithHeaders()`
+    (`...init` was spread after `headers:`, so a caller-supplied
+    `init.headers` — e.g. `workflows.updateYaml`/`importYaml`'s
+    `application/yaml` Content-Type override — silently dropped the whole
+    merged headers object, including the Authorization header). Found and
+    fixed alongside the frontend component-test layer (#155), which now
+    pins both behaviors with regression tests.
+- **Frontend: task attachment links ignored `BASE_URL`** (#145).
+  `TaskHeader`'s attachment thumbnails/links hardcoded `/api/v1/uploads/...`
+  instead of using the same `BASE_URL`-aware API root `src/api/client.ts`
+  computes, so attachments 404'd whenever the app was served from a
+  non-root base (e.g. the production `/tasks/` base set in
+  `vite.config.ts`). `client.ts` now exports its `BASE` constant and
+  `TaskHeader` uses it. Also found and fixed alongside #155's test layer.
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a
   `next_label` parameter (the exact label to move to), but the shared

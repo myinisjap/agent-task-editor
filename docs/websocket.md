@@ -58,6 +58,18 @@ A task moved to a new label.
 }
 ```
 
+### `task.updated`
+A lightweight "something about this task changed, refetch it" signal. Fired
+from several places — a dependent task's blocked/blocking badge may have
+changed after a label change, a dependency edge was added/removed, a subtask
+was created (for the parent), a subtask's merge status changed, or an agent
+run just completed. The payload intentionally carries nothing but the id —
+clients should refetch the task rather than rely on payload fields.
+
+```json
+{ "type": "task.updated", "payload": { "id": "uuid" } }
+```
+
 ### `task.agent_started`
 An agent run began.
 
@@ -100,6 +112,21 @@ The agent called `request_human` and is waiting for input.
 }
 ```
 
+### `task.review_comments_changed`
+Fired after a completed run applies `resolve_comment` resolutions from the
+agent. Only published when at least one comment was actually resolved.
+
+```json
+{
+  "type": "task.review_comments_changed",
+  "payload": {
+    "task_id": "uuid",
+    "run_id": "uuid",
+    "resolved": 2
+  }
+}
+```
+
 ### `task.rate_limited`
 An agent run was rate-limited by the provider and will be retried automatically.
 
@@ -132,6 +159,22 @@ worktree and deletes the task's local branch from the repo's main clone
 }
 ```
 
+### `task.subtask_conflict`
+A subtask's branch conflicted on merge into its parent. `task_id` here is the
+*child* (conflicting) task. A `task.updated` event is published for both the
+child and the parent right after this event.
+
+```json
+{
+  "type": "task.subtask_conflict",
+  "payload": {
+    "task_id": "uuid",
+    "parent_id": "uuid",
+    "files": ["path/to/file.go"]
+  }
+}
+```
+
 ### `task.created`
 A new task was created by a background source: either the GitHub Issues
 importer (see [task-sources.md](task-sources.md), `source: "github"`) or a
@@ -149,6 +192,37 @@ should refetch the task for full data.
     "repo_id": "uuid",
     "source": "github",
     "source_ref": "owner/repo#123"
+  }
+}
+```
+
+### `repo.clone_done`
+An async repo clone (started by `POST /repos` with an `isClone` request)
+finished successfully. The `ReposPage` listens for this to stop showing its
+cloning spinner and refresh the repo list/state.
+
+```json
+{
+  "type": "repo.clone_done",
+  "payload": {
+    "repo_id": "uuid",
+    "clone_status": "ready",
+    "clone_error": ""
+  }
+}
+```
+
+### `repo.clone_failed`
+An async repo clone failed. Same purpose as `repo.clone_done` — the
+`ReposPage` uses this to stop the spinner and surface the error.
+
+```json
+{
+  "type": "repo.clone_failed",
+  "payload": {
+    "repo_id": "uuid",
+    "clone_status": "error",
+    "clone_error": "git clone failed: ..."
   }
 }
 ```

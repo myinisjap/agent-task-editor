@@ -79,7 +79,7 @@ func Defaults() Config {
 	return Config{
 		DBPath:               "agent-task-editor.db",
 		Port:                 "8080",
-		CORSOrigins:          "*",
+		CORSOrigins:          "http://localhost:5173,http://localhost:8080",
 		LLMBaseURL:           "https://api.openai.com/v1",
 		MaxWorkers:           5,
 		GitHubSyncInterval:   30 * time.Second,

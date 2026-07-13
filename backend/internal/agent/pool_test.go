@@ -478,6 +478,127 @@ func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 	}
 }
 
+// insertFailureHistory records n prior agent-triggered (from→to) failure legs
+// plus their (to→from) return legs, so failureLoopExceeded sees a task already
+// bouncing along the same rework edge. No human rows and no other exit from
+// `from` are inserted, so the walk never breaks early — the count is exactly n
+// regardless of same-second timestamp ordering.
+func insertFailureHistory(t *testing.T, q *gen.Queries, taskID, from, to string, n int) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		f := from
+		if err := q.CreateTaskLabelHistory(ctx, gen.CreateTaskLabelHistoryParams{
+			ID: uuid.NewString(), TaskID: taskID, FromLabel: &f, ToLabel: to, Trigger: "agent",
+		}); err != nil {
+			t.Fatalf("insert failure history: %v", err)
+		}
+		back := to
+		if err := q.CreateTaskLabelHistory(ctx, gen.CreateTaskLabelHistoryParams{
+			ID: uuid.NewString(), TaskID: taskID, FromLabel: &back, ToLabel: from, Trigger: "agent",
+		}); err != nil {
+			t.Fatalf("insert return history: %v", err)
+		}
+	}
+}
+
+// buildJobAtLabel is buildJob with the task's current label overridden (the pool
+// resolves outcomes from job.Input.Task.Label).
+func buildJobAtLabel(runID, taskID, agCfgID, wfID, repoPath, label string, provider agent.Provider) agent.Job {
+	job := buildJob(runID, taskID, agCfgID, wfID, repoPath, provider)
+	job.Input.Task.Label = label
+	return job
+}
+
+// TestPool_FailureLoop_RoutesFeedbackAndTransitions verifies that a completed
+// run with a "failure" outcome (below the loop threshold) routes the agent's
+// summary onto the run as feedback for the next Worker AND still fires the
+// rework transition (agent-review → work).
+func TestPool_FailureLoop_RoutesFeedbackAndTransitions(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+	if _, err := db.SQL().Exec("UPDATE tasks SET label='agent-review' WHERE id=?", taskID); err != nil {
+		t.Fatalf("move task label: %v", err)
+	}
+	// Two prior loops — below failureLoopThreshold, so this run should transition.
+	insertFailureHistory(t, q, taskID, "agent-review", "work", 2)
+
+	finding := "target_label is not validated against workflow labels (medium)"
+	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "failure", Message: &finding}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+	pool.Submit(buildJobAtLabel(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), "agent-review", provider))
+
+	waitForLabel(t, q, taskID, "work")
+	cancel()
+
+	run, _ := q.GetAgentRun(context.Background(), runID)
+	if run.Feedback == nil || *run.Feedback != finding {
+		t.Errorf("expected run feedback %q, got %v", finding, run.Feedback)
+	}
+}
+
+// TestPool_FailureLoop_EscalatesAfterThreshold verifies that once the same
+// agent-review → work failure path has already fired failureLoopThreshold times,
+// the pool stops looping: it parks the run in waiting_human, leaves the task on
+// agent-review (does NOT transition), re-locks the task, and asks for a human.
+func TestPool_FailureLoop_EscalatesAfterThreshold(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+	if _, err := db.SQL().Exec("UPDATE tasks SET label='agent-review' WHERE id=?", taskID); err != nil {
+		t.Fatalf("move task label: %v", err)
+	}
+	// Three prior loops == threshold, so this run must escalate instead of looping.
+	insertFailureHistory(t, q, taskID, "agent-review", "work", 3)
+
+	// Model the dispatcher having locked the task on this run (the pool unit-test
+	// harness submits jobs directly, bypassing the dispatcher that normally sets
+	// this). The escalation must LEAVE this lock in place.
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("lock task on run: %v", err)
+	}
+
+	finding := "same medium issue, again"
+	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "failure", Message: &finding}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pool.Start(ctx)
+	pool.Submit(buildJobAtLabel(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), "agent-review", provider))
+
+	waitForStatus(t, q, runID, "waiting_human")
+
+	// Task must NOT have moved to work — the loop is broken, not continued.
+	task, _ := q.GetTask(context.Background(), taskID)
+	if task.Label != "agent-review" {
+		t.Errorf("expected task to stay on 'agent-review', got %q", task.Label)
+	}
+	// Still locked on this run (the escalation never clears the lock) so the
+	// dispatcher won't re-pick it until a human acts.
+	if task.ActiveAgentRunID == nil || *task.ActiveAgentRunID != runID {
+		t.Errorf("expected task still locked on run %s, got %v", runID, task.ActiveAgentRunID)
+	}
+	cancel()
+
+	if !pub.hasEvent("task.needs_human") {
+		t.Errorf("expected task.needs_human event on escalation")
+	}
+}
+
 // blockingProvider waits until its context is cancelled, mimicking a CLI
 // subprocess that only returns once killed by exec.CommandContext.
 type blockingProvider struct{}
