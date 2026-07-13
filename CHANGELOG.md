@@ -28,6 +28,14 @@ triggers the "Release" workflow the same way.
   `X-Label-Conflict` header (matching `POST /agents` behavior), and the
   frontend shows it as an informational note instead of a blocking alert.
 
+### Changed
+- Documented 5 previously-undocumented WebSocket events (`task.updated`,
+  `task.review_comments_changed`, `task.subtask_conflict`,
+  `repo.clone_done`, `repo.clone_failed`), the dependencies/subtasks REST
+  endpoints, the `cancelled` run status, and refreshed stale `CLAUDE.md`
+  notes on `METRICS_TOKEN` and WebSocket ticket-based auth. Docs-only, no
+  behavior change.
+
 ## [0.10.0] - 2026-07-12
 
 ### Added
