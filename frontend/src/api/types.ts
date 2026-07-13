@@ -2898,6 +2898,8 @@ export interface components {
             max_tokens?: number;
             timeout_secs?: number;
             max_turns?: number;
+            /** @description Dispatch failover order among configs sharing a label: lower is tried first; ties broken by newest created_at. At dispatch the first non-rate-limited match wins, so a higher-priority-value config acts as a backup when the primary is rate-limit/usage-blocked. Default 0. */
+            priority?: number;
             /** @description Number of automatic consecutive retries allowed for a task after a transient provider error (rate limit, network blip, upstream 5xx) before it is left failed / escalated to waiting_human for a human to intervene. 0 disables auto-retry. Default 3. */
             max_retries?: number;
             /** @description Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (base * 2^attempt, capped at 10 minutes) is applied on top of this base. Default 30. */

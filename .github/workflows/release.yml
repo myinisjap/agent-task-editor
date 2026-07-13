@@ -6,20 +6,16 @@ name: Release
 #
 # Two ways to cut a release:
 #
-#   1. Run this workflow manually (Actions tab -> Release -> Run workflow)
-#      and pick a version bump (patch/minor/major). The `prepare-release`
-#      job below moves CHANGELOG.md's `[Unreleased]` section under a new
-#      version heading, pushes that to main, then creates and pushes the
-#      matching tag — all in this same run. This is deliberately one
-#      workflow rather than two: a tag pushed by the default GITHUB_TOKEN
-#      does NOT trigger other workflow runs (GitHub's loop-prevention), so
-#      a separate "bump and tag" workflow would push a tag that never
-#      fires the build/release jobs below.
+#   1. Run the "Prepare Release" workflow manually (Actions tab -> Prepare
+#      Release -> Run workflow) and pick a version bump (patch/minor/major).
+#      It moves CHANGELOG.md's `[Unreleased]` section under a new version
+#      heading, pushes that to main, then creates and pushes the matching
+#      tag — which is what triggers this workflow below.
 #
-#   2. Push a tag directly, unchanged from before:
+#   2. Push a tag directly:
 #        git tag v1.2.3 && git push origin v1.2.3
 #      Useful for hotfixes where you want to hand-edit CHANGELOG.md
-#      yourself before tagging. This skips the prepare-release job.
+#      yourself before tagging. Triggers this workflow the same way.
 #
 # Publishes:
 #   ghcr.io/myinisjap/agent-task-editor-backend:{1.2.3,1.2,1,latest}
@@ -35,96 +31,14 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      bump:
-        description: Version bump type
-        type: choice
-        required: true
-        default: patch
-        options:
-          - patch
-          - minor
-          - major
 
 permissions:
-  contents: write   # push changelog commit/tag, create the GitHub Release
+  contents: write   # create the GitHub Release
   packages: write   # push images to GHCR
 
 jobs:
-  prepare-release:
-    name: Bump changelog & tag
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: main
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Check [Unreleased] section has content
-        run: |
-          section="$(awk '/^## \[Unreleased\]/{flag=1;next}/^## \[/{flag=0}flag' CHANGELOG.md)"
-          if [ -z "$(echo "$section" | tr -d '[:space:]')" ]; then
-            echo "::error::CHANGELOG.md's [Unreleased] section is empty; add release notes before cutting a release."
-            exit 1
-          fi
-
-      - name: Compute next version
-        id: version
-        run: |
-          latest_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
-          latest_tag="${latest_tag:-v0.0.0}"
-          version="${latest_tag#v}"
-          IFS='.' read -r major minor patch <<< "$version"
-          case "${{ inputs.bump }}" in
-            major) major=$((major + 1)); minor=0; patch=0 ;;
-            minor) minor=$((minor + 1)); patch=0 ;;
-            patch) patch=$((patch + 1)) ;;
-          esac
-          new_tag="v${major}.${minor}.${patch}"
-          if git rev-parse "$new_tag" >/dev/null 2>&1; then
-            echo "::error::Tag $new_tag already exists."
-            exit 1
-          fi
-          echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
-          echo "tag=$new_tag" >> "$GITHUB_OUTPUT"
-
-      - name: Move [Unreleased] notes under the new version heading
-        run: |
-          awk -v ver="${{ steps.version.outputs.version }}" -v date="$(date +%Y-%m-%d)" '
-            /^## \[Unreleased\]/ {
-              print
-              print ""
-              print "## [" ver "] - " date
-              next
-            }
-            { print }
-          ' CHANGELOG.md > CHANGELOG.md.tmp
-          mv CHANGELOG.md.tmp CHANGELOG.md
-
-      - name: Commit and push changelog to main
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md
-          git commit -m "Release ${{ steps.version.outputs.tag }}"
-          git push origin HEAD:main
-
-      - name: Create and push tag
-        run: |
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
-
   images:
     name: Build & push ${{ matrix.component }} image
-    needs: [prepare-release]
-    if: |
-      always() &&
-      (github.event_name == 'push' || needs.prepare-release.result == 'success')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -136,8 +50,6 @@ jobs:
             context: ./frontend
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -157,13 +69,10 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}-${{ matrix.component }}
-          # `value=` overrides the ref metadata-action would otherwise infer
-          # from github.ref, which for a workflow_dispatch run is a branch
-          # (e.g. main), not the tag prepare-release just created.
           tags: |
-            type=semver,pattern={{version}},value=${{ needs.prepare-release.outputs.tag || github.ref_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare-release.outputs.tag || github.ref_name }}
-            type=semver,pattern={{major}},value=${{ needs.prepare-release.outputs.tag || github.ref_name }}
+            type=semver,pattern={{version}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}},value=${{ github.ref_name }}
             type=raw,value=latest
 
       - name: Build and push
@@ -181,19 +90,13 @@ jobs:
           # of "dev". Harmless no-op for the frontend image, which has no
           # matching ARG VERSION in its Dockerfile.
           build-args: |
-            VERSION=${{ needs.prepare-release.outputs.tag || github.ref_name }}
+            VERSION=${{ github.ref_name }}
 
   backend-all-cli:
     name: Build & push backend all-cli image
-    needs: [prepare-release]
-    if: |
-      always() &&
-      (github.event_name == 'push' || needs.prepare-release.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -216,9 +119,9 @@ jobs:
           flavor: |
             suffix=-all-cli,onlatest=true
           tags: |
-            type=semver,pattern={{version}},value=${{ needs.prepare-release.outputs.tag || github.ref_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare-release.outputs.tag || github.ref_name }}
-            type=semver,pattern={{major}},value=${{ needs.prepare-release.outputs.tag || github.ref_name }}
+            type=semver,pattern={{version}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}},value=${{ github.ref_name }}
             type=raw,value=latest
 
       - name: Build and push
@@ -232,7 +135,7 @@ jobs:
           cache-from: type=gha,scope=backend-all-cli
           cache-to: type=gha,mode=max,scope=backend-all-cli
           build-args: |
-            VERSION=${{ needs.prepare-release.outputs.tag || github.ref_name }}
+            VERSION=${{ github.ref_name }}
             INSTALL_GEMINI_CLI=true
             INSTALL_CODEX_CLI=true
             INSTALL_QWEN_CLI=true
@@ -240,22 +143,14 @@ jobs:
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [prepare-release, images, backend-all-cli]
-    if: |
-      always() &&
-      (github.event_name == 'push' || needs.prepare-release.result == 'success') &&
-      needs.images.result == 'success' &&
-      needs.backend-all-cli.result == 'success'
+    needs: [images, backend-all-cli]
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
 
       - name: Extract changelog section
         id: changelog
         run: |
-          tag="${{ needs.prepare-release.outputs.tag || github.ref_name }}"
-          version="${tag#v}"
+          version="${GITHUB_REF_NAME#v}"
           notes_file="$(mktemp)"
           # Pull the body of the matching CHANGELOG section (## [x.y.z] ... up to
           # the next ## heading). Falls back to auto-generated notes if absent.
@@ -274,7 +169,7 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
+          tag_name: ${{ github.ref_name }}
           body_path: ${{ steps.changelog.outputs.has_notes == 'true' && steps.changelog.outputs.notes_file || '' }}
           generate_release_notes: ${{ steps.changelog.outputs.has_notes != 'true' }}
           fail_on_unmatched_files: false

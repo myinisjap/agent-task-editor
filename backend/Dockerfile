@@ -72,10 +72,13 @@ RUN mkdir -p /data /home/node/go /home/node/.cache/go-build && \
     chown node: /home/node/.gitconfig
 
 WORKDIR /app
+# entrypoint rarely changes, so copy it before the binaries (which change every
+# code edit) to keep this chmod layer cached across rebuilds.
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY --from=builder /app/bin/server .
 COPY --from=builder /app/bin/mcp-server .
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chown -R node: /app && chmod +x /usr/local/bin/entrypoint.sh
+RUN chown -R node: /app
 
 # Stays root so the entrypoint can remap the node user (PUID/PGID) and chown the
 # state dirs; it then drops to node via su-exec before running the server.

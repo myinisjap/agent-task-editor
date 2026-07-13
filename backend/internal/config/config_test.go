@@ -31,6 +31,26 @@ func TestDefaults_PopulatesRequiredFields(t *testing.T) {
 	}
 }
 
+func TestDefaults_CORSOriginsDefaultsToLocalOrigins(t *testing.T) {
+	cfg := config.Defaults()
+	want := "http://localhost:5173,http://localhost:8080"
+	if cfg.CORSOrigins != want {
+		t.Errorf("expected default CORSOrigins %q, got %q", want, cfg.CORSOrigins)
+	}
+}
+
+func TestLoad_CORSOriginsWildcard_ExplicitOverride(t *testing.T) {
+	t.Setenv("CORS_ORIGINS", "*")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.CORSOrigins != "*" {
+		t.Errorf("expected explicit CORS_ORIGINS=* to be honored, got %q", cfg.CORSOrigins)
+	}
+}
+
 func TestDefaults_LogRetentionDisabledByDefault(t *testing.T) {
 	cfg := config.Defaults()
 	if cfg.LogRetentionDays != 0 {

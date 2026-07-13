@@ -106,18 +106,30 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		return
 	}
 
-	matched := matchConfig(configs, t.Label)
-	if matched == nil {
+	matches := matchConfigs(configs, t.Label)
+	if len(matches) == 0 {
 		log.Debug("dispatcher: no active config for label", "label", t.Label)
 		return
 	}
 
-	// Skip dispatch if the agent config is currently rate-limited.
-	if d.RateLimits != nil {
-		if blocked, until := d.RateLimits.IsBlocked(matched.ID); blocked {
-			log.Info("dispatcher: skipping rate-limited agent config", "agent_config_id", matched.ID, "unblocked_at", until)
-			return
+	// Walk matches in priority order (matches is already sorted by the SQL
+	// query); the first config that isn't rate-limit-blocked wins. This turns
+	// "primary config ran out of usage credits" into automatic failover to a
+	// backup config sharing the same label.
+	var matched *gen.AgentConfig
+	for _, cand := range matches {
+		if d.RateLimits != nil {
+			if blocked, until := d.RateLimits.IsBlocked(cand.ID); blocked {
+				log.Info("dispatcher: skipping rate-limited config, trying next", "agent_config_id", cand.ID, "unblocked_at", until)
+				continue
+			}
 		}
+		matched = cand
+		break
+	}
+	if matched == nil {
+		log.Info("dispatcher: all matching configs rate-limited, skipping dispatch", "label", t.Label)
+		return
 	}
 
 	// Cost-budget guard: only gates the sweep path. DispatchReply (a human
@@ -263,7 +275,9 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 		if cerr != nil {
 			return "", cerr
 		}
-		matched = matchConfig(configs, t.Label)
+		if matches := matchConfigs(configs, t.Label); len(matches) > 0 {
+			matched = matches[0]
+		}
 	}
 	if matched == nil {
 		return "", ErrNoMatchingConfig
@@ -505,12 +519,13 @@ func (d *Dispatcher) buildTransitionHints(ctx context.Context, taskID, workflowI
 	return hints
 }
 
-// matchConfig returns the first enabled config whose labels include the task's
-// label. configs is ordered newest-first (created_at DESC), so the most recently
-// created config wins on a tie. A parse failure is logged and the config skipped;
-// a second match is logged as an ambiguity warning but does not change the winner.
-func matchConfig(configs []gen.AgentConfig, label string) *gen.AgentConfig {
-	var matched *gen.AgentConfig
+// matchConfigs returns every enabled config whose labels include the task's
+// label, in the order configs is given (ListAgentConfigs already sorts by
+// priority ASC, created_at DESC, so the returned slice is priority order,
+// newest-first tiebreak). A parse failure is logged and the config skipped.
+// Multiple matches are a supported feature (dispatch failover), not a warning.
+func matchConfigs(configs []gen.AgentConfig, label string) []*gen.AgentConfig {
+	var matched []*gen.AgentConfig
 	for i := range configs {
 		cfg := &configs[i]
 		if cfg.Enabled != 1 {
@@ -525,13 +540,12 @@ func matchConfig(configs []gen.AgentConfig, label string) *gen.AgentConfig {
 			if l != label {
 				continue
 			}
-			if matched == nil {
-				matched = cfg
-			} else {
-				slog.Warn("dispatcher: multiple configs match label, using newest", "component", "dispatcher", "label", label, "using", matched.Name, "also_matched", cfg.Name)
-			}
+			matched = append(matched, cfg)
 			break
 		}
+	}
+	if len(matched) > 1 {
+		slog.Debug("dispatcher: multiple configs match label", "component", "dispatcher", "label", label, "count", len(matched))
 	}
 	return matched
 }

@@ -4,21 +4,124 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-To cut a release, run the "Release" workflow manually from the Actions tab and
-pick a version bump (patch/minor/major) — it moves this file's `[Unreleased]`
-section under a new version heading, commits that to main, tags it, then
-builds and pushes the images and creates a GitHub Release using that section
-as the release notes. The `[Unreleased]` section must have content or the
-workflow fails.
+To cut a release, run the "Prepare Release" workflow manually from the Actions
+tab and pick a version bump (patch/minor/major) — it moves this file's
+`[Unreleased]` section under a new version heading, commits that to main, then
+tags it. That tag push triggers the separate "Release" workflow, which builds
+and pushes the images and creates a GitHub Release using that section as the
+release notes. The `[Unreleased]` section must have content or "Prepare
+Release" fails.
 
 Alternatively, for hotfixes where you want to hand-edit this file yourself,
 add a `## [x.y.z] - YYYY-MM-DD` section below with the changes and push the
 matching tag directly (`git tag vx.y.z && git push origin vx.y.z`), which
-triggers the same build/release steps.
+triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Fixed
+- **Agent rework loops no longer run unbounded.** A reviewer/tester that keeps
+  reporting the same finding used to send a task back along its `failure`
+  transition (e.g. `agent-review → work`) indefinitely — every transition clears
+  the dispatch lock, so nothing capped the cycle until a human paused the task.
+  The pool now:
+  - **Routes failure findings as feedback, not a plan.** When a run completes
+    with `outcome='failure'`, its summary is stored on the run's `feedback` so
+    the next agent receives it under "FEEDBACK FROM PRIOR REVIEW" (a fix
+    request) instead of only under "NOTES FROM PRIOR AGENT" (which the default
+    Worker prompt treats as an implementation plan — the reason the next Worker
+    kept "verifying" already-committed code and advancing without fixing
+    anything).
+  - **Breaks the loop after a threshold.** If the same agent failure-path
+    transition has already fired 3 times in a row — no human action and no
+    success exit from the origin label in between — the task is escalated to
+    `waiting_human` (run parked in `waiting_human`, task re-locked,
+    `task.needs_human` published) rather than re-dispatched again.
+- **Default Worker template prompt** now prioritizes any "FEEDBACK FROM PRIOR
+  REVIEW" section and explicitly warns against signalling success just because
+  code already exists from a prior run.
+- **Closed a double-dispatch race on run completion.** The pool used to clear a
+  task's active-run lock *before* performing the outcome transition; a dispatcher
+  sweep landing in that window could start a second run for the same task. The
+  lock is now cleared by the transition's atomic compare-and-swap (or explicitly
+  only when no transition happens), eliminating the window.
+
 ### Added
+- **Frontend component smoke tests (Vitest + Testing Library)** (#155).
+  - New `jsdom`-backed component-test layer (`@testing-library/react` +
+    `@testing-library/jest-dom` + `@testing-library/user-event`) alongside
+    the existing pure-function tests in `src/lib`; wired into the same
+    `npm run test:coverage` CI step, no new CI job/infra needed.
+  - Coverage added for: `TaskBoard` drag-to-move (real `@dnd-kit` drag
+    simulated via mouse events) including optimistic-update rollback on a
+    rejected `moveLabel` call and the blocked-task move confirmation;
+    `BoardPage` bulk actions (pause/archive/move-to, plus the
+    partial-failure error banner); `TaskDetailPage` tab switching
+    (Overview/Logs/Diff); `TaskActions` approve/reject/reply enablement
+    rules.
+  - New regression tests for review findings #138 (missing `Authorization`
+    header on most API calls — since superseded on `main` by the runtime
+    API-token flow, see `authToken.ts`) and #145 (attachment URLs ignoring
+    `BASE_URL`, fixed alongside this change — see `[0.7.0]`'s Fixed section).
+    #147 (hover-only board-card controls on touch) has a best-effort
+    DOM-presence test only — jsdom can't simulate real hover/touch, so full
+    verification is deferred to a future Playwright E2E layer (considered
+    for this issue but descoped to keep this change to the component-test
+    layer; see the issue for scope notes).
+  - Minor testability-only production changes: `RunLogPane`/`DiffReviewPane`
+    root elements got a `data-testid` hook; `client.ts` now exports its
+    `BASE` constant so `TaskHeader` can share it instead of hardcoding an
+    API path.
+
+### Changed
+- **Safer default `CORS_ORIGINS` and a startup warning for unauthenticated
+  deployments.** The default `CORS_ORIGINS` is now
+  `http://localhost:5173,http://localhost:8080` instead of `*`, closing a
+  drive-by cross-origin attack where any web page open in the operator's
+  browser could call the unauthenticated local API. Set `CORS_ORIGINS=*`
+  explicitly to restore the old wide-open behavior. Starting with no
+  `API_TOKEN` now logs a `slog.Warn`; the warning escalates when
+  `CORS_ORIGINS=*` is also set.
+- Documented 5 previously-undocumented WebSocket events (`task.updated`,
+  `task.review_comments_changed`, `task.subtask_conflict`,
+  `repo.clone_done`, `repo.clone_failed`), the dependencies/subtasks REST
+  endpoints, the `cancelled` run status, and refreshed stale `CLAUDE.md`
+  notes on `METRICS_TOKEN` and WebSocket ticket-based auth. Docs-only, no
+  behavior change.
+
+### Fixed
+- **Editing an enabled agent config no longer blocks on a shared-label
+  "conflict".** `PUT /agents/{id}` used to reject enabling a config with a
+  `409` if another enabled config already used the same label — a leftover
+  guard from before priority-based failover, which relies on exactly that
+  setup. Enabling now succeeds and surfaces the sharing config via the
+  `X-Label-Conflict` header (matching `POST /agents` behavior), and the
+  frontend shows it as an informational note instead of a blocking alert.
+
+## [0.10.0] - 2026-07-12
+
+### Added
+- **Agent config priority / failover.** Agent configs now have a `priority`
+  (lower runs first). When multiple enabled configs share a label, dispatch
+  tries them in priority order and skips any that are currently
+  rate-limited/out of usage credits, so a lower-priority config
+  automatically takes over for a primary that's blocked, and fails back once
+  the block expires.
+
+## [0.9.0] - 2026-07-12
+
+### Added
+- **Container-local `qwen_code` config.** The backend now reads qwen settings
+  from a repo-managed `backend/qwen-config/settings.json` (mounted read-write as
+  the single `settings.json` under `QWEN_HOME=/home/node/qwen-home`) instead of
+  the host's `~/.qwen`. This lets the container point the model `baseUrl` at
+  `host.docker.internal:8081` (the host-published model server) while a host
+  qwen install keeps `localhost` — the two no longer share, so neither breaks
+  the other. `QWEN_RUNTIME_DIR=/tmp/qwen` and an entrypoint `chown` keep qwen's
+  own startup writes (e.g. `output-language.md`) off the read-only-ish config
+  and out of the repo. Provider API-key fields ship as the non-secret
+  placeholder `local-no-auth` (the local server ignores the value but requires
+  the env key to be present).
 - **`dev.sh --all-cli`.** `dev.sh` (build-from-source) now supports the same
   `--all-cli` flag as `run.sh` (prebuilt-image runner): it sets
   `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`/`INSTALL_QWEN_CLI=true` before
@@ -45,6 +148,19 @@ triggers the same build/release steps.
   but the `qwen` CLI's turn-budget flag is `--max-session-turns` — every run
   was rejected by the CLI's argument parser before any work happened. Fixed
   the flag name; docs and unit tests updated to match.
+- **Manually-triggered releases built and published images twice.** The
+  "Release" workflow's `prepare-release` job pushed the version tag using a
+  GitHub App installation token (needed to push past `main`'s branch
+  protection), but App-token pushes aren't subject to GitHub's same-workflow
+  loop-prevention the way default-`GITHUB_TOKEN` pushes are — so that tag
+  push retriggered the very same workflow via its `push: tags: v*` trigger,
+  running the image build/publish/release jobs a second time for the same
+  tag. Split into two workflows: `.github/workflows/prepare-release.yml`
+  (`workflow_dispatch` only — bumps the changelog and pushes the tag) and
+  the trimmed `.github/workflows/release.yml` (`push: tags: v*` only —
+  builds/publishes images and creates the GitHub Release). The tag push
+  from the first now triggers the second exactly once; the
+  `git tag vx.y.z && git push origin vx.y.z` hotfix path is unaffected.
 
 ## [0.8.0] - 2026-07-10
 
@@ -306,6 +422,17 @@ triggers the same build/release steps.
     setups/non-browser clients — each use is now logged as a warning
     server-side — and may be removed in a future release.
 
+### Fixed
+- **`/healthz` no longer requires `API_TOKEN`** (#139). It was accidentally
+  mounted inside the BearerAuth middleware group in `router.go`,
+  contradicting `docs/api.md`/`internal/api/CLAUDE.md` (which documented it
+  as unauthenticated) and breaking the `docker-compose.yml`/
+  `docker-compose.release.yml` healthchecks (plain `wget --spider`, no auth
+  header) whenever `API_TOKEN` was set — the backend container would report
+  unhealthy forever. Moved `/healthz` out of the BearerAuth group (alongside
+  `/ws` and `/metrics`); added a router test locking in that it returns 200
+  with no `Authorization` header even when a bearer token is configured.
+
 ### Changed
 - **Dispatch queue visibility now gated on worker-pool saturation** (#152).
   - The `queue_position` field on task responses — and the "N in queue"
@@ -362,6 +489,20 @@ triggers the same build/release steps.
   - Docs updated: `frontend/src/api/CLAUDE.md`, `frontend/CLAUDE.md`, and
     `docs/getting-started.md`'s Authentication section now describe the
     runtime flow instead of the non-functional build-time one.
+  - Also fixed a latent header-merge bug in `request()`/`requestWithHeaders()`
+    (`...init` was spread after `headers:`, so a caller-supplied
+    `init.headers` — e.g. `workflows.updateYaml`/`importYaml`'s
+    `application/yaml` Content-Type override — silently dropped the whole
+    merged headers object, including the Authorization header). Found and
+    fixed alongside the frontend component-test layer (#155), which now
+    pins both behaviors with regression tests.
+- **Frontend: task attachment links ignored `BASE_URL`** (#145).
+  `TaskHeader`'s attachment thumbnails/links hardcoded `/api/v1/uploads/...`
+  instead of using the same `BASE_URL`-aware API root `src/api/client.ts`
+  computes, so attachments 404'd whenever the app was served from a
+  non-root base (e.g. the production `/tasks/` base set in
+  `vite.config.ts`). `client.ts` now exports its `BASE` constant and
+  `TaskHeader` uses it. Also found and fixed alongside #155's test layer.
 - **`anthropic`/`llm` providers' `signal_complete` tool now actually
   transitions the task.** The tool schema advertised to the model took a
   `next_label` parameter (the exact label to move to), but the shared

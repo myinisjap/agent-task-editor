@@ -415,12 +415,6 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		resolvedLabel = p.resolveOutcome(ctx, job.Input.Task, result.Outcome)
 	}
 
-	// Clear the active-run slot so the dispatcher can re-pick the task.
-	// waiting_human intentionally stays locked until a human acts.
-	if finalStatus == "failed" || finalStatus == "completed" {
-		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
-	}
-
 	if p.pub != nil {
 		p.pub.Publish("task.agent_done", map[string]any{
 			"task_id": job.Input.Task.ID,
@@ -429,6 +423,14 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		})
 	}
 
+	// The active-run lock must be cleared so the dispatcher can re-pick the task —
+	// but NOT before a transition that clears it itself. `engine.Transition` clears
+	// active_agent_run_id atomically as part of its compare-and-swap, so a blanket
+	// pre-clear here would open a window in which the dispatcher re-picks the task
+	// between the clear and the transition landing (a real double-dispatch race).
+	// Instead, each branch below clears the lock exactly when it owns that
+	// responsibility; a successful transition (and the waiting_human escalation,
+	// which intentionally stays locked) leaves it to the branch.
 	switch finalStatus {
 	case "completed":
 		if resolvedLabel != "" {
@@ -436,11 +438,45 @@ func (p *Pool) run(ctx context.Context, job Job) {
 			if result.Message != nil {
 				note = *result.Message
 			}
+			// A "failure" outcome sends the task back along a rework path (e.g.
+			// agent-review → work). Two things have to happen here that a plain
+			// forward transition doesn't need:
+			//   1. Route the findings to the next run as explicit *feedback* (a fix
+			//      request), not just as the "prior plan". Otherwise the next Worker
+			//      reads them under "NOTES FROM PRIOR AGENT" as an implementation
+			//      plan, sees the code already written, and advances without ever
+			//      addressing them — the core of the observed infinite loop.
+			//   2. Break the loop if this same rework edge has already fired
+			//      repeatedly without the task clearing review. The failure path is
+			//      otherwise unbounded (every transition clears the dispatch lock),
+			//      so a reviewer stuck on the same finding re-triggers a Worker
+			//      forever until a human pauses it.
+			if result.Outcome == "failure" {
+				if result.Message != nil && *result.Message != "" {
+					if err := p.q.SetAgentRunFeedback(ctx, gen.SetAgentRunFeedbackParams{
+						Feedback: result.Message,
+						ID:       job.RunID,
+					}); err != nil {
+						log.Warn("pool: route failure feedback", "err", err)
+					}
+				}
+				if p.failureLoopExceeded(ctx, job.Input.Task.ID, job.Input.Task.Label, resolvedLabel, log) {
+					// Escalation keeps the task locked on this run (waiting_human),
+					// so the lock is deliberately left set — do not clear it.
+					p.escalateFailureLoop(ctx, job, result, resolvedLabel, log)
+					break
+				}
+			}
 			if err := p.engine.Transition(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
+				// The transition didn't land (e.g. rejected or a concurrent move),
+				// so it did not clear the lock — clear it here so the finished run
+				// doesn't leave the task stuck locked.
 				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
+				_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 			}
 		} else {
-			// No resolved label — block re-dispatch until a human acts.
+			// No resolved label — unlock and block re-dispatch until a human acts.
+			_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 			if p.pub != nil {
 				p.pub.Publish("task.needs_human", map[string]any{
 					"task_id": job.Input.Task.ID,
@@ -449,6 +485,12 @@ func (p *Pool) run(ctx context.Context, job Job) {
 				})
 			}
 		}
+
+	case "failed":
+		// Genuine failure — the task stays on its current label; unlock it so the
+		// next sweep re-picks it (transient failures never reach here; they are
+		// handled by handleTransientFailure, which owns their lock/backoff).
+		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
 
 	case "waiting_human":
 		msg := ""
@@ -674,6 +716,74 @@ func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) st
 		match = t.ToLabel
 	}
 	return match
+}
+
+// failureLoopThreshold is how many times the same agent failure-path transition
+// (e.g. agent-review → work) may fire in a row — with no human action and no
+// success exit from the origin label in between — before the pool stops looping
+// and escalates the task to a human. The failure path is otherwise unbounded:
+// every transition clears the dispatch lock, so a reviewer that keeps reporting
+// the same issue would re-trigger a Worker forever (see the observed 1.5h loop).
+const failureLoopThreshold = 3
+
+// failureLoopExceeded reports whether the (fromLabel → toLabel) agent transition
+// about to fire has already fired failureLoopThreshold times in the recent tail
+// of the task's label history — i.e. the task is stuck bouncing along the same
+// rework edge. The window resets on any human-triggered transition or on any
+// exit from fromLabel to a label other than toLabel (a success/progress move),
+// so a task that genuinely advances and later revisits the edge starts fresh.
+func (p *Pool) failureLoopExceeded(ctx context.Context, taskID, fromLabel, toLabel string, log *slog.Logger) bool {
+	hist, err := p.q.ListTaskLabelHistory(ctx, taskID)
+	if err != nil {
+		log.Warn("pool: failure-loop check: list history", "err", err)
+		return false
+	}
+	count := 0
+	// ListTaskLabelHistory is ordered oldest-first; walk newest → oldest.
+	for i := len(hist) - 1; i >= 0; i-- {
+		h := hist[i]
+		if h.Trigger == string(workflow.TriggerHuman) {
+			break // a human touched this task — reset the loop budget
+		}
+		if h.FromLabel == nil || *h.FromLabel != fromLabel {
+			continue // not an exit from the origin label (e.g. the work → review leg)
+		}
+		if h.ToLabel != toLabel {
+			break // exited the origin label a different way — this loop was broken
+		}
+		count++
+	}
+	return count >= failureLoopThreshold
+}
+
+// escalateFailureLoop diverts a task stuck in a rework loop to waiting_human
+// instead of firing the failure transition again. The run has already been
+// persisted as `completed` with its usage; this re-writes it as waiting_human
+// (preserving usage from result) with an explanatory note and publishes
+// task.needs_human. The task's active-run lock is left as-is (this run) — the
+// caller never cleared it — so the task stays locked until a human acts,
+// mirroring the transient-retry and cost-budget escalations.
+func (p *Pool) escalateFailureLoop(ctx context.Context, job Job, result Result, toLabel string, log *slog.Logger) {
+	msg := fmt.Sprintf("Stuck in a rework loop: the %q → %q failure path fired %d times without the task clearing review. Human intervention required.", job.Input.Task.Label, toLabel, failureLoopThreshold)
+	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status:       "waiting_human",
+		StoredInfo:   result.StoredInfo,
+		Notes:        &msg,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		ID:           job.RunID,
+	}); err != nil {
+		log.Warn("pool: failure-loop escalation: set run status", "err", err)
+	}
+	if p.pub != nil {
+		p.pub.Publish("task.needs_human", map[string]any{
+			"task_id": job.Input.Task.ID,
+			"run_id":  job.RunID,
+			"message": msg,
+		})
+	}
+	log.Warn("pool: failure loop exceeded threshold, escalating to waiting_human", "from", job.Input.Task.Label, "to", toLabel, "threshold", failureLoopThreshold)
 }
 
 // persistLogs drains logCh and writes to SQLite in batches wrapped in a transaction.

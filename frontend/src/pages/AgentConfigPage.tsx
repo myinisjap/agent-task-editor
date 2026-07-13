@@ -66,6 +66,7 @@ export default function AgentConfigPage() {
       max_tokens: a.max_tokens,
       timeout_secs: a.timeout_secs,
       max_turns: a.max_turns,
+      priority: a.priority ?? 0,
       max_retries: a.max_retries,
       retry_backoff_secs: a.retry_backoff_secs,
       resume_sessions: a.resume_sessions ?? true,
@@ -118,7 +119,10 @@ export default function AgentConfigPage() {
     try {
       const payload = { ...form, env: sanitizeEnv(form.env) }
       if (selected) {
-        await updateAgent(selected.id, { ...payload, enabled: !!selected.enabled })
+        const { labelConflict } = await updateAgent(selected.id, { ...payload, enabled: !!selected.enabled })
+        if (labelConflict) {
+          alert(`Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`)
+        }
       } else {
         const { labelConflict } = await createAgent(payload)
         if (labelConflict) {
@@ -137,8 +141,8 @@ export default function AgentConfigPage() {
     if (!selected) return
     setSaving(true)
     try {
-      const updated = await updateAgent(selected.id, { ...form, enabled: !selected.enabled })
-      selectAgent(updated)
+      const { config } = await updateAgent(selected.id, { ...form, enabled: !selected.enabled })
+      selectAgent(config)
     } catch (e: any) {
       alert(e.message)
     } finally {
@@ -163,6 +167,7 @@ export default function AgentConfigPage() {
             max_tokens: a.max_tokens,
             timeout_secs: a.timeout_secs,
             max_turns: a.max_turns,
+            priority: a.priority ?? 0,
             max_retries: a.max_retries,
             retry_backoff_secs: a.retry_backoff_secs,
             resume_sessions: a.resume_sessions ?? true,

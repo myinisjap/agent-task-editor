@@ -223,6 +223,13 @@ components:
         max_tokens:    { type: integer }
         timeout_secs:  { type: integer }
         max_turns:     { type: integer }
+        priority:
+          type: integer
+          description: >
+            Dispatch failover order among configs sharing a label: lower is tried
+            first; ties broken by newest created_at. At dispatch the first
+            non-rate-limited match wins, so a higher-priority-value config acts as a
+            backup when the primary is rate-limit/usage-blocked. Default 0.
         max_retries:
           type: integer
           description: >
