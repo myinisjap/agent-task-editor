@@ -19,6 +19,42 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-13
+
+### Fixed
+- **Agent rework loops no longer run unbounded.** A reviewer/tester that keeps
+  reporting the same finding used to send a task back along its `failure`
+  transition (e.g. `agent-review → work`) indefinitely — every transition clears
+  the dispatch lock, so nothing capped the cycle until a human paused the task.
+  The pool now:
+  - **Routes failure findings as feedback, not a plan.** When a run completes
+    with `outcome='failure'`, its summary is stored on the run's `feedback` so
+    the next agent receives it under "FEEDBACK FROM PRIOR REVIEW" (a fix
+    request) instead of only under "NOTES FROM PRIOR AGENT" (which the default
+    Worker prompt treats as an implementation plan — the reason the next Worker
+    kept "verifying" already-committed code and advancing without fixing
+    anything).
+  - **Breaks the loop after a threshold.** If the same agent failure-path
+    transition has already fired 3 times in a row — no human action and no
+    success exit from the origin label in between — the task is escalated to
+    `waiting_human` (run parked in `waiting_human`, task re-locked,
+    `task.needs_human` published) rather than re-dispatched again.
+- **Default Worker template prompt** now prioritizes any "FEEDBACK FROM PRIOR
+  REVIEW" section and explicitly warns against signalling success just because
+  code already exists from a prior run.
+- **Closed a double-dispatch race on run completion.** The pool used to clear a
+  task's active-run lock *before* performing the outcome transition; a dispatcher
+  sweep landing in that window could start a second run for the same task. The
+  lock is now cleared by the transition's atomic compare-and-swap (or explicitly
+  only when no transition happens), eliminating the window.
+- **Editing an enabled agent config no longer blocks on a shared-label
+  "conflict".** `PUT /agents/{id}` used to reject enabling a config with a
+  `409` if another enabled config already used the same label — a leftover
+  guard from before priority-based failover, which relies on exactly that
+  setup. Enabling now succeeds and surfaces the sharing config via the
+  `X-Label-Conflict` header (matching `POST /agents` behavior), and the
+  frontend shows it as an informational note instead of a blocking alert.
+
 ### Added
 - **Recurring scheduled tasks from templates.** New `task_schedules` table
   (migration 035) links a task template to a repo and a cron expression. A
@@ -42,15 +78,47 @@ triggers the "Release" workflow the same way.
   is actually one of the schedule's repo's workflow labels (`400` otherwise),
   and the Templates page's schedule editor picks the label from that
   workflow's label list instead of free text. See `docs/task-templates.md`.
+- **Frontend component smoke tests (Vitest + Testing Library)** (#155).
+  - New `jsdom`-backed component-test layer (`@testing-library/react` +
+    `@testing-library/jest-dom` + `@testing-library/user-event`) alongside
+    the existing pure-function tests in `src/lib`; wired into the same
+    `npm run test:coverage` CI step, no new CI job/infra needed.
+  - Coverage added for: `TaskBoard` drag-to-move (real `@dnd-kit` drag
+    simulated via mouse events) including optimistic-update rollback on a
+    rejected `moveLabel` call and the blocked-task move confirmation;
+    `BoardPage` bulk actions (pause/archive/move-to, plus the
+    partial-failure error banner); `TaskDetailPage` tab switching
+    (Overview/Logs/Diff); `TaskActions` approve/reject/reply enablement
+    rules.
+  - New regression tests for review findings #138 (missing `Authorization`
+    header on most API calls — since superseded on `main` by the runtime
+    API-token flow, see `authToken.ts`) and #145 (attachment URLs ignoring
+    `BASE_URL`, fixed alongside this change — see `[0.7.0]`'s Fixed section).
+    #147 (hover-only board-card controls on touch) has a best-effort
+    DOM-presence test only — jsdom can't simulate real hover/touch, so full
+    verification is deferred to a future Playwright E2E layer (considered
+    for this issue but descoped to keep this change to the component-test
+    layer; see the issue for scope notes).
+  - Minor testability-only production changes: `RunLogPane`/`DiffReviewPane`
+    root elements got a `data-testid` hook; `client.ts` now exports its
+    `BASE` constant so `TaskHeader` can share it instead of hardcoding an
+    API path.
 
-### Fixed
-- **Editing an enabled agent config no longer blocks on a shared-label
-  "conflict".** `PUT /agents/{id}` used to reject enabling a config with a
-  `409` if another enabled config already used the same label — a leftover
-  guard from before priority-based failover, which relies on exactly that
-  setup. Enabling now succeeds and surfaces the sharing config via the
-  `X-Label-Conflict` header (matching `POST /agents` behavior), and the
-  frontend shows it as an informational note instead of a blocking alert.
+### Changed
+- **Safer default `CORS_ORIGINS` and a startup warning for unauthenticated
+  deployments.** The default `CORS_ORIGINS` is now
+  `http://localhost:5173,http://localhost:8080` instead of `*`, closing a
+  drive-by cross-origin attack where any web page open in the operator's
+  browser could call the unauthenticated local API. Set `CORS_ORIGINS=*`
+  explicitly to restore the old wide-open behavior. Starting with no
+  `API_TOKEN` now logs a `slog.Warn`; the warning escalates when
+  `CORS_ORIGINS=*` is also set.
+- Documented 5 previously-undocumented WebSocket events (`task.updated`,
+  `task.review_comments_changed`, `task.subtask_conflict`,
+  `repo.clone_done`, `repo.clone_failed`), the dependencies/subtasks REST
+  endpoints, the `cancelled` run status, and refreshed stale `CLAUDE.md`
+  notes on `METRICS_TOKEN` and WebSocket ticket-based auth. Docs-only, no
+  behavior change.
 
 ## [0.10.0] - 2026-07-12
 
