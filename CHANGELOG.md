@@ -45,6 +45,13 @@ triggers the "Release" workflow the same way.
   sweep landing in that window could start a second run for the same task. The
   lock is now cleared by the transition's atomic compare-and-swap (or explicitly
   only when no transition happens), eliminating the window.
+- **Editing an enabled agent config no longer blocks on a shared-label
+  "conflict".** `PUT /agents/{id}` used to reject enabling a config with a
+  `409` if another enabled config already used the same label — a leftover
+  guard from before priority-based failover, which relies on exactly that
+  setup. Enabling now succeeds and surfaces the sharing config via the
+  `X-Label-Conflict` header (matching `POST /agents` behavior), and the
+  frontend shows it as an informational note instead of a blocking alert.
 
 ### Added
 - **Frontend component smoke tests (Vitest + Testing Library)** (#155).
@@ -88,15 +95,6 @@ triggers the "Release" workflow the same way.
   endpoints, the `cancelled` run status, and refreshed stale `CLAUDE.md`
   notes on `METRICS_TOKEN` and WebSocket ticket-based auth. Docs-only, no
   behavior change.
-
-### Fixed
-- **Editing an enabled agent config no longer blocks on a shared-label
-  "conflict".** `PUT /agents/{id}` used to reject enabling a config with a
-  `409` if another enabled config already used the same label — a leftover
-  guard from before priority-based failover, which relies on exactly that
-  setup. Enabling now succeeds and surfaces the sharing config via the
-  `X-Label-Conflict` header (matching `POST /agents` behavior), and the
-  frontend shows it as an informational note instead of a blocking alert.
 
 ## [0.10.0] - 2026-07-12
 
