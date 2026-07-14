@@ -33,6 +33,7 @@ type Config struct {
 	LLMBaseURL         string        `yaml:"llm_base_url"`
 	LLMAPIKey          string        `yaml:"llm_api_key"`
 	MaxWorkers         int           `yaml:"max_workers"`
+	ChatMaxWorkers     int           `yaml:"chat_max_workers"`
 	RepoBaseDir        string        `yaml:"repo_base_dir"`
 	UploadDir          string        `yaml:"upload_dir"`
 	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
@@ -77,6 +78,7 @@ func Defaults() Config {
 		CORSOrigins:          "http://localhost:5173,http://localhost:8080",
 		LLMBaseURL:           "https://api.openai.com/v1",
 		MaxWorkers:           5,
+		ChatMaxWorkers:       2,
 		GitHubSyncInterval:   30 * time.Second,
 		IssueSyncInterval:    60 * time.Second,
 		BackupInterval:       24 * time.Hour,
@@ -146,6 +148,11 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAX_WORKERS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.MaxWorkers = n
+		}
+	}
+	if v := os.Getenv("CHAT_MAX_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.ChatMaxWorkers = n
 		}
 	}
 	if v := os.Getenv("REPO_BASE_DIR"); v != "" {

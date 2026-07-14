@@ -60,6 +60,26 @@ type AgentRun struct {
 	SessionID     string     `json:"session_id"`
 }
 
+type ChatMessage struct {
+	ID        string    `json:"id"`
+	SessionID string    `json:"session_id"`
+	Type      string    `json:"type"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ChatSession struct {
+	ID                string    `json:"id"`
+	RepoID            string    `json:"repo_id"`
+	Provider          string    `json:"provider"`
+	Model             string    `json:"model"`
+	Title             string    `json:"title"`
+	ProviderSessionID string    `json:"provider_session_id"`
+	WorktreePath      string    `json:"worktree_path"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 type Repo struct {
 	ID                    string    `json:"id"`
 	Name                  string    `json:"name"`

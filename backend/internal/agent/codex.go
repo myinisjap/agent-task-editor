@@ -154,6 +154,11 @@ func buildCodexArgs(input RunInput) []string {
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
 	}
+	// codex resumes via a `resume <id>` subcommand inserted after `exec`, not an
+	// appendable --resume flag like every other provider. Flags above still apply.
+	if input.ResumeSessionID != "" {
+		args = append(args, "resume", input.ResumeSessionID)
+	}
 	args = append(args, buildPrompt(input)+"\n\n"+buildSystemPrompt(input))
 	return args
 }

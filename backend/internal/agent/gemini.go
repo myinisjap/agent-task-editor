@@ -121,6 +121,11 @@ func buildGeminiArgs(input RunInput, mcpConfigured bool) []string {
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
 	}
+	// gemini bug #14180: with --resume, stdin/positional args are ignored — only
+	// the -p/--prompt flag delivers the message. We already pass -p above, so fine.
+	if input.ResumeSessionID != "" {
+		args = append(args, "--resume", input.ResumeSessionID)
+	}
 	return args
 }
 

@@ -19,6 +19,28 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Interactive chat sessions.** A new chat surface lets you talk to any
+  configured CLI provider against one of your repos — bounce ideas, ask it to
+  look at a PR, or work through a merge conflict — separate from the task board.
+  Each session runs in its own git worktree and resumes the provider
+  conversation turn to turn (all providers now support session resume, not just
+  Claude). New endpoints under `/api/v1/chat/sessions`; turns stream over the
+  existing WebSocket (`chat.message` / `chat.turn_done`). Concurrency is bounded
+  separately from task dispatch via `CHAT_MAX_WORKERS` (default 2).
+- **Session resume for qwen/gemini/codex/opencode runs.** These providers now
+  honor a stored provider session id (previously only the `claude` provider
+  did), so resumed runs continue the same conversation.
+
+### Fixed
+- **Transient-retry backoff windows are now honored.** A task backed off after a
+  transient failure (`next_retry_at` set in the future) could be re-dispatched
+  immediately instead of waiting. The dispatcher's pickup query compared the
+  driver-stored timestamp (RFC3339 with a timezone offset) against SQLite's
+  `CURRENT_TIMESTAMP` (space-separated UTC) as raw strings, so a future local
+  time could sort below "now" and slip through the filter. Both sides are now
+  normalized with `datetime()`.
+
 ## [0.11.0] - 2026-07-13
 
 ### Fixed

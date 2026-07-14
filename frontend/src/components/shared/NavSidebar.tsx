@@ -7,6 +7,7 @@ const links = [
   { to: '/dashboard/usage',       label: 'Cost & Usage' },
   { to: '/dashboard/performance', label: 'Performance' },
   { to: '/board',                 label: 'Board' },
+  { to: '/chat',                  label: 'Chat' },
   { to: '/workflow',              label: 'Workflow' },
   { to: '/agents',                label: 'Agents' },
   { to: '/repos',                 label: 'Repos' },

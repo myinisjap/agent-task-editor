@@ -947,7 +947,21 @@ func TestListAgentPickupTasks_ExcludesFutureNextRetryAt(t *testing.T) {
 	}
 
 	// Schedule a future retry — task should now be excluded.
-	future := time.Now().Add(1 * time.Hour)
+	//
+	// Store the timestamp in a negative-offset zone (America/Chicago) rather
+	// than the runner's local zone. This is the adversarial case that regressed:
+	// the sqlite3 driver serializes time.Time in its zone (e.g.
+	// "2026-07-13T20:00:00-05:00"), while CURRENT_TIMESTAMP is space-separated
+	// UTC ("2026-07-14 01:00:00"). A future-in-UTC instant stored this way has a
+	// wall-clock string that sorts lexically BEFORE the UTC "now" string, so the
+	// old raw-string comparison wrongly treated it as already-due. Pinning the
+	// zone here makes the test fail if the datetime() normalization is reverted,
+	// regardless of the CI runner's own timezone (which would otherwise mask it).
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	future := time.Now().Add(1 * time.Hour).In(chicago)
 	if _, err := q.SetTaskTransientRetry(context.Background(), gen.SetTaskTransientRetryParams{
 		TransientRetryCount: 1,
 		NextRetryAt:         &future,

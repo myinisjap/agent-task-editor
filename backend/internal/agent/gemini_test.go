@@ -4,6 +4,18 @@ import "testing"
 
 // TestBuildGeminiArgs_Basic verifies the core non-interactive/headless flags
 // are always present.
+// TestBuildGeminiArgs_Resume verifies ResumeSessionID is passed via --resume.
+func TestBuildGeminiArgs_Resume(t *testing.T) {
+	args := buildGeminiArgs(RunInput{Task: Task{Title: "t"}, AgentConfig: AgentConfig{}, ResumeSessionID: "g1"}, false)
+	if got := findFlagValue(args, "--resume"); got != "g1" {
+		t.Fatalf("expected --resume g1, got %q (args=%v)", got, args)
+	}
+	none := buildGeminiArgs(RunInput{Task: Task{Title: "t"}, AgentConfig: AgentConfig{}}, false)
+	if containsArg(none, "--resume") {
+		t.Fatalf("did not expect --resume when ResumeSessionID empty, args=%v", none)
+	}
+}
+
 func TestBuildGeminiArgs_Basic(t *testing.T) {
 	args := buildGeminiArgs(RunInput{
 		Task:        Task{Title: "t"},
