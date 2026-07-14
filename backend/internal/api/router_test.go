@@ -41,7 +41,7 @@ func newTestRouter(t *testing.T, apiToken, metricsToken string) http.Handler {
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, "dev", false)
+	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, "dev", false, nil)
 }
 
 // TestHealthzEndpoint_UnauthenticatedEvenWithAPIToken verifies GET /healthz

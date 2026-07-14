@@ -59,6 +59,9 @@ func buildQwenArgs(input RunInput, mcpCfg *MCPRunConfig) []string {
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
 	}
+	if input.ResumeSessionID != "" {
+		args = append(args, "--resume", input.ResumeSessionID)
+	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
 		// qwen uses --allowed-tools (space/array) and the same mcp__ prefix as claude.

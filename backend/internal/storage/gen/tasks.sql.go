@@ -324,7 +324,7 @@ AND t.label NOT IN (
 AND t.active_agent_run_id IS NULL
 AND t.paused = 0
 AND t.archived = 0
-AND (t.next_retry_at IS NULL OR t.next_retry_at <= CURRENT_TIMESTAMP)
+AND (t.next_retry_at IS NULL OR datetime(t.next_retry_at) <= datetime('now'))
 AND NOT EXISTS (
     SELECT 1 FROM task_dependencies d
     JOIN tasks dt ON dt.id = d.depends_on_task_id
@@ -340,6 +340,12 @@ AND NOT EXISTS (
 ORDER BY t.priority DESC, t.created_at ASC
 `
 
+// Compare through datetime(): the sqlite3 driver stores time.Time as RFC3339
+// with a timezone offset (e.g. 2026-07-13T20:57:44-05:00), while
+// CURRENT_TIMESTAMP is a space-separated UTC string. A raw string comparison of
+// the two formats is wrong (a future local time can sort below a UTC now),
+// letting a backed-off task be re-dispatched immediately. datetime() normalizes
+// both to canonical UTC 'YYYY-MM-DD HH:MM:SS' so the comparison is correct.
 // Dependency gate: never dispatch a task that still has an unsatisfied blocker.
 // A blocker is satisfied once it is archived or sits on a terminal label.
 func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {

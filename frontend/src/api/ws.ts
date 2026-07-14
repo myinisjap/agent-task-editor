@@ -19,6 +19,10 @@ export type WSEvent =
   | { type: 'task.created'; payload: Pick<Task, 'id' | 'title' | 'label' | 'repo_id' | 'source' | 'source_ref'> }
   | { type: 'task.updated'; payload: Task }
   | { type: 'task.subtask_conflict'; payload: { task_id: string; parent_id: string; files: string[] } }
+  // Interactive chat: each streamed line of a turn (broadcast to all clients;
+  // the ChatPage filters by session_id), then a terminal turn_done.
+  | { type: 'chat.message'; payload: { session_id: string; message: { id: string; type: string; content: string; created_at: string } } }
+  | { type: 'chat.turn_done'; payload: { session_id: string; status: string } }
 
 type Handler = (event: WSEvent) => void
 

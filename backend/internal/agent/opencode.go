@@ -30,6 +30,9 @@ func (r *OpencodeRunner) Run(ctx context.Context, input RunInput, logCh chan<- L
 	if input.AgentConfig.Model != "" {
 		args = append(args, "-m", input.AgentConfig.Model)
 	}
+	if input.ResumeSessionID != "" {
+		args = append(args, "--session", input.ResumeSessionID)
+	}
 	// ponytail: opencode has no --mcp-config flag; MCP tools unavailable for opencode runs
 	// "--" stops yargs flag parsing; prompt may contain "--" sequences that would be misread as flags
 	args = append(args, "--", buildPrompt(input))

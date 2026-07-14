@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestBuildCodexArgs_Basic verifies the core exec/non-interactive flags are
 // always present, and the prompt is the final positional argument.
@@ -45,6 +48,38 @@ func TestBuildCodexArgs_NoModel(t *testing.T) {
 	})
 	if containsArg(args, "--model") {
 		t.Fatalf("did not expect --model flag when Model is unset, args=%v", args)
+	}
+}
+
+// TestBuildCodexArgs_Resume verifies the `resume <id>` subcommand is inserted
+// after the exec flags and before the trailing prompt (codex's resume is a
+// subcommand, not an appendable flag like other providers).
+func TestBuildCodexArgs_Resume(t *testing.T) {
+	args := buildCodexArgs(RunInput{
+		Task:            Task{Title: "t"},
+		AgentConfig:     AgentConfig{},
+		ResumeSessionID: "sess-123",
+	})
+	ri := slices.Index(args,"resume")
+	if ri < 0 {
+		t.Fatalf("expected a resume subcommand, args=%v", args)
+	}
+	if args[ri+1] != "sess-123" {
+		t.Fatalf("expected session id right after resume, args=%v", args)
+	}
+	if ji := slices.Index(args,"--json"); ji < 0 || ji > ri {
+		t.Fatalf("expected --json flag before resume subcommand, args=%v", args)
+	}
+	if args[len(args)-1] == "resume" || args[len(args)-1] == "sess-123" {
+		t.Fatalf("expected prompt as final arg, not the resume id, args=%v", args)
+	}
+}
+
+// TestBuildCodexArgs_NoResume verifies no resume subcommand when unset.
+func TestBuildCodexArgs_NoResume(t *testing.T) {
+	args := buildCodexArgs(RunInput{Task: Task{Title: "t"}, AgentConfig: AgentConfig{}})
+	if containsArg(args, "resume") {
+		t.Fatalf("did not expect a resume subcommand when ResumeSessionID is empty, args=%v", args)
 	}
 }
 

@@ -273,6 +273,26 @@ export type AgentLog = {
   content: string
 }
 
+export type ChatSession = {
+  id: string
+  repo_id: string
+  provider: string
+  model: string
+  title: string
+  provider_session_id: string
+  worktree_path: string
+  created_at: string
+  updated_at: string
+}
+
+export type ChatMessage = {
+  id: string
+  session_id: string
+  type: string
+  content: string
+  created_at: string
+}
+
 export type WorkflowLabel = {
   id: string
   workflow_id: string
@@ -678,6 +698,16 @@ export const api = {
   },
   health: {
     providers: () => request<{ checks: ProviderCheck[] }>('/health/providers'),
+  },
+  chat: {
+    list: () => request<ChatSession[]>('/chat/sessions'),
+    create: (body: { repo_id: string; provider: string; model?: string; title?: string }) =>
+      request<ChatSession>('/chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
+    get: (id: string) => request<{ session: ChatSession; messages: ChatMessage[] }>(`/chat/sessions/${id}`),
+    delete: (id: string) => request<void>(`/chat/sessions/${id}`, { method: 'DELETE' }),
+    send: (id: string, message: string) =>
+      request<void>(`/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ message }) }),
+    cancel: (id: string) => request<void>(`/chat/sessions/${id}/cancel`, { method: 'POST' }),
   },
   backup: {
     // Raw binary download — not a JSON request<T>() call, mirrors

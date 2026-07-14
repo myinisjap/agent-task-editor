@@ -2,6 +2,19 @@ package agent
 
 import "testing"
 
+// TestBuildQwenArgs_Resume verifies ResumeSessionID is passed via --resume,
+// and omitted when empty.
+func TestBuildQwenArgs_Resume(t *testing.T) {
+	args := buildQwenArgs(RunInput{Task: Task{Title: "t"}, AgentConfig: AgentConfig{}, ResumeSessionID: "s1"}, nil)
+	if got := findFlagValue(args, "--resume"); got != "s1" {
+		t.Fatalf("expected --resume s1, got %q (args=%v)", got, args)
+	}
+	none := buildQwenArgs(RunInput{Task: Task{Title: "t"}, AgentConfig: AgentConfig{}}, nil)
+	if findFlagValue(none, "--resume") != "" {
+		t.Fatalf("did not expect --resume when ResumeSessionID empty, args=%v", none)
+	}
+}
+
 // TestBuildQwenArgs_MaxTurnsDefault verifies that when AgentConfig.MaxTurns
 // is unset (zero), the constructed args default --max-session-turns to 50
 // (matching the claude provider's fallback behavior).
