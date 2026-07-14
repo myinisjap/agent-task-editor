@@ -817,32 +817,6 @@ func buildClaudeSettingsJSON(enabledPlugins, commandAllowlist, commandDenylist [
 	return string(data), nil
 }
 
-// ClaudeOAuthAccessToken reads the access token from
-// ~/.claude/.credentials.json (written by `claude login` for Claude
-// Max/Pro OAuth accounts). Returns "" on any read/parse failure or if the
-// file/field is absent — never errors, since the caller (--bare mode, or
-// the dashboard usage widget) should just treat that as "no OAuth
-// credentials available" and fall back gracefully.
-func ClaudeOAuthAccessToken() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	data, err := os.ReadFile(home + "/.claude/.credentials.json")
-	if err != nil {
-		return ""
-	}
-	var creds struct {
-		ClaudeAiOauth struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return ""
-	}
-	return creds.ClaudeAiOauth.AccessToken
-}
-
 func mergeEnv(base []string, extra map[string]string) []string {
 	out := make([]string, len(base))
 	copy(out, base)

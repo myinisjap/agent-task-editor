@@ -8,6 +8,7 @@ The agent package owns everything to do with running AI agents: the provider abs
 |---|---|
 | `provider.go` | `Provider` interface, `RunInput`, `Result`, `LogEntry`, `LogEntryType` |
 | `claude.go` | `ClaudeRunner` — runs `claude` CLI subprocess with stream-json output |
+| `claude_credentials.go` | `ClaudeOAuthAccessToken` — reads the OAuth access token from `~/.claude/.credentials.json` and **auto-refreshes it** (Anthropic OAuth token endpoint + stored refresh token) when expired/expiring within 5 min, persisting rotated tokens back to the file atomically; used by the claude subprocess env injection and the dashboard usage widget. Returns "" when expired-and-unrefreshable so the CLI falls back to its own refresh flow |
 | `claude_discovery.go` | Discovers Claude plugins (`~/.claude/plugins/installed_plugins.json`) and user-level MCP servers (`~/.claude.json`'s global `mcpServers`) installed/configured on the machine, for per-agent-config selection (`enabled_plugins`/`enabled_mcp_servers`); `claude`-provider only |
 | `anthropic.go` | `AnthropicRunner` — calls Anthropic Messages API directly |
 | `llm.go` | `LLMRunner` — calls any OpenAI-compatible API |
