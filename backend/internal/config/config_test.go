@@ -29,6 +29,9 @@ func TestDefaults_PopulatesRequiredFields(t *testing.T) {
 	if cfg.BackupKeep <= 0 {
 		t.Errorf("BackupKeep must have a positive default, got %d", cfg.BackupKeep)
 	}
+	if cfg.ScheduleInterval <= 0 {
+		t.Errorf("ScheduleInterval must have a positive default, got %v", cfg.ScheduleInterval)
+	}
 }
 
 func TestDefaults_CORSOriginsDefaultsToLocalOrigins(t *testing.T) {
@@ -236,6 +239,30 @@ func TestLoad_InvalidBackupInterval_UsesDefault(t *testing.T) {
 	}
 	if cfg.BackupInterval != config.Defaults().BackupInterval {
 		t.Errorf("expected default backup interval on invalid input, got %v", cfg.BackupInterval)
+	}
+}
+
+func TestLoad_ScheduleIntervalEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("SCHEDULE_INTERVAL", "15s")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.ScheduleInterval != 15*time.Second {
+		t.Errorf("expected schedule interval 15s, got %v", cfg.ScheduleInterval)
+	}
+}
+
+func TestLoad_InvalidScheduleInterval_UsesDefault(t *testing.T) {
+	t.Setenv("SCHEDULE_INTERVAL", "not-a-duration")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.ScheduleInterval != config.Defaults().ScheduleInterval {
+		t.Errorf("expected default schedule interval on invalid input, got %v", cfg.ScheduleInterval)
 	}
 }
 

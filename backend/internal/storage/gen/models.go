@@ -60,6 +60,13 @@ type AgentRun struct {
 	SessionID     string     `json:"session_id"`
 }
 
+type BackupSetting struct {
+	ID              int64     `json:"id"`
+	IntervalSeconds int64     `json:"interval_seconds"`
+	Keep            int64     `json:"keep"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type ChatMessage struct {
 	ID        string    `json:"id"`
 	SessionID string    `json:"session_id"`
@@ -160,6 +167,18 @@ type TaskReviewComment struct {
 	ResolvedByRunID *string   `json:"resolved_by_run_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type TaskSchedule struct {
+	ID          string     `json:"id"`
+	TemplateID  string     `json:"template_id"`
+	RepoID      string     `json:"repo_id"`
+	CronExpr    string     `json:"cron_expr"`
+	TargetLabel string     `json:"target_label"`
+	Enabled     bool       `json:"enabled"`
+	LastRunAt   *time.Time `json:"last_run_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 type TaskTemplate struct {

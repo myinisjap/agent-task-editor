@@ -35,10 +35,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
+	schedulesH := handlers.NewSchedulesHandler(q)
 	dashH := handlers.NewDashboardHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates)
 	backupH := handlers.NewBackupHandler(db)
+	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	wsTicketH := handlers.NewWSTicketHandler(hub)
 	chatH := handlers.NewChatHandler(q, chatSender)
 
@@ -129,6 +131,13 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Put("/templates/{id}", templatesH.Update)
 			r.Delete("/templates/{id}", templatesH.Delete)
 
+			// Task schedules — fire a template on a cron expression against a repo
+			r.Get("/schedules", schedulesH.List)
+			r.Post("/schedules", schedulesH.Create)
+			r.Get("/schedules/{id}", schedulesH.Get)
+			r.Put("/schedules/{id}", schedulesH.Update)
+			r.Delete("/schedules/{id}", schedulesH.Delete)
+
 			// Inline diff review comments — persisted, injected into agent prompts while open
 			r.Get("/tasks/{id}/review-comments", reviewH.List)
 			r.Post("/tasks/{id}/review-comments", reviewH.Create)
@@ -157,6 +166,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Streams a consistent point-in-time database snapshot (VACUUM INTO)
 			// as application/octet-stream. Plain bearer-gated; see docs/backup.md.
 			r.Get("/backup", backupH.Backup)
+
+			// Automatic local-backup scheduler settings (interval/retention
+			// count) — see docs/backup.md. Whether the scheduler is enabled at
+			// all remains a deploy-time choice (BACKUP_DIR).
+			r.Get("/backup/settings", backupSettingsH.Get)
+			r.Put("/backup/settings", backupSettingsH.Update)
 
 			// Label history — audit trail of transitions (who/what triggered them)
 			r.Get("/tasks/{id}/label-history", tasksH.ListLabelHistory)

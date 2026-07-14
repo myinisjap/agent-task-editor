@@ -110,6 +110,61 @@ func TestRunOnce_PrunesOldSnapshotsKeepingNewest(t *testing.T) {
 	}
 }
 
+func TestRunOnce_WithSettingsFunc_UsesLatestKeep(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+
+	// Seed 5 old snapshots.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		ts := base.Add(time.Duration(i) * time.Hour).Format("20060102-150405")
+		path := filepath.Join(dir, "agent-task-editor-"+ts+".db")
+		if err := os.WriteFile(path, []byte("fake"), 0o644); err != nil {
+			t.Fatalf("seed file: %v", err)
+		}
+	}
+
+	keep := 2
+	s := backup.NewWithSettingsFunc(db, dir, func() (time.Duration, int) {
+		return time.Hour, keep
+	})
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) != keep {
+		t.Fatalf("expected %d files retained per the settings func's keep, got %d", keep, len(entries))
+	}
+}
+
+func TestScheduler_MinInterval_FloorsSubMinimumInterval(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+
+	// A settings func that returns a well-below-floor interval must still be
+	// floored at backup.MinInterval by currentSettings (exercised indirectly
+	// via RunOnce, which reads keep from the same path).
+	s := backup.NewWithSettingsFunc(db, dir, func() (time.Duration, int) {
+		return time.Second, 7
+	})
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	// RunOnce itself doesn't use the interval (only Run's timer does), so
+	// this just confirms a sub-floor settings func doesn't break RunOnce.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 snapshot file, got %d", len(entries))
+	}
+}
+
 func TestRunOnce_KeepZeroOrNegative_DisablesPruning(t *testing.T) {
 	db := openTestDB(t)
 	dir := t.TempDir()

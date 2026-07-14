@@ -186,6 +186,22 @@ export type TaskTemplate = {
   updated_at: string
 }
 
+// TaskSchedule recurrently instantiates a TaskTemplate against a repo on a
+// cron expression. target_label defaults to "not_ready" (a human promotes
+// the created task); setting it to a live agent label instead makes the
+// schedule fully unattended.
+export type TaskSchedule = {
+  id: string
+  template_id: string
+  repo_id: string
+  cron_expr: string
+  target_label: string
+  enabled: boolean
+  last_run_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type AgentRun = {
   id: string
   task_id: string
@@ -470,6 +486,16 @@ export type ProviderCheck = {
   hint?: string
 }
 
+// BackupSettings mirrors the backend's DB-backed automatic-backup scheduler
+// settings (see docs/backup.md). interval_seconds/keep are editable via
+// PUT /api/v1/backup/settings; whether the scheduler is enabled at all
+// remains a deploy-time-only choice (BACKUP_DIR), not exposed here.
+export type BackupSettings = {
+  interval_seconds: number
+  keep: number
+  updated_at: string
+}
+
 export const api = {
   tasks: {
     // list returns a single page of tasks (newest first). Pass `after` (a
@@ -652,6 +678,15 @@ export const api = {
       request<TaskTemplate>(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/templates/${id}`, { method: 'DELETE' }),
   },
+  schedules: {
+    list: () => request<TaskSchedule[]>('/schedules'),
+    get: (id: string) => request<TaskSchedule>(`/schedules/${id}`),
+    create: (body: { template_id: string; repo_id: string; cron_expr: string; target_label?: string; enabled?: boolean }) =>
+      request<TaskSchedule>('/schedules', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: { cron_expr: string; target_label?: string; enabled?: boolean }) =>
+      request<TaskSchedule>(`/schedules/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/schedules/${id}`, { method: 'DELETE' }),
+  },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),
     // Full per-task cost rollup (no top-N cap), used by the board page to
@@ -680,6 +715,9 @@ export const api = {
     // authedRawFetch (browsers can't set headers on <a href>, and downloads
     // need the same Authorization header as everything else).
     url: () => `${BASE}/backup`,
+    getSettings: () => request<BackupSettings>('/backup/settings'),
+    updateSettings: (body: { interval_seconds: number; keep: number }) =>
+      request<BackupSettings>('/backup/settings', { method: 'PUT', body: JSON.stringify(body) }),
   },
   uploads: {
     // Raw binary download — mirrors backup.url(). Callers must fetch() this

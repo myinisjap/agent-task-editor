@@ -393,6 +393,42 @@ Delete a template. Returns `204`.
 
 ---
 
+## Task Schedules
+
+Recurring instantiation of a task template against a repo on a cron
+expression. A background sweep fires due, enabled schedules and creates a
+task, skipping the firing while an open task from a prior firing of the same
+schedule still exists. See [task-templates.md](task-templates.md) for the
+full behavior (dedup semantics, cron format, `not_ready` vs. unattended
+agent-label targets).
+
+### `GET /schedules`
+List all schedules.
+
+### `POST /schedules`
+Create a schedule. `template_id`, `repo_id`, and `cron_expr` are required.
+`400` if `cron_expr` fails to parse, if `template_id`/`repo_id` is missing,
+if the repo has no workflow assigned, or if `target_label` isn't one of that
+workflow's labels; `404` if `template_id` or `repo_id` doesn't exist.
+`target_label` defaults to `not_ready`; `enabled` defaults to `true`.
+
+```json
+{ "template_id": "uuid", "repo_id": "uuid", "cron_expr": "0 6 * * 1", "target_label": "not_ready", "enabled": true }
+```
+
+### `GET /schedules/{id}`
+Get a single schedule.
+
+### `PUT /schedules/{id}`
+Update a schedule's `cron_expr`/`target_label`/`enabled` (template/repo are
+immutable after creation). `400` on invalid `cron_expr` or a `target_label`
+that isn't one of the schedule's repo's workflow labels; `404` if missing.
+
+### `DELETE /schedules/{id}`
+Delete a schedule. Returns `204`.
+
+---
+
 ## Agent Runs
 
 ### AgentRun Object
@@ -877,6 +913,26 @@ this endpoint for one-click on-demand snapshots. See
 `BACKUP_DIR`/`BACKUP_INTERVAL`/`BACKUP_KEEP` automatic local-snapshot
 scheduler, and a Litestream sidecar example for continuous offsite
 replication.
+
+### `GET /backup/settings` / `PUT /backup/settings`
+Reads/updates the DB-backed interval (`interval_seconds`) and retention
+count (`keep`) for the automatic local-backup scheduler. Changes take effect
+on the scheduler's next scheduled run without a restart. `interval_seconds`
+must be at least `600` (10 minutes); `keep` must be at least `1`. Defaults
+to `86400` (once a day) / `7`, matching the scheduler's previous
+env-var-only defaults. Whether the scheduler is enabled at all remains a
+deploy-time-only choice (`BACKUP_DIR`) — this endpoint only controls how
+often it runs and how many snapshots it keeps once enabled.
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/backup/settings
+curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"interval_seconds": 3600, "keep": 7}' \
+  http://localhost:8080/api/v1/backup/settings
+```
+
+The frontend's **Health** page has an "Automatic backup schedule" form that
+calls these endpoints. See [backup.md](backup.md#changing-the-intervalretention-count-at-runtime).
 
 ---
 

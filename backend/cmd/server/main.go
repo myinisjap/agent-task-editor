@@ -18,6 +18,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
+	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/tasksource"
@@ -266,14 +267,34 @@ func main() {
 	issueImporter := tasksource.New(db.SQL(), hub, cfg.IssueSyncInterval, tasksource.GitHubIssues{})
 	slog.Info("github issue import enabled", "interval", cfg.IssueSyncInterval)
 
+	// Recurring task schedules: fires task_templates on a cron expression
+	// against a repo, deduped by an open task from a prior firing.
+	taskScheduler := schedule.New(db.SQL(), hub, cfg.ScheduleInterval)
+	slog.Info("task schedule sweep enabled", "interval", cfg.ScheduleInterval)
+
 	// Automatic local backups: optional. When BACKUP_DIR is set, periodically
 	// writes a rotated VACUUM INTO snapshot to that directory. Always
 	// available regardless of this setting: GET /api/v1/backup (on-demand)
 	// and the Health page's "Download backup" button. See docs/backup.md.
+	//
+	// Interval/keep are DB-backed (backup_settings, seeded from
+	// cfg.BackupInterval/cfg.BackupKeep on first migration) and editable at
+	// runtime via PUT /api/v1/backup/settings (or the Health page), without a
+	// restart — the scheduler re-reads them from the DB before every run
+	// (see backup.NewWithSettingsFunc). BACKUP_DIR itself remains a
+	// deploy-time-only choice (enabling/disabling the scheduler requires a
+	// restart), since it names a filesystem location.
 	var backupScheduler *backup.Scheduler
 	if cfg.BackupDir != "" {
-		backupScheduler = backup.New(db, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep)
-		slog.Info("automatic local backups enabled", "dir", cfg.BackupDir, "interval", cfg.BackupInterval, "keep", cfg.BackupKeep)
+		backupScheduler = backup.NewWithSettingsFunc(db, cfg.BackupDir, func() (time.Duration, int) {
+			row, err := termQ.GetBackupSettings(context.Background())
+			if err != nil {
+				slog.Warn("backup: failed to load settings from DB; using config defaults", "err", err)
+				return cfg.BackupInterval, cfg.BackupKeep
+			}
+			return time.Duration(row.IntervalSeconds) * time.Second, int(row.Keep)
+		})
+		slog.Info("automatic local backups enabled", "dir", cfg.BackupDir)
 	} else {
 		slog.Info("automatic local backups disabled; set BACKUP_DIR to enable (see docs/backup.md)")
 	}
@@ -295,6 +316,7 @@ func main() {
 	go dispatcher.Run(ctx)
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)
+	go taskScheduler.Run(ctx)
 	if backupScheduler != nil {
 		go backupScheduler.Run(ctx)
 	}

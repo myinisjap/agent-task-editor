@@ -214,6 +214,39 @@ components:
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
 
+    TaskSchedule:
+      type: object
+      description: >
+        Recurring instantiation of a task_template against a repo on a cron
+        expression. A sweep fires due, enabled schedules and creates a task
+        (source="schedule"), skipping firing while an open task from a prior
+        firing of the same schedule still exists. target_label defaults to
+        "not_ready" (a human promotes the created task); setting it to a live
+        agent label instead makes the schedule fully unattended — pair with a
+        cost budget on the template's agent config as a safety net.
+      properties:
+        id:            { type: string }
+        template_id:   { type: string }
+        repo_id:       { type: string }
+        cron_expr:     { type: string, description: "Standard 5-field cron: minute hour day-of-month month day-of-week" }
+        target_label:  { type: string, description: "Label the created task starts on; default 'not_ready'" }
+        enabled:       { type: boolean }
+        last_run_at:   { type: string, format: date-time, nullable: true }
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+
+    BackupSettings:
+      type: object
+      description: >
+        DB-backed settings for the automatic local-backup scheduler (see
+        docs/backup.md). Changes take effect on the scheduler's next
+        scheduled run without a restart. Whether the scheduler is enabled at
+        all remains a deploy-time-only choice (BACKUP_DIR).
+      properties:
+        interval_seconds: { type: integer, description: "How often to write a new snapshot, in seconds. Minimum 600 (10 minutes). Default 86400 (once a day)." }
+        keep:             { type: integer, description: "Number of most-recent snapshots to retain before pruning older ones. Minimum 1. Default 7." }
+        updated_at:       { type: string, format: date-time }
+
     WorkflowLabel:
       type: object
       properties:
@@ -1528,6 +1561,76 @@ paths:
       responses:
         "204": { description: Deleted }
 
+  /schedules:
+    get:
+      summary: List task schedules
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TaskSchedule" } }
+    post:
+      summary: Create a task schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_id, repo_id, cron_expr]
+              properties:
+                template_id:  { type: string }
+                repo_id:      { type: string }
+                cron_expr:    { type: string }
+                target_label: { type: string, default: not_ready }
+                enabled:      { type: boolean, default: true }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskSchedule" }
+        "400": { description: Missing/invalid template_id, repo_id, or cron_expr }
+        "404": { description: Template or repo not found }
+
+  /schedules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a task schedule
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskSchedule" }
+        "404": { description: Schedule not found }
+    put:
+      summary: Update a task schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cron_expr]
+              properties:
+                cron_expr:    { type: string }
+                target_label: { type: string, default: not_ready }
+                enabled:      { type: boolean, default: true }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskSchedule" }
+        "400": { description: Invalid cron_expr }
+        "404": { description: Schedule not found }
+    delete:
+      summary: Delete a task schedule
+      responses:
+        "204": { description: Deleted }
+
   /workflows:
     get:
       summary: List workflows
@@ -1934,6 +2037,42 @@ paths:
               schema:
                 type: string
                 format: binary
+
+  /backup/settings:
+    get:
+      summary: Get automatic-backup scheduler settings
+      description: >
+        Returns the current interval/retention-count settings for the
+        automatic local-backup scheduler. Whether the scheduler is enabled
+        at all remains a deploy-time-only choice (BACKUP_DIR); this only
+        covers how often it runs and how many snapshots it keeps. See
+        docs/backup.md.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupSettings" }
+    put:
+      summary: Update automatic-backup scheduler settings
+      description: >
+        Persists new interval/retention-count settings. Takes effect on the
+        scheduler's next scheduled run without a process restart.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [interval_seconds, keep]
+              properties:
+                interval_seconds: { type: integer, description: "Minimum 600 (10 minutes)." }
+                keep:             { type: integer, description: "Minimum 1." }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupSettings" }
+        "400": { description: "interval_seconds below 600, or keep below 1" }
 
   /ws-ticket:
     post:

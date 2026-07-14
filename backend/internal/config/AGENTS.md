@@ -21,8 +21,14 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `GitHubSyncInterval` | `GITHUB_SYNC_INTERVAL` | `github_sync_interval` | `30s` |
 | `IssueSyncInterval` | `ISSUE_SYNC_INTERVAL` | `issue_sync_interval` | `60s` |
 | `BackupDir` | `BACKUP_DIR` | `backup_dir` | _(empty, scheduler disabled)_ |
-| `BackupInterval` | `BACKUP_INTERVAL` | `backup_interval` | `24h` |
-| `BackupKeep` | `BACKUP_KEEP` | `backup_keep` | `7` |
+| `BackupInterval` | `BACKUP_INTERVAL` | `backup_interval` | `24h` (initial/seed value only — see below) |
+| `BackupKeep` | `BACKUP_KEEP` | `backup_keep` | `7` (initial/seed value only — see below) |
+
+`BackupInterval`/`BackupKeep` only seed the `backup_settings` DB row on first
+migration; once running, both are edited at runtime via
+`PUT /api/v1/backup/settings` (10-minute minimum interval), independent of
+this config/env-var layer. `BackupDir` remains a restart-required,
+config/env-var-only choice — see `internal/backup` and `docs/backup.md`.
 
 ## Loading Order
 

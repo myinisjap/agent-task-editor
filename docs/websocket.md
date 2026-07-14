@@ -176,9 +176,11 @@ child and the parent right after this event.
 ```
 
 ### `task.created`
-A new task was created by the background GitHub Issues importer (see
-[task-sources.md](task-sources.md)). The payload is a subset of task fields —
-clients should refetch the task for full data.
+A new task was created by a background source: either the GitHub Issues
+importer (see [task-sources.md](task-sources.md), `source: "github"`) or a
+fired task schedule (see [task-templates.md](task-templates.md),
+`source: "schedule"`). The payload is a subset of task fields — clients
+should refetch the task for full data.
 
 ```json
 {

@@ -165,4 +165,12 @@ var (
 		Name: "ate_gh_calls_total",
 		Help: "Total number of `gh` CLI invocations, labeled by logical command.",
 	}, []string{"command"})
+
+	// ScheduleSweepDurationSeconds observes the wall-clock duration of each
+	// task-schedule sweep (recurring task creation from templates).
+	ScheduleSweepDurationSeconds = factory.NewHistogram(prometheus.HistogramOpts{
+		Name:    "ate_schedule_sweep_duration_seconds",
+		Help:    "Duration in seconds of each task-schedule sweep.",
+		Buckets: prometheus.DefBuckets,
+	})
 )

@@ -26,6 +26,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once a PR is detected as merged, the task's local branch and worktree are automatically cleaned up
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks, and (opt-in, independently) status is written back to the source issue as the imported task progresses — a comment when its PR opens, an `agent-in-progress` label when it first leaves `not_ready`, and the issue closed with a comment when the PR merges — see [docs/task-sources.md](docs/task-sources.md)
+- **Recurring task schedules** — turn a task template into a cron job: fire a pre-filled task against a repo on a schedule (hourly/daily/weekly presets or raw cron), skipping a firing while a prior unfinished task from the same schedule is still open; can target `not_ready` (human review) or a live agent label for fully unattended maintenance loops, pairing with cost budgets as a safety net — see [docs/task-templates.md](docs/task-templates.md)
 - **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Task priority** — low/normal/high/urgent priority per task; the dispatcher's pickup queue is ordered priority-first, then oldest-first, with an "N in queue" hint on cards waiting for a free worker
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
@@ -230,6 +231,7 @@ cd backend && go build -o mcp-server ./cmd/mcp-server
 | [docs/workflows.md](docs/workflows.md) | State machine format, labels, transitions, YAML import/export |
 | [docs/agents.md](docs/agents.md) | Providers, dispatcher, worker pool, run lifecycle, prompt construction |
 | [docs/task-sources.md](docs/task-sources.md) | Importing GitHub Issues as tasks |
+| [docs/task-templates.md](docs/task-templates.md) | Task templates and recurring cron-scheduled task creation |
 | [docs/api.md](docs/api.md) | Full REST API endpoint reference |
 | [docs/websocket.md](docs/websocket.md) | Live log streaming WebSocket protocol |
 | [docs/screenshots.md](docs/screenshots.md) | How to regenerate the README/docs screenshots and hero GIF |

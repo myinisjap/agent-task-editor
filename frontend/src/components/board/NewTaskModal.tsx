@@ -156,7 +156,7 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
           {templates.length > 0 && (
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-slate-400">Template</label>
@@ -209,12 +209,12 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
           </div>
 
           <div className="flex gap-3">
-            <div className="flex flex-col gap-1.5 flex-1">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
               <label className="text-xs font-medium text-slate-400">Type</label>
               <select
                 value={type}
                 onChange={(e) => setType(e.target.value as typeof type)}
-                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 <option value="feature">Feature</option>
                 <option value="bug">Bug</option>
@@ -223,12 +223,12 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1.5 flex-1">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
               <label className="text-xs font-medium text-slate-400">Priority</label>
               <select
                 value={priority}
                 onChange={(e) => setPriority(Number(e.target.value))}
-                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 {PRIORITY_LEVELS.map((p) => (
                   <option key={p.value} value={p.value}>{p.label}</option>
@@ -236,7 +236,7 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1.5 flex-1">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
               <label className="text-xs font-medium text-slate-400">Repo</label>
               {repos.length === 0 ? (
                 <div className="text-xs text-slate-500 py-2">No repos in this workflow</div>
@@ -244,7 +244,7 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
                 <select
                   value={repoId}
                   onChange={(e) => setRepoId(e.target.value)}
-                  className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 >
                   {repos.map((r) => (
                     <option key={r.id} value={r.id}>{r.name}</option>

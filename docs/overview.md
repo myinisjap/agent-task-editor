@@ -14,7 +14,7 @@ Additional task fields:
 - `worktree_path` — path to the per-task git worktree (empty if not yet provisioned or already torn down)
 - `base_ref` — the ref the branch was forked from (used for diff computation)
 - `agent_notes` — persistent markdown notes written by agents across runs; injected into each new run's prompt
-- `source` / `source_ref` — where the task was imported from (`github` / `owner/repo#123`); empty for manually created tasks (see [task-sources.md](task-sources.md))
+- `source` / `source_ref` — where the task was created from: `github` / `owner/repo#123` for GitHub Issues imports (see [task-sources.md](task-sources.md)), or `schedule` / `<schedule id>#<run marker>` for a fired task schedule (see [task-templates.md](task-templates.md)); empty for manually created tasks
 
 ### Workflows
 A workflow is a directed state machine composed of **labels** (columns) and **transitions** (allowed moves between them). Each transition has a `trigger_type`:
@@ -116,6 +116,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   issue — a comment when its PR opens, an `agent-in-progress` label when it
   first leaves `not_ready`, and the issue closed with a comment when the PR
   merges — see [task-sources.md](task-sources.md)
+- **Task templates & recurring schedules** — reusable pre-filled title/description/type snippets for recurring shapes of work; a schedule fires a template as a new task on a repo on a cron expression (hourly/daily/weekly presets or raw cron), skipping a firing while an open task from a prior firing of the same schedule still exists — see [task-templates.md](task-templates.md)
 - **Dashboard** — split across three pages: an Overview (label counts, active agents, and the human intervention queue) at `/`, a Cost & Usage page at `/dashboard/usage` (Claude rate-limit usage, plus cost/token tracking by provider, day, and task), and an Agent Performance page at `/dashboard/performance` (per-agent-config success rate, duration, retries)
 - **Provider health page** — readiness checks for the Claude/Qwen/Gemini/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions (approve/reject/move label) record *who* performed them in the `task_label_history` audit trail (`GET /tasks/{id}/label-history`); WebSocket auth via `?token=` query param
