@@ -24,7 +24,7 @@ import (
 // configure the /healthz and /health/providers "Version"/"Update available"
 // rows — see internal/health and cmd/server/main.go's ldflags-stamped
 // Version var.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, chatSender handlers.ChatSender) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
@@ -42,7 +42,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	backupH := handlers.NewBackupHandler(db)
 	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	wsTicketH := handlers.NewWSTicketHandler(hub)
-	chatH := handlers.NewChatHandler(q, chatSender)
+	chatH := handlers.NewChatHandler(q, hub, term, bearerToken, corsOrigins)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -145,14 +145,14 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Delete("/tasks/{id}/review-comments/{comment_id}", reviewH.Delete)
 
 			// Interactive chat sessions — free-form conversations against a repo,
-			// separate from the task/workflow state machine (see agent.ChatRunner).
-			// Turns stream over WebSocket (chat.message / chat.turn_done events).
+			// separate from the task/workflow state machine (see agent.TerminalManager).
+			// The session's interactive CLI runs in a PTY streamed over the
+			// /terminal WebSocket (raw bytes, ?ticket= auth like /ws).
 			r.Get("/chat/sessions", chatH.List)
 			r.Post("/chat/sessions", chatH.Create)
 			r.Get("/chat/sessions/{id}", chatH.Get)
 			r.Delete("/chat/sessions/{id}", chatH.Delete)
-			r.Post("/chat/sessions/{id}/messages", chatH.SendMessage)
-			r.Post("/chat/sessions/{id}/cancel", chatH.Cancel)
+			r.Get("/chat/sessions/{id}/terminal", chatH.Terminal)
 
 			// GitHub auth status (used by the frontend to warn when gh credentials are absent)
 			r.Get("/github/auth-status", handlers.GitHubAuthStatus)

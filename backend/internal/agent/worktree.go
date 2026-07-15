@@ -69,6 +69,13 @@ func provisionWorktree(ctx context.Context, repoPath, taskID, title string) (wtP
 	return provisionWorktreeFrom(ctx, repoPath, taskID, title, "")
 }
 
+// ProvisionChatWorktree exposes provisionWorktree for the chat terminal, which
+// cuts one worktree per session (keyed by session id) so its interactive CLI
+// runs isolated from the base checkout, edits persisting across reconnects.
+func ProvisionChatWorktree(ctx context.Context, repoPath, sessionID, title string) (wtPath, branch, baseRef string, err error) {
+	return provisionWorktree(ctx, repoPath, sessionID, title)
+}
+
 // provisionWorktreeFrom is provisionWorktree with an explicit base ref. When
 // baseOverride is non-empty the new branch is cut from it (used to branch a
 // subtask off its parent's branch); otherwise the repo's default branch is used.

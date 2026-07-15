@@ -12,7 +12,10 @@ require (
 
 require gopkg.in/yaml.v3 v3.0.1
 
-require github.com/kylelemons/godebug v1.1.0 // indirect
+require (
+	github.com/creack/pty v1.1.24 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
+)
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect

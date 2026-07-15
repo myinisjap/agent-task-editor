@@ -30,20 +30,6 @@ components:
           type: string
         updated_at:
           type: string
-    ChatMessage:
-      type: object
-      properties:
-        id:
-          type: string
-        session_id:
-          type: string
-        type:
-          type: string
-          description: user | stdout | stderr | system | tool_call | tool_result
-        content:
-          type: string
-        created_at:
-          type: string
     Task:
       type: object
       properties:
@@ -2105,9 +2091,9 @@ paths:
       summary: List interactive chat sessions
       description: >
         Interactive chat sessions are free-form conversations against a repo,
-        separate from the task/workflow state machine. Each user message runs
-        one provider turn in the session's git worktree; turns stream over the
-        WebSocket (chat.message / chat.turn_done events).
+        separate from the task/workflow state machine. Each session runs the
+        provider's interactive CLI in a PTY inside the session's git worktree,
+        streamed over the /chat/sessions/{id}/terminal WebSocket.
       responses:
         "200":
           description: All chat sessions, newest-updated first
@@ -2154,10 +2140,14 @@ paths:
         schema:
           type: string
     get:
-      summary: Get a chat session with its message transcript
+      summary: Get a chat session
+      description: >
+        Returns the session. The interactive terminal has no server-side
+        transcript — history lives in the CLI's own session store and the
+        browser's terminal scrollback.
       responses:
         "200":
-          description: The session and its ordered messages
+          description: The session
           content:
             application/json:
               schema:
@@ -2165,10 +2155,6 @@ paths:
                 properties:
                   session:
                     $ref: "#/components/schemas/ChatSession"
-                  messages:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ChatMessage"
         "404":
           description: Session not found
     delete:
@@ -2179,53 +2165,37 @@ paths:
         "404":
           description: Session not found
 
-  /chat/sessions/{id}/messages:
+  /chat/sessions/{id}/terminal:
     parameters:
       - name: id
         in: path
         required: true
         schema:
           type: string
-    post:
-      summary: Send a message (run one chat turn)
+      - name: ticket
+        in: query
+        required: false
+        schema:
+          type: string
+        description: >
+          Single-use WebSocket auth ticket from POST /ws-ticket. Required when
+          API auth is enabled (browsers can't set the bearer header on a WS
+          handshake).
+    get:
+      summary: Open the session's interactive terminal (WebSocket upgrade)
       description: >
-        Kicks off one provider turn in the background and returns 202
-        immediately; the response streams over the WebSocket as chat.message
-        events, followed by chat.turn_done. Only one turn runs per session at a
-        time.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [message]
-              properties:
-                message:
-                  type: string
+        Upgrades to a WebSocket carrying the session's interactive CLI running
+        in a PTY, cwd = the session's repo worktree (provisioned on first
+        connect). The server sends terminal output as binary frames; the client
+        sends keystrokes as binary/text frames and window-size changes as a text
+        frame of the form (NUL byte)resize:<cols>,<rows>. The process stays alive
+        across disconnects, so reconnecting reattaches to the same live session.
       responses:
-        "202":
-          description: Turn accepted and running
-        "400":
-          description: Empty message
+        "101":
+          description: Switching Protocols — WebSocket established
+        "401":
+          description: Missing or invalid ticket
         "404":
           description: Session not found
         "503":
-          description: Chat runner not available
-
-  /chat/sessions/{id}/cancel:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-    post:
-      summary: Cancel the in-flight turn for a session
-      responses:
-        "202":
-          description: Cancellation signalled
-        "409":
-          description: No turn currently in progress
-        "503":
-          description: Chat runner not available
+          description: Terminal not available

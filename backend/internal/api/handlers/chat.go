@@ -3,30 +3,42 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"nhooyr.io/websocket"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
-// ChatSender runs one interactive-chat turn for a session. Implemented by
-// agent.ChatRunner; may be nil in contexts where no runner is wired, in which
-// case sending a message reports the feature unavailable.
-type ChatSender interface {
-	SendMessage(ctx context.Context, sessionID, repoPath, message string) error
-	Cancel(sessionID string) bool
+// Terminal runs interactive chat sessions in a PTY. Implemented by
+// agent.TerminalManager; may be nil where no manager is wired, in which case the
+// terminal endpoint reports the feature unavailable.
+type Terminal interface {
+	Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, conn *websocket.Conn) error
+	Stop(sessionID string)
 }
 
-// ChatHandler owns interactive chat session CRUD and message dispatch. Chat is
-// separate from the task/workflow state machine — see agent.ChatRunner.
+// ChatHandler owns interactive chat session CRUD and the PTY terminal upgrade.
+// Chat is separate from the task/workflow state machine — a session binds a repo
+// + provider + git worktree, and the terminal runs the provider's interactive
+// CLI in that worktree (see agent.TerminalManager).
 type ChatHandler struct {
-	q      *gen.Queries
-	sender ChatSender
+	q    *gen.Queries
+	hub  *ws.Hub
+	term Terminal
+	// auth mirrors the /ws endpoint: WS handshakes can't carry the bearer header,
+	// so a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket) is
+	// validated here. Empty bearerToken = open (no auth), same as ServeWS.
+	bearerToken string
+	corsOrigins string
 }
 
-func NewChatHandler(q *gen.Queries, sender ChatSender) *ChatHandler {
-	return &ChatHandler{q: q, sender: sender}
+func NewChatHandler(q *gen.Queries, hub *ws.Hub, term Terminal, bearerToken, corsOrigins string) *ChatHandler {
+	return &ChatHandler{q: q, hub: hub, term: term, bearerToken: bearerToken, corsOrigins: corsOrigins}
 }
 
 func (h *ChatHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -74,34 +86,29 @@ func (h *ChatHandler) Create(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusCreated, sess)
 }
 
-// Get returns a session plus its full message transcript.
+// Get returns a session. The terminal has no server-side transcript — history
+// lives in the CLI's own session store and the browser's terminal scrollback.
 func (h *ChatHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	sess, err := h.q.GetChatSession(r.Context(), id)
+	sess, err := h.q.GetChatSession(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		Err(w, http.StatusNotFound, "chat session not found")
 		return
 	}
-	msgs, err := h.q.ListChatMessages(r.Context(), id)
-	if err != nil {
-		Err(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if msgs == nil {
-		msgs = []gen.ChatMessage{}
-	}
-	JSON(w, http.StatusOK, map[string]any{"session": sess, "messages": msgs})
+	JSON(w, http.StatusOK, map[string]any{"session": sess})
 }
 
-// Delete removes the session (and its messages, via ON DELETE CASCADE) and its
-// git worktree. Best-effort on the worktree — a failure there still deletes the
-// session row so the UI isn't stuck with an undeletable session.
+// Delete removes the session and its git worktree, and kills any running
+// terminal process for it. Best-effort on the worktree — a failure there still
+// deletes the row so the UI isn't stuck with an undeletable session.
 func (h *ChatHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sess, err := h.q.GetChatSession(r.Context(), id)
 	if err != nil {
 		Err(w, http.StatusNotFound, "chat session not found")
 		return
+	}
+	if h.term != nil {
+		h.term.Stop(id)
 	}
 	if sess.WorktreePath != "" {
 		if repo, rerr := h.q.GetRepo(r.Context(), sess.RepoID); rerr == nil {
@@ -115,57 +122,73 @@ func (h *ChatHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type sendChatReq struct {
-	Message string `json:"message"`
-}
+// Terminal upgrades to a WebSocket carrying the session's interactive CLI. The
+// PTY runs in the session's repo worktree, provisioned here on first connect so
+// edits persist across reconnects. Auth: single-use ?ticket= (see ServeWS).
+func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
+	if h.term == nil {
+		Err(w, http.StatusServiceUnavailable, "terminal is not available")
+		return
+	}
+	if h.bearerToken != "" && !h.hub.ConsumeTicket(r.URL.Query().Get("ticket")) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
-// SendMessage runs one chat turn. The turn streams over WebSocket (chat.message
-// / chat.turn_done events), so this endpoint kicks the turn off in the
-// background and returns 202 immediately rather than blocking for the whole run.
-func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
-	if h.sender == nil {
-		Err(w, http.StatusServiceUnavailable, "chat is not available")
-		return
-	}
 	id := chi.URLParam(r, "id")
-	var req sendChatReq
-	if err := decode(r, &req); err != nil || req.Message == "" {
-		Err(w, http.StatusBadRequest, "message is required")
-		return
-	}
 	sess, err := h.q.GetChatSession(r.Context(), id)
 	if err != nil {
-		Err(w, http.StatusNotFound, "chat session not found")
+		http.Error(w, "chat session not found", http.StatusNotFound)
 		return
 	}
 	repo, err := h.q.GetRepo(r.Context(), sess.RepoID)
 	if err != nil {
-		Err(w, http.StatusInternalServerError, "repo lookup failed")
+		http.Error(w, "repo lookup failed", http.StatusInternalServerError)
 		return
 	}
 
-	// Run the turn in the background so a long agent turn doesn't hold the HTTP
-	// request open. Use a detached context — the turn must outlive this request.
-	// The runner rejects a second concurrent turn per session (ErrChatBusy).
-	go func() {
-		_ = h.sender.SendMessage(context.Background(), id, repo.Path, req.Message)
-	}()
-	w.WriteHeader(http.StatusAccepted)
+	// An existing worktree means this session has launched a terminal before, so
+	// ask the CLI to continue its most recent session in that worktree's cwd
+	// (each session has its own worktree, so "most recent in cwd" is this
+	// session's history — no cross-session mixups). Captured before provisioning.
+	resume := sess.WorktreePath != ""
+
+	// Provision the worktree on first connect and persist it; reuse afterwards so
+	// terminal edits survive reconnects. This is the cwd the CLI runs in.
+	workDir := sess.WorktreePath
+	if workDir == "" {
+		wtPath, _, _, perr := agent.ProvisionChatWorktree(r.Context(), repo.Path, id, sess.Title)
+		if perr != nil {
+			http.Error(w, "provision worktree failed", http.StatusInternalServerError)
+			return
+		}
+		if err := h.q.SetChatSessionWorktree(r.Context(), gen.SetChatSessionWorktreeParams{WorktreePath: wtPath, ID: id}); err != nil {
+			http.Error(w, "persist worktree failed", http.StatusInternalServerError)
+			return
+		}
+		workDir = wtPath
+	}
+
+	var originPatterns []string
+	if h.corsOrigins == "*" || h.corsOrigins == "" {
+		originPatterns = []string{"*"}
+	} else {
+		for _, o := range strings.Split(h.corsOrigins, ",") {
+			if s := strings.TrimSpace(o); s != "" {
+				originPatterns = append(originPatterns, s)
+			}
+		}
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: originPatterns})
+	if err != nil {
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if err := h.term.Attach(r.Context(), id, workDir, sess.Provider, sess.Model, resume, conn); err != nil {
+		conn.Close(websocket.StatusInternalError, err.Error())
+	}
 }
 
-// Cancel signals an in-flight turn to stop. 202 if signalled, 409 if no turn
-// is currently running for the session.
-func (h *ChatHandler) Cancel(w http.ResponseWriter, r *http.Request) {
-	if h.sender == nil {
-		Err(w, http.StatusServiceUnavailable, "chat is not available")
-		return
-	}
-	if !h.sender.Cancel(chi.URLParam(r, "id")) {
-		Err(w, http.StatusConflict, "no turn in progress")
-		return
-	}
-	w.WriteHeader(http.StatusAccepted)
-}
-
-// ensure the ChatRunner satisfies ChatSender at compile time.
-var _ ChatSender = (*agent.ChatRunner)(nil)
+// ensure the TerminalManager satisfies Terminal at compile time.
+var _ Terminal = (*agent.TerminalManager)(nil)

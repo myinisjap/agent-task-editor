@@ -9,37 +9,6 @@ import (
 	"context"
 )
 
-const createChatMessage = `-- name: CreateChatMessage :one
-INSERT INTO chat_messages (id, session_id, type, content)
-VALUES (?, ?, ?, ?)
-RETURNING id, session_id, type, content, created_at
-`
-
-type CreateChatMessageParams struct {
-	ID        string `json:"id"`
-	SessionID string `json:"session_id"`
-	Type      string `json:"type"`
-	Content   string `json:"content"`
-}
-
-func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessageParams) (ChatMessage, error) {
-	row := q.db.QueryRowContext(ctx, createChatMessage,
-		arg.ID,
-		arg.SessionID,
-		arg.Type,
-		arg.Content,
-	)
-	var i ChatMessage
-	err := row.Scan(
-		&i.ID,
-		&i.SessionID,
-		&i.Type,
-		&i.Content,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const createChatSession = `-- name: CreateChatSession :one
 INSERT INTO chat_sessions (id, repo_id, provider, model, title)
 VALUES (?, ?, ?, ?, ?)
@@ -107,39 +76,6 @@ func (q *Queries) GetChatSession(ctx context.Context, id string) (ChatSession, e
 	return i, err
 }
 
-const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, session_id, type, content, created_at FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC
-`
-
-func (q *Queries) ListChatMessages(ctx context.Context, sessionID string) ([]ChatMessage, error) {
-	rows, err := q.db.QueryContext(ctx, listChatMessages, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ChatMessage
-	for rows.Next() {
-		var i ChatMessage
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.Type,
-			&i.Content,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listChatSessions = `-- name: ListChatSessions :many
 SELECT id, repo_id, provider, model, title, provider_session_id, worktree_path, created_at, updated_at FROM chat_sessions ORDER BY updated_at DESC
 `
@@ -175,20 +111,6 @@ func (q *Queries) ListChatSessions(ctx context.Context) ([]ChatSession, error) {
 		return nil, err
 	}
 	return items, nil
-}
-
-const setChatSessionResume = `-- name: SetChatSessionResume :exec
-UPDATE chat_sessions SET provider_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-`
-
-type SetChatSessionResumeParams struct {
-	ProviderSessionID string `json:"provider_session_id"`
-	ID                string `json:"id"`
-}
-
-func (q *Queries) SetChatSessionResume(ctx context.Context, arg SetChatSessionResumeParams) error {
-	_, err := q.db.ExecContext(ctx, setChatSessionResume, arg.ProviderSessionID, arg.ID)
-	return err
 }
 
 const setChatSessionTitle = `-- name: SetChatSessionTitle :exec

@@ -67,14 +67,6 @@ type BackupSetting struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-type ChatMessage struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"session_id"`
-	Type      string    `json:"type"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 type ChatSession struct {
 	ID                string    `json:"id"`
 	RepoID            string    `json:"repo_id"`
