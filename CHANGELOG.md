@@ -46,6 +46,19 @@ triggers the "Release" workflow the same way.
   remains a deploy-time-only choice (`BACKUP_DIR`). See docs/backup.md.
 
 ### Fixed
+- **Claude OAuth tokens are now auto-refreshed — no more 401s that require
+  running Claude Code on the host.** The `claude` provider (and the dashboard
+  usage widget) injected the raw `accessToken` from
+  `~/.claude/.credentials.json` as `ANTHROPIC_AUTH_TOKEN`, which makes the CLI
+  skip its own refresh flow; once the token expired (a few hours), every run
+  401'd until Claude Code was run interactively on the machine to refresh the
+  file. The server now checks the token's `expiresAt` before every use and, if
+  it is expired or expires within 5 minutes, refreshes it via Anthropic's OAuth
+  token endpoint with the stored refresh token, writing the rotated tokens back
+  to the credentials file (atomic, 0600, other fields preserved) so the app and
+  Claude Code stay in sync. If a token is expired and unrefreshable, nothing is
+  injected so the CLI can attempt its own refresh flow instead of being handed
+  a known-stale bearer token.
 - **Transient-retry backoff windows are now honored.** A task backed off after a
   transient failure (`next_retry_at` set in the future) could be re-dispatched
   immediately instead of waiting. The dispatcher's pickup query compared the
