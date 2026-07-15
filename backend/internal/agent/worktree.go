@@ -14,6 +14,11 @@ import (
 // worktreeDir is the subdirectory under a repo where per-task worktrees live.
 const worktreeDir = ".ate-worktrees"
 
+// safeIDSegment matches a task/session id safe to use as a single path segment:
+// no separators, no "..", no shell-meaningful characters. IDs are UUIDs, so
+// this is a defense-in-depth check against path traversal / injection.
+var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
 // repoGitLocks serializes ref-mutating git operations within a single repo.
 // Git worktrees share one object/ref store, so concurrent commits, merges,
 // branch deletes, and worktree adds/removes across sibling worktrees can race on
@@ -80,6 +85,12 @@ func ProvisionChatWorktree(ctx context.Context, repoPath, sessionID, title strin
 // baseOverride is non-empty the new branch is cut from it (used to branch a
 // subtask off its parent's branch); otherwise the repo's default branch is used.
 func provisionWorktreeFrom(ctx context.Context, repoPath, taskID, title, baseOverride string) (wtPath, branch, baseRef string, err error) {
+	// taskID becomes a path segment (and a git branch name), so reject anything
+	// that isn't a single safe segment to close path traversal. In practice IDs
+	// are server-generated UUIDs, so this only ever fires on a caller bug.
+	if !safeIDSegment.MatchString(taskID) || taskID == "." || taskID == ".." {
+		return "", "", "", fmt.Errorf("invalid task/session id %q", taskID)
+	}
 	branch = branchName(taskID, title)
 	wtPath = filepath.Join(repoPath, worktreeDir, taskID)
 

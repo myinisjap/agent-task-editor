@@ -58,6 +58,12 @@ triggers the "Release" workflow the same way.
   children default to a content-based minimum width; the columns and selects now
   shrink properly instead of forcing overflow.
 
+### Security
+- **Worktree provisioning validates the task/session id.** The id becomes a
+  filesystem path segment and git branch name; it is now rejected unless it is a
+  single safe segment (no separators or `..`), closing a potential path-traversal
+  vector. Ids are server-generated UUIDs, so this is defense-in-depth.
+
 ## [0.11.0] - 2026-07-13
 
 ### Fixed
