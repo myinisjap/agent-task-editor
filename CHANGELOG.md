@@ -69,6 +69,9 @@ triggers the "Release" workflow the same way.
   count of 1; defaults to once a day, keeping the newest 7 snapshots (same
   as the previous env-var defaults). Whether the scheduler is enabled at all
   remains a deploy-time-only choice (`BACKUP_DIR`). See docs/backup.md.
+- **Playwright E2E smoke tests** for the board and task-detail flows (load board,
+  create a task, open task detail, verify the WS log pane mounts), running against
+  the docker-compose stack in CI alongside the existing frontend test suite.
 
 ### Fixed
 - **Chat terminal no longer sits flush against the pane edge.** The PTY

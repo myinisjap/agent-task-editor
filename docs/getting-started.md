@@ -303,6 +303,15 @@ npm install
 npm run dev   # starts Vite dev server on :5173
 ```
 
+Run the unit/component test suite with `npm run test:coverage` (Vitest +
+Testing Library). A small Playwright E2E smoke suite also exists
+(`frontend/e2e/`), covering board load, task creation, task-detail
+navigation, and the Logs tab's WS log pane mount — it runs against the
+built docker-compose stack rather than `npm run dev`, so start the stack
+first (`./dev.sh start` or `docker compose up -d --build --wait`), then run
+`npm run e2e` from `frontend/` (see `frontend/e2e/README.md` for the
+one-time demo-repo setup it needs).
+
 ### Building the MCP Sidecar
 
 The MCP sidecar enables the `signal_complete`, `request_human`, `update_task_notes`, and `store_info` tools for the `claude` and `qwen_code` providers:

@@ -11,6 +11,9 @@ backend/coverage.out
 frontend/node_modules/
 frontend/dist/
 frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
 
 # Editor
 .DS_Store
