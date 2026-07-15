@@ -111,6 +111,16 @@ func TestTerminalManagerAttachStreams(t *testing.T) {
 		t.Errorf("stdin didn't reach the PTY, or it didn't run in cwd %q; got:\n%s", repoDir, got)
 	}
 
+	// TERM must reach the PTY as a color-capable value, else CLIs disable color
+	// (the backend container has no TERM, so it must be set explicitly).
+	if err := conn1.Write(ctx, websocket.MessageBinary, []byte("echo TERM=$TERM\n")); err != nil {
+		t.Fatalf("write TERM probe: %v", err)
+	}
+	termOut := readUntil(t, ctx, conn1, "TERM=xterm-256color")
+	if !strings.Contains(termOut, "TERM=xterm-256color") {
+		t.Errorf("PTY TERM not color-capable; got:\n%s", termOut)
+	}
+
 	// Resize must arrive as a TEXT frame (parseResize only inspects text
 	// frames); a binary frame would fall through to the PTY as literal stdin.
 	// `stty size` prints "<rows> <cols>", so after resizing to 33x77 the shell

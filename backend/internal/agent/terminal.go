@@ -126,7 +126,12 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	}
 	cmd := exec.Command(name, args...)
 	cmd.Dir = repoPath // ← run the CLI in the selected repo's worktree
-	cmd.Env = os.Environ()
+	// Advertise a color-capable terminal. The backend process has no TERM in the
+	// container, so without this the PTY inherits an empty TERM and many CLIs
+	// disable color. xterm.js on the client is a 256-color/truecolor emulator, so
+	// these values are accurate. Set after os.Environ() so they win over any
+	// inherited value.
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 
 	tty, err := pty.Start(cmd)
 	if err != nil {
