@@ -257,5 +257,5 @@ function TerminalView({ sessionId }: { sessionId: string }) {
 
   // touch-manipulation avoids the 300ms tap delay / double-tap-zoom on the
   // terminal; the flex box gives it a real height for FitAddon to measure.
-  return <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-2 touch-manipulation" />
+  return <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-4 touch-manipulation" />
 }

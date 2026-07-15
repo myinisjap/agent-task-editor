@@ -71,6 +71,10 @@ triggers the "Release" workflow the same way.
   remains a deploy-time-only choice (`BACKUP_DIR`). See docs/backup.md.
 
 ### Fixed
+- **Chat terminal no longer sits flush against the pane edge.** The PTY
+  terminal in the Chat page had minimal padding around it, so glyphs could
+  butt right up against the window edge (and get visually clipped on
+  rounded-corner window chrome). Padding increased from 8px to 16px.
 - **Claude OAuth tokens are now auto-refreshed — no more 401s that require
   running Claude Code on the host.** The `claude` provider (and the dashboard
   usage widget) injected the raw `accessToken` from
