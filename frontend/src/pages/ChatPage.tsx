@@ -154,16 +154,17 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     const container = containerRef.current
     if (!container) return
 
+    // Smaller font on phones so a usable number of columns fits the width.
+    const isNarrow = window.innerWidth < 640
     const term = new Terminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-      fontSize: 13,
+      fontSize: isNarrow ? 11 : 13,
       theme: { background: '#0f172a' }, // slate-900, matches the app chrome
       cursorBlink: true,
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(container)
-    fit.fit()
 
     let ws: WebSocket | null = null
     let closedByUs = false
@@ -176,6 +177,24 @@ function TerminalView({ sessionId }: { sessionId: string }) {
       }
     }
 
+    // Refit to the current container box and tell the PTY. Guarded because
+    // fit() throws if the container isn't laid out yet (0x0), which happens on
+    // the first mobile paint before flex resolves.
+    function refit() {
+      try {
+        fit.fit()
+        sendResize()
+      } catch { /* container not laid out yet; a later call will succeed */ }
+    }
+
+    // Initial fit after layout settles. On mobile the container often measures
+    // 0x0 synchronously on mount, so defer to the next frame (and once more, in
+    // case fonts/flex settle a beat later) rather than fitting to a stale size.
+    requestAnimationFrame(() => {
+      refit()
+      requestAnimationFrame(refit)
+    })
+
     ;(async () => {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const base = import.meta.env.BASE_URL.replace(/\/$/, '')
@@ -184,6 +203,8 @@ function TerminalView({ sessionId }: { sessionId: string }) {
       ws = new WebSocket(url)
       ws.binaryType = 'arraybuffer'
 
+      // Send the size once connected — by now the deferred fit has run, so the
+      // PTY starts at the real terminal dimensions rather than the 80x24 default.
       ws.onopen = () => sendResize()
       ws.onmessage = (e) => {
         if (typeof e.data === 'string') term.write(e.data)
@@ -199,20 +220,34 @@ function TerminalView({ sessionId }: { sessionId: string }) {
       })
     })()
 
-    // Refit + notify the PTY on container resize.
-    const ro = new ResizeObserver(() => {
-      try { fit.fit() } catch { /* not yet laid out */ }
-      sendResize()
-    })
+    // Refit on container resize (desktop pane drag, orientation change).
+    const ro = new ResizeObserver(refit)
     ro.observe(container)
+
+    // Mobile: tapping the terminal must focus xterm's hidden textarea, which is
+    // what summons the on-screen keyboard — without this, touch users can't type.
+    const focus = () => term.focus()
+    container.addEventListener('touchend', focus)
+    container.addEventListener('click', focus)
+
+    // Mobile: the on-screen keyboard shrinks the visual viewport without changing
+    // the container's box, so ResizeObserver doesn't fire. Track visualViewport
+    // directly and refit so the bottom rows stay above the keyboard.
+    const vv = window.visualViewport
+    vv?.addEventListener('resize', refit)
 
     return () => {
       closedByUs = true
       ro.disconnect()
+      container.removeEventListener('touchend', focus)
+      container.removeEventListener('click', focus)
+      vv?.removeEventListener('resize', refit)
       ws?.close()
       term.dispose()
     }
   }, [sessionId])
 
-  return <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-2" />
+  // touch-manipulation avoids the 300ms tap delay / double-tap-zoom on the
+  // terminal; the flex box gives it a real height for FitAddon to measure.
+  return <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-2 touch-manipulation" />
 }
