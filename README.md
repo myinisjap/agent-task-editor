@@ -18,7 +18,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Per-task git worktrees** — concurrent agents on the same repo don't conflict
 - **One-click PR URL** — pre-filled GitHub compare URL with task description and agent notes
 - **Workflow editor** — create/edit labels, transitions, and trigger types; import/export YAML
-- **Agent config UI** — manage multiple AI configs, each targeting different workflow stages
+- **Agent config UI** — manage multiple AI configs, each targeting different workflow stages, referencing a reusable **Provider Config** (provider/model/API keys) that can be shared across agent configs and ad-hoc chat sessions
 - **Git diff viewer** — per-task branch diff against the base ref
 - **Session resume** — re-runs on the same task continue the agent's previous conversation (`claude --resume`) with full prior context instead of starting cold; per-agent-config opt-out for stages that want fresh eyes
 - **Reply to a waiting agent** — when an agent asks for help (`request_human`), answer with text and it continues in the same session, without moving the task
@@ -132,10 +132,11 @@ See [docs/getting-started.md](docs/getting-started.md) for the full setup guide,
 ## First Steps After Startup
 
 1. **Register a repository** — Settings → Repos → Add Repo. Enter the local filesystem path agents should work in.
-2. **Create an agent config** — Settings → Agents → New Agent. Select a provider, enter a model, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
-3. **Create a task** — Board → New Task. Select the repo and fill in the title and description.
-4. **Move it to `plan`** — drag it or use the label selector. The dispatcher picks it up within 5 seconds.
-5. **Watch the logs** — click the task to open the detail view; logs stream live as the agent works.
+2. **Create a provider config** — Settings → Providers → New Provider Config. Select a provider, enter a model, and add any required env vars/API keys. Provider configs are reusable — the same one can back multiple agent configs and/or chat sessions.
+3. **Create an agent config** — Settings → Agents → New Agent. Select the provider config you just created, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
+4. **Create a task** — Board → New Task. Select the repo and fill in the title and description.
+5. **Move it to `plan`** — drag it or use the label selector. The dispatcher picks it up within 5 seconds.
+6. **Watch the logs** — click the task to open the detail view; logs stream live as the agent works.
 
 ---
 
@@ -156,7 +157,7 @@ Seven providers are available. Choose based on your auth setup, billing preferen
 ### Key limitations to be aware of
 
 - **`claude` without MCP** — If `MCP_SERVER_PATH` is not set, the agent has no way to call `signal_complete` or `request_human`. Every run will finish with status `completed` but the task label will **not** change. Always build and configure the MCP sidecar when using the `claude` provider.
-- **`claude` env var restrictions** — The `env` field in agent configs cannot override system-critical variables (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, and others). Attempts are blocked and logged as warnings.
+- **`claude` env var restrictions** — The `env` field on a provider config cannot override system-critical variables (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, and others). Attempts are blocked and logged as warnings.
 - **`llm` model quality** — The `llm` provider sends the same tool definitions and prompts regardless of endpoint, but smaller or instruction-tuned models may not reliably follow tool-use conventions. Test your chosen model before relying on it for automated workflows.
 
 ---

@@ -32,6 +32,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
+	providersH := handlers.NewProviderConfigsHandler(q)
 	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
@@ -207,6 +208,13 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Delete("/agents/{id}", agentsH.Delete)
 			r.Get("/agents/models", agentsH.GetModels)
 			r.Get("/agents/claude-options", agentsH.GetClaudeOptions)
+
+			// Provider configs
+			r.Get("/provider-configs", providersH.List)
+			r.Post("/provider-configs", providersH.Create)
+			r.Get("/provider-configs/{id}", providersH.Get)
+			r.Put("/provider-configs/{id}", providersH.Update)
+			r.Delete("/provider-configs/{id}", providersH.Delete)
 
 			// Repos
 			r.Get("/repos", reposH.List)

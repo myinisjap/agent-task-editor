@@ -12,6 +12,8 @@ The `anthropic` provider calls the Anthropic Messages API directly — no CLI bi
 
 Makes direct HTTP calls to `https://api.anthropic.com/v1/messages` in a multi-turn tool-use loop (up to `max_turns` turns, default `50`). Tool calls are executed server-side in Go; the model is sent tool results and continues until it calls `signal_complete` or `request_human`, or runs out of turns. The turn limit is configurable per agent config via the `max_turns` field (`0`/unset falls back to `50`).
 
+The provider string and model come from the agent config's referenced [Provider Config](../agents.md#provider-configs) (`provider_config_id`), not the agent config itself.
+
 ## Credentials
 
 **Required:** `LLM_API_KEY` set to an Anthropic API key.
@@ -58,7 +60,8 @@ This is billed per-token — separate from a Claude Max subscription. The `claud
 ## Command Allowlist / Denylist
 
 `command_allowlist` and `command_denylist` (JSON arrays of `"*"`-wildcard glob
-patterns on the agent config, both defaulting to `[]`/no restriction) are enforced
+patterns on the agent config — workflow-behavior fields, not part of the
+Provider Config — both defaulting to `[]`/no restriction) are enforced
 server-side, in Go, immediately before a `run_bash` call is executed: the denylist is
 checked first and always wins; if the allowlist is non-empty, the command must also
 match at least one allow pattern. A denied command returns an `error: ...` string to
@@ -75,7 +78,7 @@ Not yet supported.
 
 ## Model Selection
 
-Pass `model` in the agent config (e.g. `claude-sonnet-4-6`, `claude-opus-4`). Defaults to `claude-sonnet-4-6` if not set.
+Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) (e.g. `claude-sonnet-4-6`, `claude-opus-4`). Defaults to `claude-sonnet-4-6` if not set.
 
 ## Cost & Usage Reporting
 
@@ -90,5 +93,5 @@ Token usage (`input_tokens`/`output_tokens`) is summed from the Messages API's `
 ## Setup Checklist
 
 1. Set `LLM_API_KEY` to your Anthropic API key
-2. Create an agent config with `"provider": "anthropic"`
+2. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "anthropic"`, then an agent config referencing it via `provider_config_id`
 3. `MCP_SERVER_PATH` is not needed for this provider

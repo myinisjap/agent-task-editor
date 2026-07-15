@@ -41,6 +41,7 @@ sql:
       - "internal/storage/migrations/036_backup_settings.up.sql"
       - "internal/storage/migrations/037_chat_sessions.up.sql"
       - "internal/storage/migrations/038_drop_chat_messages.up.sql"
+      - "internal/storage/migrations/039_provider_configs.up.sql"
     gen:
       go:
         package: "gen"

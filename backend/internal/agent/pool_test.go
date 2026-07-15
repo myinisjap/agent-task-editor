@@ -104,14 +104,23 @@ func seedJobFixtures(t *testing.T, q *gen.Queries, wfID string) (taskID, agCfgID
 		t.Fatalf("create task: %v", err)
 	}
 
-	agCfgID = uuid.NewString()
-	_, err = q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID:       agCfgID,
-		Name:     "mock-agent",
+	pc, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID:       uuid.NewString(),
+		Name:     "mock-provider",
 		Provider: "mock",
 		Model:    "none",
-		Labels:   `["plan"]`,
 		Env:      `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
+
+	agCfgID = uuid.NewString()
+	_, err = q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID:               agCfgID,
+		Name:             "mock-agent",
+		ProviderConfigID: pc.ID,
+		Labels:           `["plan"]`,
 	})
 	if err != nil {
 		t.Fatalf("create agent config: %v", err)
@@ -211,17 +220,30 @@ func TestReDispatch_PicksUpConfigChanges(t *testing.T) {
 	q := gen.New(db.SQL())
 	ctx := context.Background()
 
+	pcA, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "planner-A-provider", Provider: "mock", Model: "none", Env: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create provider config A: %v", err)
+	}
+	pcB, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "planner-B-provider", Provider: "mock", Model: "none", Env: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create provider config B: %v", err)
+	}
+
 	// Config A: enabled, owns "plan". This is what the first run uses.
 	cfgA := uuid.NewString()
 	if _, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: cfgA, Name: "planner-A", Provider: "mock", Model: "none", Labels: `["plan"]`, Env: `{}`,
+		ID: cfgA, Name: "planner-A", ProviderConfigID: pcA.ID, Labels: `["plan"]`,
 	}); err != nil {
 		t.Fatalf("create config A: %v", err)
 	}
 	// Config B: also owns "plan", but starts disabled.
 	cfgB := uuid.NewString()
 	if _, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: cfgB, Name: "planner-B", Provider: "mock", Model: "none", Labels: `["plan"]`, Env: `{}`,
+		ID: cfgB, Name: "planner-B", ProviderConfigID: pcB.ID, Labels: `["plan"]`,
 	}); err != nil {
 		t.Fatalf("create config B: %v", err)
 	}
@@ -278,8 +300,8 @@ func setEnabled(t *testing.T, q *gen.Queries, id string, enabled bool) {
 		e = 1
 	}
 	if _, err := q.UpdateAgentConfig(context.Background(), gen.UpdateAgentConfigParams{
-		ID: id, Name: cur.Name, Provider: cur.Provider, Model: cur.Model,
-		SystemPrompt: cur.SystemPrompt, Labels: cur.Labels, Env: cur.Env,
+		ID: id, Name: cur.Name, ProviderConfigID: cur.ProviderConfigID,
+		SystemPrompt: cur.SystemPrompt, Labels: cur.Labels,
 		MaxTokens: cur.MaxTokens, TimeoutSecs: cur.TimeoutSecs, Enabled: e,
 	}); err != nil {
 		t.Fatalf("update config %s: %v", id, err)

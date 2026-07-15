@@ -4,13 +4,17 @@
 
 An agent config connects a set of workflow labels to a specific AI provider. The dispatcher matches tasks to configs by label name.
 
+Provider selection (which provider CLI/API, which model, and the env vars/API
+keys that authenticate it) is **not** a field on the agent config itself — it
+lives on a separate, reusable **Provider Config** entity that the agent config
+references by id. See [Provider Configs](#provider-configs) below.
+
 ### Fields
 
 | Field | Description |
 |---|---|
 | `name` | Human-readable name |
-| `provider` | Provider string — see [Providers](#providers) below |
-| `model` | Model identifier (e.g. `claude-sonnet-4-6`, `gpt-4o`) |
+| `provider_config_id` | References a [Provider Config](#provider-configs) (provider/model/env), managed separately via `/api/v1/provider-configs`. Required. `GET`/list responses embed the resolved config as `provider_config` for convenience. |
 | `labels` | JSON array of label names this agent handles (e.g. `["plan","work"]`) |
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
@@ -18,7 +22,6 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default) |
 | `max_retries` | Number of automatic consecutive retries allowed for a task after a **transient** provider error (rate limit, network blip, upstream 5xx) before it's left `failed`/escalated to `waiting_human`. `0` disables auto-retry. Default `3`. See [Retry Policy](#retry-policy) below. |
 | `retry_backoff_secs` | Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (`base * 2^attempt`, capped at 10 minutes) is applied on top. Default `30`. |
-| `env` | JSON object of additional environment variables for the agent process |
 | `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 | `enabled_mcp_servers` | JSON array of Claude user-level MCP server names enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 | `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode`, `gemini_cli`, or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
@@ -27,6 +30,32 @@ An agent config connects a set of workflow labels to a specific AI provider. The
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`gemini_cli`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. See [Cost Budgets](#cost-budgets) below. |
+
+## Provider Configs
+
+A **Provider Config** is the provider/model/API-key (env vars) triple: which
+provider CLI or API to use, which model, and the environment variables (e.g.
+`ANTHROPIC_API_KEY`) that authenticate it. It's a standalone entity, managed
+separately via `GET/POST /api/v1/provider-configs` and `GET/PUT/DELETE
+/api/v1/provider-configs/{id}` (and the **Providers** page in the UI), so the
+same provider/API-key setup can be **shared** across multiple agent configs
+and chat sessions rather than each owning its own copy.
+
+| Field | Description |
+|---|---|
+| `name` | Human-readable name |
+| `provider` | Provider string — see [Providers](#providers) below |
+| `model` | Model identifier (e.g. `claude-sonnet-4-6`, `gpt-4o`) |
+| `env` | JSON object of additional environment variables merged into the provider CLI/API process's environment |
+
+Both an agent config (`agent_configs.provider_config_id`) and a chat session
+(`chat_sessions.provider_config_id`) reference a provider config by id.
+Deleting a provider config is blocked with `409` while any agent config or
+chat session still references it.
+
+Existing agent configs and chat sessions created before this split are
+automatically migrated to their own dedicated provider config on upgrade
+(migration `039_provider_configs`) — no manual action is required.
 
 ## Providers
 
@@ -128,7 +157,7 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 
 The pricing table is intentionally approximate and small (a hardcoded Go map); it will drift from live pricing over time and is not currently user-editable.
 
-The Dashboard shows an aggregate total (tokens + cost) across all runs in a terminal state (`completed`/`failed`/`waiting_human`), plus a per-provider breakdown (via `agent_configs.provider`, joined on `agent_runs.agent_config_id`). The aggregate total query does not join on `agent_configs`, so it includes every terminal run regardless of its config. The per-provider breakdown *does* join on `agent_configs`, so runs whose agent config was later deleted (`agent_config_id` is set `NULL` on delete) are excluded from that breakdown, since they can no longer be attributed to a provider — a known limitation.
+The Dashboard shows an aggregate total (tokens + cost) across all runs in a terminal state (`completed`/`failed`/`waiting_human`), plus a per-provider breakdown (via `provider_configs.provider`, joined `agent_runs.agent_config_id` → `agent_configs` → `agent_configs.provider_config_id` → `provider_configs`). The aggregate total query does not join on `agent_configs`, so it includes every terminal run regardless of its config. The per-provider breakdown *does* join on `agent_configs`/`provider_configs`, so runs whose agent config was later deleted (`agent_config_id` is set `NULL` on delete) are excluded from that breakdown, since they can no longer be attributed to a provider — a known limitation.
 
 The Dashboard also breaks cost/usage down further into a **per-agent-config
 performance table**: success rate (completed/failed/waiting_human counts),
@@ -429,6 +458,6 @@ so humans aren't paged for problems that will resolve themselves:
 
 ## Environment Variable Security
 
-The `env` field in agent configs passes additional env vars to the subprocess. Keys that could hijack process execution are blocked and logged as warnings:
+The `env` field on a [Provider Config](#provider-configs) (referenced by an agent config's `provider_config_id`, or a chat session's) passes additional env vars to the subprocess. Keys that could hijack process execution are blocked and logged as warnings:
 
 `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`

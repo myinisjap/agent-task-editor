@@ -231,6 +231,20 @@ func (h *e2eHarness) seedTaskOnReady(t *testing.T, wfID string) string {
 	return h.seedTaskOnReadyWithProvider(t, wfID, "fake", 0)
 }
 
+// createProviderConfig creates a provider config with the given provider/model
+// and returns its id, for use as an agent config's provider_config_id.
+func (h *e2eHarness) createProviderConfig(t *testing.T, provider, model string) string {
+	t.Helper()
+	ctx := context.Background()
+	pc, err := h.q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "test-provider", Provider: provider, Model: model, Env: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
+	return pc.ID
+}
+
 // seedTaskOnReadyWithProvider is seedTaskOnReady with control over the agent
 // config's provider string and resume_sessions flag (the dispatcher's session
 // resume lookup is gated on provider == "claude" && resume_sessions != 0; the
@@ -246,9 +260,10 @@ func (h *e2eHarness) seedTaskOnReadyWithProvider(t *testing.T, wfID, provider st
 		t.Fatalf("create repo: %v", err)
 	}
 
+	pcID := h.createProviderConfig(t, provider, "none")
 	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: uuid.NewString(), Name: "fake-agent", Provider: provider, Model: "none",
-		Labels: `["ready"]`, Env: `{}`, MaxRetries: 1, RetryBackoffSecs: 1,
+		ID: uuid.NewString(), Name: "fake-agent", ProviderConfigID: pcID,
+		Labels: `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1,
 		ResumeSessions: resumeSessions,
 	}); err != nil {
 		t.Fatalf("create agent config: %v", err)
@@ -586,17 +601,19 @@ func (h *e2eHarness) seedTaskWithTwoConfigs(t *testing.T, wfID string) (taskID, 
 	}
 
 	config0ID = uuid.NewString()
+	pc0ID := h.createProviderConfig(t, "fake", "none")
 	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: config0ID, Name: "primary", Provider: "fake", Model: "none",
-		Labels: `["ready"]`, Env: `{}`, MaxRetries: 1, RetryBackoffSecs: 1,
+		ID: config0ID, Name: "primary", ProviderConfigID: pc0ID,
+		Labels: `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1,
 		Priority: 0,
 	}); err != nil {
 		t.Fatalf("create agent config 0: %v", err)
 	}
 	config1ID = uuid.NewString()
+	pc1ID := h.createProviderConfig(t, "fake", "none")
 	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: config1ID, Name: "backup", Provider: "fake", Model: "none",
-		Labels: `["ready"]`, Env: `{}`, MaxRetries: 1, RetryBackoffSecs: 1,
+		ID: config1ID, Name: "backup", ProviderConfigID: pc1ID,
+		Labels: `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1,
 		Priority: 1,
 	}); err != nil {
 		t.Fatalf("create agent config 1: %v", err)

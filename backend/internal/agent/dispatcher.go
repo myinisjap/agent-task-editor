@@ -343,7 +343,11 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		agentNotes = &t.AgentNotes
 	}
 
-	agentCfg := toAgentConfig(matched)
+	pc, err := d.q.GetProviderConfig(ctx, matched.ProviderConfigID)
+	if err != nil {
+		return "", fmt.Errorf("get provider config: %w", err)
+	}
+	agentCfg := toAgentConfig(matched, pc)
 
 	// Resume the previous run's provider session, when there is one and the
 	// config hasn't opted out. Only the claude provider honors this today; the
@@ -483,7 +487,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	}
 
 	metrics.DispatchedRunsTotal.Inc()
-	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", matched.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled, "resume_session", resumeSessionID != "", "human_reply", opts.humanReply != nil)
+	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", agentCfg.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled, "resume_session", resumeSessionID != "", "human_reply", opts.humanReply != nil)
 	return runID, nil
 }
 
@@ -589,9 +593,9 @@ func derefStr(s *string) string {
 	return *s
 }
 
-func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
+func toAgentConfig(cfg gen.AgentConfig, pc gen.ProviderConfig) AgentConfig {
 	var env map[string]string
-	_ = json.Unmarshal([]byte(cfg.Env), &env)
+	_ = json.Unmarshal([]byte(pc.Env), &env)
 	if env == nil {
 		env = map[string]string{}
 	}
@@ -606,8 +610,8 @@ func toAgentConfig(cfg gen.AgentConfig) AgentConfig {
 	return AgentConfig{
 		ID:                cfg.ID,
 		Name:              cfg.Name,
-		Provider:          cfg.Provider,
-		Model:             cfg.Model,
+		Provider:          pc.Provider,
+		Model:             pc.Model,
 		SystemPrompt:      cfg.SystemPrompt,
 		MaxTokens:         cfg.MaxTokens,
 		TimeoutSecs:       cfg.TimeoutSecs,

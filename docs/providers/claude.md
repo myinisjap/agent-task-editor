@@ -164,7 +164,7 @@ Supported. Files uploaded to a task are passed via `--image <path>` flags. The s
 
 ## Model Selection
 
-Pass `model` in the agent config (e.g. `claude-sonnet-4-6`, `claude-opus-4`). If empty, the Claude CLI uses its own default.
+Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) (e.g. `claude-sonnet-4-6`, `claude-opus-4`). If empty, the Claude CLI uses its own default.
 
 ## Cost & Usage Reporting
 
@@ -222,7 +222,7 @@ usage endpoint on every WS-triggered dashboard refresh.
 
 ## Environment Variable Security
 
-The `env` field in agent configs passes extra vars to the subprocess. Dangerous keys (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`) are blocked and logged as warnings.
+The `env` field on the referenced [Provider Config](../agents.md#provider-configs) passes extra vars to the subprocess. Dangerous keys (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`) are blocked and logged as warnings.
 
 ## Setup Checklist
 
@@ -230,4 +230,4 @@ The `env` field in agent configs passes extra vars to the subprocess. Dangerous 
 2. Authenticate: `claude login`
 3. Set `MCP_SERVER_PATH` to the path of the built `mcp-server` binary
 4. Mount `~/.claude` and the `claude` binary into Docker (if using Docker)
-5. Create an agent config with `"provider": "claude"`
+5. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "claude"`, then an agent config referencing it via `provider_config_id`

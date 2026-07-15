@@ -14,6 +14,8 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state) | `ghclient`, `agent.PushBranch` |
 | `workflows.go` | `WorkflowsHandler` | `gen.Queries`, `*sql.DB` (for YAML import transactions) |
 | `agents.go` | `AgentsHandler` | `gen.Queries` |
+| `providers.go` | `ProviderConfigsHandler` — CRUD for Provider Configs (provider/model/env), the entity `agent_configs`/`chat_sessions` reference by `provider_config_id` | `gen.Queries` |
+| `chat.go` | `ChatHandler` — interactive chat session CRUD + PTY terminal WebSocket upgrade, separate from the task/workflow state machine | `gen.Queries`, `Terminal` (`agent.TerminalManager`) |
 | `repos.go` | `ReposHandler` | `gen.Queries`, `repoBaseDir string` |
 | `review_comments.go` | `ReviewCommentsHandler` | `gen.Queries` |
 | `templates.go` | `TemplatesHandler` | `gen.Queries` |

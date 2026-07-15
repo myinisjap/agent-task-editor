@@ -1,11 +1,13 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -20,8 +22,10 @@ type agentConfigResponse struct {
 	SubtasksEnabled bool `json:"subtasks_enabled"`
 }
 
-// setupAgentsRouter returns a chi router wired with the agents routes.
-func setupAgentsRouter(t *testing.T) http.Handler {
+// setupAgentsRouter returns a chi router wired with the agents routes, plus
+// the underlying queries handle so tests can seed a provider config to
+// reference (agent configs now require an existing provider_config_id).
+func setupAgentsRouter(t *testing.T) (http.Handler, *gen.Queries) {
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
@@ -33,18 +37,36 @@ func setupAgentsRouter(t *testing.T) http.Handler {
 	r.Get("/agents/{id}", h.Get)
 	r.Put("/agents/{id}", h.Update)
 	r.Delete("/agents/{id}", h.Delete)
-	return r
+	return r, q
+}
+
+// mkProviderConfig seeds a claude provider config and returns its id, for use
+// as an agent config's provider_config_id in tests.
+func mkProviderConfig(t *testing.T, q *gen.Queries) string {
+	t.Helper()
+	pc, err := q.CreateProviderConfig(context.Background(), gen.CreateProviderConfigParams{
+		ID:       uuid.NewString(),
+		Name:     "test-provider",
+		Provider: "claude",
+		Model:    "sonnet",
+		Env:      "{}",
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
+	return pc.ID
 }
 
 // TestAgentsCreate_EnabledPluginsAndMCPServers_DefaultOff verifies that
 // omitting enabled_plugins/enabled_mcp_servers on create defaults both to
 // an empty JSON array (i.e. all plugins/MCP servers off by default).
 func TestAgentsCreate_EnabledPluginsAndMCPServers_DefaultOff(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":     "claude-default",
-		"provider": "claude",
+		"name":               "claude-default",
+		"provider_config_id": pcID,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -64,11 +86,12 @@ func TestAgentsCreate_EnabledPluginsAndMCPServers_DefaultOff(t *testing.T) {
 // TestAgentsCreate_EnabledPluginsAndMCPServers_RoundTrip verifies that
 // explicitly selected plugins/MCP servers are persisted and returned as-is.
 func TestAgentsCreate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
 		"name":                "claude-with-selections",
-		"provider":            "claude",
+		"provider_config_id":  pcID,
 		"enabled_plugins":     `["frontend-design@claude-plugins-official"]`,
 		"enabled_mcp_servers": `["context7"]`,
 	})
@@ -100,11 +123,12 @@ func TestAgentsCreate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 // TestAgentsUpdate_EnabledPluginsAndMCPServers_RoundTrip verifies that
 // updating an existing config's plugin/MCP selections persists correctly.
 func TestAgentsUpdate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":     "claude-to-update",
-		"provider": "claude",
+		"name":               "claude-to-update",
+		"provider_config_id": pcID,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -116,7 +140,7 @@ func TestAgentsUpdate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 
 	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
 		"name":                created.Name,
-		"provider":            created.Provider,
+		"provider_config_id":  created.ProviderConfigID,
 		"enabled_plugins":     `["oh-my-claudecode@omc","superpowers@claude-plugins-official"]`,
 		"enabled_mcp_servers": `["github"]`,
 	})
@@ -149,11 +173,12 @@ func TestAgentsUpdate_EnabledPluginsAndMCPServers_RoundTrip(t *testing.T) {
 // command_allowlist/command_denylist on create defaults both to an empty
 // JSON array (i.e. no restriction by default).
 func TestAgentsCreate_CommandFilters_DefaultOff(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":     "claude-cmd-default",
-		"provider": "claude",
+		"name":               "claude-cmd-default",
+		"provider_config_id": pcID,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -173,13 +198,14 @@ func TestAgentsCreate_CommandFilters_DefaultOff(t *testing.T) {
 // TestAgentsCreate_CommandFilters_RoundTrip verifies that explicitly set
 // command allow/deny lists are persisted and returned as-is.
 func TestAgentsCreate_CommandFilters_RoundTrip(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":              "claude-with-cmd-filters",
-		"provider":          "claude",
-		"command_allowlist": `["git *", "npm test"]`,
-		"command_denylist":  `["rm -rf *"]`,
+		"name":               "claude-with-cmd-filters",
+		"provider_config_id": pcID,
+		"command_allowlist":  `["git *", "npm test"]`,
+		"command_denylist":   `["rm -rf *"]`,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -209,11 +235,12 @@ func TestAgentsCreate_CommandFilters_RoundTrip(t *testing.T) {
 // TestAgentsUpdate_CommandFilters_RoundTrip verifies that updating an
 // existing config's command allow/deny lists persists correctly.
 func TestAgentsUpdate_CommandFilters_RoundTrip(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":     "claude-cmd-to-update",
-		"provider": "claude",
+		"name":               "claude-cmd-to-update",
+		"provider_config_id": pcID,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -224,10 +251,10 @@ func TestAgentsUpdate_CommandFilters_RoundTrip(t *testing.T) {
 	}
 
 	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
-		"name":              created.Name,
-		"provider":          created.Provider,
-		"command_allowlist": `["go *"]`,
-		"command_denylist":  `["curl *", "sudo *"]`,
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
+		"command_allowlist":  `["go *"]`,
+		"command_denylist":   `["curl *", "sudo *"]`,
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -257,11 +284,12 @@ func TestAgentsUpdate_CommandFilters_RoundTrip(t *testing.T) {
 // TestAgentsCreate_RetryPolicy_Defaults verifies that omitting max_retries/
 // retry_backoff_secs on create defaults to 3 retries / 30s base backoff.
 func TestAgentsCreate_RetryPolicy_Defaults(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":     "claude-retry-defaults",
-		"provider": "claude",
+		"name":               "claude-retry-defaults",
+		"provider_config_id": pcID,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -281,11 +309,12 @@ func TestAgentsCreate_RetryPolicy_Defaults(t *testing.T) {
 // TestAgentsCreate_RetryPolicy_RoundTrip verifies explicit retry policy
 // values are persisted and returned as-is.
 func TestAgentsCreate_RetryPolicy_RoundTrip(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
 		"name":               "claude-retry-custom",
-		"provider":           "claude",
+		"provider_config_id": pcID,
 		"max_retries":        5,
 		"retry_backoff_secs": 60,
 	})
@@ -308,12 +337,13 @@ func TestAgentsCreate_RetryPolicy_RoundTrip(t *testing.T) {
 // negative max_retries/retry_backoff_secs on create, since the frontend's
 // min-bound enforcement can be bypassed by a direct API client.
 func TestAgentsCreate_RetryPolicy_RejectsNegative(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":        "claude-negative-max-retries",
-		"provider":    "claude",
-		"max_retries": -1,
+		"name":               "claude-negative-max-retries",
+		"provider_config_id": pcID,
+		"max_retries":        -1,
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for negative max_retries, got %d: %s", w.Code, w.Body.String())
@@ -321,7 +351,7 @@ func TestAgentsCreate_RetryPolicy_RejectsNegative(t *testing.T) {
 
 	w = postJSON(t, router, "/agents", map[string]any{
 		"name":               "claude-negative-backoff",
-		"provider":           "claude",
+		"provider_config_id": pcID,
 		"retry_backoff_secs": -5,
 	})
 	if w.Code != http.StatusBadRequest {
@@ -332,11 +362,12 @@ func TestAgentsCreate_RetryPolicy_RejectsNegative(t *testing.T) {
 // TestAgentsUpdate_RetryPolicy_RejectsNegative verifies the API rejects
 // negative max_retries/retry_backoff_secs on update.
 func TestAgentsUpdate_RetryPolicy_RejectsNegative(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":     "claude-retry-update-negative",
-		"provider": "claude",
+		"name":               "claude-retry-update-negative",
+		"provider_config_id": pcID,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -347,9 +378,9 @@ func TestAgentsUpdate_RetryPolicy_RejectsNegative(t *testing.T) {
 	}
 
 	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
-		"name":        created.Name,
-		"provider":    created.Provider,
-		"max_retries": -1,
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
+		"max_retries":        -1,
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for negative max_retries, got %d: %s", w.Code, w.Body.String())
@@ -357,7 +388,7 @@ func TestAgentsUpdate_RetryPolicy_RejectsNegative(t *testing.T) {
 
 	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
 		"name":               created.Name,
-		"provider":           created.Provider,
+		"provider_config_id": created.ProviderConfigID,
 		"retry_backoff_secs": -5,
 	})
 	if w.Code != http.StatusBadRequest {
@@ -368,11 +399,12 @@ func TestAgentsUpdate_RetryPolicy_RejectsNegative(t *testing.T) {
 // TestAgentsUpdate_RetryPolicy_RoundTrip verifies updating retry policy
 // fields persists, and omitting them on update preserves existing values.
 func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {
-	router := setupAgentsRouter(t)
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
 
 	w := postJSON(t, router, "/agents", map[string]any{
-		"name":     "claude-retry-update",
-		"provider": "claude",
+		"name":               "claude-retry-update",
+		"provider_config_id": pcID,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
@@ -384,7 +416,7 @@ func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {
 
 	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
 		"name":               created.Name,
-		"provider":           created.Provider,
+		"provider_config_id": created.ProviderConfigID,
 		"max_retries":        0,
 		"retry_backoff_secs": 15,
 	})
@@ -404,8 +436,8 @@ func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {
 
 	// Omitting both fields on a subsequent update should preserve them.
 	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
-		"name":     created.Name,
-		"provider": created.Provider,
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())

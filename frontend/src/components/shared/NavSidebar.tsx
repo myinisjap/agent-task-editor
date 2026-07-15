@@ -10,6 +10,7 @@ const links = [
   { to: '/chat',                  label: 'Chat' },
   { to: '/workflow',              label: 'Workflow' },
   { to: '/agents',                label: 'Agents' },
+  { to: '/providers',             label: 'Providers' },
   { to: '/repos',                 label: 'Repos' },
   { to: '/templates',             label: 'Templates' },
   { to: '/health',                label: 'Health' },

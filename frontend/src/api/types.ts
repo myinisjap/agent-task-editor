@@ -2395,6 +2395,178 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/provider-configs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List provider configs */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderConfig"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a provider config */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderConfig"];
+                    };
+                };
+                /** @description Missing name/provider */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/provider-configs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a provider config */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderConfig"];
+                    };
+                };
+                /** @description Provider config not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /** Update a provider config */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderConfig"];
+                    };
+                };
+                /** @description Unknown provider */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Provider config not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Delete a provider config
+         * @description Blocked with 409 if any agent config or chat session still references this provider config.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Provider config still referenced by an agent config or chat session */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repos": {
         parameters: {
             query?: never;
@@ -2766,7 +2938,7 @@ export interface paths {
         };
         /**
          * Provider / onboarding readiness checks
-         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers referenced by an enabled agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md), and version (the running build's version — see /healthz). Also includes an opt-in update_check row (UPDATE_CHECK_ENABLED, default false) that compares the running version against the latest GitHub release tag; best-effort and never fails the response (degrades to warn when offline or gh is unavailable). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
+         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers actually referenced by an enabled agent config or a chat session, via their Provider Config — an unused/disabled Provider Config produces no check), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md), and version (the running build's version — see /healthz). Also includes an opt-in update_check row (UPDATE_CHECK_ENABLED, default false) that compares the running version against the latest GitHub release tag; best-effort and never fails the response (degrades to warn when offline or gh is unavailable). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
          */
         get: {
             parameters: {
@@ -3054,9 +3226,8 @@ export interface paths {
                 content: {
                     "application/json": {
                         repo_id: string;
-                        /** @description Provider key (e.g. claude, qwen_code, gemini_cli, codex_cli, opencode) */
-                        provider: string;
-                        model?: string;
+                        /** @description References a ProviderConfig (see /provider-configs), which supplies the provider/model/env for this session's turns. */
+                        provider_config_id: string;
                         title?: string;
                     };
                 };
@@ -3071,7 +3242,7 @@ export interface paths {
                         "application/json": components["schemas"]["ChatSession"];
                     };
                 };
-                /** @description Missing/invalid repo_id or provider */
+                /** @description Missing/invalid repo_id or provider_config_id */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -3118,6 +3289,8 @@ export interface paths {
                     content: {
                         "application/json": {
                             session?: components["schemas"]["ChatSession"];
+                            /** @description Resolved provider config for the session's provider_config_id, embedded so the frontend doesn't need a second fetch. */
+                            provider_config?: components["schemas"]["ProviderConfig"];
                         };
                     };
                 };
@@ -3237,11 +3410,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description The provider/model/API-key (env vars) triple, split out of AgentConfig so it can be shared/reused by chat sessions and agent configs alike. */
+        ProviderConfig: {
+            id?: string;
+            name?: string;
+            /** @enum {string} */
+            provider?: "claude" | "anthropic" | "llm" | "opencode" | "qwen_code" | "gemini_cli" | "codex_cli";
+            model?: string;
+            /** @description JSON object of environment variables (e.g. API keys) merged into the provider CLI's environment */
+            env?: string;
+            created_at?: string;
+            updated_at?: string;
+        };
         ChatSession: {
             id?: string;
             repo_id?: string;
-            provider?: string;
-            model?: string;
+            provider_config_id?: string;
             title?: string;
             /** @description Provider-side conversation id, resumed between turns; empty until the first turn completes */
             provider_session_id?: string;
@@ -3415,14 +3599,13 @@ export interface components {
         AgentConfig: {
             id?: string;
             name?: string;
-            /** @enum {string} */
-            provider?: "claude_code" | "openai" | "anthropic" | "custom" | "opencode";
-            model?: string;
+            /** @description References a ProviderConfig (provider/model/env), which is created and managed separately via /provider-configs and may be shared with other agent configs or chat sessions. */
+            provider_config_id?: string;
+            /** @description The resolved provider config for provider_config_id, embedded on responses for convenience so clients don't need a second fetch. Absent from request bodies. */
+            readonly provider_config?: components["schemas"]["ProviderConfig"];
             system_prompt?: string;
             /** @description JSON array of label names */
             labels?: string;
-            /** @description JSON object of env vars */
-            env?: string;
             max_tokens?: number;
             timeout_secs?: number;
             max_turns?: number;

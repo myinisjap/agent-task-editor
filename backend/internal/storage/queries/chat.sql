@@ -1,6 +1,6 @@
 -- name: CreateChatSession :one
-INSERT INTO chat_sessions (id, repo_id, provider, model, title)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO chat_sessions (id, repo_id, provider_config_id, title)
+VALUES (?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetChatSession :one

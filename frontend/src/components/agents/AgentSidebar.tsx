@@ -149,7 +149,9 @@ export default function AgentSidebar({
                   )}
                   {a.name}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">{a.provider}/{a.model.split('-').slice(0,2).join('-')}</div>
+                {a.provider_config && (
+                  <div className="text-xs text-slate-500 mt-0.5">{a.provider_config.provider}{a.provider_config.model ? `/${a.provider_config.model}` : ''}</div>
+                )}
               </span>
             </button>
           )

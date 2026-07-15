@@ -51,10 +51,9 @@ func (h *ChatHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 type createChatReq struct {
-	RepoID   string `json:"repo_id"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Title    string `json:"title"`
+	RepoID           string `json:"repo_id"`
+	ProviderConfigID string `json:"provider_config_id"`
+	Title            string `json:"title"`
 }
 
 func (h *ChatHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -63,8 +62,8 @@ func (h *ChatHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.RepoID == "" || req.Provider == "" {
-		Err(w, http.StatusBadRequest, "repo_id and provider are required")
+	if req.RepoID == "" || req.ProviderConfigID == "" {
+		Err(w, http.StatusBadRequest, "repo_id and provider_config_id are required")
 		return
 	}
 	// Validate the repo exists before creating a session bound to it.
@@ -72,12 +71,15 @@ func (h *ChatHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "unknown repo_id")
 		return
 	}
+	if _, err := h.q.GetProviderConfig(r.Context(), req.ProviderConfigID); err != nil {
+		Err(w, http.StatusBadRequest, "unknown provider_config_id")
+		return
+	}
 	sess, err := h.q.CreateChatSession(r.Context(), gen.CreateChatSessionParams{
-		ID:       uuid.NewString(),
-		RepoID:   req.RepoID,
-		Provider: req.Provider,
-		Model:    req.Model,
-		Title:    req.Title,
+		ID:               uuid.NewString(),
+		RepoID:           req.RepoID,
+		ProviderConfigID: req.ProviderConfigID,
+		Title:            req.Title,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -86,15 +88,21 @@ func (h *ChatHandler) Create(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusCreated, sess)
 }
 
-// Get returns a session. The terminal has no server-side transcript — history
-// lives in the CLI's own session store and the browser's terminal scrollback.
+// Get returns a session plus its resolved provider config, so the frontend can
+// display provider/model without a second fetch. The terminal has no
+// server-side transcript — history lives in the CLI's own session store and
+// the browser's terminal scrollback.
 func (h *ChatHandler) Get(w http.ResponseWriter, r *http.Request) {
 	sess, err := h.q.GetChatSession(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		Err(w, http.StatusNotFound, "chat session not found")
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"session": sess})
+	var pc *gen.ProviderConfig
+	if p, perr := h.q.GetProviderConfig(r.Context(), sess.ProviderConfigID); perr == nil {
+		pc = &p
+	}
+	JSON(w, http.StatusOK, map[string]any{"session": sess, "provider_config": pc})
 }
 
 // Delete removes the session and its git worktree, and kills any running
@@ -146,6 +154,14 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "repo lookup failed", http.StatusInternalServerError)
 		return
 	}
+	// Resolve the session's provider config to the concrete provider/model
+	// strings the terminal CLI needs (chat sessions reference a shared
+	// provider config rather than inlining these).
+	pc, err := h.q.GetProviderConfig(r.Context(), sess.ProviderConfigID)
+	if err != nil {
+		http.Error(w, "provider config lookup failed", http.StatusInternalServerError)
+		return
+	}
 
 	// An existing worktree means this session has launched a terminal before, so
 	// ask the CLI to continue its most recent session in that worktree's cwd
@@ -185,7 +201,7 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	if err := h.term.Attach(r.Context(), id, workDir, sess.Provider, sess.Model, resume, conn); err != nil {
+	if err := h.term.Attach(r.Context(), id, workDir, pc.Provider, pc.Model, resume, conn); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, err.Error())
 	}
 }

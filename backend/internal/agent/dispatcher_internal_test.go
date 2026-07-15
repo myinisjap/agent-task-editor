@@ -115,11 +115,11 @@ func TestToAgentConfig_CommandFilters(t *testing.T) {
 	t.Run("populated lists round-trip", func(t *testing.T) {
 		g := gen.AgentConfig{
 			ID:               "a",
-			Env:              "{}",
 			CommandAllowlist: `["git *", "npm test"]`,
 			CommandDenylist:  `["rm -rf *"]`,
 		}
-		got := toAgentConfig(g)
+		pc := gen.ProviderConfig{ID: "pc-a", Env: "{}"}
+		got := toAgentConfig(g, pc)
 		wantAllow := []string{"git *", "npm test"}
 		if len(got.CommandAllowlist) != len(wantAllow) {
 			t.Fatalf("CommandAllowlist = %+v, want %+v", got.CommandAllowlist, wantAllow)
@@ -138,11 +138,11 @@ func TestToAgentConfig_CommandFilters(t *testing.T) {
 	t.Run("default empty-array JSON yields nil slices", func(t *testing.T) {
 		g := gen.AgentConfig{
 			ID:               "a",
-			Env:              "{}",
 			CommandAllowlist: "[]",
 			CommandDenylist:  "[]",
 		}
-		got := toAgentConfig(g)
+		pc := gen.ProviderConfig{ID: "pc-a", Env: "{}"}
+		got := toAgentConfig(g, pc)
 		if len(got.CommandAllowlist) != 0 {
 			t.Fatalf("expected empty CommandAllowlist, got %+v", got.CommandAllowlist)
 		}
@@ -154,11 +154,11 @@ func TestToAgentConfig_CommandFilters(t *testing.T) {
 	t.Run("malformed JSON falls back to nil, not an error", func(t *testing.T) {
 		g := gen.AgentConfig{
 			ID:               "a",
-			Env:              "{}",
 			CommandAllowlist: "not json",
 			CommandDenylist:  "",
 		}
-		got := toAgentConfig(g)
+		pc := gen.ProviderConfig{ID: "pc-a", Env: "{}"}
+		got := toAgentConfig(g, pc)
 		if got.CommandAllowlist != nil {
 			t.Fatalf("expected nil CommandAllowlist on malformed JSON, got %+v", got.CommandAllowlist)
 		}

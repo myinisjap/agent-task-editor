@@ -10,38 +10,35 @@ import (
 )
 
 const createChatSession = `-- name: CreateChatSession :one
-INSERT INTO chat_sessions (id, repo_id, provider, model, title)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, repo_id, provider, model, title, provider_session_id, worktree_path, created_at, updated_at
+INSERT INTO chat_sessions (id, repo_id, provider_config_id, title)
+VALUES (?, ?, ?, ?)
+RETURNING id, repo_id, title, provider_session_id, worktree_path, created_at, updated_at, provider_config_id
 `
 
 type CreateChatSessionParams struct {
-	ID       string `json:"id"`
-	RepoID   string `json:"repo_id"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Title    string `json:"title"`
+	ID               string `json:"id"`
+	RepoID           string `json:"repo_id"`
+	ProviderConfigID string `json:"provider_config_id"`
+	Title            string `json:"title"`
 }
 
 func (q *Queries) CreateChatSession(ctx context.Context, arg CreateChatSessionParams) (ChatSession, error) {
 	row := q.db.QueryRowContext(ctx, createChatSession,
 		arg.ID,
 		arg.RepoID,
-		arg.Provider,
-		arg.Model,
+		arg.ProviderConfigID,
 		arg.Title,
 	)
 	var i ChatSession
 	err := row.Scan(
 		&i.ID,
 		&i.RepoID,
-		&i.Provider,
-		&i.Model,
 		&i.Title,
 		&i.ProviderSessionID,
 		&i.WorktreePath,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProviderConfigID,
 	)
 	return i, err
 }
@@ -56,7 +53,7 @@ func (q *Queries) DeleteChatSession(ctx context.Context, id string) error {
 }
 
 const getChatSession = `-- name: GetChatSession :one
-SELECT id, repo_id, provider, model, title, provider_session_id, worktree_path, created_at, updated_at FROM chat_sessions WHERE id = ?
+SELECT id, repo_id, title, provider_session_id, worktree_path, created_at, updated_at, provider_config_id FROM chat_sessions WHERE id = ?
 `
 
 func (q *Queries) GetChatSession(ctx context.Context, id string) (ChatSession, error) {
@@ -65,19 +62,18 @@ func (q *Queries) GetChatSession(ctx context.Context, id string) (ChatSession, e
 	err := row.Scan(
 		&i.ID,
 		&i.RepoID,
-		&i.Provider,
-		&i.Model,
 		&i.Title,
 		&i.ProviderSessionID,
 		&i.WorktreePath,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProviderConfigID,
 	)
 	return i, err
 }
 
 const listChatSessions = `-- name: ListChatSessions :many
-SELECT id, repo_id, provider, model, title, provider_session_id, worktree_path, created_at, updated_at FROM chat_sessions ORDER BY updated_at DESC
+SELECT id, repo_id, title, provider_session_id, worktree_path, created_at, updated_at, provider_config_id FROM chat_sessions ORDER BY updated_at DESC
 `
 
 func (q *Queries) ListChatSessions(ctx context.Context) ([]ChatSession, error) {
@@ -92,13 +88,12 @@ func (q *Queries) ListChatSessions(ctx context.Context) ([]ChatSession, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.RepoID,
-			&i.Provider,
-			&i.Model,
 			&i.Title,
 			&i.ProviderSessionID,
 			&i.WorktreePath,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ProviderConfigID,
 		); err != nil {
 			return nil, err
 		}

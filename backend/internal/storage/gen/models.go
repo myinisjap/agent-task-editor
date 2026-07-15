@@ -11,11 +11,8 @@ import (
 type AgentConfig struct {
 	ID                string    `json:"id"`
 	Name              string    `json:"name"`
-	Provider          string    `json:"provider"`
-	Model             string    `json:"model"`
 	SystemPrompt      string    `json:"system_prompt"`
 	Labels            string    `json:"labels"`
-	Env               string    `json:"env"`
 	MaxTokens         int64     `json:"max_tokens"`
 	TimeoutSecs       int64     `json:"timeout_secs"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -33,6 +30,7 @@ type AgentConfig struct {
 	MaxSubtasks       int64     `json:"max_subtasks"`
 	MaxCostUsd        float64   `json:"max_cost_usd"`
 	Priority          int64     `json:"priority"`
+	ProviderConfigID  string    `json:"provider_config_id"`
 }
 
 type AgentLog struct {
@@ -70,13 +68,22 @@ type BackupSetting struct {
 type ChatSession struct {
 	ID                string    `json:"id"`
 	RepoID            string    `json:"repo_id"`
-	Provider          string    `json:"provider"`
-	Model             string    `json:"model"`
 	Title             string    `json:"title"`
 	ProviderSessionID string    `json:"provider_session_id"`
 	WorktreePath      string    `json:"worktree_path"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	ProviderConfigID  string    `json:"provider_config_id"`
+}
+
+type ProviderConfig struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Provider  string    `json:"provider"`
+	Model     string    `json:"model"`
+	Env       string    `json:"env"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Repo struct {
