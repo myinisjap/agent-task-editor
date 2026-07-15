@@ -11,6 +11,7 @@ vi.mock('../api/client', () => ({
   api: {
     chat: { list: () => Promise.resolve(null), get: () => Promise.resolve({ session: null }) },
     repos: { list: () => Promise.resolve(null) },
+    providerConfigs: { list: () => Promise.resolve(null) },
   },
 }))
 vi.mock('../api/ws', () => ({ wsTicketParam: () => Promise.resolve('') }))

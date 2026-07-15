@@ -1,21 +1,19 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { AgentConfig, ModelList, ClaudeOptions } from '../../api/client'
-import { PROVIDERS } from '../../lib/agentTemplates'
+import { Link } from 'react-router-dom'
+import type { AgentConfig, ClaudeOptions, ProviderConfig } from '../../api/client'
 import Field from './Field'
-import ModelSelector from './ModelSelector'
 import PluginMcpPicker from './PluginMcpPicker'
 import CommandFilterEditor from './CommandFilterEditor'
 import LabelPicker from './LabelPicker'
 
-export type FormState = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>
+export type FormState = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'>
 
 export default function AgentConfigForm({
   selected,
   form,
   setForm,
   availableLabels,
-  modelList,
-  fetchingModels,
+  providerConfigs,
   claudeOptions,
   saving,
   deleting,
@@ -27,8 +25,7 @@ export default function AgentConfigForm({
   form: FormState
   setForm: Dispatch<SetStateAction<FormState>>
   availableLabels: string[]
-  modelList: ModelList | null
-  fetchingModels: boolean
+  providerConfigs: ProviderConfig[]
   claudeOptions: ClaudeOptions | null
   saving: boolean
   deleting: boolean
@@ -37,6 +34,11 @@ export default function AgentConfigForm({
   onToggleEnabled: () => void
 }) {
   const isEnabled = selected ? (selected.enabled !== 0 && selected.enabled !== false) : true
+  // The claude-specific plugin/MCP picker and the command-filter hints are
+  // both driven by the *selected provider config's* provider string, not a
+  // form field — provider/model/env now live on the referenced ProviderConfig.
+  const selectedProviderConfig = providerConfigs.find((pc) => pc.id === form.provider_config_id)
+  const providerStr = selectedProviderConfig?.provider ?? ''
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -70,26 +72,20 @@ export default function AgentConfigForm({
           />
         </Field>
 
-        <Field label="Provider">
+        <Field label="Provider config" className="col-span-2" hint="Which provider/model/API key this agent runs against. Manage provider configs (and their env vars) on the Providers page — they can be shared across agent configs and chat sessions.">
           <select
-            value={form.provider}
-            onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
+            value={form.provider_config_id}
+            onChange={(e) => setForm((f) => ({ ...f, provider_config_id: e.target.value }))}
             className="input"
           >
-            {PROVIDERS.map((p) => (
-              <option key={p} value={p}>{p}</option>
+            <option value="">Select a provider config…</option>
+            {providerConfigs.map((pc) => (
+              <option key={pc.id} value={pc.id}>{pc.name} ({pc.provider}{pc.model ? `/${pc.model}` : ''})</option>
             ))}
           </select>
-        </Field>
-
-        <Field label="Model">
-          <ModelSelector
-            provider={form.provider}
-            model={form.model}
-            onChange={(model) => setForm((f) => ({ ...f, model }))}
-            modelList={modelList}
-            fetchingModels={fetchingModels}
-          />
+          <p className="mt-1 text-xs text-slate-500">
+            <Link to="/providers" className="text-indigo-400 hover:text-indigo-300">Manage provider configs →</Link>
+          </p>
         </Field>
 
         <Field label="Timeout (secs)">
@@ -209,7 +205,7 @@ export default function AgentConfigForm({
           />
         </Field>
 
-        {form.provider === 'claude' && (
+        {providerStr === 'claude' && (
           <PluginMcpPicker
             claudeOptions={claudeOptions}
             enabledPlugins={form.enabled_plugins ?? '[]'}
@@ -229,21 +225,8 @@ export default function AgentConfigForm({
           />
         </Field>
 
-        <Field label="Env vars (JSON object)" className="col-span-2">
-          <textarea
-            value={form.env}
-            onChange={(e) => setForm((f) => ({ ...f, env: e.target.value }))}
-            rows={3}
-            className="input resize-none font-mono text-xs"
-            placeholder='{"ANTHROPIC_API_KEY": "..."}'
-          />
-          {selected && /"\*\*\*"/.test(form.env) && (
-            <p className="mt-1 text-xs text-slate-500">Keys showing *** are already set. Clear or replace the value to update; leave *** to keep existing.</p>
-          )}
-        </Field>
-
         <CommandFilterEditor
-          provider={form.provider}
+          provider={providerStr}
           allowlist={form.command_allowlist ?? '[]'}
           denylist={form.command_denylist ?? '[]'}
           onAllowlistChange={(v) => setForm((f) => ({ ...f, command_allowlist: v }))}
@@ -254,7 +237,7 @@ export default function AgentConfigForm({
       <div className="flex gap-3 mt-6">
         <button
           onClick={onSave}
-          disabled={saving || !form.name.trim()}
+          disabled={saving || !form.name.trim() || !form.provider_config_id}
           className="px-5 py-2 text-sm font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
         >
           {saving ? 'Saving…' : selected ? 'Update' : 'Create'}

@@ -49,16 +49,19 @@ func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, ll
 
 // Providers reports the readiness of each agent provider and supporting piece
 // of infrastructure (claude/qwen/opencode binaries, API keys, MCP sidecar, gh
-// auth, REPO_BASE_DIR). Provider-specific checks are only emitted for providers
-// referenced by an enabled agent config, so the page stays relevant to the
-// deployment's actual configuration.
+// auth, REPO_BASE_DIR). Provider-specific checks are only emitted for
+// providers actually referenced by an *enabled* agent config or by a chat
+// session (via their Provider Config) — not every Provider Config that
+// happens to exist — so a disabled agent config or an unused Provider Config
+// doesn't produce a noisy false-positive readiness warning (e.g. a missing
+// API key for a provider nothing currently runs).
 //
 // GET /api/v1/health/providers
 func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 	providers := map[string]bool{}
-	if cfgs, err := h.q.ListAgentConfigs(r.Context()); err == nil {
-		for _, c := range cfgs {
-			providers[c.Provider] = true
+	if names, err := h.q.ListInUseProviders(r.Context()); err == nil {
+		for _, p := range names {
+			providers[p] = true
 		}
 	}
 

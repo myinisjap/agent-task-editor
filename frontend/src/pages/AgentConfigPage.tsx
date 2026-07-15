@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type AgentConfig } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
+import { useProviderConfigsStore } from '../stores/providerConfigs'
 import { EMPTY, TEMPLATES } from '../lib/agentTemplates'
 import AgentSidebar from '../components/agents/AgentSidebar'
 import AgentConfigForm, { type FormState } from '../components/agents/AgentConfigForm'
@@ -10,9 +11,6 @@ export default function AgentConfigPage() {
   const {
     configs: agents,
     fetch: fetchAgents,
-    modelList,
-    fetchingModels,
-    fetchModels,
     claudeOptions,
     fetchClaudeOptions,
     create: createAgent,
@@ -20,6 +18,7 @@ export default function AgentConfigPage() {
     delete: deleteAgent,
   } = useAgentsStore()
   const { workflows, fetch: fetchWorkflows } = useWorkflowStore()
+  const { configs: providerConfigs, fetch: fetchProviderConfigs } = useProviderConfigsStore()
   const [selected, setSelected] = useState<AgentConfig | null>(null)
   const [form, setForm] = useState<FormState>(EMPTY)
   const [saving, setSaving] = useState(false)
@@ -36,33 +35,22 @@ export default function AgentConfigPage() {
   useEffect(() => {
     fetchAgents()
     fetchWorkflows()
-  }, [fetchAgents, fetchWorkflows])
+    fetchProviderConfigs()
+  }, [fetchAgents, fetchWorkflows, fetchProviderConfigs])
 
   useEffect(() => {
-    if (form.provider === 'claude') {
-      return
-    }
-    fetchModels(form.provider).then((data) => {
-      if (data && (form.model === '' || form.model === EMPTY.model)) {
-        setForm((f) => ({ ...f, model: data.default_model }))
-      }
-    })
-  }, [form.provider]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (form.provider !== 'claude') return
+    const provider = providerConfigs.find((pc) => pc.id === form.provider_config_id)?.provider
+    if (provider !== 'claude') return
     fetchClaudeOptions()
-  }, [form.provider]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [form.provider_config_id, providerConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectAgent(a: AgentConfig) {
     setSelected(a)
     setForm({
       name: a.name,
-      provider: a.provider,
-      model: a.model,
+      provider_config_id: a.provider_config_id,
       system_prompt: a.system_prompt,
       labels: a.labels,
-      env: a.env,
       max_tokens: a.max_tokens,
       timeout_secs: a.timeout_secs,
       max_turns: a.max_turns,
@@ -82,14 +70,21 @@ export default function AgentConfigPage() {
 
   function newAgent() {
     setSelected(null)
-    setForm(EMPTY)
+    // Preserve whatever provider config was already chosen (if any) so
+    // switching templates doesn't force re-picking it every time.
+    setForm((f) => ({ ...EMPTY, provider_config_id: f.provider_config_id }))
   }
 
   async function applyTemplate(t: typeof TEMPLATES[0]) {
     setCreatingTemplate(true)
     setShowTemplates(false)
     try {
-      const { config, labelConflict } = await createAgent(t)
+      const providerConfigId = form.provider_config_id || providerConfigs[0]?.id || ''
+      if (!providerConfigId) {
+        alert('Create a provider config first (Providers page) before applying a template.')
+        return
+      }
+      const { config, labelConflict } = await createAgent({ ...t, provider_config_id: providerConfigId })
       selectAgent(config)
       if (labelConflict) {
         alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
@@ -101,30 +96,16 @@ export default function AgentConfigPage() {
     }
   }
 
-  function sanitizeEnv(envJson: string): string {
-    try {
-      const parsed = JSON.parse(envJson) as Record<string, string>
-      const clean: Record<string, string> = {}
-      for (const [k, v] of Object.entries(parsed)) {
-        if (v !== '***' && v !== '') clean[k] = v
-      }
-      return JSON.stringify(clean)
-    } catch {
-      return envJson
-    }
-  }
-
   async function handleSave() {
     setSaving(true)
     try {
-      const payload = { ...form, env: sanitizeEnv(form.env) }
       if (selected) {
-        const { labelConflict } = await updateAgent(selected.id, { ...payload, enabled: !!selected.enabled })
+        const { labelConflict } = await updateAgent(selected.id, { ...form, enabled: !!selected.enabled })
         if (labelConflict) {
           alert(`Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`)
         }
       } else {
-        const { labelConflict } = await createAgent(payload)
+        const { labelConflict } = await createAgent(form)
         if (labelConflict) {
           alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
         }
@@ -159,11 +140,9 @@ export default function AgentConfigPage() {
         toUpdate.map((a) =>
           api.agents.update(a.id, {
             name: a.name,
-            provider: a.provider,
-            model: a.model,
+            provider_config_id: a.provider_config_id,
             system_prompt: a.system_prompt,
             labels: a.labels,
-            env: a.env,
             max_tokens: a.max_tokens,
             timeout_secs: a.timeout_secs,
             max_turns: a.max_turns,
@@ -243,8 +222,7 @@ export default function AgentConfigPage() {
           form={form}
           setForm={setForm}
           availableLabels={availableLabels}
-          modelList={modelList}
-          fetchingModels={fetchingModels}
+          providerConfigs={providerConfigs}
           claudeOptions={claudeOptions}
           saving={saving}
           deleting={deleting}

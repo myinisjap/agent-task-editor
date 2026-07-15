@@ -178,15 +178,16 @@ FROM agent_runs
 WHERE status IN ('completed','failed','waiting_human');
 
 -- name: SumUsageByProvider :many
-SELECT ac.provider AS provider,
+SELECT pc.provider AS provider,
        CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
        CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
        CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
        COUNT(*) AS run_count
 FROM agent_runs ar
 JOIN agent_configs ac ON ac.id = ar.agent_config_id
+JOIN provider_configs pc ON pc.id = ac.provider_config_id
 WHERE ar.status IN ('completed','failed','waiting_human')
-GROUP BY ac.provider
+GROUP BY pc.provider
 ORDER BY cost_usd DESC;
 
 -- name: RunStatsByAgentConfig :many
@@ -200,7 +201,7 @@ ORDER BY cost_usd DESC;
 -- has neither and would otherwise skew the average toward zero).
 SELECT ac.id AS agent_config_id,
        ac.name AS agent_name,
-       ac.provider AS provider,
+       pc.provider AS provider,
        COUNT(*) AS run_count,
        CAST(COALESCE(SUM(CASE WHEN ar.status = 'completed' THEN 1 ELSE 0 END),0) AS INTEGER) AS completed_count,
        CAST(COALESCE(SUM(CASE WHEN ar.status = 'failed' THEN 1 ELSE 0 END),0) AS INTEGER) AS failed_count,
@@ -213,8 +214,9 @@ SELECT ac.id AS agent_config_id,
        CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd
 FROM agent_runs ar
 JOIN agent_configs ac ON ac.id = ar.agent_config_id
+JOIN provider_configs pc ON pc.id = ac.provider_config_id
 WHERE ar.status IN ('completed','failed','waiting_human')
-GROUP BY ac.id, ac.name, ac.provider
+GROUP BY ac.id, ac.name, pc.provider
 ORDER BY run_count DESC;
 
 -- name: ListRunDurationsByAgentConfig :many

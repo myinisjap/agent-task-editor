@@ -46,7 +46,7 @@ If neither marker is found, the run completes with status `completed` but no out
 
 ## Model Selection
 
-Pass `model` in the agent config. It is passed via `-m <model>` to the CLI. If empty, opencode uses its configured default.
+Pass `model` on the referenced [Provider Config](../agents.md#provider-configs). It is passed via `-m <model>` to the CLI. If empty, opencode uses its configured default.
 
 To see available models: `opencode models` (the UI calls `GET /api/v1/agents/models?provider=opencode` which runs this command).
 
@@ -84,5 +84,5 @@ the `claude`, `qwen_code`, `anthropic`, or `llm` providers instead.
 
 1. Install `opencode` and add it to `PATH` (or mount it into the container)
 2. Configure opencode's model and auth via its own config
-3. Create an agent config with `"provider": "opencode"`
+3. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "opencode"`, then an agent config referencing it via `provider_config_id`
 4. Instruct the agent in its system prompt to output `OUTCOME: success` or `OUTCOME: failure` at the end

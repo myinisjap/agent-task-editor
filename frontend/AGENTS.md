@@ -33,11 +33,13 @@ src/
 │   ├── DashboardPage.tsx    Stats and recent activity
 │   ├── WorkflowPage.tsx     Workflow editor (labels + transitions)
 │   ├── AgentConfigPage.tsx  Agent config management
+│   ├── ProviderConfigPage.tsx Provider config management (provider/model/env — shared by agent configs and chat sessions)
 │   ├── ReposPage.tsx        Repo management
 │   └── HealthPage.tsx       Provider readiness / health checks
 ├── stores/
 │   ├── tasks.ts      Task list state + WebSocket updates
 │   ├── agents.ts     Agent config state
+│   ├── providerConfigs.ts Provider config state (provider/model/env)
 │   ├── repos.ts      Repo list state
 │   ├── theme.ts      Dark/light theme state (persisted, syncs root class)
 │   └── workflow.ts   Workflow + label state

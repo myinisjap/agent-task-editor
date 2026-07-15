@@ -46,21 +46,33 @@ func (h *AgentsHandler) labelConflict(r *http.Request, labelsJSON string, exclud
 // agentConfigView mirrors gen.AgentConfig but serializes the SQLite
 // 0/1 flag columns as real JSON booleans, matching the OpenAPI schema
 // (clients that echo a GET response back into a PUT would otherwise send
-// bare 1/0, which fails strict bool decoding).
+// bare 1/0, which fails strict bool decoding). It also embeds the resolved
+// ProviderConfig (provider/model/env) so clients can display/edit those
+// values without a second round-trip.
 type agentConfigView struct {
 	gen.AgentConfig
-	Enabled         bool `json:"enabled"`
-	ResumeSessions  bool `json:"resume_sessions"`
-	SubtasksEnabled bool `json:"subtasks_enabled"`
+	Enabled         bool                `json:"enabled"`
+	ResumeSessions  bool                `json:"resume_sessions"`
+	SubtasksEnabled bool                `json:"subtasks_enabled"`
+	ProviderConfig  *gen.ProviderConfig `json:"provider_config,omitempty"`
 }
 
-func safeConfig(cfg gen.AgentConfig) agentConfigView {
-	return agentConfigView{
+// safeConfig builds the response view for an agent config, looking up its
+// provider config (best-effort — if the lookup fails, provider_config is
+// simply omitted rather than failing the whole response).
+func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentConfigView {
+	view := agentConfigView{
 		AgentConfig:     cfg,
 		Enabled:         cfg.Enabled != 0,
 		ResumeSessions:  cfg.ResumeSessions != 0,
 		SubtasksEnabled: cfg.SubtasksEnabled != 0,
 	}
+	if cfg.ProviderConfigID != "" {
+		if pc, err := h.q.GetProviderConfig(r.Context(), cfg.ProviderConfigID); err == nil {
+			view.ProviderConfig = &pc
+		}
+	}
+	return view
 }
 
 var knownProviders = map[string]bool{
@@ -102,7 +114,7 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	safe := make([]agentConfigView, len(configs))
 	for i, c := range configs {
-		safe[i] = safeConfig(c)
+		safe[i] = h.safeConfig(r, c)
 	}
 	JSON(w, http.StatusOK, safe)
 }
@@ -113,17 +125,15 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "agent config not found")
 		return
 	}
-	JSON(w, http.StatusOK, safeConfig(cfg))
+	JSON(w, http.StatusOK, h.safeConfig(r, cfg))
 }
 
 func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name              string    `json:"name"`
-		Provider          string    `json:"provider"`
-		Model             string    `json:"model"`
+		ProviderConfigID  string    `json:"provider_config_id"`
 		SystemPrompt      string    `json:"system_prompt"`
 		Labels            string    `json:"labels"`
-		Env               string    `json:"env"`
 		MaxTokens         int64     `json:"max_tokens"`
 		TimeoutSecs       int64     `json:"timeout_secs"`
 		MaxTurns          int64     `json:"max_turns"`
@@ -143,12 +153,12 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.Name == "" || body.Provider == "" {
-		Err(w, http.StatusBadRequest, "name and provider are required")
+	if body.Name == "" || body.ProviderConfigID == "" {
+		Err(w, http.StatusBadRequest, "name and provider_config_id are required")
 		return
 	}
-	if !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
+	if _, err := h.q.GetProviderConfig(r.Context(), body.ProviderConfigID); err != nil {
+		Err(w, http.StatusBadRequest, "unknown provider_config_id")
 		return
 	}
 	if body.MaxRetries != nil && *body.MaxRetries < 0 {
@@ -165,9 +175,6 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Labels == "" {
 		body.Labels = "[]"
-	}
-	if body.Env == "" {
-		body.Env = "{}"
 	}
 	if body.MaxTokens == 0 {
 		body.MaxTokens = 8192
@@ -234,11 +241,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	cfg, err := h.q.CreateAgentConfig(r.Context(), gen.CreateAgentConfigParams{
 		ID:                uuid.NewString(),
 		Name:              body.Name,
-		Provider:          body.Provider,
-		Model:             body.Model,
+		ProviderConfigID:  body.ProviderConfigID,
 		SystemPrompt:      body.SystemPrompt,
 		Labels:            body.Labels,
-		Env:               body.Env,
 		MaxTokens:         body.MaxTokens,
 		TimeoutSecs:       body.TimeoutSecs,
 		MaxTurns:          body.MaxTurns,
@@ -262,8 +267,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if startEnabled == 0 {
 		// disable the freshly created config
 		cfg, err = h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
-			Name: cfg.Name, Provider: cfg.Provider, Model: cfg.Model,
-			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels, Env: cfg.Env,
+			Name: cfg.Name, ProviderConfigID: cfg.ProviderConfigID,
+			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels,
 			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
 			EnabledPlugins: cfg.EnabledPlugins, EnabledMcpServers: cfg.EnabledMcpServers,
 			CommandAllowlist: cfg.CommandAllowlist, CommandDenylist: cfg.CommandDenylist,
@@ -278,21 +283,19 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("X-Label-Conflict", conflict)
-		JSON(w, http.StatusCreated, safeConfig(cfg))
+		JSON(w, http.StatusCreated, h.safeConfig(r, cfg))
 		return
 	}
 
-	JSON(w, http.StatusCreated, safeConfig(cfg))
+	JSON(w, http.StatusCreated, h.safeConfig(r, cfg))
 }
 
 func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name              string    `json:"name"`
-		Provider          string    `json:"provider"`
-		Model             string    `json:"model"`
+		ProviderConfigID  string    `json:"provider_config_id"`
 		SystemPrompt      string    `json:"system_prompt"`
 		Labels            string    `json:"labels"`
-		Env               string    `json:"env"`
 		MaxTokens         int64     `json:"max_tokens"`
 		TimeoutSecs       int64     `json:"timeout_secs"`
 		MaxTurns          int64     `json:"max_turns"`
@@ -313,9 +316,11 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.Provider != "" && !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
-		return
+	if body.ProviderConfigID != "" {
+		if _, err := h.q.GetProviderConfig(r.Context(), body.ProviderConfigID); err != nil {
+			Err(w, http.StatusBadRequest, "unknown provider_config_id")
+			return
+		}
 	}
 	if body.MaxRetries != nil && *body.MaxRetries < 0 {
 		Err(w, http.StatusBadRequest, "max_retries must be >= 0")
@@ -359,6 +364,9 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if body.ProviderConfigID == "" {
+		body.ProviderConfigID = existing.ProviderConfigID
+	}
 	if body.EnabledPlugins == "" {
 		body.EnabledPlugins = existing.EnabledPlugins
 	}
@@ -410,11 +418,9 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
-		Provider:          body.Provider,
-		Model:             body.Model,
+		ProviderConfigID:  body.ProviderConfigID,
 		SystemPrompt:      body.SystemPrompt,
 		Labels:            body.Labels,
-		Env:               body.Env,
 		MaxTokens:         body.MaxTokens,
 		TimeoutSecs:       body.TimeoutSecs,
 		MaxTurns:          body.MaxTurns,
@@ -439,7 +445,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if conflict != "" {
 		w.Header().Set("X-Label-Conflict", conflict)
 	}
-	JSON(w, http.StatusOK, safeConfig(cfg))
+	JSON(w, http.StatusOK, h.safeConfig(r, cfg))
 }
 
 func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {

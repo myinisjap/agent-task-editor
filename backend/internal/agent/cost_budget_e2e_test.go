@@ -23,9 +23,10 @@ func (h *e2eHarness) seedTaskWithBudgets(t *testing.T, wfID string, configBudget
 		t.Fatalf("create repo: %v", err)
 	}
 
+	pcID := h.createProviderConfig(t, "fake", "none")
 	cfg, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: uuid.NewString(), Name: "fake-agent", Provider: "fake", Model: "none",
-		Labels: `["ready"]`, Env: `{}`, MaxRetries: 1, RetryBackoffSecs: 1,
+		ID: uuid.NewString(), Name: "fake-agent", ProviderConfigID: pcID,
+		Labels: `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1,
 		MaxCostUsd: configBudget,
 	})
 	if err != nil {

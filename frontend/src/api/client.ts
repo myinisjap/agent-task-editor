@@ -273,11 +273,25 @@ export type AgentLog = {
   content: string
 }
 
+// ProviderConfig is the provider/model/env (API key) triple, split out of
+// AgentConfig so it can be shared/reused by chat sessions too. AgentConfig
+// and ChatSession each reference one by id via provider_config_id.
+export type ProviderConfig = {
+  id: string
+  name: string
+  provider: string
+  model: string
+  // JSON-string-encoded object of env vars (e.g. API keys) merged into the
+  // provider CLI's environment.
+  env: string
+  created_at: string
+  updated_at: string
+}
+
 export type ChatSession = {
   id: string
   repo_id: string
-  provider: string
-  model: string
+  provider_config_id: string
   title: string
   provider_session_id: string
   worktree_path: string
@@ -318,11 +332,14 @@ export type Workflow = {
 export type AgentConfig = {
   id: string
   name: string
-  provider: string
-  model: string
+  // References a ProviderConfig (provider/model/env), managed separately
+  // via api.providerConfigs.
+  provider_config_id: string
+  // Resolved ProviderConfig for provider_config_id, embedded on GET
+  // responses for convenience (absent from request bodies).
+  provider_config?: ProviderConfig
   system_prompt: string
   labels: string
-  env: string
   max_tokens: number
   timeout_secs: number
   max_turns: number
@@ -620,7 +637,7 @@ export const api = {
   agents: {
     list: () => request<AgentConfig[]>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
-    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -634,7 +651,7 @@ export const api = {
       const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
       return { config, labelConflict }
     },
-    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'provider_config'> & { enabled?: boolean }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -651,6 +668,15 @@ export const api = {
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
     models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),
     claudeOptions: () => request<ClaudeOptions>('/agents/claude-options'),
+  },
+  providerConfigs: {
+    list: () => request<ProviderConfig[]>('/provider-configs'),
+    get: (id: string) => request<ProviderConfig>(`/provider-configs/${id}`),
+    create: (body: Omit<ProviderConfig, 'id' | 'created_at' | 'updated_at'>) =>
+      request<ProviderConfig>('/provider-configs', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: Omit<ProviderConfig, 'id' | 'created_at' | 'updated_at'>) =>
+      request<ProviderConfig>(`/provider-configs/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/provider-configs/${id}`, { method: 'DELETE' }),
   },
   repos: {
     list: () => request<Repo[]>('/repos'),
@@ -693,9 +719,9 @@ export const api = {
   },
   chat: {
     list: () => request<ChatSession[]>('/chat/sessions'),
-    create: (body: { repo_id: string; provider: string; model?: string; title?: string }) =>
+    create: (body: { repo_id: string; provider_config_id: string; title?: string }) =>
       request<ChatSession>('/chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
-    get: (id: string) => request<{ session: ChatSession }>(`/chat/sessions/${id}`),
+    get: (id: string) => request<{ session: ChatSession; provider_config?: ProviderConfig }>(`/chat/sessions/${id}`),
     delete: (id: string) => request<void>(`/chat/sessions/${id}`, { method: 'DELETE' }),
   },
   backup: {

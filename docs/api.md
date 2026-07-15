@@ -831,7 +831,9 @@ list of checks:
 - `hint` is a one-line fix, present whenever `status` is not `ok`.
 - Checks covered: the `claude` CLI (present + authenticated), API keys for the
   `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for
-  providers referenced by an **enabled** agent config), the MCP sidecar binary
+  providers actually referenced by an **enabled** agent config or a chat
+  session, via their Provider Config — an unused/disabled Provider Config
+  doesn't produce a check), the MCP sidecar binary
   (`MCP_SERVER_PATH`), gh auth (same probe as `/github/auth-status`),
   `REPO_BASE_DIR`, `auto_backup` (whether the automatic local-snapshot
   scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)), and

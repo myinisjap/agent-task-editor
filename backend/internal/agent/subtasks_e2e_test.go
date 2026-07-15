@@ -159,9 +159,15 @@ func TestE2E_SubtaskFlow(t *testing.T) {
 	if _, err := h.q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoID, Name: "r", Path: h.repo, WorkflowID: &wfID}); err != nil {
 		t.Fatalf("create repo: %v", err)
 	}
+	pc, err := h.q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "fake-provider", Provider: "fake", Model: "none", Env: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
 	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: uuid.NewString(), Name: "fake", Provider: "fake", Model: "none",
-		Labels: `["work"]`, Env: `{}`, MaxRetries: 1, RetryBackoffSecs: 1,
+		ID: uuid.NewString(), Name: "fake", ProviderConfigID: pc.ID,
+		Labels: `["work"]`, MaxRetries: 1, RetryBackoffSecs: 1,
 	}); err != nil {
 		t.Fatalf("create config: %v", err)
 	}

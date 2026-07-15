@@ -278,13 +278,27 @@ parent's run prompt via `BuildConflictContext`.
 
 ## Environment Variable Security
 
-`mergeEnv` (in `claude.go`) blocks keys that could hijack the subprocess: `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`. Blocked keys are logged as warnings, not silently dropped.
+`mergeEnv` (in `claude.go`) blocks keys that could hijack the subprocess: `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`. Blocked keys are logged as warnings, not silently dropped. `input.AgentConfig.Env` (the map `mergeEnv` merges in) now comes from the referenced `ProviderConfig`'s `env` JSON column rather than directly off `agent_configs` — `mergeEnv` itself is unaffected by that split, it only ever sees the already-resolved map.
 
 ## Adding a New Provider
 
 1. Implement `Provider` in a new file (e.g. `gemini.go`)
 2. Add a new case to `providerFactory` in `cmd/server/main.go`
-3. Add the provider string to the `AgentConfig.Provider` validation if any
+3. Add the provider string to `knownProviders` in `internal/api/handlers/agents.go` (validated on both agent-config and provider-config create/update — see `internal/api/handlers/providers.go`)
+
+`AgentConfig.Provider`/`.Model`/`.Env` (the fields providers actually read off
+`input.AgentConfig`) are populated from the joined `ProviderConfig` — a
+separate, reusable entity (`GET/POST /api/v1/provider-configs`) that both an
+`agent_configs` row and a `chat_sessions` row reference by
+`provider_config_id`, rather than each inlining its own provider/model/env.
+See [docs/agents.md § Provider Configs](../../../docs/agents.md#provider-configs).
+`toAgentConfig` (`dispatcher.go`) resolves a `ProviderConfig` and populates the
+flat `AgentConfig.Provider`/`.Model`/`.Env` fields for task runs; interactive
+chat resolves the session's `ProviderConfig` in `internal/api/handlers/chat.go`
+and passes the provider/model strings to `TerminalManager.Attach`. A new
+provider implementation never needs to know about this split, since it only
+ever reads those three fields off `input.AgentConfig` the same way it always
+has.
 
 ## Logging Conventions
 

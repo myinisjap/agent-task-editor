@@ -1,12 +1,10 @@
 import type { AgentConfig } from '../api/client'
 
-export const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'> = {
+export const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'> = {
   name: '',
-  provider: 'claude',
-  model: 'sonnet',
+  provider_config_id: '',
   system_prompt: '',
   labels: '[]',
-  env: '{}',
   max_tokens: 8192,
   timeout_secs: 600,
   max_turns: 50,
@@ -64,14 +62,15 @@ Steps:
 5. Call mcp__task-editor__signal_complete with outcome='success' if done (and all prior feedback is addressed), 'failure' if you hit a blocker.
 6. If you hit a blocker only a human can resolve (e.g. missing credentials, a decision outside your scope), call mcp__task-editor__request_human instead.`
 
-export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>> = [
+// TEMPLATES omits provider_config_id (unlike EMPTY) — a template pre-fills
+// workflow behavior (system prompt, labels, retry policy) but the caller must
+// still choose which ProviderConfig (provider/model/API key) the resulting
+// agent config uses; see AgentConfigPage's applyTemplate.
+export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'provider_config_id'>> = [
   {
     name: 'Planner',
-    provider: 'claude',
-    model: 'sonnet',
     system_prompt: PLAN_PROMPT,
     labels: '["plan"]',
-    env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
     max_turns: 50,
@@ -89,11 +88,8 @@ export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_a
   },
   {
     name: 'Tester',
-    provider: 'claude',
-    model: 'sonnet',
     system_prompt: TEST_PROMPT,
     labels: '["testing"]',
-    env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
     max_turns: 50,
@@ -109,11 +105,8 @@ export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_a
   },
   {
     name: 'Reviewer',
-    provider: 'claude',
-    model: 'sonnet',
     system_prompt: REVIEW_PROMPT,
     labels: '["agent-review"]',
-    env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
     max_turns: 50,
@@ -129,11 +122,8 @@ export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_a
   },
   {
     name: 'Worker',
-    provider: 'claude',
-    model: 'sonnet',
     system_prompt: WORK_PROMPT,
     labels: '["work"]',
-    env: '{}',
     max_tokens: 8192,
     timeout_secs: 600,
     max_turns: 50,

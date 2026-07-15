@@ -12,19 +12,26 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
-func setupHealthRouter(t *testing.T, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey string) http.Handler {
+func setupHealthRouter(t *testing.T, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey string) (http.Handler, *gen.Queries) {
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
 	h := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, "", 24*time.Hour, 7, "dev", false)
 
-	// Register the agents create route too, so tests can seed agent configs
-	// and observe how provider-specific checks are (de)emitted.
+	// Register the agents and provider-configs create routes too, so tests
+	// can seed configs and observe how provider-specific checks are
+	// (de)emitted. Provider-specific checks are driven by providers actually
+	// *referenced* by an enabled agent config or a chat session (see
+	// HealthHandler.Providers / ListInUseProviders) — not merely by the
+	// existence of a provider_configs row.
 	agentsH := handlers.NewAgentsHandler(q)
+	providersH := handlers.NewProviderConfigsHandler(q)
 	r := chi.NewRouter()
 	r.Post("/agents", agentsH.Create)
+	r.Put("/agents/{id}", agentsH.Update)
+	r.Post("/provider-configs", providersH.Create)
 	r.Get("/health/providers", h.Providers)
-	return r
+	return r, q
 }
 
 type providersResp struct {
@@ -64,7 +71,7 @@ func (r providersResp) has(id string) bool {
 // TestProvidersEndpoint_NoConfigs verifies the always-present rows are emitted
 // and no provider-specific rows appear when there are no agent configs.
 func TestProvidersEndpoint_NoConfigs(t *testing.T) {
-	router := setupHealthRouter(t, "", "", "", "")
+	router, _ := setupHealthRouter(t, "", "", "", "")
 	resp := getProviders(t, router)
 
 	for _, id := range []string{"claude_cli", "mcp_sidecar", "gh_auth", "repo_base_dir", "auto_backup", "db_size"} {
@@ -80,23 +87,67 @@ func TestProvidersEndpoint_NoConfigs(t *testing.T) {
 }
 
 // TestProvidersEndpoint_EmitsChecksForConfiguredProviders verifies a check is
-// added once an enabled agent config references that provider.
+// added once an *enabled* agent config references that provider, and that an
+// unreferenced provider config (nothing points at it) does not produce a
+// check — provider-specific checks track actual usage, not mere existence of
+// a provider_configs row, so an unused/disabled config doesn't trigger a
+// false-positive readiness warning.
 func TestProvidersEndpoint_EmitsChecksForConfiguredProviders(t *testing.T) {
-	router := setupHealthRouter(t, "", "", "", "")
+	router, _ := setupHealthRouter(t, "", "", "", "")
 
-	if w := postJSON(t, router, "/agents", map[string]any{
-		"name":     "qwen-agent",
+	var pcResp struct {
+		ID string `json:"id"`
+	}
+	w := postJSON(t, router, "/provider-configs", map[string]any{
+		"name":     "qwen-provider",
 		"provider": "qwen_code",
-	}); w.Code != http.StatusCreated {
-		t.Fatalf("seed agent: %d %s", w.Code, w.Body.String())
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seed provider config: %d %s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&pcResp); err != nil {
+		t.Fatalf("decode provider config: %v", err)
 	}
 
+	// A provider config that exists but isn't referenced by anything yet
+	// should not produce a check.
 	resp := getProviders(t, router)
+	if resp.has("qwen_cli") {
+		t.Errorf("did not expect qwen_cli check for an unreferenced provider config")
+	}
+
+	// Once an enabled agent config references it, the check should appear.
+	var agentResp struct {
+		ID string `json:"id"`
+	}
+	w = postJSON(t, router, "/agents", map[string]any{
+		"name":               "qwen-agent",
+		"provider_config_id": pcResp.ID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seed agent config: %d %s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&agentResp); err != nil {
+		t.Fatalf("decode agent config: %v", err)
+	}
+
+	resp = getProviders(t, router)
 	if !resp.has("qwen_cli") {
-		t.Errorf("expected qwen_cli check after configuring a qwen_code agent")
+		t.Errorf("expected qwen_cli check once an enabled agent config references it")
 	}
 	if resp.has("opencode_cli") {
 		t.Errorf("did not expect opencode_cli check")
+	}
+
+	// Disabling the only agent config that references the provider should
+	// make the check disappear again — a disabled config shouldn't keep
+	// producing a readiness warning for a provider nothing actually runs.
+	if w := putJSON(t, router, "/agents/"+agentResp.ID, map[string]any{"enabled": false}); w.Code != http.StatusOK {
+		t.Fatalf("disable agent config: %d %s", w.Code, w.Body.String())
+	}
+	resp = getProviders(t, router)
+	if resp.has("qwen_cli") {
+		t.Errorf("did not expect qwen_cli check once its only referencing agent config is disabled")
 	}
 }
 
@@ -149,7 +200,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 // on-disk database file size (necessarily > 0 bytes since Open() runs
 // migrations, which write to the file).
 func TestProvidersEndpoint_DBSizeCheck(t *testing.T) {
-	router := setupHealthRouter(t, "", "", "", "")
+	router, _ := setupHealthRouter(t, "", "", "", "")
 	resp := getProviders(t, router)
 
 	var found bool

@@ -16,6 +16,8 @@ Any string that doesn't match the specific provider names — convention is to u
 
 Makes HTTP calls to `POST <LLM_BASE_URL>/chat/completions` using the OpenAI chat completions format. Runs a tool-use loop (up to `max_turns` turns, default `50`) until the model calls `signal_complete` or `request_human`, or runs out of turns. The turn limit is configurable per agent config via the `max_turns` field (`0`/unset falls back to `50`).
 
+The provider string and model come from the agent config's referenced [Provider Config](../agents.md#provider-configs) (`provider_config_id`), not the agent config itself.
+
 ## Credentials
 
 **Required:**
@@ -63,7 +65,8 @@ LLM_API_KEY=sk-...
 ## Command Allowlist / Denylist
 
 `command_allowlist` and `command_denylist` (JSON arrays of `"*"`-wildcard glob
-patterns on the agent config, both defaulting to `[]`/no restriction) are enforced
+patterns on the agent config — workflow-behavior fields, not part of the
+Provider Config — both defaulting to `[]`/no restriction) are enforced
 server-side, in Go, immediately before a `run_bash` call is executed: the denylist is
 checked first and always wins; if the allowlist is non-empty, the command must also
 match at least one allow pattern. A denied command returns an `error: ...` string to
@@ -80,7 +83,7 @@ Not supported.
 
 ## Model Selection
 
-Pass `model` in the agent config (e.g. `gpt-4o`, `gpt-4o-mini`, `llama3.2`). Passed directly to the API.
+Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) (e.g. `gpt-4o`, `gpt-4o-mini`, `llama3.2`). Passed directly to the API.
 
 ## Cost & Usage Reporting
 
@@ -93,4 +96,4 @@ Detects HTTP 429 responses. Reads `x-ratelimit-reset-requests`, `x-ratelimit-res
 ## Setup Checklist
 
 1. Set `LLM_BASE_URL` and `LLM_API_KEY`
-2. Create an agent config with `"provider": "llm"` (or any non-reserved string) and the desired `model`
+2. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "llm"` (or any non-reserved string) and the desired `model`, then an agent config referencing it via `provider_config_id`

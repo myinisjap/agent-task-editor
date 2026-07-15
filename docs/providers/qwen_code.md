@@ -65,7 +65,7 @@ confirmed `qwen` CLI flag equivalent to claude's `--disallowedTools` /
 
 ## Model Selection
 
-Pass `model` in the agent config. It is passed via `--model <model>` to the CLI.
+Pass `model` on the referenced [Provider Config](../agents.md#provider-configs). It is passed via `--model <model>` to the CLI.
 
 ## Fallback Outcome Parsing
 
@@ -80,4 +80,4 @@ Like the `claude` provider, token usage and cost are parsed from the CLI's `resu
 1. Install the `qwen` CLI (`npm i -g @qwen-code/qwen-code`) and add it to `PATH` (or mount it into the container; see the backend `Dockerfile`'s `INSTALL_QWEN_CLI` build arg)
 2. Configure Qwen Code's auth via its own config
 3. Set `MCP_SERVER_PATH` to the path of the built `mcp-server` binary
-4. Create an agent config with `"provider": "qwen_code"`
+4. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "qwen_code"`, then an agent config referencing it via `provider_config_id`

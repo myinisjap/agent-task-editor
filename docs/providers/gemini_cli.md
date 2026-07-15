@@ -61,7 +61,7 @@ Not yet supported. Reserved for if/when the `gemini` CLI's non-interactive mode 
 
 ## Model Selection
 
-Pass `model` in the agent config. It is passed via `--model <model>` to the CLI.
+Pass `model` on the referenced [Provider Config](../agents.md#provider-configs). It is passed via `--model <model>` to the CLI.
 
 ## Fallback Outcome Parsing
 
@@ -76,4 +76,4 @@ The terminal `{"type":"result", "stats": {"input_tokens":..., "output_tokens":..
 1. Install the `gemini` CLI (`npm i -g @google/gemini-cli`) and add it to `PATH` (or mount it into the container; see the backend `Dockerfile`'s `INSTALL_GEMINI_CLI` build arg)
 2. Authenticate: run `gemini` once interactively to log in with a Google account, or set `GEMINI_API_KEY`/`GOOGLE_API_KEY`
 3. Set `MCP_SERVER_PATH` to the path of the built `mcp-server` binary
-4. Create an agent config with `"provider": "gemini_cli"`
+4. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "gemini_cli"`, then an agent config referencing it via `provider_config_id`

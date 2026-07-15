@@ -20,6 +20,31 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Provider Config: provider/model/API keys split out into a separate,
+  reusable entity.** Previously `AgentConfig` bundled which provider CLI to
+  use, its model, and its env vars (API keys) together with unrelated
+  workflow-behavior settings (system prompt, labels, retry policy, plugins,
+  command filters, subtasks, cost caps), and chat sessions inlined their own
+  provider/model. Provider/model/env now live on a new, standalone **Provider
+  Config** (`GET/POST /api/v1/provider-configs`,
+  `GET/PUT/DELETE /api/v1/provider-configs/{id}`; manage them from the new
+  **Providers** page). `AgentConfig` and `ChatSession` each reference one by
+  `provider_config_id`, so the same provider/API-key setup can be shared
+  across multiple agent configs and chat sessions instead of being
+  duplicated — and chat sessions can now pick up API keys from their provider
+  config too. Existing agent configs and chat sessions are automatically
+  migrated to their own provider config on upgrade (migration
+  `039_provider_configs`), so no manual action is needed after updating.
+  **Breaking change for direct API clients**: `POST`/`PUT /api/v1/agents` and
+  `POST /api/v1/chat/sessions` now require `provider_config_id` instead of
+  inlining `provider`/`model`/`env` — create or look up a provider config
+  first. Deleting a provider config still referenced by an agent config or
+  chat session is blocked with `409`. `GET /api/v1/health/providers`'s
+  provider-specific checks (qwen/opencode binaries, anthropic/llm API keys,
+  etc.) now key off providers actually referenced by an **enabled** agent
+  config or a chat session, via their Provider Config — creating a Provider
+  Config alone (with nothing pointing at it yet, or only a disabled agent
+  config) no longer produces a readiness check for it.
 - **Interactive terminal sessions.** A new chat surface runs a provider's CLI
   live in a real terminal against one of your repos — you see output as it
   happens, answer the CLI's own approval prompts, and type into it exactly like

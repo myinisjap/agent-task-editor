@@ -79,9 +79,15 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 		t.Fatalf("create repo: %v", err)
 	}
 
+	pc, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "worker-provider", Provider: "claude", Model: "sonnet", Env: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
 	cfg, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: uuid.NewString(), Name: "worker", Provider: "claude", Model: "sonnet",
-		Labels: `["work"]`, Env: "{}", MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
+		ID: uuid.NewString(), Name: "worker", ProviderConfigID: pc.ID,
+		Labels: `["work"]`, MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
 		EnabledPlugins: "[]", EnabledMcpServers: "[]", CommandAllowlist: "[]", CommandDenylist: "[]",
 		MaxRetries: 3, RetryBackoffSecs: 30, ResumeSessions: 1, SubtasksEnabled: 0, MaxSubtasks: 10,
 	})
@@ -295,9 +301,15 @@ func TestDashboardGet_InterventionQueueExcludesSupersededRuns(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set superseded run status: %v", err)
 	}
+	pc, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "worker-provider", Provider: "claude", Model: "sonnet", Env: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
 	cfg, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: uuid.NewString(), Name: "worker", Provider: "claude", Model: "sonnet",
-		Labels: `["work"]`, Env: "{}", MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
+		ID: uuid.NewString(), Name: "worker", ProviderConfigID: pc.ID,
+		Labels: `["work"]`, MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
 		EnabledPlugins: "[]", EnabledMcpServers: "[]", CommandAllowlist: "[]", CommandDenylist: "[]",
 		MaxRetries: 3, RetryBackoffSecs: 30, ResumeSessions: 1, SubtasksEnabled: 0, MaxSubtasks: 10,
 	})

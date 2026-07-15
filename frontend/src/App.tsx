@@ -10,6 +10,7 @@ import AgentPerformancePage from './pages/AgentPerformancePage'
 import TaskDetailPage from './pages/TaskDetailPage'
 import WorkflowPage from './pages/WorkflowPage'
 import AgentConfigPage from './pages/AgentConfigPage'
+import ProviderConfigPage from './pages/ProviderConfigPage'
 import ReposPage from './pages/ReposPage'
 import TemplatesPage from './pages/TemplatesPage'
 import HealthPage from './pages/HealthPage'
@@ -35,6 +36,7 @@ export default function App() {
               <Route path="/tasks/:id"             element={<TaskDetailPage />} />
               <Route path="/workflow"              element={<WorkflowPage />} />
               <Route path="/agents"                element={<AgentConfigPage />} />
+              <Route path="/providers"             element={<ProviderConfigPage />} />
               <Route path="/repos"                 element={<ReposPage />} />
               <Route path="/templates"             element={<TemplatesPage />} />
               <Route path="/health"                element={<HealthPage />} />

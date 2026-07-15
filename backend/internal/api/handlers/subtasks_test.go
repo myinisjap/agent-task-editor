@@ -167,9 +167,15 @@ func TestSubtasks_OptInGate(t *testing.T) {
 	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
 
 	// Config with subtasks disabled + an active run pointing at it.
+	pcOff, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "off-provider", Provider: "claude", Model: "sonnet", Env: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
 	cfgOff, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID: uuid.NewString(), Name: "off", Provider: "claude", Model: "sonnet",
-		Labels: `["plan"]`, Env: "{}", MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
+		ID: uuid.NewString(), Name: "off", ProviderConfigID: pcOff.ID,
+		Labels: `["plan"]`, MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
 		EnabledPlugins: "[]", EnabledMcpServers: "[]", CommandAllowlist: "[]", CommandDenylist: "[]",
 		MaxRetries: 3, RetryBackoffSecs: 30, ResumeSessions: 1, SubtasksEnabled: 0, MaxSubtasks: 10,
 	})
@@ -190,8 +196,8 @@ func TestSubtasks_OptInGate(t *testing.T) {
 
 	// Flip the config on; now allowed.
 	if _, err := q.UpdateAgentConfig(ctx, gen.UpdateAgentConfigParams{
-		Name: cfgOff.Name, Provider: cfgOff.Provider, Model: cfgOff.Model, SystemPrompt: cfgOff.SystemPrompt,
-		Labels: cfgOff.Labels, Env: cfgOff.Env, MaxTokens: cfgOff.MaxTokens, TimeoutSecs: cfgOff.TimeoutSecs,
+		Name: cfgOff.Name, ProviderConfigID: cfgOff.ProviderConfigID, SystemPrompt: cfgOff.SystemPrompt,
+		Labels: cfgOff.Labels, MaxTokens: cfgOff.MaxTokens, TimeoutSecs: cfgOff.TimeoutSecs,
 		MaxTurns: cfgOff.MaxTurns, Enabled: 1, EnabledPlugins: cfgOff.EnabledPlugins, EnabledMcpServers: cfgOff.EnabledMcpServers,
 		CommandAllowlist: cfgOff.CommandAllowlist, CommandDenylist: cfgOff.CommandDenylist,
 		MaxRetries: cfgOff.MaxRetries, RetryBackoffSecs: cfgOff.RetryBackoffSecs, ResumeSessions: cfgOff.ResumeSessions,

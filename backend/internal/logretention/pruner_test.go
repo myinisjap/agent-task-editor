@@ -63,14 +63,23 @@ func seedRun(t *testing.T, db *storage.DB, q *gen.Queries, wfID, status string, 
 		t.Fatalf("create task: %v", err)
 	}
 
-	agCfgID := uuid.NewString()
-	if _, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
-		ID:       agCfgID,
-		Name:     "agent-" + agCfgID,
+	pcID := uuid.NewString()
+	if _, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID:       pcID,
+		Name:     "provider-" + pcID,
 		Provider: "mock",
 		Model:    "none",
-		Labels:   `["plan"]`,
 		Env:      `{}`,
+	}); err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
+
+	agCfgID := uuid.NewString()
+	if _, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID:               agCfgID,
+		Name:             "agent-" + agCfgID,
+		ProviderConfigID: pcID,
+		Labels:           `["plan"]`,
 	}); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}

@@ -8,6 +8,28 @@ servers:
 
 components:
   schemas:
+    ProviderConfig:
+      type: object
+      description: >
+        The provider/model/API-key (env vars) triple, split out of AgentConfig
+        so it can be shared/reused by chat sessions and agent configs alike.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+          enum: [claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli]
+        model:
+          type: string
+        env:
+          type: string
+          description: JSON object of environment variables (e.g. API keys) merged into the provider CLI's environment
+        created_at:
+          type: string
+        updated_at:
+          type: string
     ChatSession:
       type: object
       properties:
@@ -15,9 +37,7 @@ components:
           type: string
         repo_id:
           type: string
-        provider:
-          type: string
-        model:
+        provider_config_id:
           type: string
         title:
           type: string
@@ -270,11 +290,22 @@ components:
       properties:
         id:            { type: string }
         name:          { type: string }
-        provider:      { type: string, enum: [claude_code, openai, anthropic, custom, opencode] }
-        model:         { type: string }
+        provider_config_id:
+          type: string
+          description: >
+            References a ProviderConfig (provider/model/env), which is created
+            and managed separately via /provider-configs and may be shared
+            with other agent configs or chat sessions.
+        provider_config:
+          allOf:
+            - $ref: '#/components/schemas/ProviderConfig'
+          readOnly: true
+          description: >
+            The resolved provider config for provider_config_id, embedded on
+            responses for convenience so clients don't need a second fetch.
+            Absent from request bodies.
         system_prompt: { type: string }
         labels:        { type: string, description: "JSON array of label names" }
-        env:           { type: string, description: "JSON object of env vars" }
         max_tokens:    { type: integer }
         timeout_secs:  { type: integer }
         max_turns:     { type: integer }
@@ -1798,6 +1829,55 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ClaudeOptions" }
 
+  /provider-configs:
+    get:
+      summary: List provider configs
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ProviderConfig" } }
+    post:
+      summary: Create a provider config
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderConfig" }
+        "400": { description: Missing name/provider, or unknown provider }
+
+  /provider-configs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a provider config
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderConfig" }
+        "404": { description: Provider config not found }
+    put:
+      summary: Update a provider config
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderConfig" }
+        "400": { description: Unknown provider }
+        "404": { description: Provider config not found }
+    delete:
+      summary: Delete a provider config
+      description: >
+        Blocked with 409 if any agent config or chat session still
+        references this provider config.
+      responses:
+        "204": { description: Deleted }
+        "409": { description: Provider config still referenced by an agent config or chat session }
+
   /repos:
     get:
       summary: List repos
@@ -1957,8 +2037,10 @@ paths:
         infrastructure so first-run misconfiguration is visible at a glance
         instead of surfacing as a failed agent run. Checks the claude CLI
         (present + authenticated), API keys for the anthropic/llm providers,
-        qwen/opencode binaries (only for providers referenced by an enabled
-        agent config), the MCP sidecar binary (MCP_SERVER_PATH), gh auth,
+        qwen/opencode binaries (only for providers actually referenced by an
+        enabled agent config or a chat session, via their Provider Config —
+        an unused/disabled Provider Config produces no check), the MCP
+        sidecar binary (MCP_SERVER_PATH), gh auth,
         REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot
         scheduler is enabled via BACKUP_DIR — see docs/backup.md), and
         version (the running build's version — see /healthz). Also includes
@@ -2111,15 +2193,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [repo_id, provider]
+              required: [repo_id, provider_config_id]
               properties:
                 repo_id:
                   type: string
-                provider:
+                provider_config_id:
                   type: string
-                  description: Provider key (e.g. claude, qwen_code, gemini_cli, codex_cli, opencode)
-                model:
-                  type: string
+                  description: References a ProviderConfig (see /provider-configs), which supplies the provider/model/env for this session's turns.
                 title:
                   type: string
       responses:
@@ -2130,7 +2210,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ChatSession"
         "400":
-          description: Missing/invalid repo_id or provider
+          description: Missing/invalid repo_id or provider_config_id
 
   /chat/sessions/{id}:
     parameters:
@@ -2155,6 +2235,10 @@ paths:
                 properties:
                   session:
                     $ref: "#/components/schemas/ChatSession"
+                  provider_config:
+                    allOf:
+                      - $ref: "#/components/schemas/ProviderConfig"
+                    description: Resolved provider config for the session's provider_config_id, embedded so the frontend doesn't need a second fetch.
         "404":
           description: Session not found
     delete:

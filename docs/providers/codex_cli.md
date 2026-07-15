@@ -64,7 +64,7 @@ Codex has its own, arguably stronger, native safety system instead of a glob all
 
 ## Model Selection
 
-Pass `model` in the agent config. It is passed via `--model <model>` to the CLI.
+Pass `model` on the referenced [Provider Config](../agents.md#provider-configs). It is passed via `--model <model>` to the CLI.
 
 ## Fallback Outcome Parsing
 
@@ -79,4 +79,4 @@ The `turn.completed` event reports `usage.input_tokens` / `usage.output_tokens` 
 1. Install the `codex` CLI (`npm i -g @openai/codex`) and add it to `PATH` (or mount it into the container; see the backend `Dockerfile`'s `INSTALL_CODEX_CLI` build arg)
 2. Authenticate: run `codex login` to sign in with ChatGPT, or set `OPENAI_API_KEY`
 3. Set `MCP_SERVER_PATH` to the path of the built `mcp-server` binary
-4. Create an agent config with `"provider": "codex_cli"`
+4. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "codex_cli"`, then an agent config referencing it via `provider_config_id`
