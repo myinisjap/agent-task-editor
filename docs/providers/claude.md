@@ -50,6 +50,31 @@ volumes:
 
 The `ANTHROPIC_AUTH_TOKEN` is auto-injected from `~/.claude/.credentials.json` at run time.
 
+### Automatic OAuth token refresh
+
+OAuth access tokens expire after a few hours. Before injecting the token
+(and before the dashboard usage widget calls Anthropic), the server checks
+the credentials file's `expiresAt`: if the token is expired or expires
+within 5 minutes, it is refreshed against Anthropic's OAuth token endpoint
+(`https://console.anthropic.com/v1/oauth/token`, using Claude Code's public
+client ID) with the stored `refreshToken`, and the rotated
+access/refresh tokens are written back to `~/.claude/.credentials.json`
+atomically (0600 perms, all other fields preserved) so this app and Claude
+Code on the same machine stay in sync. Refreshes are serialized behind a
+process-wide mutex because Anthropic rotates the refresh token on use.
+
+Previously the raw `accessToken` was injected as-is, so once it expired
+every run got 401s until you ran Claude Code interactively on the host to
+refresh the file. That manual step is no longer needed. Failure modes:
+
+- **Proactive refresh fails but the token is still valid** → the current
+  token is used.
+- **Token expired and refresh fails** (e.g. refresh token revoked) →
+  nothing is injected; the `claude` CLI falls back to its own refresh flow
+  against the credentials file. If that fails too, a fresh `claude login`
+  is required — the run escalates to `waiting_human` via the `auth`
+  classification as before.
+
 ## MCP Tools
 
 **All 5 MCP tools are supported** when `MCP_SERVER_PATH` is set.
