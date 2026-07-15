@@ -28,13 +28,12 @@ test.describe('board and task-detail smoke flow', () => {
     // active workflow, which may not be the repo global-setup.ts seeded if
     // others already exist (e.g. a stack left running from a prior local
     // run) — select it explicitly by name so the test doesn't depend on
-    // registration order. Scoped to the modal's own <form> (found via the
-    // title input, which only exists inside the modal) since the board
-    // itself also has a repo-filter <select> listing the same repo names.
-    const modalForm = page.locator('form').filter({ has: titleInput })
-    const repoOption = modalForm.locator('option', { hasText: 'e2e-demo-repo' })
+    // registration order. Uses a data-testid (rather than a plain <select>
+    // locator) because the board itself also has a repo-filter <select>
+    // listing the same repo names.
+    const repoSelect = page.getByTestId('new-task-repo-select')
+    const repoOption = repoSelect.locator('option', { hasText: 'e2e-demo-repo' })
     if (await repoOption.count()) {
-      const repoSelect = modalForm.locator('select').filter({ has: repoOption })
       await repoSelect.selectOption({ label: 'e2e-demo-repo' })
     }
 
