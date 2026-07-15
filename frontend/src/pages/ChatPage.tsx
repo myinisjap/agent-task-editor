@@ -1,40 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type ChatSession, type ChatMessage, type Repo, type AgentLog } from '../api/client'
-import { wsClient } from '../api/ws'
-import AgentLogEntry from '../components/board/AgentLogEntry'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
+import { api, type ChatSession, type Repo } from '../api/client'
+import { wsTicketParam } from '../api/ws'
 
 // Provider keys mirror the backend AgentConfig.Provider values (see main.go's
-// providerFactory). All support session resume, so any works for chat.
+// providerFactory) and the terminalCommand() switch. The `anthropic` API
+// provider is intentionally absent — it has no interactive CLI to run in a PTY.
 const PROVIDERS = [
   { value: 'claude', label: 'Claude' },
   { value: 'qwen_code', label: 'Qwen' },
   { value: 'gemini_cli', label: 'Gemini' },
   { value: 'codex_cli', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
-  { value: 'anthropic', label: 'Anthropic API' },
 ]
-
-// A ChatMessage renders through AgentLogEntry, which expects an AgentLog shape.
-function toLog(m: ChatMessage): AgentLog {
-  return { id: m.id, agent_run_id: m.session_id, timestamp: m.created_at, type: m.type, content: m.content }
-}
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [repos, setRepos] = useState<Repo[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
-  const [running, setRunning] = useState(false)
   // New-session form
   const [newRepo, setNewRepo] = useState('')
   const [newProvider, setNewProvider] = useState('claude')
 
-  const scrollRef = useRef<HTMLDivElement>(null)
-
   // Initial load: sessions + repos (repos needed for the new-session picker).
-  // Coerce to [] — the API marshals an empty list as JSON null (Go nil slice),
-  // which would otherwise land in state and blow up .find()/.map() below.
+  // Coerce to [] — the API marshals an empty list as JSON null (Go nil slice).
   useEffect(() => {
     api.chat.list().then((s) => setSessions(s ?? [])).catch(() => {})
     api.repos.list().then((r) => {
@@ -44,64 +35,11 @@ export default function ChatPage() {
     }).catch(() => {})
   }, [])
 
-  // Load transcript when the active session changes.
-  useEffect(() => {
-    if (!activeId) {
-      setMessages([])
-      return
-    }
-    api.chat.get(activeId).then((res) => setMessages(res.messages ?? [])).catch(() => {})
-  }, [activeId])
-
-  // Live updates: chat events broadcast to all clients, so filter by session.
-  useEffect(() => {
-    const off = wsClient.on((event) => {
-      if (event.type === 'chat.message' && event.payload.session_id === activeId) {
-        const m = event.payload.message
-        setMessages((prev) =>
-          prev.some((p) => p.id === m.id)
-            ? prev
-            : [...prev, { ...m, session_id: activeId }],
-        )
-      } else if (event.type === 'chat.turn_done' && event.payload.session_id === activeId) {
-        setRunning(false)
-      }
-    })
-    return off
-  }, [activeId])
-
-  // Keep the transcript scrolled to the newest message.
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [messages])
-
   async function createSession() {
     if (!newRepo) return
     const sess = await api.chat.create({ repo_id: newRepo, provider: newProvider })
     setSessions((prev) => [sess, ...prev])
     setActiveId(sess.id)
-  }
-
-  async function send() {
-    const text = input.trim()
-    if (!text || !activeId || running) return
-    setInput('')
-    setRunning(true)
-    // Optimistically append the user's message; the server also persists and
-    // broadcasts it, and the dedup-by-id in the WS handler prevents a double.
-    setMessages((prev) => [
-      ...prev,
-      { id: `local-${Date.now()}`, session_id: activeId, type: 'user', content: text, created_at: new Date().toISOString() },
-    ])
-    try {
-      await api.chat.send(activeId, text)
-    } catch (e) {
-      setRunning(false)
-      setMessages((prev) => [
-        ...prev,
-        { id: `err-${Date.now()}`, session_id: activeId, type: 'stderr', content: String(e), created_at: new Date().toISOString() },
-      ])
-    }
   }
 
   async function deleteSession(id: string) {
@@ -115,11 +53,10 @@ export default function ChatPage() {
   return (
     <div className="h-full min-h-0 flex">
       {/* Left: session list + new-session form.
-          Mobile: full width, and hidden once a chat is open (one pane at a
-          time — see the right pane's inverse rule). Desktop: fixed 16rem rail. */}
+          Mobile: full width, hidden once a chat is open. Desktop: fixed rail. */}
       <div className={`${active ? 'hidden md:flex' : 'flex'} w-full md:w-64 shrink-0 border-r border-slate-800 flex-col min-h-0 bg-slate-900`}>
         <div className="p-3 border-b border-slate-800 space-y-2">
-          <div className="text-slate-200 font-semibold text-sm">New chat</div>
+          <div className="text-slate-200 font-semibold text-sm">New terminal</div>
           <select
             value={newRepo}
             onChange={(e) => setNewRepo(e.target.value)}
@@ -144,7 +81,7 @@ export default function ChatPage() {
             disabled={!newRepo}
             className="w-full text-xs px-2 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
           >
-            Start chat
+            Start terminal
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -165,7 +102,6 @@ export default function ChatPage() {
                 <button
                   onClick={(e) => { e.stopPropagation(); deleteSession(s.id) }}
                   aria-label="Delete chat"
-                  // Always visible on touch (no hover); reveal-on-hover on desktop.
                   className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-slate-500 hover:text-red-400 text-sm px-1"
                 >
                   ✕
@@ -174,18 +110,16 @@ export default function ChatPage() {
             )
           })}
           {sessions.length === 0 && (
-            <p className="text-slate-600 text-xs px-3 py-3">No chats yet</p>
+            <p className="text-slate-600 text-xs px-3 py-3">No terminals yet</p>
           )}
         </div>
       </div>
 
-      {/* Right: transcript + composer. Inverse of the sidebar on mobile —
-          hidden until a chat is open, so the list gets the full screen. */}
+      {/* Right: the live terminal. Inverse of the sidebar on mobile. */}
       <div className={`${active ? 'flex' : 'hidden md:flex'} flex-1 flex-col min-w-0 min-h-0`}>
         {active ? (
           <>
             <div className="px-4 py-2 border-b border-slate-800 text-slate-400 text-xs flex items-center gap-2">
-              {/* Mobile-only back arrow — returns to the session list. */}
               <button
                 onClick={() => setActiveId(null)}
                 aria-label="Back to chats"
@@ -193,48 +127,130 @@ export default function ChatPage() {
               >
                 ‹ Chats
               </button>
-              {running && <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
               {active.provider}
               {repos.find((r) => r.id === active.repo_id) && ` · ${repos.find((r) => r.id === active.repo_id)!.name}`}
             </div>
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-2">
-              {messages.length === 0 && (
-                <p className="text-slate-600 text-xs px-3 py-3">Send a message to start.</p>
-              )}
-              {messages.map((m) => (
-                <AgentLogEntry key={m.id} log={toLog(m)} />
-              ))}
-            </div>
-            <div className="border-t border-slate-800 p-3 flex gap-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    send()
-                  }
-                }}
-                placeholder={running ? 'Waiting for the agent…' : 'Message…'}
-                rows={2}
-                // text-base on mobile (< 16px triggers iOS focus-zoom); smaller on desktop.
-                className="flex-1 resize-none text-base md:text-sm rounded bg-slate-800 border-slate-700 text-slate-200 px-3 py-2 focus:ring-indigo-500"
-              />
-              <button
-                onClick={send}
-                disabled={running || !input.trim()}
-                className="px-4 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm disabled:opacity-50"
-              >
-                Send
-              </button>
-            </div>
+            {/* keyed by session id so switching sessions remounts a fresh terminal */}
+            <TerminalView key={active.id} sessionId={active.id} />
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">
-            Select a chat or start a new one.
+            Select a terminal or start a new one.
           </div>
         )}
       </div>
     </div>
   )
+}
+
+// TerminalView mounts an xterm.js terminal bound to one chat session's PTY over
+// a dedicated WebSocket. The backend keeps the process alive across disconnects
+// and replays scrollback on reconnect, so remounting (session switch, refresh)
+// reattaches to the same live CLI.
+function TerminalView({ sessionId }: { sessionId: string }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    // Smaller font on phones so a usable number of columns fits the width.
+    const isNarrow = window.innerWidth < 640
+    const term = new Terminal({
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontSize: isNarrow ? 11 : 13,
+      theme: { background: '#0f172a' }, // slate-900, matches the app chrome
+      cursorBlink: true,
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(container)
+
+    let ws: WebSocket | null = null
+    let closedByUs = false
+    const encoder = new TextEncoder()
+
+    function sendResize() {
+      if (ws?.readyState === WebSocket.OPEN) {
+        // Resize goes as a TEXT frame (a string, not a Uint8Array) so the
+        // backend can tell it apart from keystrokes, which are binary frames.
+        // Sending it as binary would fall through to the PTY as literal stdin —
+        // the CLI would print "\x00resize:..." and never actually resize.
+        ws.send(`\x00resize:${term.cols},${term.rows}`)
+      }
+    }
+
+    // Refit to the current container box and tell the PTY. Guarded because
+    // fit() throws if the container isn't laid out yet (0x0), which happens on
+    // the first mobile paint before flex resolves.
+    function refit() {
+      try {
+        fit.fit()
+        sendResize()
+      } catch { /* container not laid out yet; a later call will succeed */ }
+    }
+
+    // Initial fit after layout settles. On mobile the container often measures
+    // 0x0 synchronously on mount, so defer to the next frame (and once more, in
+    // case fonts/flex settle a beat later) rather than fitting to a stale size.
+    requestAnimationFrame(() => {
+      refit()
+      requestAnimationFrame(refit)
+    })
+
+    ;(async () => {
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+      const ticket = await wsTicketParam()
+      const url = `${proto}//${window.location.host}${base}/api/v1/chat/sessions/${sessionId}/terminal${ticket}`
+      ws = new WebSocket(url)
+      ws.binaryType = 'arraybuffer'
+
+      // Send the size once connected — by now the deferred fit has run, so the
+      // PTY starts at the real terminal dimensions rather than the 80x24 default.
+      ws.onopen = () => sendResize()
+      ws.onmessage = (e) => {
+        if (typeof e.data === 'string') term.write(e.data)
+        else term.write(new Uint8Array(e.data))
+      }
+      ws.onclose = () => {
+        if (!closedByUs) term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n')
+      }
+
+      // Keystrokes -> PTY.
+      term.onData((data) => {
+        if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data))
+      })
+    })()
+
+    // Refit on container resize (desktop pane drag, orientation change).
+    const ro = new ResizeObserver(refit)
+    ro.observe(container)
+
+    // Mobile: tapping the terminal must focus xterm's hidden textarea, which is
+    // what summons the on-screen keyboard — without this, touch users can't type.
+    const focus = () => term.focus()
+    container.addEventListener('touchend', focus)
+    container.addEventListener('click', focus)
+
+    // Mobile: the on-screen keyboard shrinks the visual viewport without changing
+    // the container's box, so ResizeObserver doesn't fire. Track visualViewport
+    // directly and refit so the bottom rows stay above the keyboard.
+    const vv = window.visualViewport
+    vv?.addEventListener('resize', refit)
+
+    return () => {
+      closedByUs = true
+      ro.disconnect()
+      container.removeEventListener('touchend', focus)
+      container.removeEventListener('click', focus)
+      vv?.removeEventListener('resize', refit)
+      ws?.close()
+      term.dispose()
+    }
+  }, [sessionId])
+
+  // touch-manipulation avoids the 300ms tap delay / double-tap-zoom on the
+  // terminal; the flex box gives it a real height for FitAddon to measure.
+  return <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-2 touch-manipulation" />
 }

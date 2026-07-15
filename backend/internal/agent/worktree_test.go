@@ -45,6 +45,15 @@ func TestBranchNameIsSlugOnly(t *testing.T) {
 	}
 }
 
+func TestProvisionRejectsUnsafeTaskID(t *testing.T) {
+	repo := initRepo(t)
+	for _, id := range []string{"..", ".", "../evil", "a/b", "a\\b", "", "x;rm -rf"} {
+		if _, _, _, err := provisionWorktree(context.Background(), repo, id, "t"); err == nil {
+			t.Errorf("expected error for unsafe id %q, got nil", id)
+		}
+	}
+}
+
 func TestProvisionIsIdempotentAndDiffsTaskWork(t *testing.T) {
 	ctx := context.Background()
 	repo := initRepo(t)

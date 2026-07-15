@@ -9,17 +9,17 @@ import ChatPage from './ChatPage'
 // pins that: it feeds null and asserts the page renders instead of crashing.
 vi.mock('../api/client', () => ({
   api: {
-    chat: { list: () => Promise.resolve(null), get: () => Promise.resolve({ session: null, messages: null }) },
+    chat: { list: () => Promise.resolve(null), get: () => Promise.resolve({ session: null }) },
     repos: { list: () => Promise.resolve(null) },
   },
 }))
-vi.mock('../api/ws', () => ({ wsClient: { on: () => () => {} } }))
+vi.mock('../api/ws', () => ({ wsTicketParam: () => Promise.resolve('') }))
 
 test('renders without crashing when the API returns null lists', async () => {
   const { container } = render(<MemoryRouter><ChatPage /></MemoryRouter>)
-  await waitFor(() => expect(container.textContent).toContain('New chat'))
+  await waitFor(() => expect(container.textContent).toContain('New terminal'))
   // Empty-state copy proves it rendered past the .find()/.map() calls.
-  expect(container.textContent).toContain('Select a chat')
+  expect(container.textContent).toContain('Select a terminal')
   // Mobile single-pane logic: with no chat open, the sidebar is shown (not
   // hidden) so the list gets the screen. (Class check, not computed layout —
   // jsdom doesn't evaluate media queries.)

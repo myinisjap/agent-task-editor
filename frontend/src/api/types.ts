@@ -3019,7 +3019,7 @@ export interface paths {
         };
         /**
          * List interactive chat sessions
-         * @description Interactive chat sessions are free-form conversations against a repo, separate from the task/workflow state machine. Each user message runs one provider turn in the session's git worktree; turns stream over the WebSocket (chat.message / chat.turn_done events).
+         * @description Interactive chat sessions are free-form conversations against a repo, separate from the task/workflow state machine. Each session runs the provider's interactive CLI in a PTY inside the session's git worktree, streamed over the /chat/sessions/{id}/terminal WebSocket.
          */
         get: {
             parameters: {
@@ -3095,7 +3095,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get a chat session with its message transcript */
+        /**
+         * Get a chat session
+         * @description Returns the session. The interactive terminal has no server-side transcript — history lives in the CLI's own session store and the browser's terminal scrollback.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -3107,7 +3110,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The session and its ordered messages */
+                /** @description The session */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -3115,7 +3118,6 @@ export interface paths {
                     content: {
                         "application/json": {
                             session?: components["schemas"]["ChatSession"];
-                            messages?: components["schemas"]["ChatMessage"][];
                         };
                     };
                 };
@@ -3163,47 +3165,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/chat/sessions/{id}/messages": {
+    "/chat/sessions/{id}/terminal": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Single-use WebSocket auth ticket from POST /ws-ticket. Required when API auth is enabled (browsers can't set the bearer header on a WS handshake). */
+                ticket?: string;
+            };
             header?: never;
             path: {
                 id: string;
             };
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Send a message (run one chat turn)
-         * @description Kicks off one provider turn in the background and returns 202 immediately; the response streams over the WebSocket as chat.message events, followed by chat.turn_done. Only one turn runs per session at a time.
+         * Open the session's interactive terminal (WebSocket upgrade)
+         * @description Upgrades to a WebSocket carrying the session's interactive CLI running in a PTY, cwd = the session's repo worktree (provisioned on first connect). The server sends terminal output as binary frames; the client sends keystrokes as binary/text frames and window-size changes as a text frame of the form (NUL byte)resize:<cols>,<rows>. The process stays alive across disconnects, so reconnecting reattaches to the same live session.
          */
-        post: {
+        get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Single-use WebSocket auth ticket from POST /ws-ticket. Required when API auth is enabled (browsers can't set the bearer header on a WS handshake). */
+                    ticket?: string;
+                };
                 header?: never;
                 path: {
                     id: string;
                 };
                 cookie?: never;
             };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        message: string;
-                    };
-                };
-            };
+            requestBody?: never;
             responses: {
-                /** @description Turn accepted and running */
-                202: {
+                /** @description Switching Protocols — WebSocket established */
+                101: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
                 };
-                /** @description Empty message */
-                400: {
+                /** @description Missing or invalid ticket */
+                401: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3216,7 +3216,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Chat runner not available */
+                /** @description Terminal not available */
                 503: {
                     headers: {
                         [name: string]: unknown;
@@ -3225,58 +3225,8 @@ export interface paths {
                 };
             };
         };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/chat/sessions/{id}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
         put?: never;
-        /** Cancel the in-flight turn for a session */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Cancellation signalled */
-                202: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description No turn currently in progress */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Chat runner not available */
-                503: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3298,14 +3248,6 @@ export interface components {
             worktree_path?: string;
             created_at?: string;
             updated_at?: string;
-        };
-        ChatMessage: {
-            id?: string;
-            session_id?: string;
-            /** @description user | stdout | stderr | system | tool_call | tool_result */
-            type?: string;
-            content?: string;
-            created_at?: string;
         };
         Task: {
             id?: string;

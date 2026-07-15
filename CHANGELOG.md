@@ -20,14 +20,17 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
-- **Interactive chat sessions.** A new chat surface lets you talk to any
-  configured CLI provider against one of your repos — bounce ideas, ask it to
-  look at a PR, or work through a merge conflict — separate from the task board.
-  Each session runs in its own git worktree and resumes the provider
-  conversation turn to turn (all providers now support session resume, not just
-  Claude). New endpoints under `/api/v1/chat/sessions`; turns stream over the
-  existing WebSocket (`chat.message` / `chat.turn_done`). Concurrency is bounded
-  separately from task dispatch via `CHAT_MAX_WORKERS` (default 2).
+- **Interactive terminal sessions.** A new chat surface runs a provider's CLI
+  live in a real terminal against one of your repos — you see output as it
+  happens, answer the CLI's own approval prompts, and type into it exactly like
+  running the tool yourself — separate from the task board. Each session runs
+  its interactive CLI (`claude`, `codex`, `gemini`, `qwen`, or `opencode`) in a
+  PTY inside its own git worktree, streamed to an in-browser terminal over a
+  WebSocket (`GET /api/v1/chat/sessions/{id}/terminal`). The process stays alive
+  across disconnects, so a refresh reattaches to the same running session, and
+  it launches with the CLI's resume flag so prior conversation history is
+  restored from the CLI's own session store. New endpoints under
+  `/api/v1/chat/sessions`.
 - **Session resume for qwen/gemini/codex/opencode runs.** These providers now
   honor a stored provider session id (previously only the `claude` provider
   did), so resumed runs continue the same conversation.
@@ -67,6 +70,12 @@ triggers the "Release" workflow the same way.
   select row could grow wider than the modal when a repo name was long, since flex
   children default to a content-based minimum width; the columns and selects now
   shrink properly instead of forcing overflow.
+
+### Security
+- **Worktree provisioning validates the task/session id.** The id becomes a
+  filesystem path segment and git branch name; it is now rejected unless it is a
+  single safe segment (no separators or `..`), closing a potential path-traversal
+  vector. Ids are server-generated UUIDs, so this is defense-in-depth.
 
 ## [0.11.0] - 2026-07-13
 

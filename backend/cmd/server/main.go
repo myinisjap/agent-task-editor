@@ -237,12 +237,13 @@ func main() {
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = hub
 
-	// Interactive chat runner — reuses the provider factory and worktree
-	// machinery but runs on its own small concurrency budget so chat turns and
-	// task dispatch never starve each other.
-	chatRunner := agent.NewChatRunner(db.SQL(), providerFactory, hub, cfg.ChatMaxWorkers)
+	// Interactive chat terminal — runs each session's provider CLI in a PTY, one
+	// live process per session (no shared concurrency budget; a session is a
+	// single interactive process). Streamed over the /chat/sessions/{id}/terminal
+	// WebSocket.
+	terminal := agent.NewTerminalManager()
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, chatRunner)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),

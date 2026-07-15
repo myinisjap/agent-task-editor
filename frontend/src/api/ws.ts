@@ -1,6 +1,32 @@
 import type { Task, AgentLog } from './client'
 import { getApiToken, notifyUnauthorized } from './authToken'
 
+// wsTicketParam returns a "?ticket=..." query string for authenticating a
+// WebSocket handshake, or "" when no API token is configured (open auth) or the
+// exchange fails. Browsers can't set the bearer header on a WS upgrade, so the
+// token is exchanged for a short-lived single-use ticket via POST /ws-ticket
+// (see ServeWS). Shared by the event WS (below) and the chat terminal WS.
+export async function wsTicketParam(): Promise<string> {
+  const token = getApiToken()
+  if (!token) return ''
+  const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+  try {
+    const res = await fetch(`${base}/api/v1/ws-ticket`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (res.ok) {
+      const { ticket } = await res.json()
+      if (ticket) return `?ticket=${encodeURIComponent(ticket)}`
+    } else if (res.status === 401) {
+      notifyUnauthorized()
+    }
+  } catch {
+    // Fall through with no ticket — the caller's connection will 401/retry.
+  }
+  return ''
+}
+
 export type WSEvent =
   | { type: 'task.label_changed'; payload: { task_id: string; from: string; to: string; note?: string } }
   | { type: 'task.agent_started'; payload: { task_id: string; run_id: string; agent_name: string } }
@@ -19,10 +45,6 @@ export type WSEvent =
   | { type: 'task.created'; payload: Pick<Task, 'id' | 'title' | 'label' | 'repo_id' | 'source' | 'source_ref'> }
   | { type: 'task.updated'; payload: Task }
   | { type: 'task.subtask_conflict'; payload: { task_id: string; parent_id: string; files: string[] } }
-  // Interactive chat: each streamed line of a turn (broadcast to all clients;
-  // the ChatPage filters by session_id), then a terminal turn_done.
-  | { type: 'chat.message'; payload: { session_id: string; message: { id: string; type: string; content: string; created_at: string } } }
-  | { type: 'chat.turn_done'; payload: { session_id: string; status: string } }
 
 type Handler = (event: WSEvent) => void
 
@@ -43,33 +65,8 @@ class WSClient {
     }
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const token = getApiToken()
     const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-
-    // If a token is configured, exchange it for a short-lived, single-use
-    // ticket via the bearer-authed REST endpoint rather than putting the
-    // long-lived token itself in the WS URL (query strings leak into
-    // reverse-proxy/access logs and browser history).
-    let ticketParam = ''
-    if (token) {
-      try {
-        const res = await fetch(`${base}/api/v1/ws-ticket`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (res.ok) {
-          const { ticket } = await res.json()
-          if (ticket) ticketParam = `?ticket=${encodeURIComponent(ticket)}`
-        } else if (res.status === 401) {
-          // Wrong/expired token — clear it and let ApiTokenGate prompt for a
-          // new one, even if the user is only on a WS-only page.
-          notifyUnauthorized()
-        }
-      } catch {
-        // Fall through with no ticket — the connection will 401 and the
-        // existing onclose reconnect loop will retry.
-      }
-    }
+    const ticketParam = await wsTicketParam()
 
     const url = `${proto}//${window.location.host}${base}/ws${ticketParam}`
     this.ws = new WebSocket(url)
