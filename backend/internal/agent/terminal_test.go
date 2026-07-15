@@ -110,6 +110,22 @@ func TestTerminalManagerAttachStreams(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Errorf("stdin didn't reach the PTY, or it didn't run in cwd %q; got:\n%s", repoDir, got)
 	}
+
+	// Resize must arrive as a TEXT frame (parseResize only inspects text
+	// frames); a binary frame would fall through to the PTY as literal stdin.
+	// `stty size` prints "<rows> <cols>", so after resizing to 33x77 the shell
+	// should report exactly that — proving the frame resized the PTY rather
+	// than being typed into it.
+	if err := conn1.Write(ctx, websocket.MessageText, []byte("\x00resize:77,33")); err != nil {
+		t.Fatalf("write resize: %v", err)
+	}
+	if err := conn1.Write(ctx, websocket.MessageBinary, []byte("stty size\n")); err != nil {
+		t.Fatalf("write stty: %v", err)
+	}
+	size := readUntil(t, ctx, conn1, "33 77")
+	if !strings.Contains(size, "33 77") {
+		t.Errorf("resize text frame didn't apply (want stty size '33 77'); got:\n%s", size)
+	}
 	_ = conn1.Close(websocket.StatusNormalClosure, "")
 
 	// --- Reattach: scrollback should replay the earlier output. ---

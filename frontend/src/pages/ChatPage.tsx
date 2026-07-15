@@ -172,8 +172,11 @@ function TerminalView({ sessionId }: { sessionId: string }) {
 
     function sendResize() {
       if (ws?.readyState === WebSocket.OPEN) {
-        // Control frame the backend recognizes: NUL + "resize:<cols>,<rows>".
-        ws.send(encoder.encode(`\x00resize:${term.cols},${term.rows}`))
+        // Resize goes as a TEXT frame (a string, not a Uint8Array) so the
+        // backend can tell it apart from keystrokes, which are binary frames.
+        // Sending it as binary would fall through to the PTY as literal stdin —
+        // the CLI would print "\x00resize:..." and never actually resize.
+        ws.send(`\x00resize:${term.cols},${term.rows}`)
       }
     }
 
