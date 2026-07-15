@@ -183,10 +183,10 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	if err := h.term.Attach(r.Context(), id, workDir, sess.Provider, sess.Model, resume, conn); err != nil {
-		conn.Close(websocket.StatusInternalError, err.Error())
+		_ = conn.Close(websocket.StatusInternalError, err.Error())
 	}
 }
 

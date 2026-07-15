@@ -28,7 +28,7 @@ func terminalTestHandler(t *testing.T, m *TerminalManager, sessionID, repoDir st
 		if err != nil {
 			return
 		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, conn)
 	}
 }
@@ -143,7 +143,7 @@ func TestTerminalManagerAttachStreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("redial: %v", err)
 	}
-	defer conn2.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn2.Close(websocket.StatusNormalClosure, "") }()
 	replay := readUntil(t, ctx, conn2, want)
 	if !strings.Contains(replay, want) {
 		t.Errorf("reattach did not replay scrollback; got:\n%s", replay)
