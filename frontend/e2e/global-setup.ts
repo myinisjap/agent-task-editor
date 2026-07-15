@@ -26,10 +26,12 @@ export default async function globalSetup() {
   // Idempotent: if a repo with this name already exists (e.g. re-running
   // locally against a stack that wasn't torn down), reuse it instead of
   // erroring on a duplicate-name conflict.
-  const existing = await json<Array<{ id: string; name: string; workflow_id?: string }>>(
+  // The backend serializes a Go nil slice as JSON `null` (not `[]`) when no
+  // repos exist yet, e.g. on a fresh CI stack — guard against that here.
+  const existing = await json<Array<{ id: string; name: string; workflow_id?: string }> | null>(
     await fetch(`${API_BASE}/repos`),
   )
-  let repo = existing.find((r) => r.name === REPO_NAME)
+  let repo = existing?.find((r) => r.name === REPO_NAME)
 
   if (!repo) {
     repo = await json(
