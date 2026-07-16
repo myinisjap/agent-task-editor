@@ -38,6 +38,16 @@ FROM chat_sessions;
 -- NOT NULL REFERENCES column in place of provider/model(/env), copy the data
 -- across (every row already has its backfilled provider_configs.id, which is
 -- just its own id), then swap the table in.
+--
+-- agent_configs is itself the target of agent_runs.agent_config_id
+-- (ON DELETE SET NULL, since 008_agent_runs_fk_set_null). The connection
+-- this runs on has foreign_keys=on (see storage/db.go), so the DROP TABLE
+-- below would otherwise fire that SET NULL action against every agent_runs
+-- row before agent_configs_new is renamed into place, silently wiping
+-- agent_config_id on all historical runs (breaks the performance dashboard's
+-- per-agent-config stats). Disable FK enforcement for this rebuild only.
+PRAGMA foreign_keys = OFF;
+
 CREATE TABLE agent_configs_new (
     id                  TEXT PRIMARY KEY,
     name                TEXT NOT NULL,
@@ -104,3 +114,5 @@ ALTER TABLE chat_sessions_new RENAME TO chat_sessions;
 
 CREATE INDEX idx_chat_sessions_repo ON chat_sessions(repo_id);
 CREATE INDEX idx_chat_sessions_provider_config ON chat_sessions(provider_config_id);
+
+PRAGMA foreign_keys = ON;
