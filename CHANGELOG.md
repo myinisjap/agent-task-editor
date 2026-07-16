@@ -54,7 +54,10 @@ triggers the "Release" workflow the same way.
   WebSocket (`GET /api/v1/chat/sessions/{id}/terminal`). The process stays alive
   across disconnects, so a refresh reattaches to the same running session, and
   it launches with the CLI's resume flag so prior conversation history is
-  restored from the CLI's own session store. New endpoints under
+  restored from the CLI's own session store. The browser terminal automatically
+  reconnects after a dropped connection (redrawing the current screen from
+  server-side scrollback) and sends a periodic keepalive so idle sessions aren't
+  reaped by proxy/load-balancer idle timeouts. New endpoints under
   `/api/v1/chat/sessions`.
 - **Session resume for qwen/gemini/codex/opencode runs.** These providers now
   honor a stored provider session id (previously only the `claude` provider

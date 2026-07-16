@@ -173,6 +173,8 @@ function TerminalView({ sessionId }: { sessionId: string }) {
 
     let ws: WebSocket | null = null
     let closedByUs = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let keepAliveTimer: ReturnType<typeof setInterval> | null = null
     const encoder = new TextEncoder()
 
     function sendResize() {
@@ -203,30 +205,44 @@ function TerminalView({ sessionId }: { sessionId: string }) {
       requestAnimationFrame(refit)
     })
 
-    ;(async () => {
+    // (Re)connect to the session's PTY. The backend keeps the process alive and
+    // replays scrollback on attach, so reconnecting after a drop just redraws the
+    // current screen. Any drop that isn't our own teardown retries in 2s.
+    async function connect() {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const base = import.meta.env.BASE_URL.replace(/\/$/, '')
       const ticket = await wsTicketParam()
+      if (closedByUs) return
       const url = `${proto}//${window.location.host}${base}/api/v1/chat/sessions/${sessionId}/terminal${ticket}`
       ws = new WebSocket(url)
       ws.binaryType = 'arraybuffer'
 
       // Send the size once connected — by now the deferred fit has run, so the
       // PTY starts at the real terminal dimensions rather than the 80x24 default.
-      ws.onopen = () => sendResize()
+      ws.onopen = () => {
+        sendResize()
+        // Keepalive: idle terminals send no frames, so a proxy/LB idle timeout
+        // silently reaps the connection. A periodic resize is a frame the backend
+        // already understands and a no-op when the size is unchanged.
+        keepAliveTimer = setInterval(sendResize, 30000)
+      }
       ws.onmessage = (e) => {
         if (typeof e.data === 'string') term.write(e.data)
         else term.write(new Uint8Array(e.data))
       }
       ws.onclose = () => {
-        if (!closedByUs) term.write('\r\n\x1b[90m[disconnected]\x1b[0m\r\n')
+        if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null }
+        if (closedByUs) return
+        reconnectTimer = setTimeout(connect, 2000)
       }
+    }
+    connect()
 
-      // Keystrokes -> PTY.
-      term.onData((data) => {
-        if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data))
-      })
-    })()
+    // Keystrokes -> PTY. Registered once; reads the current ws each time so it
+    // keeps working across reconnects (don't re-register inside connect()).
+    term.onData((data) => {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data))
+    })
 
     // Refit on container resize (desktop pane drag, orientation change).
     const ro = new ResizeObserver(refit)
@@ -246,6 +262,8 @@ function TerminalView({ sessionId }: { sessionId: string }) {
 
     return () => {
       closedByUs = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (keepAliveTimer) clearInterval(keepAliveTimer)
       ro.disconnect()
       container.removeEventListener('touchend', focus)
       container.removeEventListener('click', focus)
