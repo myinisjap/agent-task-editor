@@ -102,6 +102,20 @@ triggers the "Release" workflow the same way.
   select row could grow wider than the modal when a repo name was long, since flex
   children default to a content-based minimum width; the columns and selects now
   shrink properly instead of forcing overflow.
+- **Performance tab no longer loses agent-run history on upgrade.** The
+  `039_provider_configs` migration rebuilds `agent_configs` (SQLite can't add
+  a `NOT NULL REFERENCES` column in place). With foreign keys enforced,
+  `DROP TABLE agent_configs` fired the pre-existing
+  `agent_runs.agent_config_id ON DELETE SET NULL` action against every run
+  row before the rebuilt table was renamed back into place, silently
+  detaching all historical runs from their agent config and leaving the
+  Performance tab empty (its per-agent-config stats query inner-joins on
+  that column). Migrations now run without transaction-wrapping so a
+  migration's own `PRAGMA foreign_keys=OFF/ON` (SQLite ignores this pragma
+  inside a transaction) takes effect, and `039_provider_configs` disables FK
+  enforcement around its table rebuilds. Deployments that already applied
+  the old version of this migration will have their pre-upgrade run history
+  permanently detached from its agent config; new runs are unaffected.
 
 ### Security
 - **Worktree provisioning validates the task/session id.** The id becomes a

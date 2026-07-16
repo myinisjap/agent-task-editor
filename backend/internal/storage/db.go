@@ -100,7 +100,16 @@ func runMigrations(db *sql.DB) error {
 		return fmt.Errorf("create migration source: %w", err)
 	}
 
-	driver, err := sqlite3.WithInstance(db, &sqlite3.Config{})
+	// NoTxWrap: some migrations rebuild a table that other tables reference via
+	// ON DELETE SET NULL foreign keys (e.g. 039_provider_configs, following the
+	// 008_agent_runs_fk_set_null pattern). Wrapped in a transaction, an in-file
+	// "PRAGMA foreign_keys=OFF" is a documented SQLite no-op (PRAGMA foreign_keys
+	// only takes effect outside an active transaction), so the DROP TABLE step
+	// would otherwise fire ON DELETE SET NULL against every referencing row
+	// before the rebuilt table is renamed back into place — silently nulling
+	// live data. Running migrations without the wrapper lets those migrations'
+	// own "PRAGMA foreign_keys=OFF/ON" statements actually take effect.
+	driver, err := sqlite3.WithInstance(db, &sqlite3.Config{NoTxWrap: true})
 	if err != nil {
 		return fmt.Errorf("create migration driver: %w", err)
 	}
