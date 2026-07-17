@@ -212,6 +212,8 @@ func (r *GeminiRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 	// Stream stdout (stream-json lines) — Gemini's own event schema.
 	go func() {
 		defer wg.Done()
+		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in claude.go
+		defer rawDump.Close()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
@@ -219,6 +221,7 @@ func (r *GeminiRunner) Run(ctx context.Context, input RunInput, logCh chan<- Log
 			if line == "" {
 				continue
 			}
+			rawDump.WriteLine(line)
 			entry, parsed, u, class, sid := classifyGeminiJSON(line)
 			logCh <- entry
 			if parsed != "" {

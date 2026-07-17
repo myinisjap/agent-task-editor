@@ -248,6 +248,8 @@ func (r *CodexRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogE
 	// scanned by ClassifyLine below) for any line that doesn't parse as JSON.
 	go func() {
 		defer wg.Done()
+		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in claude.go
+		defer rawDump.Close()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
@@ -255,6 +257,7 @@ func (r *CodexRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogE
 			if line == "" {
 				continue
 			}
+			rawDump.WriteLine(line)
 			entry, parsed, u, class, sid := classifyCodexJSON(line)
 			logCh <- entry
 			if parsed != "" {

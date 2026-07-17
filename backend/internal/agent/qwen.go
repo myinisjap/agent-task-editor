@@ -153,6 +153,8 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 	// Stream stdout (stream-json lines) — same envelope as the claude CLI.
 	go func() {
 		defer wg.Done()
+		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in claude.go
+		defer rawDump.Close()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
@@ -160,6 +162,7 @@ func (r *QwenRunner) Run(ctx context.Context, input RunInput, logCh chan<- LogEn
 			if line == "" {
 				continue
 			}
+			rawDump.WriteLine(line)
 			ev := classifyStreamJSON(line)
 			logCh <- ev.Entry
 			if ev.Outcome != "" {
