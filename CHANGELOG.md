@@ -24,7 +24,8 @@ triggers the "Release" workflow the same way.
   dump every raw stream-json line from CLI providers (`claude`, `codex`,
   `gemini_cli`, `qwen_code`, `opencode`) verbatim to `<dir>/<run_id>.jsonl`
   before parsing, for reviewing what the CLIs emit vs. what we extract. Dev/debug
-  only, off by default, no retention or compression. See
+  only, off by default, no retention or compression. `dev.sh` gained a
+  `--raw-log-dir <path>` flag to enable it. See
   [getting-started.md](docs/getting-started.md).
 - **Workflow page: in-app help.** An info button in the Workflow editor header
   opens a modal explaining labels, transitions, trigger/path options, and the

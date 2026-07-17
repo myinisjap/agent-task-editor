@@ -16,6 +16,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-dir) REPO_BASE_DIR="$2"; shift 2 ;;
     --all-cli) ALL_CLI=true; shift ;;
+    --raw-log-dir) AGENT_RAW_LOG_DIR="$2"; shift 2 ;;
     *) break ;;
   esac
 done
@@ -46,6 +47,11 @@ done
 unset _prefix _UNSAFE_PREFIXES
 
 export REPO_BASE_DIR
+# Dev-only raw agent-log capture. --raw-log-dir sets AGENT_RAW_LOG_DIR; the
+# `dev` (local) path uses it as-is, while `start`/`restart` (docker) ignore the
+# host value and write to /data/raw-logs on the db_data volume — see
+# docker-compose.yml. Export so compose can gate the env line on its presence.
+export AGENT_RAW_LOG_DIR
 # Passed to the backend container, which remaps its runtime user to these so
 # files agents write to bind-mounted repos are owned by the host user rather
 # than root (see backend/entrypoint.sh).
@@ -134,7 +140,7 @@ case "$CMD" in
     (cd "$SCRIPT_DIR/backend" && go build -o server ./cmd/server)
 
     echo "Starting backend on :8080..."
-    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" LOG_LEVEL=DEBUG ./server) &
+    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" LOG_LEVEL=DEBUG AGENT_RAW_LOG_DIR="$AGENT_RAW_LOG_DIR" ./server) &
     BACKEND_PID=$!
 
     echo "Starting frontend on :5173..."
@@ -149,7 +155,7 @@ case "$CMD" in
     wait $BACKEND_PID $FRONTEND_PID
     ;;
   *)
-    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [start|stop|restart|logs|login|shell|dev]"
+    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [--raw-log-dir <path>] [start|stop|restart|logs|login|shell|dev]"
     exit 1
     ;;
 esac
