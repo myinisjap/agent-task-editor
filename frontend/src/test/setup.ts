@@ -4,6 +4,57 @@ import '@testing-library/jest-dom/vitest'
 import { afterEach, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
+// Newer Node versions (22.4+) ship their own experimental global
+// `localStorage`/`sessionStorage` (see `node --help` -> `--webstorage`).
+// Depending on the exact Node/jsdom/Vitest version combination, that global
+// can end up shadowing — or otherwise breaking — jsdom's `window.localStorage`
+// (it silently resolves to `undefined` instead of a working Storage object,
+// with no thrown error, so `localStorage.getItem(...)` fails with "Cannot
+// read properties of undefined"). Every test that touches token storage
+// (api/authToken.ts, and anything that calls it transitively, e.g. the authed
+// fetch helpers in api/client.ts) then fails regardless of whether the code
+// under test is correct. Provide our own minimal, synchronous, in-memory
+// Storage polyfill and force both globals to it so tests are deterministic
+// across Node/jsdom versions and CLI flags.
+class MemoryStorage implements Storage {
+  private store = new Map<string, string>()
+
+  get length(): number {
+    return this.store.size
+  }
+
+  clear(): void {
+    this.store.clear()
+  }
+
+  getItem(key: string): string | null {
+    return this.store.has(key) ? this.store.get(key)! : null
+  }
+
+  key(index: number): string | null {
+    return Array.from(this.store.keys())[index] ?? null
+  }
+
+  removeItem(key: string): void {
+    this.store.delete(key)
+  }
+
+  setItem(key: string, value: string): void {
+    this.store.set(key, String(value))
+  }
+}
+
+for (const target of [globalThis, window] as const) {
+  Object.defineProperty(target, 'localStorage', {
+    configurable: true,
+    value: new MemoryStorage(),
+  })
+  Object.defineProperty(target, 'sessionStorage', {
+    configurable: true,
+    value: new MemoryStorage(),
+  })
+}
+
 // Testing Library doesn't auto-cleanup between tests when globals are on in
 // some setups — be explicit so component trees don't leak across tests.
 afterEach(() => {
