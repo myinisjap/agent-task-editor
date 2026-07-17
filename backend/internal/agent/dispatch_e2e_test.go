@@ -278,10 +278,16 @@ func (h *e2eHarness) seedTaskOnReadyWithProvider(t *testing.T, wfID, provider st
 	return taskID
 }
 
-// pollTask waits until cond(task) holds or the deadline elapses.
+// pollTask waits until cond(task) holds or the deadline elapses. Every caller
+// waits for a condition that *should* become true, so this returns the instant
+// it does — the deadline only bounds the failure case. It is set generously (15s)
+// because CI runs the whole module with `-race`, whose 10-20x slowdown on a
+// loaded 2-core runner can starve the dispatcher's sweep goroutine long enough
+// that a tighter window (the old 5s) times out before a sweep lands, producing
+// a spurious "task ... active=<nil>" flake even though the logic is correct.
 func (h *e2eHarness) pollTask(t *testing.T, taskID string, cond func(gen.Task) bool, msg string) gen.Task {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		task, err := h.q.GetTask(context.Background(), taskID)
 		if err == nil && cond(task) {
