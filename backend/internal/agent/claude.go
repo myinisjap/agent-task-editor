@@ -241,6 +241,11 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input RunInput, sidecarEn
 	// Stream stdout (stream-json lines)
 	go func() {
 		defer wg.Done()
+		// ponytail: dev-only raw capture to review/improve parsing. Set
+		// AGENT_RAW_LOG_DIR to dump every stdout line verbatim to
+		// <dir>/<runID>.jsonl. Off by default; no DB, no product surface.
+		rawDump := openRawDump(input.RunID)
+		defer rawDump.Close()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
@@ -248,6 +253,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input RunInput, sidecarEn
 			if line == "" {
 				continue
 			}
+			rawDump.WriteLine(line)
 			ev := classifyStreamJSON(line)
 			logCh <- ev.Entry
 			mu.Lock()
@@ -828,4 +834,43 @@ func mergeEnv(base []string, extra map[string]string) []string {
 		out = append(out, fmt.Sprintf("%s=%s", k, v))
 	}
 	return out
+}
+
+// rawDump is a dev-only tee of raw stdout stream-json lines, gated by the
+// AGENT_RAW_LOG_DIR env var. When unset, all methods are no-ops on a nil
+// receiver so the hot path stays clean. Used to review provider output and
+// improve our stream parsing — not a product feature.
+type rawDump struct {
+	f *os.File
+}
+
+func openRawDump(runID string) *rawDump {
+	dir := os.Getenv("AGENT_RAW_LOG_DIR")
+	if dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		slog.Warn("raw log capture: mkdir failed", "dir", dir, "err", err)
+		return nil
+	}
+	f, err := os.Create(filepath.Join(dir, runID+".jsonl"))
+	if err != nil {
+		slog.Warn("raw log capture: create failed", "err", err)
+		return nil
+	}
+	return &rawDump{f: f}
+}
+
+func (d *rawDump) WriteLine(line string) {
+	if d == nil {
+		return
+	}
+	_, _ = d.f.WriteString(line + "\n")
+}
+
+func (d *rawDump) Close() {
+	if d == nil {
+		return
+	}
+	_ = d.f.Close()
 }

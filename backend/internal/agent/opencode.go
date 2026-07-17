@@ -75,6 +75,8 @@ func (r *OpencodeRunner) Run(ctx context.Context, input RunInput, logCh chan<- L
 
 	go func() {
 		defer wg.Done()
+		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in claude.go
+		defer rawDump.Close()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
@@ -82,6 +84,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input RunInput, logCh chan<- L
 			if line == "" {
 				continue
 			}
+			rawDump.WriteLine(line)
 			entry, parsed := classifyOpencodeJSON(line)
 			logCh <- entry
 			if parsed != "" {

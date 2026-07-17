@@ -65,6 +65,10 @@ services:
       # Set to the host directory containing your repos. The backend rewrites
       # paths under this directory to /repos inside the container automatically.
       - REPO_BASE_DIR=${REPO_BASE_DIR:-/tmp/repos}
+      # Dev-only raw agent-log capture. dev.sh --raw-log-dir sets AGENT_RAW_LOG_DIR
+      # on the host; here we redirect to /data/raw-logs (on the db_data volume, so
+      # no new mount) only when the flag is present. See docs/getting-started.md.
+      - AGENT_RAW_LOG_DIR=${AGENT_RAW_LOG_DIR:+/data/raw-logs}
       # Optional: write rotated local snapshots to /data/backups every BACKUP_INTERVAL,
       # keeping the newest BACKUP_KEEP. /data is the db_data volume, so this persists
       # with no new volume needed. See docs/backup.md.
