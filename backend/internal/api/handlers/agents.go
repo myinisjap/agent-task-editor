@@ -494,8 +494,15 @@ func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if models == nil {
-		Err(w, http.StatusNotFound, fmt.Sprintf("unknown provider: %s", provider))
-		return
+		// Known provider without a fixed model list (e.g. qwen_code): model comes
+		// from provider config, so return an empty list rather than 404 so the UI
+		// falls back to free-text entry instead of logging a console error.
+		if knownProviders[provider] {
+			models = []string{}
+		} else {
+			Err(w, http.StatusNotFound, fmt.Sprintf("unknown provider: %s", provider))
+			return
+		}
 	}
 
 	JSON(w, http.StatusOK, map[string]any{
