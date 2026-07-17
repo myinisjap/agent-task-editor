@@ -2,6 +2,8 @@
 
 A workflow is the state machine that governs how tasks progress. Each workflow contains **labels** (columns) and **transitions** (allowed moves between labels).
 
+> A condensed version of this reference is also available in the app: click the ⓘ button in the Workflow page header.
+
 ## Labels
 
 | Field | Type | Description |

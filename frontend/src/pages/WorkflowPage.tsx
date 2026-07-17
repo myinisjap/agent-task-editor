@@ -91,6 +91,112 @@ function NewWorkflowModal({
   )
 }
 
+// ── Help modal ───────────────────────────────────────────────────────────────
+
+const EXAMPLE_YAML = `name: My Workflow
+description: Optional description
+labels:
+  - name: backlog
+    color: "#6B7280"
+    sort_order: 0
+    agent_ignore: true
+  - name: in-progress
+    color: "#F59E0B"
+    sort_order: 1
+  - name: done
+    color: "#10B981"
+    sort_order: 2
+    is_terminal: true
+transitions:
+  - from: backlog
+    to: in-progress
+    trigger: human
+  - from: in-progress
+    to: done
+    trigger: agent
+    path: success
+  - from: done
+    to: in-progress
+    trigger: human`
+
+function WorkflowHelpModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 flex-shrink-0">
+          <h2 className="text-lg font-semibold text-slate-100">How Workflows Work</h2>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="text-slate-500 hover:text-slate-200 transition-colors text-sm leading-none"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="px-6 py-4 overflow-y-auto flex flex-col gap-5 text-sm text-slate-300">
+          <section className="flex flex-col gap-1.5">
+            <h3 className="text-slate-100 font-semibold">Overview</h3>
+            <p>
+              A workflow is a state machine made up of <strong>labels</strong> (the columns on the board)
+              and <strong>transitions</strong> (the allowed moves between labels). Tasks start on a label
+              and can only move to another label if a matching transition is defined — any other move is
+              rejected.
+            </p>
+          </section>
+
+          <section className="flex flex-col gap-1.5">
+            <h3 className="text-slate-100 font-semibold">Labels</h3>
+            <ul className="flex flex-col gap-1 list-disc list-inside">
+              <li><code className="bg-slate-800 rounded px-1 font-mono">name</code> — unique identifier within the workflow</li>
+              <li><code className="bg-slate-800 rounded px-1 font-mono">color</code> — hex color used on the board</li>
+              <li><code className="bg-slate-800 rounded px-1 font-mono">sort_order</code> — column order on the board</li>
+              <li><code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> — agents cannot move tasks here; the dispatcher skips tasks already on this label</li>
+              <li><code className="bg-slate-800 rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
+            </ul>
+          </section>
+
+          <section className="flex flex-col gap-1.5">
+            <h3 className="text-slate-100 font-semibold">Transitions</h3>
+            <ul className="flex flex-col gap-1 list-disc list-inside">
+              <li><code className="bg-slate-800 rounded px-1 font-mono">from</code> / <code className="bg-slate-800 rounded px-1 font-mono">to</code> — source and destination label names</li>
+              <li><code className="bg-slate-800 rounded px-1 font-mono">trigger</code> — <code className="bg-slate-800 rounded px-1 font-mono">agent</code>, <code className="bg-slate-800 rounded px-1 font-mono">human</code>, or <code className="bg-slate-800 rounded px-1 font-mono">both</code>: who is allowed to make this move</li>
+              <li><code className="bg-slate-800 rounded px-1 font-mono">path</code> — <code className="bg-slate-800 rounded px-1 font-mono">success</code> or <code className="bg-slate-800 rounded px-1 font-mono">failure</code>: which outcome this transition represents, used by the Approve/Reject actions</li>
+            </ul>
+            <p>Only transitions you define are allowed — a task can never skip to a label with no matching transition.</p>
+          </section>
+
+          <section className="flex flex-col gap-1.5">
+            <h3 className="text-slate-100 font-semibold">YAML Example</h3>
+            <pre className="bg-slate-800 rounded p-3 font-mono text-xs text-slate-200 overflow-x-auto whitespace-pre">
+{EXAMPLE_YAML}
+            </pre>
+          </section>
+
+          <p className="text-xs text-slate-500">
+            For the full reference — including the default workflow, Approve/Reject semantics, and engine
+            rules — see <code className="bg-slate-800 rounded px-1 font-mono">docs/workflows.md</code> in the repo.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ───────────────────────────────────────────────────────────────
 
 export default function WorkflowPage() {
@@ -103,6 +209,7 @@ export default function WorkflowPage() {
   const [saved, setSaved] = useState(false)
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [showNewModal, setShowNewModal] = useState(false)
+  const [showHelpModal, setShowHelpModal] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [validationErrors, setValidationErrors] = useState<WorkflowValidationError[]>([])
@@ -293,6 +400,18 @@ export default function WorkflowPage() {
           {error && <span className="text-sm text-red-400">{error}</span>}
           {saved && <span className="text-sm text-emerald-400">Saved ✓</span>}
           <button
+            onClick={() => setShowHelpModal(true)}
+            title="How workflows work"
+            aria-label="How workflows work"
+            className="w-7 h-7 flex items-center justify-center text-sm rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          </button>
+          <button
             onClick={handleSave}
             disabled={saving || !selectedWorkflowId}
             className="px-4 py-1.5 text-sm font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors"
@@ -374,6 +493,9 @@ export default function WorkflowPage() {
           onCreate={handleCreate}
         />
       )}
+
+      {/* Help Modal */}
+      {showHelpModal && <WorkflowHelpModal onClose={() => setShowHelpModal(false)} />}
     </div>
   )
 }

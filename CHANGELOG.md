@@ -19,6 +19,12 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Workflow page: in-app help.** An info button in the Workflow editor header
+  opens a modal explaining labels, transitions, trigger/path options, and the
+  YAML configuration format, with a minimal working example — so the
+  `docs/workflows.md` reference is discoverable right where you edit YAML.
+
 ## [0.12.0] - 2026-07-16
 
 ### Added
