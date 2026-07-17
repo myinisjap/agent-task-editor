@@ -19,6 +19,8 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-16
+
 ### Added
 - **Provider Config: provider/model/API keys split out into a separate,
   reusable entity.** Previously `AgentConfig` bundled which provider CLI to
