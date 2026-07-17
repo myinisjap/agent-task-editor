@@ -85,6 +85,11 @@ triggers the "Release" workflow the same way.
   the docker-compose stack in CI alongside the existing frontend test suite.
 
 ### Fixed
+- **`GET /agents/models` no longer 404s for providers without a fixed model
+  list.** Known providers that source their model from provider config (e.g.
+  `qwen_code`) returned 404, logging a console error on the agent-config page.
+  They now return an empty `models` list so the UI falls back to free-text
+  model entry.
 - **Chat terminal no longer sits flush against the pane edge.** The PTY
   terminal in the Chat page had minimal padding around it, so glyphs could
   butt right up against the window edge (and get visually clipped on
