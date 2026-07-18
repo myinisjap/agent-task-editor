@@ -1,6 +1,7 @@
-// Package agent implements the agent runtime: provider interface, bounded pool,
-// dispatcher, and concrete backends (ClaudeRunner, LLMRunner, QwenRunner,
-// GeminiRunner, CodexRunner).
+// Package agent implements the agent runtime core: the Provider interface,
+// bounded worker pool, and dispatcher. Concrete provider backends
+// (ClaudeRunner, AnthropicRunner, LLMRunner, QwenRunner, GeminiRunner,
+// CodexRunner, OpencodeRunner) live in the sibling providers package.
 package agent
 
 import (
@@ -100,6 +101,12 @@ type RunInput struct {
 	// that failed to merge back into this (parent) task's branch. It is injected
 	// into the prompt so the parent's work agent resolves the conflicts.
 	SubtaskConflicts *string
+}
+
+// TransitionHint describes an available transition for the MCP sidecar.
+type TransitionHint struct {
+	ToLabel string `json:"to_label"`
+	Path    string `json:"path"` // success | failure | either
 }
 
 // ReviewComment is a minimal copy of storage's task_review_comments row —

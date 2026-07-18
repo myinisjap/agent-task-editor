@@ -21,7 +21,7 @@ import (
 // fail or block the overall /dashboard response.
 func TestDashboardGet_ClaudeUsageUnavailableWithoutCredentials(t *testing.T) {
 	// Point HOME somewhere without a ~/.claude/.credentials.json so
-	// agent.ClaudeOAuthAccessToken() reliably returns "".
+	// providers.ClaudeOAuthAccessToken() reliably returns "".
 	t.Setenv("HOME", t.TempDir())
 	_ = os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
@@ -180,37 +181,37 @@ func main() {
 	providerFactory := func(agentCfg agent.AgentConfig) agent.Provider {
 		switch agentCfg.Provider {
 		case "claude":
-			var mcp *agent.MCPManager
+			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {
-				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
+				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &agent.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		case "anthropic":
 			// Calls the Anthropic Messages API directly — no CLI binary needed.
 			// Requires LLM_API_KEY to be set. Billed per-token (not Claude Max).
-			return &agent.AnthropicRunner{APIKey: cfg.LLMAPIKey}
+			return &providers.AnthropicRunner{APIKey: cfg.LLMAPIKey}
 		case "opencode":
-			return &agent.OpencodeRunner{}
+			return &providers.OpencodeRunner{}
 		case "qwen_code":
-			var mcp *agent.MCPManager
+			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {
-				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
+				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &agent.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		case "gemini_cli":
-			var mcp *agent.MCPManager
+			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {
-				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
+				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &agent.GeminiRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.GeminiRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		case "codex_cli":
-			var mcp *agent.MCPManager
+			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {
-				mcp = &agent.MCPManager{ServerBinary: cfg.MCPBinary}
+				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &agent.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		default:
-			return &agent.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
+			return &providers.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
 		}
 	}
 
