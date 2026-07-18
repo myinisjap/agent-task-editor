@@ -288,13 +288,22 @@ export class OfficeScene {
     // rather than a grid of boxes.
     drawSharedFloor(ctx, cssW, cssH)
 
-    // Behind-props + workstations for every station (back to front).
+    // Short back-props (behind the desk), then workstations + signs.
     this.stations.forEach((st, i) => {
       const p = this.patch(i)
       const rng = mulberry32(0x9e37 + i * 2654435761)
-      drawScatter(ctx, p, rng, 'back')
+      drawScatter(ctx, p, rng, 'back', 'noLamp')
       drawWorkstation(ctx, st.action, this.workstation(i), st.color)
       drawSign(ctx, this.workstation(i), st)
+    })
+
+    // Tall floor lamps AFTER workstations (so a lamp beside a desk isn't
+    // clipped by it) but before sprites (so workers still pass in front). Same
+    // rng seed → identical positions as the back pass above.
+    this.stations.forEach((_st, i) => {
+      const p = this.patch(i)
+      const rng = mulberry32(0x9e37 + i * 2654435761)
+      drawScatter(ctx, p, rng, 'back', 'lampOnly')
     })
 
     // Depth-sort sprites back-to-front so lower ones overlap upper ones.
@@ -397,10 +406,23 @@ function drawSign(
   }
 }
 
-// Scatter a stable set of small props (plants, boxes, mugs) in a band of the
-// patch. 'back' fills the upper third (behind sprites); 'front' the bottom
-// edge (in front of sprites).
-function drawScatter(ctx: CanvasRenderingContext2D, p: Patch, rng: () => number, band: 'back' | 'front') {
+// Scatter a stable set of small props (plants, boxes, mugs, lamps) in a band of
+// the patch. 'back' fills the upper third; 'front' the bottom edge.
+//
+// The `only` phase controls which props render, WITHOUT changing the rng draw
+// sequence — so prop positions/types stay identical across phases:
+//   'noLamp' — everything except the tall floor lamp (drawn before workstations
+//              so short props sit behind the desk)
+//   'lampOnly' — only the floor lamp (drawn AFTER workstations so a tall lamp
+//                standing next to a desk isn't clipped by it), back band only
+//   'all' — used for the front band (no lamps there anyway)
+function drawScatter(
+  ctx: CanvasRenderingContext2D,
+  p: Patch,
+  rng: () => number,
+  band: 'back' | 'front',
+  only: 'noLamp' | 'lampOnly' | 'all' = 'all',
+) {
   const n = band === 'back' ? 2 + Math.floor(rng() * 2) : 1 + Math.floor(rng() * 2)
   const yMin = band === 'back' ? p.y + 16 : p.y + p.h - 14
   const ySpan = band === 'back' ? p.h * 0.22 : 10
@@ -408,11 +430,16 @@ function drawScatter(ctx: CanvasRenderingContext2D, p: Patch, rng: () => number,
     const x = p.x + 4 + rng() * (p.w - 20)
     const y = yMin + rng() * ySpan
     const pick = rng()
-    // The floor lamp is tall (~character height), so it only fits in the back
-    // band where there's full patch height below it; in the front (bottom-edge)
-    // band it would run off the floor, so lamps fall back to a plant there.
+    // The floor lamp is tall (~character height); it only fits in the back band
+    // (full patch height below it), so in the front band that slot is a plant.
+    const isLamp = pick >= 0.45 && pick < 0.65 && band === 'back'
+    if (isLamp) {
+      if (only !== 'noLamp') drawLamp(ctx, x, y)
+      continue
+    }
+    if (only === 'lampOnly') continue // this pass renders lamps only
     if (pick < 0.45) drawPlant(ctx, x, y)
-    else if (pick < 0.65) (band === 'back' ? drawLamp : drawPlant)(ctx, x, y)
+    else if (pick < 0.65) drawPlant(ctx, x, y) // front-band lamp slot → plant
     else if (pick < 0.85) drawBox(ctx, x, y)
     else drawMug(ctx, x, y)
   }
