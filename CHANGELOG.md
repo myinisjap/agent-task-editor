@@ -42,7 +42,10 @@ triggers the "Release" workflow the same way.
   floors, a back wall with a bookshelf/picture/clock, and scattered plants,
   boxes, and mugs — so it feels lived-in rather than a bare grid. Stations
   reflow into a responsive grid, so it stacks cleanly on mobile instead of
-  scrolling sideways. Rendered on a Canvas 2D loop, honors
+  scrolling sideways. Workers are directional — a true front, side profile, and
+  back view, so someone walking up to a workstation shows their back and a
+  side-walker shows a profile — with coherent top-left shading and a 3-frame
+  walk cycle. Rendered on a Canvas 2D loop, honors
   `prefers-reduced-motion`, off by default, and the on/off state is remembered
   in `localStorage`.
 

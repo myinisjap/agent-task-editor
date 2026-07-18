@@ -13,9 +13,11 @@ import {
   composeFrame,
   actionFrameCount,
   VARIANTS,
+  WALK_FRAME_COUNT,
   GRID_W,
   GRID_H,
   type Action,
+  type Dir,
   type Frame,
   type Variant,
 } from './pixelSprites'
@@ -47,7 +49,8 @@ type Sprite = {
   frameDur: number
   frame: number
   legTimer: number
-  leg: 0 | 1
+  leg: number // walk-cycle index (0..WALK_FRAME_COUNT-1)
+  dir: Dir // facing: front (toward viewer) / side / back (away/at station)
   variant: Variant
 }
 
@@ -189,6 +192,7 @@ export class OfficeScene {
           frame: Math.floor(Math.random() * 4),
           legTimer: 0,
           leg: 0,
+          dir: 'front',
           variant: VARIANTS[Math.floor(Math.random() * VARIANTS.length)],
         })
       }
@@ -221,18 +225,27 @@ export class OfficeScene {
           s.x = s.tx
           s.y = s.ty
           s.moving = false
-          // Arrived. If this was a bid for the work slot, stay a while and act
-          // facing the station; otherwise idle briefly then try to queue.
+          // Arrived. At the work slot: face the station (back to viewer) and
+          // stay a while to act; otherwise idle facing the viewer (front).
           s.pause = s.atWork ? 2.5 + Math.random() * 3 : 0.6 + Math.random() * 1.8
-          if (s.atWork) s.facing = 1 // face up/into the workstation
+          s.dir = s.atWork ? 'back' : 'front'
+          if (s.atWork) s.facing = 1
         } else {
           s.x += (dx / dist) * move
           s.y += (dy / dist) * move
-          if (Math.abs(dx) > 0.5) s.facing = dx < 0 ? -1 : 1
+          // Pick facing from the dominant travel axis: mostly-horizontal → side
+          // profile (mirror via facing); mostly-vertical → back if walking up,
+          // front if walking down.
+          if (Math.abs(dx) >= Math.abs(dy)) {
+            s.dir = 'side'
+            if (Math.abs(dx) > 0.5) s.facing = dx < 0 ? -1 : 1
+          } else {
+            s.dir = dy < 0 ? 'back' : 'front'
+          }
           s.legTimer += dt
-          if (s.legTimer >= 0.16) {
-            s.legTimer -= 0.16
-            s.leg = s.leg === 0 ? 1 : 0
+          if (s.legTimer >= 0.15) {
+            s.legTimer -= 0.15
+            s.leg = (s.leg + 1) % WALK_FRAME_COUNT
           }
         }
       } else {
@@ -321,8 +334,11 @@ export class OfficeScene {
       const st = this.stations[s.stationIndex]
       if (!st) continue
       const walkLeg = s.moving && st.action !== 'robot' ? s.leg : -1
-      const f = composeFrame(st.action, s.frame, walkLeg, s.variant)
-      drawSprite(ctx, f, s.x, s.y, s.facing)
+      const f = composeFrame(st.action, s.frame, walkLeg, s.variant, s.dir)
+      // 'side' is authored facing right; mirror for leftward travel. Front and
+      // back are symmetric, so only side needs the facing flip.
+      const flip = s.dir === 'side' && s.facing === -1
+      drawSprite(ctx, f, s.x, s.y, flip ? -1 : 1)
     }
 
     // Front-props: near the bottom edge, drawn last so they overlap sprites

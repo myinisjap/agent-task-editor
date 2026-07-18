@@ -3,10 +3,12 @@
 // officeScene.ts (canvas blitting) and covered by TaskFactory.test.tsx.
 //
 // Each sprite is a 16x24 grid of characters; a palette maps each char to a
-// color (space and '.' are transparent). Every humanoid action shares one
-// authored, shaded BASE body and overlays only the acting limb + tool per
-// frame. Per-worker VARIANTS recolor hat/hair/shirt/skin so a crowd reads as
-// different people rather than clones.
+// color (space and '.' are transparent). Characters are DIRECTIONAL: separate
+// front / side / back base bodies, so a worker walking up shows their back and
+// one walking sideways shows a profile — the single biggest "quality" lever
+// over a lone flipped front view. Shading uses one coherent top-left light
+// source (highlight up-left, shadow down-right). Per-worker VARIANTS recolor
+// hat/hair/skin/shirt so a crowd reads as different people.
 
 export type Action =
   | 'idle'
@@ -18,6 +20,11 @@ export type Action =
   | 'approving'
   | 'celebrating'
   | 'waving'
+
+// Which way a sprite faces. 'side' is drawn facing right; officeScene mirrors
+// it for leftward travel. Back is used while walking away / working at a
+// station (facing up into it).
+export type Dir = 'front' | 'side' | 'back'
 
 export const DEFAULT_ACTIONS: Record<string, Action> = {
   not_ready: 'idle',
@@ -36,169 +43,243 @@ export const BUCKET_ACTIONS: Record<'notReady' | 'agentWorking' | 'waitingHuman'
   waitingHuman: 'waving',
 }
 
-// Shared humanoid base (16 wide x 24 tall). Character legend:
-//   h hat  i hat-shade  r hair
-//   H skin  S skin-shade  N neck  e eye
-//   T shirt  t shirt-hi  u shirt-shade  A arm-skin
-//   G glove/cuff  P belt  k buckle  L legs  l leg-shade  B boot  o boot-sole
-// Arms run full torso height (cols 2-3 and 12-13) so they read as limbs;
-// per-action overlays replace the right arm (cols 12-13) + tool.
-const BASE_ROWS = [
-  '......iiii......', // 0  hat top shade
-  '.....hhhhhh.....', // 1  hat crown
-  '....hhhhhhhh....', // 2  hat crown
-  '...iihhhhhhii...', // 3  hat brim (shaded ends)
-  '....rrHHHHrr....', // 4  hairline + forehead
-  '....rHHHHHHr....', // 5  hair sides + face
-  '....HeHHHHeH....', // 6  eyes
-  '....HHHHHHHH....', // 7  cheeks
-  '....SHHHHHHS....', // 8  jaw (shaded sides)
-  '.....SHHHHS.....', // 9  chin taper
+// Legend (shared across directions):
+//   h hat  H hat-hi  i hat-shade   r hair  q hair-hi  j hair-shade
+//   K skin  S skin-shade  n nose  N neck  e eye
+//   T shirt  t shirt-hi  u shirt-shade  A arm-skin  a arm-shade
+//   G glove  P belt  k buckle  L legs  x leg-hi  l leg-shade  B boot  b boot-hi  o sole
+//
+// FRONT: faces the viewer. Light from top-left → left edges get *-hi chars,
+// right edges get *-shade chars.
+const FRONT_ROWS = [
+  '......Hiii......', // 0  hat top: hi-left, shade-right
+  '.....HhhhhhI....', // 1  hat crown
+  '....Hhhhhhhhi...', // 2  hat crown
+  '...iihhhhhhiii..', // 3  hat brim
+  '....qrKKKKjr....', // 4  hairline + forehead
+  '....qKKKKKKj....', // 5  hair sides + face
+  '....KeKKKKeK....', // 6  eyes
+  '....KKKnKKKK....', // 7  cheeks + nose
+  '....KKKKKKSS....', // 8  jaw (shade right)
+  '.....KKKKSS.....', // 9  chin taper
   '......NNNN......', // 10 neck
-  '..AAtTTTTTTtAA..', // 11 shoulders: arm + shirt(hi edges) + arm
-  '..AATTTTTTTTAA..', // 12 upper arm + shirt
-  '..AATuTTTTuTAA..', // 13 arm + shirt with side shadow
-  '..AATuTTTTuTAA..', // 14 forearm + shirt
-  '..AGTuTTTTuTGA..', // 15 cuff + shirt
-  '..GGTTTTTTTTGG..', // 16 gloves/hands + shirt hem
+  '..AAtTTTTTTuzA..', // 11 shoulders: arm + shirt(hi-left/shade-right) + arm
+  '..AATTTTTTTTzA..', // 12 upper arm + shirt
+  '..AATtTTTTuuzA..', // 13 arm + shirt hi-left / shade-right
+  '..AATtTTTTuuzA..', // 14
+  '..AGTtTTTTuuGa..', // 15 cuff + shirt
+  '..GGTTTTTTTTGG..', // 16 gloves + shirt hem
   '....PPPkkPPP....', // 17 belt + buckle
-  '....LLL..LLL....', // 18 hips/upper leg (leg gap)
-  '....LLL..LLL....', // 19 upper leg
-  '....LlL..LlL....', // 20 lower leg (inner shade)
-  '....LLL..LLL....', // 21 lower leg
-  '...BBBB..BBBB...', // 22 boots
-  '...oooo..oooo...', // 23 boot soles
+  '....xLL..LLl....', // 18 upper leg (hi-left, shade-right)
+  '....xLL..LLl....', // 19
+  '....xLL..LLl....', // 20
+  '....xLL..LLl....', // 21
+  '...bBBB..BBBo...', // 22 boots (hi-left, sole-right)
+  '...oooo..oooo...', // 23 soles
 ]
 
-// Default palette. Chars listed in VARIANT_KEYS are overridden per-worker.
+// SIDE: profile facing right. One near arm (right side of body) visible; nose
+// juts right; back of head + hair on the left. Narrower torso.
+const SIDE_ROWS = [
+  '.....Hiii.......', // 0  hat top
+  '....Hhhhhhi.....', // 1
+  '...jhhhhhhhi....', // 2  hair back-left + hat
+  '..jjhhhhhhii....', // 3  hat brim, hair nape
+  '..jjrKKKKKn.....', // 4  hair + face, nose bump right
+  '..jjrKKKKKKn....', // 5  face + nose
+  '...jrKKeKKKn....', // 6  eye (single, forward)
+  '...jrKKKKKK.....', // 7  cheek
+  '....rKKKKSS.....', // 8  jaw shade
+  '.....KKKSS......', // 9  chin
+  '......NNN.......', // 10 neck
+  '.....tTTTTa.....', // 11 shoulder + near arm (right)
+  '.....tTTTTAz....', // 12 torso + arm
+  '.....tTTTTAz....', // 13
+  '.....tTTTTAz....', // 14
+  '.....tTTTuGa....', // 15 cuff
+  '.....TTTuGG.....', // 16 hem + glove
+  '.....PPkPP......', // 17 belt
+  '.....xLLl.......', // 18 near leg (one column set in profile)
+  '.....xLLl.......', // 19
+  '.....xLLl.......', // 20
+  '.....xLLl.......', // 21
+  '....bBBBo.......', // 22 boot (toe points right)
+  '....ooooo.......', // 23 sole
+]
+
+// BACK: facing away. Hair fills the whole head (no face/eyes); shoulders and
+// back of shirt; legs/boots from behind. Light still top-left.
+const BACK_ROWS = [
+  '......Hiii......', // 0  hat top
+  '.....HhhhhhI....', // 1
+  '....Hhhhhhhhi...', // 2
+  '...iihhhhhhiii..', // 3  brim
+  '....qrrrrrrj....', // 4  hair
+  '....qrrrrrrj....', // 5  hair
+  '....qrrrrrrj....', // 6  hair (no eyes)
+  '....qrrrrrrj....', // 7  hair nape
+  '....jrrrrrrj....', // 8  nape shade
+  '.....jrrrj......', // 9  nape taper
+  '......NNNN......', // 10 neck
+  '..AAtTTTTTTuzA..', // 11 shoulders + back
+  '..AATTTTTTTTzA..', // 12
+  '..AATtTTTTuuzA..', // 13
+  '..AATtTTTTuuzA..', // 14
+  '..AGTtTTTTuuGa..', // 15
+  '..GGTTTTTTTTGG..', // 16
+  '....PPPPPPPP....', // 17 belt (no buckle from behind)
+  '....xLL..LLl....', // 18
+  '....xLL..LLl....', // 19
+  '....xLL..LLl....', // 20
+  '....xLL..LLl....', // 21
+  '...bBBB..BBBo...', // 22 boots (heels)
+  '...oooo..oooo...', // 23
+]
+
+const DIR_ROWS: Record<Dir, string[]> = { front: FRONT_ROWS, side: SIDE_ROWS, back: BACK_ROWS }
+
+// Default palette with a coherent top-left light model (‑hi lighter, ‑shade
+// darker than the base tone). Chars in VARIANT_KEYS are overridden per worker;
+// the derived hi/shade for variant colors are computed in applyVariant so a
+// recolor keeps its shading.
 const BASE_PALETTE: Record<string, string> = {
-  h: '#facc15', // hat
-  i: '#ca8a04', // hat shade
-  r: '#3f2d1d', // hair
-  H: '#f0a875', // skin
-  S: '#d68a56', // skin shade
-  e: '#1e293b', // eye
-  N: '#d99361', // neck
-  T: '#5b8def', // shirt
-  t: '#7ba7f5', // shirt highlight
-  u: '#3f6cc4', // shirt shadow
-  A: '#f0a875', // arm skin
-  G: '#334155', // glove/cuff
-  P: '#475569', // belt
-  k: '#cbd5e1', // buckle
-  L: '#3b4a63', // legs
-  l: '#2b3648', // leg inner shade
-  B: '#1e293b', // boots
-  o: '#0f172a', // boot soles
+  h: '#facc15', H: '#fde047', i: '#ca8a04', I: '#ca8a04', // hat + hi + shade (I = shade alt)
+  r: '#3f2d1d', q: '#5a4230', j: '#2a1c11', // hair + hi + shade
+  K: '#f0a875', S: '#cf8a52', n: '#dd9a68', // skin + shade + nose
+  e: '#1e293b', N: '#d99361', // eye, neck
+  T: '#5b8def', t: '#83aef7', u: '#3a63b8', // shirt + hi + shade
+  A: '#f0a875', z: '#cf8a52', a: '#f0a875', // arm + arm-shade + hand/acting-arm skin
+  G: '#334155', P: '#475569', k: '#cbd5e1', // glove, belt, buckle
+  L: '#3b4a63', x: '#4c5f7e', l: '#2b3648', // legs + hi + shade
+  B: '#1e293b', b: '#2f3d52', o: '#0f172a', // boots + hi + sole
 }
 
-// Chars recolored per worker. A variant supplies a subset; anything it omits
-// falls back to BASE_PALETTE.
-const VARIANT_KEYS = ['h', 'i', 'r', 'H', 'S', 'N', 'A', 'T', 't', 'u'] as const
-
+// Chars recolored per worker (base tones). Their -hi/-shade partners are
+// derived automatically so the light model survives a recolor.
+const VARIANT_KEYS = ['h', 'r', 'K', 'T', 'A'] as const
 export type Variant = Partial<Record<(typeof VARIANT_KEYS)[number], string>>
 
-// A palette of distinct looks: hat/hair/skin/shirt combos. officeScene picks
-// one per sprite (by index) so a station's crew looks like different people.
+// hi/shade partner char for each recolorable base char.
+const SHADE_OF: Record<string, { hi?: string; shade: string; extra?: string[] }> = {
+  h: { hi: 'H', shade: 'i', extra: ['I'] }, // I is an alt hat-shade cell
+  r: { hi: 'q', shade: 'j' },
+  K: { shade: 'S', extra: ['n', 'N'] }, // skin drives nose + neck too
+  T: { hi: 't', shade: 'u' },
+  A: { shade: 'z' }, // arm base + arm-shade (body arm-shade char is 'z')
+}
+
+// A palette of distinct looks. officeScene picks one per sprite so a station's
+// crew looks like different people.
 export const VARIANTS: Variant[] = [
-  {}, // default: yellow hard hat, tan skin, blue shirt
-  { h: '#f97316', i: '#c2560c', T: '#e05a4e', t: '#f0837a', u: '#b03c33' }, // orange hat, red shirt
-  { H: '#8d5a3c', S: '#734125', N: '#7a4d33', A: '#8d5a3c', h: '#22c55e', i: '#15803d', T: '#334155', t: '#475569', u: '#1e293b' }, // deep skin, green hat, slate shirt
-  { r: '#6b3410', H: '#e8b98f', S: '#cf9668', N: '#d6a077', A: '#e8b98f', h: '#e11d48', i: '#9f1239', T: '#a855f7', t: '#c084fc', u: '#7e22ce' }, // auburn hair, pink hat, purple shirt
-  { H: '#c98a5e', S: '#a86a41', N: '#b0764a', A: '#c98a5e', h: '#0ea5e9', i: '#0369a1', T: '#f59e0b', t: '#fbbf24', u: '#b45309' }, // cyan hat, amber shirt
-  { r: '#1c1917', h: '#facc15', i: '#ca8a04', T: '#14b8a6', t: '#2dd4bf', u: '#0f766e' }, // teal shirt
-  { H: '#6f4426', S: '#57331a', N: '#5f3a21', A: '#6f4426', r: '#0c0a09', h: '#94a3b8', i: '#64748b', T: '#6366f1', t: '#818cf8', u: '#4338ca' }, // dark skin, gray hat, indigo shirt
+  {}, // default: yellow hat, tan skin, blue shirt
+  { h: '#f97316', T: '#e05a4e' }, // orange hat, red shirt
+  { K: '#8d5a3c', h: '#22c55e', T: '#334155', A: '#8d5a3c' }, // deep skin, green hat, slate shirt
+  { r: '#6b3410', K: '#e8b98f', h: '#e11d48', T: '#a855f7', A: '#e8b98f' }, // auburn, pink hat, purple
+  { K: '#c98a5e', h: '#0ea5e9', T: '#f59e0b', A: '#c98a5e' }, // cyan hat, amber shirt
+  { r: '#1c1917', T: '#14b8a6' }, // teal shirt
+  { K: '#6f4426', r: '#0c0a09', h: '#94a3b8', T: '#6366f1', A: '#6f4426' }, // dark skin, gray hat, indigo
 ]
 
-export const GRID_W = BASE_ROWS[0].length
-export const GRID_H = BASE_ROWS.length
+export const GRID_W = FRONT_ROWS[0].length
+export const GRID_H = FRONT_ROWS.length
 
 export type Frame = { rows: string[]; palette: Record<string, string> }
 
-// Merge a small overlay of [col,row,char] cells onto the base rows, layering
-// extraPalette on top of BASE_PALETTE. Lets every action share one body.
-function frame(overlay: Array<[number, number, string]>, extraPalette: Record<string, string> = {}): Frame {
-  const rows = BASE_ROWS.map((r) => r.split(''))
-  for (const [x, y, ch] of overlay) rows[y][x] = ch
+// Lighten / darken a hex color by a factor for auto-derived hi/shade tones.
+function shift(hex: string, f: number): string {
+  const m = hex.replace('#', '')
+  const r = parseInt(m.slice(0, 2), 16)
+  const g = parseInt(m.slice(2, 4), 16)
+  const b = parseInt(m.slice(4, 6), 16)
+  const c = (v: number) => Math.max(0, Math.min(255, Math.round(f >= 1 ? v + (255 - v) * (f - 1) : v * f)))
+  return '#' + [c(r), c(g), c(b)].map((v) => v.toString(16).padStart(2, '0')).join('')
+}
+
+// Overlay [col,row,char] cells onto a direction's base rows.
+function frameFor(dir: Dir, overlay: Array<[number, number, string]>, extraPalette: Record<string, string> = {}): Frame {
+  const rows = DIR_ROWS[dir].map((r) => r.split(''))
+  for (const [x, y, ch] of overlay) if (rows[y]) rows[y][x] = ch
   return { rows: rows.map((r) => r.join('')), palette: { ...BASE_PALETTE, ...extraPalette } }
 }
 
 const ARM = { a: '#f0a875' } // acting-arm recolor (skin) — retinted per variant
 
-// 2-frame walk cycle. Base stance has both boots flat at row 22 (cols 3-6 and
-// 9-12) with soles at 23. A stride lifts one boot up a row and extends the
-// other outward, clearing the lifted foot's old sole cell — a visible swing,
-// not a same-char no-op. '.' clears a cell back to transparent.
+// 3-frame walk cycle: contact-left, passing (mid-stride, feet together), and
+// contact-right. Applied only while moving. Cells clear to '.' where a foot
+// lifts. Authored for the FRONT/BACK leg block (cols 3-11, rows 18-23).
 const WALK_LEGS: Array<Array<[number, number, string]>> = [
-  // left foot forward/down, right foot lifted+back
-  [[2, 22, 'B'], [3, 22, 'B'], [2, 23, 'o'], [3, 23, 'o'], // left boot extends outward
-   [11, 22, '.'], [12, 22, '.'], [11, 23, '.'], [12, 23, '.'], [10, 21, 'B'], [11, 21, 'B']], // right boot lifts up
-  // right foot forward/down, left foot lifted+back
-  [[12, 22, 'B'], [13, 22, 'B'], [12, 23, 'o'], [13, 23, 'o'], // right boot extends outward
-   [3, 22, '.'], [4, 22, '.'], [3, 23, '.'], [4, 23, '.'], [4, 21, 'B'], [5, 21, 'B']], // left boot lifts up
+  // left foot forward
+  [[2, 22, 'B'], [3, 22, 'B'], [2, 23, 'o'], [3, 23, 'o'],
+   [11, 22, '.'], [12, 22, '.'], [11, 23, '.'], [12, 23, '.'], [10, 21, 'B'], [11, 21, 'B']],
+  // passing pose: both feet centered/together (mid-stride)
+  [[5, 22, 'B'], [6, 22, 'B'], [9, 22, 'B'], [10, 22, 'B'],
+   [5, 23, 'o'], [6, 23, 'o'], [9, 23, 'o'], [10, 23, 'o']],
+  // right foot forward
+  [[12, 22, 'B'], [13, 22, 'B'], [12, 23, 'o'], [13, 23, 'o'],
+   [3, 22, '.'], [4, 22, '.'], [3, 23, '.'], [4, 23, '.'], [4, 21, 'B'], [5, 21, 'B']],
 ]
 
-// Right arm columns are 12-13; hand/glove row 16. Tools are held out from the
-// right hand. Coordinates re-authored for the 16x24 grid.
+// Actions are authored against the FRONT body (worker faces viewer while
+// using a tool). Right arm cols 12-13; hand/glove row 16.
 const ACTION_FRAMES: Record<Exclude<Action, 'robot'>, Frame[]> = {
   idle: [
-    frame([]),
-    frame([[7, 10, 'N'], [8, 10, 'N']]), // breathing: neck widens
-    frame([]),
-    frame([[5, 6, 'H'], [10, 6, 'H'], [6, 6, 'e'], [11, 6, 'e']]), // eyes glance aside
+    frameFor('front', []),
+    frameFor('front', [[7, 10, 'N'], [8, 10, 'N']]),
+    frameFor('front', []),
+    frameFor('front', [[5, 6, 'K'], [10, 6, 'K'], [6, 6, 'e'], [11, 6, 'e']]),
   ],
   drawing: [
-    // pencil scribbles a left-right arc at hip height, hand following
-    frame([[12, 13, 'a'], [13, 14, 'a'], [13, 15, 'c'], [13, 16, 'c']], { ...ARM, c: '#fde68a' }),
-    frame([[12, 13, 'a'], [11, 14, 'a'], [10, 15, 'c'], [10, 16, 'c']], { ...ARM, c: '#fde68a' }),
-    frame([[12, 13, 'a'], [9, 14, 'a'], [8, 15, 'c'], [8, 16, 'c']], { ...ARM, c: '#fde68a' }),
-    frame([[12, 13, 'a'], [11, 14, 'a'], [10, 15, 'c'], [10, 16, 'c']], { ...ARM, c: '#fde68a' }),
+    frameFor('front', [[12, 13, 'a'], [13, 14, 'a'], [13, 15, 'c'], [13, 16, 'c']], { ...ARM, c: '#fde68a' }),
+    frameFor('front', [[12, 13, 'a'], [11, 14, 'a'], [10, 15, 'c'], [10, 16, 'c']], { ...ARM, c: '#fde68a' }),
+    frameFor('front', [[12, 13, 'a'], [9, 14, 'a'], [8, 15, 'c'], [8, 16, 'c']], { ...ARM, c: '#fde68a' }),
+    frameFor('front', [[12, 13, 'a'], [11, 14, 'a'], [10, 15, 'c'], [10, 16, 'c']], { ...ARM, c: '#fde68a' }),
   ],
   inspecting: [
-    // magnifying glass (2x2 lens + handle) sweeps at head height
-    frame([[12, 11, 'a'], [13, 9, 'a'], [12, 6, 'g'], [13, 6, 'g'], [12, 7, 'g'], [13, 7, 'g'], [13, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
-    frame([[12, 11, 'a'], [10, 9, 'a'], [8, 6, 'g'], [9, 6, 'g'], [8, 7, 'g'], [9, 7, 'g'], [9, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
-    frame([[12, 11, 'a'], [13, 9, 'a'], [12, 6, 'g'], [13, 6, 'g'], [12, 7, 'g'], [13, 7, 'g'], [13, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
+    frameFor('front', [[12, 11, 'a'], [13, 9, 'a'], [12, 6, 'g'], [13, 6, 'g'], [12, 7, 'g'], [13, 7, 'g'], [13, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
+    frameFor('front', [[12, 11, 'a'], [10, 9, 'a'], [8, 6, 'g'], [9, 6, 'g'], [8, 7, 'g'], [9, 7, 'g'], [9, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
+    frameFor('front', [[12, 11, 'a'], [13, 9, 'a'], [12, 6, 'g'], [13, 6, 'g'], [12, 7, 'g'], [13, 7, 'g'], [13, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
   ],
   hammering: [
-    // hammer (2x2 head + handle) arcs overhead -> mid -> strike at hip -> up
-    frame([[12, 8, 'a'], [13, 6, 'a'], [12, 3, 'm'], [13, 3, 'm'], [12, 4, 'm'], [13, 4, 'm'], [13, 5, 'a']], { ...ARM, m: '#d6d3d1' }),
-    frame([[12, 11, 'a'], [13, 11, 'a'], [12, 12, 'm'], [13, 12, 'm'], [12, 13, 'm'], [13, 13, 'm']], { ...ARM, m: '#d6d3d1' }),
-    frame([[12, 14, 'a'], [13, 14, 'a'], [12, 15, 'm'], [13, 15, 'm'], [12, 16, 'm'], [13, 16, 'm']], { ...ARM, m: '#d6d3d1' }),
-    frame([[12, 11, 'a'], [13, 11, 'a'], [12, 12, 'm'], [13, 12, 'm'], [12, 13, 'm'], [13, 13, 'm']], { ...ARM, m: '#d6d3d1' }),
+    frameFor('front', [[12, 8, 'a'], [13, 6, 'a'], [12, 3, 'm'], [13, 3, 'm'], [12, 4, 'm'], [13, 4, 'm'], [13, 5, 'a']], { ...ARM, m: '#d6d3d1' }),
+    frameFor('front', [[12, 11, 'a'], [13, 11, 'a'], [12, 12, 'm'], [13, 12, 'm'], [12, 13, 'm'], [13, 13, 'm']], { ...ARM, m: '#d6d3d1' }),
+    frameFor('front', [[12, 14, 'a'], [13, 14, 'a'], [12, 15, 'm'], [13, 15, 'm'], [12, 16, 'm'], [13, 16, 'm']], { ...ARM, m: '#d6d3d1' }),
+    frameFor('front', [[12, 11, 'a'], [13, 11, 'a'], [12, 12, 'm'], [13, 12, 'm'], [12, 13, 'm'], [13, 13, 'm']], { ...ARM, m: '#d6d3d1' }),
   ],
   testing: [
-    // flask (2x2 body + neck, teal liquid) tips and shakes at chest height
-    frame([[12, 11, 'a'], [13, 12, 'a'], [12, 8, 'f'], [13, 8, 'f'], [12, 9, 'f'], [13, 9, 'f'], [13, 7, 'f']], { ...ARM, f: '#2dd4bf' }),
-    frame([[12, 10, 'a'], [13, 11, 'a'], [11, 7, 'f'], [12, 7, 'f'], [11, 8, 'f'], [12, 8, 'f'], [12, 6, 'f']], { ...ARM, f: '#2dd4bf' }),
-    frame([[12, 11, 'a'], [13, 10, 'a'], [13, 6, 'f'], [13, 7, 'f'], [12, 7, 'f'], [12, 8, 'f'], [13, 8, 'f']], { ...ARM, f: '#2dd4bf' }),
-    frame([[12, 10, 'a'], [13, 11, 'a'], [11, 7, 'f'], [12, 7, 'f'], [11, 8, 'f'], [12, 8, 'f'], [12, 6, 'f']], { ...ARM, f: '#2dd4bf' }),
+    frameFor('front', [[12, 11, 'a'], [13, 12, 'a'], [12, 8, 'f'], [13, 8, 'f'], [12, 9, 'f'], [13, 9, 'f'], [13, 7, 'f']], { ...ARM, f: '#2dd4bf' }),
+    frameFor('front', [[12, 10, 'a'], [13, 11, 'a'], [11, 7, 'f'], [12, 7, 'f'], [11, 8, 'f'], [12, 8, 'f'], [12, 6, 'f']], { ...ARM, f: '#2dd4bf' }),
+    frameFor('front', [[12, 11, 'a'], [13, 10, 'a'], [13, 6, 'f'], [13, 7, 'f'], [12, 7, 'f'], [12, 8, 'f'], [13, 8, 'f']], { ...ARM, f: '#2dd4bf' }),
+    frameFor('front', [[12, 10, 'a'], [13, 11, 'a'], [11, 7, 'f'], [12, 7, 'f'], [11, 8, 'f'], [12, 8, 'f'], [12, 6, 'f']], { ...ARM, f: '#2dd4bf' }),
   ],
   approving: [
-    // stamp raised overhead, then slams onto a document at hip level
-    frame([[12, 8, 'a'], [13, 6, 'a'], [12, 3, 'p'], [13, 3, 'p'], [12, 4, 'p'], [13, 4, 'p'], [13, 5, 'p']], { ...ARM, p: '#f472b6' }),
-    frame([[12, 12, 'a'], [13, 12, 'a'], [12, 13, 'p'], [13, 13, 'p'], [12, 14, 'p'], [13, 14, 'p']], { ...ARM, p: '#f472b6' }),
-    frame([[12, 12, 'a'], [13, 12, 'a'], [12, 13, 'p'], [13, 13, 'p'], [12, 14, 'p'], [13, 14, 'p']], { ...ARM, p: '#f472b6' }),
+    frameFor('front', [[12, 8, 'a'], [13, 6, 'a'], [12, 3, 'p'], [13, 3, 'p'], [12, 4, 'p'], [13, 4, 'p'], [13, 5, 'p']], { ...ARM, p: '#f472b6' }),
+    frameFor('front', [[12, 12, 'a'], [13, 12, 'a'], [12, 13, 'p'], [13, 13, 'p'], [12, 14, 'p'], [13, 14, 'p']], { ...ARM, p: '#f472b6' }),
+    frameFor('front', [[12, 12, 'a'], [13, 12, 'a'], [12, 13, 'p'], [13, 13, 'p'], [12, 14, 'p'], [13, 14, 'p']], { ...ARM, p: '#f472b6' }),
   ],
   celebrating: [
-    // both arms swing from down-at-sides up into a raised "V" and back
-    frame([[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a'], [2, 11, 'a'], [2, 10, 'a'], [2, 9, 'a'], [2, 8, 'a']], ARM),
-    frame([[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a'], [2, 11, 'a'], [2, 12, 'a'], [2, 13, 'a'], [2, 14, 'a']], ARM),
-    frame([[13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a'], [13, 6, 'a'], [2, 10, 'a'], [2, 9, 'a'], [2, 8, 'a'], [2, 6, 'a']], ARM),
-    frame([[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a'], [2, 11, 'a'], [2, 12, 'a'], [2, 13, 'a'], [2, 14, 'a']], ARM),
+    frameFor('front', [[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a'], [2, 11, 'a'], [2, 10, 'a'], [2, 9, 'a'], [2, 8, 'a']], ARM),
+    frameFor('front', [[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a'], [2, 11, 'a'], [2, 12, 'a'], [2, 13, 'a'], [2, 14, 'a']], ARM),
+    frameFor('front', [[13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a'], [13, 6, 'a'], [2, 10, 'a'], [2, 9, 'a'], [2, 8, 'a'], [2, 6, 'a']], ARM),
+    frameFor('front', [[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a'], [2, 11, 'a'], [2, 12, 'a'], [2, 13, 'a'], [2, 14, 'a']], ARM),
   ],
   waving: [
-    // right arm sweeps from resting at the side up to a raised wave and back
-    frame([[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a']], ARM),
-    frame([[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a']], ARM),
-    frame([[13, 10, 'a'], [13, 9, 'a'], [13, 7, 'a'], [13, 6, 'a']], ARM),
-    frame([[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a']], ARM),
+    frameFor('front', [[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a']], ARM),
+    frameFor('front', [[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a']], ARM),
+    frameFor('front', [[13, 10, 'a'], [13, 9, 'a'], [13, 7, 'a'], [13, 6, 'a']], ARM),
+    frameFor('front', [[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a']], ARM),
   ],
 }
 
-// Distinct robot sprite on the same 16x24 grid: boxy visored head, antenna,
-// segmented arms, tread base. Chars: a antenna, n antenna-stalk, r frame,
-// V visor, R body, M arm, j joint, d tread, D tread-shade, w wheel.
+// Plain directional standing/walking bodies (no tool) for when a sprite is
+// walking or shown from side/back. Frame index only matters for the head-bob
+// idle wobble on front.
+const WALK_BODY: Record<Dir, Frame> = {
+  front: frameFor('front', []),
+  side: frameFor('side', []),
+  back: frameFor('back', []),
+}
+
+// Robot (unchanged shape; still faces the viewer, ignores direction).
 const ROBOT_ROWS_BASE = [
   '.......a........',
   '.......a........',
@@ -230,7 +311,6 @@ const ROBOT_PALETTE = {
   M: '#818cf8', j: '#3730a3', d: '#3730a3', D: '#1e1b4b', w: '#312e81',
 }
 function robotFrame(visorFill: string, antennaFill: string): Frame {
-  // A scan band: dim two visor rows so the "eye" reads as scanning.
   const rows = ROBOT_ROWS_BASE.map((r) => r.split(''))
   for (let x = 0; x < GRID_W; x++) {
     if (rows[5][x] === 'V') rows[5][x] = 'v'
@@ -239,8 +319,8 @@ function robotFrame(visorFill: string, antennaFill: string): Frame {
   return { rows: rows.map((r) => r.join('')), palette: { ...ROBOT_PALETTE, v: visorFill, a: antennaFill } }
 }
 const ROBOT_FRAMES: Frame[] = [
-  robotFrame('#312e81', '#a5b4fc'), // scan band low, antenna dim
-  robotFrame('#e0e7ff', '#f472b6'), // scan band lit, antenna blinks bright
+  robotFrame('#312e81', '#a5b4fc'),
+  robotFrame('#e0e7ff', '#f472b6'),
   robotFrame('#312e81', '#a5b4fc'),
 ]
 
@@ -248,31 +328,74 @@ export function actionFrameCount(action: Action): number {
   return action === 'robot' ? ROBOT_FRAMES.length : ACTION_FRAMES[action].length
 }
 
-// Apply a per-worker variant recolor to a frame's palette. Skips robots
-// (their palette has no variant keys, so this is a no-op for them). The
-// acting-arm char 'a' tracks the variant's arm-skin so tool-holding arms
-// match the body.
+// Recolor a frame's palette for one worker, deriving matching -hi/-shade tones
+// so the light model survives. Skips robots (no variant keys).
 function applyVariant(f: Frame, variant?: Variant): Frame {
   if (!variant) return f
-  const palette: Record<string, string> = { ...f.palette, ...variant }
-  if (variant.A && palette.a) palette.a = variant.A // keep acting arm in sync
+  const palette: Record<string, string> = { ...f.palette }
+  for (const key of VARIANT_KEYS) {
+    const base = variant[key]
+    if (!base) continue
+    palette[key] = base
+    const rule = SHADE_OF[key]
+    if (rule.hi) palette[rule.hi] = shift(base, 1.28)
+    palette[rule.shade] = shift(base, 0.72)
+    for (const ex of rule.extra ?? []) {
+      const f = ex === 'N' ? 0.86 : ex === 'n' ? 0.94 : 0.72 // neck / nose / else shade
+      palette[ex] = shift(base, f)
+    }
+  }
+  // The acting-arm char 'a' doubles as the tool-holding skin arm in ACTION
+  // overlays; keep it matched to the worker's skin (variant K) rather than the
+  // shirt-arm-shade, so a raised tool arm isn't a mismatched color.
+  if (variant.K) palette.a = variant.K
   return { rows: f.rows, palette }
 }
 
-// Compose the sprite for a given action + action-frame, optionally overlaying
-// a walk-cycle leg pose (walkLeg >= 0) for a moving humanoid and a per-worker
-// variant recolor. Robots roll on treads and ignore walkLeg + variant.
-export function composeFrame(action: Action, frameIndex: number, walkLeg = -1, variant?: Variant): Frame {
+// Compose the sprite for action + frame, optional walk-leg overlay, per-worker
+// variant, and facing direction. While walking (walkLeg >= 0) or when not
+// front-facing, we use the plain directional body instead of the tool action
+// (you can't see someone hammering from behind). Robots ignore dir + walkLeg.
+export function composeFrame(
+  action: Action,
+  frameIndex: number,
+  walkLeg = -1,
+  variant?: Variant,
+  dir: Dir = 'front',
+): Frame {
   if (action === 'robot') {
     return ROBOT_FRAMES[frameIndex % ROBOT_FRAMES.length]
   }
-  const frames = ACTION_FRAMES[action]
-  const base = frames[frameIndex % frames.length]
-  let composed = base
+
+  let base: Frame
+  if (walkLeg >= 0 || dir !== 'front') {
+    // Walking, or facing side/back → plain directional body (+ walk legs).
+    base = WALK_BODY[dir]
+  } else {
+    const frames = ACTION_FRAMES[action]
+    base = frames[frameIndex % frames.length]
+  }
+
   if (walkLeg >= 0) {
     const rows = base.rows.map((r) => r.split(''))
-    for (const [x, y, ch] of WALK_LEGS[walkLeg % WALK_LEGS.length]) rows[y][x] = ch
-    composed = { rows: rows.map((r) => r.join('')), palette: base.palette }
+    // Side profile has a single leg column; only front/back use the L/R walk
+    // overlay. For side, nudge the boot to fake a step.
+    if (dir === 'side') {
+      const shift = walkLeg % 3 === 1 ? 0 : walkLeg % 3 === 0 ? -1 : 1
+      for (let y = 22; y <= 23; y++) {
+        const r = rows[y]
+        for (let x = 0; x < r.length; x++) if (r[x] === 'B' || r[x] === 'b' || r[x] === 'o') {
+          const nx = x + shift
+          if (nx >= 0 && nx < r.length && r[nx] === '.') { r[nx] = r[x]; r[x] = '.' }
+        }
+      }
+    } else {
+      for (const [x, y, ch] of WALK_LEGS[walkLeg % WALK_LEGS.length]) if (rows[y]) rows[y][x] = ch
+    }
+    base = { rows: rows.map((r) => r.join('')), palette: base.palette }
   }
-  return applyVariant(composed, variant)
+
+  return applyVariant(base, variant)
 }
+
+export const WALK_FRAME_COUNT = WALK_LEGS.length
