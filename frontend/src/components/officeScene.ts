@@ -268,28 +268,33 @@ export class OfficeScene {
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, cssW, cssH)
 
-    // Floor grid backdrop.
-    ctx.fillStyle = '#0f172a'
+    // Dark backdrop between rooms (reads as building shell / hallways).
+    ctx.fillStyle = '#161a24'
     ctx.fillRect(0, 0, cssW, cssH)
-    ctx.strokeStyle = 'rgba(148,163,184,0.06)'
-    ctx.lineWidth = 1
-    for (let gx = 0; gx <= cssW; gx += 16) {
-      ctx.beginPath(); ctx.moveTo(gx + 0.5, 0); ctx.lineTo(gx + 0.5, cssH); ctx.stroke()
-    }
-    for (let gy = 0; gy <= cssH; gy += 16) {
-      ctx.beginPath(); ctx.moveTo(0, gy + 0.5); ctx.lineTo(cssW, gy + 0.5); ctx.stroke()
-    }
 
+    // Each station is a furnished ROOM: warm textured floor, a back wall with
+    // wall-mounted décor, scatter props, then the workstation. Sprites are
+    // drawn afterwards (depth-sorted) so they walk in front of the floor/props
+    // but behind nothing that should occlude them.
     this.stations.forEach((st, i) => {
       const p = this.patch(i)
+      const theme = ROOM_THEME[st.action] ?? ROOM_THEME.idle
+      const rng = mulberry32(0x9e37 + i * 2654435761)
 
-      ctx.fillStyle = 'rgba(30,41,59,0.35)'
-      ctx.fillRect(p.x, p.y, p.w, p.h)
+      drawFloor(ctx, p, theme)
+      drawBackWall(ctx, p, theme, i)
+
+      // Accent strip under the label so the stage color still reads.
       ctx.fillStyle = st.color
       ctx.fillRect(p.x, p.y, p.w, 3)
 
+      // Behind-props: scatter along the back half so sprites pass in front.
+      drawScatter(ctx, p, rng, 'back')
+
+      drawWorkstation(ctx, st.action, this.workstation(i), st.color)
+
       // Header label.
-      ctx.fillStyle = '#94a3b8'
+      ctx.fillStyle = '#cbd5e1'
       ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
@@ -300,20 +305,17 @@ export class OfficeScene {
       ctx.font = '600 18px ui-sans-serif, system-ui, sans-serif'
       ctx.fillText(String(st.count), p.x + p.w / 2, p.y + p.h + FOOTER_H / 2)
 
-      // Overflow badge.
       const overflow = st.count - CAP
       if (overflow > 0) {
-        ctx.fillStyle = '#64748b'
+        ctx.fillStyle = '#94a3b8'
         ctx.font = '10px ui-sans-serif, system-ui, sans-serif'
         ctx.textAlign = 'right'
         ctx.fillText(`+${overflow}`, p.x + p.w - 6, p.y + 12)
         ctx.textAlign = 'center'
       }
-
-      drawWorkstation(ctx, st.action, this.workstation(i), st.color)
     })
 
-    // Depth-sort: draw sprites back-to-front so lower ones overlap upper ones.
+    // Depth-sort sprites back-to-front so lower ones overlap upper ones.
     const ordered = [...this.sprites].sort((a, b) => a.y - b.y)
     for (const s of ordered) {
       const st = this.stations[s.stationIndex]
@@ -322,7 +324,145 @@ export class OfficeScene {
       const f = composeFrame(st.action, s.frame, walkLeg, s.variant)
       drawSprite(ctx, f, s.x, s.y, s.facing)
     }
+
+    // Front-props: near the bottom edge, drawn last so they overlap sprites
+    // (a plant a worker walks behind), grounding the room.
+    this.stations.forEach((_st, i) => {
+      const p = this.patch(i)
+      const rng = mulberry32(0x51ed + i * 2654435761)
+      drawScatter(ctx, p, rng, 'front')
+    })
   }
+}
+
+// Warm, per-room palette + floor style. Grouped so build stages get wood,
+// review/QA get tile, done gets a cozy carpet.
+type RoomTheme = {
+  floor: string
+  floorAlt: string // plank/tile line color
+  wall: string
+  wallTrim: string
+  style: 'wood' | 'tile' | 'carpet'
+}
+const ROOM_THEME: Record<Action, RoomTheme> = {
+  idle:        { floor: '#6b4f34', floorAlt: '#5c432c', wall: '#463022', wallTrim: '#5c4230', style: 'wood' },
+  drawing:     { floor: '#6b4f34', floorAlt: '#5c432c', wall: '#463022', wallTrim: '#5c4230', style: 'wood' },
+  inspecting:  { floor: '#7a5a3a', floorAlt: '#694c30', wall: '#4a3222', wallTrim: '#60422c', style: 'wood' },
+  hammering:   { floor: '#6b4f34', floorAlt: '#5c432c', wall: '#463022', wallTrim: '#5c4230', style: 'wood' },
+  testing:     { floor: '#c9c1b0', floorAlt: '#b8af9c', wall: '#5a5347', wallTrim: '#726a59', style: 'tile' },
+  robot:       { floor: '#3a3550', floorAlt: '#322e46', wall: '#2a2740', wallTrim: '#413c5e', style: 'tile' },
+  approving:   { floor: '#c9c1b0', floorAlt: '#b8af9c', wall: '#5a5347', wallTrim: '#726a59', style: 'tile' },
+  celebrating: { floor: '#7c4a52', floorAlt: '#6d4048', wall: '#4a2e33', wallTrim: '#5f3a41', style: 'carpet' },
+  waving:      { floor: '#c9c1b0', floorAlt: '#b8af9c', wall: '#5a5347', wallTrim: '#726a59', style: 'tile' },
+}
+
+// Tiny deterministic PRNG so a station's scatter props stay put frame-to-frame
+// (seeded by station index), instead of jumping every render.
+function mulberry32(seed: number) {
+  let a = seed >>> 0
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// Textured warm floor for one room.
+function drawFloor(ctx: CanvasRenderingContext2D, p: Patch, t: RoomTheme) {
+  ctx.fillStyle = t.floor
+  ctx.fillRect(p.x, p.y, p.w, p.h)
+  ctx.fillStyle = t.floorAlt
+  if (t.style === 'wood') {
+    // Horizontal planks.
+    for (let y = p.y + 12; y < p.y + p.h; y += 14) ctx.fillRect(p.x, y, p.w, 1)
+  } else if (t.style === 'tile') {
+    // Grid grout.
+    for (let x = p.x + 16; x < p.x + p.w; x += 16) ctx.fillRect(x, p.y, 1, p.h)
+    for (let y = p.y + 16; y < p.y + p.h; y += 16) ctx.fillRect(p.x, y, p.w, 1)
+  } else {
+    // Carpet speckle.
+    const rng = mulberry32(p.x * 131 + p.y)
+    for (let k = 0; k < 40; k++) {
+      ctx.globalAlpha = 0.25
+      ctx.fillRect(p.x + rng() * p.w, p.y + rng() * p.h, 1, 1)
+    }
+    ctx.globalAlpha = 1
+  }
+}
+
+// Back wall band + one wall-mounted décor item (bookshelf / picture / clock),
+// chosen by station index so rooms differ but stay stable.
+function drawBackWall(ctx: CanvasRenderingContext2D, p: Patch, t: RoomTheme, i: number) {
+  const wallH = 12
+  ctx.fillStyle = t.wall
+  ctx.fillRect(p.x, p.y, p.w, wallH)
+  ctx.fillStyle = t.wallTrim
+  ctx.fillRect(p.x, p.y + wallH, p.w, 2) // baseboard trim
+
+  const kind = i % 3
+  const cx = p.x + p.w / 2
+  if (kind === 0) {
+    // Bookshelf with colored spines.
+    const bx = cx - 26
+    ctx.fillStyle = '#5c4128'; ctx.fillRect(bx, p.y + 2, 52, 8)
+    const spines = ['#dc2626', '#16a34a', '#2563eb', '#f59e0b', '#7c3aed', '#e11d48']
+    for (let k = 0; k < 12; k++) {
+      ctx.fillStyle = spines[(i + k) % spines.length]
+      ctx.fillRect(bx + 2 + k * 4, p.y + 3, 3, 6)
+    }
+  } else if (kind === 1) {
+    // Framed picture: sky over ground.
+    ctx.fillStyle = '#8b6b45'; ctx.fillRect(cx - 12, p.y + 1, 24, 10)
+    ctx.fillStyle = '#7dd3fc'; ctx.fillRect(cx - 10, p.y + 2, 20, 5)
+    ctx.fillStyle = '#4ade80'; ctx.fillRect(cx - 10, p.y + 7, 20, 2)
+  } else {
+    // Wall clock.
+    ctx.fillStyle = '#e2e8f0'; ctx.fillRect(cx - 5, p.y + 1, 10, 10)
+    ctx.fillStyle = '#1e293b'; ctx.fillRect(cx - 1, p.y + 2, 2, 5); ctx.fillRect(cx, p.y + 5, 3, 2)
+  }
+}
+
+// Scatter a stable set of small props (plants, boxes, mugs) in a band of the
+// patch. 'back' fills the upper third (behind sprites); 'front' the bottom
+// edge (in front of sprites).
+function drawScatter(ctx: CanvasRenderingContext2D, p: Patch, rng: () => number, band: 'back' | 'front') {
+  const n = band === 'back' ? 2 + Math.floor(rng() * 2) : 1 + Math.floor(rng() * 2)
+  const yMin = band === 'back' ? p.y + 16 : p.y + p.h - 14
+  const ySpan = band === 'back' ? p.h * 0.22 : 10
+  for (let k = 0; k < n; k++) {
+    const x = p.x + 4 + rng() * (p.w - 20)
+    const y = yMin + rng() * ySpan
+    const pick = rng()
+    if (pick < 0.55) drawPlant(ctx, x, y)
+    else if (pick < 0.8) drawBox(ctx, x, y)
+    else drawMug(ctx, x, y)
+  }
+}
+
+function propShadow(ctx: CanvasRenderingContext2D, x: number, y: number, w: number) {
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'
+  ctx.fillRect(x - 1, y, w + 2, 2)
+}
+
+function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  propShadow(ctx, x, y + 12, 8)
+  ctx.fillStyle = '#7c4a2a'; ctx.fillRect(x + 1, y + 8, 6, 5) // pot
+  ctx.fillStyle = '#8a5433'; ctx.fillRect(x + 1, y + 8, 6, 1)
+  ctx.fillStyle = '#22c55e'; ctx.fillRect(x, y + 2, 3, 7); ctx.fillRect(x + 5, y + 3, 3, 6) // fronds
+  ctx.fillStyle = '#16a34a'; ctx.fillRect(x + 2, y, 4, 6)
+}
+
+function drawBox(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  propShadow(ctx, x, y + 10, 10)
+  ctx.fillStyle = '#c8a06a'; ctx.fillRect(x, y + 2, 10, 8)
+  ctx.fillStyle = '#a8834f'; ctx.fillRect(x, y + 2, 10, 1); ctx.fillRect(x + 4, y + 2, 2, 8)
+}
+
+function drawMug(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  propShadow(ctx, x, y + 6, 5)
+  ctx.fillStyle = '#e2e8f0'; ctx.fillRect(x, y + 1, 5, 5)
+  ctx.fillStyle = '#94a3b8'; ctx.fillRect(x + 5, y + 2, 1, 2) // handle
 }
 
 // Draw the shared workstation for a station's action. Each is a small
@@ -378,13 +518,18 @@ function drawWorkstation(
       break
     }
     default: {
-      // Desk (drawing / inspecting / approving / idle): a table with a paper
-      // and a colored monitor/sign tinted to the station accent.
-      ctx.fillStyle = '#3f2d1d'; ctx.fillRect(px, py + h - 14, w, 14) // desk top
-      ctx.fillStyle = '#2a1d13'; ctx.fillRect(px, py + h - 14, w, 3)
-      ctx.fillStyle = '#e2e8f0'; ctx.fillRect(px + 8, py + h - 12, 14, 10) // paper
-      ctx.fillStyle = accent; ctx.fillRect(px + w - 26, py + h - 28, 20, 16) // monitor/sign
-      ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(px + w - 26, py + h - 28, 20, 3)
+      // Desk (drawing / inspecting / approving / idle): a lighter maple table
+      // (so it pops on wood floors) with a dark outline, a paper, and a
+      // monitor tinted to the station accent.
+      ctx.fillStyle = '#1c1207'; ctx.fillRect(px - 1, py + h - 15, w + 2, 16) // outline
+      ctx.fillStyle = '#a9885a'; ctx.fillRect(px, py + h - 14, w, 14) // desk top (maple)
+      ctx.fillStyle = '#c9a878'; ctx.fillRect(px, py + h - 14, w, 3) // top highlight
+      ctx.fillStyle = '#8a6c44'; ctx.fillRect(px, py + h - 4, w, 4) // front-edge shadow
+      ctx.fillStyle = '#f8fafc'; ctx.fillRect(px + 8, py + h - 12, 14, 10) // paper
+      ctx.fillStyle = '#cbd5e1'; ctx.fillRect(px + 8, py + h - 12, 14, 1)
+      ctx.fillStyle = '#1e293b'; ctx.fillRect(px + w - 27, py + h - 29, 22, 18) // monitor bezel
+      ctx.fillStyle = accent; ctx.fillRect(px + w - 25, py + h - 27, 18, 12) // screen
+      ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fillRect(px + w - 25, py + h - 27, 18, 2)
       break
     }
   }

@@ -38,8 +38,11 @@ triggers the "Release" workflow the same way.
   pixel-art workers (varied per person, not clones) queue up, walk to the
   workstation, and act out their stage there (drawing, hammering, a scanning
   robot, …) before stepping aside for the next; the crowd size scales with the
-  task count. Stations reflow into a responsive grid, so it stacks cleanly on
-  mobile instead of scrolling sideways. Rendered on a Canvas 2D loop, honors
+  task count. Each station is a small furnished room — warm wood/tile/carpet
+  floors, a back wall with a bookshelf/picture/clock, and scattered plants,
+  boxes, and mugs — so it feels lived-in rather than a bare grid. Stations
+  reflow into a responsive grid, so it stacks cleanly on mobile instead of
+  scrolling sideways. Rendered on a Canvas 2D loop, honors
   `prefers-reduced-motion`, off by default, and the on/off state is remembered
   in `localStorage`.
 
