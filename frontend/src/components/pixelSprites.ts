@@ -52,11 +52,11 @@ export const BUCKET_ACTIONS: Record<'notReady' | 'agentWorking' | 'waitingHuman'
 // FRONT: faces the viewer. Light from top-left → left edges get *-hi chars,
 // right edges get *-shade chars.
 const FRONT_ROWS = [
-  '......Hiii......', // 0  hat top: hi-left, shade-right
-  '.....HhhhhhI....', // 1  hat crown
-  '....Hhhhhhhhi...', // 2  hat crown
-  '...iihhhhhhiii..', // 3  hat brim
-  '....qrKKKKjr....', // 4  hairline + forehead
+  '......qrrj......', // 0  hair crown (hi-left, shade-right)
+  '.....qrrrrrj....', // 1  hair
+  '....qrrrrrrrj...', // 2  hair
+  '....qrrrrrrrj...', // 3  hair
+  '....qrKKKKrj....', // 4  hairline + forehead
   '....qKKKKKKj....', // 5  hair sides + face
   '....KeKKKKeK....', // 6  eyes
   '....KKKnKKKK....', // 7  cheeks + nose
@@ -81,12 +81,12 @@ const FRONT_ROWS = [
 // SIDE: profile facing right. One near arm (right side of body) visible; nose
 // juts right; back of head + hair on the left. Narrower torso.
 const SIDE_ROWS = [
-  '.....Hiii.......', // 0  hat top
-  '....Hhhhhhi.....', // 1
-  '...jhhhhhhhi....', // 2  hair back-left + hat
-  '..jjhhhhhhii....', // 3  hat brim, hair nape
-  '..jjrKKKKKn.....', // 4  hair + face, nose bump right
-  '..jjrKKKKKKn....', // 5  face + nose
+  '....qrrrj.......', // 0  hair crown
+  '...qrrrrrj......', // 1  hair
+  '..qrrrrrrrj.....', // 2  hair
+  '..jrrrrrrrj.....', // 3  hair back + nape
+  '..jrrKKKKKn.....', // 4  hair + face, nose bump right
+  '..jrrKKKKKKn....', // 5  face + nose
   '...jrKKeKKKn....', // 6  eye (single, forward)
   '...jrKKKKKK.....', // 7  cheek
   '....rKKKKSS.....', // 8  jaw shade
@@ -110,10 +110,10 @@ const SIDE_ROWS = [
 // BACK: facing away. Hair fills the whole head (no face/eyes); shoulders and
 // back of shirt; legs/boots from behind. Light still top-left.
 const BACK_ROWS = [
-  '......Hiii......', // 0  hat top
-  '.....HhhhhhI....', // 1
-  '....Hhhhhhhhi...', // 2
-  '...iihhhhhhiii..', // 3  brim
+  '......qrrj......', // 0  hair crown
+  '.....qrrrrrj....', // 1  hair
+  '....qrrrrrrrj...', // 2  hair
+  '....qrrrrrrrj...', // 3  hair
   '....qrrrrrrj....', // 4  hair
   '....qrrrrrrj....', // 5  hair
   '....qrrrrrrj....', // 6  hair (no eyes)
@@ -170,14 +170,16 @@ const SHADE_OF: Record<string, { hi?: string; shade: string; extra?: string[] }>
 
 // A palette of distinct looks. officeScene picks one per sprite so a station's
 // crew looks like different people.
+// Hats are gone, so hair color is now the main head variety — every variant
+// sets a distinct hair (r) so a crew doesn't read as clones.
 export const VARIANTS: Variant[] = [
-  {}, // default: yellow hat, tan skin, blue shirt
-  { h: '#f97316', T: '#e05a4e' }, // orange hat, red shirt
-  { K: '#8d5a3c', h: '#22c55e', T: '#334155', A: '#8d5a3c' }, // deep skin, green hat, slate shirt
-  { r: '#6b3410', K: '#e8b98f', h: '#e11d48', T: '#a855f7', A: '#e8b98f' }, // auburn, pink hat, purple
-  { K: '#c98a5e', h: '#0ea5e9', T: '#f59e0b', A: '#c98a5e' }, // cyan hat, amber shirt
-  { r: '#1c1917', T: '#14b8a6' }, // teal shirt
-  { K: '#6f4426', r: '#0c0a09', h: '#94a3b8', T: '#6366f1', A: '#6f4426' }, // dark skin, gray hat, indigo
+  { r: '#3f2d1d' }, // dark brown hair, tan skin, blue shirt
+  { r: '#7a4a1e', T: '#e05a4e' }, // light brown hair, red shirt
+  { K: '#8d5a3c', r: '#1c1310', T: '#334155', A: '#8d5a3c' }, // deep skin, black hair, slate shirt
+  { r: '#a0521a', K: '#e8b98f', T: '#a855f7', A: '#e8b98f' }, // auburn hair, purple shirt
+  { K: '#c98a5e', r: '#c99a3a', T: '#f59e0b', A: '#c98a5e' }, // dark-blond hair, amber shirt
+  { r: '#1c1917', T: '#14b8a6' }, // black hair, teal shirt
+  { K: '#6f4426', r: '#0c0a09', T: '#6366f1', A: '#6f4426' }, // dark skin, black hair, indigo shirt
 ]
 
 export const GRID_W = FRONT_ROWS[0].length
