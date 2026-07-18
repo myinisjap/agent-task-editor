@@ -419,12 +419,28 @@ function propShadow(ctx: CanvasRenderingContext2D, x: number, y: number, w: numb
   ctx.fillRect(x - 1, y, w + 2, 2)
 }
 
+// A small potted plant: terracotta pot with a rim, and a few distinct
+// pointed leaves (light/dark greens) so it reads as a plant, not a green blob.
 function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  propShadow(ctx, x, y + 12, 8)
-  ctx.fillStyle = '#7c4a2a'; ctx.fillRect(x + 1, y + 8, 6, 5) // pot
-  ctx.fillStyle = '#8a5433'; ctx.fillRect(x + 1, y + 8, 6, 1)
-  ctx.fillStyle = '#22c55e'; ctx.fillRect(x, y + 2, 3, 7); ctx.fillRect(x + 5, y + 3, 3, 6) // fronds
-  ctx.fillStyle = '#16a34a'; ctx.fillRect(x + 2, y, 4, 6)
+  propShadow(ctx, x + 1, y + 16, 10)
+  // Terracotta pot (tapered) with a lighter rim.
+  ctx.fillStyle = '#a1552b'; ctx.fillRect(x + 2, y + 11, 9, 6) // body
+  ctx.fillStyle = '#8a4522'; ctx.fillRect(x + 3, y + 15, 7, 2) // base shade
+  ctx.fillStyle = '#c26a38'; ctx.fillRect(x + 1, y + 10, 11, 2) // rim
+  // Foliage: a central stalk with pointed leaves fanning out.
+  const dark = '#15803d'
+  const mid = '#22c55e'
+  const lite = '#4ade80'
+  ctx.fillStyle = dark
+  ctx.fillRect(x + 1, y + 6, 2, 5) // lower-left leaf
+  ctx.fillRect(x + 9, y + 6, 2, 5) // lower-right leaf
+  ctx.fillStyle = mid
+  ctx.fillRect(x + 2, y + 3, 2, 4); ctx.fillRect(x + 3, y + 2, 1, 2) // left leaf tip
+  ctx.fillRect(x + 8, y + 3, 2, 4); ctx.fillRect(x + 8, y + 2, 1, 2) // right leaf tip
+  ctx.fillRect(x + 5, y + 4, 2, 6) // center stalk
+  ctx.fillStyle = lite
+  ctx.fillRect(x + 5, y, 2, 4) // center leaf highlight
+  ctx.fillRect(x + 3, y + 4, 1, 1); ctx.fillRect(x + 8, y + 4, 1, 1) // glints
 }
 
 function drawBox(ctx: CanvasRenderingContext2D, x: number, y: number) {
