@@ -31,6 +31,13 @@ triggers the "Release" workflow the same way.
   opens a modal explaining labels, transitions, trigger/path options, and the
   YAML configuration format, with a minimal working example — so the
   `docs/workflows.md` reference is discoverable right where you edit YAML.
+- **Dashboard: "Visualize tasks" toggle.** A small, purely cosmetic switch in
+  the Overview header swaps the "Task counts by label" chips for an animated
+  top-down "office floor" — one station per workflow stage, with little
+  pixel-art workers that walk around, pause, and act out their stage (drawing,
+  hammering, a scanning robot, …); the crowd size scales with the task count.
+  Rendered on a Canvas 2D loop, honors `prefers-reduced-motion`, off by default,
+  and the on/off state is remembered in `localStorage`.
 
 ## [0.12.0] - 2026-07-16
 
