@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -467,10 +467,10 @@ func (h *DashboardHandler) claudeUsage(ctx context.Context) claudeUsageResponse 
 	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	usage, err := agent.FetchClaudeUsage(fetchCtx)
+	usage, err := providers.FetchClaudeUsage(fetchCtx)
 	var result claudeUsageResponse
 	if err != nil {
-		if !errors.Is(err, agent.ErrNoClaudeCredentials) {
+		if !errors.Is(err, providers.ErrNoClaudeCredentials) {
 			slog.Debug("dashboard: claude usage fetch failed", "err", err)
 		}
 		result = claudeUsageResponse{Available: false}

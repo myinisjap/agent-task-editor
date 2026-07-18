@@ -1,27 +1,22 @@
 # internal/agent
 
-The agent package owns everything to do with running AI agents: the provider abstraction, several concrete providers (claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli), the worker pool, and the dispatcher.
+The agent package owns the agent runtime core: the provider abstraction, the bounded worker pool, and the dispatcher. Concrete provider backends (claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli) live in the sibling `providers` package (see `providers/AGENTS.md`) — this package defines only the `Provider` interface and the shared types/errors providers are built against; it does **not** import `providers` (providers imports `agent`, never the reverse).
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `provider.go` | `Provider` interface, `RunInput`, `Result`, `LogEntry`, `LogEntryType` |
-| `claude.go` | `ClaudeRunner` — runs `claude` CLI subprocess with stream-json output |
-| `claude_credentials.go` | `ClaudeOAuthAccessToken` — reads the OAuth access token from `~/.claude/.credentials.json` and **auto-refreshes it** (Anthropic OAuth token endpoint + stored refresh token) when expired/expiring within 5 min, persisting rotated tokens back to the file atomically; used by the claude subprocess env injection and the dashboard usage widget. Returns "" when expired-and-unrefreshable so the CLI falls back to its own refresh flow |
-| `claude_discovery.go` | Discovers Claude plugins (`~/.claude/plugins/installed_plugins.json`) and user-level MCP servers (`~/.claude.json`'s global `mcpServers`) installed/configured on the machine, for per-agent-config selection (`enabled_plugins`/`enabled_mcp_servers`); `claude`-provider only |
-| `anthropic.go` | `AnthropicRunner` — calls Anthropic Messages API directly |
-| `llm.go` | `LLMRunner` — calls any OpenAI-compatible API |
-| `tools.go` | Shared tool implementations for `anthropic` and `llm` providers (read_file, write_file, run_bash) |
-| `mcp.go` | `MCPManager` — prepares/cleans up the MCP sidecar config and result file |
+| `provider.go` | `Provider` interface, `RunInput`, `Result`, `LogEntry`, `LogEntryType`, `TransitionHint`, `ReviewComment`, `AgentConfig`, `Task` — the shared types every provider is built against |
 | `pool.go` | `Pool` — bounded goroutine pool; persists logs, publishes WS events; classifies transient vs genuine failures and drives the per-task retry budget |
 | `dispatcher.go` | `Dispatcher` — periodic DB sweep; matches tasks to configs; submits jobs |
 | `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown; `RepoGitLock` (per-repo git serialization) |
 | `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (Mechanism 2, issue #82) |
+| `terminal.go` | `TerminalManager`/`NewTerminalManager` — interactive chat session CLI process management |
 | `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure |
-| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `is429Line`/`isTransientLine` are thin wrappers; `classifyResultMessage` (in `claude.go`) prefers the claude/qwen stream-json typed `result` event's `api_error_status` field / text over raw line sniffing |
+| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `providers.is429Line`/`providers.isTransientLine` (in the `providers` package) are thin wrappers over this; `providers.classifyResultMessage` prefers the claude/qwen stream-json typed `result` event's `api_error_status` field / text over raw line sniffing |
 | `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers |
-| `claude_reset.go` | `parseClaudeResetTime` — parses Claude's "resets 6pm (America/Chicago)"-style session/usage-limit text into an exact `ErrRateLimit.ResetAt` (+1min retry buffer), so the pool can schedule an exact retry instead of falling back to `BlockWithBackoff`. Blank-imports `time/tzdata` (embeds IANA tzdata into the binary — the prod container has no `/usr/share/zoneinfo`) |
+
+Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `GeminiRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
 
 ## Branch-per-task / Worktrees
 
@@ -108,16 +103,16 @@ govern automatic retries for **transient** provider errors only:
   `rate_limit`, or `auth` — logged as the `classification` field on the failure
   log line so misclassifications are diagnosable from logs alone. Any error
   implementing `Transient() bool` (both `ErrRateLimit` and `ErrTransient`) is
-  treated as transient. HTTP providers (`anthropic.go`, `llm.go`) wrap
+  treated as transient. HTTP providers (`providers/anthropic.go`, `providers/llm.go`) wrap
   network-level `Do()` errors and `5xx` responses as `ErrTransient`; `429` stays
-  `ErrRateLimit`. CLI providers (`claude.go`, `qwen.go`, `opencode.go`,
-  `gemini.go`, `codex.go`) classify stdout/stderr via the **single** pattern
+  `ErrRateLimit`. CLI providers (`providers/claude.go`, `providers/qwen.go`, `providers/opencode.go`,
+  `providers/gemini.go`, `providers/codex.go`) classify stdout/stderr via the **single** pattern
   table in `errclass.go` (`ClassifyLine`) — connection resets, `502/503/504`,
   "timeout", `429`/rate limit, and "Not logged in"/"Please run /login" all live
   in that one table with per-pattern unit tests, so a CLI-wording change is a
   one-line edit. For the claude/qwen providers, the typed stream-json `result`
-  event (`classifyResultMessage`) is preferred over raw line sniffing where
-  present; `gemini.go`/`codex.go` have their own dedicated
+  event (`providers/parse_streamjson.go`'s `classifyResultMessage`) is preferred over raw line sniffing where
+  present; `providers/parse_gemini.go`/`providers/parse_codex.go` have their own dedicated
   `classifyGeminiJSON`/`classifyCodexJSON` parsers instead, since neither CLI's
   JSON event schema is compatible with claude/qwen's stream-json envelope, but
   both still prefer their own typed terminal event's classification over raw
@@ -152,7 +147,7 @@ a session/thread id the same way (from their own `classifyGeminiJSON`/
 `claude`. `Dispatcher.startRun` looks up the
 latest session for (task, agent config) via `GetLatestTaskSession` — gated on
 `provider == "claude" && resume_sessions` — and sets `RunInput.ResumeSessionID`;
-`claude.go` then passes `--resume` with a **condensed prompt**
+`providers/claude.go` then passes `--resume` with a **condensed prompt**
 (`buildResumePrompt`: human reply + feedback + open review comments only, since
 the resumed conversation already contains the task context). If the resume
 target is gone (`isResumeErrorLine`, or an error exit with no stream output —
@@ -278,11 +273,11 @@ parent's run prompt via `BuildConflictContext`.
 
 ## Environment Variable Security
 
-`mergeEnv` (in `claude.go`) blocks keys that could hijack the subprocess: `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`. Blocked keys are logged as warnings, not silently dropped. `input.AgentConfig.Env` (the map `mergeEnv` merges in) now comes from the referenced `ProviderConfig`'s `env` JSON column rather than directly off `agent_configs` — `mergeEnv` itself is unaffected by that split, it only ever sees the already-resolved map.
+`mergeEnv` (in `providers/cli.go`) blocks keys that could hijack the subprocess: `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`. Blocked keys are logged as warnings, not silently dropped. `input.AgentConfig.Env` (the map `mergeEnv` merges in) now comes from the referenced `ProviderConfig`'s `env` JSON column rather than directly off `agent_configs` — `mergeEnv` itself is unaffected by that split, it only ever sees the already-resolved map.
 
 ## Adding a New Provider
 
-1. Implement `Provider` in a new file (e.g. `gemini.go`)
+1. Implement `Provider` in a new file in `providers/` (e.g. `providers/gemini.go`)
 2. Add a new case to `providerFactory` in `cmd/server/main.go`
 3. Add the provider string to `knownProviders` in `internal/api/handlers/agents.go` (validated on both agent-config and provider-config create/update — see `internal/api/handlers/providers.go`)
 

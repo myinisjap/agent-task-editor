@@ -123,17 +123,3 @@ func ClassifyLine(line string) Classification {
 	}
 	return ClassNone
 }
-
-// is429Line reports whether the line signals an API rate-limit rejection.
-// Thin wrapper over ClassifyLine kept for the CLI providers' stdout/stderr
-// scan loops.
-func is429Line(line string) bool {
-	return ClassifyLine(line) == ClassRateLimit
-}
-
-// isTransientLine reports whether the line signals a transient infrastructure
-// problem (network blip, upstream 5xx, connection reset, timeout) rather than
-// a genuine task/agent failure. Thin wrapper over ClassifyLine.
-func isTransientLine(line string) bool {
-	return ClassifyLine(line) == ClassTransient
-}

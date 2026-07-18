@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -526,12 +526,12 @@ type claudePluginOption struct {
 // present as per-agent-config selection options. This endpoint is
 // claude-provider-specific for now; other providers have no equivalent.
 func (h *AgentsHandler) GetClaudeOptions(w http.ResponseWriter, r *http.Request) {
-	plugins, err := agent.ListInstalledClaudePlugins()
+	plugins, err := providers.ListInstalledClaudePlugins()
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	mcpServers, err := agent.ListAvailableClaudeMCPServers()
+	mcpServers, err := providers.ListAvailableClaudeMCPServers()
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
