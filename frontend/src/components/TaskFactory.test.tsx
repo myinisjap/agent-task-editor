@@ -91,4 +91,16 @@ describe('composeFrame', () => {
     expect(() => composeFrame('hammering', 99)).not.toThrow()
     expect(composeFrame('hammering', actionFrameCount('hammering')).rows).toEqual(composeFrame('hammering', 0).rows)
   })
+
+  it('recolors a humanoid via a variant but leaves the robot untouched', () => {
+    const plain = composeFrame('idle', 0)
+    const green = composeFrame('idle', 0, -1, { h: '#00ff00', T: '#123456' })
+    expect(green.rows).toEqual(plain.rows) // shape identical
+    expect(green.palette.h).toBe('#00ff00') // hat recolored
+    expect(green.palette.T).toBe('#123456') // shirt recolored
+    expect(green.palette.B).toBe(plain.palette.B) // non-variant char untouched
+
+    const robot = composeFrame('robot', 0, -1, { h: '#00ff00' })
+    expect(robot.palette.h).toBeUndefined() // robot has no variant keys
+  })
 })

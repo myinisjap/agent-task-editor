@@ -5,10 +5,12 @@
 import {
   composeFrame,
   actionFrameCount,
+  VARIANTS,
   GRID_W,
   GRID_H,
   type Action,
   type Frame,
+  type Variant,
 } from './pixelSprites'
 
 export type Station = {
@@ -37,11 +39,12 @@ type Sprite = {
   frame: number
   legTimer: number
   leg: 0 | 1
+  variant: Variant // per-worker recolor so a crew isn't clones
 }
 
 // Layout constants (CSS px). ZOOM is the integer pixel-art scale (3-4x → we
 // use 4 for a roomy floor). Sprite box is GRID_W*ZOOM by GRID_H*ZOOM.
-const ZOOM = 4
+const ZOOM = 3
 const SPRITE_W = GRID_W * ZOOM // 48
 const SPRITE_H = GRID_H * ZOOM // 72
 const CAP = 6 // max sprites drawn per station
@@ -118,6 +121,7 @@ export class OfficeScene {
           frame: Math.floor(Math.random() * 4),
           legTimer: 0,
           leg: 0,
+          variant: VARIANTS[Math.floor(Math.random() * VARIANTS.length)],
         })
       }
     })
@@ -237,7 +241,7 @@ export class OfficeScene {
       const st = this.stations[s.stationIndex]
       if (!st) continue
       const walkLeg = s.moving && st.action !== 'robot' ? s.leg : -1
-      const f = composeFrame(st.action, s.frame, walkLeg)
+      const f = composeFrame(st.action, s.frame, walkLeg, s.variant)
       drawSprite(ctx, f, s.x, s.y, s.facing)
     }
   }
