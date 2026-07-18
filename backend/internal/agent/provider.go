@@ -62,14 +62,6 @@ type Result struct {
 	SessionID string
 }
 
-// runUsage carries token usage and cost parsed from a single provider
-// message (e.g. the claude/qwen CLI stream-json "result" envelope).
-type runUsage struct {
-	InputTokens  int64
-	OutputTokens int64
-	CostUSD      float64
-}
-
 // RunInput carries everything an agent needs to start work.
 type RunInput struct {
 	RunID         string
