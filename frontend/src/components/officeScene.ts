@@ -408,8 +408,11 @@ function drawScatter(ctx: CanvasRenderingContext2D, p: Patch, rng: () => number,
     const x = p.x + 4 + rng() * (p.w - 20)
     const y = yMin + rng() * ySpan
     const pick = rng()
+    // The floor lamp is tall (~character height), so it only fits in the back
+    // band where there's full patch height below it; in the front (bottom-edge)
+    // band it would run off the floor, so lamps fall back to a plant there.
     if (pick < 0.45) drawPlant(ctx, x, y)
-    else if (pick < 0.65) drawLamp(ctx, x, y)
+    else if (pick < 0.65) (band === 'back' ? drawLamp : drawPlant)(ctx, x, y)
     else if (pick < 0.85) drawBox(ctx, x, y)
     else drawMug(ctx, x, y)
   }
@@ -447,13 +450,15 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.fillRect(x + 4, y + 5, 1, 2); ctx.fillRect(x + 13, y + 5, 1, 2) // side glints
 }
 
-// A stand-up floor lamp: slim pole on a small base with a warm glowing shade
-// and a soft light halo, mixed into the scatter for a cozier room.
+// A stand-up floor lamp: tall slim pole on a small base with a warm glowing
+// shade and a soft light halo, mixed into the scatter for a cozier room.
+// Sized close to a worker's height (~56px, vs the 72px sprite) so it reads as
+// a real floor lamp standing among them rather than a tabletop lamp.
 function drawLamp(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  propShadow(ctx, x + 2, y + 26, 9)
-  // Base + pole.
-  ctx.fillStyle = '#334155'; ctx.fillRect(x + 3, y + 24, 8, 2) // base
-  ctx.fillStyle = '#475569'; ctx.fillRect(x + 6, y + 8, 2, 16) // pole
+  propShadow(ctx, x + 2, y + 56, 9)
+  // Base + long pole.
+  ctx.fillStyle = '#334155'; ctx.fillRect(x + 3, y + 54, 8, 2) // base
+  ctx.fillStyle = '#475569'; ctx.fillRect(x + 6, y + 8, 2, 46) // pole
   // Soft warm halo around the shade.
   ctx.save()
   ctx.globalAlpha = 0.18
