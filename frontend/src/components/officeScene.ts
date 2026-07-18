@@ -408,8 +408,9 @@ function drawScatter(ctx: CanvasRenderingContext2D, p: Patch, rng: () => number,
     const x = p.x + 4 + rng() * (p.w - 20)
     const y = yMin + rng() * ySpan
     const pick = rng()
-    if (pick < 0.55) drawPlant(ctx, x, y)
-    else if (pick < 0.8) drawBox(ctx, x, y)
+    if (pick < 0.45) drawPlant(ctx, x, y)
+    else if (pick < 0.65) drawLamp(ctx, x, y)
+    else if (pick < 0.85) drawBox(ctx, x, y)
     else drawMug(ctx, x, y)
   }
 }
@@ -419,28 +420,52 @@ function propShadow(ctx: CanvasRenderingContext2D, x: number, y: number, w: numb
   ctx.fillRect(x - 1, y, w + 2, 2)
 }
 
-// A small potted plant: terracotta pot with a rim, and a few distinct
-// pointed leaves (light/dark greens) so it reads as a plant, not a green blob.
+// A potted plant: terracotta pot with a rim, and pointed leaves fanning out in
+// light/mid/dark greens so it reads as a plant, not a green blob. Drawn ~1.5x
+// the earlier size (≈17 wide x 26 tall) so it holds its own on the floor.
 function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  propShadow(ctx, x + 1, y + 16, 10)
+  propShadow(ctx, x + 1, y + 25, 15)
   // Terracotta pot (tapered) with a lighter rim.
-  ctx.fillStyle = '#a1552b'; ctx.fillRect(x + 2, y + 11, 9, 6) // body
-  ctx.fillStyle = '#8a4522'; ctx.fillRect(x + 3, y + 15, 7, 2) // base shade
-  ctx.fillStyle = '#c26a38'; ctx.fillRect(x + 1, y + 10, 11, 2) // rim
+  ctx.fillStyle = '#a1552b'; ctx.fillRect(x + 3, y + 17, 13, 9) // body
+  ctx.fillStyle = '#8a4522'; ctx.fillRect(x + 4, y + 23, 11, 3) // base shade
+  ctx.fillStyle = '#c26a38'; ctx.fillRect(x + 1, y + 15, 17, 3) // rim
+  ctx.fillStyle = '#d67d47'; ctx.fillRect(x + 1, y + 15, 17, 1) // rim highlight
   // Foliage: a central stalk with pointed leaves fanning out.
   const dark = '#15803d'
   const mid = '#22c55e'
   const lite = '#4ade80'
   ctx.fillStyle = dark
-  ctx.fillRect(x + 1, y + 6, 2, 5) // lower-left leaf
-  ctx.fillRect(x + 9, y + 6, 2, 5) // lower-right leaf
+  ctx.fillRect(x + 1, y + 9, 3, 7) // lower-left leaf
+  ctx.fillRect(x + 14, y + 9, 3, 7) // lower-right leaf
+  ctx.fillRect(x + 7, y + 6, 3, 9) // center stalk (behind)
   ctx.fillStyle = mid
-  ctx.fillRect(x + 2, y + 3, 2, 4); ctx.fillRect(x + 3, y + 2, 1, 2) // left leaf tip
-  ctx.fillRect(x + 8, y + 3, 2, 4); ctx.fillRect(x + 8, y + 2, 1, 2) // right leaf tip
-  ctx.fillRect(x + 5, y + 4, 2, 6) // center stalk
+  ctx.fillRect(x + 3, y + 4, 3, 6); ctx.fillRect(x + 4, y + 2, 2, 3) // left leaf
+  ctx.fillRect(x + 12, y + 4, 3, 6); ctx.fillRect(x + 12, y + 2, 2, 3) // right leaf
+  ctx.fillRect(x + 7, y + 5, 3, 9) // center stalk (front)
   ctx.fillStyle = lite
-  ctx.fillRect(x + 5, y, 2, 4) // center leaf highlight
-  ctx.fillRect(x + 3, y + 4, 1, 1); ctx.fillRect(x + 8, y + 4, 1, 1) // glints
+  ctx.fillRect(x + 7, y, 3, 6) // center leaf highlight
+  ctx.fillRect(x + 4, y + 5, 1, 2); ctx.fillRect(x + 13, y + 5, 1, 2) // side glints
+}
+
+// A stand-up floor lamp: slim pole on a small base with a warm glowing shade
+// and a soft light halo, mixed into the scatter for a cozier room.
+function drawLamp(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  propShadow(ctx, x + 2, y + 26, 9)
+  // Base + pole.
+  ctx.fillStyle = '#334155'; ctx.fillRect(x + 3, y + 24, 8, 2) // base
+  ctx.fillStyle = '#475569'; ctx.fillRect(x + 6, y + 8, 2, 16) // pole
+  // Soft warm halo around the shade.
+  ctx.save()
+  ctx.globalAlpha = 0.18
+  ctx.fillStyle = '#fde68a'
+  ctx.fillRect(x, y - 2, 14, 12)
+  ctx.globalAlpha = 0.1
+  ctx.fillRect(x - 2, y - 4, 18, 16)
+  ctx.restore()
+  // Conical shade (trapezoid from rects) with a lit underside.
+  ctx.fillStyle = '#e2b04a'; ctx.fillRect(x + 3, y, 8, 2) // shade top
+  ctx.fillStyle = '#f4cf74'; ctx.fillRect(x + 2, y + 2, 10, 3) // shade mid
+  ctx.fillStyle = '#fde9a8'; ctx.fillRect(x + 1, y + 5, 12, 2) // shade rim (bright, lit)
 }
 
 function drawBox(ctx: CanvasRenderingContext2D, x: number, y: number) {
