@@ -60,12 +60,13 @@ const SPRITE_W = GRID_W * ZOOM // 48
 const SPRITE_H = GRID_H * ZOOM // 72
 const CAP = 6 // max sprites drawn per station
 const STATION_W = 168
-const STATION_GAP = 12
+const STATION_GAP = 0 // no gap: adjacent stations abut into one continuous scene
 const PAD = 16
-const HEADER_H = 20 // label row above each patch
-const FLOOR_H = 176 // patch height sprites roam within
-const FOOTER_H = 34 // count + name row below each patch
-const CELL_H = HEADER_H + FLOOR_H + FOOTER_H // full vertical footprint of one station
+// Stations sit flush on one shared floor; the label + count live on the
+// workstation sign, so there's no header/footer text band around each cell.
+const SIGN_H = 30 // room above the desk reserved for the name/count plaque
+const FLOOR_H = 190 // patch height sprites roam within
+const CELL_H = SIGN_H + FLOOR_H // full vertical footprint of one station
 
 type Patch = { x: number; y: number; w: number; h: number }
 
@@ -123,27 +124,28 @@ export class OfficeScene {
 
   height(): number {
     const rows = Math.max(1, Math.ceil((this.stations.length || 1) / Math.max(1, this.cols)))
-    return PAD * 2 + rows * CELL_H + (rows - 1) * STATION_GAP
+    return PAD * 2 + rows * CELL_H
   }
 
   private patch(i: number): Patch {
     const col = i % this.cols
     const row = Math.floor(i / this.cols)
     return {
-      x: PAD + col * (STATION_W + STATION_GAP),
-      y: PAD + row * (CELL_H + STATION_GAP) + HEADER_H,
+      x: PAD + col * STATION_W,
+      y: PAD + row * CELL_H + SIGN_H,
       w: STATION_W,
       h: FLOOR_H,
     }
   }
 
   // The workstation footprint: a block centered along the patch's back wall
-  // (upper area). Sprites work at a slot just below its front edge.
+  // (upper area). Sprites work at a slot just below its front edge. The name/
+  // count sign sits in the SIGN_H band directly above it.
   private workstation(i: number): { x: number; y: number; w: number; h: number } {
     const p = this.patch(i)
-    const w = 60
-    const h = 34
-    return { x: p.x + p.w / 2 - w / 2, y: p.y + 14, w, h }
+    const w = 84
+    const h = 46
+    return { x: p.x + p.w / 2 - w / 2, y: p.y + 12, w, h }
   }
 
   // The single work slot (top-left of a sprite standing at the station,
@@ -281,51 +283,18 @@ export class OfficeScene {
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, cssW, cssH)
 
-    // Dark backdrop between rooms (reads as building shell / hallways).
-    ctx.fillStyle = '#161a24'
-    ctx.fillRect(0, 0, cssW, cssH)
+    // ONE continuous warm wood floor across the whole scene. Stations abut with
+    // no gap, so with a single floor the whole thing reads as one open room
+    // rather than a grid of boxes.
+    drawSharedFloor(ctx, cssW, cssH)
 
-    // Each station is a furnished ROOM: warm textured floor, a back wall with
-    // wall-mounted décor, scatter props, then the workstation. Sprites are
-    // drawn afterwards (depth-sorted) so they walk in front of the floor/props
-    // but behind nothing that should occlude them.
+    // Behind-props + workstations for every station (back to front).
     this.stations.forEach((st, i) => {
       const p = this.patch(i)
-      const theme = ROOM_THEME[st.action] ?? ROOM_THEME.idle
       const rng = mulberry32(0x9e37 + i * 2654435761)
-
-      drawFloor(ctx, p, theme)
-      drawBackWall(ctx, p, theme, i)
-
-      // Accent strip under the label so the stage color still reads.
-      ctx.fillStyle = st.color
-      ctx.fillRect(p.x, p.y, p.w, 3)
-
-      // Behind-props: scatter along the back half so sprites pass in front.
       drawScatter(ctx, p, rng, 'back')
-
       drawWorkstation(ctx, st.action, this.workstation(i), st.color)
-
-      // Header label.
-      ctx.fillStyle = '#cbd5e1'
-      ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(st.name.toUpperCase(), p.x + p.w / 2, p.y - HEADER_H / 2)
-
-      // Count.
-      ctx.fillStyle = '#e2e8f0'
-      ctx.font = '600 18px ui-sans-serif, system-ui, sans-serif'
-      ctx.fillText(String(st.count), p.x + p.w / 2, p.y + p.h + FOOTER_H / 2)
-
-      const overflow = st.count - CAP
-      if (overflow > 0) {
-        ctx.fillStyle = '#94a3b8'
-        ctx.font = '10px ui-sans-serif, system-ui, sans-serif'
-        ctx.textAlign = 'right'
-        ctx.fillText(`+${overflow}`, p.x + p.w - 6, p.y + 12)
-        ctx.textAlign = 'center'
-      }
+      drawSign(ctx, this.workstation(i), st)
     })
 
     // Depth-sort sprites back-to-front so lower ones overlap upper ones.
@@ -351,27 +320,6 @@ export class OfficeScene {
   }
 }
 
-// Warm, per-room palette + floor style. Grouped so build stages get wood,
-// review/QA get tile, done gets a cozy carpet.
-type RoomTheme = {
-  floor: string
-  floorAlt: string // plank/tile line color
-  wall: string
-  wallTrim: string
-  style: 'wood' | 'tile' | 'carpet'
-}
-const ROOM_THEME: Record<Action, RoomTheme> = {
-  idle:        { floor: '#6b4f34', floorAlt: '#5c432c', wall: '#463022', wallTrim: '#5c4230', style: 'wood' },
-  drawing:     { floor: '#6b4f34', floorAlt: '#5c432c', wall: '#463022', wallTrim: '#5c4230', style: 'wood' },
-  inspecting:  { floor: '#7a5a3a', floorAlt: '#694c30', wall: '#4a3222', wallTrim: '#60422c', style: 'wood' },
-  hammering:   { floor: '#6b4f34', floorAlt: '#5c432c', wall: '#463022', wallTrim: '#5c4230', style: 'wood' },
-  testing:     { floor: '#c9c1b0', floorAlt: '#b8af9c', wall: '#5a5347', wallTrim: '#726a59', style: 'tile' },
-  robot:       { floor: '#3a3550', floorAlt: '#322e46', wall: '#2a2740', wallTrim: '#413c5e', style: 'tile' },
-  approving:   { floor: '#c9c1b0', floorAlt: '#b8af9c', wall: '#5a5347', wallTrim: '#726a59', style: 'tile' },
-  celebrating: { floor: '#7c4a52', floorAlt: '#6d4048', wall: '#4a2e33', wallTrim: '#5f3a41', style: 'carpet' },
-  waving:      { floor: '#c9c1b0', floorAlt: '#b8af9c', wall: '#5a5347', wallTrim: '#726a59', style: 'tile' },
-}
-
 // Tiny deterministic PRNG so a station's scatter props stay put frame-to-frame
 // (seeded by station index), instead of jumping every render.
 function mulberry32(seed: number) {
@@ -384,58 +332,68 @@ function mulberry32(seed: number) {
   }
 }
 
-// Textured warm floor for one room.
-function drawFloor(ctx: CanvasRenderingContext2D, p: Patch, t: RoomTheme) {
-  ctx.fillStyle = t.floor
-  ctx.fillRect(p.x, p.y, p.w, p.h)
-  ctx.fillStyle = t.floorAlt
-  if (t.style === 'wood') {
-    // Horizontal planks.
-    for (let y = p.y + 12; y < p.y + p.h; y += 14) ctx.fillRect(p.x, y, p.w, 1)
-  } else if (t.style === 'tile') {
-    // Grid grout.
-    for (let x = p.x + 16; x < p.x + p.w; x += 16) ctx.fillRect(x, p.y, 1, p.h)
-    for (let y = p.y + 16; y < p.y + p.h; y += 16) ctx.fillRect(p.x, y, p.w, 1)
-  } else {
-    // Carpet speckle.
-    const rng = mulberry32(p.x * 131 + p.y)
-    for (let k = 0; k < 40; k++) {
-      ctx.globalAlpha = 0.25
-      ctx.fillRect(p.x + rng() * p.w, p.y + rng() * p.h, 1, 1)
-    }
-    ctx.globalAlpha = 1
-  }
+// One continuous warm wood floor spanning the whole canvas. Uniform planks so
+// abutting stations merge into a single open room. Seeded speckle adds subtle
+// grain without per-station seams.
+const FLOOR = '#6b4f34'
+const FLOOR_LINE = '#5c432c'
+function drawSharedFloor(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  ctx.fillStyle = FLOOR
+  ctx.fillRect(0, 0, w, h)
+  ctx.fillStyle = FLOOR_LINE
+  for (let y = 12; y < h; y += 14) ctx.fillRect(0, y, w, 1) // planks
+  // Faint grain speckle.
+  const rng = mulberry32(0x1234)
+  ctx.globalAlpha = 0.06
+  ctx.fillStyle = '#000000'
+  for (let k = 0; k < (w * h) / 900; k++) ctx.fillRect(rng() * w, rng() * h, 1, 1)
+  ctx.globalAlpha = 1
 }
 
-// Back wall band + one wall-mounted décor item (bookshelf / picture / clock),
-// chosen by station index so rooms differ but stay stable.
-function drawBackWall(ctx: CanvasRenderingContext2D, p: Patch, t: RoomTheme, i: number) {
-  const wallH = 12
-  ctx.fillStyle = t.wall
-  ctx.fillRect(p.x, p.y, p.w, wallH)
-  ctx.fillStyle = t.wallTrim
-  ctx.fillRect(p.x, p.y + wallH, p.w, 2) // baseboard trim
+// The name + count plaque, mounted just above the workstation in the SIGN_H
+// band. Tinted to the stage's accent color so stages stay distinguishable now
+// that the floor is uniform. Shows a "+N" overflow suffix when capped.
+function drawSign(
+  ctx: CanvasRenderingContext2D,
+  ws: { x: number; y: number; w: number; h: number },
+  st: Station,
+) {
+  const label = st.name.toUpperCase()
+  ctx.font = '700 10px ui-sans-serif, system-ui, sans-serif'
+  const labelW = ctx.measureText(label).width
+  const count = String(st.count)
+  ctx.font = '800 13px ui-sans-serif, system-ui, sans-serif'
+  const countW = ctx.measureText(count).width
+  const overflow = st.count - CAP
+  const extra = overflow > 0 ? `+${overflow}` : ''
 
-  const kind = i % 3
-  const cx = p.x + p.w / 2
-  if (kind === 0) {
-    // Bookshelf with colored spines.
-    const bx = cx - 26
-    ctx.fillStyle = '#5c4128'; ctx.fillRect(bx, p.y + 2, 52, 8)
-    const spines = ['#dc2626', '#16a34a', '#2563eb', '#f59e0b', '#7c3aed', '#e11d48']
-    for (let k = 0; k < 12; k++) {
-      ctx.fillStyle = spines[(i + k) % spines.length]
-      ctx.fillRect(bx + 2 + k * 4, p.y + 3, 3, 6)
-    }
-  } else if (kind === 1) {
-    // Framed picture: sky over ground.
-    ctx.fillStyle = '#8b6b45'; ctx.fillRect(cx - 12, p.y + 1, 24, 10)
-    ctx.fillStyle = '#7dd3fc'; ctx.fillRect(cx - 10, p.y + 2, 20, 5)
-    ctx.fillStyle = '#4ade80'; ctx.fillRect(cx - 10, p.y + 7, 20, 2)
-  } else {
-    // Wall clock.
-    ctx.fillStyle = '#e2e8f0'; ctx.fillRect(cx - 5, p.y + 1, 10, 10)
-    ctx.fillStyle = '#1e293b'; ctx.fillRect(cx - 1, p.y + 2, 2, 5); ctx.fillRect(cx, p.y + 5, 3, 2)
+  const w = Math.max(52, labelW + 16, countW + 26)
+  const h = 24
+  const x = Math.round(ws.x + ws.w / 2 - w / 2)
+  const y = Math.round(ws.y - h - 4)
+
+  // Plaque: dark panel with an accent top bar + a little post to the desk.
+  ctx.fillStyle = 'rgba(0,0,0,0.28)'; ctx.fillRect(x + 2, y + h, w - 4, 3) // shadow
+  ctx.fillStyle = '#8a6c44'; ctx.fillRect(x + w / 2 - 1, y + h, 2, 6) // mounting post
+  ctx.fillStyle = '#0f172a'; ctx.fillRect(x, y, w, h)
+  ctx.fillStyle = st.color; ctx.fillRect(x, y, w, 4) // accent bar
+  ctx.strokeStyle = 'rgba(148,163,184,0.35)'; ctx.lineWidth = 1
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1)
+
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#cbd5e1'
+  ctx.font = '700 9px ui-sans-serif, system-ui, sans-serif'
+  ctx.fillText(label, x + w / 2, y + 10)
+  ctx.fillStyle = '#f1f5f9'
+  ctx.font = '800 13px ui-sans-serif, system-ui, sans-serif'
+  ctx.fillText(count, x + w / 2, y + 18)
+  if (extra) {
+    ctx.fillStyle = '#94a3b8'
+    ctx.font = '700 8px ui-sans-serif, system-ui, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText(extra, x + w / 2 + countW / 2 + 2, y + 19)
+    ctx.textAlign = 'center'
   }
 }
 
@@ -484,15 +442,27 @@ function drawMug(ctx: CanvasRenderingContext2D, x: number, y: number) {
 // Draw the shared workstation for a station's action. Each is a small
 // top-down pixel prop drawn from rects; the accent color tints its surface so
 // it reads as belonging to that station.
+// Props are authored against this base footprint; the actual (larger) ws size
+// is reached by scaling, so every internal offset grows proportionally and we
+// don't have to re-tune ~25 rects.
+const WS_BASE_W = 60
+const WS_BASE_H = 34
+
 function drawWorkstation(
   ctx: CanvasRenderingContext2D,
   action: Action,
   ws: { x: number; y: number; w: number; h: number },
   accent: string,
 ) {
-  const { x, y, w, h } = ws
-  const px = Math.round(x)
-  const py = Math.round(y)
+  // Scale the authored (60x34) prop up to fill the real workstation footprint.
+  ctx.save()
+  ctx.translate(Math.round(ws.x), Math.round(ws.y))
+  ctx.scale(ws.w / WS_BASE_W, ws.h / WS_BASE_H)
+
+  const w = WS_BASE_W
+  const h = WS_BASE_H
+  const px = 0
+  const py = 0
   const shadow = 'rgba(0,0,0,0.28)'
 
   // Ground shadow under every station.
@@ -549,6 +519,7 @@ function drawWorkstation(
       break
     }
   }
+  ctx.restore()
 }
 
 // Blit one composed frame at (px, py) top-left, scaled ZOOM×, optionally
