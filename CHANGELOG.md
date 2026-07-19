@@ -42,7 +42,10 @@ triggers the "Release" workflow the same way.
   name + count on a sign hung over each workstation, so it reads as a single
   open workshop rather than a grid of boxes, with scattered plants, boxes, and
   mugs to feel lived-in. Stations reflow into a responsive grid, so it stacks
-  cleanly on mobile instead of scrolling sideways. Workers are directional — a true front, side profile, and
+  cleanly on mobile instead of scrolling sideways. A "Robots" toggle swaps the
+  whole crew for robot workers (boxy visored heads on the same animated bodies,
+  so they still act out each stage), remembered separately in `localStorage`.
+  Workers are directional — a true front, side profile, and
   back view, so someone walking up to a workstation shows their back and a
   side-walker shows a profile — with coherent top-left shading and a 3-frame
   walk cycle. Rendered on a Canvas 2D loop, honors

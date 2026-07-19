@@ -72,10 +72,15 @@ type Patch = { x: number; y: number; w: number; h: number }
 
 export class OfficeScene {
   stations: Station[] = []
+  robots = false // render the crew as robots (all-robot version)
   private sprites: Sprite[] = []
   private aisle = 0
   private cols = 1
   private layoutW = STATION_W + PAD * 2
+
+  setRobots(on: boolean) {
+    this.robots = on
+  }
 
   setStations(stations: Station[]) {
     this.stations = stations
@@ -312,7 +317,7 @@ export class OfficeScene {
       const st = this.stations[s.stationIndex]
       if (!st) continue
       const walkLeg = s.moving && st.action !== 'robot' ? s.leg : -1
-      const f = composeFrame(st.action, s.frame, walkLeg, s.variant, s.dir)
+      const f = composeFrame(st.action, s.frame, walkLeg, s.variant, s.dir, this.robots)
       // 'side' is authored facing right; mirror for leftward travel. Front and
       // back are symmetric, so only side needs the facing flip.
       const flip = s.dir === 'side' && s.facing === -1

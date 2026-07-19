@@ -354,16 +354,92 @@ function applyVariant(f: Frame, variant?: Variant): Frame {
   return { rows: f.rows, palette }
 }
 
+// Robot restyle: reuse the exact humanoid body (so every action/walk overlay
+// works) but recolor its chars to metal/chrome and turn the face into a glowing
+// visor. Metallic palette layered over whatever the frame already has; the
+// acting-arm char 'a' becomes chrome so a raised tool arm matches the body.
+const ROBOT_SKIN: Record<string, string> = {
+  // robot head: M metal shell, C casing-shade, V visor glass, e antenna/eye glow
+  M: '#9aa7b8', C: '#5b6673', V: '#0e7490', e: '#5eead4',
+  n: '#7c8b9e', N: '#475569',
+  // (legacy human head chars, in case any survive) → chrome
+  K: '#94a3b8', S: '#64748b',
+  r: '#475569', q: '#64748b', j: '#334155',
+  // shirt/torso → painted chassis (kept variant-tintable via T below)
+  T: '#5b8def', t: '#83aef7', u: '#3a63b8',
+  // arms → chrome
+  A: '#cbd5e1', z: '#94a3b8', a: '#cbd5e1',
+  // gloves/belt/legs/boots → dark metal + joints
+  G: '#334155', P: '#1e293b', k: '#22d3ee', L: '#475569', x: '#64748b', l: '#334155',
+  B: '#1e293b', b: '#334155', o: '#0f172a',
+}
+
+// Replace the whole head (rows 0-10) with a boxy robot head: an antenna on a
+// stalk, a squared metal casing ('M' shell, 'C' casing-shade), a wide glowing
+// visor ('V'), and a neck. Authored per direction so it reads unmistakably as
+// a robot rather than a chrome person. Rows 11+ (body) keep the human layout so
+// every action/walk overlay still lands.
+const ROBOT_HEAD: Record<Dir, string[]> = {
+  front: [
+    '.......e........', // 0  antenna tip (glow)
+    '.......M........', // 1  antenna stalk
+    '.....MMMMMM.....', // 2  casing top
+    '....MMMMMMMM....', // 3  casing
+    '....MVVVVVVM....', // 4  visor top
+    '....MVVVVVVM....', // 5  visor (eyes glow within)
+    '....MVeVVeVM....', // 6  visor with two lit "eyes"
+    '....MVVVVVVM....', // 7  visor bottom
+    '....CMMMMMMC....', // 8  chin casing (shaded ends)
+    '.....CMMMC......', // 9  jaw taper
+    '......NNNN......', // 10 neck
+  ],
+  side: [
+    '.....e..........', // 0  antenna tip
+    '.....M..........', // 1  stalk
+    '...MMMMMM.......', // 2  casing top
+    '..MMMMMMMM......', // 3  casing
+    '..CMVVVVVn......', // 4  visor + sensor nub (front-right)
+    '..CMVVVVVVn.....', // 5  visor
+    '..CMVeVVVVn.....', // 6  visor with lit eye
+    '..CMVVVVVV......', // 7  visor bottom
+    '...CMMMMMC......', // 8  jaw
+    '....CMMMC.......', // 9  chin
+    '......NNN.......', // 10 neck
+  ],
+  back: [
+    '.......e........', // 0  antenna tip
+    '.......M........', // 1  stalk
+    '.....MMMMMM.....', // 2  casing top
+    '....MMMMMMMM....', // 3  casing
+    '....MCCCCCCM....', // 4  back panel (recessed)
+    '....MCCCCCCM....', // 5
+    '....MCC..CCM....', // 6  cooling vents
+    '....MCC..CCM....', // 7
+    '....CMMMMMMC....', // 8
+    '.....CMMMC......', // 9
+    '......NNNN......', // 10 neck
+  ],
+}
+
+function robotHead(rows: string[][], dir: Dir) {
+  const head = ROBOT_HEAD[dir]
+  for (let y = 0; y < head.length; y++) {
+    if (rows[y]) rows[y] = head[y].split('')
+  }
+}
+
 // Compose the sprite for action + frame, optional walk-leg overlay, per-worker
-// variant, and facing direction. While walking (walkLeg >= 0) or when not
-// front-facing, we use the plain directional body instead of the tool action
-// (you can't see someone hammering from behind). Robots ignore dir + walkLeg.
+// variant, facing direction, and whether to render as a robot. While walking
+// (walkLeg >= 0) or when not front-facing, we use the plain directional body
+// instead of the tool action (you can't see someone hammering from behind).
+// The legacy standalone `robot` action keeps its distinct scanning sprite.
 export function composeFrame(
   action: Action,
   frameIndex: number,
   walkLeg = -1,
   variant?: Variant,
   dir: Dir = 'front',
+  robot = false,
 ): Frame {
   if (action === 'robot') {
     return ROBOT_FRAMES[frameIndex % ROBOT_FRAMES.length]
@@ -378,8 +454,8 @@ export function composeFrame(
     base = frames[frameIndex % frames.length]
   }
 
+  const rows = base.rows.map((r) => r.split(''))
   if (walkLeg >= 0) {
-    const rows = base.rows.map((r) => r.split(''))
     // Side profile has a single leg column; only front/back use the L/R walk
     // overlay. For side, nudge the boot to fake a step.
     if (dir === 'side') {
@@ -394,10 +470,22 @@ export function composeFrame(
     } else {
       for (const [x, y, ch] of WALK_LEGS[walkLeg % WALK_LEGS.length]) if (rows[y]) rows[y][x] = ch
     }
-    base = { rows: rows.map((r) => r.join('')), palette: base.palette }
   }
 
-  return applyVariant(base, variant)
+  if (robot) robotHead(rows, dir)
+  const composed = { rows: rows.map((r) => r.join('')), palette: base.palette }
+  const themed = applyVariant(composed, variant)
+  if (!robot) return themed
+  // Metallic recolor on top of any variant tint. The chassis (T) still takes
+  // the variant color so a robot crew varies in body paint; the head casing can
+  // pick up a faint variant tint on the visor for extra variety.
+  const palette = { ...themed.palette, ...ROBOT_SKIN }
+  if (variant?.T) {
+    palette.T = variant.T; palette.t = shift(variant.T, 1.28); palette.u = shift(variant.T, 0.72)
+    palette.V = shift(variant.T, 0.5) // visor tinted toward the chassis color
+  }
+  palette.a = ROBOT_SKIN.a
+  return { rows: themed.rows, palette }
 }
 
 export const WALK_FRAME_COUNT = WALK_LEGS.length

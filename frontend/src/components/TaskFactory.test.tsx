@@ -78,6 +78,31 @@ describe('composeFrame', () => {
     }
   })
 
+  it('renders a well-formed grid in robot mode across actions/dirs/walk', () => {
+    const actions = ['idle', 'drawing', 'hammering', 'testing', 'approving', 'celebrating', 'waving'] as const
+    const dirs = ['front', 'side', 'back'] as const
+    for (const action of actions) {
+      for (const dir of dirs) {
+        for (const leg of [-1, 0, 1, 2]) {
+          const f = composeFrame(action, 0, leg, undefined, dir, true) // robot = true
+          expect(f.rows).toHaveLength(GRID_H)
+          expect(f.rows.every((r) => r.length === GRID_W)).toBe(true)
+          for (const row of f.rows) {
+            for (const ch of row) {
+              if (ch !== '.' && ch !== ' ') expect(typeof f.palette[ch]).toBe('string')
+            }
+          }
+        }
+      }
+    }
+  })
+
+  it('robot mode changes the head vs. the human sprite', () => {
+    const human = composeFrame('idle', 0, -1, undefined, 'front', false)
+    const robot = composeFrame('idle', 0, -1, undefined, 'front', true)
+    expect(robot.rows.slice(0, 10)).not.toEqual(human.rows.slice(0, 10)) // head reshaped
+  })
+
   it('overlays walk legs on a humanoid but not on the robot', () => {
     const still = composeFrame('idle', 0, -1)
     const walking = composeFrame('idle', 0, 0)

@@ -6,6 +6,7 @@ import { useWorkflowStore } from '../stores/workflow'
 import TaskFactory from '../components/TaskFactory'
 
 const VISUALIZE_KEY = 'dashboard.visualize'
+const ROBOTS_KEY = 'dashboard.visualize.robots'
 
 const LABEL_COLORS: Record<string, string> = {
   not_ready:    '#6B7280',
@@ -26,6 +27,9 @@ export default function DashboardPage() {
   const [visualize, setVisualize] = useState(() => {
     try { return localStorage.getItem(VISUALIZE_KEY) === '1' } catch { return false }
   })
+  const [robots, setRobots] = useState(() => {
+    try { return localStorage.getItem(ROBOTS_KEY) === '1' } catch { return false }
+  })
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflow = useWorkflowStore((s) => s.active())
 
@@ -37,6 +41,14 @@ export default function DashboardPage() {
     setVisualize((v) => {
       const next = !v
       try { localStorage.setItem(VISUALIZE_KEY, next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }
+
+  const toggleRobots = () => {
+    setRobots((v) => {
+      const next = !v
+      try { localStorage.setItem(ROBOTS_KEY, next ? '1' : '0') } catch { /* ignore */ }
       return next
     })
   }
@@ -72,18 +84,34 @@ export default function DashboardPage() {
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-slate-100">Overview</h1>
-        <button
-          onClick={toggleVisualize}
-          className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors ${
-            visualize
-              ? 'bg-slate-800 border-slate-600 text-slate-200'
-              : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
-          }`}
-          title="Fun, non-essential task visualization"
-        >
-          <span className={`inline-block w-2 h-2 rounded-full ${visualize ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-          Visualize tasks
-        </button>
+        <div className="flex items-center gap-2">
+          {visualize && (
+            <button
+              onClick={toggleRobots}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                robots
+                  ? 'bg-slate-800 border-slate-600 text-slate-200'
+                  : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
+              }`}
+              title="Render the crew as robots"
+            >
+              <span className={`inline-block w-2 h-2 rounded-full ${robots ? 'bg-cyan-400' : 'bg-slate-600'}`} />
+              Robots
+            </button>
+          )}
+          <button
+            onClick={toggleVisualize}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors ${
+              visualize
+                ? 'bg-slate-800 border-slate-600 text-slate-200'
+                : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
+            }`}
+            title="Fun, non-essential task visualization"
+          >
+            <span className={`inline-block w-2 h-2 rounded-full ${visualize ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+            Visualize tasks
+          </button>
+        </div>
       </div>
 
       {/* Label count chips */}
@@ -91,7 +119,7 @@ export default function DashboardPage() {
         <section className="mb-8">
           <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Task counts by label</h2>
           {visualize && workflow ? (
-            <TaskFactory workflow={workflow} labelCounts={dash.label_counts} />
+            <TaskFactory workflow={workflow} labelCounts={dash.label_counts} robots={robots} />
           ) : (
             <div className="flex flex-wrap gap-2">
               {Object.entries(dash.label_counts).map(([label, count]) => (

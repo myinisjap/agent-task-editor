@@ -39,14 +39,19 @@ const sum = (names: string[], counts: Record<string, number>) => names.reduce((s
 export default function TaskFactory({
   workflow,
   labelCounts,
+  robots = false,
 }: {
   workflow: Workflow
   labelCounts: Record<string, number>
+  robots?: boolean
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sceneRef = useRef<OfficeScene | undefined>(undefined)
   if (!sceneRef.current) sceneRef.current = new OfficeScene()
+  // Robot mode is read live by the draw loop each frame, so just keep the
+  // scene's flag in sync — no re-render or re-layout needed.
+  sceneRef.current.setRobots(robots)
 
   // Rebuild station layout whenever the workflow or counts change. Signature
   // string keeps this cheap and avoids re-running on unrelated renders.
