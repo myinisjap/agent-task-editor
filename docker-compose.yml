@@ -38,6 +38,8 @@ services:
       - PGID=${PGID:-1000}
       # Path to the MCP sidecar binary built into the image
       - MCP_SERVER_PATH=/app/mcp-server
+      # Path to the board MCP binary; enables the create-task tools in chat sessions
+      - MCP_BOARD_PATH=/app/mcp-board
       # Optional: set API_TOKEN to require a Bearer token on all API requests
       # - API_TOKEN=change-me
       # Optional: use provider=anthropic in agent configs to call the API directly

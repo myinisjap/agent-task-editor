@@ -20,14 +20,20 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
-- **Board MCP server (`mcp-board`) for creating tickets from a chat client.** A
-  new standalone MCP server lets you work through a plan in a chat client (e.g.
-  Claude Desktop) and have it create tickets on the board via `list_repos`,
-  `list_workflows`, and `create_task`. It talks to the backend over REST and is
-  deliberately separate from the per-run MCP sidecar, so the in-flow kanban
-  agents never gain a task-creation tool. `create_task` drops tickets straight
-  onto `work` by default. Build with `go build -o mcp-board ./cmd/mcp-board`;
-  see [board-mcp.md](docs/board-mcp.md).
+- **Board MCP server (`mcp-board`) for creating tickets from a chat.** A new MCP
+  server lets you work through a plan in a chat and have it create tickets on the
+  board via `list_repos`, `list_workflows`, and `create_task`. It talks to the
+  backend over REST and is deliberately separate from the per-run MCP sidecar, so
+  the in-flow kanban agents never gain a task-creation tool. `create_task` drops
+  tickets straight onto `work` by default.
+  - **Wired into the in-app Chat tab:** set `MCP_BOARD_PATH` to the `mcp-board`
+    binary (done automatically by the Docker images and `./dev.sh dev`) and the
+    tools appear inside chat sessions for `claude`/`qwen_code` (via
+    `--mcp-config`) and `gemini_cli`/`codex_cli` (via a per-session home dir).
+  - **Or run standalone** and point an external chat client (e.g. Claude Desktop)
+    at it: `go build -o mcp-board ./cmd/mcp-board`.
+
+  See [board-mcp.md](docs/board-mcp.md).
 - **`POST /tasks` accepts an initial `label`.** Task creation can now place a
   task directly on any column defined in its workflow (default remains
   `not_ready`). Since this is initial placement rather than a transition, it is

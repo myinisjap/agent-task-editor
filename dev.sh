@@ -136,11 +136,15 @@ case "$CMD" in
     (cd "$SCRIPT_DIR/backend" && go build -o mcp-server ./cmd/mcp-server)
     MCP_SERVER_PATH="$SCRIPT_DIR/backend/mcp-server"
 
+    echo "Building board MCP server..."
+    (cd "$SCRIPT_DIR/backend" && go build -o mcp-board ./cmd/mcp-board)
+    MCP_BOARD_PATH="$SCRIPT_DIR/backend/mcp-board"
+
     echo "Building backend..."
     (cd "$SCRIPT_DIR/backend" && go build -o server ./cmd/server)
 
     echo "Starting backend on :8080..."
-    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" LOG_LEVEL=DEBUG AGENT_RAW_LOG_DIR="$AGENT_RAW_LOG_DIR" ./server) &
+    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" MCP_BOARD_PATH="$MCP_BOARD_PATH" LOG_LEVEL=DEBUG AGENT_RAW_LOG_DIR="$AGENT_RAW_LOG_DIR" ./server) &
     BACKEND_PID=$!
 
     echo "Starting frontend on :5173..."

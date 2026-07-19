@@ -1,9 +1,16 @@
 # Board MCP Server (create tickets from a chat)
 
-`mcp-board` is a standalone MCP (Model Context Protocol) server that lets you
-drive the board from a **chat client** such as Claude Desktop: brainstorm a plan
-in the chat, then have it create tickets on the board. It talks to the backend
-over the REST API, so it can run anywhere that can reach your backend URL.
+`mcp-board` is an MCP (Model Context Protocol) server that lets you drive the
+board from a chat: brainstorm a plan, then have it create tickets on the board.
+It talks to the backend over the REST API.
+
+There are two ways to use it:
+
+1. **The in-app Chat tab** (recommended) — the backend wires these tools into the
+   app's own chat sessions automatically. Just open a chat and ask it to create
+   tickets. See [In-app chat tab](#in-app-chat-tab) below.
+2. **An external chat client** such as Claude Desktop — run `mcp-board` yourself
+   and point the client at it. See [External chat client](#external-chat-client).
 
 ## How it differs from the MCP sidecar
 
@@ -55,7 +62,36 @@ the workflow, or the backend returns a 400.
 > review the batch first, create with `label: "not_ready"` and move them on the
 > board when ready.
 
-## Setup
+## In-app chat tab
+
+The Docker images build `mcp-board` in and set `MCP_BOARD_PATH=/app/mcp-board`,
+so the board tools are wired into the app's Chat tab out of the box. When you
+open a chat session, the backend registers `mcp-board` with the session's CLI
+(pointed at its own REST API), and the three tools become available in that
+conversation.
+
+To use it: open the **Chat** tab, start a session against the repo you want,
+work through your plan, then ask it to create the tickets — it will call
+`list_repos`/`create_task` and they appear on the board (on `work` by default).
+
+Notes:
+- This is a **human-driven** surface. It is deliberately separate from the
+  in-flow kanban agents that process columns — those agents never get a
+  task-creation tool. Only the chat you're talking to does.
+- Provider support matches the task sidecar: `claude` and `qwen_code` (via a
+  per-session `--mcp-config`), and `gemini_cli` / `codex_cli` (via a per-session
+  home directory). `opencode` has no per-invocation MCP mechanism, so board
+  tools aren't injected there.
+- Running locally with `./dev.sh dev` builds `mcp-board` and sets
+  `MCP_BOARD_PATH` automatically. If you run the server by hand, set
+  `MCP_BOARD_PATH` to the built binary to enable it.
+- Leaving `MCP_BOARD_PATH` unset simply launches chat sessions as before (no
+  board tools).
+
+## External chat client
+
+To create tickets from a chat client outside the app (e.g. Claude Desktop), run
+`mcp-board` yourself and register it:
 
 1. **Build it:**
    ```bash

@@ -96,6 +96,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | Variable | Default | Description |
 |---|---|---|
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, `gemini_cli`, and `codex_cli` providers). |
+| `MCP_BOARD_PATH` | _(empty)_ | Path to the `mcp-board` binary. Enables the board tools (`list_repos`/`list_workflows`/`create_task`) inside Chat-tab sessions, so a chat can create tickets. Set automatically by the Docker images and `./dev.sh dev`. See [board-mcp.md](board-mcp.md). |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API) |
 | `LLM_API_KEY` | _(empty)_ | API key for `llm` or `anthropic` provider |
 

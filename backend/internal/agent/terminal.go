@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
@@ -12,6 +13,19 @@ import (
 	"github.com/creack/pty"
 	"nhooyr.io/websocket"
 )
+
+// ChatMCPProvisioner builds the per-provider CLI wiring that exposes extra MCP
+// tools to an interactive chat session — currently the board server
+// (list_repos / list_workflows / create_task), which lets a chat work through a
+// plan and create tickets. Given the session's provider and id, it returns
+// additional CLI args, additional environment entries ("KEY=VALUE"), and a
+// cleanup func (always non-nil) to remove any temp files it created, called when
+// the CLI process exits.
+//
+// It is injected from cmd/server with an implementation in the providers package
+// so this package stays free of provider-specific MCP config shapes. A nil
+// provisioner (the default) leaves chat sessions exactly as before.
+type ChatMCPProvisioner func(provider, sessionID string) (args []string, env []string, cleanup func(), err error)
 
 // TerminalManager runs interactive CLI sessions in a PTY, one live process per
 // chat session. Unlike the task Pool (headless `-p` runs), the process stays
@@ -26,6 +40,10 @@ import (
 type TerminalManager struct {
 	mu       sync.Mutex
 	sessions map[string]*ptySession
+
+	// ChatMCP, when set, wires extra MCP tools (the board server) into each
+	// session's CLI. Nil disables the feature (no change to the launched CLI).
+	ChatMCP ChatMCPProvisioner
 }
 
 // NewTerminalManager builds an empty manager.
@@ -45,6 +63,7 @@ type ptySession struct {
 	scrollback []byte    // ring of recent output, capped at scrollbackCap
 	attached   io.Writer // current WS writer, nil when detached
 	done       chan struct{}
+	cleanup    func() // removes per-session MCP temp files; run after the process exits
 }
 
 // ErrTerminalUnsupported means the session's provider has no interactive CLI
@@ -124,6 +143,22 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	if err != nil {
 		return nil, err
 	}
+
+	// Wire the board MCP tools into this session's CLI when configured. Failures
+	// are non-fatal: the chat still works, just without the create-task tools.
+	var extraEnv []string
+	var cleanup func()
+	if m.ChatMCP != nil {
+		mcpArgs, mcpEnv, cl, perr := m.ChatMCP(provider, sessionID)
+		if perr != nil {
+			slog.Warn("chat MCP provisioning failed; continuing without board tools", "session_id", sessionID, "err", perr)
+		} else {
+			args = append(args, mcpArgs...)
+			extraEnv = mcpEnv
+			cleanup = cl
+		}
+	}
+
 	cmd := exec.Command(name, args...)
 	cmd.Dir = repoPath // ← run the CLI in the selected repo's worktree
 	// Advertise a color-capable terminal. The backend process has no TERM in the
@@ -132,13 +167,17 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	// these values are accurate. Set after os.Environ() so they win over any
 	// inherited value.
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = append(cmd.Env, extraEnv...)
 
 	tty, err := pty.Start(cmd)
 	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
 		return nil, fmt.Errorf("start pty: %w", err)
 	}
 
-	s := &ptySession{cmd: cmd, tty: tty, done: make(chan struct{})}
+	s := &ptySession{cmd: cmd, tty: tty, done: make(chan struct{}), cleanup: cleanup}
 	m.sessions[sessionID] = s
 
 	// Output pump: PTY -> scrollback + attached WS. Runs for the process's life.
@@ -162,6 +201,9 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 		}
 		close(s.done)
 		_ = cmd.Wait()
+		if s.cleanup != nil {
+			s.cleanup()
+		}
 		m.mu.Lock()
 		delete(m.sessions, sessionID)
 		m.mu.Unlock()

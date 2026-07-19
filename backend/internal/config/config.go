@@ -30,6 +30,7 @@ type Config struct {
 	// easily carry a different token than other tooling.
 	MetricsToken       string        `yaml:"metrics_token"`
 	MCPBinary          string        `yaml:"mcp_server_path"`
+	MCPBoardBinary     string        `yaml:"mcp_board_path"`
 	LLMBaseURL         string        `yaml:"llm_base_url"`
 	LLMAPIKey          string        `yaml:"llm_api_key"`
 	MaxWorkers         int           `yaml:"max_workers"`
@@ -142,6 +143,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MCP_SERVER_PATH"); v != "" {
 		cfg.MCPBinary = v
+	}
+	if v := os.Getenv("MCP_BOARD_PATH"); v != "" {
+		cfg.MCPBoardBinary = v
 	}
 	if v := os.Getenv("LLM_BASE_URL"); v != "" {
 		cfg.LLMBaseURL = v
