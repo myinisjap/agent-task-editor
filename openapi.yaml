@@ -773,6 +773,7 @@ paths:
                 type:        { type: string }
                 repo_id:     { type: string }
                 workflow_id: { type: string }
+                label:       { type: string, default: not_ready, description: "Label (column) the task starts on. Defaults to 'not_ready'. Must name a label defined in the workflow; unlike a label move this is initial placement, so it is not restricted to defined transition edges (e.g. a task can be created directly on 'work')." }
                 priority:    { type: integer, enum: [-1, 0, 1, 2], default: 0 }
       responses:
         "201":

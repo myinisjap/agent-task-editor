@@ -2,6 +2,8 @@
 
 The MCP (Model Context Protocol) sidecar is a small process (`mcp-server`) that runs alongside an agent subprocess, connected over stdio JSON-RPC. It exposes tools that let agents interact with the task system — signalling completion, requesting human input, persisting notes, and more.
 
+> Looking to **create tickets from a chat client** (e.g. Claude Desktop)? That is a *separate* server, `mcp-board` — see [board-mcp.md](board-mcp.md). The sidecar documented here runs per agent run and intentionally does **not** expose task creation to the in-flow kanban agents.
+
 ## Which Providers Use It
 
 | Provider | MCP Sidecar |

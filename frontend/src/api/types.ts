@@ -67,6 +67,11 @@ export interface paths {
                         repo_id: string;
                         workflow_id: string;
                         /**
+                         * @description Label (column) the task starts on. Defaults to 'not_ready'. Must name a label defined in the workflow; unlike a label move this is initial placement, so it is not restricted to defined transition edges (e.g. a task can be created directly on 'work').
+                         * @default not_ready
+                         */
+                        label?: string;
+                        /**
                          * @default 0
                          * @enum {integer}
                          */

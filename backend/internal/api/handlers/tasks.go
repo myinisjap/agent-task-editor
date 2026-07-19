@@ -178,6 +178,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		taskType = r.FormValue("type")
 		repoID = r.FormValue("repo_id")
 		workflowID = r.FormValue("workflow_id")
+		label := r.FormValue("label")
 
 		priority := PriorityNormal
 		if raw := r.FormValue("priority"); raw != "" {
@@ -213,13 +214,18 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if taskType == "" {
 			taskType = "feature"
 		}
+		label, lerr := h.resolveInitialLabel(r.Context(), workflowID, label)
+		if lerr != nil {
+			Err(w, http.StatusBadRequest, lerr.Error())
+			return
+		}
 
 		task, err := h.q.CreateTask(r.Context(), gen.CreateTaskParams{
 			ID:          taskID,
 			Title:       title,
 			Description: description,
 			Type:        taskType,
-			Label:       "not_ready",
+			Label:       label,
 			RepoID:      repoID,
 			WorkflowID:  workflowID,
 			Attachments: string(attachmentsJSON),
@@ -240,6 +246,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Type        string `json:"type"`
 		RepoID      string `json:"repo_id"`
 		WorkflowID  string `json:"workflow_id"`
+		Label       string `json:"label"`
 		Priority    int    `json:"priority"`
 	}
 	if err := decode(r, &body); err != nil {
@@ -257,13 +264,18 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "priority must be one of -1 (low), 0 (normal), 1 (high), 2 (urgent)")
 		return
 	}
+	label, lerr := h.resolveInitialLabel(r.Context(), body.WorkflowID, body.Label)
+	if lerr != nil {
+		Err(w, http.StatusBadRequest, lerr.Error())
+		return
+	}
 
 	task, err := h.q.CreateTask(r.Context(), gen.CreateTaskParams{
 		ID:          uuid.NewString(),
 		Title:       body.Title,
 		Description: body.Description,
 		Type:        body.Type,
-		Label:       "not_ready",
+		Label:       label,
 		RepoID:      body.RepoID,
 		WorkflowID:  body.WorkflowID,
 		Attachments: "[]",
@@ -274,6 +286,29 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusCreated, toTaskResponse(task))
+}
+
+// resolveInitialLabel picks the label a freshly created task starts on.
+// An empty request keeps the historical default ("not_ready", a human-gate
+// column). A non-empty label must name a real label in the task's workflow —
+// this is initial placement, not a state-machine transition, so it does not go
+// through the engine's transition-edge validation (there is no "from" state
+// yet). Callers such as the board MCP server use this to drop tickets straight
+// onto an agent-triggerable column (e.g. "work").
+func (h *TasksHandler) resolveInitialLabel(ctx context.Context, workflowID, requested string) (string, error) {
+	if requested == "" {
+		return "not_ready", nil
+	}
+	labels, err := h.q.ListWorkflowLabels(ctx, workflowID)
+	if err != nil {
+		return "", fmt.Errorf("failed to load workflow labels")
+	}
+	for _, l := range labels {
+		if l.Name == requested {
+			return requested, nil
+		}
+	}
+	return "", fmt.Errorf("label %q is not defined in this workflow", requested)
 }
 
 func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {

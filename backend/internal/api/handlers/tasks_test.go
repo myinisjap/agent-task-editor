@@ -345,6 +345,53 @@ func TestTasks_Create_OK(t *testing.T) {
 	}
 }
 
+func TestTasks_Create_WithLabel_LandsDirectlyOnColumn(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	// "work" is not reachable from "not_ready" via a transition edge, but initial
+	// placement is not a transition — the task should land straight on "work".
+	body := map[string]string{
+		"title":       "Ship it",
+		"repo_id":     repoID,
+		"workflow_id": wfID,
+		"label":       "work",
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.Label != "work" {
+		t.Errorf("initial label: want 'work', got %q", task.Label)
+	}
+}
+
+func TestTasks_Create_UnknownLabel_Returns400(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	body := map[string]string{
+		"title":       "bad label",
+		"repo_id":     repoID,
+		"workflow_id": wfID,
+		"label":       "nonexistent",
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for unknown label, got %d: %s", w.Code, w.Body)
+	}
+}
+
 func TestTasks_Create_MissingTitle_Returns400(t *testing.T) {
 	r, _, wfID, repoID := setupTaskRouter(t)
 
