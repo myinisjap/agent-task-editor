@@ -1,7 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useDashboard } from '../lib/useDashboard'
+import { useWorkflowStore } from '../stores/workflow'
+import TaskFactory from '../components/TaskFactory'
+
+const VISUALIZE_KEY = 'dashboard.visualize'
+const ROBOTS_KEY = 'dashboard.visualize.robots'
 
 const LABEL_COLORS: Record<string, string> = {
   not_ready:    '#6B7280',
@@ -19,6 +24,34 @@ export default function DashboardPage() {
   const { dash, refresh } = useDashboard()
   const [rejectNote, setRejectNote] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<Record<string, boolean>>({})
+  const [visualize, setVisualize] = useState(() => {
+    try { return localStorage.getItem(VISUALIZE_KEY) === '1' } catch { return false }
+  })
+  const [robots, setRobots] = useState(() => {
+    try { return localStorage.getItem(ROBOTS_KEY) === '1' } catch { return false }
+  })
+  const workflows = useWorkflowStore((s) => s.workflows)
+  const workflow = useWorkflowStore((s) => s.active())
+
+  useEffect(() => {
+    if (workflows.length === 0) useWorkflowStore.getState().fetch()
+  }, [workflows.length])
+
+  const toggleVisualize = () => {
+    setVisualize((v) => {
+      const next = !v
+      try { localStorage.setItem(VISUALIZE_KEY, next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }
+
+  const toggleRobots = () => {
+    setRobots((v) => {
+      const next = !v
+      try { localStorage.setItem(ROBOTS_KEY, next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }
 
   const handleApprove = async (taskId: string) => {
     setPending((p) => ({ ...p, [taskId]: true }))
@@ -49,24 +82,58 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-xl font-semibold text-slate-100 mb-6">Overview</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl font-semibold text-slate-100">Overview</h1>
+        <div className="flex items-center gap-2">
+          {visualize && (
+            <button
+              onClick={toggleRobots}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                robots
+                  ? 'bg-slate-800 border-slate-600 text-slate-200'
+                  : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
+              }`}
+              title="Render the crew as robots"
+            >
+              <span className={`inline-block w-2 h-2 rounded-full ${robots ? 'bg-cyan-400' : 'bg-slate-600'}`} />
+              Robots
+            </button>
+          )}
+          <button
+            onClick={toggleVisualize}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors ${
+              visualize
+                ? 'bg-slate-800 border-slate-600 text-slate-200'
+                : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
+            }`}
+            title="Fun, non-essential task visualization"
+          >
+            <span className={`inline-block w-2 h-2 rounded-full ${visualize ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+            Visualize tasks
+          </button>
+        </div>
+      </div>
 
       {/* Label count chips */}
       {dash && Object.keys(dash.label_counts).length > 0 && (
         <section className="mb-8">
           <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Task counts by label</h2>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(dash.label_counts).map(([label, count]) => (
-              <div
-                key={label}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-medium"
-                style={{ backgroundColor: LABEL_COLORS[label] ?? '#6B7280' }}
-              >
-                <span>{label}</span>
-                <span className="bg-black/20 rounded-full px-1.5 py-0.5 text-xs">{count}</span>
-              </div>
-            ))}
-          </div>
+          {visualize && workflow ? (
+            <TaskFactory workflow={workflow} labelCounts={dash.label_counts} robots={robots} />
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(dash.label_counts).map(([label, count]) => (
+                <div
+                  key={label}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-medium"
+                  style={{ backgroundColor: LABEL_COLORS[label] ?? '#6B7280' }}
+                >
+                  <span>{label}</span>
+                  <span className="bg-black/20 rounded-full px-1.5 py-0.5 text-xs">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
