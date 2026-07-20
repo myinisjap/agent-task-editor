@@ -13,6 +13,7 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `APITokens` | `API_TOKENS` | `api_tokens` | _(empty map)_ |
 | `MetricsToken` | `METRICS_TOKEN` | `metrics_token` | _(empty)_ |
 | `MCPBinary` | `MCP_SERVER_PATH` | `mcp_server_path` | _(empty)_ |
+| `MCPBoardBinary` | `MCP_BOARD_PATH` | `mcp_board_path` | _(empty)_ |
 | `LLMBaseURL` | `LLM_BASE_URL` | `llm_base_url` | `https://api.openai.com/v1` |
 | `LLMAPIKey` | `LLM_API_KEY` | `llm_api_key` | _(empty)_ |
 | `MaxWorkers` | `MAX_WORKERS` | `max_workers` | `5` |
@@ -50,5 +51,6 @@ config/env-var-only choice — see `internal/backup` and `docs/backup.md`.
   authenticated with it resolves to actor `""`, same as before this field existed.
 - `MetricsToken` empty (the default) leaves `GET /metrics` unauthenticated, independent of `APIToken`/`APITokens` — most Prometheus scrape setups can't easily carry a different token than other tooling.
 - `MCPBinary` empty means ClaudeRunner runs without MCP tools (`signal_complete`/`request_human` unavailable)
+- `MCPBoardBinary` empty means chat sessions launch without the board MCP tools (`list_repos`/`list_workflows`/`create_task`); set it to the `mcp-board` binary path to let chat sessions create tickets. See `docs/board-mcp.md`.
 - `BackupDir` empty disables the automatic local-snapshot scheduler (`internal/backup.Scheduler`); the on-demand `GET /api/v1/backup` endpoint and the Health page's "Download backup" button are always available regardless. See `docs/backup.md`.
 - `CORSOrigins` defaults to the known local dev/prod origins (`http://localhost:5173,http://localhost:8080`), not `*`; the wildcard is still available by setting `CORS_ORIGINS=*` explicitly. An empty `APIToken` now also triggers a startup `slog.Warn` in `cmd/server/main.go` (warn-only, matching the `REPO_BASE_DIR` pattern), escalated to a stronger message when `CORSOrigins == "*"` as well.

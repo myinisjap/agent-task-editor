@@ -243,6 +243,14 @@ func main() {
 	// single interactive process). Streamed over the /chat/sessions/{id}/terminal
 	// WebSocket.
 	terminal := agent.NewTerminalManager()
+	// Expose the board MCP tools (list_repos/list_workflows/create_task) to chat
+	// sessions when MCP_BOARD_PATH points at the mcp-board binary. This is a
+	// human-driven surface (the chat tab), deliberately separate from the in-flow
+	// kanban agents, which never get task-creation tools. Nil when unset.
+	if cfg.MCPBoardBinary != "" {
+		terminal.ChatMCP = providers.NewChatMCPProvisioner(cfg.MCPBoardBinary, backendURL, cfg.APIToken)
+		slog.Info("board MCP enabled for chat sessions", "binary", cfg.MCPBoardBinary)
+	}
 
 	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal)
 

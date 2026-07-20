@@ -150,6 +150,66 @@ func TestTerminalManagerAttachStreams(t *testing.T) {
 	}
 }
 
+// TestTerminalManager_ChatMCPInjectsEnv verifies that a configured ChatMCP
+// provisioner's environment reaches the launched CLI process, and that it is
+// called with the session's provider and id. The env probe (echoing a var only
+// the provisioner sets) can only succeed if injection actually happened.
+func TestTerminalManager_ChatMCPInjectsEnv(t *testing.T) {
+	m := NewTerminalManager()
+	sessionID := "mcp-sess"
+	defer m.Stop(sessionID)
+
+	var gotProvider, gotSession string
+	cleanupCalled := make(chan struct{}, 1)
+	m.ChatMCP = func(provider, sid string) ([]string, []string, func(), error) {
+		gotProvider, gotSession = provider, sid
+		return nil, []string{"ATE_BOARD_TEST=zzz42"}, func() { cleanupCalled <- struct{}{} }, nil
+	}
+
+	orig := buildTerminalCommand
+	buildTerminalCommand = func(_, _ string, _ bool) (string, []string, error) { return "sh", nil, nil }
+	t.Cleanup(func() { buildTerminalCommand = orig })
+
+	repoDir := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, conn)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("echo BOARD=$ATE_BOARD_TEST\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out := readUntil(t, ctx, conn, "BOARD=zzz42")
+	if !strings.Contains(out, "BOARD=zzz42") {
+		t.Errorf("ChatMCP env did not reach the PTY; got:\n%s", out)
+	}
+	if gotProvider != "claude" || gotSession != sessionID {
+		t.Errorf("provisioner called with provider=%q session=%q; want claude/%s", gotProvider, gotSession, sessionID)
+	}
+
+	// Stopping the session must run the provisioner's cleanup.
+	m.Stop(sessionID)
+	select {
+	case <-cleanupCalled:
+	case <-time.After(5 * time.Second):
+		t.Error("cleanup was not called after Stop")
+	}
+}
+
 // readUntil reads frames until `marker` appears in the accumulated output or the
 // context deadline hits.
 func readUntil(t *testing.T, ctx context.Context, c *websocket.Conn, marker string) string {

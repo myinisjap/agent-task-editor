@@ -12,9 +12,12 @@ COPY . .
 # which passes VERSION=<git tag> as a build-arg). Left as "dev" for local
 # `docker compose build` invocations that don't set it.
 ARG VERSION=dev
-# Build both binaries — mcp-server is the signal_complete/request_human sidecar
+# Build all binaries — mcp-server is the signal_complete/request_human sidecar;
+# mcp-board is the standing board MCP server wired into chat sessions (and
+# usable standalone from a chat client). See docs/board-mcp.md.
 RUN go build -ldflags "-X main.Version=${VERSION}" -o bin/server ./cmd/server && \
-    go build -o bin/mcp-server ./cmd/mcp-server
+    go build -o bin/mcp-server ./cmd/mcp-server && \
+    go build -o bin/mcp-board ./cmd/mcp-board
 
 # Use node:26-alpine as the runtime so the claude CLI is available
 FROM node:26-alpine
@@ -78,6 +81,7 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY --from=builder /app/bin/server .
 COPY --from=builder /app/bin/mcp-server .
+COPY --from=builder /app/bin/mcp-board .
 RUN chown -R node: /app
 
 # Stays root so the entrypoint can remap the node user (PUID/PGID) and chown the

@@ -73,6 +73,7 @@ Create a task. Accepts JSON body or `multipart/form-data` (for image attachments
   "type": "feature | bug | chore | ...",
   "repo_id": "uuid (required)",
   "workflow_id": "uuid (required)",
+  "label": "string (optional, default not_ready)",
   "priority": "-1 | 0 | 1 | 2 (optional, default 0)"
 }
 ```
@@ -80,7 +81,12 @@ Create a task. Accepts JSON body or `multipart/form-data` (for image attachments
 **Multipart form** (`Content-Type: multipart/form-data`):
 Same fields as form values, plus `attachments` (multiple file fields). Images are validated (max 10 MB each, image/* MIME type only) and stored in `UPLOAD_DIR`.
 
-New tasks start on the `not_ready` label regardless of input.
+New tasks default to the `not_ready` label. Pass `label` to place a task
+directly on any column defined in the workflow (e.g. `work` to make it
+immediately agent-eligible). Because this is initial placement rather than a
+state-machine transition, it is not restricted to the workflow's transition
+edges; an unknown label returns `400`. The [board MCP server](board-mcp.md)
+uses this to create tickets straight into `work` from a chat client.
 
 ### `GET /tasks/{id}`
 Get a single task.

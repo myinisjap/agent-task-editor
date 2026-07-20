@@ -68,6 +68,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `API_TOKENS` | _(none)_ | Named bearer tokens (`name1:token1,name2:token2`); resolves to an actor name recorded in `task_label_history.actor_id` for human-triggered transitions, surfaced via `GET /tasks/{id}/label-history` |
 | `REPO_BASE_DIR` | _(none)_ | Restrict repo paths; empty = any path allowed (warns on startup) |
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
+| `MCP_BOARD_PATH` | _(none)_ | Path to mcp-board binary; enables the board tools (list_repos/list_workflows/create_task) inside chat sessions. See `docs/board-mcp.md` |
 | `LLM_API_KEY` | _(none)_ | API key for `anthropic` or `llm` provider |
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer (see `docs/task-sources.md`) |

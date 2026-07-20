@@ -128,6 +128,7 @@ func TestLoad_EnvVarsOverrideDefaults(t *testing.T) {
 	t.Setenv("LLM_BASE_URL", "https://custom-llm.example.com/v1")
 	t.Setenv("LLM_API_KEY", "key-xyz")
 	t.Setenv("MCP_SERVER_PATH", "/usr/local/bin/mcp")
+	t.Setenv("MCP_BOARD_PATH", "/usr/local/bin/mcp-board")
 
 	cfg, err := config.Load("")
 	if err != nil {
@@ -145,6 +146,7 @@ func TestLoad_EnvVarsOverrideDefaults(t *testing.T) {
 		{"LLMBaseURL", cfg.LLMBaseURL, "https://custom-llm.example.com/v1"},
 		{"LLMAPIKey", cfg.LLMAPIKey, "key-xyz"},
 		{"MCPBinary", cfg.MCPBinary, "/usr/local/bin/mcp"},
+		{"MCPBoardBinary", cfg.MCPBoardBinary, "/usr/local/bin/mcp-board"},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
