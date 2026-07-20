@@ -31,6 +31,26 @@ triggers the "Release" workflow the same way.
   opens a modal explaining labels, transitions, trigger/path options, and the
   YAML configuration format, with a minimal working example — so the
   `docs/workflows.md` reference is discoverable right where you edit YAML.
+- **Dashboard: "Visualize tasks" toggle.** A small, purely cosmetic switch in
+  the Overview header swaps the "Task counts by label" chips for an animated
+  top-down "office floor" — one station per workflow stage, each with its own
+  workstation (desk, anvil, lab bench, charging rack, or podium). Little
+  pixel-art workers (varied per person, not clones) queue up, walk to the
+  workstation, and act out their stage there (drawing, hammering, a scanning
+  robot, …) before stepping aside for the next; the crowd size scales with the
+  task count. Everything sits on one continuous warm wood floor with the stage
+  name + count on a sign hung over each workstation, so it reads as a single
+  open workshop rather than a grid of boxes, with scattered plants, boxes, and
+  mugs to feel lived-in. Stations reflow into a responsive grid, so it stacks
+  cleanly on mobile instead of scrolling sideways. A "Robots" toggle swaps the
+  whole crew for robot workers (boxy visored heads on the same animated bodies,
+  so they still act out each stage), remembered separately in `localStorage`.
+  Workers are directional — a true front, side profile, and
+  back view, so someone walking up to a workstation shows their back and a
+  side-walker shows a profile — with coherent top-left shading and a 3-frame
+  walk cycle. Rendered on a Canvas 2D loop, honors
+  `prefers-reduced-motion`, off by default, and the on/off state is remembered
+  in `localStorage`.
 
 ## [0.12.0] - 2026-07-16
 
