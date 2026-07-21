@@ -196,6 +196,35 @@ func waitForLabel(t *testing.T, q *gen.Queries, taskID, want string) {
 	t.Errorf("timed out waiting for task %s to reach label %q; current: %q", taskID, want, task.Label)
 }
 
+// startPool runs pool.Start in a goroutine and registers a cleanup that stops
+// the pool and blocks until every worker goroutine has returned before the test
+// tears down its temp repo/DB. Pool.Start blocks on its worker WaitGroup, so a
+// returned Start means no worker is still running a safety-net `git status`
+// against a directory that t.Cleanup is about to remove — the race that made
+// these tests flaky. Returns the pool's context (some tests pass it on) and a
+// stop func for tests that want to halt the pool mid-body before asserting;
+// stop is idempotent and safe to call alongside the automatic cleanup.
+func startPool(t *testing.T, pool *agent.Pool) (context.Context, func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); pool.Start(ctx) }()
+
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Error("timed out waiting for pool workers to drain")
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return ctx, stop
+}
+
 // waitForTaskRetryCount polls until the task's transient_retry_count matches want.
 func waitForTaskRetryCount(t *testing.T, q *gen.Queries, taskID string, want int64) {
 	t.Helper()
@@ -322,13 +351,12 @@ func TestPool_CompletedResult_TransitionsLabel(t *testing.T) {
 
 	beforeCompleted := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("completed"))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
 	waitForLabel(t, q, taskID, "review-plan")
-	cancel()
+	stop()
 
 	// Task label should have been transitioned
 	task, _ := q.GetTask(context.Background(), taskID)
@@ -388,13 +416,12 @@ func TestPool_ResolvedComments_MarkedResolved(t *testing.T) {
 		},
 	}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
 	waitForLabel(t, q, taskID, "review-plan")
-	cancel()
+	stop()
 
 	c, err := q.GetTaskReviewComment(context.Background(), gen.GetTaskReviewCommentParams{ID: commentID, TaskID: taskID})
 	if err != nil {
@@ -445,13 +472,12 @@ func TestPool_ResolvedComments_IgnoredOnFailure(t *testing.T) {
 		ResolvedComments: []agent.ResolvedComment{{ID: commentID, Note: "claimed fix"}},
 	}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
 	waitForStatus(t, q, runID, "failed")
-	cancel()
+	stop()
 
 	c, err := q.GetTaskReviewComment(context.Background(), gen.GetTaskReviewCommentParams{ID: commentID, TaskID: taskID})
 	if err != nil {
@@ -477,13 +503,12 @@ func TestPool_FailedResult_SetsStatusFailed(t *testing.T) {
 	beforeFailed := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("failed"))
 	beforeGenuine := testutil.ToFloat64(metrics.RunClassificationTotal.WithLabelValues(string(agent.ClassGenuine)))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
 	waitForStatus(t, q, runID, "failed")
-	cancel()
+	stop()
 
 	run, _ := q.GetAgentRun(context.Background(), runID)
 	if run.Status != "failed" {
@@ -554,12 +579,11 @@ func TestPool_FailureLoop_RoutesFeedbackAndTransitions(t *testing.T) {
 	finding := "target_label is not validated against workflow labels (medium)"
 	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "failure", Message: &finding}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 	pool.Submit(buildJobAtLabel(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), "agent-review", provider))
 
 	waitForLabel(t, q, taskID, "work")
-	cancel()
+	stop()
 
 	run, _ := q.GetAgentRun(context.Background(), runID)
 	if run.Feedback == nil || *run.Feedback != finding {
@@ -598,8 +622,7 @@ func TestPool_FailureLoop_EscalatesAfterThreshold(t *testing.T) {
 	finding := "same medium issue, again"
 	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "failure", Message: &finding}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 	pool.Submit(buildJobAtLabel(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), "agent-review", provider))
 
 	waitForStatus(t, q, runID, "waiting_human")
@@ -614,7 +637,7 @@ func TestPool_FailureLoop_EscalatesAfterThreshold(t *testing.T) {
 	if task.ActiveAgentRunID == nil || *task.ActiveAgentRunID != runID {
 		t.Errorf("expected task still locked on run %s, got %v", runID, task.ActiveAgentRunID)
 	}
-	cancel()
+	stop()
 
 	if !pub.hasEvent("task.needs_human") {
 		t.Errorf("expected task.needs_human event on escalation")
@@ -650,9 +673,7 @@ func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
 		t.Fatalf("set active run: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go pool.Start(ctx)
+	startPool(t, pool)
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProvider{}))
 
@@ -693,9 +714,7 @@ func TestPool_Saturated(t *testing.T) {
 		t.Fatal("expected an idle pool to not be saturated")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go pool.Start(ctx)
+	startPool(t, pool)
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProvider{}))
 
@@ -732,13 +751,12 @@ func TestPool_WaitingHuman_PublishesEvent(t *testing.T) {
 	msg := "need approval"
 	provider := &mockProvider{result: agent.Result{Status: "waiting_human", Message: &msg}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
 
 	waitForStatus(t, q, runID, "waiting_human")
-	cancel()
+	stop()
 
 	if !pub.hasEvent("task.needs_human") {
 		t.Errorf("expected task.needs_human event")
@@ -789,15 +807,14 @@ func TestPool_TransientFailure_RetriesUnderCap(t *testing.T) {
 
 	provider := &mockProvider{err: &agent.ErrTransient{Cause: context.DeadlineExceeded}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	// max_retries=3, base backoff 30s — well within the budget on the first failure.
 	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
 
 	waitForStatus(t, q, runID, "failed")
 	waitForTaskRetryCount(t, q, taskID, 1)
-	cancel()
+	stop()
 
 	task, err := q.GetTask(context.Background(), taskID)
 	if err != nil {
@@ -849,13 +866,12 @@ func TestPool_TransientFailure_EscalatesAfterMaxRetries(t *testing.T) {
 
 	provider := &mockProvider{err: &agent.ErrTransient{Cause: context.DeadlineExceeded}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 1, 1))
 
 	waitForStatus(t, q, runID, "waiting_human")
-	cancel()
+	stop()
 
 	if !pub.hasEvent("task.needs_human") {
 		t.Error("expected task.needs_human event on retry-budget exhaustion")
@@ -888,13 +904,12 @@ func TestPool_GenuineFailure_DoesNotConsumeRetryBudget(t *testing.T) {
 	// the task itself failed. This must not touch the retry counter.
 	provider := &mockProvider{result: agent.Result{Status: "failed"}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
 
 	waitForStatus(t, q, runID, "failed")
-	cancel()
+	stop()
 
 	task, err := q.GetTask(context.Background(), taskID)
 	if err != nil {
@@ -928,13 +943,12 @@ func TestPool_Success_ResetsRetryCount(t *testing.T) {
 
 	provider := &mockProvider{result: agent.Result{Status: "completed"}}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
 
 	waitForStatus(t, q, runID, "completed")
-	cancel()
+	stop()
 
 	task, err := q.GetTask(context.Background(), taskID)
 	if err != nil {
@@ -1172,13 +1186,12 @@ func TestPool_SafetyNetCommit_HumanReadableMessage(t *testing.T) {
 	// keys its git lock off Task.RepoPath, so set both to the same repo.
 	job.Input.Task.RepoPath = repoPath
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
+	_, stop := startPool(t, pool)
 
 	pool.Submit(job)
 
 	waitForLabel(t, q, taskID, "review-plan")
-	cancel()
+	stop()
 
 	out, err := exec.Command("git", "-C", repoPath, "log", "-1", "--format=%B").CombinedOutput()
 	if err != nil {
