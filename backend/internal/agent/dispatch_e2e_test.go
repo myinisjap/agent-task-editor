@@ -161,11 +161,30 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	d.Publisher = pub
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go pool.Start(ctx)
-	go d.Run(ctx)
-	t.Cleanup(cancel)
+	// poolDone/dispDone close when their goroutines fully return. Pool.Start
+	// blocks on its internal WaitGroup, so poolDone closing means every worker —
+	// including any in-flight run's safety-net git commit against the temp repo —
+	// has finished. Dispatcher.Run returns on ctx cancel.
+	poolDone := make(chan struct{})
+	dispDone := make(chan struct{})
+	go func() { defer close(poolDone); pool.Start(ctx) }()
+	go func() { defer close(dispDone); d.Run(ctx) }()
 
-	return &e2eHarness{q: q, engine: engine, pool: pool, disp: d, pub: pub, repo: initRepo(t), cancel: cancel}
+	// Build the repo before registering the drain cleanup so that this cleanup —
+	// registered last, therefore run first (t.Cleanup is LIFO) — cancels the loop
+	// and blocks until both goroutines have drained BEFORE Go removes the temp
+	// repo (initRepo's t.TempDir), closes the DB, or deletes the DB file. Without
+	// this, teardown races an in-flight pool worker: the worker's safety-net
+	// `git status`/commit runs against a repo dir being deleted out from under it
+	// ("git status: signal: killed: fatal: not a git repository") and its DB
+	// writes hit a closed handle. This is the E2E flake's root cause.
+	h := &e2eHarness{q: q, engine: engine, pool: pool, disp: d, pub: pub, repo: initRepo(t), cancel: cancel}
+	t.Cleanup(func() {
+		cancel()
+		<-poolDone
+		<-dispDone
+	})
+	return h
 }
 
 // seedE2EWorkflow inserts a workflow purpose-built for these tests:
