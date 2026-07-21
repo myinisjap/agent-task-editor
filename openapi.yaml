@@ -533,7 +533,7 @@ components:
       properties:
         id:               { type: string }
         task_id:          { type: string }
-        agent_config_id:  { type: string }
+        agent_config_id:  { type: string, nullable: true, description: "Agent config that ran this task; set NULL if that config is later deleted." }
         status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled] }
         feedback:         { type: string, nullable: true }
         stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }

@@ -86,6 +86,10 @@ triggers the "Release" workflow the same way.
   hand-written types but were missing from the spec — `Task.attachments`,
   `WorkflowTransition.path`, `AgentConfig.enabled`, and `AgentRun.stored_info` /
   `AgentRun.notes` — matching the backend's serialized JSON.
+- **`AgentRun.agent_config_id` is now correctly typed as nullable.** The backend
+  sets this column to NULL when the run's agent config is later deleted and emits
+  `null` on the wire, but the spec typed it as a plain `string`. It is now
+  `nullable: true`, so `AgentRun.agent_config_id` generates as `string | null`.
 
 ## [0.12.0] - 2026-07-16
 

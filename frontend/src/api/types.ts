@@ -3714,7 +3714,8 @@ export interface components {
         AgentRun: {
             id: string;
             task_id: string;
-            agent_config_id: string;
+            /** @description Agent config that ran this task; set NULL if that config is later deleted. */
+            agent_config_id: string | null;
             /** @enum {string} */
             status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled";
             feedback?: string | null;
