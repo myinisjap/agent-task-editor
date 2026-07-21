@@ -71,6 +71,22 @@ triggers the "Release" workflow the same way.
   `prefers-reduced-motion`, off by default, and the on/off state is remembered
   in `localStorage`.
 
+### Changed
+- **Frontend now consumes the generated OpenAPI types as its single source of
+  truth.** `frontend/src/api/client.ts` previously hand-maintained a parallel
+  set of ~30 request/response type definitions that could drift from the
+  `openapi.yaml` spec. Those are now thin re-exports of the generated
+  `src/api/types.ts` (produced by `npm run gen:api`), so the committed spec is
+  the one place wire shapes are defined. Consumers import the same type names
+  from `./client` unchanged. No runtime/API behavior change.
+- **`openapi.yaml` gained required-field metadata and reconciled drift.** Every
+  component schema now declares an accurate `required:` array (previously only
+  `ProviderCheck` did), so generated fields that the server always populates are
+  typed as present rather than optional. Also added fields that existed in the
+  hand-written types but were missing from the spec — `Task.attachments`,
+  `WorkflowTransition.path`, `AgentConfig.enabled`, and `AgentRun.stored_info` /
+  `AgentRun.notes` — matching the backend's serialized JSON.
+
 ## [0.12.0] - 2026-07-16
 
 ### Added

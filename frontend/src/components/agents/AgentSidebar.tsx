@@ -108,7 +108,7 @@ export default function AgentSidebar({
       <div className="flex flex-col gap-0.5 p-2">
         {agents.map((a) => {
           const isChecked = multiSelected.has(a.id)
-          const isDisabled = a.enabled === 0 || a.enabled === false
+          const isDisabled = !a.enabled
           return (
             <button
               key={a.id}

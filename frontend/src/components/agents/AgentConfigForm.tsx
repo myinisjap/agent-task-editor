@@ -33,7 +33,7 @@ export default function AgentConfigForm({
   onDelete: () => void
   onToggleEnabled: () => void
 }) {
-  const isEnabled = selected ? (selected.enabled !== 0 && selected.enabled !== false) : true
+  const isEnabled = selected ? selected.enabled : true
   // The claude-specific plugin/MCP picker and the command-filter hints are
   // both driven by the *selected provider config's* provider string, not a
   // form field — provider/model/env now live on the referenced ProviderConfig.

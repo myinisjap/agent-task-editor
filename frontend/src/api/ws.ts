@@ -1,4 +1,4 @@
-import type { Task, AgentLog } from './client'
+import type { Task, AgentLog, AgentRun } from './client'
 import { getApiToken, notifyUnauthorized } from './authToken'
 
 // wsTicketParam returns a "?ticket=..." query string for authenticating a
@@ -30,7 +30,7 @@ export async function wsTicketParam(): Promise<string> {
 export type WSEvent =
   | { type: 'task.label_changed'; payload: { task_id: string; from: string; to: string; note?: string } }
   | { type: 'task.agent_started'; payload: { task_id: string; run_id: string; agent_name: string } }
-  | { type: 'task.agent_done'; payload: { task_id: string; run_id: string; status: string } }
+  | { type: 'task.agent_done'; payload: { task_id: string; run_id: string; status: AgentRun['status'] } }
   | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string } }
   | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
   | { type: 'agent.log'; payload: { task_id: string; run_id: string; entry: AgentLog } }
@@ -38,7 +38,7 @@ export type WSEvent =
   // batched message (capped server-side). has_more signals that earlier entries
   // exist and can be fetched via the REST logs endpoint ("load earlier").
   | { type: 'agent.log_replay'; payload: { task_id: string; run_id: string; has_more: boolean; entries: AgentLog[] } }
-  | { type: 'task.git_state_changed'; payload: { task_id: string; git_state: string; pr_url: string } }
+  | { type: 'task.git_state_changed'; payload: { task_id: string; git_state: Task['git_state']; pr_url: string } }
   | { type: 'task.review_comments_changed'; payload: { task_id: string; run_id: string; resolved: number } }
   // task.created payloads carry a subset of Task fields (always includes id);
   // consumers should refetch the task for full data.
