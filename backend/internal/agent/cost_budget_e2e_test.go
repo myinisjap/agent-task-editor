@@ -12,6 +12,14 @@ import (
 // max_cost_usd (at creation, configBudget) and the task's max_cost_usd
 // (via a follow-up UpdateTask, taskBudget). A 0 value leaves that budget
 // unset (unlimited from that source) — see effectiveBudget.
+//
+// The task is created on the non-pickup "parked" label and only moved to
+// "ready" by the caller's seedRunWithCost (or seedReady) once all cost state
+// is in place. The harness starts the dispatcher (sweeping every 15ms) before
+// a test seeds, so creating the task directly on "ready" here races the first
+// sweep: it could dispatch a real run before the prior-cost row lands, seeing
+// spent=0 and skipping the budget guard. Landing on a pickup label last closes
+// that window deterministically.
 func (h *e2eHarness) seedTaskWithBudgets(t *testing.T, wfID string, configBudget, taskBudget float64) (taskID, agentConfigID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -35,7 +43,7 @@ func (h *e2eHarness) seedTaskWithBudgets(t *testing.T, wfID string, configBudget
 
 	taskID = uuid.NewString()
 	if _, err := h.q.CreateTask(ctx, gen.CreateTaskParams{
-		ID: taskID, Title: "do the thing", WorkflowID: wfID, RepoID: repoID, Label: "ready",
+		ID: taskID, Title: "do the thing", WorkflowID: wfID, RepoID: repoID, Label: "parked",
 	}); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
@@ -54,10 +62,27 @@ func (h *e2eHarness) seedTaskWithBudgets(t *testing.T, wfID string, configBudget
 	return taskID, cfg.ID
 }
 
+// seedReady moves a task seeded by seedTaskWithBudgets onto the "ready"
+// pickup label, the last seeding step so the dispatcher's first sweep of the
+// task always observes complete cost state (see seedTaskWithBudgets). Callers
+// that seed a prior-cost run use seedRunWithCost, which calls this for them;
+// callers with no prior run (the "no budget set" path) call it directly.
+func (h *e2eHarness) seedReady(t *testing.T, taskID string) {
+	t.Helper()
+	if _, err := h.q.UpdateTaskLabel(context.Background(), gen.UpdateTaskLabelParams{
+		Label: "ready", ID: taskID,
+	}); err != nil {
+		t.Fatalf("move task to ready: %v", err)
+	}
+}
+
 // seedRunWithCost inserts a completed agent_runs row for taskID under
 // agentConfigID carrying the given cost_usd, standing in for a run that
 // already happened before the sweep a test observes. Counted by
-// SumTaskCost/effectiveBudget regardless of status (see runs.sql).
+// SumTaskCost/effectiveBudget regardless of status (see runs.sql). It then
+// moves the task onto the "ready" pickup label as the final step, so the
+// dispatcher's first sweep of the task always sees this cost already recorded
+// (see seedTaskWithBudgets for the race this closes).
 func (h *e2eHarness) seedRunWithCost(t *testing.T, taskID, agentConfigID string, cost float64) {
 	t.Helper()
 	ctx := context.Background()
@@ -72,6 +97,7 @@ func (h *e2eHarness) seedRunWithCost(t *testing.T, taskID, agentConfigID string,
 	}); err != nil {
 		t.Fatalf("complete prior run: %v", err)
 	}
+	h.seedReady(t, taskID)
 }
 
 // TestE2E_CostBudget covers the dispatcher's pre-dispatch cost-budget guard:
@@ -87,6 +113,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		h := newE2EHarness(t, fp)
 		wfID := seedE2EWorkflow(t, h.q)
 		taskID, _ := h.seedTaskWithBudgets(t, wfID, 0, 0)
+		h.seedReady(t, taskID)
 
 		h.pollTask(t, taskID, func(tk gen.Task) bool {
 			return tk.Label == "next"
