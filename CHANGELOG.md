@@ -19,6 +19,8 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-21
+
 ### Added
 - **Board MCP server (`mcp-board`) for creating tickets from a chat.** A new MCP
   server lets you work through a plan in a chat and have it create tickets on the
