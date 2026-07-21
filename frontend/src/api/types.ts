@@ -3417,39 +3417,41 @@ export interface components {
     schemas: {
         /** @description The provider/model/API-key (env vars) triple, split out of AgentConfig so it can be shared/reused by chat sessions and agent configs alike. */
         ProviderConfig: {
-            id?: string;
-            name?: string;
+            id: string;
+            name: string;
             /** @enum {string} */
-            provider?: "claude" | "anthropic" | "llm" | "opencode" | "qwen_code" | "gemini_cli" | "codex_cli";
-            model?: string;
+            provider: "claude" | "anthropic" | "llm" | "opencode" | "qwen_code" | "gemini_cli" | "codex_cli";
+            model: string;
             /** @description JSON object of environment variables (e.g. API keys) merged into the provider CLI's environment */
-            env?: string;
-            created_at?: string;
-            updated_at?: string;
+            env: string;
+            created_at: string;
+            updated_at: string;
         };
         ChatSession: {
-            id?: string;
-            repo_id?: string;
-            provider_config_id?: string;
-            title?: string;
+            id: string;
+            repo_id: string;
+            provider_config_id: string;
+            title: string;
             /** @description Provider-side conversation id, resumed between turns; empty until the first turn completes */
-            provider_session_id?: string;
-            worktree_path?: string;
-            created_at?: string;
-            updated_at?: string;
+            provider_session_id: string;
+            worktree_path: string;
+            created_at: string;
+            updated_at: string;
         };
         Task: {
-            id?: string;
-            title?: string;
-            description?: string;
+            id: string;
+            title: string;
+            description: string;
             /** @enum {string} */
-            type?: "feature" | "bug" | "chore" | "spike";
-            label?: string;
-            repo_id?: string;
-            workflow_id?: string;
+            type: "feature" | "bug" | "chore" | "spike";
+            label: string;
+            repo_id: string;
+            workflow_id: string;
             current_agent_run_id?: string | null;
             active_agent_run_id?: string | null;
             agent_notes?: string;
+            /** @description Relative paths of files uploaded with the task (served under /uploads/). Emitted as an array; empty when the task has none. */
+            attachments?: string[];
             /** @description Per-task git branch (empty until first dispatch) */
             branch?: string;
             /** @description Path to the task's git worktree */
@@ -3507,119 +3509,126 @@ export interface components {
             /** @description Derived, read-time 0-based position in the current agent-pickup queue (priority DESC, created_at ASC) among tasks eligible for dispatch, computed only when the worker pool has no free slot (all MAX_WORKERS busy). Null/absent when the task is not currently pickup-eligible (e.g. blocked, paused, archived, or not on an agent-triggerable label) or when the pool has idle capacity and the task would be dispatched immediately. */
             queue_position?: number | null;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
         };
         /** @description One end of a task dependency edge (a blocker or a dependent). */
         DependencyEdge: {
             /** @description The other task in the edge */
-            task_id?: string;
-            title?: string;
-            label?: string;
-            archived?: boolean;
+            task_id: string;
+            title: string;
+            label: string;
+            archived: boolean;
             /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived). Not meaningful for dependents (always false there). */
-            satisfied?: boolean;
+            satisfied: boolean;
         };
         /** @description Both directions of a task's dependency edges. */
         TaskDependencies: {
             /** @description Tasks this task depends on (its blockers), newest first. */
-            blocked_by?: components["schemas"]["DependencyEdge"][];
+            blocked_by: components["schemas"]["DependencyEdge"][];
             /** @description Tasks that depend on this task, newest first. */
-            blocking?: components["schemas"]["DependencyEdge"][];
+            blocking: components["schemas"]["DependencyEdge"][];
             /** @description Count of unsatisfied blockers */
-            blocked_by_count?: number;
+            blocked_by_count: number;
             /** @description Count of dependents */
-            blocking_count?: number;
+            blocking_count: number;
         };
         /** @description Reusable pre-filled title/description/type for recurring shapes of work (e.g. "upgrade dependency X", "fix flaky test"). Applied in the new-task form; creating a task from a template just pre-fills fields. */
         TaskTemplate: {
-            id?: string;
+            id: string;
             /** @description Unique display name */
-            name?: string;
-            title?: string;
-            description?: string;
+            name: string;
+            title: string;
+            description: string;
             /** @enum {string} */
-            type?: "feature" | "bug" | "chore" | "spike";
+            type: "feature" | "bug" | "chore" | "spike";
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
         };
         /** @description Recurring instantiation of a task_template against a repo on a cron expression. A sweep fires due, enabled schedules and creates a task (source="schedule"), skipping firing while an open task from a prior firing of the same schedule still exists. target_label defaults to "not_ready" (a human promotes the created task); setting it to a live agent label instead makes the schedule fully unattended — pair with a cost budget on the template's agent config as a safety net. */
         TaskSchedule: {
-            id?: string;
-            template_id?: string;
-            repo_id?: string;
+            id: string;
+            template_id: string;
+            repo_id: string;
             /** @description Standard 5-field cron: minute hour day-of-month month day-of-week */
-            cron_expr?: string;
+            cron_expr: string;
             /** @description Label the created task starts on; default 'not_ready' */
-            target_label?: string;
-            enabled?: boolean;
+            target_label: string;
+            enabled: boolean;
             /** Format: date-time */
-            last_run_at?: string | null;
+            last_run_at: string | null;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
         };
         /** @description DB-backed settings for the automatic local-backup scheduler (see docs/backup.md). Changes take effect on the scheduler's next scheduled run without a restart. Whether the scheduler is enabled at all remains a deploy-time-only choice (BACKUP_DIR). */
         BackupSettings: {
             /** @description How often to write a new snapshot, in seconds. Minimum 600 (10 minutes). Default 86400 (once a day). */
-            interval_seconds?: number;
+            interval_seconds: number;
             /** @description Number of most-recent snapshots to retain before pruning older ones. Minimum 1. Default 7. */
-            keep?: number;
+            keep: number;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
         };
         WorkflowLabel: {
-            id?: string;
-            workflow_id?: string;
-            name?: string;
-            color?: string;
-            sort_order?: number;
-            agent_ignore?: number;
-            is_terminal?: number;
+            id: string;
+            workflow_id: string;
+            name: string;
+            color: string;
+            sort_order: number;
+            agent_ignore: number;
+            is_terminal: number;
         };
         WorkflowTransition: {
-            id?: string;
-            workflow_id?: string;
-            from_label?: string;
-            to_label?: string;
+            id: string;
+            workflow_id: string;
+            from_label: string;
+            to_label: string;
             /** @enum {string} */
-            trigger_type?: "agent" | "human" | "both";
+            trigger_type: "agent" | "human" | "both";
             agent_config_id?: string | null;
+            /**
+             * @description For an agent transition, which run outcome takes this edge: success, failure, or either (the default when unset/null).
+             * @enum {string|null}
+             */
+            path?: "success" | "failure" | "either" | null;
         };
         Workflow: {
-            id?: string;
-            name?: string;
-            description?: string;
-            labels?: components["schemas"]["WorkflowLabel"][];
-            transitions?: components["schemas"]["WorkflowTransition"][];
+            id: string;
+            name: string;
+            description: string;
+            labels: components["schemas"]["WorkflowLabel"][];
+            transitions: components["schemas"]["WorkflowTransition"][];
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
         };
         AgentConfig: {
-            id?: string;
-            name?: string;
+            id: string;
+            name: string;
             /** @description References a ProviderConfig (provider/model/env), which is created and managed separately via /provider-configs and may be shared with other agent configs or chat sessions. */
-            provider_config_id?: string;
+            provider_config_id: string;
             /** @description The resolved provider config for provider_config_id, embedded on responses for convenience so clients don't need a second fetch. Absent from request bodies. */
             readonly provider_config?: components["schemas"]["ProviderConfig"];
-            system_prompt?: string;
+            /** @description Whether the dispatcher considers this config for its labels. Sent as a boolean on responses (the stored 0/1 is normalized); accepted as boolean or 0/1 on write. Absent from create request bodies (new configs start enabled unless a label conflict disables them). */
+            enabled: boolean;
+            system_prompt: string;
             /** @description JSON array of label names */
-            labels?: string;
-            max_tokens?: number;
-            timeout_secs?: number;
-            max_turns?: number;
+            labels: string;
+            max_tokens: number;
+            timeout_secs: number;
+            max_turns: number;
             /** @description Dispatch failover order among configs sharing a label: lower is tried first; ties broken by newest created_at. At dispatch the first non-rate-limited match wins, so a higher-priority-value config acts as a backup when the primary is rate-limit/usage-blocked. Default 0. */
-            priority?: number;
+            priority: number;
             /** @description Number of automatic consecutive retries allowed for a task after a transient provider error (rate limit, network blip, upstream 5xx) before it is left failed / escalated to waiting_human for a human to intervene. 0 disables auto-retry. Default 3. */
-            max_retries?: number;
+            max_retries: number;
             /** @description Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (base * 2^attempt, capped at 10 minutes) is applied on top of this base. Default 30. */
-            retry_backoff_secs?: number;
+            retry_backoff_secs: number;
             /** @description Whether new runs for a task resume the previous run's provider session (claude provider only; other providers ignore it). On by default. Off means every run starts cold — useful for stages that should look at the work with fresh eyes (e.g. agent review). */
             resume_sessions?: boolean;
             /** @description Whether this config's runs may decompose their task into subtasks via the create_subtask MCP tool (claude/qwen_code only). Off by default — a deliberate capability granted to a specific agent (the planner). */
@@ -3638,31 +3647,31 @@ export interface components {
              * Format: double
              * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost so far (across every run for the task, any status). 0 disables the cap (unlimited). Default 0. If the task itself also has a nonzero max_cost_usd, the effective budget is the lower of the two. NOT a mid-run kill switch — no provider supports killing an in-flight run at a cost threshold; the guard only blocks the *next* dispatch once the budget is already exhausted. See docs/agents.md#cost-budgets.
              */
-            max_cost_usd?: number;
+            max_cost_usd: number;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
         };
         ModelList: {
-            provider?: string;
-            default_model?: string;
-            models?: string[];
+            provider: string;
+            default_model: string;
+            models: string[];
         };
         /** @description Claude plugins and user-level MCP servers discovered on the server's Claude home directory (~/.claude/plugins/installed_plugins.json and the global mcpServers key in ~/.claude.json), for per-agent-config selection. */
         ClaudeOptions: {
-            plugins?: {
+            plugins: {
                 /** @description "<name>@<marketplace>" */
-                id?: string;
-                name?: string;
-                marketplace?: string;
+                id: string;
+                name: string;
+                marketplace: string;
             }[];
-            mcp_servers?: string[];
+            mcp_servers: string[];
         };
         Repo: {
-            id?: string;
-            name?: string;
-            path?: string;
+            id: string;
+            name: string;
+            path: string;
             remote_url?: string | null;
             workflow_id?: string | null;
             /** @description 1 = open GitHub issues matching issue_sync_label are periodically imported as tasks (requires remote_url and workflow_id). 0 = off. */
@@ -3679,42 +3688,46 @@ export interface components {
             /** @description Human-readable failure detail when clone_status is 'error'. */
             clone_error?: string;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
         };
         /** @description A persistent, file/line-anchored inline review comment on a task's diff. Open comments are injected into every agent run's prompt until resolved (by an agent via the MCP resolve_comment tool, or by a human). */
         ReviewComment: {
-            id?: string;
-            task_id?: string;
-            file_path?: string;
+            id: string;
+            task_id: string;
+            file_path: string;
             /** @enum {string} */
-            side?: "old" | "new";
-            start_line?: number;
-            end_line?: number;
-            quoted_text?: string;
-            body?: string;
+            side: "old" | "new";
+            start_line: number;
+            end_line: number;
+            quoted_text: string;
+            body: string;
             /** @enum {string} */
-            status?: "open" | "resolved";
+            status: "open" | "resolved";
             resolution_note?: string | null;
             /** @description Run that resolved it; null when human-resolved */
             resolved_by_run_id?: string | null;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
         };
         AgentRun: {
-            id?: string;
-            task_id?: string;
-            agent_config_id?: string;
+            id: string;
+            task_id: string;
+            agent_config_id: string;
             /** @enum {string} */
-            status?: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled";
+            status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled";
             feedback?: string | null;
+            /** @description Free-form info the agent stored for this run (via the MCP store_info tool); null when none. */
+            stored_info?: string | null;
+            /** @description Human/agent notes attached to the run; null when none. */
+            notes?: string | null;
             /** Format: date-time */
             started_at?: string | null;
             /** Format: date-time */
             completed_at?: string | null;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             /** @description Total input/prompt tokens consumed across the run (summed across all turns of a multi-turn agentic loop). 0 if the provider does not report usage (e.g. opencode currently). */
             input_tokens?: number;
             /** @description Total output/completion tokens consumed across the run. */
@@ -3729,114 +3742,114 @@ export interface components {
         };
         /** @description One row of a task's label-transition audit trail (task_label_history), oldest first. */
         TaskLabelHistory: {
-            id?: string;
-            task_id?: string;
-            from_label?: string | null;
-            to_label?: string;
+            id: string;
+            task_id: string;
+            from_label: string | null;
+            to_label: string;
             /** @enum {string} */
-            trigger?: "agent" | "human" | "subtasks_complete";
+            trigger: "agent" | "human" | "subtasks_complete";
             /** @description For human-triggered transitions, the resolved named-token actor (see BearerAuth / API_TOKENS) — null/empty when the legacy shared API_TOKEN or no auth was used. For agent-triggered transitions, the agent run ID. */
-            actor_id?: string | null;
-            note?: string | null;
+            actor_id: string | null;
+            note: string | null;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
         };
         AgentLog: {
-            id?: string;
-            agent_run_id?: string;
+            id: string;
+            agent_run_id: string;
             /** Format: date-time */
-            timestamp?: string;
+            timestamp: string;
             /** @enum {string} */
-            type?: "stdout" | "stderr" | "system" | "tool_call" | "tool_result";
-            content?: string;
+            type: "stdout" | "stderr" | "system" | "tool_call" | "tool_result";
+            content: string;
         };
         Dashboard: {
-            label_counts?: {
+            label_counts: {
                 [key: string]: number;
             };
-            active_agents?: {
-                run_id?: string;
-                task_id?: string;
-                task_title?: string;
-                agent_name?: string;
-                started_at?: string;
+            active_agents: {
+                run_id: string;
+                task_id: string;
+                task_title: string;
+                agent_name: string;
+                started_at: string;
             }[];
-            intervention_queue?: {
-                run_id?: string;
-                task_id?: string;
-                task_title?: string;
-                message?: string | null;
-                created_at?: string;
+            intervention_queue: {
+                run_id: string;
+                task_id: string;
+                task_title: string;
+                message: string | null;
+                created_at: string;
             }[];
             /** @description Aggregate token/cost usage across all runs in a terminal state (completed, failed, waiting_human). */
-            cost_total?: {
-                input_tokens?: number;
-                output_tokens?: number;
+            cost_total: {
+                input_tokens: number;
+                output_tokens: number;
                 /** Format: double */
-                cost_usd?: number;
+                cost_usd: number;
             };
             /** @description Per-provider breakdown of token/cost usage, sorted by cost descending. Runs whose agent_config was later deleted are excluded (agent_config_id is set NULL on delete, so they can no longer be attributed to a provider). */
-            cost_by_provider?: {
-                provider?: string;
-                input_tokens?: number;
-                output_tokens?: number;
+            cost_by_provider: {
+                provider: string;
+                input_tokens: number;
+                output_tokens: number;
                 /** Format: double */
-                cost_usd?: number;
-                run_count?: number;
+                cost_usd: number;
+                run_count: number;
             }[];
             /** @description Per-agent-config run analytics, sorted by run_count descending. Only runs in a terminal status (completed/failed/waiting_human) with a still-existing agent_config are included, same filtering as cost_by_provider. Two caveats: (1) avg_turns_to_done and the retry fields are attributed entirely to a task's *last* run's agent config, not proportionally split across every config a task passed through; (2) avg_transient_retries and tasks_with_retries are a live snapshot of tasks.transient_retry_count, which resets to 0 on success or escalation to a human — not a lifetime/historical retry count. */
-            agent_config_stats?: {
-                agent_config_id?: string;
-                agent_name?: string;
-                provider?: string;
-                run_count?: number;
-                completed_count?: number;
-                failed_count?: number;
-                waiting_human_count?: number;
+            agent_config_stats: {
+                agent_config_id: string;
+                agent_name: string;
+                provider: string;
+                run_count: number;
+                completed_count: number;
+                failed_count: number;
+                waiting_human_count: number;
                 /** Format: double */
-                success_rate_percent?: number;
+                success_rate_percent: number;
                 /** Format: double */
-                avg_duration_secs?: number;
+                avg_duration_secs: number;
                 /** Format: double */
-                p90_duration_secs?: number;
+                p90_duration_secs: number;
                 /** Format: double */
-                avg_turns_to_done?: number;
+                avg_turns_to_done: number;
                 /** Format: double */
-                avg_transient_retries?: number;
-                tasks_with_retries?: number;
-                input_tokens?: number;
-                output_tokens?: number;
+                avg_transient_retries: number;
+                tasks_with_retries: number;
+                input_tokens: number;
+                output_tokens: number;
                 /** Format: double */
-                cost_usd?: number;
+                cost_usd: number;
             }[];
             /** @description Daily token/cost/run-count rollup, most recent day first, capped at the last 30 days with recorded activity. Same terminal-status filtering as cost_total. */
-            cost_by_day?: {
+            cost_by_day: {
                 /** @description ISO date (YYYY-MM-DD) */
-                day?: string;
-                input_tokens?: number;
-                output_tokens?: number;
+                day: string;
+                input_tokens: number;
+                output_tokens: number;
                 /** Format: double */
-                cost_usd?: number;
-                run_count?: number;
+                cost_usd: number;
+                run_count: number;
             }[];
             /** @description Top 20 tasks by cumulative recorded cost. Unlike cost_total / cost_by_provider / agent_config_stats, this includes runs in EVERY status (not just terminal ones) — a cost rollup should reflect every run that ran, including ones still in flight or that failed, matching the same filtering the dispatcher's cost-budget guard uses (see docs/agents.md#cost-budgets). */
-            cost_by_task?: {
-                task_id?: string;
-                task_title?: string;
-                input_tokens?: number;
-                output_tokens?: number;
+            cost_by_task: {
+                task_id: string;
+                task_title: string;
+                input_tokens: number;
+                output_tokens: number;
                 /** Format: double */
-                cost_usd?: number;
+                cost_usd: number;
             }[];
             /** @description Live Claude account rate-limit usage from Anthropic's OAuth usage endpoint (5-hour rolling window + weekly window). `available` is false when the server has no Claude OAuth credentials or the fetch failed; other fields are zero/absent in that case. */
-            claude_usage?: {
-                available?: boolean;
+            claude_usage: {
+                available: boolean;
                 /** Format: double */
-                five_hour_percent?: number;
+                five_hour_percent: number;
                 /** Format: date-time */
                 five_hour_resets_at?: string | null;
                 /** Format: double */
-                weekly_percent?: number;
+                weekly_percent: number;
                 /** Format: date-time */
                 weekly_resets_at?: string | null;
             };
@@ -3858,7 +3871,7 @@ export interface components {
             hint?: string;
         };
         Error: {
-            error?: string;
+            error: string;
         };
     };
     responses: never;

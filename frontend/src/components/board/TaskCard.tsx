@@ -134,7 +134,7 @@ export default function TaskCard({
           />
           <select
             value={editType}
-            onChange={(e) => setEditType(e.target.value)}
+            onChange={(e) => setEditType(e.target.value as Task['type'])}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
             className="w-full text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-slate-100 focus:outline-none focus:border-indigo-400"
@@ -145,7 +145,7 @@ export default function TaskCard({
           </select>
           <select
             value={editPriority}
-            onChange={(e) => setEditPriority(Number(e.target.value))}
+            onChange={(e) => setEditPriority(Number(e.target.value) as Task['priority'])}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
             className="w-full text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-slate-100 focus:outline-none focus:border-indigo-400"

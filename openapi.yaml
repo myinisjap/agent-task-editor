@@ -30,6 +30,7 @@ components:
           type: string
         updated_at:
           type: string
+      required: [id, name, provider, model, env, created_at, updated_at]
     ChatSession:
       type: object
       properties:
@@ -50,6 +51,7 @@ components:
           type: string
         updated_at:
           type: string
+      required: [id, repo_id, provider_config_id, title, provider_session_id, worktree_path, created_at, updated_at]
     Task:
       type: object
       properties:
@@ -63,6 +65,12 @@ components:
         current_agent_run_id: { type: string, nullable: true }
         active_agent_run_id:  { type: string, nullable: true }
         agent_notes: { type: string }
+        attachments:
+          type: array
+          items: { type: string }
+          description: >
+            Relative paths of files uploaded with the task (served under
+            /uploads/). Emitted as an array; empty when the task has none.
         branch:        { type: string, description: "Per-task git branch (empty until first dispatch)" }
         worktree_path: { type: string, description: "Path to the task's git worktree" }
         base_ref:      { type: string, description: "Ref the branch forked from" }
@@ -175,6 +183,7 @@ components:
             capacity and the task would be dispatched immediately.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
+      required: [id, title, description, type, label, repo_id, workflow_id, created_at, updated_at]
 
     DependencyEdge:
       type: object
@@ -189,6 +198,7 @@ components:
           description: >
             For a blocker: whether the edge is satisfied (the blocker is terminal
             or archived). Not meaningful for dependents (always false there).
+      required: [task_id, title, label, archived, satisfied]
 
     TaskDependencies:
       type: object
@@ -204,6 +214,7 @@ components:
           description: Tasks that depend on this task, newest first.
         blocked_by_count: { type: integer, description: "Count of unsatisfied blockers" }
         blocking_count:   { type: integer, description: "Count of dependents" }
+      required: [blocked_by, blocking, blocked_by_count, blocking_count]
 
     TaskTemplate:
       type: object
@@ -219,6 +230,7 @@ components:
         type:        { type: string, enum: [feature, bug, chore, spike] }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
+      required: [id, name, title, description, type, created_at, updated_at]
 
     TaskSchedule:
       type: object
@@ -240,6 +252,7 @@ components:
         last_run_at:   { type: string, format: date-time, nullable: true }
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
+      required: [id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at]
 
     BackupSettings:
       type: object
@@ -252,6 +265,7 @@ components:
         interval_seconds: { type: integer, description: "How often to write a new snapshot, in seconds. Minimum 600 (10 minutes). Default 86400 (once a day)." }
         keep:             { type: integer, description: "Number of most-recent snapshots to retain before pruning older ones. Minimum 1. Default 7." }
         updated_at:       { type: string, format: date-time }
+      required: [interval_seconds, keep, updated_at]
 
     WorkflowLabel:
       type: object
@@ -263,6 +277,7 @@ components:
         sort_order:   { type: integer }
         agent_ignore: { type: integer }
         is_terminal:  { type: integer }
+      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal]
 
     WorkflowTransition:
       type: object
@@ -273,6 +288,14 @@ components:
         to_label:         { type: string }
         trigger_type:     { type: string, enum: [agent, human, both] }
         agent_config_id:  { type: string, nullable: true }
+        path:
+          type: string
+          enum: [success, failure, either]
+          nullable: true
+          description: >
+            For an agent transition, which run outcome takes this edge:
+            success, failure, or either (the default when unset/null).
+      required: [id, workflow_id, from_label, to_label, trigger_type]
 
     Workflow:
       type: object
@@ -284,6 +307,7 @@ components:
         transitions: { type: array, items: { $ref: "#/components/schemas/WorkflowTransition" } }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
+      required: [id, name, description, labels, transitions, created_at, updated_at]
 
     AgentConfig:
       type: object
@@ -304,6 +328,13 @@ components:
             The resolved provider config for provider_config_id, embedded on
             responses for convenience so clients don't need a second fetch.
             Absent from request bodies.
+        enabled:
+          type: boolean
+          description: >
+            Whether the dispatcher considers this config for its labels. Sent
+            as a boolean on responses (the stored 0/1 is normalized); accepted
+            as boolean or 0/1 on write. Absent from create request bodies
+            (new configs start enabled unless a label conflict disables them).
         system_prompt: { type: string }
         labels:        { type: string, description: "JSON array of label names" }
         max_tokens:    { type: integer }
@@ -388,6 +419,22 @@ components:
             docs/agents.md#cost-budgets.
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
+      required:
+        - id
+        - name
+        - provider_config_id
+        - enabled
+        - system_prompt
+        - labels
+        - max_tokens
+        - timeout_secs
+        - max_turns
+        - priority
+        - max_retries
+        - retry_backoff_secs
+        - max_cost_usd
+        - created_at
+        - updated_at
 
     ModelList:
       type: object
@@ -395,6 +442,7 @@ components:
         provider:      { type: string }
         default_model: { type: string }
         models:        { type: array, items: { type: string } }
+      required: [provider, default_model, models]
 
     ClaudeOptions:
       type: object
@@ -411,9 +459,11 @@ components:
               id:          { type: string, description: "\"<name>@<marketplace>\"" }
               name:        { type: string }
               marketplace: { type: string }
+            required: [id, name, marketplace]
         mcp_servers:
           type: array
           items: { type: string }
+      required: [plugins, mcp_servers]
 
     Repo:
       type: object
@@ -454,6 +504,7 @@ components:
           type: string
           description: Human-readable failure detail when clone_status is 'error'.
         created_at:  { type: string, format: date-time }
+      required: [id, name, path, created_at]
 
     ReviewComment:
       type: object
@@ -475,6 +526,7 @@ components:
         resolved_by_run_id: { type: string, nullable: true, description: "Run that resolved it; null when human-resolved" }
         created_at:         { type: string, format: date-time }
         updated_at:         { type: string, format: date-time }
+      required: [id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, created_at, updated_at]
 
     AgentRun:
       type: object
@@ -484,6 +536,8 @@ components:
         agent_config_id:  { type: string }
         status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled] }
         feedback:         { type: string, nullable: true }
+        stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }
+        notes:            { type: string, nullable: true, description: "Human/agent notes attached to the run; null when none." }
         started_at:       { type: string, format: date-time, nullable: true }
         completed_at:     { type: string, format: date-time, nullable: true }
         created_at:       { type: string, format: date-time }
@@ -513,6 +567,7 @@ components:
             task under the same agent config resumes it (claude provider only,
             unless the config's resume_sessions is off). Empty for
             providers/runs without a session.
+      required: [id, task_id, agent_config_id, status, created_at]
 
     TaskLabelHistory:
       type: object
@@ -535,6 +590,7 @@ components:
             transitions, the agent run ID.
         note:       { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+      required: [id, task_id, from_label, to_label, trigger, actor_id, note, created_at]
 
     AgentLog:
       type: object
@@ -544,6 +600,7 @@ components:
         timestamp:    { type: string, format: date-time }
         type:         { type: string, enum: [stdout, stderr, system, tool_call, tool_result] }
         content:      { type: string }
+      required: [id, agent_run_id, timestamp, type, content]
 
     Dashboard:
       type: object
@@ -561,6 +618,7 @@ components:
               task_title: { type: string }
               agent_name: { type: string }
               started_at: { type: string }
+            required: [run_id, task_id, task_title, agent_name, started_at]
         intervention_queue:
           type: array
           items:
@@ -571,6 +629,7 @@ components:
               task_title: { type: string }
               message:    { type: string, nullable: true }
               created_at: { type: string }
+            required: [run_id, task_id, task_title, message, created_at]
         cost_total:
           type: object
           description: >-
@@ -580,6 +639,7 @@ components:
             input_tokens:  { type: integer }
             output_tokens: { type: integer }
             cost_usd:      { type: number, format: double }
+          required: [input_tokens, output_tokens, cost_usd]
         cost_by_provider:
           type: array
           description: >-
@@ -595,6 +655,7 @@ components:
               output_tokens: { type: integer }
               cost_usd:      { type: number, format: double }
               run_count:     { type: integer }
+            required: [provider, input_tokens, output_tokens, cost_usd, run_count]
         agent_config_stats:
           type: array
           description: >-
@@ -627,6 +688,23 @@ components:
               input_tokens:           { type: integer }
               output_tokens:          { type: integer }
               cost_usd:               { type: number, format: double }
+            required:
+              - agent_config_id
+              - agent_name
+              - provider
+              - run_count
+              - completed_count
+              - failed_count
+              - waiting_human_count
+              - success_rate_percent
+              - avg_duration_secs
+              - p90_duration_secs
+              - avg_turns_to_done
+              - avg_transient_retries
+              - tasks_with_retries
+              - input_tokens
+              - output_tokens
+              - cost_usd
         cost_by_day:
           type: array
           description: >-
@@ -641,6 +719,7 @@ components:
               output_tokens: { type: integer }
               cost_usd:      { type: number, format: double }
               run_count:     { type: integer }
+            required: [day, input_tokens, output_tokens, cost_usd, run_count]
         cost_by_task:
           type: array
           description: >-
@@ -658,6 +737,7 @@ components:
               input_tokens:  { type: integer }
               output_tokens: { type: integer }
               cost_usd:      { type: number, format: double }
+            required: [task_id, task_title, input_tokens, output_tokens, cost_usd]
         claude_usage:
           type: object
           description: >-
@@ -671,6 +751,17 @@ components:
             five_hour_resets_at: { type: string, format: date-time, nullable: true }
             weekly_percent:      { type: number, format: double }
             weekly_resets_at:    { type: string, format: date-time, nullable: true }
+          required: [available, five_hour_percent, weekly_percent]
+      required:
+        - label_counts
+        - active_agents
+        - intervention_queue
+        - cost_total
+        - cost_by_provider
+        - agent_config_stats
+        - cost_by_day
+        - cost_by_task
+        - claude_usage
 
     ProviderCheck:
       type: object
@@ -700,6 +791,7 @@ components:
       type: object
       properties:
         error: { type: string }
+      required: [error]
 
 paths:
   /tasks:

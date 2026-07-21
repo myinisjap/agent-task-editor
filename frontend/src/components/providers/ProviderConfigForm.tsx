@@ -48,7 +48,7 @@ export default function ProviderConfigForm({
         <Field label="Provider">
           <select
             value={form.provider}
-            onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
+            onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value as FormState['provider'] }))}
             className="input"
           >
             {PROVIDERS.map((p) => (
