@@ -294,7 +294,8 @@ type runOptions struct {
 
 // startRun provisions the task's worktree if needed, creates the run row,
 // marks it as the task's active run, and submits the job to the pool. Shared
-// by the sweep dispatch path and DispatchReply.
+// by the sweep dispatch path and DispatchReply. It reads as a sequence of
+// phases, each delegated to a helper below.
 func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.AgentConfig, opts runOptions) (string, error) {
 	log := slog.With("component", "dispatcher", "task_id", t.ID)
 
@@ -303,95 +304,27 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", fmt.Errorf("get repo: %w", err)
 	}
 
-	// Each task works in its own git worktree on its own branch so concurrent
-	// agents on the same repo don't conflict. Reuse the task's worktree across
-	// re-runs; provision it on first dispatch. A subtask's branch is cut from its
-	// parent's branch (not the repo base) so its work merges back cleanly.
-	workDir := t.WorktreePath
-	if workDir == "" {
-		var wtPath, branch, baseRef string
-		var perr error
-		if base := d.parentBranchBase(ctx, t); base != "" {
-			wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
-		} else {
-			wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
-		}
-		if perr != nil {
-			return "", fmt.Errorf("provision worktree: %w", perr)
-		}
-		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
-			Branch:       branch,
-			WorktreePath: wtPath,
-			BaseRef:      baseRef,
-			ID:           t.ID,
-		}); err != nil {
-			return "", fmt.Errorf("persist worktree: %w", err)
-		}
-		workDir = wtPath
+	workDir, err := d.ensureWorktree(ctx, t, repo)
+	if err != nil {
+		return "", err
 	}
 
 	runID := uuid.NewString()
 	log = log.With("run_id", runID)
+
+	agentCfg, resumeSessionID, err := d.resolveAgentConfig(ctx, t, matched)
+	if err != nil {
+		return "", err
+	}
+
 	var feedback *string
 	if t.CurrentAgentRunID != nil {
 		prior, _ := d.q.GetAgentRun(ctx, *t.CurrentAgentRunID)
 		feedback = prior.Feedback
 	}
 
-	var agentNotes *string
-	if t.AgentNotes != "" {
-		agentNotes = &t.AgentNotes
-	}
-
-	pc, err := d.q.GetProviderConfig(ctx, matched.ProviderConfigID)
-	if err != nil {
-		return "", fmt.Errorf("get provider config: %w", err)
-	}
-	agentCfg := toAgentConfig(matched, pc)
-
-	// Resume the previous run's provider session, when there is one and the
-	// config hasn't opted out. Only the claude provider honors this today; the
-	// runner falls back to a cold start if the session no longer exists.
-	var resumeSessionID string
-	if agentCfg.Provider == "claude" && agentCfg.ResumeSessions {
-		if sid, serr := d.q.GetLatestTaskSession(ctx, gen.GetLatestTaskSessionParams{
-			TaskID:        t.ID,
-			AgentConfigID: &matched.ID,
-		}); serr == nil && sid != "" {
-			resumeSessionID = sid
-		}
-	}
-
-	// Create the run row and mark the task's active run in a single transaction.
-	// These two writes must be atomic: if the run were created but the task never
-	// pointed at it (a crash or error between the statements), an orphaned
-	// 'pending' run would linger with nothing gating re-dispatch. Committing them
-	// together means either both land or neither does.
-	tx, err := d.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", fmt.Errorf("begin tx: %w", err)
-	}
-	tq := d.q.WithTx(tx)
-	if _, err := tq.CreateAgentRun(ctx, gen.CreateAgentRunParams{
-		ID:            runID,
-		TaskID:        t.ID,
-		AgentConfigID: &matched.ID,
-		Feedback:      feedback,
-	}); err != nil {
-		_ = tx.Rollback()
-		return "", fmt.Errorf("create agent run: %w", err)
-	}
-	// Mark the task's active run so the next sweep skips it.
-	if err := tq.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-		CurrentAgentRunID: &runID,
-		ActiveAgentRunID:  &runID,
-		ID:                t.ID,
-	}); err != nil {
-		_ = tx.Rollback()
-		return "", fmt.Errorf("set task active run: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("commit run creation: %w", err)
+	if err := d.persistRunRow(ctx, t, matched, runID, feedback); err != nil {
+		return "", err
 	}
 
 	// Record the human's reply at the top of the new run's log so the
@@ -408,44 +341,12 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		}
 	}
 
-	// Parse task attachments from JSON.
-	var attachmentRels []string
-	if t.Attachments != "" && t.Attachments != "[]" {
-		_ = json.Unmarshal([]byte(t.Attachments), &attachmentRels)
-	}
+	attachmentRels, attachmentAbsPaths := d.resolveAttachments(t, workDir, log)
+	reviewComments := d.loadReviewComments(ctx, t.ID, log)
 
-	// Build absolute paths for attachments.
-	var attachmentAbsPaths []string
-	for _, rel := range attachmentRels {
-		if d.uploadDir != "" {
-			attachmentAbsPaths = append(attachmentAbsPaths, filepath.Join(d.uploadDir, rel))
-		}
-	}
-
-	// Copy attachment images into the worktree so the agent can read them via file tools.
-	if len(attachmentAbsPaths) > 0 && workDir != "" {
-		if err := copyAttachmentsToWorktree(workDir, attachmentAbsPaths); err != nil {
-			log.Warn("dispatcher: copy attachments to worktree", "err", err)
-		}
-	}
-
-	// Open inline diff review comments are injected into the prompt on every
-	// run until an agent (or a human) resolves them.
-	var reviewComments []ReviewComment
-	if rows, err := d.q.ListOpenTaskReviewComments(ctx, t.ID); err != nil {
-		log.Warn("dispatcher: list open review comments", "err", err)
-	} else {
-		for _, c := range rows {
-			reviewComments = append(reviewComments, ReviewComment{
-				ID:         c.ID,
-				FilePath:   c.FilePath,
-				Side:       c.Side,
-				StartLine:  c.StartLine,
-				EndLine:    c.EndLine,
-				QuotedText: c.QuotedText,
-				Body:       c.Body,
-			})
-		}
+	var agentNotes *string
+	if t.AgentNotes != "" {
+		agentNotes = &t.AgentNotes
 	}
 
 	transitions := d.buildTransitionHints(ctx, t.ID, t.WorkflowID, t.Label)
@@ -489,6 +390,142 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	metrics.DispatchedRunsTotal.Inc()
 	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", agentCfg.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled, "resume_session", resumeSessionID != "", "human_reply", opts.humanReply != nil)
 	return runID, nil
+}
+
+// ensureWorktree returns the task's working directory, provisioning a git
+// worktree on first dispatch and reusing it across re-runs. Each task works in
+// its own worktree on its own branch so concurrent agents on the same repo don't
+// conflict. A subtask's branch is cut from its parent's branch (not the repo
+// base) so its work merges back cleanly.
+func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Repo) (string, error) {
+	workDir := t.WorktreePath
+	if workDir == "" {
+		var wtPath, branch, baseRef string
+		var perr error
+		if base := d.parentBranchBase(ctx, t); base != "" {
+			wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
+		} else {
+			wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+		}
+		if perr != nil {
+			return "", fmt.Errorf("provision worktree: %w", perr)
+		}
+		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+			Branch:       branch,
+			WorktreePath: wtPath,
+			BaseRef:      baseRef,
+			ID:           t.ID,
+		}); err != nil {
+			return "", fmt.Errorf("persist worktree: %w", err)
+		}
+		workDir = wtPath
+	}
+	return workDir, nil
+}
+
+// resolveAgentConfig builds the effective agent config for the run and resolves
+// the provider session to resume, if any. Only the claude provider honors resume
+// today (and only when the config hasn't opted out); the runner falls back to a
+// cold start if the session no longer exists.
+func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig) (AgentConfig, string, error) {
+	pc, err := d.q.GetProviderConfig(ctx, matched.ProviderConfigID)
+	if err != nil {
+		return AgentConfig{}, "", fmt.Errorf("get provider config: %w", err)
+	}
+	agentCfg := toAgentConfig(matched, pc)
+
+	var resumeSessionID string
+	if agentCfg.Provider == "claude" && agentCfg.ResumeSessions {
+		if sid, serr := d.q.GetLatestTaskSession(ctx, gen.GetLatestTaskSessionParams{
+			TaskID:        t.ID,
+			AgentConfigID: &matched.ID,
+		}); serr == nil && sid != "" {
+			resumeSessionID = sid
+		}
+	}
+	return agentCfg, resumeSessionID, nil
+}
+
+// persistRunRow creates the run row and marks the task's active run in a single
+// transaction. These two writes must be atomic: if the run were created but the
+// task never pointed at it (a crash or error between the statements), an orphaned
+// 'pending' run would linger with nothing gating re-dispatch. Committing them
+// together means either both land or neither does.
+func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, runID string, feedback *string) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	tq := d.q.WithTx(tx)
+	if _, err := tq.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID:            runID,
+		TaskID:        t.ID,
+		AgentConfigID: &matched.ID,
+		Feedback:      feedback,
+	}); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("create agent run: %w", err)
+	}
+	// Mark the task's active run so the next sweep skips it.
+	if err := tq.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                t.ID,
+	}); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("set task active run: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit run creation: %w", err)
+	}
+	return nil
+}
+
+// resolveAttachments parses the task's attachment list, builds absolute paths
+// under the upload dir, and copies the images into the worktree so the agent can
+// read them via file tools. Returns the relative paths (for the run input) and
+// the absolute paths.
+func (d *Dispatcher) resolveAttachments(t gen.Task, workDir string, log *slog.Logger) ([]string, []string) {
+	var attachmentRels []string
+	if t.Attachments != "" && t.Attachments != "[]" {
+		_ = json.Unmarshal([]byte(t.Attachments), &attachmentRels)
+	}
+
+	var attachmentAbsPaths []string
+	for _, rel := range attachmentRels {
+		if d.uploadDir != "" {
+			attachmentAbsPaths = append(attachmentAbsPaths, filepath.Join(d.uploadDir, rel))
+		}
+	}
+
+	if len(attachmentAbsPaths) > 0 && workDir != "" {
+		if err := copyAttachmentsToWorktree(workDir, attachmentAbsPaths); err != nil {
+			log.Warn("dispatcher: copy attachments to worktree", "err", err)
+		}
+	}
+	return attachmentRels, attachmentAbsPaths
+}
+
+// loadReviewComments loads the task's open inline diff review comments. They are
+// injected into the prompt on every run until an agent (or a human) resolves them.
+func (d *Dispatcher) loadReviewComments(ctx context.Context, taskID string, log *slog.Logger) []ReviewComment {
+	var reviewComments []ReviewComment
+	if rows, err := d.q.ListOpenTaskReviewComments(ctx, taskID); err != nil {
+		log.Warn("dispatcher: list open review comments", "err", err)
+	} else {
+		for _, c := range rows {
+			reviewComments = append(reviewComments, ReviewComment{
+				ID:         c.ID,
+				FilePath:   c.FilePath,
+				Side:       c.Side,
+				StartLine:  c.StartLine,
+				EndLine:    c.EndLine,
+				QuotedText: c.QuotedText,
+				Body:       c.Body,
+			})
+		}
+	}
+	return reviewComments
 }
 
 // parentBranchBase returns the branch a subtask should fork from: its parent's
