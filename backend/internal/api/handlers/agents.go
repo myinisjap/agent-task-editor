@@ -14,6 +14,25 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
+// validateAgentConfigNumeric enforces the non-negative bounds shared by Create
+// and Update on the optional numeric fields. It writes the 400 response and
+// returns false on the first violation.
+func validateAgentConfigNumeric(w http.ResponseWriter, maxRetries, retryBackoffSecs *int64, maxCostUsd *float64) bool {
+	if maxRetries != nil && *maxRetries < 0 {
+		Err(w, http.StatusBadRequest, "max_retries must be >= 0")
+		return false
+	}
+	if retryBackoffSecs != nil && *retryBackoffSecs < 0 {
+		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
+		return false
+	}
+	if maxCostUsd != nil && *maxCostUsd < 0 {
+		Err(w, http.StatusBadRequest, "max_cost_usd must be >= 0")
+		return false
+	}
+	return true
+}
+
 // labelConflict returns the name of any enabled config (excluding excludeID) that shares a label.
 func (h *AgentsHandler) labelConflict(r *http.Request, labelsJSON string, excludeID string) (string, error) {
 	var newLabels []string
@@ -161,16 +180,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "unknown provider_config_id")
 		return
 	}
-	if body.MaxRetries != nil && *body.MaxRetries < 0 {
-		Err(w, http.StatusBadRequest, "max_retries must be >= 0")
-		return
-	}
-	if body.RetryBackoffSecs != nil && *body.RetryBackoffSecs < 0 {
-		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
-		return
-	}
-	if body.MaxCostUsd != nil && *body.MaxCostUsd < 0 {
-		Err(w, http.StatusBadRequest, "max_cost_usd must be >= 0")
+	if !validateAgentConfigNumeric(w, body.MaxRetries, body.RetryBackoffSecs, body.MaxCostUsd) {
 		return
 	}
 	if body.Labels == "" {
@@ -322,16 +332,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if body.MaxRetries != nil && *body.MaxRetries < 0 {
-		Err(w, http.StatusBadRequest, "max_retries must be >= 0")
-		return
-	}
-	if body.RetryBackoffSecs != nil && *body.RetryBackoffSecs < 0 {
-		Err(w, http.StatusBadRequest, "retry_backoff_secs must be >= 0")
-		return
-	}
-	if body.MaxCostUsd != nil && *body.MaxCostUsd < 0 {
-		Err(w, http.StatusBadRequest, "max_cost_usd must be >= 0")
+	if !validateAgentConfigNumeric(w, body.MaxRetries, body.RetryBackoffSecs, body.MaxCostUsd) {
 		return
 	}
 

@@ -62,16 +62,19 @@ func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, repo)
 }
 
+// createRepoBody is the decoded request payload for ReposHandler.Create.
+type createRepoBody struct {
+	Name                  string  `json:"name"`
+	Path                  string  `json:"path"`
+	RemoteURL             *string `json:"remote_url"`
+	WorkflowID            *string `json:"workflow_id"`
+	IssueSyncEnabled      bool    `json:"issue_sync_enabled"`
+	IssueSyncLabel        string  `json:"issue_sync_label"`
+	IssueWritebackEnabled bool    `json:"issue_writeback_enabled"`
+}
+
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name                  string  `json:"name"`
-		Path                  string  `json:"path"`
-		RemoteURL             *string `json:"remote_url"`
-		WorkflowID            *string `json:"workflow_id"`
-		IssueSyncEnabled      bool    `json:"issue_sync_enabled"`
-		IssueSyncLabel        string  `json:"issue_sync_label"`
-		IssueWritebackEnabled bool    `json:"issue_writeback_enabled"`
-	}
+	var body createRepoBody
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -101,50 +104,10 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// derive the destination path.
 	isClone := body.Path == ""
 	if isClone {
-		if remoteURL == "" {
-			Err(w, http.StatusBadRequest, "path or remote_url is required")
+		destPath, ok := h.resolveCloneDestination(w, remoteURL, body.Name)
+		if !ok {
 			return
 		}
-		if h.repoBaseDir == "" {
-			Err(w, http.StatusBadRequest, "repo_base_dir must be configured on the server to enable auto-cloning")
-			return
-		}
-
-		// Derive the clone destination from the parsed name (org/repo) or fall back
-		// to the last path segment of the remote URL.
-		cloneSubdir := body.Name
-		if cloneSubdir == "" {
-			// Name not yet known; use last segment of URL as subdir.
-			seg := remoteURL[strings.LastIndex(remoteURL, "/")+1:]
-			cloneSubdir = strings.TrimSuffix(seg, ".git")
-		}
-		destPath := filepath.Join(h.repoBaseDir, cloneSubdir)
-
-		// Validate destPath is within repoBaseDir BEFORE any filesystem operations
-		// to prevent path traversal via a crafted name or URL segment (e.g. "../../etc").
-		// The destination doesn't exist yet, so this is a lexical (cleaned-path)
-		// check; withinBaseDir's symlink resolution is for already-existing paths.
-		cleanDest := filepath.Clean(destPath)
-		cleanBase := filepath.Clean(h.repoBaseDir)
-		sep := string(os.PathSeparator)
-		if cleanDest != cleanBase && !strings.HasPrefix(cleanDest+sep, cleanBase+sep) {
-			Err(w, http.StatusBadRequest, "derived clone path is outside the allowed base directory")
-			return
-		}
-
-		// Only allow https:// and git@ schemes to avoid unexpected behaviour.
-		if !strings.HasPrefix(remoteURL, "https://") && !strings.HasPrefix(remoteURL, "git@") {
-			Err(w, http.StatusBadRequest, "remote_url must use https:// or git@ scheme")
-			return
-		}
-
-		// Refuse to clone over an existing directory — the async clone would fail
-		// anyway, and this keeps the error synchronous and clear.
-		if _, err := os.Stat(destPath); err == nil {
-			Err(w, http.StatusBadRequest, "clone destination already exists")
-			return
-		}
-
 		body.Path = destPath
 	}
 
@@ -154,41 +117,15 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For an existing local path, enforce the base-dir restriction (resolving
-	// symlinks, consistent with Update) and verify it's a git repository before
-	// persisting. The clone path skips both here: the directory doesn't exist yet
-	// and is created/verified asynchronously by cloneRepoAsync.
-	if !isClone {
-		if h.repoBaseDir != "" && !withinBaseDir(body.Path, h.repoBaseDir) {
-			Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
-			return
-		}
-		if err := exec.CommandContext(r.Context(), "git", "-C", body.Path, "rev-parse", "--git-dir").Run(); err != nil {
-			Err(w, http.StatusBadRequest, "path is not a git repository")
-			return
-		}
+	if !isClone && !h.validateExistingRepoPath(w, r, body.Path) {
+		return
 	}
 
-	issueSyncEnabled := int64(0)
-	if body.IssueSyncEnabled {
-		if remoteURL == "" {
-			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
-			return
-		}
-		if body.WorkflowID == nil || *body.WorkflowID == "" {
-			Err(w, http.StatusBadRequest, "issue sync requires a workflow (imported issues become tasks in that workflow)")
-			return
-		}
-		issueSyncEnabled = 1
+	issueSyncEnabled, issueWritebackEnabled, ok := resolveIssueFlags(w, &body, remoteURL)
+	if !ok {
+		return
 	}
-	issueWritebackEnabled := int64(0)
-	if body.IssueWritebackEnabled {
-		if remoteURL == "" {
-			Err(w, http.StatusBadRequest, "issue write-back requires a GitHub remote_url")
-			return
-		}
-		issueWritebackEnabled = 1
-	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                    uuid.NewString(),
 		Name:                  body.Name,
@@ -205,23 +142,120 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isClone {
-		// Mark the row 'cloning' and run the clone in the background so a slow
-		// clone of a large repo doesn't exceed the server's WriteTimeout and get
-		// cut off mid-clone. The UI shows a spinner and refreshes on the
-		// repo.clone_done / repo.clone_failed WS event.
-		if err := h.q.SetRepoCloneStatus(r.Context(), gen.SetRepoCloneStatusParams{
-			CloneStatus: "cloning",
-			CloneError:  "",
-			ID:          repo.ID,
-		}); err != nil {
-			middleware.LoggerFromContext(r.Context()).Warn("failed to mark repo cloning", "repo_id", repo.ID, "err", err)
-		}
-		repo.CloneStatus = "cloning"
-		go h.cloneRepoAsync(repo.ID, remoteURL, body.Path)
+		h.startAsyncClone(r, &repo, remoteURL, body.Path)
 	} else {
 		setClaudeTrust(r.Context(), body.Path)
 	}
 	JSON(w, http.StatusCreated, repo)
+}
+
+// resolveCloneDestination validates the auto-clone inputs and derives the clone
+// destination path under repoBaseDir. It writes the 400 response and returns
+// ok=false on the first violation.
+func (h *ReposHandler) resolveCloneDestination(w http.ResponseWriter, remoteURL, name string) (destPath string, ok bool) {
+	if remoteURL == "" {
+		Err(w, http.StatusBadRequest, "path or remote_url is required")
+		return "", false
+	}
+	if h.repoBaseDir == "" {
+		Err(w, http.StatusBadRequest, "repo_base_dir must be configured on the server to enable auto-cloning")
+		return "", false
+	}
+
+	// Derive the clone destination from the parsed name (org/repo) or fall back
+	// to the last path segment of the remote URL.
+	cloneSubdir := name
+	if cloneSubdir == "" {
+		// Name not yet known; use last segment of URL as subdir.
+		seg := remoteURL[strings.LastIndex(remoteURL, "/")+1:]
+		cloneSubdir = strings.TrimSuffix(seg, ".git")
+	}
+	destPath = filepath.Join(h.repoBaseDir, cloneSubdir)
+
+	// Validate destPath is within repoBaseDir BEFORE any filesystem operations
+	// to prevent path traversal via a crafted name or URL segment (e.g. "../../etc").
+	// The destination doesn't exist yet, so this is a lexical (cleaned-path)
+	// check; withinBaseDir's symlink resolution is for already-existing paths.
+	cleanDest := filepath.Clean(destPath)
+	cleanBase := filepath.Clean(h.repoBaseDir)
+	sep := string(os.PathSeparator)
+	if cleanDest != cleanBase && !strings.HasPrefix(cleanDest+sep, cleanBase+sep) {
+		Err(w, http.StatusBadRequest, "derived clone path is outside the allowed base directory")
+		return "", false
+	}
+
+	// Only allow https:// and git@ schemes to avoid unexpected behaviour.
+	if !strings.HasPrefix(remoteURL, "https://") && !strings.HasPrefix(remoteURL, "git@") {
+		Err(w, http.StatusBadRequest, "remote_url must use https:// or git@ scheme")
+		return "", false
+	}
+
+	// Refuse to clone over an existing directory — the async clone would fail
+	// anyway, and this keeps the error synchronous and clear.
+	if _, err := os.Stat(destPath); err == nil {
+		Err(w, http.StatusBadRequest, "clone destination already exists")
+		return "", false
+	}
+
+	return destPath, true
+}
+
+// validateExistingRepoPath enforces the base-dir restriction (resolving symlinks,
+// consistent with Update) and verifies path is a git repository before persisting.
+// It writes the 400 response and returns false on failure. Only used for the
+// existing-local-path branch; the clone path skips both checks since the
+// directory doesn't exist yet.
+func (h *ReposHandler) validateExistingRepoPath(w http.ResponseWriter, r *http.Request, path string) bool {
+	if h.repoBaseDir != "" && !withinBaseDir(path, h.repoBaseDir) {
+		Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
+		return false
+	}
+	if err := exec.CommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+		Err(w, http.StatusBadRequest, "path is not a git repository")
+		return false
+	}
+	return true
+}
+
+// resolveIssueFlags validates and resolves the issue-sync and issue-writeback
+// flags to their 0/1 column values. It writes the 400 response and returns
+// ok=false on the first violation.
+func resolveIssueFlags(w http.ResponseWriter, body *createRepoBody, remoteURL string) (issueSyncEnabled, issueWritebackEnabled int64, ok bool) {
+	if body.IssueSyncEnabled {
+		if remoteURL == "" {
+			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
+			return 0, 0, false
+		}
+		if body.WorkflowID == nil || *body.WorkflowID == "" {
+			Err(w, http.StatusBadRequest, "issue sync requires a workflow (imported issues become tasks in that workflow)")
+			return 0, 0, false
+		}
+		issueSyncEnabled = 1
+	}
+	if body.IssueWritebackEnabled {
+		if remoteURL == "" {
+			Err(w, http.StatusBadRequest, "issue write-back requires a GitHub remote_url")
+			return 0, 0, false
+		}
+		issueWritebackEnabled = 1
+	}
+	return issueSyncEnabled, issueWritebackEnabled, true
+}
+
+// startAsyncClone marks the freshly-created repo row 'cloning' and kicks off the
+// background clone. Runs in the background so a slow clone of a large repo doesn't
+// exceed the server's WriteTimeout and get cut off mid-clone. The UI shows a
+// spinner and refreshes on the repo.clone_done / repo.clone_failed WS event.
+func (h *ReposHandler) startAsyncClone(r *http.Request, repo *gen.Repo, remoteURL, destPath string) {
+	if err := h.q.SetRepoCloneStatus(r.Context(), gen.SetRepoCloneStatusParams{
+		CloneStatus: "cloning",
+		CloneError:  "",
+		ID:          repo.ID,
+	}); err != nil {
+		middleware.LoggerFromContext(r.Context()).Warn("failed to mark repo cloning", "repo_id", repo.ID, "err", err)
+	}
+	repo.CloneStatus = "cloning"
+	go h.cloneRepoAsync(repo.ID, remoteURL, destPath)
 }
 
 // cloneRepoAsync performs the git clone for an auto-cloned repo outside the HTTP
