@@ -668,9 +668,18 @@ values; setting `remote_url` or `workflow_id` to an empty string clears it.
   "workflow_id": "string|null",
   "issue_sync_enabled": true,
   "issue_sync_label": "string",
-  "issue_writeback_enabled": true
+  "issue_writeback_enabled": true,
+  "pr_review_auto_transition_enabled": true
 }
 ```
+
+`pr_review_auto_transition_enabled` (requires `remote_url`): when set,
+`internal/ghsync` automatically transitions a task along its workflow's
+"failure" human path (same target as a manual Reject) the first time a sweep
+ingests new PR review feedback for it — a `changes_requested` review, a new
+inline review comment, or a newly-failing GitHub Actions check. Off by
+default; feedback is always ingested and surfaced in the next run's prompt
+regardless of this flag. See [task-sources.md](task-sources.md).
 
 ### `DELETE /repos/{id}`
 Unregister a repository.

@@ -268,8 +268,11 @@ func main() {
 
 	// GitHub PR status auto-sync: polls all eligible tasks on a configurable
 	// interval and pushes "task.git_state_changed" WebSocket events so the
-	// board refreshes automatically without a page reload.
-	ghSyncer := ghsync.New(db.SQL(), hub, cfg.GitHubSyncInterval)
+	// board refreshes automatically without a page reload. Also ingests PR
+	// review feedback / failed GHA checks (see internal/ghsync/pr_review.go);
+	// engine is passed through so a repo can opt into auto-transitioning a
+	// task back to its failure-path label when new feedback arrives.
+	ghSyncer := ghsync.New(db.SQL(), hub, cfg.GitHubSyncInterval, engine)
 	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 
 	// GitHub Issues import: polls repos with issue sync enabled and creates

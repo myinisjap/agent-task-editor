@@ -47,7 +47,7 @@ TriggerAgent TransitionTrigger = "agent"
 TriggerHuman TransitionTrigger = "human"
 ```
 
-Human-triggered transitions come from the Approve/Reject handlers. Agent-triggered transitions come from the pool after a run completes with `NextLabel` set.
+Human-triggered transitions come from the Approve/Reject handlers. Agent-triggered transitions come from the pool after a run completes with `NextLabel` set. `internal/ghsync`'s optional PR-review auto-transition (per-repo opt-in `pr_review_auto_transition_enabled`) also uses `TriggerHuman` when it moves a task along its workflow's "failure" path on new GitHub review feedback — it mirrors the manual Reject action rather than introducing a new trigger, and duplicates a narrow "resolve the failure-path target" helper (`ghsync.(*Syncer).failurePathTarget`) rather than depending on `api/handlers`.
 
 ## AgentPickupLabels
 

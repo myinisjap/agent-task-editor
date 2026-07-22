@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react'
 import { api, type Repo, type Workflow } from '../api/client'
 
-type EditForm = { name: string; path: string; remote_url: string; workflow_id: string; issue_sync_enabled: boolean; issue_sync_label: string; issue_writeback_enabled: boolean }
+type EditForm = { name: string; path: string; remote_url: string; workflow_id: string; issue_sync_enabled: boolean; issue_sync_label: string; issue_writeback_enabled: boolean; pr_review_auto_transition_enabled: boolean }
 
 export default function ReposPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false })
+  const [form, setForm] = useState({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState<EditForm>({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false })
+  const [editForm, setEditForm] = useState<EditForm>({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
 
@@ -71,10 +71,11 @@ export default function ReposPage() {
         issue_sync_enabled: form.issue_sync_enabled,
         issue_sync_label: form.issue_sync_label.trim(),
         issue_writeback_enabled: form.issue_writeback_enabled,
+        pr_review_auto_transition_enabled: form.pr_review_auto_transition_enabled,
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
-      setForm({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false })
+      setForm({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -92,13 +93,14 @@ export default function ReposPage() {
       issue_sync_enabled: !!repo.issue_sync_enabled,
       issue_sync_label: repo.issue_sync_label ?? '',
       issue_writeback_enabled: !!repo.issue_writeback_enabled,
+      pr_review_auto_transition_enabled: !!repo.pr_review_auto_transition_enabled,
     })
     setEditError('')
   }
 
   function cancelEdit() {
     setEditingId(null)
-    setEditForm({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false })
+    setEditForm({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
     setEditError('')
   }
 
@@ -116,6 +118,7 @@ export default function ReposPage() {
         issue_sync_enabled: editForm.issue_sync_enabled,
         issue_sync_label: editForm.issue_sync_label.trim(),
         issue_writeback_enabled: editForm.issue_writeback_enabled,
+        pr_review_auto_transition_enabled: editForm.pr_review_auto_transition_enabled,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -240,6 +243,19 @@ export default function ReposPage() {
                 (comment on the source issue when a PR opens, close it when merged; requires remote URL)
               </span>
             </label>
+
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.pr_review_auto_transition_enabled}
+                onChange={(e) => setForm((f) => ({ ...f, pr_review_auto_transition_enabled: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              Auto-transition to work on PR changes-requested
+              <span className="text-slate-600">
+                (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
+              </span>
+            </label>
           </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -289,6 +305,14 @@ export default function ReposPage() {
                     title="Commenting on the source issue when a task's PR opens, and closing it when the PR merges"
                   >
                     Write-back
+                  </span>
+                )}
+                {!!repo.pr_review_auto_transition_enabled && (
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 shrink-0"
+                    title="Auto-transitioning tasks back to their failure-path label on GitHub changes-requested reviews, new review comments, or failed checks"
+                  >
+                    PR auto-transition
                   </span>
                 )}
                 <div className="text-xs text-slate-500 shrink-0">
@@ -396,6 +420,19 @@ export default function ReposPage() {
                       Issue write-back
                       <span className="text-slate-600">
                         (comment on the source issue when a PR opens, close it when merged; requires remote URL)
+                      </span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editForm.pr_review_auto_transition_enabled}
+                        onChange={(e) => setEditForm((f) => ({ ...f, pr_review_auto_transition_enabled: e.target.checked }))}
+                        className="accent-indigo-500"
+                      />
+                      Auto-transition to work on PR changes-requested
+                      <span className="text-slate-600">
+                        (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
                       </span>
                     </label>
                   </div>

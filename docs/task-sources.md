@@ -153,3 +153,87 @@ Comments posted by this feature include an HTML comment marker
 tell an agent-task-editor write-back apart from their own comments. This
 marker plays no role in idempotency (which is DB-flag based, not
 comment-scraping based) — it's purely for human legibility.
+
+## PR review / GitHub Actions feedback ingestion
+
+This is the reverse direction of the loop above: instead of writing task
+status *to* GitHub, `internal/ghsync`'s sweep reads GitHub PR reviews, inline
+review comments, and check-run results back *into* the task, for any task
+with a branch and an open PR — not just imported ones.
+
+On every sweep, for each task with a resolved PR number, the syncer:
+
+1. **Fetches inline review comments** (`gh api repos/{repo}/pulls/{n}/comments`,
+   paginated) and inserts any not already ingested (deduped by the GitHub
+   comment id) as `task_review_comments` rows tagged `source: "github"`,
+   `external_id: "<github comment id>"`. These flow through the exact same
+   path as comments left in-app: the `OPEN REVIEW COMMENTS` prompt section on
+   the next dispatch, and the MCP `resolve_comment` tool / API resolve
+   endpoint to close them out.
+2. **Fetches reviews** (`gh pr view --json reviews`) and, for any
+   `CHANGES_REQUESTED` review submitted after the last-seen cursor, appends
+   its body to a feedback block.
+3. **Fetches failed/cancelled checks** (`gh pr checks --json name,link,bucket`)
+   and, if the set of failing check names differs from what was last
+   surfaced for the current head commit, appends their names/links to the
+   same feedback block.
+4. If that combined block is non-empty, it's **appended** (not overwritten)
+   to the task's current agent run's `Feedback` column — read-modify-write,
+   so it never clobbers a note a human already left via Reject. This is the
+   same column rendered under the `FEEDBACK FROM PRIOR REVIEW:` prompt
+   section on the run's next dispatch.
+
+### Tracking / fresh-cycle-on-push
+
+A per-task row in `task_pr_review_state` tracks a cursor (last-seen review
+submission timestamp, a fingerprint of the last-surfaced failing checks) plus
+the PR's head commit SHA as of the last sweep. Re-sweeps only surface
+reviews/checks newer than the cursor, so feedback is never duplicated across
+sweeps.
+
+When the PR's head SHA changes — i.e. the agent pushed a new commit — the
+cursor resets, so reviews/checks against the new commit start a fresh
+feedback cycle rather than being silently suppressed by the old cursor.
+Already-ingested inline review comments are **not** purged or reset on a
+push; they stay wherever they are until resolved (matching how locally-left
+open review comments already behave across runs).
+
+Every fetch is best-effort and independent: a `gh` failure fetching reviews,
+say, is logged and swallowed and does not prevent comments or checks from
+still being ingested that sweep, mirroring the write-back error-handling
+style above.
+
+### Auto-transition (opt-in)
+
+| Repo field | Meaning |
+|---|---|
+| `pr_review_auto_transition_enabled` | `1` to auto-move a task back to work when new PR feedback lands |
+
+By default, newly-ingested PR feedback is surfaced in the prompt but the task
+stays wherever a human put it — someone still has to click Reject (or
+whatever the workflow's manual transition is) to send it back to an agent.
+Setting `pr_review_auto_transition_enabled: 1` on the repo skips that click:
+the first time a sweep ingests new feedback for a task (a changes-requested
+review, a new inline comment, or a newly-failing check), the task is
+transitioned along its workflow's "failure" human-transition path — the same
+destination label a manual Reject would use. If no such transition is
+defined from the task's current label, or the transition is otherwise
+invalid (e.g. the task moved concurrently), this is logged and skipped; a
+human can always still transition the task by hand. Requires `remote_url`,
+same as issue write-back.
+
+Via the API:
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"pr_review_auto_transition_enabled": true}'
+```
+
+### v2 (not yet implemented)
+
+Resolve/reply write-back — after the agent addresses an ingested GitHub
+review comment (e.g. via the `resolve_comment` MCP tool), replying on the
+originating GitHub review thread — is intentionally out of scope for v1. The
+`external_id`/`source` columns on `task_review_comments` are structured to
+make that a natural follow-up without a schema change.

@@ -9,10 +9,65 @@ import (
 	"context"
 )
 
+const createGitHubTaskReviewComment = `-- name: CreateGitHubTaskReviewComment :one
+INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_line, quoted_text, body, external_id, source)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'github')
+RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
+`
+
+type CreateGitHubTaskReviewCommentParams struct {
+	ID         string  `json:"id"`
+	TaskID     string  `json:"task_id"`
+	FilePath   string  `json:"file_path"`
+	Side       string  `json:"side"`
+	StartLine  int64   `json:"start_line"`
+	EndLine    int64   `json:"end_line"`
+	QuotedText string  `json:"quoted_text"`
+	Body       string  `json:"body"`
+	ExternalID *string `json:"external_id"`
+}
+
+// Like CreateTaskReviewComment but for a comment ingested from a GitHub PR
+// review (source='github'), tagged with the GitHub comment id (external_id)
+// so re-sweeps can dedup via GetTaskReviewCommentByExternalID before
+// inserting.
+func (q *Queries) CreateGitHubTaskReviewComment(ctx context.Context, arg CreateGitHubTaskReviewCommentParams) (TaskReviewComment, error) {
+	row := q.db.QueryRowContext(ctx, createGitHubTaskReviewComment,
+		arg.ID,
+		arg.TaskID,
+		arg.FilePath,
+		arg.Side,
+		arg.StartLine,
+		arg.EndLine,
+		arg.QuotedText,
+		arg.Body,
+		arg.ExternalID,
+	)
+	var i TaskReviewComment
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.FilePath,
+		&i.Side,
+		&i.StartLine,
+		&i.EndLine,
+		&i.QuotedText,
+		&i.Body,
+		&i.Status,
+		&i.ResolutionNote,
+		&i.ResolvedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ExternalID,
+		&i.Source,
+	)
+	return i, err
+}
+
 const createTaskReviewComment = `-- name: CreateTaskReviewComment :one
 INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_line, quoted_text, body)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at
+RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
 `
 
 type CreateTaskReviewCommentParams struct {
@@ -52,6 +107,8 @@ func (q *Queries) CreateTaskReviewComment(ctx context.Context, arg CreateTaskRev
 		&i.ResolvedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExternalID,
+		&i.Source,
 	)
 	return i, err
 }
@@ -74,7 +131,7 @@ func (q *Queries) DeleteTaskReviewComment(ctx context.Context, arg DeleteTaskRev
 }
 
 const getTaskReviewComment = `-- name: GetTaskReviewComment :one
-SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at FROM task_review_comments WHERE id = ? AND task_id = ?
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source FROM task_review_comments WHERE id = ? AND task_id = ?
 `
 
 type GetTaskReviewCommentParams struct {
@@ -99,12 +156,46 @@ func (q *Queries) GetTaskReviewComment(ctx context.Context, arg GetTaskReviewCom
 		&i.ResolvedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExternalID,
+		&i.Source,
+	)
+	return i, err
+}
+
+const getTaskReviewCommentByExternalID = `-- name: GetTaskReviewCommentByExternalID :one
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source FROM task_review_comments WHERE task_id = ? AND external_id = ?
+`
+
+type GetTaskReviewCommentByExternalIDParams struct {
+	TaskID     string  `json:"task_id"`
+	ExternalID *string `json:"external_id"`
+}
+
+func (q *Queries) GetTaskReviewCommentByExternalID(ctx context.Context, arg GetTaskReviewCommentByExternalIDParams) (TaskReviewComment, error) {
+	row := q.db.QueryRowContext(ctx, getTaskReviewCommentByExternalID, arg.TaskID, arg.ExternalID)
+	var i TaskReviewComment
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.FilePath,
+		&i.Side,
+		&i.StartLine,
+		&i.EndLine,
+		&i.QuotedText,
+		&i.Body,
+		&i.Status,
+		&i.ResolutionNote,
+		&i.ResolvedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ExternalID,
+		&i.Source,
 	)
 	return i, err
 }
 
 const listOpenTaskReviewComments = `-- name: ListOpenTaskReviewComments :many
-SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at FROM task_review_comments WHERE task_id = ? AND status = 'open' ORDER BY created_at ASC
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source FROM task_review_comments WHERE task_id = ? AND status = 'open' ORDER BY created_at ASC
 `
 
 func (q *Queries) ListOpenTaskReviewComments(ctx context.Context, taskID string) ([]TaskReviewComment, error) {
@@ -130,6 +221,8 @@ func (q *Queries) ListOpenTaskReviewComments(ctx context.Context, taskID string)
 			&i.ResolvedByRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ExternalID,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -145,7 +238,7 @@ func (q *Queries) ListOpenTaskReviewComments(ctx context.Context, taskID string)
 }
 
 const listTaskReviewComments = `-- name: ListTaskReviewComments :many
-SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at FROM task_review_comments WHERE task_id = ? ORDER BY created_at ASC
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source FROM task_review_comments WHERE task_id = ? ORDER BY created_at ASC
 `
 
 func (q *Queries) ListTaskReviewComments(ctx context.Context, taskID string) ([]TaskReviewComment, error) {
@@ -171,6 +264,8 @@ func (q *Queries) ListTaskReviewComments(ctx context.Context, taskID string) ([]
 			&i.ResolvedByRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ExternalID,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -189,7 +284,7 @@ const reopenTaskReviewComment = `-- name: ReopenTaskReviewComment :one
 UPDATE task_review_comments
 SET status = 'open', resolution_note = NULL, resolved_by_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = ? AND task_id = ?
-RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at
+RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
 `
 
 type ReopenTaskReviewCommentParams struct {
@@ -214,6 +309,8 @@ func (q *Queries) ReopenTaskReviewComment(ctx context.Context, arg ReopenTaskRev
 		&i.ResolvedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExternalID,
+		&i.Source,
 	)
 	return i, err
 }
@@ -222,7 +319,7 @@ const resolveTaskReviewComment = `-- name: ResolveTaskReviewComment :one
 UPDATE task_review_comments
 SET status = 'resolved', resolution_note = ?, resolved_by_run_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ? AND task_id = ? AND status = 'open'
-RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at
+RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
 `
 
 type ResolveTaskReviewCommentParams struct {
@@ -254,6 +351,8 @@ func (q *Queries) ResolveTaskReviewComment(ctx context.Context, arg ResolveTaskR
 		&i.ResolvedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ExternalID,
+		&i.Source,
 	)
 	return i, err
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
 
@@ -30,20 +31,41 @@ type Syncer struct {
 	hub      Publisher
 	interval time.Duration
 	wb       *writeback.Writeback
+	// engine drives the optional auto-transition-on-feedback behavior (see
+	// pr_review.go's autoTransitionOnFeedback). Nil disables auto-transition
+	// entirely, which keeps tests and non-transition setups simple — mirrors
+	// how wb being nil disables write-back.
+	engine *workflow.Engine
 
 	// getPR resolves the PR state for a branch. Defaults to
 	// ghclient.GetPRForBranch; overridable in tests.
 	getPR func(ctx context.Context, repoName, branch string) (state, prURL string, prNumber int, err error)
+
+	// getPRHead, getReviews, getReviewComments, getFailedChecks back the PR
+	// review/GHA-status feedback ingestion (see pr_review.go). Default to the
+	// corresponding ghclient functions; overridable in tests.
+	getPRHead         func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error)
+	getReviews        func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error)
+	getReviewComments func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error)
+	getFailedChecks   func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error)
 }
 
-// New creates a Syncer that polls on the given interval.
-func New(db *sql.DB, hub Publisher, interval time.Duration) *Syncer {
+// New creates a Syncer that polls on the given interval. engine may be nil,
+// which disables the optional auto-transition-on-PR-feedback behavior (per-
+// repo opt-in via pr_review_auto_transition_enabled) while still ingesting
+// and surfacing PR review/GHA feedback.
+func New(db *sql.DB, hub Publisher, interval time.Duration, engine *workflow.Engine) *Syncer {
 	return &Syncer{
-		q:        gen.New(db),
-		hub:      hub,
-		interval: interval,
-		wb:       writeback.New(gen.New(db)),
-		getPR:    ghclient.GetPRForBranch,
+		q:                 gen.New(db),
+		hub:               hub,
+		interval:          interval,
+		wb:                writeback.New(gen.New(db)),
+		engine:            engine,
+		getPR:             ghclient.GetPRForBranch,
+		getPRHead:         ghclient.GetPRHead,
+		getReviews:        ghclient.GetPRReviews,
+		getReviewComments: ghclient.GetPRReviewComments,
+		getFailedChecks:   ghclient.GetFailedChecks,
 	}
 }
 
@@ -128,16 +150,24 @@ func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 }
 
 // syncTask checks the PR state for a single task and updates it if changed.
+// It also, independently of whether the state changed, ingests any new PR
+// review feedback / failed GHA checks for tasks with an open PR (see
+// ingestPRFeedback in pr_review.go) — a task can sit on "pr_open" across many
+// sweeps while new reviews/comments/check runs keep arriving.
 func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 	log := slog.With("component", "ghsync", "task_id", task.ID)
-	state, prURL, _, err := s.getPR(ctx, repo.ghName, task.Branch)
+	state, prURL, prNumber, err := s.getPR(ctx, repo.ghName, task.Branch)
 	if err != nil {
 		log.Warn("ghsync: get PR for branch", "branch", task.Branch, "err", err)
 		return
 	}
 
+	if prNumber != 0 {
+		s.ingestPRFeedback(ctx, task, repo, prNumber)
+	}
+
 	if state == task.GitState {
-		return // no change — nothing to do
+		return // no git-state change — nothing further to do
 	}
 
 	// Persist the new state, and the PR URL when the live query surfaced one.
