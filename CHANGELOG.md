@@ -20,6 +20,20 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **DB-backed, UI-editable agent-log retention settings.** The agent-log
+  cleanup pruner (`internal/logretention`) that deletes `agent_logs` rows
+  for terminal-status runs older than N days is now configurable at
+  runtime instead of env-var/restart-only:
+  - New `GET`/`PUT /api/v1/log-retention/settings` endpoints (mirroring the
+    existing `/api/v1/backup/settings` pattern) backed by a new singleton
+    `log_retention_settings` table (migration 041).
+  - The Health page has a new "Agent log cleanup" form to view/edit
+    retention days and cleanup frequency without touching the server config.
+  - `LOG_RETENTION_DAYS`/`LOG_RETENTION_INTERVAL` env vars now only seed the
+    initial values on first migration; the pruner always runs and re-reads
+    settings from the DB on each tick, so `days=0` (the default) fully
+    disables cleanup and can be toggled at runtime without a restart. See
+    [docs/backup.md#agent-log-retention](docs/backup.md#agent-log-retention).
 - **Ingest GitHub PR review comments, changes-requested reviews, and failed
   GitHub Actions checks as task feedback.** `internal/ghsync`'s sweep now
   checks every task's open PR for new signals since the last sweep:

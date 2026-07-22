@@ -19,6 +19,7 @@ export type TaskDependencies = Schemas['TaskDependencies']
 export type TaskTemplate = Schemas['TaskTemplate']
 export type TaskSchedule = Schemas['TaskSchedule']
 export type BackupSettings = Schemas['BackupSettings']
+export type LogRetentionSettings = Schemas['LogRetentionSettings']
 export type WorkflowLabel = Schemas['WorkflowLabel']
 export type WorkflowTransition = Schemas['WorkflowTransition']
 export type Workflow = Schemas['Workflow']
@@ -361,6 +362,11 @@ export const api = {
     getSettings: () => request<BackupSettings>('/backup/settings'),
     updateSettings: (body: { interval_seconds: number; keep: number }) =>
       request<BackupSettings>('/backup/settings', { method: 'PUT', body: JSON.stringify(body) }),
+  },
+  logRetention: {
+    getSettings: () => request<LogRetentionSettings>('/log-retention/settings'),
+    updateSettings: (body: { days: number; interval_seconds: number }) =>
+      request<LogRetentionSettings>('/log-retention/settings', { method: 'PUT', body: JSON.stringify(body) }),
   },
   uploads: {
     // Raw binary download — mirrors backup.url(). Callers must fetch() this

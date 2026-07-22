@@ -267,6 +267,22 @@ components:
         updated_at:       { type: string, format: date-time }
       required: [interval_seconds, keep, updated_at]
 
+    LogRetentionSettings:
+      type: object
+      description: >
+        DB-backed settings for the automatic agent-log retention pruner
+        (see docs/backup.md#agent-log-retention). It deletes agent_logs rows
+        belonging to runs in a terminal status (completed/failed/
+        waiting_human) whose completed_at is older than `days` days ago.
+        Changes take effect on the pruner's next scheduled run without a
+        restart. Unlike backup, there is no separate deploy-time enable
+        gate — days=0 fully disables cleanup via this settings row alone.
+      properties:
+        days:             { type: integer, description: "Delete terminal-run logs older than this many days. 0 disables cleanup (logs are kept forever). Minimum 0. Default 0." }
+        interval_seconds: { type: integer, description: "How often the pruner checks for logs to delete, in seconds. Minimum 60 (1 minute). Default 3600 (once an hour)." }
+        updated_at:       { type: string, format: date-time }
+      required: [days, interval_seconds, updated_at]
+
     WorkflowLabel:
       type: object
       properties:
@@ -2259,6 +2275,41 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BackupSettings" }
         "400": { description: "interval_seconds below 600, or keep below 1" }
+
+  /log-retention/settings:
+    get:
+      summary: Get agent-log retention pruner settings
+      description: >
+        Returns the current retention-days/interval settings for the
+        automatic agent-log retention pruner. days=0 means cleanup is
+        disabled. See docs/backup.md#agent-log-retention.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogRetentionSettings" }
+    put:
+      summary: Update agent-log retention pruner settings
+      description: >
+        Persists new retention-days/interval settings. Takes effect on the
+        pruner's next scheduled run without a process restart. Set days to
+        0 to disable cleanup entirely.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [days, interval_seconds]
+              properties:
+                days:             { type: integer, description: "0 (disabled) or greater." }
+                interval_seconds: { type: integer, description: "Minimum 60 (1 minute)." }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogRetentionSettings" }
+        "400": { description: "days below 0, or interval_seconds below 60" }
 
   /ws-ticket:
     post:

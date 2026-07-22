@@ -312,18 +312,28 @@ func main() {
 		slog.Info("automatic local backups disabled; set BACKUP_DIR to enable (see docs/backup.md)")
 	}
 
-	// Agent-log retention: optional. When LOG_RETENTION_DAYS > 0, periodically
-	// deletes agent_logs rows for terminal-status runs (completed/failed/
-	// waiting_human) whose completed_at is older than that many days.
-	// Disabled by default so DB growth behavior is unchanged unless
-	// explicitly opted in. See docs/backup.md#agent-log-retention.
-	var logPruner *logretention.Pruner
-	if cfg.LogRetentionDays > 0 {
-		logPruner = logretention.New(termQ, cfg.LogRetentionDays, cfg.LogRetentionInterval)
-		slog.Info("agent log retention enabled", "retention_days", cfg.LogRetentionDays, "interval", cfg.LogRetentionInterval)
-	} else {
-		slog.Info("agent log retention disabled; set LOG_RETENTION_DAYS to enable (see docs/backup.md#agent-log-retention)")
-	}
+	// Agent-log retention: periodically deletes agent_logs rows for
+	// terminal-status runs (completed/failed/waiting_human) whose
+	// completed_at is older than the configured number of days. Disabled by
+	// default (days=0) so DB growth behavior is unchanged unless explicitly
+	// opted in. See docs/backup.md#agent-log-retention.
+	//
+	// Days/interval are DB-backed (log_retention_settings, seeded from
+	// cfg.LogRetentionDays/cfg.LogRetentionInterval on first migration) and
+	// editable at runtime via PUT /api/v1/log-retention/settings (or the
+	// Health page), without a restart — the pruner re-reads them from the DB
+	// before every run (see logretention.NewWithSettingsFunc). Unlike
+	// backup (gated by BACKUP_DIR), there's no deploy-time enable gate here:
+	// the pruner always runs and simply no-ops while days=0.
+	logPruner := logretention.NewWithSettingsFunc(termQ, func() (int, time.Duration) {
+		row, err := termQ.GetLogRetentionSettings(context.Background())
+		if err != nil {
+			slog.Warn("logretention: failed to load settings from DB; using config defaults", "err", err)
+			return cfg.LogRetentionDays, cfg.LogRetentionInterval
+		}
+		return int(row.Days), time.Duration(row.IntervalSeconds) * time.Second
+	})
+	slog.Info("agent log retention pruner starting; effective settings are DB-backed and editable via PUT /api/v1/log-retention/settings (see docs/backup.md#agent-log-retention)", "seed_default_days", cfg.LogRetentionDays)
 
 	go pool.Start(ctx)
 	go dispatcher.Run(ctx)
@@ -333,9 +343,7 @@ func main() {
 	if backupScheduler != nil {
 		go backupScheduler.Run(ctx)
 	}
-	if logPruner != nil {
-		go logPruner.Run(ctx)
-	}
+	go logPruner.Run(ctx)
 
 	go func() {
 		slog.Info("server starting", "port", cfg.Port)

@@ -140,15 +140,19 @@ Every stream-json line produced by every agent run is persisted to the
 the table most likely to bloat the SQLite file, which in turn slows down
 `VACUUM INTO` backups (see above) and log-list queries.
 
-Set `LOG_RETENTION_DAYS` to a positive number to enable a built-in pruner
-that periodically deletes `agent_logs` rows belonging to runs in a
-**terminal status** (`completed`, `failed`, or `waiting_human`) whose run
-`completed_at` is older than that many days:
+A built-in pruner periodically deletes `agent_logs` rows belonging to runs
+in a **terminal status** (`completed`, `failed`, or `waiting_human`) whose
+run `completed_at` is older than a configurable number of days. Retention
+days and how often the pruner runs are **DB-backed and editable at runtime**
+from the **Health** page (or the API directly) — no restart required. The
+env vars below only seed the *initial* values on first migration; unlike
+`BACKUP_DIR` there's no separate deploy-time enable gate for log retention,
+so `days=0` (the default) alone fully disables cleanup:
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOG_RETENTION_DAYS` | `0` | Delete logs for terminal-status runs older than this many days. `0` = keep forever (pruning disabled, the default — no behavior change unless explicitly opted in). |
-| `LOG_RETENTION_INTERVAL` | `1h` | How often the pruner runs. Only meaningful when `LOG_RETENTION_DAYS > 0`. Accepts Go duration strings. |
+| `LOG_RETENTION_DAYS` | `0` | Seeds the initial retention days on first migration. `0` = keep forever (pruning disabled, the default — no behavior change unless explicitly opted in). |
+| `LOG_RETENTION_INTERVAL` | `1h` | Seeds the initial pruner run interval. Accepts Go duration strings. |
 
 ```yaml
 environment:
@@ -160,6 +164,31 @@ The pruner **never touches a run that's still `pending`/`running`** — the
 delete predicate requires both a terminal status and a non-null
 `completed_at`, so the currently-active run's logs and the WebSocket replay
 path (which reads the live run's logs) are always unaffected.
+
+### Changing retention days/interval at runtime
+
+`LOG_RETENTION_DAYS`/`LOG_RETENTION_INTERVAL` above only set the *initial*
+values (seeded into the database on first migration). Once the app is
+running, both are editable without a restart via
+`GET`/`PUT /api/v1/log-retention/settings` — the **Health** page has an
+"Agent log cleanup" form that calls these endpoints:
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/log-retention/settings
+curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"days": 30, "interval_seconds": 3600}' \
+  http://localhost:8080/api/v1/log-retention/settings
+```
+
+| Field | Minimum | Default | Description |
+|---|---|---|---|
+| `days` | `0` | `0` | Delete terminal-run logs older than this many days. `0` disables cleanup (logs are kept forever). |
+| `interval_seconds` | `60` (1 minute) | `3600` (once an hour) | How often the pruner checks for logs to delete. |
+
+The pruner re-reads these on its own timer, so a change here takes effect on
+the very next scheduled run — no restart needed. This is the only control
+for whether cleanup runs at all: setting `days` to `0` fully disables it,
+and setting it back above `0` re-enables it, both without a restart.
 
 This release scopes retention to age-based pruning only
 (`LOG_RETENTION_DAYS`). A per-run row cap (`LOG_MAX_ROWS_PER_RUN`, capping
