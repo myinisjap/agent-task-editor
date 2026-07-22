@@ -19,6 +19,35 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Ingest GitHub PR review comments, changes-requested reviews, and failed
+  GitHub Actions checks as task feedback.** `internal/ghsync`'s sweep now
+  checks every task's open PR for new signals since the last sweep:
+  - Inline review comments (with file/line anchors) are inserted as
+    `task_review_comments` (tagged `source: "github"`), so they flow through
+    the existing `OPEN REVIEW COMMENTS` prompt section and MCP
+    `resolve_comment` loop right alongside locally-left comments.
+  - `changes_requested` review bodies and failed check names/links (no
+    anchor) are appended to the task's current run `Feedback`, rendered under
+    the `FEEDBACK FROM PRIOR REVIEW:` prompt section the next time the task
+    dispatches — closing the gap where a teammate's GitHub review previously
+    had to be copy-pasted into a manual Reject note.
+  - Ingestion is cursor-based and idempotent (`task_pr_review_state`,
+    dedup by GitHub comment id / review timestamp / failing-check
+    fingerprint) — re-sweeps never duplicate feedback. When the PR's head
+    commit changes (the agent pushed), the review/check cursor resets so a
+    fresh feedback cycle can start, while already-ingested inline comments
+    are left as-is.
+  - New per-repo opt-in `pr_review_auto_transition_enabled`: when set, a task
+    with newly-ingested PR feedback is automatically moved along its
+    workflow's "failure" human transition path (the same target as a manual
+    Reject), so it lands back in front of an agent without a human clicking
+    Reject. Off by default — feedback is still ingested and surfaced either
+    way. Configurable from the Repos page.
+  - Every step is best-effort (a `gh` hiccup on one signal never blocks the
+    others or fails the sweep), mirroring the existing issue write-back
+    error-handling style. See [task-sources.md](docs/task-sources.md).
+
 ### Changed
 - **Reorganized the sidebar navigation into collapsible categories.** The
   flat 11-link menu is now grouped into `Insights` (Cost & Usage,

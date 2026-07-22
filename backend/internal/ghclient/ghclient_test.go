@@ -253,6 +253,141 @@ func TestCreatePR_RaceAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestGetPRHead(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !strings.Contains(strings.Join(args, " "), "headRefOid") {
+				t.Fatalf("expected headRefOid in json fields, got %v", args)
+			}
+			return fakeCmd{output: []byte(`[{"number":5,"headRefOid":"abc123"}]`)}
+		},
+	})
+
+	head, err := GetPRHead(context.Background(), "acme/widgets", "some-branch")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if head.Number != 5 || head.HeadSHA != "abc123" {
+		t.Errorf("head = %+v, want {5 abc123}", head)
+	}
+}
+
+func TestGetPRHead_NoPR(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			return fakeCmd{output: []byte(`[]`)}
+		},
+	})
+
+	head, err := GetPRHead(context.Background(), "acme/widgets", "some-branch")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if head.Number != 0 || head.HeadSHA != "" {
+		t.Errorf("head = %+v, want zero value", head)
+	}
+}
+
+func TestGetPRReviews(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "view") {
+				t.Fatalf("expected pr view call, got %v", args)
+			}
+			return fakeCmd{output: []byte(`{"reviews":[
+				{"id":"r1","state":"changes_requested","body":"please fix X","author":{"login":"alice"},"submittedAt":"2024-01-01T00:00:00Z"},
+				{"id":"r2","state":"APPROVED","body":"lgtm","author":{"login":"bob"},"submittedAt":"2024-01-02T00:00:00Z"}
+			]}`)}
+		},
+	})
+
+	reviews, err := GetPRReviews(context.Background(), "acme/widgets", 5)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(reviews) != 2 {
+		t.Fatalf("expected 2 reviews, got %d", len(reviews))
+	}
+	if reviews[0].State != "CHANGES_REQUESTED" {
+		t.Errorf("review[0].State = %q, want normalized CHANGES_REQUESTED", reviews[0].State)
+	}
+	if reviews[0].Author != "alice" || reviews[0].Body != "please fix X" {
+		t.Errorf("review[0] = %+v, unexpected", reviews[0])
+	}
+}
+
+func TestGetPRReviewComments_Paginated(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "--paginate") {
+				t.Fatalf("expected --paginate flag, got %v", args)
+			}
+			// Two pages concatenated back to back, as gh --paginate does for arrays.
+			page1 := `[{"id":1,"path":"a.go","line":10,"start_line":10,"side":"RIGHT","body":"fix this","diff_hunk":"@@ -1 +1 @@","commit_id":"sha1","user":{"login":"alice"},"created_at":"2024-01-01T00:00:00Z"}]`
+			page2 := `[{"id":2,"path":"b.go","line":20,"side":"RIGHT","body":"and this","diff_hunk":"@@ -2 +2 @@","commit_id":"sha1","user":{"login":"bob"},"created_at":"2024-01-01T00:01:00Z"}]`
+			return fakeCmd{output: []byte(page1 + page2)}
+		},
+	})
+
+	comments, err := GetPRReviewComments(context.Background(), "acme/widgets", 5)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 comments, got %d: %+v", len(comments), comments)
+	}
+	if comments[0].ID != "1" || comments[0].Path != "a.go" || comments[0].Line != 10 {
+		t.Errorf("comment[0] = %+v, unexpected", comments[0])
+	}
+	if comments[1].ID != "2" || comments[1].Path != "b.go" {
+		t.Errorf("comment[1] = %+v, unexpected", comments[1])
+	}
+}
+
+func TestGetFailedChecks_FiltersToFailures(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "checks") {
+				t.Fatalf("expected pr checks call, got %v", args)
+			}
+			// gh pr checks exits non-zero when a check has failed, but still
+			// prints JSON on stdout — simulate that.
+			return fakeCmd{
+				output: []byte(`[
+					{"name":"build","link":"https://ci/1","bucket":"fail"},
+					{"name":"lint","link":"https://ci/2","bucket":"pass"},
+					{"name":"deploy","link":"https://ci/3","bucket":"cancel"},
+					{"name":"e2e","link":"https://ci/4","bucket":"pending"}
+				]`),
+				err: errors.New("exit status 8"),
+			}
+		},
+	})
+
+	checks, err := GetFailedChecks(context.Background(), "acme/widgets", 5)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(checks) != 2 {
+		t.Fatalf("expected 2 failed/cancelled checks, got %d: %+v", len(checks), checks)
+	}
+	if checks[0].Name != "build" || checks[1].Name != "deploy" {
+		t.Errorf("checks = %+v, unexpected", checks)
+	}
+}
+
+func TestGetFailedChecks_HardFailureNoOutput(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			return fakeCmd{err: errors.New("gh: not found")}
+		},
+	})
+
+	if _, err := GetFailedChecks(context.Background(), "acme/widgets", 5); err == nil {
+		t.Fatal("expected error when gh produces no output and fails")
+	}
+}
+
 func TestListOpenIssues_LabelFiltering(t *testing.T) {
 	t.Run("no label", func(t *testing.T) {
 		var capturedArgs []string

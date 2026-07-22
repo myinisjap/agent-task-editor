@@ -141,6 +141,217 @@ func CreatePR(ctx context.Context, repoName, branch, base, title, body string) (
 	return "pr_open", url, nil
 }
 
+// PRHead holds a PR's number and current head commit SHA, used by ghsync to
+// detect when the agent has pushed a new commit (see GetPRHead).
+type PRHead struct {
+	Number  int
+	HeadSHA string
+}
+
+// GetPRHead returns the PR number and head commit SHA for the given branch,
+// or a zero PRHead if no PR exists yet for the branch. Used to detect a fresh
+// push since the last sweep (the review/feedback ingestion cursor resets when
+// the head SHA changes).
+func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
+	metrics.GhCallsTotal.WithLabelValues("pr_list_head").Inc()
+	cmd := runGH(ctx, "pr", "list",
+		"--repo", repoName,
+		"--head", branch,
+		"--state", "all",
+		"--json", "number,headRefOid",
+		"--limit", "1",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return PRHead{}, err
+	}
+	var prs []struct {
+		Number     int    `json:"number"`
+		HeadRefOid string `json:"headRefOid"`
+	}
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return PRHead{}, err
+	}
+	if len(prs) == 0 {
+		return PRHead{}, nil
+	}
+	return PRHead{Number: prs[0].Number, HeadSHA: prs[0].HeadRefOid}, nil
+}
+
+// Review is a single review left on a PR (a "changes requested"/"approved"/
+// "commented" submission with a body, as opposed to an inline review
+// comment — see PRReviewComment).
+type Review struct {
+	ID          string
+	State       string // "APPROVED", "CHANGES_REQUESTED", "COMMENTED", etc (uppercase, as returned by gh)
+	Body        string
+	Author      string
+	SubmittedAt string // RFC3339 timestamp string, compared lexically for cursor purposes
+}
+
+// GetPRReviews returns all reviews submitted on the given PR, in the order
+// GitHub returns them (oldest first).
+func GetPRReviews(ctx context.Context, repoName string, prNumber int) ([]Review, error) {
+	metrics.GhCallsTotal.WithLabelValues("pr_reviews").Inc()
+	cmd := runGH(ctx, "pr", "view", fmt.Sprint(prNumber),
+		"--repo", repoName,
+		"--json", "reviews",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Reviews []struct {
+			ID     string `json:"id"`
+			State  string `json:"state"`
+			Body   string `json:"body"`
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			SubmittedAt string `json:"submittedAt"`
+		} `json:"reviews"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return nil, err
+	}
+	reviews := make([]Review, 0, len(payload.Reviews))
+	for _, r := range payload.Reviews {
+		reviews = append(reviews, Review{
+			ID:          r.ID,
+			State:       strings.ToUpper(r.State),
+			Body:        r.Body,
+			Author:      r.Author.Login,
+			SubmittedAt: r.SubmittedAt,
+		})
+	}
+	return reviews, nil
+}
+
+// PRReviewComment is a single inline (file/line-anchored) review comment left
+// on a PR's diff. Named distinctly from agent.ReviewComment (the local
+// human-left-in-app equivalent) to avoid an import cycle / naming collision.
+type PRReviewComment struct {
+	ID        string
+	Path      string
+	Line      int    // the line the comment is anchored to; 0 if the comment is on an outdated/removed diff position
+	StartLine int    // for multi-line comments; equals Line when the comment spans a single line
+	Side      string // "LEFT" or "RIGHT" (maps to our "old"/"new")
+	Body      string
+	DiffHunk  string
+	CommitID  string
+	Author    string
+	CreatedAt string
+}
+
+// GetPRReviewComments returns all inline review comments left on the given
+// PR's diff, across all reviews. Paginates through the full result set.
+func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]PRReviewComment, error) {
+	metrics.GhCallsTotal.WithLabelValues("pr_review_comments").Inc()
+	cmd := runGH(ctx, "api",
+		fmt.Sprintf("repos/%s/pulls/%d/comments", repoName, prNumber),
+		"--paginate",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	// --paginate concatenates one JSON array per page back-to-back rather than
+	// merging them into a single array, so decode with a streaming decoder that
+	// consumes each array in turn.
+	dec := json.NewDecoder(strings.NewReader(string(out)))
+	var comments []PRReviewComment
+	for dec.More() {
+		var page []struct {
+			ID        int64  `json:"id"`
+			Path      string `json:"path"`
+			Line      *int   `json:"line"`
+			StartLine *int   `json:"start_line"`
+			Side      string `json:"side"`
+			Body      string `json:"body"`
+			DiffHunk  string `json:"diff_hunk"`
+			CommitID  string `json:"commit_id"`
+			User      struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			CreatedAt string `json:"created_at"`
+		}
+		if err := dec.Decode(&page); err != nil {
+			return nil, err
+		}
+		for _, c := range page {
+			line := 0
+			if c.Line != nil {
+				line = *c.Line
+			}
+			startLine := line
+			if c.StartLine != nil {
+				startLine = *c.StartLine
+			}
+			comments = append(comments, PRReviewComment{
+				ID:        fmt.Sprint(c.ID),
+				Path:      c.Path,
+				Line:      line,
+				StartLine: startLine,
+				Side:      c.Side,
+				Body:      c.Body,
+				DiffHunk:  c.DiffHunk,
+				CommitID:  c.CommitID,
+				Author:    c.User.Login,
+				CreatedAt: c.CreatedAt,
+			})
+		}
+	}
+	return comments, nil
+}
+
+// Check is a single GitHub Actions / status check result on a PR.
+type Check struct {
+	Name string
+	Link string
+	// Bucket is gh's coarse classification: "pass", "fail", "pending", "skipping", "cancel".
+	Bucket string
+}
+
+// GetFailedChecks returns the checks on the given PR whose bucket is "fail"
+// or "cancel" (build/test failures and cancelled runs — both indicate the
+// agent's last push didn't pass CI). Pending/skipped/passing checks are
+// excluded.
+func GetFailedChecks(ctx context.Context, repoName string, prNumber int) ([]Check, error) {
+	metrics.GhCallsTotal.WithLabelValues("pr_checks").Inc()
+	cmd := runGH(ctx, "pr", "checks", fmt.Sprint(prNumber),
+		"--repo", repoName,
+		"--json", "name,link,bucket",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		// `gh pr checks` exits non-zero when any check has failed (or none
+		// exist yet), even though it still prints valid JSON on stdout in the
+		// failing-checks case. Try to parse stdout before giving up.
+		if len(out) == 0 {
+			return nil, err
+		}
+	}
+	var raw []struct {
+		Name   string `json:"name"`
+		Link   string `json:"link"`
+		Bucket string `json:"bucket"`
+	}
+	if jerr := json.Unmarshal(out, &raw); jerr != nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, jerr
+	}
+	checks := make([]Check, 0)
+	for _, c := range raw {
+		if c.Bucket == "fail" || c.Bucket == "cancel" {
+			checks = append(checks, Check{Name: c.Name, Link: c.Link, Bucket: c.Bucket})
+		}
+	}
+	return checks, nil
+}
+
 // Issue is a GitHub issue as returned by `gh issue list`.
 type Issue struct {
 	Number int

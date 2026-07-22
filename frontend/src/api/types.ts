@@ -2705,6 +2705,7 @@ export interface paths {
                         issue_sync_enabled?: boolean;
                         issue_sync_label?: string;
                         issue_writeback_enabled?: boolean;
+                        pr_review_auto_transition_enabled?: boolean;
                     };
                 };
             };
@@ -3680,6 +3681,8 @@ export interface components {
             issue_sync_label?: string;
             /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the "agent-in-progress" label when a task first leaves not_ready, and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
             issue_writeback_enabled?: number;
+            /** @description 1 = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. 0 = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
+            pr_review_auto_transition_enabled?: number;
             /**
              * @description State of the repo's initial auto-clone. 'ready' for local repos and finished clones; 'cloning' while an async git clone is in progress (POST /repos returns immediately with this status); 'error' if the clone failed (see clone_error). Watch the repo.clone_done / repo.clone_failed WebSocket events for transitions out of 'cloning'.
              * @enum {string}
@@ -3710,6 +3713,13 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description GitHub review-comment id when source is 'github' (used to dedup re-sweeps); null for locally-created comments. */
+            external_id?: string | null;
+            /**
+             * @description 'local' for comments left in-app; 'github' for comments ingested from a GitHub PR review (see internal/ghsync). Both flow through the same OPEN REVIEW COMMENTS prompt section and resolve loop.
+             * @enum {string}
+             */
+            source?: "local" | "github";
         };
         AgentRun: {
             id: string;

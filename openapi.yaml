@@ -491,6 +491,17 @@ components:
             opens, applies the "agent-in-progress" label when a task first
             leaves not_ready, and closes the issue with a comment when the
             PR merges. 0 = off. See docs/task-sources.md.
+        pr_review_auto_transition_enabled:
+          type: integer
+          description: >
+            1 = when ghsync ingests new GitHub PR review/GHA feedback for one
+            of this repo's tasks (a changes_requested review, a new inline
+            review comment, or a failed check), the task is automatically
+            transitioned along its workflow's "failure" human path (the same
+            target as a manual Reject), so it lands back in front of an agent
+            without a human having to click Reject. Requires remote_url.
+            0 = off (feedback is still ingested and surfaced in the prompt;
+            a human must transition the task manually). See docs/task-sources.md.
         clone_status:
           type: string
           enum: [ready, cloning, error]
@@ -526,6 +537,19 @@ components:
         resolved_by_run_id: { type: string, nullable: true, description: "Run that resolved it; null when human-resolved" }
         created_at:         { type: string, format: date-time }
         updated_at:         { type: string, format: date-time }
+        external_id:
+          type: string
+          nullable: true
+          description: >
+            GitHub review-comment id when source is 'github' (used to dedup
+            re-sweeps); null for locally-created comments.
+        source:
+          type: string
+          enum: [local, github]
+          description: >
+            'local' for comments left in-app; 'github' for comments ingested
+            from a GitHub PR review (see internal/ghsync). Both flow through
+            the same OPEN REVIEW COMMENTS prompt section and resolve loop.
       required: [id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, created_at, updated_at]
 
     AgentRun:
@@ -2019,6 +2043,7 @@ paths:
                 issue_sync_enabled:  { type: boolean }
                 issue_sync_label:    { type: string }
                 issue_writeback_enabled: { type: boolean }
+                pr_review_auto_transition_enabled: { type: boolean }
       responses:
         "200":
           content:

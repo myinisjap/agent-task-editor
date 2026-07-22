@@ -6,6 +6,8 @@ backend/bin/
 *.db-wal
 *.db.backup
 backend/coverage.out
+backend/test_results.txt
+frontend/frontend_test_results.txt
 
 # Node
 frontend/node_modules/

@@ -87,17 +87,18 @@ type ProviderConfig struct {
 }
 
 type Repo struct {
-	ID                    string    `json:"id"`
-	Name                  string    `json:"name"`
-	Path                  string    `json:"path"`
-	RemoteUrl             *string   `json:"remote_url"`
-	WorkflowID            *string   `json:"workflow_id"`
-	CreatedAt             time.Time `json:"created_at"`
-	IssueSyncEnabled      int64     `json:"issue_sync_enabled"`
-	IssueSyncLabel        string    `json:"issue_sync_label"`
-	CloneStatus           string    `json:"clone_status"`
-	CloneError            string    `json:"clone_error"`
-	IssueWritebackEnabled int64     `json:"issue_writeback_enabled"`
+	ID                            string    `json:"id"`
+	Name                          string    `json:"name"`
+	Path                          string    `json:"path"`
+	RemoteUrl                     *string   `json:"remote_url"`
+	WorkflowID                    *string   `json:"workflow_id"`
+	CreatedAt                     time.Time `json:"created_at"`
+	IssueSyncEnabled              int64     `json:"issue_sync_enabled"`
+	IssueSyncLabel                string    `json:"issue_sync_label"`
+	CloneStatus                   string    `json:"clone_status"`
+	CloneError                    string    `json:"clone_error"`
+	IssueWritebackEnabled         int64     `json:"issue_writeback_enabled"`
+	PrReviewAutoTransitionEnabled int64     `json:"pr_review_auto_transition_enabled"`
 }
 
 type Task struct {
@@ -152,6 +153,14 @@ type TaskLabelHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type TaskPrReviewState struct {
+	TaskID                string    `json:"task_id"`
+	HeadSha               string    `json:"head_sha"`
+	LastReviewSubmittedAt *string   `json:"last_review_submitted_at"`
+	LastFailedCheckSha    *string   `json:"last_failed_check_sha"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
 type TaskReviewComment struct {
 	ID              string    `json:"id"`
 	TaskID          string    `json:"task_id"`
@@ -166,6 +175,8 @@ type TaskReviewComment struct {
 	ResolvedByRunID *string   `json:"resolved_by_run_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	ExternalID      *string   `json:"external_id"`
+	Source          string    `json:"source"`
 }
 
 type TaskSchedule struct {

@@ -3,6 +3,18 @@ INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
+-- name: CreateGitHubTaskReviewComment :one
+-- Like CreateTaskReviewComment but for a comment ingested from a GitHub PR
+-- review (source='github'), tagged with the GitHub comment id (external_id)
+-- so re-sweeps can dedup via GetTaskReviewCommentByExternalID before
+-- inserting.
+INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_line, quoted_text, body, external_id, source)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'github')
+RETURNING *;
+
+-- name: GetTaskReviewCommentByExternalID :one
+SELECT * FROM task_review_comments WHERE task_id = ? AND external_id = ?;
+
 -- name: GetTaskReviewComment :one
 SELECT * FROM task_review_comments WHERE id = ? AND task_id = ?;
 

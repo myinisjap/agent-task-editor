@@ -8,13 +8,13 @@ SELECT * FROM repos WHERE id = ?;
 SELECT * FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC;
 
 -- name: CreateRepo :one
-INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled, pr_review_auto_transition_enabled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateRepo :one
 UPDATE repos
-SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?
+SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?, pr_review_auto_transition_enabled = ?
 WHERE id = ?
 RETURNING *;
 
