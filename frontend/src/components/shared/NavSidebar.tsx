@@ -1,25 +1,98 @@
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
 
-const links = [
-  { to: '/',                      label: 'Dashboard' },
-  { to: '/dashboard/usage',       label: 'Cost & Usage' },
-  { to: '/dashboard/performance', label: 'Performance' },
-  { to: '/board',                 label: 'Board' },
-  { to: '/chat',                  label: 'Chat' },
-  { to: '/workflow',              label: 'Workflow' },
-  { to: '/agents',                label: 'Agents' },
-  { to: '/providers',             label: 'Providers' },
-  { to: '/repos',                 label: 'Repos' },
-  { to: '/templates',             label: 'Templates' },
-  { to: '/health',                label: 'Health' },
+interface NavGroup {
+  key: string
+  label: string
+  links: { to: string; label: string }[]
+}
+
+// Dashboard is the home route and stays reachable as a standalone top-level
+// link above the collapsible groups; the remaining 10 destinations are
+// organized into logical categories below.
+const topLevelLink = { to: '/', label: 'Dashboard' }
+
+const groups: NavGroup[] = [
+  {
+    key: 'insights',
+    label: 'Insights',
+    links: [
+      { to: '/dashboard/usage', label: 'Cost & Usage' },
+      { to: '/dashboard/performance', label: 'Performance' },
+    ],
+  },
+  {
+    key: 'work',
+    label: 'Work',
+    links: [
+      { to: '/board', label: 'Board' },
+      { to: '/chat', label: 'Chat' },
+    ],
+  },
+  {
+    key: 'configuration',
+    label: 'Configuration',
+    links: [
+      { to: '/workflow', label: 'Workflow' },
+      { to: '/agents', label: 'Agents' },
+      { to: '/providers', label: 'Providers' },
+      { to: '/repos', label: 'Repos' },
+      { to: '/templates', label: 'Templates' },
+    ],
+  },
+  {
+    key: 'system',
+    label: 'System',
+    links: [{ to: '/health', label: 'Health' }],
+  },
 ]
+
+const STORAGE_KEY = 'nav-open-groups'
+
+/** Which group (if any) contains the given pathname. */
+function groupForPath(pathname: string): string | null {
+  const group = groups.find((g) => g.links.some((l) => l.to !== '/' && pathname.startsWith(l.to)))
+  return group?.key ?? null
+}
+
+function loadOpenGroups(activeKey: string | null): Record<string, boolean> {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored) as Record<string, boolean>
+      if (activeKey) parsed[activeKey] = true
+      return parsed
+    }
+  } catch { /* ignore */ }
+  const initial: Record<string, boolean> = {}
+  if (activeKey) initial[activeKey] = true
+  return initial
+}
 
 export default function NavSidebar() {
   const [isOpen, setIsOpen] = useState(false)
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggle)
+  const location = useLocation()
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
+    loadOpenGroups(groupForPath(location.pathname)),
+  )
+
+  const toggleGroup = (key: string) => {
+    setOpenGroups((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
+
+  const linkClassName = ({ isActive }: { isActive: boolean }) =>
+    `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+      isActive
+        ? 'bg-slate-700 text-white'
+        : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
+    }`
 
   return (
     <>
@@ -61,29 +134,63 @@ export default function NavSidebar() {
           </button>
         </div>
 
-        {links.map(({ to, label }) => (
+        {/* Scrollable nav-links region — keeps the theme toggle pinned at the
+            bottom via mt-auto even when expanded groups overflow a short
+            viewport. */}
+        <div className="flex flex-col gap-1 overflow-y-auto min-h-0">
           <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
+            to={topLevelLink.to}
+            end
             onClick={() => setIsOpen(false)}
-            className={({ isActive }) =>
-              `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-slate-700 text-white'
-                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
-              }`
-            }
+            className={linkClassName}
           >
-            {label}
+            {topLevelLink.label}
           </NavLink>
-        ))}
+
+          {groups.map((group) => {
+            const isGroupOpen = !!openGroups[group.key]
+            const panelId = `nav-group-${group.key}`
+            return (
+              <div key={group.key} className="flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.key)}
+                  aria-expanded={isGroupOpen}
+                  aria-controls={panelId}
+                  className="flex items-center justify-between px-3 py-2 rounded-md text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                >
+                  <span>{group.label}</span>
+                  <span
+                    aria-hidden="true"
+                    className={`transition-transform duration-150 ${isGroupOpen ? 'rotate-90' : ''}`}
+                  >
+                    ▸
+                  </span>
+                </button>
+                {isGroupOpen && (
+                  <div id={panelId} className="flex flex-col gap-1 pl-1">
+                    {group.links.map(({ to, label }) => (
+                      <NavLink
+                        key={to}
+                        to={to}
+                        onClick={() => setIsOpen(false)}
+                        className={linkClassName}
+                      >
+                        {label}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
 
         <button
           onClick={toggleTheme}
           aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+          className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0"
         >
           <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
           <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
