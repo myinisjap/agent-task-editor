@@ -157,7 +157,6 @@ type TaskPrReviewState struct {
 	TaskID                string    `json:"task_id"`
 	HeadSha               string    `json:"head_sha"`
 	LastReviewSubmittedAt *string   `json:"last_review_submitted_at"`
-	LastCommentID         *string   `json:"last_comment_id"`
 	LastFailedCheckSha    *string   `json:"last_failed_check_sha"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }

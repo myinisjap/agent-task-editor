@@ -89,7 +89,6 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 		TaskID:                task.ID,
 		HeadSha:               state.HeadSha,
 		LastReviewSubmittedAt: state.LastReviewSubmittedAt,
-		LastCommentID:         state.LastCommentID,
 		LastFailedCheckSha:    state.LastFailedCheckSha,
 	}); err != nil {
 		log.Warn("ghsync: upsert pr review state", "err", err)
