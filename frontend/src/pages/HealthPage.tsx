@@ -15,6 +15,16 @@ const MIN_INTERVAL_SECONDS = 600
 // (once a day), used only as a fallback while settings are still loading.
 const DEFAULT_INTERVAL_SECONDS = 86400
 
+// LOG_RETENTION_MIN_INTERVAL_SECONDS mirrors the backend's floor
+// (logretention.MinInterval / minLogRetentionIntervalSeconds) — kept in
+// lockstep so the form can reject an out-of-range value before
+// round-tripping to the server.
+const LOG_RETENTION_MIN_INTERVAL_SECONDS = 60
+// LOG_RETENTION_DEFAULT_INTERVAL_SECONDS mirrors the backend's
+// out-of-the-box default (once an hour), used only as a fallback while
+// settings are still loading.
+const LOG_RETENTION_DEFAULT_INTERVAL_SECONDS = 3600
+
 // backupFilenameFromContentDisposition extracts the filename from a
 // Content-Disposition: attachment; filename="..." header value, falling
 // back to a client-side timestamped name if the header is missing/unparseable.
@@ -44,6 +54,19 @@ export default function HealthPage() {
   const [settingsError, setSettingsError] = useState('')
   const [settingsSaved, setSettingsSaved] = useState(false)
 
+  // Agent log retention settings (retention days / cleanup frequency) —
+  // see docs/backup.md#agent-log-retention. logRetentionIntervalMinutes is
+  // the form's editable unit (minutes); the API works in seconds, so it's
+  // converted at the load/save boundary. days=0 disables cleanup.
+  const [logRetentionDays, setLogRetentionDays] = useState('0')
+  const [logRetentionIntervalMinutes, setLogRetentionIntervalMinutes] = useState(
+    String(LOG_RETENTION_DEFAULT_INTERVAL_SECONDS / 60),
+  )
+  const [logRetentionLoading, setLogRetentionLoading] = useState(true)
+  const [logRetentionSaving, setLogRetentionSaving] = useState(false)
+  const [logRetentionError, setLogRetentionError] = useState('')
+  const [logRetentionSaved, setLogRetentionSaved] = useState(false)
+
   const load = useCallback(() => {
     setLoading(true)
     setError('')
@@ -65,8 +88,21 @@ export default function HealthPage() {
       .finally(() => setSettingsLoading(false))
   }, [])
 
+  const loadLogRetentionSettings = useCallback(() => {
+    setLogRetentionLoading(true)
+    setLogRetentionError('')
+    api.logRetention.getSettings()
+      .then((s) => {
+        setLogRetentionDays(String(s.days))
+        setLogRetentionIntervalMinutes(String(Math.round(s.interval_seconds / 60)))
+      })
+      .catch((e) => setLogRetentionError(String(e)))
+      .finally(() => setLogRetentionLoading(false))
+  }, [])
+
   useEffect(() => { load() }, [load])
   useEffect(() => { loadSettings() }, [loadSettings])
+  useEffect(() => { loadLogRetentionSettings() }, [loadLogRetentionSettings])
 
   const saveSettings = useCallback(async () => {
     setSettingsSaving(true)
@@ -94,6 +130,33 @@ export default function HealthPage() {
       setSettingsSaving(false)
     }
   }, [intervalMinutes, keep])
+
+  const saveLogRetentionSettings = useCallback(async () => {
+    setLogRetentionSaving(true)
+    setLogRetentionError('')
+    setLogRetentionSaved(false)
+    try {
+      const days = Number(logRetentionDays)
+      const minutes = Number(logRetentionIntervalMinutes)
+      if (!Number.isFinite(days) || days < 0) {
+        throw new Error('Retention days must be 0 (disabled) or greater')
+      }
+      if (!Number.isFinite(minutes) || minutes * 60 < LOG_RETENTION_MIN_INTERVAL_SECONDS) {
+        throw new Error('Cleanup frequency must be at least 1 minute')
+      }
+      const updated = await api.logRetention.updateSettings({
+        days: Math.round(days),
+        interval_seconds: Math.round(minutes * 60),
+      })
+      setLogRetentionDays(String(updated.days))
+      setLogRetentionIntervalMinutes(String(Math.round(updated.interval_seconds / 60)))
+      setLogRetentionSaved(true)
+    } catch (e) {
+      setLogRetentionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLogRetentionSaving(false)
+    }
+  }, [logRetentionDays, logRetentionIntervalMinutes])
 
   const downloadBackup = useCallback(async () => {
     setBackupLoading(true)
@@ -263,6 +326,66 @@ export default function HealthPage() {
             className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
           >
             {settingsSaving ? 'Saving…' : 'Save backup settings'}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-8 pt-6 border-t border-slate-800">
+        <h2 className="text-base font-semibold text-slate-100 mb-1">Agent log cleanup</h2>
+        <p className="text-sm text-slate-400 mb-3">
+          Automatically deletes stored logs for completed, failed, and waiting-on-human runs
+          once they're older than the configured number of days, bounding database growth on
+          long-lived boards. Logs for still-running runs are never touched. Set retention days
+          to 0 to disable cleanup and keep logs forever. Changes take effect without a
+          restart — see <code className="text-slate-300">docs/backup.md</code>.
+        </p>
+
+        {logRetentionError && (
+          <div className="mb-3 bg-red-900/40 border border-red-700 text-red-200 text-sm px-3 py-2 rounded-lg">
+            {logRetentionError}
+          </div>
+        )}
+        {logRetentionSaved && !logRetentionError && (
+          <div className="mb-3 bg-green-900/30 border border-green-700 text-green-300 text-sm px-3 py-2 rounded-lg">
+            Log cleanup settings saved.
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-end gap-4 mb-3">
+          <label className="flex flex-col gap-1 text-sm text-slate-300">
+            Delete logs older than (days)
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={logRetentionDays}
+              onChange={(e) => setLogRetentionDays(e.target.value)}
+              disabled={logRetentionLoading || logRetentionSaving}
+              className="w-40 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+            />
+            <span className="text-xs text-slate-500">0 disables cleanup — logs are kept forever.</span>
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm text-slate-300">
+            Cleanup frequency (minutes)
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={logRetentionIntervalMinutes}
+              onChange={(e) => setLogRetentionIntervalMinutes(e.target.value)}
+              disabled={logRetentionLoading || logRetentionSaving}
+              className="w-40 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+            />
+            <span className="text-xs text-slate-500">Minimum 1 minute.</span>
+          </label>
+
+          <button
+            onClick={saveLogRetentionSettings}
+            disabled={logRetentionLoading || logRetentionSaving}
+            className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
+          >
+            {logRetentionSaving ? 'Saving…' : 'Save log cleanup settings'}
           </button>
         </div>
       </div>

@@ -43,6 +43,7 @@ sql:
       - "internal/storage/migrations/038_drop_chat_messages.up.sql"
       - "internal/storage/migrations/039_provider_configs.up.sql"
       - "internal/storage/migrations/040_pr_review_feedback.up.sql"
+      - "internal/storage/migrations/041_log_retention_settings.up.sql"
     gen:
       go:
         package: "gen"

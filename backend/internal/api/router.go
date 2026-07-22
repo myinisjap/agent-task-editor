@@ -42,6 +42,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates)
 	backupH := handlers.NewBackupHandler(db)
 	backupSettingsH := handlers.NewBackupSettingsHandler(q)
+	logRetentionSettingsH := handlers.NewLogRetentionSettingsHandler(q)
 	wsTicketH := handlers.NewWSTicketHandler(hub)
 	chatH := handlers.NewChatHandler(q, hub, term, bearerToken, corsOrigins)
 
@@ -173,6 +174,13 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// all remains a deploy-time choice (BACKUP_DIR).
 			r.Get("/backup/settings", backupSettingsH.Get)
 			r.Put("/backup/settings", backupSettingsH.Update)
+
+			// Agent-log retention pruner settings (retention days / run
+			// interval) — see docs/backup.md#agent-log-retention. Unlike
+			// backup, there's no separate deploy-time enable gate: days=0
+			// fully disables cleanup via this settings row alone.
+			r.Get("/log-retention/settings", logRetentionSettingsH.Get)
+			r.Put("/log-retention/settings", logRetentionSettingsH.Update)
 
 			// Label history — audit trail of transitions (who/what triggered them)
 			r.Get("/tasks/{id}/label-history", tasksH.ListLabelHistory)

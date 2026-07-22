@@ -30,6 +30,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Task priority** — low/normal/high/urgent priority per task; the dispatcher's pickup queue is ordered priority-first, then oldest-first, with an "N in queue" hint on cards waiting for a free worker
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
+- **Configurable database cleanup** — automatic pruning of old agent logs (retention days + how often it runs) is DB-backed and editable at runtime from the Health page, no restart required — see [docs/backup.md#agent-log-retention](docs/backup.md#agent-log-retention)
 - **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
 - **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything

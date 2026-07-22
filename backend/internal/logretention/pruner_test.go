@@ -183,3 +183,40 @@ func TestRunOnce_DaysZeroOrNegative_DisablesPruning(t *testing.T) {
 		t.Errorf("expected no pruning with negative days, got %d remaining", n)
 	}
 }
+
+func TestRunOnce_WithSettingsFunc_UsesLatestDays(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+
+	wfs, err := q.ListWorkflows(context.Background())
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("expected seeded workflow: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	old := time.Now().UTC().AddDate(0, 0, -60)
+	oldTerminalRun := seedRun(t, db, q, wfID, "completed", &old)
+
+	days := 0
+	p := logretention.NewWithSettingsFunc(q, func() (int, time.Duration) {
+		return days, time.Hour
+	})
+
+	// Disabled (days=0): no-op.
+	if err := p.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if n := logCount(t, q, oldTerminalRun); n != 1 {
+		t.Errorf("expected no pruning while days=0, got %d remaining", n)
+	}
+
+	// Enable via the settingsFn (simulating a runtime PUT) and re-run: takes
+	// effect without reconstructing the Pruner.
+	days = 30
+	if err := p.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if n := logCount(t, q, oldTerminalRun); n != 0 {
+		t.Errorf("expected pruning after settingsFn days changed to 30, got %d remaining", n)
+	}
+}

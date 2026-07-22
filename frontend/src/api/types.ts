@@ -3144,6 +3144,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/log-retention/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get agent-log retention pruner settings
+         * @description Returns the current retention-days/interval settings for the automatic agent-log retention pruner. days=0 means cleanup is disabled. See docs/backup.md#agent-log-retention.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LogRetentionSettings"];
+                    };
+                };
+            };
+        };
+        /**
+         * Update agent-log retention pruner settings
+         * @description Persists new retention-days/interval settings. Takes effect on the pruner's next scheduled run without a process restart. Set days to 0 to disable cleanup entirely.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description 0 (disabled) or greater. */
+                        days: number;
+                        /** @description Minimum 60 (1 minute). */
+                        interval_seconds: number;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LogRetentionSettings"];
+                    };
+                };
+                /** @description days below 0, or interval_seconds below 60 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ws-ticket": {
         parameters: {
             query?: never;
@@ -3572,6 +3648,15 @@ export interface components {
             interval_seconds: number;
             /** @description Number of most-recent snapshots to retain before pruning older ones. Minimum 1. Default 7. */
             keep: number;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description DB-backed settings for the automatic agent-log retention pruner (see docs/backup.md#agent-log-retention). It deletes agent_logs rows belonging to runs in a terminal status (completed/failed/ waiting_human) whose completed_at is older than `days` days ago. Changes take effect on the pruner's next scheduled run without a restart. Unlike backup, there is no separate deploy-time enable gate — days=0 fully disables cleanup via this settings row alone. */
+        LogRetentionSettings: {
+            /** @description Delete terminal-run logs older than this many days. 0 disables cleanup (logs are kept forever). Minimum 0. Default 0. */
+            days: number;
+            /** @description How often the pruner checks for logs to delete, in seconds. Minimum 60 (1 minute). Default 3600 (once an hour). */
+            interval_seconds: number;
             /** Format: date-time */
             updated_at: string;
         };

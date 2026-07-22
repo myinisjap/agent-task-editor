@@ -76,6 +76,13 @@ type ChatSession struct {
 	ProviderConfigID  string    `json:"provider_config_id"`
 }
 
+type LogRetentionSetting struct {
+	ID              int64     `json:"id"`
+	Days            int64     `json:"days"`
+	IntervalSeconds int64     `json:"interval_seconds"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type ProviderConfig struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
