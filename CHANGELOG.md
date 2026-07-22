@@ -19,6 +19,18 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+- **Reorganized the sidebar navigation into collapsible categories.** The
+  flat 11-link menu is now grouped into `Insights` (Cost & Usage,
+  Performance), `Work` (Board, Chat), `Configuration` (Workflow, Agents,
+  Providers, Repos, Templates), and `System` (Health), with Dashboard kept as
+  a standalone top-level link. Each group header is a keyboard-accessible
+  toggle (`aria-expanded`/`aria-controls`) that expands/collapses its links;
+  the group containing the current route opens automatically and the
+  expand/collapse state persists across sessions via `localStorage`. The
+  link list scrolls independently of the pinned theme toggle so long,
+  fully-expanded menus don't clip on short mobile viewports.
+
 ## [0.13.0] - 2026-07-21
 
 ### Added
