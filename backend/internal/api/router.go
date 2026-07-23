@@ -43,6 +43,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	backupH := handlers.NewBackupHandler(db)
 	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	logRetentionSettingsH := handlers.NewLogRetentionSettingsHandler(q)
+	modelPricingH := handlers.NewModelPricingHandler(q, db.SQL())
 	wsTicketH := handlers.NewWSTicketHandler(hub)
 	chatH := handlers.NewChatHandler(q, hub, term, bearerToken, corsOrigins)
 
@@ -181,6 +182,14 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// fully disables cleanup via this settings row alone.
 			r.Get("/log-retention/settings", logRetentionSettingsH.Get)
 			r.Put("/log-retention/settings", logRetentionSettingsH.Update)
+
+			// User-editable per-model USD pricing table used to estimate
+			// anthropic/llm run costs (see internal/agent/providers/pricing.go).
+			// PUT replaces the whole table (add/remove rows are expressed
+			// client-side as a new full list); unlisted models fall back to
+			// the hardcoded map.
+			r.Get("/settings/pricing", modelPricingH.List)
+			r.Put("/settings/pricing", modelPricingH.Update)
 
 			// Label history — audit trail of transitions (who/what triggered them)
 			r.Get("/tasks/{id}/label-history", tasksH.ListLabelHistory)

@@ -55,6 +55,14 @@ type Result struct {
 	// InputTokens/OutputTokens via the internal pricing table. Zero if
 	// unknown/unreported — not necessarily a free run.
 	CostUSD float64
+	// CostUnknown is true only when the anthropic/llm providers consumed
+	// tokens but no price entry (DB-backed or hardcoded fallback) matched
+	// the model, so CostUSD was left at 0 as a placeholder rather than a
+	// computed figure. Always false for claude/qwen_code (and any other
+	// provider that reports its own authoritative cost or none at all), so a
+	// legitimate $0 (e.g. under a Claude Max subscription) is never
+	// confused with an unpriced model.
+	CostUnknown bool
 	// SessionID is the provider-side conversation session for this run (the
 	// claude/qwen CLI stream-json envelope's session_id). Persisted on the run
 	// so a later run on the same task can resume the session with full prior

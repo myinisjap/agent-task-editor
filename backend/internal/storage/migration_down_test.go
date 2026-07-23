@@ -72,3 +72,67 @@ func TestMigration018DownStep(t *testing.T) {
 		}
 	}
 }
+
+// TestMigration042DownStep verifies migration 042's down migration (which
+// drops the model_pricing table and agent_runs.cost_unknown column) applies
+// cleanly against this repo's SQLite driver/version. 042 is the latest
+// migration at the time this test was written, so Migrate(41) rolls back
+// just that one step and exercises its down migration directly.
+func TestMigration042DownStep(t *testing.T) {
+	const targetVersion = 41
+	dbPath := t.TempDir() + "/migtest.db"
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	driver, err := sqlite3.WithInstance(db.SQL(), &sqlite3.Config{})
+	if err != nil {
+		t.Fatalf("driver: %v", err)
+	}
+	src, err := iofs.New(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatalf("source: %v", err)
+	}
+	m, err := migrate.NewWithInstance("iofs", src, "sqlite3", driver)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+
+	if err := m.Migrate(targetVersion); err != nil {
+		t.Fatalf("down to version %d (042 rollback): %v", targetVersion, err)
+	}
+
+	// model_pricing table should be gone.
+	var tableCount int
+	if err := db.SQL().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='model_pricing'`).Scan(&tableCount); err != nil {
+		t.Fatalf("check model_pricing table: %v", err)
+	}
+	if tableCount != 0 {
+		t.Error("expected model_pricing table to be dropped after down migration")
+	}
+
+	// agent_runs.cost_unknown column should be gone.
+	rows, err := db.SQL().Query(`PRAGMA table_info(agent_runs)`)
+	if err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if name == "cost_unknown" {
+			t.Fatal("column \"cost_unknown\" still present after down migration")
+		}
+	}
+}

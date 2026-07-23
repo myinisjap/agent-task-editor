@@ -56,6 +56,7 @@ type AgentRun struct {
 	OutputTokens  int64      `json:"output_tokens"`
 	CostUsd       float64    `json:"cost_usd"`
 	SessionID     string     `json:"session_id"`
+	CostUnknown   int64      `json:"cost_unknown"`
 }
 
 type BackupSetting struct {
@@ -81,6 +82,13 @@ type LogRetentionSetting struct {
 	Days            int64     `json:"days"`
 	IntervalSeconds int64     `json:"interval_seconds"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type ModelPricing struct {
+	Model       string    `json:"model"`
+	InputPer1m  float64   `json:"input_per_1m"`
+	OutputPer1m float64   `json:"output_per_1m"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type ProviderConfig struct {

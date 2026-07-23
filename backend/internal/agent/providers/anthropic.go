@@ -28,6 +28,12 @@ type AnthropicRunner struct {
 	APIKey string
 	// BaseURL defaults to https://api.anthropic.com. Override for proxies/testing.
 	BaseURL string
+	// PriceResolver resolves model to USD-per-1M pricing for cost estimation;
+	// nil falls back to the hardcoded modelPricing map (see pricing.go).
+	// Wired to a DB-backed resolver in cmd/server/main.go's providerFactory
+	// so the user-editable pricing table (GET/PUT /api/v1/settings/pricing)
+	// takes effect without a restart.
+	PriceResolver PriceResolver
 }
 
 func (r *AnthropicRunner) base() string {
@@ -212,6 +218,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input agent.RunInput, logCh c
 
 	var acc runAccumulators
 	acc.model = input.AgentConfig.Model
+	acc.priceResolver = r.PriceResolver
 	maxTurns := int(input.AgentConfig.MaxTurns)
 	if maxTurns <= 0 {
 		maxTurns = 50
@@ -246,7 +253,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input agent.RunInput, logCh c
 		// No tool calls — model finished
 		if len(toolUses) == 0 || resp.StopReason == "end_turn" {
 			res := agent.Result{Status: "completed"}
-			acc.attach(&res)
+			acc.attach(ctx, &res)
 			return res, nil
 		}
 
@@ -281,7 +288,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input agent.RunInput, logCh c
 			})
 
 			if signal != nil {
-				acc.attach(signal)
+				acc.attach(ctx, signal)
 				return *signal, nil
 			}
 		}

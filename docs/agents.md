@@ -149,13 +149,29 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 |---|---|---|
 | `claude` | CLI's own `result` stream-json message (`usage` + `total_cost_usd`) | Authoritative — the CLI itself knows whether you're on a Claude Max subscription (often `$0`) or metered API billing, so `cost_usd` is used as-is, not estimated. |
 | `qwen_code` | Same `result` envelope parsing as `claude` (`classifyStreamJSON`) | Same authoritative behavior as `claude`, assuming the qwen CLI's stream-json output stays compatible. |
-| `anthropic` | Messages API `usage` field, summed across every turn of the agentic loop | `cost_usd` is *estimated* by multiplying tokens by a small, manually maintained USD-per-1M-token pricing table (`internal/agent/pricing.go`). Unknown models fall back to $0 rather than a guessed price. |
+| `anthropic` | Messages API `usage` field, summed across every turn of the agentic loop | `cost_usd` is *estimated* by multiplying tokens by a USD-per-1M-token price. A model's price comes from the user-editable `model_pricing` table (`GET`/`PUT /api/v1/settings/pricing`, see below) if present, otherwise from a small hardcoded fallback map (`internal/agent/providers/pricing.go`). A model in neither is left at `cost_usd = 0` and the run is flagged `cost_unknown = true` rather than silently reported as free. |
 | `llm` | OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`), summed across every turn | Same estimation approach and pricing table as `anthropic`. |
 | `opencode` | Not currently exposed in `opencode run --format json` output | Usage/cost is left at `0` — not estimated — until opencode's JSON schema includes a usage field. |
 | `gemini_cli` | CLI's terminal `result` stream-json event (`stats.input_tokens`/`stats.output_tokens`) | Token counts are used as-is; the Gemini CLI's JSON output reports no cost figure, so `cost_usd` is left at `0`, not estimated. |
 | `codex_cli` | CLI's `turn.completed` JSONL event (`usage.input_tokens`/`usage.output_tokens`) | Token counts are used as-is; the Codex CLI's JSON output reports no cost figure, so `cost_usd` is left at `0`, not estimated. |
 
-The pricing table is intentionally approximate and small (a hardcoded Go map); it will drift from live pricing over time and is not currently user-editable.
+### Editable pricing table
+
+The `anthropic`/`llm` cost estimate is driven by a per-model USD-per-1M-token
+price, stored in the DB-backed `model_pricing` table and editable from
+**Configuration → Pricing** in the UI (or directly via `GET`/`PUT
+/api/v1/settings/pricing`). The table is seeded on first migration from the
+same values that used to be hardcoded, so estimates are unchanged until you
+edit a row; edits take effect on the very next run completion without a
+restart. A model not listed in `model_pricing` falls back to a small,
+approximate hardcoded map in `internal/agent/providers/pricing.go` (exact
+match, then longest model-ID-prefix match); a model matching neither has
+`agent_runs.cost_unknown` set to `1` for that run (surfaced in the run
+history UI as "cost unknown") instead of silently showing `$0`, so a stale
+or missing price is visible rather than mistaken for a genuinely free run.
+`claude`/`qwen_code` never set `cost_unknown` — their CLI-reported cost
+(including a legitimate `$0` under a Claude Max subscription) is always
+authoritative.
 
 The Dashboard shows an aggregate total (tokens + cost) across all runs in a terminal state (`completed`/`failed`/`waiting_human`), plus a per-provider breakdown (via `provider_configs.provider`, joined `agent_runs.agent_config_id` → `agent_configs` → `agent_configs.provider_config_id` → `provider_configs`). The aggregate total query does not join on `agent_configs`, so it includes every terminal run regardless of its config. The per-provider breakdown *does* join on `agent_configs`/`provider_configs`, so runs whose agent config was later deleted (`agent_config_id` is set `NULL` on delete) are excluded from that breakdown, since they can no longer be attributed to a provider — a known limitation.
 

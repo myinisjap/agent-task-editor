@@ -38,7 +38,7 @@ LIMIT 1;
 
 -- name: SetAgentRunCompleted :one
 UPDATE agent_runs
-SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, completed_at = CURRENT_TIMESTAMP
+SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 
