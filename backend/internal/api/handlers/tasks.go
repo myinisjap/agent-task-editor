@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -207,9 +208,17 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if title == "" || repoID == "" || workflowID == "" {
-			Err(w, http.StatusBadRequest, "title, repo_id, and workflow_id are required")
+		if title == "" || repoID == "" {
+			Err(w, http.StatusBadRequest, "title and repo_id are required")
 			return
+		}
+		if workflowID == "" {
+			resolved, werr := h.resolveDefaultWorkflowID(r.Context())
+			if werr != nil {
+				Err(w, http.StatusBadRequest, werr.Error())
+				return
+			}
+			workflowID = resolved
 		}
 		if taskType == "" {
 			taskType = "feature"
@@ -253,9 +262,17 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.Title == "" || body.RepoID == "" || body.WorkflowID == "" {
-		Err(w, http.StatusBadRequest, "title, repo_id, and workflow_id are required")
+	if body.Title == "" || body.RepoID == "" {
+		Err(w, http.StatusBadRequest, "title and repo_id are required")
 		return
+	}
+	if body.WorkflowID == "" {
+		resolved, werr := h.resolveDefaultWorkflowID(r.Context())
+		if werr != nil {
+			Err(w, http.StatusBadRequest, werr.Error())
+			return
+		}
+		body.WorkflowID = resolved
 	}
 	if body.Type == "" {
 		body.Type = "feature"
@@ -286,6 +303,28 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusCreated, toTaskResponse(task))
+}
+
+// resolveDefaultWorkflowID picks the workflow a task lands on when the
+// caller doesn't supply one. It prefers the workflow literally named
+// "Default" (seeded on first run — see storage.SeedDefaultWorkflow), which
+// keeps this deterministic without a schema change. If that workflow has
+// been renamed or deleted, it falls back to the alphabetically-first
+// workflow by name so the board's workflow dropdown and this fallback stay
+// consistent with each other.
+func (h *TasksHandler) resolveDefaultWorkflowID(ctx context.Context) (string, error) {
+	if wf, err := h.q.GetWorkflowByName(ctx, "Default"); err == nil {
+		return wf.ID, nil
+	}
+	workflows, err := h.q.ListWorkflows(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to load workflows")
+	}
+	if len(workflows) == 0 {
+		return "", fmt.Errorf("no workflows configured")
+	}
+	sort.Slice(workflows, func(i, j int) bool { return workflows[i].Name < workflows[j].Name })
+	return workflows[0].ID, nil
 }
 
 // resolveInitialLabel picks the label a freshly created task starts on.

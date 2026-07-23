@@ -33,12 +33,13 @@ chat client at — not something an agent processing a column can reach. See
 
 ### `list_repos`
 Lists the repositories configured on the board. Returns `id`, `name`,
-`workflow_id`, and `clone_status`. Use it to find the `repo_id` (and default
-workflow) to pass to `create_task`.
+`workflow_id`, and `clone_status`. Use it to find the `repo_id` to pass to
+`create_task`.
 
 ### `list_workflows`
 Lists the workflows and each workflow's label (column) names, so you can see
-which labels a ticket can be created on (e.g. `work`, `not_ready`).
+which labels a ticket can be created on (e.g. `work`, `not_ready`), and find
+the `workflow_id` to pass to `create_task`.
 
 ### `create_task`
 Creates a ticket on the board.
@@ -49,7 +50,7 @@ Creates a ticket on the board.
 | `repo_id` | ✅ | Repo the ticket belongs to (from `list_repos`) |
 | `description` | — | What the ticket should accomplish (markdown) |
 | `type` | — | `feature` (default) \| `bug` \| `chore` \| `spike` |
-| `workflow_id` | — | Defaults to the repo's configured workflow |
+| `workflow_id` | — | Workflow the task is created under (from `list_workflows`). Defaults to the board's default workflow (the one named "Default", else the alphabetically-first workflow) when omitted — it is **not** derived from the repo. |
 | `label` | — | Column the ticket starts on. **Defaults to `work`** so an agent picks it up immediately; pass e.g. `not_ready` to stage it for manual review first |
 
 Landing a ticket directly on a column is *initial placement*, not a workflow

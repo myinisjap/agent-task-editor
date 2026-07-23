@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -406,7 +407,7 @@ func TestTasks_Create_MissingTitle_Returns400(t *testing.T) {
 	}
 }
 
-func TestTasks_Create_MissingRepoAndWorkflow_Returns400(t *testing.T) {
+func TestTasks_Create_MissingRepo_Returns400(t *testing.T) {
 	r, _, _, _ := setupTaskRouter(t)
 
 	body := map[string]string{"title": "only title"}
@@ -417,6 +418,61 @@ func TestTasks_Create_MissingRepoAndWorkflow_Returns400(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestTasks_Create_OmittedWorkflowID_DefaultsToDefaultWorkflow verifies that
+// when workflow_id is omitted from the request, the task lands on the
+// seeded "Default" workflow rather than requiring the caller to know its id.
+func TestTasks_Create_OmittedWorkflowID_DefaultsToDefaultWorkflow(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	body := map[string]string{
+		"title":   "No workflow specified",
+		"repo_id": repoID,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.WorkflowID != wfID {
+		t.Errorf("expected task to default to seeded Default workflow %q, got %q", wfID, task.WorkflowID)
+	}
+}
+
+// TestTasks_Create_OmittedWorkflowID_Multipart_DefaultsToDefaultWorkflow is
+// the multipart-form-data equivalent of the JSON-body test above.
+func TestTasks_Create_OmittedWorkflowID_Multipart_DefaultsToDefaultWorkflow(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("title", "No workflow specified (multipart)")
+	_ = mw.WriteField("repo_id", repoID)
+	_ = mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.WorkflowID != wfID {
+		t.Errorf("expected task to default to seeded Default workflow %q, got %q", wfID, task.WorkflowID)
 	}
 }
 

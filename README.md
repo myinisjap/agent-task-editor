@@ -18,6 +18,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Per-task git worktrees** — concurrent agents on the same repo don't conflict
 - **One-click PR URL** — pre-filled GitHub compare URL with task description and agent notes
 - **Workflow editor** — create/edit labels, transitions, and trigger types; import/export YAML
+- **Workflow chosen per task** — pick a workflow when creating each task (defaults to the "Default" workflow; other workflows are offered alphabetically); a repo's own workflow setting is only used as a fallback for automated task sources (GitHub issue import, scheduled tasks)
 - **Agent config UI** — manage multiple AI configs, each targeting different workflow stages, referencing a reusable **Provider Config** (provider/model/API keys) that can be shared across agent configs and ad-hoc chat sessions
 - **Git diff viewer** — per-task branch diff against the base ref
 - **Session resume** — re-runs on the same task continue the agent's previous conversation (`claude --resume`) with full prior context instead of starting cold; per-agent-config opt-out for stages that want fresh eyes

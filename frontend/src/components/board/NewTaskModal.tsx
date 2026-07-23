@@ -5,8 +5,29 @@ import { useTasksStore } from '../../stores/tasks'
 import { PRIORITY_LEVELS } from '../../lib/priority'
 
 type Props = {
-  workflow: Workflow
+  // Optional hint for the initially-selected workflow (e.g. the board's
+  // currently active workflow). The modal always lets the user change it;
+  // if omitted (or the hinted workflow no longer exists) it falls back to
+  // the workflow named "Default", else the alphabetically-first workflow —
+  // matching the backend's own default-resolution behavior.
+  workflow?: Workflow
   onClose: () => void
+}
+
+// sortWorkflowsAlphabetically returns a new array of workflows sorted by
+// name (case-insensitive), for consistent dropdown ordering.
+function sortWorkflowsAlphabetically(list: Workflow[]): Workflow[] {
+  return [...list].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// pickDefaultWorkflowId chooses the initial workflow selection: the hinted
+// workflow if still present, else the one named "Default", else the
+// alphabetically-first workflow.
+function pickDefaultWorkflowId(sorted: Workflow[], hint?: Workflow): string {
+  if (hint && sorted.some((w) => w.id === hint.id)) return hint.id
+  const named = sorted.find((w) => w.name === 'Default')
+  if (named) return named.id
+  return sorted[0]?.id ?? ''
 }
 
 export default function NewTaskModal({ workflow, onClose }: Props) {
@@ -17,6 +38,8 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
   const [type, setType] = useState<'feature' | 'bug' | 'chore' | 'spike'>('feature')
   const [priority, setPriority] = useState(0)
   const [repoId, setRepoId] = useState('')
+  const [workflows, setWorkflows] = useState<Workflow[]>([])
+  const [workflowId, setWorkflowId] = useState('')
   const [attachments, setAttachments] = useState<File[]>([])
   const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
@@ -27,14 +50,21 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    // Repos are no longer scoped to a workflow for task creation — a task's
+    // workflow is now chosen independently, so show every repo.
     api.repos.list().then((r) => {
-      const workflowRepos = r.filter((repo) => repo.workflow_id === workflow.id)
-      setRepos(workflowRepos)
-      if (workflowRepos.length > 0) setRepoId(workflowRepos[0].id)
+      setRepos(r)
+      if (r.length > 0) setRepoId(r[0].id)
+    })
+    api.workflows.list().then((w) => {
+      const sorted = sortWorkflowsAlphabetically(w)
+      setWorkflows(sorted)
+      setWorkflowId(pickDefaultWorkflowId(sorted, workflow))
     })
     api.templates.list().then(setTemplates).catch(() => {})
     titleRef.current?.focus()
-  }, [workflow.id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function applyTemplate(id: string) {
     setTemplateId(id)
@@ -115,7 +145,7 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
       fd.append('type', type)
       fd.append('priority', String(priority))
       fd.append('repo_id', repoId)
-      fd.append('workflow_id', workflow.id)
+      if (workflowId) fd.append('workflow_id', workflowId)
       attachments.forEach((f) => fd.append('attachments', f))
 
       const task = await api.tasks.create(fd)
@@ -208,8 +238,8 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
             />
           </div>
 
-          <div className="flex gap-3">
-            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+          <div className="flex flex-wrap gap-3">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
               <label className="text-xs font-medium text-slate-400">Type</label>
               <select
                 value={type}
@@ -223,7 +253,7 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
               <label className="text-xs font-medium text-slate-400">Priority</label>
               <select
                 value={priority}
@@ -236,10 +266,10 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
               <label className="text-xs font-medium text-slate-400">Repo</label>
               {repos.length === 0 ? (
-                <div className="text-xs text-slate-500 py-2">No repos in this workflow</div>
+                <div className="text-xs text-slate-500 py-2">No repos configured</div>
               ) : (
                 <select
                   data-testid="new-task-repo-select"
@@ -249,6 +279,24 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
                 >
                   {repos.map((r) => (
                     <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
+              <label className="text-xs font-medium text-slate-400">Workflow</label>
+              {workflows.length === 0 ? (
+                <div className="text-xs text-slate-500 py-2">No workflows configured</div>
+              ) : (
+                <select
+                  data-testid="new-task-workflow-select"
+                  value={workflowId}
+                  onChange={(e) => setWorkflowId(e.target.value)}
+                  className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {workflows.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
                   ))}
                 </select>
               )}

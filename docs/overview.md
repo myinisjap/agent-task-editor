@@ -9,6 +9,8 @@ Agent Task Editor is a self-hosted Kanban-style task board where AI agents autom
 ### Tasks
 A task is the unit of work — it has a title, a description, a type (e.g. `feature`, `bug`, `chore`), and a **label** that represents its current position in the workflow. Tasks are always associated with a repository and a workflow.
 
+The workflow is chosen **per task**, independently of the repo, at creation time (in the "New Task" modal, or via the `workflow_id` field on `POST /tasks` / the `create_task` MCP tool). If no workflow is specified, the task defaults to the workflow named "Default" (falling back to the alphabetically-first workflow if "Default" doesn't exist); other workflows are offered alphabetically in the picker. A repo also carries its own optional `workflow_id` setting, but that is only consulted by automated task sources that have no interactive workflow picker — GitHub issue import and scheduled/recurring tasks (see [task-sources.md](task-sources.md) and [task-templates.md](task-templates.md)).
+
 Additional task fields:
 - `branch` — the git branch provisioned for this task (`ate-<slug>-<id>`)
 - `worktree_path` — path to the per-task git worktree (empty if not yet provisioned or already torn down)

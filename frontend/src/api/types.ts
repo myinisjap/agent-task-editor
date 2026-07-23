@@ -65,7 +65,8 @@ export interface paths {
                         description?: string;
                         type?: string;
                         repo_id: string;
-                        workflow_id: string;
+                        /** @description Optional. Defaults to the board's default workflow (the one named 'Default', else the alphabetically-first workflow) when omitted. */
+                        workflow_id?: string;
                         /** @description Label (column) the task starts on. Empty defaults to the workflow's human-gate label — the lowest sort_order agent_ignore label, else the first label ('not_ready' in the default workflow). Must name a label defined in the workflow; unlike a label move this is initial placement, so it is not restricted to defined transition edges (e.g. a task can be created directly on 'work'). */
                         label?: string;
                         /**

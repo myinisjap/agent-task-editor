@@ -142,7 +142,7 @@ func toolDefs() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "list_repos",
-			"description": "List the repositories configured on the board. Use this to find the repo_id (and its default workflow_id) to pass to create_task.",
+			"description": "List the repositories configured on the board. Use this to find the repo_id to pass to create_task.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
@@ -152,7 +152,7 @@ func toolDefs() []map[string]any {
 		},
 		{
 			"name":        "create_task",
-			"description": "Create a ticket on the board. By default the ticket lands on the \"work\" column so an agent starts on it immediately; pass a different label to stage it elsewhere (e.g. \"not_ready\"). If workflow_id is omitted it is taken from the repo's default workflow.",
+			"description": "Create a ticket on the board. By default the ticket lands on the \"work\" column so an agent starts on it immediately; pass a different label to stage it elsewhere (e.g. \"not_ready\"). If workflow_id is omitted, the board's default workflow is used (the one named \"Default\", else the alphabetically-first workflow).",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -160,7 +160,7 @@ func toolDefs() []map[string]any {
 					"description": map[string]any{"type": "string", "description": "What the ticket should accomplish (markdown supported)"},
 					"type":        map[string]any{"type": "string", "enum": []string{"feature", "bug", "chore", "spike"}, "description": "Task type (default feature)"},
 					"repo_id":     map[string]any{"type": "string", "description": "ID of the repo the ticket belongs to (from list_repos)"},
-					"workflow_id": map[string]any{"type": "string", "description": "Workflow ID; defaults to the repo's configured workflow when omitted"},
+					"workflow_id": map[string]any{"type": "string", "description": "Workflow ID (from list_workflows); defaults to the board's default workflow when omitted"},
 					"label":       map[string]any{"type": "string", "description": "Column the ticket starts on (default \"work\"). Must be a label in the workflow."},
 				},
 				"required": []string{"title", "repo_id"},
@@ -257,27 +257,18 @@ func (be *backend) createTask(args json.RawMessage) (string, bool) {
 		a.Label = "work"
 	}
 
-	// Derive the workflow from the repo when the caller didn't specify one.
-	if a.WorkflowID == "" {
-		var repo struct {
-			WorkflowID *string `json:"workflow_id"`
-		}
-		if err := be.get("/api/v1/repos/"+a.RepoID, &repo); err != nil {
-			return "failed to look up repo " + a.RepoID + ": " + err.Error(), true
-		}
-		if repo.WorkflowID == nil || *repo.WorkflowID == "" {
-			return "repo has no default workflow; pass workflow_id explicitly (call list_workflows)", true
-		}
-		a.WorkflowID = *repo.WorkflowID
-	}
-
+	// workflow_id is optional: when omitted, the backend applies the board's
+	// default workflow (the one named "Default", else the alphabetically-first
+	// workflow).
 	payload := map[string]any{
 		"title":       a.Title,
 		"description": a.Description,
 		"type":        a.Type,
 		"repo_id":     a.RepoID,
-		"workflow_id": a.WorkflowID,
 		"label":       a.Label,
+	}
+	if a.WorkflowID != "" {
+		payload["workflow_id"] = a.WorkflowID
 	}
 	var created struct {
 		ID    string `json:"id"`
