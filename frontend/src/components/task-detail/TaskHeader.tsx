@@ -391,7 +391,7 @@ export default function TaskHeader({
               className="text-left w-full cursor-pointer hover:bg-slate-700/50 transition-colors rounded"
               title="Click to expand"
             >
-              <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-60 overflow-y-auto font-sans">
+              <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-60 overflow-hidden font-sans">
                 {task.agent_notes}
               </pre>
             </button>
