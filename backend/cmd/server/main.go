@@ -177,6 +177,13 @@ func main() {
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
 	backendURL := "http://localhost:" + cfg.Port
 
+	// priceResolver resolves anthropic/llm model pricing from the
+	// user-editable model_pricing table (GET/PUT /api/v1/settings/pricing),
+	// falling back to the hardcoded map in providers/pricing.go for any
+	// model not present in the DB. It reads the DB fresh on every run
+	// completion, so edits via the settings UI take effect immediately.
+	priceResolver := providers.DBPriceResolver{Q: termQ}
+
 	// Agent provider factory — selects backend based on AgentConfig.Provider
 	providerFactory := func(agentCfg agent.AgentConfig) agent.Provider {
 		switch agentCfg.Provider {
@@ -189,7 +196,7 @@ func main() {
 		case "anthropic":
 			// Calls the Anthropic Messages API directly — no CLI binary needed.
 			// Requires LLM_API_KEY to be set. Billed per-token (not Claude Max).
-			return &providers.AnthropicRunner{APIKey: cfg.LLMAPIKey}
+			return &providers.AnthropicRunner{APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
 		case "opencode":
 			return &providers.OpencodeRunner{}
 		case "qwen_code":
@@ -211,7 +218,7 @@ func main() {
 			}
 			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		default:
-			return &providers.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey}
+			return &providers.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
 		}
 	}
 

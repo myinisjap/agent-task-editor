@@ -40,6 +40,12 @@ type runAccumulators struct {
 	// attach() can compute an estimated cost from accumulated tokens.
 	model string
 
+	// priceResolver resolves model to USD-per-1M pricing; nil falls back to
+	// the hardcoded modelPricing map (defaultPriceResolver). Set from the
+	// owning runner's PriceResolver field (wired to a DB-backed resolver in
+	// cmd/server/main.go's providerFactory).
+	priceResolver PriceResolver
+
 	inputTokens  int64
 	outputTokens int64
 }
@@ -79,8 +85,11 @@ func (a *runAccumulators) applySpecialTool(name string, args map[string]string, 
 
 // attach copies any accumulated stored info / task notes / token usage onto
 // a Result, computing an estimated cost from the accumulated tokens and the
-// model set on the accumulator.
-func (a *runAccumulators) attach(res *agent.Result) {
+// model set on the accumulator via priceResolver (or the hardcoded map if
+// unset). CostUnknown is set when tokens were actually consumed but no price
+// entry matched the model, so the caller can distinguish "$0, unpriced
+// model" from a genuinely free run.
+func (a *runAccumulators) attach(ctx context.Context, res *agent.Result) {
 	if a.storedInfo != "" {
 		res.StoredInfo = &a.storedInfo
 	}
@@ -89,7 +98,9 @@ func (a *runAccumulators) attach(res *agent.Result) {
 	}
 	res.InputTokens = a.inputTokens
 	res.OutputTokens = a.outputTokens
-	res.CostUSD = estimateCostUSD(a.model, a.inputTokens, a.outputTokens)
+	cost, known := estimateCostUSDWithResolver(ctx, a.priceResolver, a.model, a.inputTokens, a.outputTokens)
+	res.CostUSD = cost
+	res.CostUnknown = (a.inputTokens > 0 || a.outputTokens > 0) && !known
 }
 
 // CommandPolicy holds the optional per-agent-config command allow/deny patterns

@@ -452,7 +452,8 @@ Delete a schedule. Returns `204`.
 | `completed_at` | RFC3339? | When the run finished |
 | `input_tokens` | integer | Total input/prompt tokens consumed across the run (summed across all turns); `0` if the provider doesn't report usage |
 | `output_tokens` | integer | Total output/completion tokens consumed across the run |
-| `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`qwen_code`; estimated from tokens via an internal pricing table for `anthropic`/`llm`; always `0` for `opencode`. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
+| `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`qwen_code`; estimated from tokens against the user-editable pricing table (falling back to an internal hardcoded table) for `anthropic`/`llm`; always `0` for `opencode`. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
+| `cost_unknown` | integer | `1` if tokens were consumed but no pricing table row matched the model, so `cost_usd` was left at `0` as a placeholder rather than a computed figure. `0` otherwise — including for `claude`/`qwen_code`, whose `cost_usd` (even a legitimate `0` under a Claude Max subscription) is always authoritative. |
 | `session_id` | string | Provider-side conversation session for this run (claude/qwen stream-json `session_id`); used to resume the session on a later run (see [agents.md § Session Resume](agents.md#session-resume)). Empty when the provider has no session |
 
 ### `GET /tasks/{id}/runs`
@@ -950,6 +951,29 @@ curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/
 
 The frontend's **Health** page has an "Automatic backup schedule" form that
 calls these endpoints. See [backup.md](backup.md#changing-the-intervalretention-count-at-runtime).
+
+### `GET /settings/pricing` / `PUT /settings/pricing`
+Reads/replaces the user-editable per-model USD-per-1M-token pricing table
+used to estimate `anthropic`/`llm` run costs (see [agents.md § Editable
+pricing table](agents.md#editable-pricing-table)). `GET` returns every row,
+ordered by model. `PUT` replaces the *entire* table with the submitted array
+in a single transaction — add/remove/edit a model are all expressed
+client-side as a new full list. Rejects an empty or duplicate `model`, or a
+negative `input_per_1m`/`output_per_1m`, with `400`. Takes effect on the very
+next `anthropic`/`llm` run completion without a restart. A model not listed
+here falls back to a small hardcoded table; a model matching neither has
+that run's `cost_unknown` flag set to `1` instead of a silent `$0` (see the
+`AgentRun` object above).
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/settings/pricing
+curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '[{"model": "claude-sonnet-4-5", "input_per_1m": 3, "output_per_1m": 15}]' \
+  http://localhost:8080/api/v1/settings/pricing
+```
+
+The frontend's **Configuration → Pricing** page provides an editable table
+UI (add/remove rows, Save) for this endpoint.
 
 ---
 

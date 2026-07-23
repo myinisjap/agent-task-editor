@@ -24,6 +24,12 @@ type LLMRunner struct {
 	BaseURL string
 	// APIKey is sent as Bearer token.
 	APIKey string
+	// PriceResolver resolves model to USD-per-1M pricing for cost estimation;
+	// nil falls back to the hardcoded modelPricing map (see pricing.go).
+	// Wired to a DB-backed resolver in cmd/server/main.go's providerFactory
+	// so the user-editable pricing table (GET/PUT /api/v1/settings/pricing)
+	// takes effect without a restart.
+	PriceResolver PriceResolver
 }
 
 // tool definitions sent to the LLM
@@ -220,6 +226,7 @@ func (r *LLMRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- 
 
 	var acc runAccumulators
 	acc.model = input.AgentConfig.Model
+	acc.priceResolver = r.PriceResolver
 	maxTurns := int(input.AgentConfig.MaxTurns)
 	if maxTurns <= 0 {
 		maxTurns = 50
@@ -239,7 +246,7 @@ func (r *LLMRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- 
 			// No tool calls — treat as completion
 			logCh <- agent.LogEntry{Type: agent.LogStdout, Content: fmt.Sprintf("%v", resp.Content), At: time.Now()}
 			res := agent.Result{Status: "completed"}
-			acc.attach(&res)
+			acc.attach(ctx, &res)
 			return res, nil
 		}
 
@@ -269,7 +276,7 @@ func (r *LLMRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- 
 			})
 
 			if signal != nil {
-				acc.attach(signal)
+				acc.attach(ctx, signal)
 				return *signal, nil
 			}
 		}

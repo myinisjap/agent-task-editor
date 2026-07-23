@@ -44,6 +44,7 @@ sql:
       - "internal/storage/migrations/039_provider_configs.up.sql"
       - "internal/storage/migrations/040_pr_review_feedback.up.sql"
       - "internal/storage/migrations/041_log_retention_settings.up.sql"
+      - "internal/storage/migrations/042_model_pricing.up.sql"
     gen:
       go:
         package: "gen"

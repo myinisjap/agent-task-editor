@@ -106,7 +106,14 @@ export default function RunHistoryList({
                   </div>
                   {((run.cost_usd ?? 0) > 0 || (run.input_tokens ?? 0) > 0 || (run.output_tokens ?? 0) > 0) && (
                     <div className="text-slate-500 text-[11px] mt-0.5">
-                      ${(run.cost_usd ?? 0).toFixed(4)} · {formatTokenCount(run.input_tokens ?? 0)}/{formatTokenCount(run.output_tokens ?? 0)} tok
+                      {run.cost_unknown
+                        // Tokens were consumed but no pricing table row (user-edited
+                        // or hardcoded fallback) matched the model — surface that
+                        // distinctly from a genuine $0 (e.g. under a Claude Max
+                        // subscription) so users know to add a row at /settings/pricing.
+                        ? <span title="Model not found in the pricing table — add it at Configuration → Pricing">cost unknown</span>
+                        : <>${(run.cost_usd ?? 0).toFixed(4)}</>}
+                      {' '}· {formatTokenCount(run.input_tokens ?? 0)}/{formatTokenCount(run.output_tokens ?? 0)} tok
                     </div>
                   )}
                 </button>

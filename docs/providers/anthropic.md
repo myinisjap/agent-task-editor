@@ -82,7 +82,7 @@ Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) 
 
 ## Cost & Usage Reporting
 
-Token usage (`input_tokens`/`output_tokens`) is summed from the Messages API's `usage` field across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens via the internal pricing table (`internal/agent/pricing.go`). See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+Token usage (`input_tokens`/`output_tokens`) is summed from the Messages API's `usage` field across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens against the user-editable pricing table (`GET`/`PUT /api/v1/settings/pricing`, Configuration → Pricing in the UI), falling back to a small hardcoded map (`internal/agent/providers/pricing.go`) for any model with no matching row. A model matching neither has that run's `cost_unknown` flag set instead of silently showing `$0`. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
 ## When to Use
 

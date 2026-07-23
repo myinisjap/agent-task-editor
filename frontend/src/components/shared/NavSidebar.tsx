@@ -38,6 +38,7 @@ const groups: NavGroup[] = [
       { to: '/workflow', label: 'Workflow' },
       { to: '/agents', label: 'Agents' },
       { to: '/providers', label: 'Providers' },
+      { to: '/settings/pricing', label: 'Pricing' },
       { to: '/repos', label: 'Repos' },
       { to: '/templates', label: 'Templates' },
     ],

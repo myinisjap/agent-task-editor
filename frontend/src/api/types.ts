@@ -3220,6 +3220,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/pricing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List user-editable model pricing rows
+         * @description Returns every row of the user-editable USD-per-1M-token pricing table used to estimate anthropic/llm run costs, ordered by model. Models with no row here fall back to an internal, approximate hardcoded table. See ModelPricing and AgentRun.cost_unknown.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelPricing"][];
+                    };
+                };
+            };
+        };
+        /**
+         * Replace the entire model pricing table
+         * @description Replaces the whole pricing table with the submitted rows in a single transaction — add/remove/edit a model are all expressed client-side as a new full list. Takes effect on the very next anthropic/llm run completion without a restart. Rejects an empty/duplicate model or a negative price.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        model: string;
+                        /**
+                         * Format: double
+                         * @description Must be >= 0.
+                         */
+                        input_per_1m: number;
+                        /**
+                         * Format: double
+                         * @description Must be >= 0.
+                         */
+                        output_per_1m: number;
+                    }[];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelPricing"][];
+                    };
+                };
+                /** @description Empty/duplicate model, or a negative price */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ws-ticket": {
         parameters: {
             query?: never;
@@ -3660,6 +3743,23 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /** @description One user-editable USD-per-1M-token pricing row (see 042_model_pricing and internal/agent/providers/pricing.go's DBPriceResolver), used to estimate anthropic/llm run costs. A model with no row here falls back to an internal, approximate hardcoded table; a model matching neither has its cost flagged unknown (AgentRun.cost_unknown) instead of being silently reported as free. Read fresh on every run completion, so an edit here takes effect on the very next run without a restart. */
+        ModelPricing: {
+            /** @description Model ID, matched exactly first, then by longest-prefix (e.g. a row for "claude-sonnet-4-5" also prices "claude-sonnet-4-5-20260101"). */
+            model: string;
+            /**
+             * Format: double
+             * @description USD price per 1M input/prompt tokens. Must be >= 0.
+             */
+            input_per_1m: number;
+            /**
+             * Format: double
+             * @description USD price per 1M output/completion tokens. Must be >= 0.
+             */
+            output_per_1m: number;
+            /** Format: date-time */
+            updated_at: string;
+        };
         WorkflowLabel: {
             id: string;
             workflow_id: string;
@@ -3830,9 +3930,11 @@ export interface components {
             output_tokens?: number;
             /**
              * Format: double
-             * @description Estimated USD cost of the run. For the `claude` CLI provider this is the CLI's own authoritative total_cost_usd figure (which may legitimately be 0 under a Claude Max subscription); for anthropic/llm providers it is computed from input/output tokens via an internal, approximate pricing table. 0 if unknown/unreported.
+             * @description Estimated USD cost of the run. For the `claude` CLI provider this is the CLI's own authoritative total_cost_usd figure (which may legitimately be 0 under a Claude Max subscription); for anthropic/llm providers it is computed from input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported.
              */
             cost_usd?: number;
+            /** @description 1 if tokens were consumed but no price entry (user-edited or hardcoded fallback) matched the model, so cost_usd was left at 0 as a placeholder rather than a computed figure — add a row for this model at /settings/pricing to get a real estimate. 0 otherwise, including for claude/qwen_code (which never set this; their cost_usd, including a legitimate 0 under a Claude Max subscription, is always authoritative). */
+            cost_unknown?: number;
             /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */
             session_id?: string;
         };

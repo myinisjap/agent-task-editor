@@ -33,6 +33,23 @@ triggers the "Release" workflow the same way.
     sidebar, which requests browser notification permission from that click
     (a required user gesture). Degrades silently on browsers without the
     Notifications API.
+- **User-editable model pricing table for cost estimation.** The USD-per-1M
+  -token pricing used to estimate `anthropic`/`llm` run costs was previously
+  a hardcoded Go map with no way to fix drift or add a missing model:
+  - New `GET`/`PUT /api/v1/settings/pricing` endpoints backed by a new
+    `model_pricing` table (migration 042), seeded from the previous hardcoded
+    values so estimates are unchanged until a row is edited. `PUT` replaces
+    the whole table in a transaction; add/remove/edit are all expressed
+    client-side as a new full list.
+  - A model not listed in `model_pricing` still falls back to the small
+    hardcoded map in `internal/agent/providers/pricing.go`, so unlisted
+    models keep working exactly as before.
+  - A run whose model matches neither table now has `agent_runs.cost_unknown`
+    set instead of silently showing `$0` — the run history UI renders "cost
+    unknown" for it, distinct from a genuinely free run (e.g. `claude`/
+    `qwen_code` under a Claude Max subscription, which never set this flag).
+  - New **Configuration → Pricing** page: an editable table (model, input
+    price, output price) with add/remove rows and a Save action.
 - **DB-backed, UI-editable agent-log retention settings.** The agent-log
   cleanup pruner (`internal/logretention`) that deletes `agent_logs` rows
   for terminal-status runs older than N days is now configurable at

@@ -406,6 +406,10 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 		}
 	}
 
+	costUnknown := int64(0)
+	if result.CostUnknown {
+		costUnknown = 1
+	}
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 		Status:       finalStatus,
 		StoredInfo:   result.StoredInfo,
@@ -413,6 +417,7 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 		InputTokens:  result.InputTokens,
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
+		CostUnknown:  costUnknown,
 		ID:           job.RunID,
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)
