@@ -113,6 +113,76 @@ describe('parseLogContent — tool calls', () => {
   })
 })
 
+// Regression: the real Claude/qwen stream-json shape nests tool_use inside
+// message.content[] of a type:"assistant" envelope — not a top-level
+// {type:"tool_use"} nor {tool_use:{...}}. These were being dropped to an empty
+// entry (backend) / raw JSON blob (frontend) before the parser handled them.
+describe('parseLogContent — assistant-nested tool_use (real SDK shape)', () => {
+  const envelope = (blocks: unknown[]) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: blocks },
+      session_id: 's-1',
+    })
+
+  it('parses a tool_use-only assistant message as a tool_call', () => {
+    const content = envelope([{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/a/b/c/TaskHeader.tsx' } }])
+    // Backend now tags these LogToolCall; earlier WS frames may still arrive as stdout.
+    for (const type of ['tool_call', 'stdout']) {
+      const parsed = parseLogContent(type, content)
+      expect(parsed.kind).toBe('tool_call')
+      if (parsed.kind !== 'tool_call') return
+      expect(parsed.toolName).toBe('Read')
+      expect(parsed.summary).toBe('b/c/TaskHeader.tsx')
+    }
+  })
+
+  it('folds leading prose into the summary for a mixed text+tool_use message', () => {
+    const content = envelope([
+      { type: 'text', text: 'Let me check the header component.' },
+      { type: 'tool_use', id: 'toolu_2', name: 'Read', input: { file_path: '/x/y/z.tsx' } },
+    ])
+    const parsed = parseLogContent('tool_call', content)
+    expect(parsed.kind).toBe('tool_call')
+    if (parsed.kind !== 'tool_call') return
+    expect(parsed.toolName).toBe('Read')
+    expect(parsed.summary).toContain('Let me check the header component.')
+    expect(parsed.summary).toContain('y/z.tsx')
+  })
+
+  it('still returns assistant_text for a text-only message', () => {
+    const content = envelope([{ type: 'text', text: 'Working on it.' }])
+    const parsed = parseLogContent('stdout', content)
+    expect(parsed.kind).toBe('assistant_text')
+    if (parsed.kind !== 'assistant_text') return
+    expect(parsed.text).toBe('Working on it.')
+  })
+})
+
+describe('parseLogContent — plain user text (not a tool_result)', () => {
+  it('surfaces user block text instead of a raw blob', () => {
+    const content = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: 'Please fix the failing test.' }] },
+    })
+    const parsed = parseLogContent('stdout', content)
+    expect(parsed.kind).toBe('text')
+    if (parsed.kind !== 'text') return
+    expect(parsed.text).toBe('Please fix the failing test.')
+  })
+
+  it('surfaces user content given as a plain string', () => {
+    const content = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: 'do the thing' },
+    })
+    const parsed = parseLogContent('stdout', content)
+    expect(parsed.kind).toBe('text')
+    if (parsed.kind !== 'text') return
+    expect(parsed.text).toBe('do the thing')
+  })
+})
+
 describe('parseLogContent — tool results', () => {
   it('resolves the tool name from the sibling tool_use block', () => {
     const content = JSON.stringify({

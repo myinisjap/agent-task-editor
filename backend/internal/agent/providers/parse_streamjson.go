@@ -61,7 +61,15 @@ func classifyStreamJSON(line string) streamEvent {
 	msgType := strings.Trim(string(raw["type"]), `"`)
 	switch msgType {
 	case "assistant":
-		return streamEvent{Entry: agent.LogEntry{Type: agent.LogStdout, Content: extractAssistantText(raw), At: time.Now()}, SessionID: sessionID}
+		// Pass the *raw* line through — display shaping (extracting text,
+		// summarizing tool calls) is the frontend's job (parseAgentLog.ts).
+		// We only classify the line so the log renders with the right treatment:
+		// LogToolCall when it carries a tool_use block, LogStdout for prose.
+		logType := agent.LogStdout
+		if assistantHasToolUse(raw) {
+			logType = agent.LogToolCall
+		}
+		return streamEvent{Entry: agent.LogEntry{Type: logType, Content: line, At: time.Now()}, SessionID: sessionID}
 	case "tool_use":
 		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, SessionID: sessionID}
 	case "tool_result":
@@ -171,23 +179,23 @@ func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 	return u
 }
 
-func extractAssistantText(raw map[string]json.RawMessage) string {
+// assistantHasToolUse reports whether an assistant stream-json message carries
+// at least one tool_use content block. Used to classify the raw line as
+// LogToolCall (vs LogStdout for prose) so the frontend renders it with the
+// right treatment — the raw line is passed through either way.
+func assistantHasToolUse(raw map[string]json.RawMessage) bool {
 	var msg struct {
-		Message struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"message"`
+		Content []struct {
+			Type string `json:"type"`
+		} `json:"content"`
 	}
-	if err := json.Unmarshal(raw["message"], &msg.Message); err != nil {
-		return string(raw["message"])
+	if err := json.Unmarshal(raw["message"], &msg); err != nil {
+		return false
 	}
-	var parts []string
-	for _, c := range msg.Message.Content {
-		if c.Type == "text" && c.Text != "" {
-			parts = append(parts, c.Text)
+	for _, c := range msg.Content {
+		if c.Type == "tool_use" {
+			return true
 		}
 	}
-	return strings.Join(parts, " ")
+	return false
 }

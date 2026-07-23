@@ -68,6 +68,43 @@ func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 	}
 }
 
+// TestClassifyStreamJSON_AssistantToolUse verifies that an assistant message
+// carrying a tool_use block is classified as LogToolCall with the *raw* line
+// preserved as Content, so the frontend can recover the tool name/input. Shape
+// is the real Claude/qwen stream-json envelope from captured agent dumps.
+func TestClassifyStreamJSON_AssistantToolUse(t *testing.T) {
+	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/repo/foo.tsx","offset":378,"limit":50}}]},"session_id":"s-1"}`
+
+	ev := classifyStreamJSON(line)
+
+	if ev.Entry.Type != agent.LogToolCall {
+		t.Errorf("want LogToolCall entry, got %v", ev.Entry.Type)
+	}
+	if ev.Entry.Content != line {
+		t.Errorf("want raw line preserved as Content, got %q", ev.Entry.Content)
+	}
+	if ev.SessionID != "s-1" {
+		t.Errorf("want session s-1, got %q", ev.SessionID)
+	}
+}
+
+// TestClassifyStreamJSON_AssistantText verifies a text-only assistant message is
+// classified as LogStdout with the *raw* line preserved — display shaping
+// (extracting the text) is the frontend's job, so the backend no longer
+// flattens it.
+func TestClassifyStreamJSON_AssistantText(t *testing.T) {
+	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working on it"}]}}`
+
+	ev := classifyStreamJSON(line)
+
+	if ev.Entry.Type != agent.LogStdout {
+		t.Errorf("want LogStdout entry, got %v", ev.Entry.Type)
+	}
+	if ev.Entry.Content != line {
+		t.Errorf("want raw line preserved as Content, got %q", ev.Entry.Content)
+	}
+}
+
 // TestClassifyStreamJSON_SessionID verifies the session id is extracted from
 // any stream-json envelope carrying one, and is empty otherwise.
 func TestClassifyStreamJSON_SessionID(t *testing.T) {

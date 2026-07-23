@@ -97,6 +97,17 @@ triggers the "Release" workflow the same way.
     others or fails the sweep), mirroring the existing issue write-back
     error-handling style. See [task-sources.md](docs/task-sources.md).
 
+### Fixed
+- **Agent tool calls now show in the run log instead of vanishing.** An
+  assistant stream-json message carrying a `tool_use` block (e.g. `Read`,
+  `Bash`, `Edit`) was flattened to an empty log entry by the backend and never
+  reached the UI's tool-call renderer — roughly a third of every run's log
+  lines. The backend now preserves these as `tool_call` entries, and the
+  frontend parser recognizes the real nested SDK shape
+  (`assistant` → `message.content[].tool_use`) rather than only the
+  hand-built top-level shapes. Plain user-turn text (not a `tool_result`) is
+  now surfaced too instead of falling through to a raw JSON blob.
+
 ### Changed
 - **Default task-start label now derives from the workflow instead of a
   hard-coded `not_ready`.** New tasks created without an explicit label —

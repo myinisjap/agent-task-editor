@@ -152,16 +152,33 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
   const role = msg.role as string | undefined
   const content = msg.content
 
-  // assistant message with text
+  // assistant message: text and/or tool_use blocks. Claude/qwen emit these
+  // one-per-message; other models may mix. A tool_use block is the meaningful
+  // action, so prefer it — the virtualized log renders one entry per row, so we
+  // return a single ParsedLog rather than splitting a mixed message.
   if (role === 'assistant' && Array.isArray(content)) {
     const texts: string[] = []
+    let toolBlock: Record<string, unknown> | undefined
     for (const block of content as unknown[]) {
-      if (typeof block === 'object' && block !== null) {
-        const b = block as Record<string, unknown>
-        if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-          texts.push(b.text.trim())
-        }
+      if (typeof block !== 'object' || block === null) continue
+      const b = block as Record<string, unknown>
+      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+        texts.push(b.text.trim())
+      } else if (b.type === 'tool_use' && !toolBlock) {
+        toolBlock = b
       }
+    }
+    if (toolBlock) {
+      const toolName = (toolBlock.name ?? '') as string
+      const input = (toolBlock.input ?? {}) as Record<string, unknown>
+      let summary = summariseInput(toolName, input)
+      // Fold any assistant prose that preceded the call into the summary so it
+      // isn't lost (rare — mixed text+tool_use messages).
+      if (texts.length > 0) {
+        const prose = truncate(texts.join(' '), 80)
+        summary = summary ? `${prose} — ${summary}` : prose
+      }
+      return { kind: 'tool_call', toolName, input, summary }
     }
     if (texts.length > 0) {
       return { kind: 'assistant_text', text: texts.join('\n') }
@@ -218,6 +235,26 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
       const { summary, detail } = summariseResult(toolName, text)
       return { kind: 'tool_result', toolName, summary, isError, detail }
     }
+
+    // No tool_result block — a plain user turn (initial prompt or interleaved
+    // text). Surface its text rather than dropping to a raw JSON blob.
+    const texts: string[] = []
+    for (const block of content as unknown[]) {
+      if (typeof block === 'object' && block !== null) {
+        const b = block as Record<string, unknown>
+        if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+          texts.push(b.text.trim())
+        }
+      }
+    }
+    if (texts.length > 0) {
+      return { kind: 'text', text: texts.join('\n') }
+    }
+  }
+
+  // user content as a plain string (some CLIs don't wrap it in blocks).
+  if (role === 'user' && typeof content === 'string' && content.trim()) {
+    return { kind: 'text', text: content.trim() }
   }
 
   return null
