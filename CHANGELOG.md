@@ -20,6 +20,19 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Opt-in browser notifications when a human is needed.** Frontend-only,
+  driven by the existing app-wide WebSocket connection — no new backend
+  infra, VAPID keys, or push subscription storage:
+  - Fires when an agent calls the `request_human` MCP tool (or any other
+    condition that already publishes `task.needs_human`, e.g. cost-budget
+    or retry-budget exhaustion).
+  - Fires when a task's label changes onto a "human gate" — a non-terminal
+    label whose only outgoing transitions are human-triggered, or that has
+    `agent_ignore` set — computed client-side from the active workflow.
+  - Off by default; enable from the new toggle at the bottom of the nav
+    sidebar, which requests browser notification permission from that click
+    (a required user gesture). Degrades silently on browsers without the
+    Notifications API.
 - **DB-backed, UI-editable agent-log retention settings.** The agent-log
   cleanup pruner (`internal/logretention`) that deletes `agent_logs` rows
   for terminal-status runs older than N days is now configurable at

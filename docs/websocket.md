@@ -58,6 +58,11 @@ A task moved to a new label.
 }
 ```
 
+The frontend also treats this event as a possible "needs human" signal: if
+`to` is a non-terminal label whose only outgoing transitions (per the active
+workflow) are `human`-triggered, or that has `agent_ignore` set, it fires an
+opt-in browser notification (see [Client-Side Behaviour](#client-side-behaviour)).
+
 ### `task.updated`
 A lightweight "something about this task changed, refetch it" signal. Fired
 from several places — a dependent task's blocked/blocking badge may have
@@ -99,7 +104,8 @@ An agent run completed (any terminal run status).
 ```
 
 ### `task.needs_human`
-The agent called `request_human` and is waiting for input.
+The agent called `request_human` and is waiting for input. Also published on
+cost-budget or retry-budget exhaustion (see `internal/agent`).
 
 ```json
 {
@@ -111,6 +117,9 @@ The agent called `request_human` and is waiting for input.
   }
 }
 ```
+
+The frontend surfaces this as an opt-in browser notification (see
+[Client-Side Behaviour](#client-side-behaviour)).
 
 ### `task.review_comments_changed`
 Fired after a completed run applies `resolve_comment` resolutions from the
@@ -280,6 +289,7 @@ The frontend `WSClient` (`frontend/src/api/ws.ts`) handles:
 - **Re-subscribe** — all active subscriptions are re-sent after a reconnect
 - **Event routing** — listeners registered per `task_id` receive matching `agent.log` entries; global listeners receive all other events
 - **Ticket fetch** — if `VITE_API_TOKEN` is set, `connect()` first `POST`s `/api/v1/ws-ticket` (Bearer-authed) and opens the socket with the returned `?ticket=`; if that fetch fails it falls through and connects without a ticket (the server 401s and the reconnect loop retries)
+- **"Needs human" notifications** — `useHumanNeededNotifications` (`frontend/src/lib/useHumanNeededNotifications.ts`) is mounted once at the app root and listens on this same connection for `task.needs_human` and human-gate `task.label_changed` events, showing a browser `Notification` for each (opt-in, off by default; see the sidebar toggle and `frontend/src/stores/notifications.ts`). This is a Notifications-API-only implementation — there is no server-side Web Push, VAPID keys, or subscription storage, so notifications only fire while a tab/PWA is open.
 
 ## Hub Architecture
 

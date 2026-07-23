@@ -104,6 +104,11 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   cold; per-agent-config opt-out for stages that want fresh eyes
 - **Reply to a waiting agent** — when an agent asks for help (`request_human`),
   answer with text and it continues in the same session, without moving the task
+- **Browser notifications when a human is needed** — opt-in (off by default,
+  enabled from the sidebar); fires on `request_human`/budget-exhaustion
+  (`task.needs_human`) and when a task lands on a label only a human can move
+  it out of, all driven client-side off the existing WebSocket stream — see
+  [websocket.md](websocket.md#client-side-behaviour)
 - **Inline diff review comments** — leave file/line-anchored comments on the diff; open comments are injected into every agent run's prompt until the agent resolves them via the `resolve_comment` MCP tool (resolutions show up threaded in the diff viewer)
 - **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once

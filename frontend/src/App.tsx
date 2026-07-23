@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import NavSidebar from './components/shared/NavSidebar'
 import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
+import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
 import BoardPage from './pages/BoardPage'
 import ChatPage from './pages/ChatPage'
 import DashboardPage from './pages/DashboardPage'
@@ -16,6 +17,10 @@ import TemplatesPage from './pages/TemplatesPage'
 import HealthPage from './pages/HealthPage'
 
 export default function App() {
+  // Registered once at the app root (not per-page) so "human needed"
+  // notifications fire for the whole session regardless of route.
+  useHumanNeededNotifications()
+
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ApiTokenGate>
