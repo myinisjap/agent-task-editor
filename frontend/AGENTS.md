@@ -42,6 +42,7 @@ src/
 │   ├── providerConfigs.ts Provider config state (provider/model/env)
 │   ├── repos.ts      Repo list state
 │   ├── theme.ts      Dark/light theme state (persisted, syncs root class)
+│   ├── notifications.ts Browser-notification opt-in + permission state (persisted; default off)
 │   └── workflow.ts   Workflow + label state
 ├── lib/
 │   ├── parseDiff.ts         Git unified diff parser
@@ -50,7 +51,10 @@ src/
 │   ├── validateWorkflow.ts  Structural validation of a parsed workflow (labels, transitions, reachability)
 │   ├── condensedBoard.ts    Groups workflow labels into condensed/agent-group board columns
 │   ├── diffComments.ts      Maps API review-comment wire type to the diff viewer's view model
-│   └── useIsMobile.ts       Hook for responsive breakpoint detection
+│   ├── useIsMobile.ts       Hook for responsive breakpoint detection
+│   ├── humanGate.ts         isHumanGateLabel() — is a workflow label one only a human can move a task out of
+│   ├── notify.ts            showHumanNeededNotification() — de-duped browser Notification wrapper
+│   └── useHumanNeededNotifications.ts  Hook mounted at the app root: WS-driven "needs human" notifications
 ├── App.tsx           Router setup
 └── main.tsx          Entry point
 ```

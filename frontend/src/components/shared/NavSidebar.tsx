@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
+import { useNotificationsStore, notificationsSupported } from '../../stores/notifications'
 
 interface NavGroup {
   key: string
@@ -74,6 +75,9 @@ export default function NavSidebar() {
   const [isOpen, setIsOpen] = useState(false)
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggle)
+  const notificationsEnabled = useNotificationsStore((s) => s.enabled)
+  const notificationsPermission = useNotificationsStore((s) => s.permission)
+  const toggleNotifications = useNotificationsStore((s) => s.toggle)
   const location = useLocation()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     loadOpenGroups(groupForPath(location.pathname)),
@@ -186,11 +190,36 @@ export default function NavSidebar() {
           })}
         </div>
 
+        {notificationsSupported() && (
+          <button
+            onClick={toggleNotifications}
+            disabled={notificationsPermission === 'denied'}
+            aria-label={notificationsEnabled ? 'Disable notifications' : 'Enable notifications'}
+            title={
+              notificationsPermission === 'denied'
+                ? 'Notifications are blocked for this site — re-enable them in your browser settings'
+                : notificationsEnabled
+                  ? 'Disable notifications'
+                  : 'Get notified in your browser when a task needs a human'
+            }
+            className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-400"
+          >
+            <span aria-hidden="true">{notificationsEnabled ? '🔔' : '🔕'}</span>
+            <span>
+              {notificationsPermission === 'denied'
+                ? 'Notifications blocked'
+                : notificationsEnabled
+                  ? 'Notifications on'
+                  : 'Enable notifications'}
+            </span>
+          </button>
+        )}
+
         <button
           onClick={toggleTheme}
           aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0"
+          className={`${notificationsSupported() ? '' : 'mt-auto'} flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0`}
         >
           <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
           <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>

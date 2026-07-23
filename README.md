@@ -35,6 +35,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 - **Installable as a PWA** — add the board to your phone's home screen for quick access
+- **Browser notifications when a human is needed** — opt-in (off by default; enable from the sidebar); fires whenever an agent calls the `request_human` MCP tool, or a task lands on a label only a human can move it out of, driven by the existing WebSocket event stream, no extra backend or push infrastructure required
 
 See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.
 
