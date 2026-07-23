@@ -41,6 +41,7 @@ function label(name: string, sortOrder: number): WorkflowLabel {
     sort_order: sortOrder,
     agent_ignore: 0,
     is_terminal: 0,
+    create_pr: 0,
   }
 }
 

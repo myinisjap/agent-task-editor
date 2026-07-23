@@ -11,6 +11,7 @@ function label(name: string, opts: { agentIgnore?: boolean; isTerminal?: boolean
     sort_order: 0,
     agent_ignore: opts.agentIgnore ? 1 : 0,
     is_terminal: opts.isTerminal ? 1 : 0,
+    create_pr: 0,
   }
 }
 

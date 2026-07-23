@@ -67,8 +67,8 @@ function workflow(): Workflow {
     name: 'Default',
     description: '',
     labels: [
-      { id: 'l1', workflow_id: 'wf', name: 'todo', color: '#000', sort_order: 0, agent_ignore: 0, is_terminal: 0 },
-      { id: 'l2', workflow_id: 'wf', name: 'doing', color: '#000', sort_order: 1, agent_ignore: 0, is_terminal: 0 },
+      { id: 'l1', workflow_id: 'wf', name: 'todo', color: '#000', sort_order: 0, agent_ignore: 0, is_terminal: 0, create_pr: 0 },
+      { id: 'l2', workflow_id: 'wf', name: 'doing', color: '#000', sort_order: 1, agent_ignore: 0, is_terminal: 0, create_pr: 0 },
     ],
     transitions: [],
     created_at: new Date().toISOString(),
