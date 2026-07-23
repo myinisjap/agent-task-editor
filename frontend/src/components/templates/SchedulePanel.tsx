@@ -32,7 +32,8 @@ export default function SchedulePanel({
   const [repoId, setRepoId] = useState(repos[0]?.id ?? '')
   const [preset, setPreset] = useState('daily')
   const [cronExpr, setCronExpr] = useState('0 6 * * *')
-  const [targetLabel, setTargetLabel] = useState('not_ready')
+  // Seeded empty; the repo-select effect fills in the workflow's gate label.
+  const [targetLabel, setTargetLabel] = useState('')
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -45,13 +46,23 @@ export default function SchedulePanel({
     ? (workflows.find((w) => w.id === selectedRepo.workflow_id)?.labels ?? [])
     : []
 
+  // The workflow's human-gate label — the default a schedule targets, mirroring
+  // the backend: lowest sort_order agent_ignore label, else the first label.
+  // "not_ready" for the default workflow, the equivalent gate for a custom one.
+  const gateLabel = (() => {
+    const sorted = workflowLabels.slice().sort((a, b) => a.sort_order - b.sort_order)
+    return sorted.find((l) => l.agent_ignore !== 0)?.name ?? sorted[0]?.name ?? ''
+  })()
+
   useEffect(() => {
     if (workflowLabels.length === 0) return
     if (!workflowLabels.some((l) => l.name === targetLabel)) {
-      setTargetLabel(workflowLabels.some((l) => l.name === 'not_ready') ? 'not_ready' : workflowLabels[0].name)
+      setTargetLabel(gateLabel)
     }
+    // Also keyed on gateLabel so a late-loading workflows fetch still populates
+    // the default once labels arrive (repoId alone wouldn't re-fire).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repoId])
+  }, [repoId, gateLabel])
 
   function handlePresetChange(key: string) {
     setPreset(key)
@@ -72,7 +83,8 @@ export default function SchedulePanel({
         template_id: templateId,
         repo_id: repoId,
         cron_expr: cronExpr.trim(),
-        target_label: targetLabel.trim() || 'not_ready',
+        // Empty lets the backend resolve the workflow's human-gate label.
+        target_label: targetLabel.trim(),
         enabled,
       })
       onChange()
@@ -167,7 +179,7 @@ export default function SchedulePanel({
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-slate-400">
-              Target label <span className="text-slate-600">(default not_ready)</span>
+              Target label <span className="text-slate-600">(default {gateLabel || 'human-gate label'})</span>
             </label>
             {workflowLabels.length > 0 ? (
               <select value={targetLabel} onChange={(e) => setTargetLabel(e.target.value)} className={inputCls}>
@@ -193,10 +205,10 @@ export default function SchedulePanel({
           </label>
         </div>
 
-        {targetLabel.trim() !== '' && targetLabel.trim() !== 'not_ready' && (
+        {targetLabel.trim() !== '' && gateLabel !== '' && targetLabel.trim() !== gateLabel && (
           <p className="text-[11px] text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
             ⚠ Starting on label <span className="font-mono">{targetLabel.trim()}</span> instead of{' '}
-            <span className="font-mono">not_ready</span> skips human review — the created task goes straight to an
+            <span className="font-mono">{gateLabel}</span> skips human review — the created task goes straight to an
             agent. This enables fully unattended maintenance loops; pair it with a cost budget on the target agent
             config as a safety net.
           </p>

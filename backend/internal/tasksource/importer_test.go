@@ -69,6 +69,14 @@ func seedRepo(t *testing.T, q *gen.Queries, syncEnabled int64, withWorkflow bool
 		if err != nil {
 			t.Fatalf("create workflow: %v", err)
 		}
+		// Custom-named human-gate label (lowest sort_order agent_ignore label) —
+		// deliberately NOT "not_ready", to prove imports land on the workflow's
+		// gate label whatever it's called, not a hard-coded literal.
+		if _, err := q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
+			ID: uuid.NewString(), WorkflowID: wf.ID, Name: "triage", Color: "#000", SortOrder: 0, AgentIgnore: 1,
+		}); err != nil {
+			t.Fatalf("create gate label: %v", err)
+		}
 		workflowID = &wf.ID
 	}
 
@@ -140,8 +148,8 @@ func TestSweepImportsAndDedupes(t *testing.T) {
 	if bug.Type != "bug" {
 		t.Errorf("type = %q, want bug", bug.Type)
 	}
-	if bug.Label != "not_ready" {
-		t.Errorf("label = %q, want not_ready", bug.Label)
+	if bug.Label != "triage" {
+		t.Errorf("label = %q, want triage (the workflow's gate label)", bug.Label)
 	}
 	if bug.Title != "Fix crash" {
 		t.Errorf("title = %q", bug.Title)

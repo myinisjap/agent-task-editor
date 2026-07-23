@@ -14,6 +14,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/cronexpr"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
 // Publisher is satisfied by *ws.Hub — it sends events to all connected clients.
@@ -145,7 +146,20 @@ func (s *Scheduler) fireIfDue(ctx context.Context, sched gen.TaskSchedule, now t
 
 	targetLabel := sched.TargetLabel
 	if targetLabel == "" {
-		targetLabel = "not_ready"
+		labels, err := s.q.ListWorkflowLabels(ctx, *repo.WorkflowID)
+		if err != nil {
+			log.Warn("schedule sweep: label lookup failed", "workflow_id", *repo.WorkflowID, "err", err)
+			return false
+		}
+		gate, first := workflow.GateLabel(labels)
+		if gate != "" {
+			targetLabel = gate
+		} else if first != "" {
+			targetLabel = first
+		} else {
+			log.Warn("schedule sweep: repo workflow has no labels; skipping")
+			return false
+		}
 	}
 
 	// source_ref must be unique per firing (tasks has a UNIQUE(source,

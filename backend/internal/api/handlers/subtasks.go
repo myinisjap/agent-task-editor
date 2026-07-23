@@ -3,11 +3,11 @@ package handlers
 import (
 	"database/sql"
 	"net/http"
-	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
 // SubtasksHandler creates child tasks under a parent (Mechanism 2). The
@@ -171,19 +171,10 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // gateLabel returns the human-gate landing label (the agent_ignore label with
 // the lowest sort_order) and the first label overall (lowest sort_order),
-// used as a fallback when the workflow has no agent_ignore label.
+// used as a fallback when the workflow has no agent_ignore label. Thin wrapper
+// over workflow.GateLabel, which owns the label-semantics.
 func gateLabel(labels []gen.WorkflowLabel) (gate, first string) {
-	sorted := append([]gen.WorkflowLabel(nil), labels...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].SortOrder < sorted[j].SortOrder })
-	for _, l := range sorted {
-		if first == "" {
-			first = l.Name
-		}
-		if l.AgentIgnore != 0 {
-			return l.Name, first
-		}
-	}
-	return "", first
+	return workflow.GateLabel(labels)
 }
 
 // isAgentIgnoreLabel reports whether name is an agent_ignore label in the set.
