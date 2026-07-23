@@ -168,6 +168,15 @@ function WorkflowHelpModal({ onClose }: { onClose: () => void }) {
               <li><code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> — agents cannot move tasks here; the dispatcher skips tasks already on this label</li>
               <li><code className="bg-slate-800 rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
             </ul>
+            <p>
+              Tasks created without an explicit label — GitHub Issue imports, scheduled tasks, and API
+              creates that omit one — land on the workflow's <strong>human-gate label</strong>: the
+              lowest <code className="bg-slate-800 rounded px-1 font-mono">sort_order</code>{' '}
+              <code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> label (falling back
+              to the first label if none is marked <code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code>),
+              so a human promotes them before an agent picks them up. There is no reserved label name — in
+              the default workflow this happens to be <code className="bg-slate-800 rounded px-1 font-mono">not_ready</code>.
+            </p>
           </section>
 
           <section className="flex flex-col gap-1.5">

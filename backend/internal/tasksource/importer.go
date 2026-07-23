@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
 // Publisher is satisfied by *ws.Hub — it sends events to all connected clients.
@@ -87,6 +88,25 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) int {
 		return 0
 	}
 
+	// Imported tasks land on the workflow's human-gate label (the lowest
+	// sort_order agent_ignore label, falling back to the first label) so a human
+	// promotes them before an agent picks them up — "not_ready" for the default
+	// workflow, the equivalent gate for any custom one.
+	labels, err := im.q.ListWorkflowLabels(ctx, *repo.WorkflowID)
+	if err != nil {
+		log.Warn("issue import: label lookup failed", "workflow_id", *repo.WorkflowID, "err", err)
+		return 0
+	}
+	gate, first := workflow.GateLabel(labels)
+	startLabel := gate
+	if startLabel == "" {
+		startLabel = first
+	}
+	if startLabel == "" {
+		log.Warn("issue import: repo workflow has no labels; skipping")
+		return 0
+	}
+
 	items, err := im.source.Fetch(ctx, repo)
 	if err != nil {
 		log.Warn("issue import: fetch failed", "err", err)
@@ -120,7 +140,7 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) int {
 			Title:       item.Title,
 			Description: description,
 			Type:        TaskTypeFromLabels(item.Labels),
-			Label:       "not_ready",
+			Label:       startLabel,
 			RepoID:      repo.ID,
 			WorkflowID:  *repo.WorkflowID,
 			Attachments: "[]",

@@ -289,19 +289,29 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveInitialLabel picks the label a freshly created task starts on.
-// An empty request keeps the historical default ("not_ready", a human-gate
-// column). A non-empty label must name a real label in the task's workflow —
-// this is initial placement, not a state-machine transition, so it does not go
-// through the engine's transition-edge validation (there is no "from" state
-// yet). Callers such as the board MCP server use this to drop tickets straight
-// onto an agent-triggerable column (e.g. "work").
+// An empty request lands the task on the workflow's human-gate label (the
+// lowest-sort_order agent_ignore label, falling back to the first label if the
+// workflow has none) so a human promotes it before an agent picks it up — for
+// the default workflow that is "not_ready", but any workflow works. A non-empty
+// label must name a real label in the task's workflow — this is initial
+// placement, not a state-machine transition, so it does not go through the
+// engine's transition-edge validation (there is no "from" state yet). Callers
+// such as the board MCP server use this to drop tickets straight onto an
+// agent-triggerable column (e.g. "work").
 func (h *TasksHandler) resolveInitialLabel(ctx context.Context, workflowID, requested string) (string, error) {
-	if requested == "" {
-		return "not_ready", nil
-	}
 	labels, err := h.q.ListWorkflowLabels(ctx, workflowID)
 	if err != nil {
 		return "", fmt.Errorf("failed to load workflow labels")
+	}
+	if requested == "" {
+		gate, first := gateLabel(labels)
+		if gate != "" {
+			return gate, nil
+		}
+		if first != "" {
+			return first, nil
+		}
+		return "", fmt.Errorf("workflow has no labels")
 	}
 	for _, l := range labels {
 		if l.Name == requested {

@@ -66,10 +66,7 @@ export interface paths {
                         type?: string;
                         repo_id: string;
                         workflow_id: string;
-                        /**
-                         * @description Label (column) the task starts on. Defaults to 'not_ready'. Must name a label defined in the workflow; unlike a label move this is initial placement, so it is not restricted to defined transition edges (e.g. a task can be created directly on 'work').
-                         * @default not_ready
-                         */
+                        /** @description Label (column) the task starts on. Empty defaults to the workflow's human-gate label — the lowest sort_order agent_ignore label, else the first label ('not_ready' in the default workflow). Must name a label defined in the workflow; unlike a label move this is initial placement, so it is not restricted to defined transition edges (e.g. a task can be created directly on 'work'). */
                         label?: string;
                         /**
                          * @default 0
@@ -1737,7 +1734,7 @@ export interface paths {
                         template_id: string;
                         repo_id: string;
                         cron_expr: string;
-                        /** @default not_ready */
+                        /** @description Empty defaults to the repo workflow's human-gate label (lowest sort_order agent_ignore label, else the first label; 'not_ready' in the default workflow). */
                         target_label?: string;
                         /** @default true */
                         enabled?: boolean;
@@ -1827,7 +1824,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         cron_expr: string;
-                        /** @default not_ready */
+                        /** @description Empty defaults to the repo workflow's human-gate label (lowest sort_order agent_ignore label, else the first label; 'not_ready' in the default workflow). */
                         target_label?: string;
                         /** @default true */
                         enabled?: boolean;
@@ -3708,14 +3705,14 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        /** @description Recurring instantiation of a task_template against a repo on a cron expression. A sweep fires due, enabled schedules and creates a task (source="schedule"), skipping firing while an open task from a prior firing of the same schedule still exists. target_label defaults to "not_ready" (a human promotes the created task); setting it to a live agent label instead makes the schedule fully unattended — pair with a cost budget on the template's agent config as a safety net. */
+        /** @description Recurring instantiation of a task_template against a repo on a cron expression. A sweep fires due, enabled schedules and creates a task (source="schedule"), skipping firing while an open task from a prior firing of the same schedule still exists. target_label defaults to the repo workflow's human-gate label — the lowest sort_order agent_ignore label, or the first label if none ("not_ready" in the default workflow) — so a human promotes the created task; setting it to a live agent label instead makes the schedule fully unattended — pair with a cost budget on the template's agent config as a safety net. */
         TaskSchedule: {
             id: string;
             template_id: string;
             repo_id: string;
             /** @description Standard 5-field cron: minute hour day-of-month month day-of-week */
             cron_expr: string;
-            /** @description Label the created task starts on; default 'not_ready' */
+            /** @description Label the created task starts on. Empty defaults to the repo workflow's human-gate label (lowest sort_order agent_ignore label, else the first label; 'not_ready' in the default workflow). */
             target_label: string;
             enabled: boolean;
             /** Format: date-time */
@@ -3864,7 +3861,7 @@ export interface components {
             issue_sync_enabled?: number;
             /** @description Only import issues carrying this label (empty = all open issues). */
             issue_sync_label?: string;
-            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the "agent-in-progress" label when a task first leaves not_ready, and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
+            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the "agent-in-progress" label when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
             issue_writeback_enabled?: number;
             /** @description 1 = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. 0 = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
             pr_review_auto_transition_enabled?: number;

@@ -45,7 +45,7 @@ curl -X POST http://localhost:8080/api/v1/schedules \
 | `template_id` | Which template to instantiate |
 | `repo_id` | Which repo the created task belongs to (must have a workflow assigned) |
 | `cron_expr` | Standard 5-field cron: `minute hour day-of-month month day-of-week`. Supports `*`, single values, comma lists, and `*/N` steps. |
-| `target_label` | The label the created task starts on. Default `not_ready`. Must be one of the repo's workflow's labels — `POST`/`PUT` reject an unrecognized label with `400`. |
+| `target_label` | The label the created task starts on. Defaults to the repo workflow's human-gate label (the lowest `sort_order` `agent_ignore` label, or the first label if none — `not_ready` in the default workflow). Must be one of the repo's workflow's labels — `POST`/`PUT` reject an unrecognized label with `400`. |
 | `enabled` | Whether the schedule fires at all |
 
 The UI's schedule editor (embedded in the Templates page, per template)
@@ -73,21 +73,22 @@ Every firing creates a task with `source = "schedule"` and
 each task needs a distinct `source_ref` even though they all trace back to
 one schedule).
 
-### `not_ready` vs. a live agent label — the unattended mode
+### Human-gate label vs. a live agent label — the unattended mode
 
-By default `target_label` is `not_ready`, matching how manually created and
-imported tasks start: a human reviews and promotes the task into the
-workflow. Setting `target_label` to a label the workflow's dispatcher picks
-up directly (an "agent" trigger-type label) instead means the created task
-is **immediately picked up by an agent** — no human in the loop at all.
+By default `target_label` is the workflow's human-gate label (`not_ready` in
+the default workflow), matching how manually created and imported tasks
+start: a human reviews and promotes the task into the workflow. Setting
+`target_label` to a label the workflow's dispatcher picks up directly (an
+"agent" trigger-type label) instead means the created task is **immediately
+picked up by an agent** — no human in the loop at all.
 
 This is intentional and enables fully unattended maintenance loops (e.g. a
 weekly "upgrade dependencies" schedule that runs end-to-end with no human
 involvement). Because it removes human review as a safety net, pair it with
 a **cost budget** (`max_cost_usd`) on the target agent config, so a runaway
 or repeatedly-failing unattended run can't burn unbounded spend. The UI
-flags this combination with a warning when a non-`not_ready` target label is
-entered.
+flags this combination with a warning when a target label other than the
+default human-gate label is entered.
 
 ## Polling interval
 

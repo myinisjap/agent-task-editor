@@ -74,6 +74,26 @@ func (h *SchedulesHandler) validateTargetLabelForRepo(ctx context.Context, repo 
 	return false, "target_label is not a label in the repo's workflow", nil
 }
 
+// defaultTargetLabelForRepo returns the label a schedule targets when the
+// request leaves target_label empty: the repo workflow's human-gate label (the
+// lowest-sort_order agent_ignore label, falling back to the first label) so the
+// created task waits for a human to promote it — "not_ready" for the default
+// workflow, the equivalent gate for any custom one.
+func (h *SchedulesHandler) defaultTargetLabelForRepo(ctx context.Context, repo gen.Repo) (string, error) {
+	if repo.WorkflowID == nil || *repo.WorkflowID == "" {
+		return "", nil
+	}
+	labels, err := h.q.ListWorkflowLabels(ctx, *repo.WorkflowID)
+	if err != nil {
+		return "", err
+	}
+	gate, first := gateLabel(labels)
+	if gate != "" {
+		return gate, nil
+	}
+	return first, nil
+}
+
 func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body scheduleBody
 	if err := decode(r, &body); err != nil {
@@ -102,7 +122,10 @@ func (h *SchedulesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.TargetLabel == "" {
-		body.TargetLabel = "not_ready"
+		if body.TargetLabel, err = h.defaultTargetLabelForRepo(r.Context(), repo); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if ok, msg, err := h.validateTargetLabelForRepo(r.Context(), repo, body.TargetLabel); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -141,10 +164,6 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid cron_expr: "+err.Error())
 		return
 	}
-	if body.TargetLabel == "" {
-		body.TargetLabel = "not_ready"
-	}
-
 	// repo_id is immutable after creation (see CreateTaskSchedule), so the
 	// workflow to validate target_label against is the existing schedule's repo.
 	existing, err := h.q.GetTaskSchedule(r.Context(), chi.URLParam(r, "id"))
@@ -156,6 +175,12 @@ func (h *SchedulesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if body.TargetLabel == "" {
+		if body.TargetLabel, err = h.defaultTargetLabelForRepo(r.Context(), repo); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if ok, msg, err := h.validateTargetLabelForRepo(r.Context(), repo, body.TargetLabel); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

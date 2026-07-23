@@ -98,6 +98,19 @@ triggers the "Release" workflow the same way.
     error-handling style. See [task-sources.md](docs/task-sources.md).
 
 ### Changed
+- **Default task-start label now derives from the workflow instead of a
+  hard-coded `not_ready`.** New tasks created without an explicit label —
+  GitHub Issue imports, scheduled tasks, and API creates that omit a label —
+  and schedules with an empty `target_label` now land on the workflow's
+  *human-gate label*: the lowest `sort_order` `agent_ignore` label (falling
+  back to the first label if none is marked `agent_ignore`). The
+  "agent-in-progress" issue write-back likewise fires when a task first leaves
+  that gate label rather than one named `not_ready`. For the default seeded
+  workflow this is still `not_ready`, so nothing changes there — but custom
+  workflows that don't define a `not_ready` label no longer strand imported,
+  scheduled, or unlabeled tasks on a non-existent column. The schedule editor's
+  default and "skips human review" warning now reference the selected repo's
+  gate label.
 - **Reorganized the sidebar navigation into collapsible categories.** The
   flat 11-link menu is now grouped into `Insights` (Cost & Usage,
   Performance), `Work` (Board, Chat), `Configuration` (Workflow, Agents,

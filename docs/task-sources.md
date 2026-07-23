@@ -40,8 +40,10 @@ For each matching open issue the importer creates a task with:
   → `bug`; `chore`/`maintenance`/`dependencies`/`ci`/`refactor`/`cleanup` →
   `chore`; `spike`/`research`/`question`/`investigation` → `spike`; anything
   else → `feature`
-- **label** — `not_ready`, same as manually created tasks, so nothing runs
-  until a human moves the task into an agent-triggerable column
+- **label** — the repo workflow's human-gate label (the lowest `sort_order`
+  `agent_ignore` label, or the first label if none is marked `agent_ignore`),
+  same as manually created tasks, so nothing runs until a human moves the task
+  into an agent-triggerable column. In the default workflow this is `not_ready`.
 - **source / source_ref** — `github` / `owner/repo#123`, shown as a link back
   to the issue on the task detail page
 
@@ -101,9 +103,11 @@ Three independent triggers fire the write-back actions below. Each is
 best-effort: a failed `gh` call is logged and swallowed, never surfaced to
 the human clicking a button or blocking a background sweep.
 
-1. **Task leaves `not_ready`** (optional intermediate signal) — the first
-   time a task's label moves off `not_ready` (agent- or human-triggered), the
-   source issue gets an `agent-in-progress` label via
+1. **Task leaves the human-gate label** (optional intermediate signal) — the
+   first time a task's label moves off the workflow's human-gate label (the
+   lowest `sort_order` `agent_ignore` label — `not_ready` in the default
+   workflow), agent- or human-triggered, the source issue gets an
+   `agent-in-progress` label via
    `gh issue edit --add-label agent-in-progress`. This label name is
    currently **fixed, not configurable** per repo; a future request could add
    a per-repo custom label field, but v2 ships a sensible default. If the

@@ -6,10 +6,32 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
+
+// GateLabel returns a workflow's human-gate landing label — the label a task
+// should start on so a human promotes it before an agent picks it up. That is
+// the lowest-sort_order agent_ignore label (gate); first is the lowest-sort_order
+// label overall, used as a fallback when the workflow defines no agent_ignore
+// label. Both are "" when the workflow has no labels. For the default seeded
+// workflow the gate is "not_ready"; this generalizes that convention to any
+// workflow instead of hard-coding the name.
+func GateLabel(labels []gen.WorkflowLabel) (gate, first string) {
+	sorted := append([]gen.WorkflowLabel(nil), labels...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].SortOrder < sorted[j].SortOrder })
+	for _, l := range sorted {
+		if first == "" {
+			first = l.Name
+		}
+		if l.AgentIgnore != 0 {
+			return l.Name, first
+		}
+	}
+	return "", first
+}
 
 // TransitionTrigger identifies who initiated a label change.
 type TransitionTrigger string
@@ -65,10 +87,12 @@ type Engine struct {
 	// Failures are the callback's concern; the transition has already committed.
 	OnTerminal func(ctx context.Context, task gen.Task)
 	// OnLeaveNotReady, if set, is called after a task successfully transitions
-	// off the "not_ready" label for the first time (i.e. fromLabel ==
-	// "not_ready" && toLabel != "not_ready"). Used to apply an "agent is already
-	// working on this" signal to an imported task's source GitHub issue.
-	// Failures are the callback's concern; the transition has already committed.
+	// off the workflow's human-gate label — the label GateLabel resolves to,
+	// which is "not_ready" for the default workflow but generalizes to any
+	// workflow — for the first time (i.e. fromLabel is the gate label and
+	// toLabel is not). Used to apply an "agent is already working on this" signal
+	// to an imported task's source GitHub issue. Failures are the callback's
+	// concern; the transition has already committed.
 	OnLeaveNotReady func(ctx context.Context, task gen.Task)
 }
 
@@ -188,7 +212,14 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 		e.OnTerminal(ctx, task)
 	}
 
-	if fromLabel == "not_ready" && toLabel != "not_ready" && e.OnLeaveNotReady != nil {
+	// Fire OnLeaveNotReady when a task first moves off the workflow's human-gate
+	// label (GateLabel — "not_ready" for the default workflow, the equivalent
+	// gate for any custom one). We deliberately key only on the real agent_ignore
+	// gate, not GateLabel's first-label fallback: the "agent-in-progress"
+	// write-back signals that a task has left a human-review column, which is
+	// only meaningful when such a column exists. A workflow with no agent_ignore
+	// label has no human gate to leave, so the hook stays a no-op there.
+	if gate, _ := GateLabel(labels); gate != "" && fromLabel == gate && toLabel != gate && e.OnLeaveNotReady != nil {
 		task.Label = toLabel
 		e.OnLeaveNotReady(ctx, task)
 	}

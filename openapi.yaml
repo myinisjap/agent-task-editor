@@ -238,16 +238,18 @@ components:
         Recurring instantiation of a task_template against a repo on a cron
         expression. A sweep fires due, enabled schedules and creates a task
         (source="schedule"), skipping firing while an open task from a prior
-        firing of the same schedule still exists. target_label defaults to
-        "not_ready" (a human promotes the created task); setting it to a live
-        agent label instead makes the schedule fully unattended — pair with a
-        cost budget on the template's agent config as a safety net.
+        firing of the same schedule still exists. target_label defaults to the
+        repo workflow's human-gate label — the lowest sort_order agent_ignore
+        label, or the first label if none ("not_ready" in the default workflow)
+        — so a human promotes the created task; setting it to a live agent label
+        instead makes the schedule fully unattended — pair with a cost budget on
+        the template's agent config as a safety net.
       properties:
         id:            { type: string }
         template_id:   { type: string }
         repo_id:       { type: string }
         cron_expr:     { type: string, description: "Standard 5-field cron: minute hour day-of-month month day-of-week" }
-        target_label:  { type: string, description: "Label the created task starts on; default 'not_ready'" }
+        target_label:  { type: string, description: "Label the created task starts on. Empty defaults to the repo workflow's human-gate label (lowest sort_order agent_ignore label, else the first label; 'not_ready' in the default workflow)." }
         enabled:       { type: boolean }
         last_run_at:   { type: string, format: date-time, nullable: true }
         created_at:    { type: string, format: date-time }
@@ -522,7 +524,8 @@ components:
             this repo's imported tasks (requires remote_url; independent of
             issue_sync_enabled): comments on the issue when a task's PR
             opens, applies the "agent-in-progress" label when a task first
-            leaves not_ready, and closes the issue with a comment when the
+            leaves the workflow's human-gate label ("not_ready" in the default
+            workflow), and closes the issue with a comment when the
             PR merges. 0 = off. See docs/task-sources.md.
         pr_review_auto_transition_enabled:
           type: integer
@@ -935,7 +938,7 @@ paths:
                 type:        { type: string }
                 repo_id:     { type: string }
                 workflow_id: { type: string }
-                label:       { type: string, default: not_ready, description: "Label (column) the task starts on. Defaults to 'not_ready'. Must name a label defined in the workflow; unlike a label move this is initial placement, so it is not restricted to defined transition edges (e.g. a task can be created directly on 'work')." }
+                label:       { type: string, description: "Label (column) the task starts on. Empty defaults to the workflow's human-gate label — the lowest sort_order agent_ignore label, else the first label ('not_ready' in the default workflow). Must name a label defined in the workflow; unlike a label move this is initial placement, so it is not restricted to defined transition edges (e.g. a task can be created directly on 'work')." }
                 priority:    { type: integer, enum: [-1, 0, 1, 2], default: 0 }
       responses:
         "201":
@@ -1762,7 +1765,7 @@ paths:
                 template_id:  { type: string }
                 repo_id:      { type: string }
                 cron_expr:    { type: string }
-                target_label: { type: string, default: not_ready }
+                target_label: { type: string, description: "Empty defaults to the repo workflow's human-gate label (lowest sort_order agent_ignore label, else the first label; 'not_ready' in the default workflow)." }
                 enabled:      { type: boolean, default: true }
       responses:
         "201":
@@ -1797,7 +1800,7 @@ paths:
               required: [cron_expr]
               properties:
                 cron_expr:    { type: string }
-                target_label: { type: string, default: not_ready }
+                target_label: { type: string, description: "Empty defaults to the repo workflow's human-gate label (lowest sort_order agent_ignore label, else the first label; 'not_ready' in the default workflow)." }
                 enabled:      { type: boolean, default: true }
       responses:
         "200":
