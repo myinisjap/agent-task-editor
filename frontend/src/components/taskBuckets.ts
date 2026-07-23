@@ -42,7 +42,7 @@ function selfCheck() {
   const defaultWf: Workflow = {
     id: 'wf', name: '', description: '', created_at: '', updated_at: '',
     labels: DEFAULT_LABEL_NAMES.map((name, i) => ({
-      id: name, workflow_id: 'wf', name, color: '#000', sort_order: i, agent_ignore: 0, is_terminal: name === 'done' ? 1 : 0,
+      id: name, workflow_id: 'wf', name, color: '#000', sort_order: i, agent_ignore: 0, is_terminal: name === 'done' ? 1 : 0, create_pr: 0,
     })),
     transitions: [],
   }

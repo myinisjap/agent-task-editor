@@ -94,6 +94,11 @@ type Engine struct {
 	// to an imported task's source GitHub issue. Failures are the callback's
 	// concern; the transition has already committed.
 	OnLeaveNotReady func(ctx context.Context, task gen.Task)
+	// OnCreatePR, if set, is called after a task transitions into a label marked
+	// create_pr, regardless of who triggered the move. Used to push the task's
+	// branch and open a GitHub pull request. Failures are the callback's concern;
+	// the transition has already committed.
+	OnCreatePR func(ctx context.Context, task gen.Task)
 }
 
 // New creates a new Engine.
@@ -130,12 +135,14 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 		return fmt.Errorf("list labels: %w", err)
 	}
 	toIsTerminal := false
+	toCreatePR := false
 	for _, l := range labels {
 		if l.Name == toLabel {
 			if l.AgentIgnore != 0 && trigger == TriggerAgent {
 				return ErrAgentIgnored
 			}
 			toIsTerminal = l.IsTerminal != 0
+			toCreatePR = l.CreatePr != 0
 		}
 	}
 
@@ -210,6 +217,11 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	if toIsTerminal && e.OnTerminal != nil {
 		task.Label = toLabel
 		e.OnTerminal(ctx, task)
+	}
+
+	if toCreatePR && e.OnCreatePR != nil {
+		task.Label = toLabel
+		e.OnCreatePR(ctx, task)
 	}
 
 	// Fire OnLeaveNotReady when a task first moves off the workflow's human-gate

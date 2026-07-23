@@ -46,9 +46,9 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 }
 
 const createWorkflowLabel = `-- name: CreateWorkflowLabel :one
-INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal
+INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr
 `
 
 type CreateWorkflowLabelParams struct {
@@ -59,6 +59,7 @@ type CreateWorkflowLabelParams struct {
 	SortOrder   int64  `json:"sort_order"`
 	AgentIgnore int64  `json:"agent_ignore"`
 	IsTerminal  int64  `json:"is_terminal"`
+	CreatePr    int64  `json:"create_pr"`
 }
 
 func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLabelParams) (WorkflowLabel, error) {
@@ -70,6 +71,7 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		arg.SortOrder,
 		arg.AgentIgnore,
 		arg.IsTerminal,
+		arg.CreatePr,
 	)
 	var i WorkflowLabel
 	err := row.Scan(
@@ -80,6 +82,7 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		&i.SortOrder,
 		&i.AgentIgnore,
 		&i.IsTerminal,
+		&i.CreatePr,
 	)
 	return i, err
 }
@@ -211,7 +214,7 @@ func (q *Queries) GetWorkflowTransition(ctx context.Context, arg GetWorkflowTran
 }
 
 const listWorkflowLabels = `-- name: ListWorkflowLabels :many
-SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
 `
 
 func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]WorkflowLabel, error) {
@@ -231,6 +234,7 @@ func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]
 			&i.SortOrder,
 			&i.AgentIgnore,
 			&i.IsTerminal,
+			&i.CreatePr,
 		); err != nil {
 			return nil, err
 		}

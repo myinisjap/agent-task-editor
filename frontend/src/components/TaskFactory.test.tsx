@@ -12,6 +12,7 @@ function label(overrides: Partial<Workflow['labels'][number]>): Workflow['labels
     sort_order: 0,
     agent_ignore: 0,
     is_terminal: 0,
+    create_pr: 0,
     ...overrides,
   }
 }

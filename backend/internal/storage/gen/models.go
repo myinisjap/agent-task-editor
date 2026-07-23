@@ -232,6 +232,7 @@ type WorkflowLabel struct {
 	SortOrder   int64  `json:"sort_order"`
 	AgentIgnore int64  `json:"agent_ignore"`
 	IsTerminal  int64  `json:"is_terminal"`
+	CreatePr    int64  `json:"create_pr"`
 }
 
 type WorkflowTransition struct {

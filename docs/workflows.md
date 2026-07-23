@@ -13,6 +13,7 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 | `sort_order` | int | Column order on the board |
 | `agent_ignore` | bool | Agents cannot move tasks to this label; dispatcher skips tasks already here |
 | `is_terminal` | bool | No further transitions; task is complete |
+| `create_pr` | bool | Any transition into this label pushes the task's branch and auto-opens (or reuses) a GitHub PR. Requires a GitHub remote and an authenticated `gh`; best-effort, so a failure is logged and the transition still commits. Equivalent to clicking "Create PR" manually. **At most one label per workflow may set this** — saving a workflow with two is rejected. |
 
 ## Transitions
 

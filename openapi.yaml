@@ -312,7 +312,8 @@ components:
         sort_order:   { type: integer }
         agent_ignore: { type: integer }
         is_terminal:  { type: integer }
-      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal]
+        create_pr:    { type: integer, description: "When non-zero, a task entering this label auto-opens a GitHub PR (pushes the branch first)." }
+      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr]
 
     WorkflowTransition:
       type: object

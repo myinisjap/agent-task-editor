@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
 
 // Diff returns the task's accumulated changes: the diff of its branch against
@@ -145,23 +147,59 @@ func (h *TasksHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "task not found")
 		return
 	}
-	if task.Branch == "" {
-		Err(w, http.StatusBadRequest, "task has no branch yet")
-		return
-	}
 	repo, err := h.q.GetRepo(r.Context(), task.RepoID)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to locate repo")
 		return
 	}
-	if repo.RemoteUrl == nil {
-		Err(w, http.StatusBadRequest, "repo has no remote_url")
+
+	updated, prURL, err := CreatePRForTask(r.Context(), h.q, h.wb, task, repo)
+	if err != nil {
+		Err(w, prCreateStatus(err), err.Error())
 		return
+	}
+
+	JSON(w, http.StatusOK, map[string]any{
+		"pr_url":    prURL,
+		"git_state": updated.GitState,
+	})
+}
+
+// errBadRequest / errBadGateway tag PR-creation failures so HTTP callers can map
+// them to a status code while non-HTTP callers (the workflow OnCreatePR hook)
+// can just log them.
+var (
+	errPRBadRequest = errors.New("bad request")
+	errPRBadGateway = errors.New("bad gateway")
+)
+
+func prCreateStatus(err error) int {
+	switch {
+	case errors.Is(err, errPRBadRequest):
+		return http.StatusBadRequest
+	case errors.Is(err, errPRBadGateway):
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// CreatePRForTask pushes the task's branch to origin and opens (or reuses) a
+// GitHub pull request, persists the resulting PR URL + git state on the task,
+// and runs the issue write-back. Shared by the HTTP CreatePR handler and the
+// workflow engine's OnCreatePR hook so both produce an identical PR. It is
+// idempotent: an existing PR for the branch is returned rather than erroring.
+// wb may be nil to skip write-back.
+func CreatePRForTask(ctx context.Context, q *gen.Queries, wb *writeback.Writeback, task gen.Task, repo gen.Repo) (updated gen.Task, prURL string, err error) {
+	if task.Branch == "" {
+		return gen.Task{}, "", fmt.Errorf("%w: task has no branch yet", errPRBadRequest)
+	}
+	if repo.RemoteUrl == nil {
+		return gen.Task{}, "", fmt.Errorf("%w: repo has no remote_url", errPRBadRequest)
 	}
 	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
 	if !ok {
-		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
-		return
+		return gen.Task{}, "", fmt.Errorf("%w: repo remote is not a GitHub URL", errPRBadRequest)
 	}
 
 	// Push the branch first. Push from the worktree if it still exists,
@@ -171,42 +209,36 @@ func (h *TasksHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	if gitDir == "" || !dirExists(gitDir) {
 		gitDir = repo.Path
 	}
-	if err := agent.PushBranch(r.Context(), gitDir, task.Branch); err != nil {
-		Err(w, http.StatusInternalServerError, "failed to push branch: "+err.Error())
-		return
+	if err := agent.PushBranch(ctx, gitDir, task.Branch); err != nil {
+		return gen.Task{}, "", fmt.Errorf("failed to push branch: %w", err)
 	}
 
 	// gh compare/PR base wants a branch name, not a remote-tracking ref.
 	base := strings.TrimPrefix(task.BaseRef, "origin/")
-	body := buildPRBody(task, collectBranchCommits(r.Context(), gitDir, task.BaseRef, task.Branch))
+	body := buildPRBody(task, collectBranchCommits(ctx, gitDir, task.BaseRef, task.Branch))
 
-	state, prURL, err := ghclient.CreatePR(r.Context(), ghName, task.Branch, base, task.Title, body)
+	state, prURL, err := ghclient.CreatePR(ctx, ghName, task.Branch, base, task.Title, body)
 	if err != nil {
-		Err(w, http.StatusBadGateway, err.Error())
-		return
+		return gen.Task{}, "", fmt.Errorf("%w: %s", errPRBadGateway, err.Error())
 	}
 
-	updated, err := h.q.SetTaskPR(r.Context(), gen.SetTaskPRParams{
+	updated, err = q.SetTaskPR(ctx, gen.SetTaskPRParams{
 		GitState: state,
 		PrUrl:    prURL,
 		ID:       task.ID,
 	})
 	if err != nil {
-		Err(w, http.StatusInternalServerError, err.Error())
-		return
+		return gen.Task{}, "", err
 	}
 
 	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
 	// the task wasn't imported or the repo doesn't have it enabled).
-	if h.wb != nil {
-		h.wb.OnPROpened(r.Context(), updated, repo)
-		h.wb.OnPRMerged(r.Context(), updated, repo)
+	if wb != nil {
+		wb.OnPROpened(ctx, updated, repo)
+		wb.OnPRMerged(ctx, updated, repo)
 	}
 
-	JSON(w, http.StatusOK, map[string]any{
-		"pr_url":    prURL,
-		"git_state": updated.GitState,
-	})
+	return updated, prURL, nil
 }
 
 // buildPRBody assembles a markdown PR description from the task and its commits.

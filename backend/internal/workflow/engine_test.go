@@ -364,3 +364,69 @@ func TestTransition_OnLeaveNotReady_NilCallbackIsSafe(t *testing.T) {
 		t.Fatalf("transition failed: %v", err)
 	}
 }
+
+// markCreatePR flips the create_pr flag on a seeded workflow label.
+func markCreatePR(t *testing.T, db *storage.DB, wfID, label string) {
+	t.Helper()
+	if _, err := db.SQL().Exec(
+		`UPDATE workflow_labels SET create_pr = 1 WHERE workflow_id = ? AND name = ?`,
+		wfID, label,
+	); err != nil {
+		t.Fatalf("mark create_pr: %v", err)
+	}
+}
+
+func TestTransition_OnCreatePR_FiresWhenEnteringCreatePRLabel(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	markCreatePR(t, db, wfID, "review")
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+
+	var calls []string
+	engine.OnCreatePR = func(_ context.Context, task gen.Task) {
+		calls = append(calls, task.Label) // label should already be the destination
+	}
+
+	task := createTestTask(t, db, "agent-review", wfID)
+	if err := engine.Transition(context.Background(), task.ID, "review", workflow.TriggerAgent, "", ""); err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+
+	if len(calls) != 1 || calls[0] != "review" {
+		t.Fatalf("expected OnCreatePR to fire once with label review, got %v", calls)
+	}
+}
+
+func TestTransition_OnCreatePR_DoesNotFireForNonCreatePRLabel(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	// No label marked create_pr.
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+
+	var calls []string
+	engine.OnCreatePR = func(_ context.Context, task gen.Task) {
+		calls = append(calls, task.ID)
+	}
+
+	task := createTestTask(t, db, "work", wfID)
+	if err := engine.Transition(context.Background(), task.ID, "testing", workflow.TriggerAgent, "", ""); err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+
+	if len(calls) != 0 {
+		t.Fatalf("expected OnCreatePR not to fire, got %v", calls)
+	}
+}
+
+func TestTransition_OnCreatePR_NilCallbackIsSafe(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	markCreatePR(t, db, wfID, "review")
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+	// engine.OnCreatePR left nil — Transition must not panic.
+
+	task := createTestTask(t, db, "agent-review", wfID)
+	if err := engine.Transition(context.Background(), task.ID, "review", workflow.TriggerAgent, "", ""); err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+}

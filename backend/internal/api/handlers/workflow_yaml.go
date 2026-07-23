@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -23,6 +24,7 @@ type yamlLabel struct {
 	SortOrder   int    `yaml:"sort_order"`
 	AgentIgnore bool   `yaml:"agent_ignore,omitempty"`
 	IsTerminal  bool   `yaml:"is_terminal,omitempty"`
+	CreatePR    bool   `yaml:"create_pr,omitempty"`
 }
 
 type yamlTransition struct {
@@ -31,6 +33,22 @@ type yamlTransition struct {
 	TriggerType string  `yaml:"trigger"`
 	AgentConfig *string `yaml:"agent_config,omitempty"`
 	Path        *string `yaml:"path,omitempty"`
+}
+
+// validate checks workflow-level invariants beyond per-field parsing.
+func (wf yamlWorkflow) validate() error {
+	// At most one label may auto-open a PR — otherwise a task moving through
+	// several such labels would try to open a PR more than once.
+	createPR := 0
+	for _, l := range wf.Labels {
+		if l.CreatePR {
+			createPR++
+		}
+	}
+	if createPR > 1 {
+		return fmt.Errorf("at most one label may set create_pr; found %d", createPR)
+	}
+	return nil
 }
 
 // ExportWorkflowYAML exports a workflow as YAML.
@@ -59,6 +77,7 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			SortOrder:   int(l.SortOrder),
 			AgentIgnore: l.AgentIgnore != 0,
 			IsTerminal:  l.IsTerminal != 0,
+			CreatePR:    l.CreatePr != 0,
 		})
 	}
 	for _, t := range transitions {
@@ -90,6 +109,10 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 	}
 	if in.Name == "" {
 		Err(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if err := in.validate(); err != nil {
+		Err(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -133,6 +156,10 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 		if l.IsTerminal {
 			isTerminal = 1
 		}
+		createPR := int64(0)
+		if l.CreatePR {
+			createPR = 1
+		}
 		if _, err := tq.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
 			ID:          uuid.NewString(),
 			WorkflowID:  wfID,
@@ -141,6 +168,7 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 			SortOrder:   int64(l.SortOrder),
 			AgentIgnore: agentIgnore,
 			IsTerminal:  isTerminal,
+			CreatePr:    createPR,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
@@ -189,6 +217,10 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 		Err(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	if err := in.validate(); err != nil {
+		Err(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	ctx := r.Context()
 
@@ -218,6 +250,10 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 		if l.IsTerminal {
 			isTerminal = 1
 		}
+		createPR := int64(0)
+		if l.CreatePR {
+			createPR = 1
+		}
 		if _, err := h.q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
 			ID:          uuid.NewString(),
 			WorkflowID:  wfID,
@@ -226,6 +262,7 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			SortOrder:   int64(l.SortOrder),
 			AgentIgnore: agentIgnore,
 			IsTerminal:  isTerminal,
+			CreatePr:    createPR,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return

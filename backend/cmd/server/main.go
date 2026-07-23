@@ -15,6 +15,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
@@ -172,6 +173,22 @@ func main() {
 			return
 		}
 		issueWriteback.OnLeaveNotReady(ctx, task, repo)
+	}
+
+	// On reaching a label marked create_pr: push the branch and open (or reuse) a
+	// GitHub PR, reusing the same path as the manual "Create PR" endpoint so both
+	// produce an identical PR and issue write-back. Best-effort — a failure here
+	// (no remote, gh unauthenticated, push rejected) is logged, not fatal; the
+	// transition has already committed and a human can still open the PR manually.
+	engine.OnCreatePR = func(ctx context.Context, task gen.Task) {
+		repo, err := termQ.GetRepo(ctx, task.RepoID)
+		if err != nil {
+			slog.Warn("onCreatePR: get repo", "task_id", task.ID, "err", err)
+			return
+		}
+		if _, _, err := handlers.CreatePRForTask(ctx, termQ, issueWriteback, task, repo); err != nil {
+			slog.Warn("onCreatePR: create pr", "task_id", task.ID, "err", err)
+		}
 	}
 
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
