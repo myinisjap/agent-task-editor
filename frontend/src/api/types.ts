@@ -3765,6 +3765,8 @@ export interface components {
             sort_order: number;
             agent_ignore: number;
             is_terminal: number;
+            /** @description When non-zero, a task entering this label auto-opens a GitHub PR (pushes the branch first). */
+            create_pr: number;
         };
         WorkflowTransition: {
             id: string;

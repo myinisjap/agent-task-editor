@@ -1,0 +1,1 @@
+ALTER TABLE workflow_labels ADD COLUMN create_pr INTEGER NOT NULL DEFAULT 0;

@@ -20,6 +20,13 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Auto-open a GitHub PR when a task reaches a label.** Workflow labels gain a
+  `create_pr` flag (settable in the workflow YAML). Any transition into a
+  `create_pr` label — agent- or human-triggered — pushes the task's branch and
+  opens (or reuses) a GitHub PR, the same result as clicking "Create PR"
+  manually. Best-effort: a failure (no remote, `gh` unauthenticated, push
+  rejected) is logged and the transition still commits. At most one label per
+  workflow may set `create_pr` (saving a workflow with two is rejected).
 - **Click-to-expand agent notes on the task overview.** The "Agent Notes"
   block on a task's Overview tab is now a clickable preview that opens a
   full modal (Escape or backdrop click to close) instead of a fixed

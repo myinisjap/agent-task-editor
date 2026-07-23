@@ -167,6 +167,7 @@ function WorkflowHelpModal({ onClose }: { onClose: () => void }) {
               <li><code className="bg-slate-800 rounded px-1 font-mono">sort_order</code> — column order on the board</li>
               <li><code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> — agents cannot move tasks here; the dispatcher skips tasks already on this label</li>
               <li><code className="bg-slate-800 rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
+              <li><code className="bg-slate-800 rounded px-1 font-mono">create_pr</code> — entering this label pushes the branch and auto-opens a GitHub PR (needs a GitHub remote and gh auth); at most one label per workflow may set this</li>
             </ul>
             <p>
               Tasks created without an explicit label — GitHub Issue imports, scheduled tasks, and API
