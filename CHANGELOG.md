@@ -20,6 +20,13 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Changed
+- **Repo Workflow field is now scoped to GitHub issue import.** Since a task's
+  workflow is chosen per task, the repo's `workflow_id` is only still used by
+  issue import (and scheduled tasks), so the Workflow picker on the Add/Edit
+  Repo forms now appears only when "Import GitHub Issues" is enabled, and the
+  repo cards no longer show a standalone workflow name. The repo list header
+  also stacks vertically on narrow/mobile screens so badges no longer overlap
+  the repo name.
 - **Workflow is now chosen per task, not pinned to the repo.** The "New Task"
   modal gained a Workflow picker (sorted alphabetically, defaulting to the
   "Default" workflow) and no longer filters repos by the board's active

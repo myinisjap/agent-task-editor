@@ -192,20 +192,6 @@ export default function ReposPage() {
               />
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">Workflow</label>
-              <select
-                value={form.workflow_id}
-                onChange={(e) => setForm((f) => ({ ...f, workflow_id: e.target.value }))}
-                className={inputCls}
-              >
-                <option value="">None</option>
-                {workflows.map((w) => (
-                  <option key={w.id} value={w.id}>{w.name}</option>
-                ))}
-              </select>
-            </div>
-
             <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
               <input
                 type="checkbox"
@@ -218,17 +204,35 @@ export default function ReposPage() {
             </label>
 
             {form.issue_sync_enabled && (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-slate-400">
-                  Issue label filter <span className="text-slate-600">(empty = all open issues)</span>
-                </label>
-                <input
-                  value={form.issue_sync_label}
-                  onChange={(e) => setForm((f) => ({ ...f, issue_sync_label: e.target.value }))}
-                  placeholder="agent-ok"
-                  className={inputCls}
-                />
-              </div>
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-400">
+                    Workflow <span className="text-slate-600">(imported issues become tasks here)</span>
+                  </label>
+                  <select
+                    value={form.workflow_id}
+                    onChange={(e) => setForm((f) => ({ ...f, workflow_id: e.target.value }))}
+                    className={inputCls}
+                  >
+                    <option value="">None</option>
+                    {workflows.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-400">
+                    Issue label filter <span className="text-slate-600">(empty = all open issues)</span>
+                  </label>
+                  <input
+                    value={form.issue_sync_label}
+                    onChange={(e) => setForm((f) => ({ ...f, issue_sync_label: e.target.value }))}
+                    placeholder="agent-ok"
+                    className={inputCls}
+                  />
+                </div>
+              </>
             )}
 
             <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
@@ -282,54 +286,53 @@ export default function ReposPage() {
         <div className="flex flex-col gap-2">
           {repos.map((repo) => (
             <div key={repo.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-              {/* Repo row header */}
-              <div className="px-5 py-4 flex items-center gap-4">
+              {/* Repo row header — stacks on mobile, single row from sm up */}
+              <div className="px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-100">{repo.name}</div>
+                  <div className="text-sm font-medium text-slate-100 break-words">{repo.name}</div>
                   <div className="text-xs text-slate-500 font-mono mt-0.5 truncate">{repo.path}</div>
                   {repo.remote_url && (
                     <div className="text-xs text-slate-600 mt-0.5 truncate">{repo.remote_url}</div>
                   )}
                 </div>
-                {!!repo.issue_sync_enabled && (
-                  <span
-                    className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 shrink-0"
-                    title={`Importing open GitHub issues${repo.issue_sync_label ? ` labeled "${repo.issue_sync_label}"` : ''} as tasks`}
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  {!!repo.issue_sync_enabled && (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 shrink-0"
+                      title={`Importing open GitHub issues${repo.issue_sync_label ? ` labeled "${repo.issue_sync_label}"` : ''} as tasks into the "${workflowName(repo.workflow_id)}" workflow`}
+                    >
+                      Issue sync{repo.issue_sync_label ? `: ${repo.issue_sync_label}` : ''}
+                    </span>
+                  )}
+                  {!!repo.issue_writeback_enabled && (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shrink-0"
+                      title="Commenting on the source issue when a task's PR opens, and closing it when the PR merges"
+                    >
+                      Write-back
+                    </span>
+                  )}
+                  {!!repo.pr_review_auto_transition_enabled && (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 shrink-0"
+                      title="Auto-transitioning tasks back to their failure-path label on GitHub changes-requested reviews, new review comments, or failed checks"
+                    >
+                      PR auto-transition
+                    </span>
+                  )}
+                  <button
+                    onClick={() => editingId === repo.id ? cancelEdit() : startEdit(repo)}
+                    className="text-xs text-slate-500 hover:text-indigo-400 transition-colors shrink-0"
                   >
-                    Issue sync{repo.issue_sync_label ? `: ${repo.issue_sync_label}` : ''}
-                  </span>
-                )}
-                {!!repo.issue_writeback_enabled && (
-                  <span
-                    className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shrink-0"
-                    title="Commenting on the source issue when a task's PR opens, and closing it when the PR merges"
+                    {editingId === repo.id ? 'Cancel' : 'Edit'}
+                  </button>
+                  <button
+                    onClick={() => handleDelete(repo)}
+                    className="text-xs text-slate-600 hover:text-red-400 transition-colors shrink-0"
                   >
-                    Write-back
-                  </span>
-                )}
-                {!!repo.pr_review_auto_transition_enabled && (
-                  <span
-                    className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 shrink-0"
-                    title="Auto-transitioning tasks back to their failure-path label on GitHub changes-requested reviews, new review comments, or failed checks"
-                  >
-                    PR auto-transition
-                  </span>
-                )}
-                <div className="text-xs text-slate-500 shrink-0">
-                  {workflowName(repo.workflow_id)}
+                    Remove
+                  </button>
                 </div>
-                <button
-                  onClick={() => editingId === repo.id ? cancelEdit() : startEdit(repo)}
-                  className="text-xs text-slate-500 hover:text-indigo-400 transition-colors shrink-0"
-                >
-                  {editingId === repo.id ? 'Cancel' : 'Edit'}
-                </button>
-                <button
-                  onClick={() => handleDelete(repo)}
-                  className="text-xs text-slate-600 hover:text-red-400 transition-colors shrink-0"
-                >
-                  Remove
-                </button>
               </div>
 
               {/* Inline edit form */}
@@ -371,20 +374,6 @@ export default function ReposPage() {
                       />
                     </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-400">Workflow</label>
-                      <select
-                        value={editForm.workflow_id}
-                        onChange={(e) => setEditForm((f) => ({ ...f, workflow_id: e.target.value }))}
-                        className={inputCls}
-                      >
-                        <option value="">None</option>
-                        {workflows.map((w) => (
-                          <option key={w.id} value={w.id}>{w.name}</option>
-                        ))}
-                      </select>
-                    </div>
-
                     <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
                       <input
                         type="checkbox"
@@ -397,17 +386,35 @@ export default function ReposPage() {
                     </label>
 
                     {editForm.issue_sync_enabled && (
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-medium text-slate-400">
-                          Issue label filter <span className="text-slate-600">(empty = all open issues)</span>
-                        </label>
-                        <input
-                          value={editForm.issue_sync_label}
-                          onChange={(e) => setEditForm((f) => ({ ...f, issue_sync_label: e.target.value }))}
-                          placeholder="agent-ok"
-                          className={inputCls}
-                        />
-                      </div>
+                      <>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-medium text-slate-400">
+                            Workflow <span className="text-slate-600">(imported issues become tasks here)</span>
+                          </label>
+                          <select
+                            value={editForm.workflow_id}
+                            onChange={(e) => setEditForm((f) => ({ ...f, workflow_id: e.target.value }))}
+                            className={inputCls}
+                          >
+                            <option value="">None</option>
+                            {workflows.map((w) => (
+                              <option key={w.id} value={w.id}>{w.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-medium text-slate-400">
+                            Issue label filter <span className="text-slate-600">(empty = all open issues)</span>
+                          </label>
+                          <input
+                            value={editForm.issue_sync_label}
+                            onChange={(e) => setEditForm((f) => ({ ...f, issue_sync_label: e.target.value }))}
+                            placeholder="agent-ok"
+                            className={inputCls}
+                          />
+                        </div>
+                      </>
                     )}
 
                     <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
