@@ -20,6 +20,11 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Click-to-expand agent notes on the task overview.** The "Agent Notes"
+  block on a task's Overview tab is now a clickable preview that opens a
+  full modal (Escape or backdrop click to close) instead of a fixed
+  `max-h-60` scroll box — makes long notes easier to read, including on
+  mobile.
 - **Opt-in browser notifications when a human is needed.** Frontend-only,
   driven by the existing app-wide WebSocket connection — no new backend
   infra, VAPID keys, or push subscription storage:
