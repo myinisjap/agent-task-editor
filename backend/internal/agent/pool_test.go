@@ -644,6 +644,57 @@ func TestPool_FailureLoop_EscalatesAfterThreshold(t *testing.T) {
 	}
 }
 
+// TestPool_FailureLoop_EscalationPreservesCostUnknown verifies that
+// escalateFailureLoop's re-write of the run row to waiting_human does not
+// clobber a cost_unknown flag that was already set on the run's first
+// persistence — SetAgentRunCompletedParams overwrites every column
+// unconditionally, so omitting CostUnknown when re-persisting would
+// silently reset it to false/0 (regression: it used to).
+func TestPool_FailureLoop_EscalationPreservesCostUnknown(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+	if _, err := db.SQL().Exec("UPDATE tasks SET label='agent-review' WHERE id=?", taskID); err != nil {
+		t.Fatalf("move task label: %v", err)
+	}
+	// Three prior loops == threshold, so this run must escalate.
+	insertFailureHistory(t, q, taskID, "agent-review", "work", 3)
+
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("lock task on run: %v", err)
+	}
+
+	finding := "same medium issue, again"
+	provider := &mockProvider{result: agent.Result{
+		Status: "completed", Outcome: "failure", Message: &finding,
+		InputTokens: 1000, OutputTokens: 500, CostUSD: 0, CostUnknown: true,
+	}}
+
+	_, stop := startPool(t, pool)
+	pool.Submit(buildJobAtLabel(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), "agent-review", provider))
+
+	waitForStatus(t, q, runID, "waiting_human")
+	stop()
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.CostUnknown != 1 {
+		t.Errorf("expected cost_unknown=1 to survive the failure-loop escalation rewrite, got %d", run.CostUnknown)
+	}
+	if run.InputTokens != 1000 || run.OutputTokens != 500 {
+		t.Errorf("expected token counts to survive the escalation rewrite, got in=%d out=%d", run.InputTokens, run.OutputTokens)
+	}
+}
+
 // blockingProvider waits until its context is cancelled, mimicking a CLI
 // subprocess that only returns once killed by exec.CommandContext.
 type blockingProvider struct{}

@@ -179,6 +179,34 @@ func TestDBPriceResolver_FallsBackToMapWhenNotInDB(t *testing.T) {
 	}
 }
 
+// TestDBPriceResolver_PrefixMatchAgainstDBRow verifies a DB row is matched
+// by longest-prefix (same as the hardcoded fallback table) rather than only
+// ever exact-matching, so a user-added row for e.g. "claude-sonnet-4-5"
+// also prices a dated/suffixed model ID that isn't itself a row.
+func TestDBPriceResolver_PrefixMatchAgainstDBRow(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	// Replace the whole table with a single custom row so the hardcoded
+	// map's own "claude-sonnet-4-5" entry can't mask a resolver bug.
+	if err := q.DeleteAllModelPricing(context.Background()); err != nil {
+		t.Fatalf("delete all: %v", err)
+	}
+	if _, err := q.UpsertModelPricing(context.Background(), gen.UpsertModelPricingParams{
+		Model: "my-custom-model", InputPer1m: 42, OutputPer1m: 99,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	r := DBPriceResolver{Q: q}
+	inPer1M, outPer1M, known := r.Price(context.Background(), "my-custom-model-20260101")
+	if !known {
+		t.Fatal("expected a dated suffix of a DB row's model ID to prefix-match")
+	}
+	if inPer1M != 42 || outPer1M != 99 {
+		t.Errorf("expected the DB row's price via prefix match, got in=%v out=%v", inPer1M, outPer1M)
+	}
+}
+
 // TestDBPriceResolver_UnknownEverywhere verifies a model in neither the DB
 // nor the hardcoded map reports known=false.
 func TestDBPriceResolver_UnknownEverywhere(t *testing.T) {

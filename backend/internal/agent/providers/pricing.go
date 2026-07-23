@@ -122,9 +122,11 @@ func estimateCostUSDWithResolver(ctx context.Context, resolver PriceResolver, mo
 }
 
 // DBPriceResolver resolves pricing from the user-editable model_pricing
-// table (see 042_model_pricing / GET/PUT /api/v1/settings/pricing), falling
-// back to the hardcoded modelPricing map when no DB row matches. It reads
-// the DB fresh on every call rather than caching at construction time, so an
+// table (see 042_model_pricing / GET/PUT /api/v1/settings/pricing) — exact
+// match first, then the same longest-prefix match the hardcoded fallback
+// table uses (see lookupModelPrice) — falling back to the hardcoded
+// modelPricing map entirely when no DB row matches either way. It reads the
+// DB fresh on every call rather than caching at construction time, so an
 // edit made through the settings UI takes effect on the very next run
 // without a process restart. Constructed once in cmd/server/main.go's
 // providerFactory and shared across runs.
@@ -137,12 +139,26 @@ func (r DBPriceResolver) Price(ctx context.Context, model string) (float64, floa
 		return 0, 0, false
 	}
 	if r.Q != nil {
+		// Exact match first (single-row lookup, cheapest common case).
 		if row, err := r.Q.GetModelPricing(ctx, model); err == nil {
 			return row.InputPer1m, row.OutputPer1m, true
 		} else if err != sql.ErrNoRows {
 			// DB error other than "not found" — fall through to the hardcoded
 			// map rather than silently treating this as an unpriced model.
 			_ = err
+		} else if rows, lerr := r.Q.ListModelPricing(ctx); lerr == nil {
+			// No exact match — try the same longest-prefix match the hardcoded
+			// fallback table uses, so a user-added row (e.g. "claude-sonnet-4-5")
+			// also prices dated/suffixed model IDs (e.g.
+			// "claude-sonnet-4-5-20260101") the same way the fallback does,
+			// instead of only ever matching exact model strings.
+			table := make(map[string]modelPrice, len(rows))
+			for _, row := range rows {
+				table[row.Model] = modelPrice{InputPer1M: row.InputPer1m, OutputPer1M: row.OutputPer1m}
+			}
+			if price, ok := lookupModelPrice(table, model); ok {
+				return price.InputPer1M, price.OutputPer1M, true
+			}
 		}
 	}
 	price, ok := lookupModelPrice(modelPricing, model)

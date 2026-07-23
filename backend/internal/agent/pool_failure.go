@@ -249,12 +249,19 @@ func (p *Pool) failureLoopExceeded(ctx context.Context, taskID, fromLabel, toLab
 // escalateFailureLoop diverts a task stuck in a rework loop to waiting_human
 // instead of firing the failure transition again. The run has already been
 // persisted as `completed` with its usage; this re-writes it as waiting_human
-// (preserving usage from result) with an explanatory note and publishes
-// task.needs_human. The task's active-run lock is left as-is (this run) — the
-// caller never cleared it — so the task stays locked until a human acts,
-// mirroring the transient-retry and cost-budget escalations.
+// (preserving usage from result, including the cost_unknown flag set by
+// persistRunResult — SetAgentRunCompletedParams overwrites every column
+// unconditionally, so omitting a field here would silently clobber it back
+// to false/0) with an explanatory note and publishes task.needs_human. The
+// task's active-run lock is left as-is (this run) — the caller never cleared
+// it — so the task stays locked until a human acts, mirroring the
+// transient-retry and cost-budget escalations.
 func (p *Pool) escalateFailureLoop(ctx context.Context, job Job, result Result, toLabel string, log *slog.Logger) {
 	msg := fmt.Sprintf("Stuck in a rework loop: the %q → %q failure path fired %d times without the task clearing review. Human intervention required.", job.Input.Task.Label, toLabel, failureLoopThreshold)
+	costUnknown := int64(0)
+	if result.CostUnknown {
+		costUnknown = 1
+	}
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 		Status:       "waiting_human",
 		StoredInfo:   result.StoredInfo,
@@ -262,6 +269,7 @@ func (p *Pool) escalateFailureLoop(ctx context.Context, job Job, result Result, 
 		InputTokens:  result.InputTokens,
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
+		CostUnknown:  costUnknown,
 		ID:           job.RunID,
 	}); err != nil {
 		log.Warn("pool: failure-loop escalation: set run status", "err", err)
