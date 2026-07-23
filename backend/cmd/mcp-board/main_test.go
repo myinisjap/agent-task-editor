@@ -72,21 +72,21 @@ func TestToolsList(t *testing.T) {
 	}
 }
 
-func TestCreateTask_DefaultsToWork_DerivesWorkflowFromRepo(t *testing.T) {
+func TestCreateTask_DefaultsToWork_OmitsWorkflowID(t *testing.T) {
+	// When workflow_id is omitted, the MCP server should not look up the repo
+	// to derive one — it should simply omit workflow_id from the payload and
+	// let the backend apply its own default workflow.
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/repo-1":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "repo-1", "workflow_id": "wf-9"})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/tasks":
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/tasks" {
 			body, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(body, &gotBody)
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "task-abc", "label": gotBody["label"]})
-		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		t.Errorf("unexpected request %s %s (no repo lookup expected when workflow_id is omitted)", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
@@ -100,8 +100,8 @@ func TestCreateTask_DefaultsToWork_DerivesWorkflowFromRepo(t *testing.T) {
 	if gotBody["label"] != "work" {
 		t.Errorf("expected default label 'work', got %v", gotBody["label"])
 	}
-	if gotBody["workflow_id"] != "wf-9" {
-		t.Errorf("expected workflow derived from repo (wf-9), got %v", gotBody["workflow_id"])
+	if _, present := gotBody["workflow_id"]; present {
+		t.Errorf("expected workflow_id to be omitted so the backend applies its default, got %v", gotBody["workflow_id"])
 	}
 	if !strings.Contains(res["text"].(string), "task-abc") {
 		t.Errorf("expected created id in result, got %v", res["text"])

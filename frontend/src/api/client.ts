@@ -153,7 +153,7 @@ export const api = {
       return { items: data ?? [], nextCursor: headers.get('X-Next-Cursor') || null }
     },
     get: (id: string) => request<Task>(`/tasks/${id}`),
-    create: (body: FormData | { title: string; description?: string; type?: string; repo_id: string; workflow_id: string; priority?: number }) => {
+    create: (body: FormData | { title: string; description?: string; type?: string; repo_id: string; workflow_id?: string; priority?: number }) => {
       if (body instanceof FormData) {
         return request<Task>('/tasks', { method: 'POST', body, isFormData: true })
       }

@@ -24,10 +24,12 @@ to enforce.
 - `create_task(title, repo_id, [description], [type], [workflow_id], [label])` —
   `POST /api/v1/tasks`. Defaults `label` to `"work"` so a ticket is immediately
   agent-eligible; pass another label (e.g. `"not_ready"`) to stage it. When
-  `workflow_id` is omitted it is read from the repo's default workflow. Landing a
-  task directly on a column is initial placement (see
-  `TasksHandler.resolveInitialLabel`), so it is not restricted to the workflow's
-  transition edges.
+  `workflow_id` is omitted, it is left out of the request entirely and the
+  backend applies its own default workflow (the one named `"Default"`, else
+  the alphabetically-first workflow — see `TasksHandler.resolveDefaultWorkflowID`)
+  — it is **not** derived from the repo. Landing a task directly on a column is
+  initial placement (see `TasksHandler.resolveInitialLabel`), so it is not
+  restricted to the workflow's transition edges.
 
 ## Environment Variables
 

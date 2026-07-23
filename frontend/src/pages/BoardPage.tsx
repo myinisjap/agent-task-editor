@@ -321,7 +321,7 @@ export default function BoardPage() {
         </div>
       )}
 
-      {showNewTask && workflow && (
+      {showNewTask && (
         <NewTaskModal workflow={workflow} onClose={() => setShowNewTask(false)} />
       )}
 

@@ -19,6 +19,19 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+- **Workflow is now chosen per task, not pinned to the repo.** The "New Task"
+  modal gained a Workflow picker (sorted alphabetically, defaulting to the
+  "Default" workflow) and no longer filters repos by the board's active
+  workflow — every repo is selectable regardless of workflow. The REST
+  `POST /tasks` and MCP `create_task` `workflow_id` parameter is optional
+  again: when omitted, the task lands on the board's default workflow (the
+  one named "Default", else the alphabetically-first workflow) instead of
+  requiring the caller to know a workflow id or deriving one from the repo.
+  A repo's own `workflow_id` setting is unchanged and still used by GitHub
+  issue import and scheduled/recurring tasks, which have no interactive
+  workflow picker.
+
 ### Added
 - **Auto-open a GitHub PR when a task reaches a label.** Workflow labels gain a
   `create_pr` flag (settable in the workflow YAML). Any transition into a
