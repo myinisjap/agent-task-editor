@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { Task } from '../../api/client'
 import type TaskHeaderType from './TaskHeader'
+import TaskHeader from './TaskHeader'
 
 // Regression test for #145 / #178 — attachment URLs must go through the same
 // BASE_URL-aware base that src/api/client.ts's exported `BASE` constant uses,
@@ -135,5 +137,29 @@ describe('TaskHeader attachment URLs (#145 / #178)', () => {
 
     await screen.findByAltText('attachment')
     expect(fetchedUrls()).toContain('/api/v1/uploads/foo.png')
+  })
+})
+
+describe('TaskHeader agent notes modal', () => {
+  it('opens a modal with the full notes when the preview is clicked, and closes it', async () => {
+    const user = userEvent.setup()
+    renderHeader(TaskHeader, baseTask({ agent_notes: 'Some detailed agent notes here.' }))
+
+    // Preview button renders the notes text; the modal is not open yet.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTitle('Click to expand'))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Agent Notes' })
+    expect(dialog).toBeInTheDocument()
+
+    await user.click(screen.getByTitle('Close'))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('does not render a clickable notes preview when there are no agent notes', () => {
+    renderHeader(TaskHeader, baseTask({ agent_notes: '' }))
+    expect(screen.queryByTitle('Click to expand')).not.toBeInTheDocument()
   })
 })

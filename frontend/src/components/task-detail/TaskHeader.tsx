@@ -3,6 +3,7 @@ import { api, authedRawFetch, type Task, type Repo, type AgentRun, type Workflow
 import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
+import AgentNotesModal from './AgentNotesModal'
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -93,6 +94,8 @@ export default function TaskHeader({
   const blobUrlMapRef = useRef<Map<string, string>>(new Map())
   const [blobUrlVersion, setBlobUrlVersion] = useState(0)
   const attachments = task.attachments
+
+  const [notesModalOpen, setNotesModalOpen] = useState(false)
 
   useEffect(() => {
     // Revoke any previously-created blob URLs before fetching the new set.
@@ -382,10 +385,20 @@ export default function TaskHeader({
         {task.agent_notes && (
           <div>
             <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
-            <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-60 overflow-y-auto font-sans">
-              {task.agent_notes}
-            </pre>
+            <button
+              type="button"
+              onClick={() => setNotesModalOpen(true)}
+              className="text-left w-full cursor-pointer hover:bg-slate-700/50 transition-colors rounded"
+              title="Click to expand"
+            >
+              <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-60 overflow-hidden font-sans">
+                {task.agent_notes}
+              </pre>
+            </button>
           </div>
+        )}
+        {notesModalOpen && task.agent_notes && (
+          <AgentNotesModal notes={task.agent_notes} onClose={() => setNotesModalOpen(false)} />
         )}
         {task.source === 'github' && task.source_ref && (
           <Row label="Source">
