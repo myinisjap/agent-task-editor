@@ -86,6 +86,12 @@ triggers the "Release" workflow the same way.
   expand/collapse state persists across sessions via `localStorage`. The
   link list scrolls independently of the pinned theme toggle so long,
   fully-expanded menus don't clip on short mobile viewports.
+- **Dependency version bumps** (consolidated Dependabot PRs): frontend
+  `@testing-library/jest-dom` 6.9.1→7.0.0, `tailwindcss` 4.3.2→4.3.3,
+  `react-dom` 19.2.7→19.2.8, `@tanstack/react-virtual` 3.14.5→3.14.8,
+  `oxlint` 1.74.0→1.75.0; backend `github.com/prometheus/client_golang`
+  1.23.2→1.24.0; CI actions `setup-go` v6→v7 and
+  `create-github-app-token` v2→v3.
 
 ## [0.13.0] - 2026-07-21
 
