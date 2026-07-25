@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from 'react'
+import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
 import type { AgentConfig, ClaudeOptions, ProviderConfig } from '../../api/client'
 import Field from './Field'
@@ -20,6 +20,7 @@ export default function AgentConfigForm({
   onSave,
   onDelete,
   onToggleEnabled,
+  helpButton,
 }: {
   selected: AgentConfig | null
   form: FormState
@@ -32,6 +33,7 @@ export default function AgentConfigForm({
   onSave: () => void
   onDelete: () => void
   onToggleEnabled: () => void
+  helpButton?: ReactNode
 }) {
   const isEnabled = selected ? selected.enabled : true
   // The claude-specific plugin/MCP picker and the command-filter hints are
@@ -43,9 +45,12 @@ export default function AgentConfigForm({
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-base font-semibold text-slate-100">
-          {selected ? `Edit: ${selected.name}` : 'New Agent Config'}
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold text-slate-100">
+            {selected ? `Edit: ${selected.name}` : 'New Agent Config'}
+          </h2>
+          {helpButton}
+        </div>
         {selected && (
           <div className="flex items-center gap-2">
             <span className={`text-xs ${isEnabled ? 'text-green-400' : 'text-slate-500'}`}>

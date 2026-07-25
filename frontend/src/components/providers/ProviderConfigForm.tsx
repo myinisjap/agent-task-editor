@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from 'react'
+import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import type { ModelList, ProviderConfig } from '../../api/client'
 import { PROVIDERS } from '../../lib/agentTemplates'
 import Field from '../agents/Field'
@@ -16,6 +16,7 @@ export default function ProviderConfigForm({
   deleting,
   onSave,
   onDelete,
+  helpButton,
 }: {
   selected: ProviderConfig | null
   form: FormState
@@ -26,13 +27,17 @@ export default function ProviderConfigForm({
   deleting: boolean
   onSave: () => void
   onDelete: () => void
+  helpButton?: ReactNode
 }) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-base font-semibold text-slate-100">
-          {selected ? `Edit: ${selected.name}` : 'New Provider Config'}
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold text-slate-100">
+            {selected ? `Edit: ${selected.name}` : 'New Provider Config'}
+          </h2>
+          {helpButton}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-5 max-w-2xl">

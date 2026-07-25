@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, type Repo, type Workflow } from '../api/client'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { ReposHelp } from '../components/shared/pageHelp'
 
 type EditForm = { name: string; path: string; remote_url: string; workflow_id: string; issue_sync_enabled: boolean; issue_sync_label: string; issue_writeback_enabled: boolean; pr_review_auto_transition_enabled: boolean }
 
@@ -11,6 +14,7 @@ export default function ReposPage() {
   const [form, setForm] = useState({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [showHelp, setShowHelp] = useState(false)
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -141,7 +145,10 @@ export default function ReposPage() {
   return (
     <div className="p-6 max-w-3xl">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-slate-100">Repos</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-slate-100">Repos</h1>
+          <HelpButton onClick={() => setShowHelp(true)} title="About repos" />
+        </div>
         <button
           onClick={() => setShowForm((v) => !v)}
           className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
@@ -149,6 +156,12 @@ export default function ReposPage() {
           {showForm ? 'Cancel' : '+ Add Repo'}
         </button>
       </div>
+
+      {showHelp && (
+        <HelpModal title="About Repos" onClose={() => setShowHelp(false)}>
+          <ReposHelp />
+        </HelpModal>
+      )}
 
       {showForm && (
         <form

@@ -19,6 +19,14 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **In-app help modals on every page.** Each page (Overview, Board, Chat,
+  Workflows, Agents, Providers, Pricing, Repos, Templates, Health, Cost &
+  Usage, Agent Performance) now has an "i" info button that opens a modal
+  explaining what the page does and how to configure it — aimed at making the
+  app more approachable for new users. Closes on the ✕ button, clicking the
+  backdrop, or pressing Escape.
+
 ### Changed
 - **Repo Workflow field is now scoped to GitHub issue import.** Since a task's
   workflow is chosen per task, the repo's `workflow_id` is only still used by

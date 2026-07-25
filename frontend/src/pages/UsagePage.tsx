@@ -1,13 +1,27 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDashboard } from '../lib/useDashboard'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { UsageHelp } from '../components/shared/pageHelp'
 
 export default function UsagePage() {
   const navigate = useNavigate()
   const { dash } = useDashboard()
+  const [showHelp, setShowHelp] = useState(false)
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-xl font-semibold text-slate-100 mb-6">Cost &amp; Usage</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl font-semibold text-slate-100">Cost &amp; Usage</h1>
+        <HelpButton onClick={() => setShowHelp(true)} title="About cost & usage" />
+      </div>
+
+      {showHelp && (
+        <HelpModal title="About Cost & Usage" onClose={() => setShowHelp(false)}>
+          <UsageHelp />
+        </HelpModal>
+      )}
 
       {/* Claude usage (live 5-hour / weekly rate-limit utilization) */}
       {dash && dash.claude_usage?.available && (

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api, type TaskTemplate, type TaskSchedule, type Repo, type Workflow } from '../api/client'
 import SchedulePanel from '../components/templates/SchedulePanel'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { TemplatesHelp } from '../components/shared/pageHelp'
 
 type TemplateForm = { name: string; title: string; description: string; type: string }
 
@@ -16,6 +19,7 @@ export default function TemplatesPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [showHelp, setShowHelp] = useState(false)
 
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<TemplateForm>(emptyTemplateForm)
@@ -111,7 +115,10 @@ export default function TemplatesPage() {
   return (
     <div className="p-6 max-w-4xl">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-slate-100">Task Templates</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-slate-100">Task Templates</h1>
+          <HelpButton onClick={() => setShowHelp(true)} title="About templates" />
+        </div>
         <button
           onClick={() => setShowForm((v) => !v)}
           className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
@@ -119,6 +126,12 @@ export default function TemplatesPage() {
           {showForm ? 'Cancel' : '+ Add Template'}
         </button>
       </div>
+
+      {showHelp && (
+        <HelpModal title="About Task Templates" onClose={() => setShowHelp(false)}>
+          <TemplatesHelp />
+        </HelpModal>
+      )}
 
       {showForm && (
         <form

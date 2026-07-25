@@ -3,6 +3,9 @@ import { useProviderConfigsStore } from '../stores/providerConfigs'
 import { useAgentsStore } from '../stores/agents'
 import type { ProviderConfig, ModelList } from '../api/client'
 import ProviderConfigForm, { type FormState } from '../components/providers/ProviderConfigForm'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { ProvidersHelp } from '../components/shared/pageHelp'
 
 const EMPTY: FormState = { name: '', provider: 'claude', model: 'sonnet', env: '{}' }
 
@@ -16,6 +19,7 @@ export default function ProviderConfigPage() {
   const [modelList, setModelList] = useState<ModelList | null>(null)
   const [fetchingModels, setFetchingModels] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
 
   useEffect(() => {
     fetchConfigs()
@@ -93,9 +97,12 @@ export default function ProviderConfigPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950">
-        <span className="text-sm text-slate-300 truncate">
-          {selected ? selected.name : 'New provider config'}
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm text-slate-300 truncate">
+            {selected ? selected.name : 'New provider config'}
+          </span>
+          <HelpButton onClick={() => setShowHelp(true)} title="About providers" />
+        </div>
         <button
           onClick={() => setSidebarOpen(true)}
           className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
@@ -163,8 +170,17 @@ export default function ProviderConfigPage() {
           deleting={deleting}
           onSave={handleSave}
           onDelete={handleDelete}
+          helpButton={
+            <HelpButton onClick={() => setShowHelp(true)} title="About providers" />
+          }
         />
       </div>
+
+      {showHelp && (
+        <HelpModal title="About Providers" onClose={() => setShowHelp(false)}>
+          <ProvidersHelp />
+        </HelpModal>
+      )}
     </div>
   )
 }

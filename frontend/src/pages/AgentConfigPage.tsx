@@ -6,6 +6,9 @@ import { useProviderConfigsStore } from '../stores/providerConfigs'
 import { EMPTY, TEMPLATES } from '../lib/agentTemplates'
 import AgentSidebar from '../components/agents/AgentSidebar'
 import AgentConfigForm, { type FormState } from '../components/agents/AgentConfigForm'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { AgentsHelp } from '../components/shared/pageHelp'
 
 export default function AgentConfigPage() {
   const {
@@ -29,6 +32,7 @@ export default function AgentConfigPage() {
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set())
   const [bulkSaving, setBulkSaving] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
 
   const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
 
@@ -186,9 +190,12 @@ export default function AgentConfigPage() {
     <div className="flex flex-col h-full overflow-hidden">
       {/* Mobile-only header bar: shows selected agent + button to open the configs drawer */}
       <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950">
-        <span className="text-sm text-slate-300 truncate">
-          {selected ? selected.name : 'New agent'}
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm text-slate-300 truncate">
+            {selected ? selected.name : 'New agent'}
+          </span>
+          <HelpButton onClick={() => setShowHelp(true)} title="About agent configs" />
+        </div>
         <button
           onClick={() => setSidebarOpen(true)}
           className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
@@ -229,8 +236,17 @@ export default function AgentConfigPage() {
           onSave={handleSave}
           onDelete={handleDelete}
           onToggleEnabled={handleToggleEnabled}
+          helpButton={
+            <HelpButton onClick={() => setShowHelp(true)} title="About agent configs" />
+          }
         />
       </div>
+
+      {showHelp && (
+        <HelpModal title="About Agent Configs" onClose={() => setShowHelp(false)}>
+          <AgentsHelp />
+        </HelpModal>
+      )}
     </div>
   )
 }

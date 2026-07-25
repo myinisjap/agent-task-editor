@@ -5,6 +5,9 @@ import { useDashboard } from '../lib/useDashboard'
 import { useWorkflowStore } from '../stores/workflow'
 import TaskFactory from '../components/TaskFactory'
 import FactoryLine from '../components/FactoryLine'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { DashboardHelp } from '../components/shared/pageHelp'
 
 const VISUALIZE_KEY = 'dashboard.visualize'
 const ROBOTS_KEY = 'dashboard.visualize.robots' // legacy; migrated into MODE_KEY
@@ -49,6 +52,7 @@ export default function DashboardPage() {
     try { return localStorage.getItem(VISUALIZE_KEY) === '1' } catch { return false }
   })
   const [mode, setMode] = useState<VizMode>(initialMode)
+  const [showHelp, setShowHelp] = useState(false)
   const workflows = useWorkflowStore((s) => s.workflows)
   const workflow = useWorkflowStore((s) => s.active())
 
@@ -138,8 +142,15 @@ export default function DashboardPage() {
             <span className={`inline-block w-2 h-2 rounded-full ${visualize ? 'bg-emerald-400' : 'bg-slate-600'}`} />
             Visualize tasks
           </button>
+          <HelpButton onClick={() => setShowHelp(true)} title="About this page" />
         </div>
       </div>
+
+      {showHelp && (
+        <HelpModal title="About the Overview" onClose={() => setShowHelp(false)}>
+          <DashboardHelp />
+        </HelpModal>
+      )}
 
       {/* Label count chips */}
       {dash && Object.keys(dash.label_counts).length > 0 && (

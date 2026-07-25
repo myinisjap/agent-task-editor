@@ -6,6 +6,9 @@ import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
 import { api, type BulkAction, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { BoardHelp } from '../components/shared/pageHelp'
 
 const CONDENSED_STORAGE_KEY = 'board.condensed'
 
@@ -24,6 +27,7 @@ export default function BoardPage() {
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
   const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
   const [showNewTask, setShowNewTask] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [condensed, setCondensed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(CONDENSED_STORAGE_KEY) === 'true'
@@ -226,8 +230,15 @@ export default function BoardPage() {
             <span>{condensed ? '⊟' : '⊞'}</span>
             <span>{condensed ? 'Expanded' : 'Condensed'}</span>
           </button>
+          <HelpButton onClick={() => setShowHelp(true)} title="About the board" />
         </div>
       </div>
+
+      {showHelp && (
+        <HelpModal title="About the Board" onClose={() => setShowHelp(false)}>
+          <BoardHelp />
+        </HelpModal>
+      )}
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
