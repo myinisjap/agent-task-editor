@@ -40,6 +40,18 @@ triggers the "Release" workflow the same way.
   workflow picker.
 
 ### Added
+- **New "Factory" dashboard visualization.** The Overview's optional "Visualize
+  tasks" view gains a third style, chosen from a segmented Office / Robots /
+  Factory picker (replacing the old standalone "Robots" toggle; an existing
+  Robots preference migrates automatically). Factory renders each workflow label
+  as a station on an assembly line — a machine that animates the work that label
+  represents (intake hopper, CAD drafting gantry, inspection scanner, hydraulic
+  press, QA bench, a laser-sweeping agent scanner, approval stamp, packing box) —
+  while tasks ride conveyor belts between stations, gaining detail as they go.
+  The belts are routed from the real flex layout, so they re-attach correctly
+  (straight run, vertical drop, or wrap-around return) as the line reflows on
+  mobile and desktop. The default workflow gets a bespoke machine per label;
+  custom workflows collapse to the same three buckets the office scene uses.
 - **Auto-open a GitHub PR when a task reaches a label.** Workflow labels gain a
   `create_pr` flag (settable in the workflow YAML). Any transition into a
   `create_pr` label — agent- or human-triggered — pushes the task's branch and
