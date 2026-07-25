@@ -81,6 +81,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 - **Frontend types:** `frontend/src/api/types.ts` is generated from the root `openapi.yaml`. When changing the API, edit `openapi.yaml`, then run `cd frontend && npm run gen:api` to regenerate the types and commit the result. Don't hand-edit `types.ts` — CI's "Check generated API types are up to date" step fails on any drift between the spec and the committed types.
 - **Migrations:** add numbered files to `backend/internal/storage/migrations/`; they run automatically on startup
 - **Changelog:** always add an entry under `## [Unreleased]` in `CHANGELOG.md` for any user-facing change (features, fixes, security, breaking changes). This file drives the GitHub Release notes, so keep it current with every PR.
+- **Commit messages:** keep them to the plain message only (subject + body). Do **not** append a `Co-Authored-By:` trailer or a `Claude-Session:` line to any commit or merge message.
 
 ## Common API Calls
 
