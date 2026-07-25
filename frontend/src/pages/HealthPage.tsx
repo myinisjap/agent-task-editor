@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, authedRawFetch, type ProviderCheck, type ProviderCheckStatus } from '../api/client'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { HealthHelp } from '../components/shared/pageHelp'
 
 const STATUS_META: Record<ProviderCheckStatus, { dot: string; label: string; labelCls: string }> = {
   ok: { dot: 'bg-green-500', label: 'Ready', labelCls: 'text-green-400' },
@@ -43,6 +46,7 @@ export default function HealthPage() {
   const [error, setError] = useState('')
   const [backupLoading, setBackupLoading] = useState(false)
   const [backupError, setBackupError] = useState('')
+  const [showHelp, setShowHelp] = useState(false)
 
   // Backup schedule settings (interval/retention count) — see docs/backup.md.
   // intervalMinutes is the form's editable unit (minutes); the API works in
@@ -189,7 +193,10 @@ export default function HealthPage() {
   return (
     <div className="p-6 max-w-3xl">
       <div className="flex items-center justify-between mb-2">
-        <h1 className="text-xl font-semibold text-slate-100">Provider Health</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-slate-100">Provider Health</h1>
+          <HelpButton onClick={() => setShowHelp(true)} title="About provider health" />
+        </div>
         <button
           onClick={load}
           disabled={loading}
@@ -202,6 +209,12 @@ export default function HealthPage() {
         Readiness of the agent providers and supporting infrastructure. Fix any red or
         yellow row before running your first task to avoid a failed run.
       </p>
+
+      {showHelp && (
+        <HelpModal title="About Provider Health" onClose={() => setShowHelp(false)}>
+          <HealthHelp />
+        </HelpModal>
+      )}
 
       {error && (
         <div className="mb-4 bg-red-900/40 border border-red-700 text-red-200 text-sm px-3 py-2 rounded-lg">

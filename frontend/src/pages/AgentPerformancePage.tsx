@@ -1,12 +1,26 @@
+import { useState } from 'react'
 import { useDashboard } from '../lib/useDashboard'
 import { formatDuration } from '../lib/format'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { PerformanceHelp } from '../components/shared/pageHelp'
 
 export default function AgentPerformancePage() {
   const { dash } = useDashboard()
+  const [showHelp, setShowHelp] = useState(false)
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <h1 className="text-xl font-semibold text-slate-100 mb-6">Agent Performance</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl font-semibold text-slate-100">Agent Performance</h1>
+        <HelpButton onClick={() => setShowHelp(true)} title="About agent performance" />
+      </div>
+
+      {showHelp && (
+        <HelpModal title="About Agent Performance" onClose={() => setShowHelp(false)}>
+          <PerformanceHelp />
+        </HelpModal>
+      )}
 
       {/* Per-agent-config performance */}
       {dash && dash.agent_config_stats && dash.agent_config_stats.length > 0 && (

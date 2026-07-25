@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { PricingHelp } from '../components/shared/pageHelp'
 
 // PricingRow is the editable form-state shape for one row of the table —
 // prices are kept as strings while editing so an in-progress/invalid number
@@ -17,6 +20,7 @@ export default function PricingSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -92,7 +96,10 @@ export default function PricingSettingsPage() {
 
   return (
     <div className="p-6 max-w-3xl">
-      <h1 className="text-xl font-semibold text-slate-100 mb-2">Model Pricing</h1>
+      <div className="flex items-center gap-2 mb-2">
+        <h1 className="text-xl font-semibold text-slate-100">Model Pricing</h1>
+        <HelpButton onClick={() => setShowHelp(true)} title="About model pricing" />
+      </div>
       <p className="text-sm text-slate-400 mb-6">
         USD price per 1M tokens used to estimate run cost for the <code className="text-slate-300">anthropic</code>{' '}
         and <code className="text-slate-300">llm</code> providers (the <code className="text-slate-300">claude</code>{' '}
@@ -101,6 +108,12 @@ export default function PricingSettingsPage() {
         matches neither is flagged "cost unknown" in its run history instead of silently showing $0. Changes take
         effect on the very next run — no restart needed.
       </p>
+
+      {showHelp && (
+        <HelpModal title="About Model Pricing" onClose={() => setShowHelp(false)}>
+          <PricingHelp />
+        </HelpModal>
+      )}
 
       {error && (
         <div className="mb-4 bg-red-900/40 border border-red-700 text-red-200 text-sm px-3 py-2 rounded-lg">
