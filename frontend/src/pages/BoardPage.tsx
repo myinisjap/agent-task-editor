@@ -4,6 +4,7 @@ import { useWorkflowStore } from '../stores/workflow'
 import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
+import OnboardingChecklist from '../components/board/OnboardingChecklist'
 import { api, type BulkAction, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
@@ -247,6 +248,8 @@ export default function BoardPage() {
           <BoardHelp />
         </HelpModal>
       )}
+
+      <OnboardingChecklist />
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 mb-4">

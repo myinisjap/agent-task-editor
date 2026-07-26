@@ -34,6 +34,10 @@ vi.mock('../api/client', async () => {
       workflows: { list: (...args: unknown[]) => workflowsListMock(...args) },
       repos: { list: vi.fn().mockResolvedValue([]) },
       dashboard: { costByTask: (...args: unknown[]) => costByTaskMock(...args) },
+      // OnboardingChecklist (rendered by BoardPage) calls these on mount.
+      providerConfigs: { list: vi.fn().mockResolvedValue([]) },
+      agents: { list: vi.fn().mockResolvedValue([]) },
+      health: { providers: vi.fn().mockResolvedValue({ checks: [] }) },
     },
   }
 })

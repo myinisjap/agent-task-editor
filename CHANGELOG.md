@@ -20,6 +20,12 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **First-run onboarding checklist on the Board** that sequences setup steps
+  (add a repo → configure a provider → create an agent config → create your
+  first task), checks each off live as configuration lands, folds in
+  `/health/providers` readiness checks so a failing credential check (e.g.
+  Claude CLI not authenticated) surfaces against the relevant step, and stays
+  dismissed permanently once dismissed or once all steps pass (#258).
 - **Imported GitHub issues now stay in sync with their board tasks.** The
   importer was create-only: once a task existed for an issue, nothing about
   that issue was ever looked at again, so an edited title or body never
