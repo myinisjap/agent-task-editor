@@ -99,7 +99,7 @@ export default function AgentConfigForm({
           />
         </Field>
 
-        <Field label="Provider config" className="col-span-2" hint="Which provider/model/API key this agent runs against. Manage provider configs (and their env vars) on the Providers page — they can be shared across agent configs and chat sessions.">
+        <Field label="Provider config" className="sm:col-span-2" hint="Which provider/model/API key this agent runs against. Manage provider configs (and their env vars) on the Providers page — they can be shared across agent configs and chat sessions.">
           <select
             value={form.provider_config_id}
             onChange={(e) => setForm((f) => ({ ...f, provider_config_id: e.target.value }))}
@@ -241,7 +241,7 @@ export default function AgentConfigForm({
           )}
         </Field>
 
-        <Field label="Labels" className="col-span-2">
+        <Field label="Labels" className="sm:col-span-2">
           <LabelPicker
             selected={(() => { try { return JSON.parse(form.labels) } catch { return [] } })()}
             available={availableLabels}
@@ -265,7 +265,7 @@ export default function AgentConfigForm({
           </Field>
         ) : null}
 
-        <Field label="System prompt" className="col-span-2">
+        <Field label="System prompt" className="sm:col-span-2">
           <textarea
             value={form.system_prompt}
             onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}

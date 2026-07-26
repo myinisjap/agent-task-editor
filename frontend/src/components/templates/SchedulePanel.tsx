@@ -162,7 +162,7 @@ export default function SchedulePanel({
               ))}
             </select>
           </div>
-          <div className="flex flex-col gap-1.5 col-span-2">
+          <div className="flex flex-col gap-1.5 sm:col-span-2">
             <label className="text-xs font-medium text-slate-400">
               Cron expression <span className="text-slate-600">(minute hour day-of-month month day-of-week)</span>
             </label>

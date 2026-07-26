@@ -85,6 +85,14 @@ triggers the "Release" workflow the same way.
   matrix in sync.
 
 ### Fixed
+- **Two-column forms no longer collapse into overlapping, unreadable fields on
+  mobile.** The Agent config, Provider config, Templates, and schedule forms use
+  a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded
+  `col-span-2`. At mobile widths that spanned a second column the grid didn't
+  have, so CSS created an implicit one: the single-width fields were crushed
+  into a sliver of the first track while their labels overlapped each other and
+  hint text wrapped one word per line. Those rows are now `sm:col-span-2`, so
+  everything stacks in a single full-width column below the `sm` breakpoint.
 - **The GitHub issue fetch no longer silently truncates at 200 issues.** It now
   paginates the full result set. Beyond dropping issues outright on busy repos,
   the cap would have made the new reconciliation mistake a truncated page for a
