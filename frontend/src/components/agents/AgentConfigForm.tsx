@@ -67,7 +67,7 @@ export default function AgentConfigForm({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-5 max-w-2xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-2xl">
         <Field label="Name">
           <input
             value={form.name}

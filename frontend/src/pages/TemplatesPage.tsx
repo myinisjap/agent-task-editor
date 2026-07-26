@@ -139,7 +139,7 @@ export default function TemplatesPage() {
           className="mb-6 bg-slate-900 border border-slate-700 rounded-xl p-5 flex flex-col gap-4"
         >
           <h2 className="text-sm font-semibold text-slate-200">New Template</h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-slate-400">Name</label>
               <input
@@ -241,7 +241,7 @@ export default function TemplatesPage() {
                   className="border-t border-slate-700 bg-slate-900 px-5 py-4 flex flex-col gap-4"
                 >
                   <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Edit Template</h3>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-medium text-slate-400">Name</label>
                       <input
