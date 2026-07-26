@@ -258,7 +258,7 @@ export default function AgentConfigForm({
             onMcpServersChange={(json) => setForm((f) => ({ ...f, enabled_mcp_servers: json }))}
           />
         ) : providerStr && mcpCap.support !== 'full' ? (
-          <Field label="Plugins / MCP servers" className="col-span-2">
+          <Field label="Plugins / MCP servers" className="sm:col-span-2">
             <p className="text-xs text-slate-500">
               MCP servers / plugins are not supported by the {providerStr} provider.
             </p>
