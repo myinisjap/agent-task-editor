@@ -56,6 +56,15 @@ The fetch is fully paginated — earlier versions capped it at 200 issues per
 sweep and silently ignored the rest, which also meant reconciliation (below)
 could mistake a truncated page for a closed issue.
 
+New tasks for one repo's sweep are created inside a **single database
+transaction** (one commit for the whole batch, not one per issue) and, if
+any were created, a **single `task.created_bulk`** WebSocket event is
+published for the repo instead of one `task.created` per issue (see
+[websocket.md](websocket.md)). Both changes exist to keep a large first
+import (or backlog catch-up) from repeatedly acquiring SQLite's write lock
+and from flooding connected clients with one event — and one board refetch —
+per issue.
+
 ## Deduplication
 
 `(source, source_ref)` is unique across tasks (enforced by a partial unique

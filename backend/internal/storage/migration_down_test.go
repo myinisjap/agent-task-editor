@@ -137,13 +137,13 @@ func TestMigration042DownStep(t *testing.T) {
 	}
 }
 
-// TestMigration045DownStep verifies migration 045's down migration (which
+// TestMigration046DownStep verifies migration 046's down migration (which
 // drops repos.issue_writeback_label) applies cleanly against this repo's
-// SQLite driver/version. 045 is the latest migration at the time this test
-// was written, so Migrate(44) rolls back just that one step and exercises
+// SQLite driver/version. 046 is the latest migration at the time this test
+// was written, so Migrate(45) rolls back just that one step and exercises
 // its down migration directly.
-func TestMigration045DownStep(t *testing.T) {
-	const targetVersion = 44
+func TestMigration046DownStep(t *testing.T) {
+	const targetVersion = 45
 	dbPath := t.TempDir() + "/migtest.db"
 	db, err := Open(dbPath)
 	if err != nil {
@@ -165,7 +165,7 @@ func TestMigration045DownStep(t *testing.T) {
 	}
 
 	if err := m.Migrate(targetVersion); err != nil {
-		t.Fatalf("down to version %d (045 rollback): %v", targetVersion, err)
+		t.Fatalf("down to version %d (046 rollback): %v", targetVersion, err)
 	}
 
 	// repos.issue_writeback_label column should be gone.

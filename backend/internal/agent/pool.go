@@ -120,6 +120,13 @@ func (p *Pool) Saturated() bool {
 	return len(p.running) >= p.maxWorkers
 }
 
+// MaxWorkers returns the pool's configured worker count (MAX_WORKERS). Used
+// by the dispatcher/dashboard as the fallback effective concurrency limit for
+// a repo with no repos.max_concurrent_runs override.
+func (p *Pool) MaxWorkers() int {
+	return p.maxWorkers
+}
+
 // Start launches worker goroutines. Blocks until ctx is cancelled.
 func (p *Pool) Start(ctx context.Context) {
 	for i := 0; i < p.maxWorkers; i++ {

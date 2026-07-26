@@ -21,6 +21,9 @@ type EditForm = {
   issue_sync_gone_action: IssueSyncGoneAction
   issue_sync_gone_label: string
   issue_comment_sync_enabled: boolean
+  // Empty string = no repo-specific cap (falls back to the global
+  // MAX_WORKERS). Kept as a string so the input can be blank rather than 0.
+  max_concurrent_runs: string
 }
 
 const BLANK_FORM: EditForm = {
@@ -37,6 +40,7 @@ const BLANK_FORM: EditForm = {
   issue_sync_gone_action: 'flag',
   issue_sync_gone_label: '',
   issue_comment_sync_enabled: false,
+  max_concurrent_runs: '',
 }
 
 export default function ReposPage() {
@@ -114,6 +118,7 @@ export default function ReposPage() {
         issue_sync_gone_action: form.issue_sync_gone_action,
         issue_sync_gone_label: form.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: form.issue_comment_sync_enabled,
+        max_concurrent_runs: form.max_concurrent_runs.trim() ? Number(form.max_concurrent_runs) : undefined,
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -141,6 +146,7 @@ export default function ReposPage() {
       issue_sync_gone_action: repo.issue_sync_gone_action ?? 'flag',
       issue_sync_gone_label: repo.issue_sync_gone_label ?? '',
       issue_comment_sync_enabled: !!repo.issue_comment_sync_enabled,
+      max_concurrent_runs: repo.max_concurrent_runs != null ? String(repo.max_concurrent_runs) : '',
     })
     setEditError('')
   }
@@ -171,6 +177,7 @@ export default function ReposPage() {
         issue_sync_gone_action: editForm.issue_sync_gone_action,
         issue_sync_gone_label: editForm.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: editForm.issue_comment_sync_enabled,
+        max_concurrent_runs: editForm.max_concurrent_runs.trim() ? Number(editForm.max_concurrent_runs) : null,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -394,6 +401,20 @@ export default function ReposPage() {
                 (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
               </span>
             </label>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-slate-400">
+                Max concurrent agent runs <span className="text-slate-600">(blank = use the global default)</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={form.max_concurrent_runs}
+                onChange={(e) => setForm((f) => ({ ...f, max_concurrent_runs: e.target.value }))}
+                placeholder="unset"
+                className={`${inputCls} max-w-[10rem]`}
+              />
+            </div>
           </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -452,6 +473,14 @@ export default function ReposPage() {
                       title="Auto-transitioning tasks back to their failure-path label on GitHub changes-requested reviews, new review comments, or failed checks"
                     >
                       PR auto-transition
+                    </span>
+                  )}
+                  {repo.max_concurrent_runs != null && (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/30 shrink-0"
+                      title="The dispatcher will not run more than this many agents on this repo at once, regardless of free global worker slots"
+                    >
+                      Max {repo.max_concurrent_runs} concurrent
                     </span>
                   )}
                   <button
@@ -649,6 +678,20 @@ export default function ReposPage() {
                         (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
                       </span>
                     </label>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-slate-400">
+                        Max concurrent agent runs <span className="text-slate-600">(blank = use the global default)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={editForm.max_concurrent_runs}
+                        onChange={(e) => setEditForm((f) => ({ ...f, max_concurrent_runs: e.target.value }))}
+                        placeholder="unset"
+                        className={`${inputCls} max-w-[10rem]`}
+                      />
+                    </div>
                   </div>
 
                   {editError && <p className="text-xs text-red-400">{editError}</p>}

@@ -3955,6 +3955,8 @@ export interface components {
             clone_status?: "ready" | "cloning" | "error";
             /** @description Human-readable failure detail when clone_status is 'error'. */
             clone_error?: string;
+            /** @description Optional cap on the number of agent runs the dispatcher will keep in flight against this repo at once. null (the default) means "no repo-specific cap" — the dispatcher falls back to the server's global MAX_WORKERS limit, preserving pre-existing behavior. A repo saturated with eligible tasks is skipped by the dispatcher once its in-flight run count reaches this limit (or the global fallback), leaving worker slots free for other repos. See GET /dashboard's repo_concurrency for live in-use vs. limit. */
+            max_concurrent_runs?: number | null;
             /** Format: date-time */
             created_at: string;
         };
@@ -4147,6 +4149,13 @@ export interface components {
                 /** Format: date-time */
                 weekly_resets_at?: string | null;
             };
+            /** @description Per-repo worker-slot breakdown: how many of a repo's effective concurrency limit (its max_concurrent_runs if set, else the server's global MAX_WORKERS) are currently occupied by in-flight agent runs. Only repos with at least one in-flight run are included, sorted by in_use descending. */
+            repo_concurrency: {
+                repo_id: string;
+                repo_name: string;
+                in_use: number;
+                limit: number;
+            }[];
         };
         /** @description A single provider/onboarding readiness row. */
         ProviderCheck: {

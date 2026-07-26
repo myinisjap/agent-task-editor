@@ -20,6 +20,21 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Per-repo concurrency limits.** Repos can now set an optional
+  `max_concurrent_runs` cap (Repos page) on how many agent runs the
+  dispatcher will keep in flight against that repo at once, independent of
+  the global `MAX_WORKERS` pool size. Previously one repo with many eligible
+  tasks (e.g. from a schedule or a bulk GitHub Issues import) could occupy
+  every worker slot and starve every other repo indefinitely. Leaving the
+  cap unset preserves prior behavior exactly (falls back to the global
+  limit). The Dashboard's new "Repo concurrency" section shows live in-use
+  vs. effective-limit worker slots per repo.
+- **First-run onboarding checklist on the Board** that sequences setup steps
+  (add a repo → configure a provider → create an agent config → create your
+  first task), checks each off live as configuration lands, folds in
+  `/health/providers` readiness checks so a failing credential check (e.g.
+  Claude CLI not authenticated) surfaces against the relevant step, and stays
+  dismissed permanently once dismissed or once all steps pass (#258).
 - **Imported GitHub issues now stay in sync with their board tasks.** The
   importer was create-only: once a task existed for an issue, nothing about
   that issue was ever looked at again, so an edited title or body never
@@ -79,6 +94,15 @@ triggers the "Release" workflow the same way.
 - The Repos help modal described issue import as create-only, which is no
   longer accurate; it now covers ongoing sync, the update policy, what happens
   when an issue closes, and comment sync.
+- **GitHub issue import now creates a repo's new tasks in a single DB
+  transaction per sweep, and emits one batched `task.created_bulk` WebSocket
+  event instead of one `task.created` per issue.** Previously each imported
+  issue was its own implicit commit (repeatedly acquiring SQLite's
+  single-writer lock) and its own broadcast event (each triggering a
+  per-client task refetch) — a large backlog import could contend with other
+  writers and flood connected clients. See
+  [task-sources.md](docs/task-sources.md) and
+  [websocket.md](docs/websocket.md).
 
 ## [0.14.0] - 2026-07-26
 

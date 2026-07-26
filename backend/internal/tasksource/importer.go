@@ -41,6 +41,7 @@ type Publisher interface {
 //     Reconciliation never deletes a task or un-imports it — it only sets
 //     state and optionally archives/moves.
 type Importer struct {
+	db       *sql.DB
 	q        *gen.Queries
 	hub      Publisher
 	interval time.Duration
@@ -57,6 +58,7 @@ type Importer struct {
 // (see NewWithEngine).
 func New(db *sql.DB, hub Publisher, interval time.Duration, source Source) *Importer {
 	return &Importer{
+		db:       db,
 		q:        gen.New(db),
 		hub:      hub,
 		interval: interval,
@@ -95,6 +97,14 @@ type sweepStats struct {
 	commented int
 	flagged   int // items reconciled as "gone" this sweep (any gone action)
 }
+
+// maxCreatedIDsInEvent caps how many task ids are inlined in a single
+// task.created_bulk event's payload. A sweep that creates far more than this
+// (e.g. first import of a large backlog) would otherwise risk a WS payload
+// large enough to itself contend with the hub's bounded per-client send
+// buffer (see ws.Hub.Publish) — count is always exact; ids beyond the cap are
+// simply omitted and clients fall back to their normal task list refresh.
+const maxCreatedIDsInEvent = 500
 
 // Sweep syncs every issue-sync-enabled repo: creating tasks for new items,
 // updating existing ones, ingesting comments, and reconciling disappeared
@@ -171,6 +181,13 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 
 	commenter, canComment := im.source.(CommentSource)
 
+	// New items are created in a single DB transaction for the whole repo,
+	// rather than one implicit commit per row: SQLite is single-writer, and a
+	// large backlog importing one row per commit would repeatedly acquire and
+	// release the write lock, blocking every other writer (agent pool, API)
+	// on busy_timeout for the duration. See createNewTasks.
+	var toCreate []ExternalTask
+
 	seen := make(map[string]bool, len(items))
 	for _, item := range items {
 		seen[item.Ref] = true
@@ -180,9 +197,7 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 			SourceRef: item.Ref,
 		})
 		if errors.Is(err, sql.ErrNoRows) {
-			if _, ok := im.createTask(ctx, repo, startLabel, item, log); ok {
-				stats.created++
-			}
+			toCreate = append(toCreate, item)
 			continue
 		}
 		if err != nil {
@@ -214,8 +229,85 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 		}
 	}
 
+	stats.created += im.createNewTasks(ctx, repo, startLabel, toCreate, log)
+
 	stats.flagged += im.reconcile(ctx, repo, seen, log)
 	return stats
+}
+
+// createNewTasks imports every not-yet-seen external item for one repo in a
+// single DB transaction (one commit, one write-lock acquisition, instead of
+// one per item) and — if at least one task was created — emits a single
+// task.created_bulk event instead of one task.created per item. The event is
+// only published after the transaction commits successfully, so it always
+// reflects DB truth.
+func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, startLabel string, items []ExternalTask, log *slog.Logger) int {
+	if len(items) == 0 {
+		return 0
+	}
+
+	tx, err := im.db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Warn("issue import: begin create transaction failed", "err", err)
+		return 0
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	qtx := im.q.WithTx(tx)
+
+	created := make([]gen.Task, 0, len(items))
+	for _, item := range items {
+		task, err := qtx.CreateSourcedTask(ctx, gen.CreateSourcedTaskParams{
+			ID:          uuid.NewString(),
+			Title:       item.Title,
+			Description: composeDescription(item.Body, item.URL),
+			Type:        TaskTypeFromLabels(item.Labels),
+			Label:       startLabel,
+			RepoID:      repo.ID,
+			WorkflowID:  *repo.WorkflowID,
+			Attachments: "[]",
+			Source:      im.source.Name(),
+			SourceRef:   item.Ref,
+		})
+		if err != nil {
+			// A UNIQUE violation here means a concurrent insert won the race —
+			// harmless; anything else is worth surfacing. Either way, a failed
+			// INSERT only rolls back that statement in SQLite, not the whole
+			// transaction, so the rest of the batch still commits.
+			log.Warn("issue import: create task failed", "ref", item.Ref, "err", err)
+			continue
+		}
+		created = append(created, task)
+	}
+
+	if len(created) == 0 {
+		return 0
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Warn("issue import: commit create transaction failed", "count", len(created), "err", err)
+		return 0
+	}
+
+	for _, task := range created {
+		log.Info("issue import: task created", "task_id", task.ID, "ref", task.SourceRef)
+	}
+
+	ids := make([]string, 0, len(created))
+	for i, task := range created {
+		if i >= maxCreatedIDsInEvent {
+			break
+		}
+		ids = append(ids, task.ID)
+	}
+	im.hub.Publish("task.created_bulk", map[string]any{
+		"repo_id": repo.ID,
+		"source":  im.source.Name(),
+		"count":   len(created),
+		"ids":     ids,
+	})
+
+	return len(created)
 }
 
 // composeDescription builds a task's description from an external item's body
@@ -248,39 +340,6 @@ func updateAllowed(repo gen.Repo, taskLabel, gateLabel string) bool {
 	default:
 		return taskLabel == gateLabel
 	}
-}
-
-// createTask imports a brand-new external item as a task. Returns ok=false on
-// any failure (logged and skipped, never aborting the sweep).
-func (im *Importer) createTask(ctx context.Context, repo gen.Repo, startLabel string, item ExternalTask, log *slog.Logger) (gen.Task, bool) {
-	task, err := im.q.CreateSourcedTask(ctx, gen.CreateSourcedTaskParams{
-		ID:          uuid.NewString(),
-		Title:       item.Title,
-		Description: composeDescription(item.Body, item.URL),
-		Type:        TaskTypeFromLabels(item.Labels),
-		Label:       startLabel,
-		RepoID:      repo.ID,
-		WorkflowID:  *repo.WorkflowID,
-		Attachments: "[]",
-		Source:      im.source.Name(),
-		SourceRef:   item.Ref,
-	})
-	if err != nil {
-		// A UNIQUE violation here means a concurrent insert won the race —
-		// harmless; anything else is worth surfacing.
-		log.Warn("issue import: create task failed", "ref", item.Ref, "err", err)
-		return gen.Task{}, false
-	}
-	log.Info("issue import: task created", "task_id", task.ID, "ref", item.Ref)
-	im.hub.Publish("task.created", map[string]any{
-		"id":         task.ID,
-		"title":      task.Title,
-		"label":      task.Label,
-		"repo_id":    task.RepoID,
-		"source":     task.Source,
-		"source_ref": task.SourceRef,
-	})
-	return task, true
 }
 
 // applyFieldUpdates recomputes the description exactly as the create path

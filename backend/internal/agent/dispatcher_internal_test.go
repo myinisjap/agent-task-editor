@@ -167,3 +167,37 @@ func TestToAgentConfig_CommandFilters(t *testing.T) {
 		}
 	})
 }
+
+// TestDispatcher_repoAtLimit covers the effective-limit resolution used by
+// the sweep dispatch path (see issue #255): repos.max_concurrent_runs wins
+// when set to a positive value; otherwise the pool's global MAX_WORKERS is
+// the fallback, so an unset limit preserves pre-existing behavior exactly.
+func TestDispatcher_repoAtLimit(t *testing.T) {
+	i64 := func(n int64) *int64 { return &n }
+
+	pool := &Pool{maxWorkers: 5}
+	d := &Dispatcher{pool: pool}
+
+	tests := []struct {
+		name    string
+		repo    gen.Repo
+		inUse   map[string]int64
+		atLimit bool
+	}{
+		{"unset limit, under global cap", gen.Repo{ID: "r1"}, map[string]int64{"r1": 4}, false},
+		{"unset limit, at global cap", gen.Repo{ID: "r1"}, map[string]int64{"r1": 5}, true},
+		{"unset limit, no in-flight runs", gen.Repo{ID: "r1"}, map[string]int64{}, false},
+		{"repo limit under repo cap", gen.Repo{ID: "r1", MaxConcurrentRuns: i64(2)}, map[string]int64{"r1": 1}, false},
+		{"repo limit at repo cap, below global cap", gen.Repo{ID: "r1", MaxConcurrentRuns: i64(2)}, map[string]int64{"r1": 2}, true},
+		{"zero repo limit treated as unset (falls back to global)", gen.Repo{ID: "r1", MaxConcurrentRuns: i64(0)}, map[string]int64{"r1": 4}, false},
+		{"different repo's in-use count doesn't affect this repo", gen.Repo{ID: "r1", MaxConcurrentRuns: i64(1)}, map[string]int64{"r2": 10}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := d.repoAtLimit(tt.repo, tt.inUse)
+			if got != tt.atLimit {
+				t.Errorf("repoAtLimit() = %v, want %v", got, tt.atLimit)
+			}
+		})
+	}
+}

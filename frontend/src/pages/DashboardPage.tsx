@@ -224,6 +224,39 @@ export default function DashboardPage() {
         </section>
       )}
 
+      {/* Per-repo concurrency: worker slots in use vs. each repo's effective
+          limit (its max_concurrent_runs if set, else the global MAX_WORKERS).
+          Only shown when at least one repo has an in-flight run. */}
+      {dash && dash.repo_concurrency.length > 0 && (
+        <section className="mb-8">
+          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
+            Repo concurrency
+          </h2>
+          <div className="flex flex-col gap-2">
+            {dash.repo_concurrency.map((rc) => {
+              const pct = rc.limit > 0 ? Math.min(100, (rc.in_use / rc.limit) * 100) : 0
+              const saturated = rc.in_use >= rc.limit
+              return (
+                <div key={rc.repo_id} className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm text-slate-200 truncate">{rc.repo_name}</span>
+                    <span className={`text-xs shrink-0 ${saturated ? 'text-amber-400' : 'text-slate-400'}`}>
+                      {rc.in_use} / {rc.limit} workers
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${saturated ? 'bg-amber-500' : 'bg-indigo-500'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Intervention queue */}
       {dash && dash.intervention_queue.length > 0 && (
         <section className="mb-8">
