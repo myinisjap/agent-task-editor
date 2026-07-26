@@ -998,3 +998,126 @@ func TestReposUpdate_InvalidIssueSyncPolicyFieldsRejected(t *testing.T) {
 		t.Errorf("expected 400 for move without a label, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// max_concurrent_runs (per-repo concurrency cap — issue #255)
+// ---------------------------------------------------------------------------
+
+// TestReposCreate_MaxConcurrentRunsValidation covers the create-time
+// validation for the optional per-repo concurrency cap: omitted is fine
+// (nil, "no cap"), a positive integer is fine, and 0/negative are rejected
+// rather than silently treated as unlimited (see resolveMaxConcurrentRuns).
+func TestReposCreate_MaxConcurrentRunsValidation(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	// Omitted → nil, accepted.
+	repoDir := filepath.Join(base, "omitted")
+	initBareGitRepo(t, repoDir)
+	w := postJSON(t, router, "/repos", map[string]any{"name": "omitted", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("omitted: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if repo["max_concurrent_runs"] != nil {
+		t.Errorf("omitted max_concurrent_runs = %v, want nil", repo["max_concurrent_runs"])
+	}
+
+	// Positive integer → accepted and persisted.
+	repoDir2 := filepath.Join(base, "capped")
+	initBareGitRepo(t, repoDir2)
+	w = postJSON(t, router, "/repos", map[string]any{"name": "capped", "path": repoDir2, "max_concurrent_runs": 3})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("positive: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["max_concurrent_runs"]; got != float64(3) {
+		t.Errorf("max_concurrent_runs = %v, want 3", got)
+	}
+
+	// Zero → rejected.
+	repoDir3 := filepath.Join(base, "zero")
+	initBareGitRepo(t, repoDir3)
+	w = postJSON(t, router, "/repos", map[string]any{"name": "zero", "path": repoDir3, "max_concurrent_runs": 0})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("zero: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Negative → rejected.
+	repoDir4 := filepath.Join(base, "negative")
+	initBareGitRepo(t, repoDir4)
+	w = postJSON(t, router, "/repos", map[string]any{"name": "negative", "path": repoDir4, "max_concurrent_runs": -1})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("negative: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReposUpdate_MaxConcurrentRunsOmittedVsNullVsSet verifies the PATCH
+// tri-state semantics for max_concurrent_runs: a PATCH that omits the field
+// entirely leaves the stored value untouched; a PATCH with an explicit
+// number sets/replaces it; a PATCH with an explicit `null` clears it back to
+// nil ("use the global default").
+func TestReposUpdate_MaxConcurrentRunsOmittedVsNullVsSet(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myrepo", "path": repoDir, "max_concurrent_runs": 2})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+	if got := repo["max_concurrent_runs"]; got != float64(2) {
+		t.Fatalf("initial max_concurrent_runs = %v, want 2", got)
+	}
+
+	// Omitted field on an unrelated PATCH must not touch the stored value.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("unrelated patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["max_concurrent_runs"]; got != float64(2) {
+		t.Errorf("max_concurrent_runs after unrelated patch = %v, want unchanged 2", got)
+	}
+
+	// A new positive value replaces the existing cap.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"max_concurrent_runs": 5})
+	if w.Code != http.StatusOK {
+		t.Fatalf("set patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["max_concurrent_runs"]; got != float64(5) {
+		t.Errorf("max_concurrent_runs after set = %v, want 5", got)
+	}
+
+	// Explicit null clears it back to nil.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"max_concurrent_runs": nil})
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if repo["max_concurrent_runs"] != nil {
+		t.Errorf("max_concurrent_runs after clear = %v, want nil", repo["max_concurrent_runs"])
+	}
+
+	// Zero/negative are rejected on update too.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"max_concurrent_runs": 0})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("zero on update: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"max_concurrent_runs": -2})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("negative on update: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}

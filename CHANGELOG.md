@@ -20,6 +20,15 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Per-repo concurrency limits.** Repos can now set an optional
+  `max_concurrent_runs` cap (Repos page) on how many agent runs the
+  dispatcher will keep in flight against that repo at once, independent of
+  the global `MAX_WORKERS` pool size. Previously one repo with many eligible
+  tasks (e.g. from a schedule or a bulk GitHub Issues import) could occupy
+  every worker slot and starve every other repo indefinitely. Leaving the
+  cap unset preserves prior behavior exactly (falls back to the global
+  limit). The Dashboard's new "Repo concurrency" section shows live in-use
+  vs. effective-limit worker slots per repo.
 - **Imported GitHub issues now stay in sync with their board tasks.** The
   importer was create-only: once a task existed for an issue, nothing about
   that issue was ever looked at again, so an edited title or body never

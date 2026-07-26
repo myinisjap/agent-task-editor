@@ -47,6 +47,7 @@ sql:
       - "internal/storage/migrations/042_model_pricing.up.sql"
       - "internal/storage/migrations/043_label_create_pr.up.sql"
       - "internal/storage/migrations/044_issue_sync_updates.up.sql"
+      - "internal/storage/migrations/045_repo_max_concurrent_runs.up.sql"
     gen:
       go:
         package: "gen"

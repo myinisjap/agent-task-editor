@@ -21,6 +21,47 @@ func (q *Queries) ClearActiveAgentRun(ctx context.Context, id string) error {
 	return err
 }
 
+const countActiveRunsByRepo = `-- name: CountActiveRunsByRepo :many
+SELECT repo_id, COUNT(*) AS in_use
+FROM tasks
+WHERE active_agent_run_id IS NOT NULL
+  AND archived = 0
+GROUP BY repo_id
+`
+
+type CountActiveRunsByRepoRow struct {
+	RepoID string `json:"repo_id"`
+	InUse  int64  `json:"in_use"`
+}
+
+// Per-repo in-flight run counts, used by the dispatcher to enforce
+// repos.max_concurrent_runs. A task counts as "in flight" for a repo while
+// it holds an active run lock (active_agent_run_id IS NOT NULL), the same
+// signal ListAgentPickupTasks already excludes on, so this is consistent
+// with "pickup-eligible" meaning "not already running".
+func (q *Queries) CountActiveRunsByRepo(ctx context.Context) ([]CountActiveRunsByRepoRow, error) {
+	rows, err := q.db.QueryContext(ctx, countActiveRunsByRepo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountActiveRunsByRepoRow
+	for rows.Next() {
+		var i CountActiveRunsByRepoRow
+		if err := rows.Scan(&i.RepoID, &i.InUse); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countSubtasks = `-- name: CountSubtasks :one
 SELECT COUNT(*) FROM tasks WHERE parent_task_id = ?
 `

@@ -161,6 +161,18 @@ AND NOT EXISTS (
 )
 ORDER BY t.priority DESC, t.created_at ASC;
 
+-- name: CountActiveRunsByRepo :many
+-- Per-repo in-flight run counts, used by the dispatcher to enforce
+-- repos.max_concurrent_runs. A task counts as "in flight" for a repo while
+-- it holds an active run lock (active_agent_run_id IS NOT NULL), the same
+-- signal ListAgentPickupTasks already excludes on, so this is consistent
+-- with "pickup-eligible" meaning "not already running".
+SELECT repo_id, COUNT(*) AS in_use
+FROM tasks
+WHERE active_agent_run_id IS NOT NULL
+  AND archived = 0
+GROUP BY repo_id;
+
 -- name: SetTaskTransientRetry :one
 UPDATE tasks
 SET transient_retry_count = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP

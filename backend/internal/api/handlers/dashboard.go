@@ -23,14 +23,18 @@ const claudeUsageCacheTTL = 45 * time.Second
 
 type DashboardHandler struct {
 	q *gen.Queries
+	// maxWorkers is the global MAX_WORKERS setting, used as the effective
+	// per-repo concurrency limit for any repo with no repos.max_concurrent_runs
+	// override (see repoConcurrency).
+	maxWorkers int
 
 	usageMu       sync.Mutex
 	cachedUsage   claudeUsageResponse
 	cachedUsageAt time.Time
 }
 
-func NewDashboardHandler(q *gen.Queries) *DashboardHandler {
-	return &DashboardHandler{q: q}
+func NewDashboardHandler(q *gen.Queries, maxWorkers int) *DashboardHandler {
+	return &DashboardHandler{q: q, maxWorkers: maxWorkers}
 }
 
 type dashboardResponse struct {
@@ -43,6 +47,21 @@ type dashboardResponse struct {
 	CostByDay         []costByDayRow       `json:"cost_by_day"`
 	CostByTask        []taskCostRow        `json:"cost_by_task"`
 	ClaudeUsage       claudeUsageResponse  `json:"claude_usage"`
+	RepoConcurrency   []repoConcurrencyRow `json:"repo_concurrency"`
+}
+
+// repoConcurrencyRow is the per-repo worker-slot breakdown: how many of a
+// repo's effective concurrency limit are currently occupied by in-flight
+// agent runs. Limit is repos.max_concurrent_runs when the repo has one set,
+// otherwise the pool's global MAX_WORKERS (the same fallback the dispatcher
+// enforces — see Dispatcher.repoAtLimit). Only repos with at least one
+// in-flight run are included, keeping this list proportional to current
+// activity rather than listing every repo on every poll.
+type repoConcurrencyRow struct {
+	RepoID   string `json:"repo_id"`
+	RepoName string `json:"repo_name"`
+	InUse    int64  `json:"in_use"`
+	Limit    int    `json:"limit"`
 }
 
 // claudeUsageResponse is the live Claude account rate-limit utilization
@@ -279,6 +298,12 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	repoConcurrency, err := h.repoConcurrency(ctx)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	JSON(w, http.StatusOK, dashboardResponse{
 		LabelCounts:       counts,
 		ActiveAgents:      activeRows,
@@ -293,7 +318,46 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		CostByDay:        dayRows,
 		CostByTask:       taskCostRows,
 		ClaudeUsage:      h.claudeUsage(ctx),
+		RepoConcurrency:  repoConcurrency,
 	})
+}
+
+// repoConcurrency builds the per-repo worker-slot breakdown (see
+// repoConcurrencyRow) from the same in-flight-run signal the dispatcher uses
+// to enforce repos.max_concurrent_runs (CountActiveRunsByRepo). Only repos
+// with at least one in-flight run are returned, sorted by in-use descending
+// so the busiest repos surface first.
+func (h *DashboardHandler) repoConcurrency(ctx context.Context) ([]repoConcurrencyRow, error) {
+	counts, err := h.q.CountActiveRunsByRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(counts) == 0 {
+		return []repoConcurrencyRow{}, nil
+	}
+
+	rows := make([]repoConcurrencyRow, 0, len(counts))
+	for _, c := range counts {
+		repo, err := h.q.GetRepo(ctx, c.RepoID)
+		if err != nil {
+			// A repo can be deleted out from under an in-flight run's row
+			// (repo_id has no FK enforcement here); skip rather than fail
+			// the whole dashboard request.
+			continue
+		}
+		limit := h.maxWorkers
+		if repo.MaxConcurrentRuns != nil && *repo.MaxConcurrentRuns > 0 {
+			limit = int(*repo.MaxConcurrentRuns)
+		}
+		rows = append(rows, repoConcurrencyRow{
+			RepoID:   repo.ID,
+			RepoName: repo.Name,
+			InUse:    c.InUse,
+			Limit:    limit,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].InUse > rows[j].InUse })
+	return rows, nil
 }
 
 // CostByTask returns the full per-task cost rollup (no top-N cap, no
