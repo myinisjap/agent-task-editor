@@ -4,21 +4,52 @@ import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { ReposHelp } from '../components/shared/pageHelp'
 
-type EditForm = { name: string; path: string; remote_url: string; workflow_id: string; issue_sync_enabled: boolean; issue_sync_label: string; issue_writeback_enabled: boolean; pr_review_auto_transition_enabled: boolean }
+type IssueSyncUpdatePolicy = 'gate' | 'always' | 'never'
+type IssueSyncGoneAction = 'flag' | 'archive' | 'move'
+
+type EditForm = {
+  name: string
+  path: string
+  remote_url: string
+  workflow_id: string
+  issue_sync_enabled: boolean
+  issue_sync_label: string
+  issue_writeback_enabled: boolean
+  pr_review_auto_transition_enabled: boolean
+  issue_sync_update_policy: IssueSyncUpdatePolicy
+  issue_sync_gone_action: IssueSyncGoneAction
+  issue_sync_gone_label: string
+  issue_comment_sync_enabled: boolean
+}
+
+const BLANK_FORM: EditForm = {
+  name: '',
+  path: '',
+  remote_url: '',
+  workflow_id: '',
+  issue_sync_enabled: false,
+  issue_sync_label: '',
+  issue_writeback_enabled: false,
+  pr_review_auto_transition_enabled: false,
+  issue_sync_update_policy: 'gate',
+  issue_sync_gone_action: 'flag',
+  issue_sync_gone_label: '',
+  issue_comment_sync_enabled: false,
+}
 
 export default function ReposPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
+  const [form, setForm] = useState<EditForm>({ ...BLANK_FORM })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [showHelp, setShowHelp] = useState(false)
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState<EditForm>({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
+  const [editForm, setEditForm] = useState<EditForm>({ ...BLANK_FORM })
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
 
@@ -76,10 +107,14 @@ export default function ReposPage() {
         issue_sync_label: form.issue_sync_label.trim(),
         issue_writeback_enabled: form.issue_writeback_enabled,
         pr_review_auto_transition_enabled: form.pr_review_auto_transition_enabled,
+        issue_sync_update_policy: form.issue_sync_update_policy,
+        issue_sync_gone_action: form.issue_sync_gone_action,
+        issue_sync_gone_label: form.issue_sync_gone_label.trim(),
+        issue_comment_sync_enabled: form.issue_comment_sync_enabled,
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
-      setForm({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
+      setForm({ ...BLANK_FORM })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -98,13 +133,17 @@ export default function ReposPage() {
       issue_sync_label: repo.issue_sync_label ?? '',
       issue_writeback_enabled: !!repo.issue_writeback_enabled,
       pr_review_auto_transition_enabled: !!repo.pr_review_auto_transition_enabled,
+      issue_sync_update_policy: repo.issue_sync_update_policy ?? 'gate',
+      issue_sync_gone_action: repo.issue_sync_gone_action ?? 'flag',
+      issue_sync_gone_label: repo.issue_sync_gone_label ?? '',
+      issue_comment_sync_enabled: !!repo.issue_comment_sync_enabled,
     })
     setEditError('')
   }
 
   function cancelEdit() {
     setEditingId(null)
-    setEditForm({ name: '', path: '', remote_url: '', workflow_id: '', issue_sync_enabled: false, issue_sync_label: '', issue_writeback_enabled: false, pr_review_auto_transition_enabled: false })
+    setEditForm({ ...BLANK_FORM })
     setEditError('')
   }
 
@@ -123,6 +162,10 @@ export default function ReposPage() {
         issue_sync_label: editForm.issue_sync_label.trim(),
         issue_writeback_enabled: editForm.issue_writeback_enabled,
         pr_review_auto_transition_enabled: editForm.pr_review_auto_transition_enabled,
+        issue_sync_update_policy: editForm.issue_sync_update_policy,
+        issue_sync_gone_action: editForm.issue_sync_gone_action,
+        issue_sync_gone_label: editForm.issue_sync_gone_label.trim(),
+        issue_comment_sync_enabled: editForm.issue_comment_sync_enabled,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -245,6 +288,61 @@ export default function ReposPage() {
                     className={inputCls}
                   />
                 </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-400">
+                    Keep in sync <span className="text-slate-600">(apply upstream title/body/label changes)</span>
+                  </label>
+                  <select
+                    value={form.issue_sync_update_policy}
+                    onChange={(e) => setForm((f) => ({ ...f, issue_sync_update_policy: e.target.value as IssueSyncUpdatePolicy }))}
+                    className={inputCls}
+                  >
+                    <option value="gate">Only while in the human-gate column (default)</option>
+                    <option value="always">Always</option>
+                    <option value="never">Never (detect drift, don't write it)</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-400">
+                    If the issue closes or loses the label
+                  </label>
+                  <select
+                    value={form.issue_sync_gone_action}
+                    onChange={(e) => setForm((f) => ({ ...f, issue_sync_gone_action: e.target.value as IssueSyncGoneAction }))}
+                    className={inputCls}
+                  >
+                    <option value="flag">Flag the task only (default)</option>
+                    <option value="archive">Flag and archive the task</option>
+                    <option value="move">Flag and move to a label</option>
+                  </select>
+                </div>
+
+                {form.issue_sync_gone_action === 'move' && (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-slate-400">Move to label</label>
+                    <input
+                      value={form.issue_sync_gone_label}
+                      onChange={(e) => setForm((f) => ({ ...f, issue_sync_gone_label: e.target.value }))}
+                      placeholder="triage"
+                      className={inputCls}
+                    />
+                  </div>
+                )}
+
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.issue_comment_sync_enabled}
+                    onChange={(e) => setForm((f) => ({ ...f, issue_comment_sync_enabled: e.target.checked }))}
+                    className="accent-indigo-500"
+                  />
+                  Ingest issue comments
+                  <span className="text-slate-600">
+                    (write-access authors only, passed to the agent as untrusted context; off by default)
+                  </span>
+                </label>
               </>
             )}
 
@@ -427,6 +525,61 @@ export default function ReposPage() {
                             className={inputCls}
                           />
                         </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-medium text-slate-400">
+                            Keep in sync <span className="text-slate-600">(apply upstream title/body/label changes)</span>
+                          </label>
+                          <select
+                            value={editForm.issue_sync_update_policy}
+                            onChange={(e) => setEditForm((f) => ({ ...f, issue_sync_update_policy: e.target.value as IssueSyncUpdatePolicy }))}
+                            className={inputCls}
+                          >
+                            <option value="gate">Only while in the human-gate column (default)</option>
+                            <option value="always">Always</option>
+                            <option value="never">Never (detect drift, don't write it)</option>
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-medium text-slate-400">
+                            If the issue closes or loses the label
+                          </label>
+                          <select
+                            value={editForm.issue_sync_gone_action}
+                            onChange={(e) => setEditForm((f) => ({ ...f, issue_sync_gone_action: e.target.value as IssueSyncGoneAction }))}
+                            className={inputCls}
+                          >
+                            <option value="flag">Flag the task only (default)</option>
+                            <option value="archive">Flag and archive the task</option>
+                            <option value="move">Flag and move to a label</option>
+                          </select>
+                        </div>
+
+                        {editForm.issue_sync_gone_action === 'move' && (
+                          <div className="flex flex-col gap-1.5">
+                            <label className="text-xs font-medium text-slate-400">Move to label</label>
+                            <input
+                              value={editForm.issue_sync_gone_label}
+                              onChange={(e) => setEditForm((f) => ({ ...f, issue_sync_gone_label: e.target.value }))}
+                              placeholder="triage"
+                              className={inputCls}
+                            />
+                          </div>
+                        )}
+
+                        <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editForm.issue_comment_sync_enabled}
+                            onChange={(e) => setEditForm((f) => ({ ...f, issue_comment_sync_enabled: e.target.checked }))}
+                            className="accent-indigo-500"
+                          />
+                          Ingest issue comments
+                          <span className="text-slate-600">
+                            (write-access authors only, passed to the agent as untrusted context; off by default)
+                          </span>
+                        </label>
                       </>
                     )}
 

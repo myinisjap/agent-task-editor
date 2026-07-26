@@ -342,7 +342,50 @@ export function ReposHelp() {
         <h3 className="text-slate-100 font-semibold">Issue sync</h3>
         <p>
           Turning on "Import GitHub Issues" periodically creates board tasks from open issues
-          (optionally filtered to one label) in the repo's assigned workflow.
+          (optionally filtered to one label) in the repo's assigned workflow — and keeps them in
+          sync afterward. If the issue's title, body, or labels change upstream, the task is
+          updated to match (subject to the update policy below); if the issue closes or loses the
+          filter label, the task is flagged rather than silently left behind.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Keeping tasks in sync (update policy)</h3>
+        <p>
+          <code className="bg-slate-800 rounded px-1 font-mono">issue_sync_update_policy</code>{' '}
+          controls when upstream edits are allowed to overwrite the task:
+        </p>
+        <ul className="flex flex-col gap-1 list-disc list-inside">
+          <li><strong>gate</strong> (default) — only while the task is still in the workflow's human-gate column; once it moves past that, the task is frozen even if the issue keeps changing.</li>
+          <li><strong>always</strong> — upstream edits apply no matter where the task currently sits.</li>
+          <li><strong>never</strong> — drift is still detected, but nothing is written to the task.</li>
+        </ul>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Closed or unlabeled issue action</h3>
+        <p>
+          <code className="bg-slate-800 rounded px-1 font-mono">issue_sync_gone_action</code>{' '}
+          decides what happens when the source issue closes or stops matching the label filter:
+        </p>
+        <ul className="flex flex-col gap-1 list-disc list-inside">
+          <li><strong>flag</strong> (default) — just marks the task so you can see it needs a look; no other action taken.</li>
+          <li><strong>archive</strong> — also archives the task.</li>
+          <li><strong>move</strong> — also moves the task to <code className="bg-slate-800 rounded px-1 font-mono">issue_sync_gone_label</code>.</li>
+        </ul>
+        <p>
+          A task with a currently running agent is always just flagged, never archived or moved —
+          it's re-checked on the next sweep once the run finishes.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Issue comment sync</h3>
+        <p>
+          <code className="bg-slate-800 rounded px-1 font-mono">issue_comment_sync_enabled</code>{' '}
+          (off by default) ingests the source issue's comment thread onto the task, so the
+          pre-work discussion isn't invisible to the agent. Only comments from people with write
+          access to the repo are ingested, and this app's own write-back comments are always
+          filtered out. Comments follow the same update policy as field sync above (frozen once
+          the task leaves the gate column, by default). Ingested comments are passed to the agent
+          as clearly marked untrusted context — never treated as instructions.
         </p>
       </section>
     </>

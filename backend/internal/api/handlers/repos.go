@@ -72,6 +72,10 @@ type createRepoBody struct {
 	IssueSyncLabel                string  `json:"issue_sync_label"`
 	IssueWritebackEnabled         bool    `json:"issue_writeback_enabled"`
 	PrReviewAutoTransitionEnabled bool    `json:"pr_review_auto_transition_enabled"`
+	IssueSyncUpdatePolicy         string  `json:"issue_sync_update_policy"`
+	IssueSyncGoneAction           string  `json:"issue_sync_gone_action"`
+	IssueSyncGoneLabel            string  `json:"issue_sync_gone_label"`
+	IssueCommentSyncEnabled       bool    `json:"issue_comment_sync_enabled"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +140,22 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		prReviewAutoTransitionEnabled = 1
 	}
 
+	issueSyncUpdatePolicy, ok := resolveIssueSyncUpdatePolicy(w, body.IssueSyncUpdatePolicy)
+	if !ok {
+		return
+	}
+
+	issueSyncGoneLabel := strings.TrimSpace(body.IssueSyncGoneLabel)
+	issueSyncGoneAction, ok := resolveIssueSyncGoneAction(w, body.IssueSyncGoneAction, issueSyncGoneLabel)
+	if !ok {
+		return
+	}
+
+	issueCommentSyncEnabled := int64(0)
+	if body.IssueCommentSyncEnabled {
+		issueCommentSyncEnabled = 1
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -146,6 +166,10 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueSyncLabel:                strings.TrimSpace(body.IssueSyncLabel),
 		IssueWritebackEnabled:         issueWritebackEnabled,
 		PrReviewAutoTransitionEnabled: prReviewAutoTransitionEnabled,
+		IssueSyncUpdatePolicy:         issueSyncUpdatePolicy,
+		IssueSyncGoneAction:           issueSyncGoneAction,
+		IssueSyncGoneLabel:            issueSyncGoneLabel,
+		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -251,6 +275,47 @@ func resolveIssueFlags(w http.ResponseWriter, body *createRepoBody, remoteURL st
 		issueWritebackEnabled = 1
 	}
 	return issueSyncEnabled, issueWritebackEnabled, true
+}
+
+// resolveIssueSyncUpdatePolicy validates the conflict policy for propagating
+// upstream issue field/comment drift to an already-imported task. Empty is
+// accepted and resolved to the documented default "gate" — matching how
+// tasksource's update-permission predicate treats "" (see AGENTS.md /
+// issue #264 phase 1's carry-over hazard notes: this column must never be
+// written as a bare "" by the API, or its DB default is defeated). Writes
+// the 400 response and returns ok=false for any other unrecognized value.
+func resolveIssueSyncUpdatePolicy(w http.ResponseWriter, policy string) (resolved string, ok bool) {
+	switch policy {
+	case "":
+		return "gate", true
+	case "gate", "always", "never":
+		return policy, true
+	default:
+		Err(w, http.StatusBadRequest, "issue_sync_update_policy must be one of: gate, always, never")
+		return "", false
+	}
+}
+
+// resolveIssueSyncGoneAction validates the reconciliation action taken when
+// an imported issue closes or stops matching the sync filter. Empty resolves
+// to the documented default "flag". "move" additionally requires a non-empty
+// goneLabel (the transition target) — writes the 400 response and returns
+// ok=false otherwise.
+func resolveIssueSyncGoneAction(w http.ResponseWriter, action, goneLabel string) (resolved string, ok bool) {
+	if action == "" {
+		action = "flag"
+	}
+	switch action {
+	case "flag", "archive", "move":
+	default:
+		Err(w, http.StatusBadRequest, "issue_sync_gone_action must be one of: flag, archive, move")
+		return "", false
+	}
+	if action == "move" && goneLabel == "" {
+		Err(w, http.StatusBadRequest, "issue_sync_gone_label is required when issue_sync_gone_action is 'move'")
+		return "", false
+	}
+	return action, true
 }
 
 // startAsyncClone marks the freshly-created repo row 'cloning' and kicks off the
@@ -362,6 +427,10 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncLabel                *string `json:"issue_sync_label"`
 		IssueWritebackEnabled         *bool   `json:"issue_writeback_enabled"`
 		PrReviewAutoTransitionEnabled *bool   `json:"pr_review_auto_transition_enabled"`
+		IssueSyncUpdatePolicy         *string `json:"issue_sync_update_policy"`
+		IssueSyncGoneAction           *string `json:"issue_sync_gone_action"`
+		IssueSyncGoneLabel            *string `json:"issue_sync_gone_label"`
+		IssueCommentSyncEnabled       *bool   `json:"issue_comment_sync_enabled"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -425,6 +494,48 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		prReviewAutoTransitionEnabled = 0
 		if *body.PrReviewAutoTransitionEnabled {
 			prReviewAutoTransitionEnabled = 1
+		}
+	}
+
+	// issue_sync_update_policy / issue_sync_gone_action / issue_sync_gone_label /
+	// issue_comment_sync_enabled: pointer fields so an omitted field preserves
+	// the repo's existing value (see CRITICAL hazard note in issue #264 phase
+	// 1 — these four columns must NEVER be defaulted to Go zero values here,
+	// or every unrelated PATCH (e.g. a rename) would silently wipe a
+	// configured policy back to "").
+	issueSyncGoneLabel := existing.IssueSyncGoneLabel
+	if body.IssueSyncGoneLabel != nil {
+		issueSyncGoneLabel = strings.TrimSpace(*body.IssueSyncGoneLabel)
+	}
+
+	issueSyncUpdatePolicy := existing.IssueSyncUpdatePolicy
+	if body.IssueSyncUpdatePolicy != nil {
+		resolved, ok := resolveIssueSyncUpdatePolicy(w, *body.IssueSyncUpdatePolicy)
+		if !ok {
+			return
+		}
+		issueSyncUpdatePolicy = resolved
+	}
+
+	issueSyncGoneAction := existing.IssueSyncGoneAction
+	if body.IssueSyncGoneAction != nil {
+		resolved, ok := resolveIssueSyncGoneAction(w, *body.IssueSyncGoneAction, issueSyncGoneLabel)
+		if !ok {
+			return
+		}
+		issueSyncGoneAction = resolved
+	} else if issueSyncGoneAction == "move" && issueSyncGoneLabel == "" {
+		// Gone-action wasn't touched by this PATCH but is already "move", and
+		// this PATCH cleared the label — re-validate so the two stay consistent.
+		Err(w, http.StatusBadRequest, "issue_sync_gone_label is required when issue_sync_gone_action is 'move'")
+		return
+	}
+
+	issueCommentSyncEnabled := existing.IssueCommentSyncEnabled
+	if body.IssueCommentSyncEnabled != nil {
+		issueCommentSyncEnabled = 0
+		if *body.IssueCommentSyncEnabled {
+			issueCommentSyncEnabled = 1
 		}
 	}
 
@@ -492,6 +603,10 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncLabel:                issueSyncLabel,
 		IssueWritebackEnabled:         issueWritebackEnabled,
 		PrReviewAutoTransitionEnabled: prReviewAutoTransitionEnabled,
+		IssueSyncUpdatePolicy:         issueSyncUpdatePolicy,
+		IssueSyncGoneAction:           issueSyncGoneAction,
+		IssueSyncGoneLabel:            issueSyncGoneLabel,
+		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

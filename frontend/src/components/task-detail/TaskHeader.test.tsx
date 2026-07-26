@@ -162,4 +162,17 @@ describe('TaskHeader agent notes modal', () => {
     renderHeader(TaskHeader, baseTask({ agent_notes: '' }))
     expect(screen.queryByTitle('Click to expand')).not.toBeInTheDocument()
   })
+
+  // issue #264 phase 4 — a task whose source issue closed or lost its sync
+  // label is flagged (task.source_state === 'gone') rather than silently
+  // orphaned; the board/detail view must surface that.
+  it('shows a "source issue closed or unlabeled" badge when source_state is gone', () => {
+    renderHeader(TaskHeader, baseTask({ source: 'github', source_ref: 'org/repo#7', source_state: 'gone' }))
+    expect(screen.getByText(/source issue closed or unlabeled/i)).toBeInTheDocument()
+  })
+
+  it('does not show the gone badge for a source task still in sync', () => {
+    renderHeader(TaskHeader, baseTask({ source: 'github', source_ref: 'org/repo#7', source_state: '' }))
+    expect(screen.queryByText(/source issue closed or unlabeled/i)).not.toBeInTheDocument()
+  })
 })

@@ -394,7 +394,7 @@ func TestListOpenIssues_LabelFiltering(t *testing.T) {
 		scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
 			func(t *testing.T, args []string) fakeCmd {
 				capturedArgs = args
-				return fakeCmd{output: []byte(`[{"number":1,"title":"t1","body":"b1","url":"u1","labels":[{"name":"bug"},{"name":"urgent"}]}]`)}
+				return fakeCmd{output: []byte(`[{"number":1,"title":"t1","body":"b1","html_url":"u1","labels":[{"name":"bug"},{"name":"urgent"}]}]`)}
 			},
 		})
 
@@ -402,11 +402,18 @@ func TestListOpenIssues_LabelFiltering(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
-		if argsContain(capturedArgs, "--label") {
-			t.Errorf("did not expect --label flag in args: %v", capturedArgs)
+		joined := strings.Join(capturedArgs, " ")
+		if strings.Contains(joined, "labels=") {
+			t.Errorf("did not expect a labels= query param in args: %v", capturedArgs)
+		}
+		if !argsContain(capturedArgs, "--paginate") {
+			t.Errorf("expected --paginate flag in args: %v", capturedArgs)
 		}
 		if len(issues) != 1 {
 			t.Fatalf("expected 1 issue, got %d", len(issues))
+		}
+		if issues[0].URL != "u1" {
+			t.Errorf("url = %q, want %q (mapped from html_url)", issues[0].URL, "u1")
 		}
 		if got, want := issues[0].Labels, []string{"bug", "urgent"}; !equalStrSlices(got, want) {
 			t.Errorf("labels = %v, want %v", got, want)
@@ -426,13 +433,132 @@ func TestListOpenIssues_LabelFiltering(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
-		if !argsContain(capturedArgs, "--label") {
-			t.Errorf("expected --label flag in args: %v", capturedArgs)
+		if !argsContain(capturedArgs, "--paginate") {
+			t.Errorf("expected --paginate flag in args: %v", capturedArgs)
 		}
-		if !argsContain(capturedArgs, "bug") {
-			t.Errorf("expected label value 'bug' in args: %v", capturedArgs)
+		joined := strings.Join(capturedArgs, " ")
+		if !strings.Contains(joined, "labels=bug") {
+			t.Errorf("expected labels=bug query param in args: %v", capturedArgs)
 		}
 	})
+
+	t.Run("label with space and ampersand is URL-encoded", func(t *testing.T) {
+		var capturedArgs []string
+		scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+			func(t *testing.T, args []string) fakeCmd {
+				capturedArgs = args
+				return fakeCmd{output: []byte(`[]`)}
+			},
+		})
+
+		_, err := ListOpenIssues(context.Background(), "acme/widgets", "needs & review")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		joined := strings.Join(capturedArgs, " ")
+		// url.Values.Encode() percent-encodes spaces as '+' and '&' as '%26'.
+		if !strings.Contains(joined, "labels=needs+%26+review") {
+			t.Errorf("expected URL-encoded label in args, got: %v", capturedArgs)
+		}
+	})
+}
+
+func TestListOpenIssues_Paginated(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "--paginate") {
+				t.Fatalf("expected --paginate flag, got %v", args)
+			}
+			// Two pages concatenated back to back, as gh --paginate does for arrays.
+			page1 := `[{"number":1,"title":"first","body":"b1","html_url":"u1","labels":[]}]`
+			page2 := `[{"number":2,"title":"second","body":"b2","html_url":"u2","labels":[{"name":"bug"}]}]`
+			return fakeCmd{output: []byte(page1 + page2)}
+		},
+	})
+
+	issues, err := ListOpenIssues(context.Background(), "acme/widgets", "")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("expected 2 issues across both pages, got %d: %+v", len(issues), issues)
+	}
+	if issues[0].Number != 1 || issues[1].Number != 2 {
+		t.Errorf("issues = %+v, unexpected numbers", issues)
+	}
+}
+
+func TestListOpenIssues_SkipsPullRequests(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			// The REST /issues endpoint returns PRs too, tagged with a non-null
+			// pull_request field. These must never be imported as tasks.
+			body := `[
+				{"number":1,"title":"a real issue","body":"b1","html_url":"u1","labels":[]},
+				{"number":2,"title":"a pull request","body":"b2","html_url":"u2","labels":[],"pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/2"}}
+			]`
+			return fakeCmd{output: []byte(body)}
+		},
+	})
+
+	issues, err := ListOpenIssues(context.Background(), "acme/widgets", "")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue (PR skipped), got %d: %+v", len(issues), issues)
+	}
+	if issues[0].Number != 1 {
+		t.Errorf("issues[0] = %+v, expected the non-PR issue", issues[0])
+	}
+}
+
+func TestGetIssueComments_Decodes(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "--paginate") {
+				t.Fatalf("expected --paginate flag, got %v", args)
+			}
+			joined := strings.Join(args, " ")
+			if !strings.Contains(joined, "issues/42/comments") {
+				t.Fatalf("expected issues/42/comments in args, got %v", args)
+			}
+			return fakeCmd{output: []byte(`[{"id":123,"body":"looks good","author_association":"OWNER","user":{"login":"alice"},"created_at":"2024-01-01T00:00:00Z"}]`)}
+		},
+	})
+
+	comments, err := GetIssueComments(context.Background(), "acme/widgets", 42)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(comments))
+	}
+	c := comments[0]
+	if c.ID != "123" || c.Author != "alice" || c.AuthorAssociation != "OWNER" || c.Body != "looks good" || c.CreatedAt != "2024-01-01T00:00:00Z" {
+		t.Errorf("comment = %+v, unexpected", c)
+	}
+}
+
+func TestGetIssueComments_Paginated(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			page1 := `[{"id":1,"body":"first","author_association":"MEMBER","user":{"login":"alice"},"created_at":"2024-01-01T00:00:00Z"}]`
+			page2 := `[{"id":2,"body":"second","author_association":"NONE","user":{"login":"mallory"},"created_at":"2024-01-01T00:01:00Z"}]`
+			return fakeCmd{output: []byte(page1 + page2)}
+		},
+	})
+
+	comments, err := GetIssueComments(context.Background(), "acme/widgets", 42)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 comments across both pages, got %d: %+v", len(comments), comments)
+	}
+	if comments[0].ID != "1" || comments[1].ID != "2" {
+		t.Errorf("comments = %+v, unexpected", comments)
+	}
 }
 
 func TestAddIssueLabel(t *testing.T) {

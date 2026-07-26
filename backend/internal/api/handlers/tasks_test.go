@@ -127,6 +127,8 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Patch("/tasks/{id}/archive", h.SetArchived)
 	r.Post("/tasks/{id}/pr", h.CreatePR)
 	r.Patch("/tasks/{id}/git-state", h.UpdateGitState)
+	r.Get("/tasks/{id}/label-history", h.ListLabelHistory)
+	r.Get("/tasks/{id}/source-comments", h.ListSourceComments)
 
 	return r, q, wfID, repoID
 }

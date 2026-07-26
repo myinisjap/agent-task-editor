@@ -299,9 +299,14 @@ func main() {
 	ghSyncer := ghsync.New(db.SQL(), hub, cfg.GitHubSyncInterval, engine)
 	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 
-	// GitHub Issues import: polls repos with issue sync enabled and creates
-	// tasks from matching open issues (deduped by tasks.source/source_ref).
-	issueImporter := tasksource.New(db.SQL(), hub, cfg.IssueSyncInterval, tasksource.GitHubIssues{})
+	// GitHub Issues import: polls repos with issue sync enabled, creates tasks
+	// from matching open issues (deduped by tasks.source/source_ref), keeps
+	// existing tasks in sync with title/body/label drift, ingests the issue's
+	// comment thread when opted in, and reconciles issues that close or drop
+	// out of the filter. engine is passed through so a repo can opt into the
+	// "move" gone-action (issue_sync_gone_action) transitioning the task to a
+	// designated label; nil-safe if omitted.
+	issueImporter := tasksource.NewWithEngine(db.SQL(), hub, cfg.IssueSyncInterval, tasksource.GitHubIssues{}, engine)
 	slog.Info("github issue import enabled", "interval", cfg.IssueSyncInterval)
 
 	// Recurring task schedules: fires task_templates on a cron expression

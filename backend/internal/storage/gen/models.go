@@ -114,6 +114,10 @@ type Repo struct {
 	CloneError                    string    `json:"clone_error"`
 	IssueWritebackEnabled         int64     `json:"issue_writeback_enabled"`
 	PrReviewAutoTransitionEnabled int64     `json:"pr_review_auto_transition_enabled"`
+	IssueSyncUpdatePolicy         string    `json:"issue_sync_update_policy"`
+	IssueSyncGoneAction           string    `json:"issue_sync_gone_action"`
+	IssueSyncGoneLabel            string    `json:"issue_sync_gone_label"`
+	IssueCommentSyncEnabled       int64     `json:"issue_comment_sync_enabled"`
 }
 
 type Task struct {
@@ -149,6 +153,8 @@ type Task struct {
 	WritebackInProgressSent int64      `json:"writeback_in_progress_sent"`
 	WritebackPrCommented    int64      `json:"writeback_pr_commented"`
 	WritebackClosed         int64      `json:"writeback_closed"`
+	SourceState             string     `json:"source_state"`
+	SourceStateAt           *time.Time `json:"source_state_at"`
 }
 
 type TaskDependency struct {
@@ -204,6 +210,16 @@ type TaskSchedule struct {
 	LastRunAt   *time.Time `json:"last_run_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type TaskSourceComment struct {
+	ID                string    `json:"id"`
+	TaskID            string    `json:"task_id"`
+	ExternalID        string    `json:"external_id"`
+	Author            string    `json:"author"`
+	Body              string    `json:"body"`
+	ExternalCreatedAt string    `json:"external_created_at"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type TaskTemplate struct {

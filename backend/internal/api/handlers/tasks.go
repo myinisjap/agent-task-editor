@@ -655,6 +655,30 @@ func (h *TasksHandler) ListLabelHistory(w http.ResponseWriter, r *http.Request) 
 	JSON(w, http.StatusOK, history)
 }
 
+// ListSourceComments returns the comment thread ingested from the task's
+// source item (e.g. its GitHub issue), oldest first. Ingestion is opt-in per
+// repo (issue_comment_sync_enabled), limited to write-access authors, and
+// gated by the same issue_sync_update_policy as field updates — see
+// tasksource.Importer. Empty (not an error) when the task has no source, the
+// repo hasn't opted in, or no sweep has ingested anything yet.
+// Route: GET /tasks/{id}/source-comments
+func (h *TasksHandler) ListSourceComments(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	comments, err := h.q.ListTaskSourceComments(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if comments == nil {
+		comments = []gen.TaskSourceComment{}
+	}
+	JSON(w, http.StatusOK, comments)
+}
+
 func handleTransitionError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, workflow.ErrNoTransition):

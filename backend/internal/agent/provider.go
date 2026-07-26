@@ -86,6 +86,10 @@ type RunInput struct {
 	// Open inline diff review comments on the task, injected into the prompt
 	// so the agent addresses (and resolves) each one.
 	OpenReviewComments []ReviewComment
+	// SourceComments are comments ingested from the external item this task was
+	// imported from (e.g. its GitHub issue thread). Untrusted external content —
+	// rendered into the prompt inside explicit delimiters, never as instructions.
+	SourceComments []SourceComment
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
 	// ResumeSessionID, if non-empty, asks the provider to resume this prior
@@ -126,6 +130,18 @@ type ReviewComment struct {
 type ResolvedComment struct {
 	ID   string `json:"id"`
 	Note string `json:"note"`
+}
+
+// SourceComment is a minimal copy of storage's task_source_comments row — a
+// human comment ingested from the external item (e.g. a GitHub issue) this
+// task was imported from. Untrusted external content: rendered into the
+// prompt inside explicit delimiters and never treated as instructions. Unlike
+// ReviewComment, it is not resolvable — there is no resolve_comment analogue —
+// so it is intentionally not passed to the MCP sidecar's Prepare calls.
+type SourceComment struct {
+	Author    string `json:"author"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
 }
 
 // Task is a minimal copy of storage.Task to avoid import cycles.

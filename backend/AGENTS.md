@@ -34,7 +34,7 @@ internal/ghclient/ Thin wrapper around the `gh` CLI (PR create/lookup, issue lis
 internal/ghsync/  Background PR-state poller — refreshes task git_state from GitHub, cleans up merged branches, ingests PR review/GHA feedback into task_review_comments + run Feedback (optional auto-transition; see pr_review.go)
 internal/health/  Provider readiness checks (used by GET /health/providers)
 internal/storage/ SQLite DB, migrations, sqlc-generated queries, seed data
-internal/tasksource/ GitHub Issues importer — polls opted-in repos and creates tasks for new issues
+internal/tasksource/ GitHub Issues importer — polls opted-in repos, creates tasks for new issues, updates tasks whose issue drifted, reconciles tasks whose issue closed/unlabeled, and (opt-in) ingests the issue comment thread
 internal/workflow/ State machine engine — validates/executes label transitions
 internal/ws/      WebSocket hub + per-client connection management
 ```

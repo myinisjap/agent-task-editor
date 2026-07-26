@@ -1246,6 +1246,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/source-comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a task's ingested source-issue comment thread
+         * @description Comments ingested from the external item (e.g. GitHub issue) this task was imported from, oldest first. Empty for tasks with no source, for repos with issue_comment_sync_enabled off, or before the next sweep ingests any. See docs/task-sources.md.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskSourceComment"][];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs": {
         parameters: {
             query?: never;
@@ -2704,6 +2751,12 @@ export interface paths {
                         issue_sync_label?: string;
                         issue_writeback_enabled?: boolean;
                         pr_review_auto_transition_enabled?: boolean;
+                        /** @enum {string} */
+                        issue_sync_update_policy?: "gate" | "always" | "never";
+                        /** @enum {string} */
+                        issue_sync_gone_action?: "flag" | "archive" | "move";
+                        issue_sync_gone_label?: string;
+                        issue_comment_sync_enabled?: boolean;
                     };
                 };
             };
@@ -3635,6 +3688,16 @@ export interface components {
             source?: string;
             /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
             source_ref?: string;
+            /**
+             * @description Reconciliation state set by the importer's sweep. Empty (default) means the source item was present in the last sweep's fetch; 'gone' means it closed or no longer matches the repo's issue_sync_label filter. See GET /tasks/{id}/source-comments and docs/task-sources.md. Never set for manually created tasks.
+             * @enum {string}
+             */
+            source_state?: "" | "gone";
+            /**
+             * Format: date-time
+             * @description Timestamp of the last source_state change. Null until set.
+             */
+            source_state_at?: string | null;
             /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived. Zero when the task has no unsatisfied blockers. */
             blocked_by_count?: number;
             /** @description Derived (read-time) count of tasks that depend on this task (i.e. this task is a blocker for that many other tasks). */
@@ -3869,6 +3932,20 @@ export interface components {
             /** @description 1 = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. 0 = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
             pr_review_auto_transition_enabled?: number;
             /**
+             * @description Conflict policy for propagating upstream title/body/label drift (and, when issue_comment_sync_enabled is on, comment ingestion) to an already-imported task. 'gate' (default; empty string is treated the same as 'gate') applies updates only while the task is still on its workflow's human-gate label; 'always' applies them regardless of label; 'never' detects drift but never writes it to the task. See docs/task-sources.md.
+             * @enum {string}
+             */
+            issue_sync_update_policy?: "gate" | "always" | "never";
+            /**
+             * @description What the importer's reconciliation sweep does when a previously imported issue closes or stops matching issue_sync_label. 'flag' (default; empty string is treated the same as 'flag') only sets the task's source_state; 'archive' also archives the task; 'move' also transitions it to issue_sync_gone_label. A task with an active agent run is only ever flagged, regardless of this setting, and is re-evaluated on the next sweep. See docs/task-sources.md.
+             * @enum {string}
+             */
+            issue_sync_gone_action?: "flag" | "archive" | "move";
+            /** @description Target label for issue_sync_gone_action 'move'. Required (rejected with 400) when issue_sync_gone_action is 'move'. */
+            issue_sync_gone_label?: string;
+            /** @description 1 = ingest the source GitHub issue's comment thread (write-access authors only: OWNER/MEMBER/COLLABORATOR; this system's own write-back comments are filtered out) into task_source_comments and pass it to the agent prompt as clearly delimited untrusted context. Follows the same issue_sync_update_policy gate as field updates. 0 = off (default). */
+            issue_comment_sync_enabled?: number;
+            /**
              * @description State of the repo's initial auto-clone. 'ready' for local repos and finished clones; 'cloning' while an async git clone is in progress (POST /repos returns immediately with this status); 'error' if the clone failed (see clone_error). Watch the repo.clone_done / repo.clone_failed WebSocket events for transitions out of 'cloning'.
              * @enum {string}
              */
@@ -3905,6 +3982,22 @@ export interface components {
              * @enum {string}
              */
             source?: "local" | "github";
+        };
+        /** @description One comment ingested from the comment thread of the external item (e.g. GitHub issue) a task was imported from. Append-only and deduped by (task_id, external_id). Only ingested from authors with write access to the repo (OWNER/MEMBER/COLLABORATOR), with this system's own write-back comments filtered out; passed to the agent prompt as explicitly delimited untrusted content. See docs/task-sources.md. */
+        TaskSourceComment: {
+            id: string;
+            task_id: string;
+            /** @description GitHub comment id (used to dedup re-sweeps) */
+            external_id: string;
+            author: string;
+            body: string;
+            /** @description RFC3339 timestamp as reported by the source */
+            external_created_at: string;
+            /**
+             * Format: date-time
+             * @description When this row was ingested
+             */
+            created_at: string;
         };
         AgentRun: {
             id: string;

@@ -343,6 +343,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 
 	attachmentRels, attachmentAbsPaths := d.resolveAttachments(t, workDir, log)
 	reviewComments := d.loadReviewComments(ctx, t.ID, log)
+	sourceComments := d.loadSourceComments(ctx, t.ID, log)
 
 	var agentNotes *string
 	if t.AgentNotes != "" {
@@ -372,6 +373,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			Feedback:           feedback,
 			PriorPlan:          agentNotes,
 			OpenReviewComments: reviewComments,
+			SourceComments:     sourceComments,
 			AttachmentAbsPaths: attachmentAbsPaths,
 			ResumeSessionID:    resumeSessionID,
 			HumanReply:         opts.humanReply,
@@ -526,6 +528,25 @@ func (d *Dispatcher) loadReviewComments(ctx context.Context, taskID string, log 
 		}
 	}
 	return reviewComments
+}
+
+// loadSourceComments loads the task's ingested source-issue comment thread
+// (see tasksource's importer). Best-effort, mirroring loadReviewComments: a
+// query failure is logged and yields no comments rather than failing the run.
+func (d *Dispatcher) loadSourceComments(ctx context.Context, taskID string, log *slog.Logger) []SourceComment {
+	var sourceComments []SourceComment
+	if rows, err := d.q.ListTaskSourceComments(ctx, taskID); err != nil {
+		log.Warn("dispatcher: list task source comments", "err", err)
+	} else {
+		for _, c := range rows {
+			sourceComments = append(sourceComments, SourceComment{
+				Author:    c.Author,
+				Body:      c.Body,
+				CreatedAt: c.ExternalCreatedAt,
+			})
+		}
+	}
+	return sourceComments
 }
 
 // parentBranchBase returns the branch a subtask should fork from: its parent's

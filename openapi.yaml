@@ -112,6 +112,20 @@ components:
           description: >
             External item the task was imported from, unique within source
             (e.g. "owner/repo#123"). Empty for manually created tasks.
+        source_state:
+          type: string
+          enum: ["", gone]
+          description: >
+            Reconciliation state set by the importer's sweep. Empty (default)
+            means the source item was present in the last sweep's fetch;
+            'gone' means it closed or no longer matches the repo's
+            issue_sync_label filter. See GET /tasks/{id}/source-comments and
+            docs/task-sources.md. Never set for manually created tasks.
+        source_state_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the last source_state change. Null until set.
         blocked_by_count:
           type: integer
           description: >
@@ -539,6 +553,43 @@ components:
             without a human having to click Reject. Requires remote_url.
             0 = off (feedback is still ingested and surfaced in the prompt;
             a human must transition the task manually). See docs/task-sources.md.
+        issue_sync_update_policy:
+          type: string
+          enum: [gate, always, never]
+          description: >
+            Conflict policy for propagating upstream title/body/label drift
+            (and, when issue_comment_sync_enabled is on, comment ingestion)
+            to an already-imported task. 'gate' (default; empty string is
+            treated the same as 'gate') applies updates only while the task
+            is still on its workflow's human-gate label; 'always' applies
+            them regardless of label; 'never' detects drift but never writes
+            it to the task. See docs/task-sources.md.
+        issue_sync_gone_action:
+          type: string
+          enum: [flag, archive, move]
+          description: >
+            What the importer's reconciliation sweep does when a previously
+            imported issue closes or stops matching issue_sync_label. 'flag'
+            (default; empty string is treated the same as 'flag') only sets
+            the task's source_state; 'archive' also archives the task;
+            'move' also transitions it to issue_sync_gone_label. A task with
+            an active agent run is only ever flagged, regardless of this
+            setting, and is re-evaluated on the next sweep. See
+            docs/task-sources.md.
+        issue_sync_gone_label:
+          type: string
+          description: >
+            Target label for issue_sync_gone_action 'move'. Required
+            (rejected with 400) when issue_sync_gone_action is 'move'.
+        issue_comment_sync_enabled:
+          type: integer
+          description: >
+            1 = ingest the source GitHub issue's comment thread (write-access
+            authors only: OWNER/MEMBER/COLLABORATOR; this system's own
+            write-back comments are filtered out) into task_source_comments
+            and pass it to the agent prompt as clearly delimited untrusted
+            context. Follows the same issue_sync_update_policy gate as field
+            updates. 0 = off (default).
         clone_status:
           type: string
           enum: [ready, cloning, error]
@@ -588,6 +639,25 @@ components:
             from a GitHub PR review (see internal/ghsync). Both flow through
             the same OPEN REVIEW COMMENTS prompt section and resolve loop.
       required: [id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, created_at, updated_at]
+
+    TaskSourceComment:
+      type: object
+      description: >-
+        One comment ingested from the comment thread of the external item
+        (e.g. GitHub issue) a task was imported from. Append-only and deduped
+        by (task_id, external_id). Only ingested from authors with write
+        access to the repo (OWNER/MEMBER/COLLABORATOR), with this system's
+        own write-back comments filtered out; passed to the agent prompt as
+        explicitly delimited untrusted content. See docs/task-sources.md.
+      properties:
+        id:                  { type: string }
+        task_id:             { type: string }
+        external_id:         { type: string, description: "GitHub comment id (used to dedup re-sweeps)" }
+        author:              { type: string }
+        body:                { type: string }
+        external_created_at: { type: string, description: "RFC3339 timestamp as reported by the source" }
+        created_at:          { type: string, format: date-time, description: "When this row was ingested" }
+      required: [id, task_id, external_id, author, body, external_created_at, created_at]
 
     AgentRun:
       type: object
@@ -1519,6 +1589,26 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/TaskLabelHistory" } }
 
+  /tasks/{id}/source-comments:
+    get:
+      summary: Get a task's ingested source-issue comment thread
+      description: >
+        Comments ingested from the external item (e.g. GitHub issue) this
+        task was imported from, oldest first. Empty for tasks with no source,
+        for repos with issue_comment_sync_enabled off, or before the next
+        sweep ingests any. See docs/task-sources.md.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TaskSourceComment" } }
+        "404": { description: Task not found }
+
   /tasks/{id}/runs:
     get:
       summary: List agent runs for a task
@@ -2094,6 +2184,14 @@ paths:
                 issue_sync_label:    { type: string }
                 issue_writeback_enabled: { type: boolean }
                 pr_review_auto_transition_enabled: { type: boolean }
+                issue_sync_update_policy:
+                  type: string
+                  enum: [gate, always, never]
+                issue_sync_gone_action:
+                  type: string
+                  enum: [flag, archive, move]
+                issue_sync_gone_label: { type: string }
+                issue_comment_sync_enabled: { type: boolean }
       responses:
         "200":
           content:

@@ -740,3 +740,261 @@ func TestReposList_Empty(t *testing.T) {
 		t.Errorf("expected empty list, got %d items", len(repos))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Issue sync update policy / gone action / gone label / comment sync
+// (issue #264 phase 4) — see the CRITICAL hazard note in
+// api/handlers/repos.go: these four columns must round-trip real values on
+// both Create and Update, and an unrelated PATCH must never reset them.
+// ---------------------------------------------------------------------------
+
+// TestReposCreate_IssueSyncPolicyFieldsRoundTrip verifies the four new fields
+// accept explicit values on create and default correctly when omitted.
+func TestReposCreate_IssueSyncPolicyFieldsRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	// Omitted → documented defaults ('gate' / 'flag'), not Go zero values.
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name": "myorg/myrepo",
+		"path": repoDir,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_sync_update_policy"]; got != "gate" {
+		t.Errorf("issue_sync_update_policy default = %v, want %q", got, "gate")
+	}
+	if got := repo["issue_sync_gone_action"]; got != "flag" {
+		t.Errorf("issue_sync_gone_action default = %v, want %q", got, "flag")
+	}
+	if got := repo["issue_sync_gone_label"]; got != "" {
+		t.Errorf("issue_sync_gone_label default = %v, want empty", got)
+	}
+	if got := repo["issue_comment_sync_enabled"]; got != float64(0) {
+		t.Errorf("issue_comment_sync_enabled default = %v, want 0", got)
+	}
+
+	// Explicit values round-trip.
+	repoDir2 := filepath.Join(base, "myorg", "myrepo2")
+	initBareGitRepo(t, repoDir2)
+	w = postJSON(t, router, "/repos", map[string]any{
+		"name":                       "myorg/myrepo2",
+		"path":                       repoDir2,
+		"issue_sync_update_policy":   "always",
+		"issue_sync_gone_action":     "move",
+		"issue_sync_gone_label":      "triage",
+		"issue_comment_sync_enabled": true,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_sync_update_policy"]; got != "always" {
+		t.Errorf("issue_sync_update_policy = %v, want %q", got, "always")
+	}
+	if got := repo["issue_sync_gone_action"]; got != "move" {
+		t.Errorf("issue_sync_gone_action = %v, want %q", got, "move")
+	}
+	if got := repo["issue_sync_gone_label"]; got != "triage" {
+		t.Errorf("issue_sync_gone_label = %v, want %q", got, "triage")
+	}
+	if got := repo["issue_comment_sync_enabled"]; got != float64(1) {
+		t.Errorf("issue_comment_sync_enabled = %v, want 1", got)
+	}
+}
+
+// TestReposCreate_InvalidIssueSyncUpdatePolicyRejected verifies an
+// unrecognized issue_sync_update_policy value is a 400.
+func TestReposCreate_InvalidIssueSyncUpdatePolicyRejected(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":                     "myorg/myrepo",
+		"path":                     repoDir,
+		"issue_sync_update_policy": "sometimes",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid issue_sync_update_policy, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReposCreate_InvalidIssueSyncGoneActionRejected verifies an unrecognized
+// issue_sync_gone_action value is a 400.
+func TestReposCreate_InvalidIssueSyncGoneActionRejected(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":                   "myorg/myrepo",
+		"path":                   repoDir,
+		"issue_sync_gone_action": "delete",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid issue_sync_gone_action, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReposCreate_GoneActionMoveRequiresLabel verifies issue_sync_gone_action
+// "move" without issue_sync_gone_label is rejected with 400.
+func TestReposCreate_GoneActionMoveRequiresLabel(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":                   "myorg/myrepo",
+		"path":                   repoDir,
+		"issue_sync_gone_action": "move",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for move without a label, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// With a label, it's accepted.
+	w = postJSON(t, router, "/repos", map[string]any{
+		"name":                   "myorg/myrepo",
+		"path":                   repoDir,
+		"issue_sync_gone_action": "move",
+		"issue_sync_gone_label":  "triage",
+	})
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected 201 for move with a label, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReposUpdate_IssueSyncPolicyFieldsRoundTripAndSurviveUnrelatedPatch is
+// the hazard-#1 regression test: an unrelated PATCH (here, a rename) must
+// preserve the four issue-sync-policy fields, not reset them to "" / 0.
+// Mirrors TestReposUpdate_PrReviewAutoTransitionRoundTrip.
+func TestReposUpdate_IssueSyncPolicyFieldsRoundTripAndSurviveUnrelatedPatch(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name": "myorg/myrepo",
+		"path": repoDir,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+	if got := repo["issue_sync_update_policy"]; got != "gate" {
+		t.Fatalf("create default issue_sync_update_policy = %v, want %q", got, "gate")
+	}
+	if got := repo["issue_sync_gone_action"]; got != "flag" {
+		t.Fatalf("create default issue_sync_gone_action = %v, want %q", got, "flag")
+	}
+
+	// Configure non-default values.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{
+		"issue_sync_update_policy":   "always",
+		"issue_sync_gone_action":     "move",
+		"issue_sync_gone_label":      "triage",
+		"issue_comment_sync_enabled": true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_sync_update_policy"]; got != "always" {
+		t.Errorf("issue_sync_update_policy = %v, want %q", got, "always")
+	}
+	if got := repo["issue_sync_gone_action"]; got != "move" {
+		t.Errorf("issue_sync_gone_action = %v, want %q", got, "move")
+	}
+	if got := repo["issue_sync_gone_label"]; got != "triage" {
+		t.Errorf("issue_sync_gone_label = %v, want %q", got, "triage")
+	}
+	if got := repo["issue_comment_sync_enabled"]; got != float64(1) {
+		t.Errorf("issue_comment_sync_enabled = %v, want 1", got)
+	}
+
+	// THE HAZARD: an unrelated PATCH (renaming the repo) must not reset these
+	// fields back to "" / 0. Before the fix, gen.UpdateRepoParams was built
+	// with a named-field struct literal that omitted these four fields
+	// entirely, so every PATCH silently wiped them.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("unrelated patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["name"]; got != "renamed" {
+		t.Fatalf("expected name to actually change to %q, got %v", "renamed", got)
+	}
+	if got := repo["issue_sync_update_policy"]; got != "always" {
+		t.Errorf("issue_sync_update_policy after unrelated patch = %v, want %q (preserved)", got, "always")
+	}
+	if got := repo["issue_sync_gone_action"]; got != "move" {
+		t.Errorf("issue_sync_gone_action after unrelated patch = %v, want %q (preserved)", got, "move")
+	}
+	if got := repo["issue_sync_gone_label"]; got != "triage" {
+		t.Errorf("issue_sync_gone_label after unrelated patch = %v, want %q (preserved)", got, "triage")
+	}
+	if got := repo["issue_comment_sync_enabled"]; got != float64(1) {
+		t.Errorf("issue_comment_sync_enabled after unrelated patch = %v, want 1 (preserved)", got)
+	}
+}
+
+// TestReposUpdate_InvalidIssueSyncPolicyFieldsRejected verifies PATCH
+// validates the two enum fields and the move/label requirement the same way
+// Create does.
+func TestReposUpdate_InvalidIssueSyncPolicyFieldsRejected(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myorg/myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"issue_sync_update_policy": "sometimes"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid issue_sync_update_policy, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"issue_sync_gone_action": "delete"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid issue_sync_gone_action, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"issue_sync_gone_action": "move"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for move without a label, got %d: %s", w.Code, w.Body.String())
+	}
+}

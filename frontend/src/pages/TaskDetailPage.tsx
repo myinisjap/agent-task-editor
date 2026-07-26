@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type Workflow, type Repo } from '../api/client'
+import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { useAgentsStore } from '../stores/agents'
 import DependenciesPanel from '../components/DependenciesPanel'
@@ -9,6 +9,7 @@ import TaskHeader from '../components/task-detail/TaskHeader'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
+import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
@@ -21,6 +22,7 @@ export default function TaskDetailPage() {
   const [task, setTask] = useState<Task | null>(null)
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [labelHistory, setLabelHistory] = useState<TaskLabelHistoryEntry[]>([])
+  const [sourceComments, setSourceComments] = useState<TaskSourceComment[]>([])
   const [selectedRun, setSelectedRun] = useState<string | null>(null)
   const [rejectNote, setRejectNote] = useState('')
   const [replyText, setReplyText] = useState('')
@@ -61,6 +63,11 @@ export default function TaskDetailPage() {
     api.tasks.listLabelHistory(id).then((h) => setLabelHistory(h ?? [])).catch(() => {})
   }, [id])
 
+  const refreshSourceComments = useCallback(() => {
+    if (!id) return
+    api.tasks.sourceComments(id).then((c) => setSourceComments(c ?? [])).catch(() => {})
+  }, [id])
+
   // Fetch agent configs for name lookup
   useEffect(() => {
     fetchAgents()
@@ -74,11 +81,12 @@ export default function TaskDetailPage() {
   // Initial load
   useEffect(() => {
     if (!id) return
-    Promise.all([api.tasks.get(id), api.tasks.runs(id), api.tasks.listLabelHistory(id)])
-      .then(([t, r, h]) => {
+    Promise.all([api.tasks.get(id), api.tasks.runs(id), api.tasks.listLabelHistory(id), api.tasks.sourceComments(id)])
+      .then(([t, r, h, c]) => {
         setTask(t)
         setRuns(r ?? [])
         setLabelHistory(h ?? [])
+        setSourceComments(c ?? [])
         if (r && r.length > 0) setSelectedRun(r[0].id)
       })
   }, [id])
@@ -120,6 +128,13 @@ export default function TaskDetailPage() {
         refreshTask()
       } else if (event.type === 'task.git_state_changed' && event.payload.task_id === id) {
         setTask((t) => t ? { ...t, git_state: event.payload.git_state, pr_url: event.payload.pr_url || t.pr_url } : t)
+      } else if (event.type === 'task.updated' && event.payload.id === id) {
+        // Covers the importer's reconciliation sweep (source_state flips to
+        // 'gone'/back, or a field-drift update) — refetch for full data since
+        // the payload here only carries {id}.
+        refreshTask()
+      } else if (event.type === 'task.source_comment_added' && event.payload.task_id === id) {
+        refreshSourceComments()
       }
     })
 
@@ -127,7 +142,7 @@ export default function TaskDetailPage() {
       off()
       wsClient.unsubscribeTask(id)
     }
-  }, [id, refreshTask, refreshRuns, refreshComments, refreshLabelHistory])
+  }, [id, refreshTask, refreshRuns, refreshComments, refreshLabelHistory, refreshSourceComments])
 
   const activeRun = runs.find((r) => r.id === selectedRun)
   const needsHuman = activeRun?.status === 'waiting_human'
@@ -416,6 +431,8 @@ export default function TaskDetailPage() {
             />
 
             <LabelHistoryList history={labelHistory} />
+
+            <SourceCommentsList comments={sourceComments} />
           </div>
         )}
 

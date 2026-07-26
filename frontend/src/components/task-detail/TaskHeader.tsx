@@ -410,6 +410,14 @@ export default function TaskHeader({
             >
               {task.source_ref}
             </a>
+            {task.source_state === 'gone' && (
+              <span
+                className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-900/70 text-amber-300"
+                title="The source issue closed or no longer matches the repo's issue sync filter. The task was left as-is (or archived/moved, per the repo's setting) rather than silently orphaned."
+              >
+                ⚠ source issue closed or unlabeled
+              </span>
+            )}
           </Row>
         )}
         <Row label="Created">

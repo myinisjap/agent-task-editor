@@ -39,6 +39,7 @@ export function makeApiMock() {
       runs: vi.fn().mockResolvedValue([]),
       getRun: vi.fn(),
       listLabelHistory: vi.fn().mockResolvedValue([]),
+      sourceComments: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
       replyRun: vi.fn(),
       runLogs: vi.fn().mockResolvedValue({ items: [], hasMore: false, prevCursor: null }),
