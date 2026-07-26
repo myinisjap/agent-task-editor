@@ -85,14 +85,64 @@ jobs:
 
       - name: Move [Unreleased] notes under the new version heading
         run: |
+          # 1. Insert the new version heading right under [Unreleased], moving
+          #    the accumulated notes beneath it.
+          # 2. Within that new version section only, merge any duplicate
+          #    "### Heading" subsections (e.g. two "### Added" blocks) so each
+          #    heading appears once with its bullets grouped, preserving the
+          #    order each heading first appeared. This keeps the GitHub Release
+          #    notes clean even if [Unreleased] accumulated duplicate headings.
           awk -v ver="${{ steps.version.outputs.version }}" -v date="$(date +%Y-%m-%d)" '
+            BEGIN { insec = 0; nheads = 0 }
+            function flush_section(   i, h, b) {
+              # emit merged subsections for the version being closed
+              for (i = 1; i <= nheads; i++) {
+                h = order[i]
+                print h
+                # Trim only trailing blank lines (the source of the blank left
+                # where two same-heading blocks were joined); interior blanks
+                # inside an entry are preserved. Re-add exactly one blank line
+                # to separate this subsection from the next.
+                b = body[h]
+                sub(/\n[[:space:]\n]*$/, "\n", b)
+                printf "%s\n", b
+              }
+              nheads = 0
+              delete order
+              delete body
+              delete seen
+            }
             /^## \[Unreleased\]/ {
               print
               print ""
               print "## [" ver "] - " date
+              insec = 1
+              curhead = ""
+              next
+            }
+            # A later "## [" heading closes the version section we are merging.
+            insec && /^## \[/ {
+              flush_section()
+              insec = 0
+              print
+              next
+            }
+            insec && /^### / {
+              curhead = $0
+              if (!seen[curhead]) {
+                seen[curhead] = 1
+                nheads++
+                order[nheads] = curhead
+                body[curhead] = ""
+              }
+              next
+            }
+            insec && curhead != "" {
+              body[curhead] = body[curhead] $0 "\n"
               next
             }
             { print }
+            END { if (insec) flush_section() }
           ' CHANGELOG.md > CHANGELOG.md.tmp
           mv CHANGELOG.md.tmp CHANGELOG.md
 
