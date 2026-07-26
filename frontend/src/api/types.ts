@@ -1107,7 +1107,7 @@ export interface paths {
         };
         /**
          * Refresh and return the task's live GitHub PR state via the gh CLI
-         * @description Queries gh for the current PR state of the task's branch and persists it. If the live query fails, returns the previously stored git_state and pr_url instead of erroring, with an additional error field describing the failure. Returns git_state "none" without querying gh if the task has no branch yet.
+         * @description Queries gh for the current PR state of the task's branch and persists it. When a PR exists, also refreshes GitHub's merge-conflict verdict for it (pr_mergeable). If the live query fails, returns the previously stored git_state and pr_url instead of erroring, with an additional error field describing the failure. Returns git_state "none" without querying gh if the task has no branch yet.
          */
         get: {
             parameters: {
@@ -1129,6 +1129,11 @@ export interface paths {
                             /** @enum {string} */
                             git_state?: "" | "none" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
                             pr_url?: string;
+                            /**
+                             * @description Omitted from the no-branch response; otherwise the stored verdict, refreshed when a PR exists
+                             * @enum {string}
+                             */
+                            pr_mergeable?: "" | "mergeable" | "conflicting" | "unknown";
                             /** @description Present only when the live gh query failed */
                             error?: string | null;
                         };
@@ -3677,6 +3682,11 @@ export interface components {
             git_state?: "" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
             /** @description URL of the GitHub pull request opened for this task's branch (via POST /tasks/{id}/pr, or discovered by the GitHub PR status sweep). Empty until a PR exists. */
             pr_url?: string;
+            /**
+             * @description GitHub's verdict on whether this task's pull request still merges cleanly into its base branch, refreshed by the GitHub PR status sweep (and by GET /tasks/{id}/github-status). Empty until the task has a PR that has been checked; "unknown" while GitHub is still computing the test merge, which it does asynchronously after every push to either branch. When it flips to "conflicting", the sweep also appends a resolve-the-conflict note to the task's current agent run feedback.
+             * @enum {string}
+             */
+            pr_mergeable?: "" | "mergeable" | "conflicting" | "unknown";
             /** @description Number of consecutive automatic retries this task has had for transient provider errors (rate limits, network blips, upstream 5xx). Reset to 0 on a genuine failure or a successful run. */
             transient_retry_count?: number;
             /**

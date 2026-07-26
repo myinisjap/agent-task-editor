@@ -30,7 +30,7 @@ agent-task-editor/
 │       ├── api/              # Chi router, handlers, middleware
 │       ├── config/           # YAML + env var config
 │       ├── ghclient/         # Thin `gh` CLI wrapper (PR lookup/create, issue listing, repo name parsing)
-│       ├── ghsync/           # Background poller: refreshes task GitHub PR state via `gh` CLI
+│       ├── ghsync/           # Background poller: refreshes task GitHub PR state (incl. merge conflicts) via `gh` CLI
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
 │       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues)

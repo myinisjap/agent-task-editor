@@ -20,6 +20,19 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Merge-conflict detection on open PRs.** The GitHub PR status sweep now
+  also asks GitHub whether each task's open PR still merges cleanly into its
+  base branch, so a PR that goes stale because someone else merged first is
+  noticed without anyone opening GitHub. The verdict is stored on the task as
+  `pr_mergeable` (`mergeable` / `conflicting` / `unknown`), pushed to the UI as
+  a new `task.pr_mergeable_changed` WebSocket event, rendered as a conflict
+  marker on the board card and task detail header, and refreshed on demand by
+  `GET /tasks/{id}/github-status`. When a conflict first appears, the sweep
+  appends a "resolve the conflict" note to the task's current agent run
+  feedback (and, for repos with `pr_review_auto_transition_enabled`, moves the
+  task back along its workflow's failure path) so an agent picks the work back
+  up. The check rides along with the existing PR head-SHA lookup, so it costs
+  no additional `gh` call per sweep.
 - **Per-repo concurrency limits.** Repos can now set an optional
   `max_concurrent_runs` cap (Repos page) on how many agent runs the
   dispatcher will keep in flight against that repo at once, independent of

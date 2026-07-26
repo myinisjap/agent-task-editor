@@ -288,6 +288,45 @@ func TestGetPRHead_NoPR(t *testing.T) {
 	}
 }
 
+func TestGetPRHead_Mergeability(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want Mergeability
+	}{
+		{"conflicting", `[{"number":5,"headRefOid":"abc","baseRefName":"main","mergeable":"CONFLICTING"}]`, MergeableConflicting},
+		{"mergeable", `[{"number":5,"headRefOid":"abc","baseRefName":"main","mergeable":"MERGEABLE"}]`, MergeableClean},
+		{"unknown", `[{"number":5,"headRefOid":"abc","baseRefName":"main","mergeable":"UNKNOWN"}]`, MergeableUnknown},
+		// A field gh didn't return, or an enum member it grows later, must
+		// never be read as a conflict.
+		{"absent", `[{"number":5,"headRefOid":"abc","baseRefName":"main"}]`, MergeableUnknown},
+		{"unrecognised", `[{"number":5,"headRefOid":"abc","baseRefName":"main","mergeable":"BLOCKED"}]`, MergeableUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+				func(t *testing.T, args []string) fakeCmd {
+					if !strings.Contains(strings.Join(args, " "), "mergeable") {
+						t.Fatalf("expected mergeable in json fields, got %v", args)
+					}
+					return fakeCmd{output: []byte(tc.json)}
+				},
+			})
+
+			head, err := GetPRHead(context.Background(), "acme/widgets", "some-branch")
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if head.Mergeable != tc.want {
+				t.Errorf("mergeable = %q, want %q", head.Mergeable, tc.want)
+			}
+			if head.BaseRef != "main" {
+				t.Errorf("base ref = %q, want main", head.BaseRef)
+			}
+		})
+	}
+}
+
 func TestGetPRReviews(t *testing.T) {
 	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
 		func(t *testing.T, args []string) fakeCmd {

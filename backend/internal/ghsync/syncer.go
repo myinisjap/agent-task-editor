@@ -151,9 +151,10 @@ func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 
 // syncTask checks the PR state for a single task and updates it if changed.
 // It also, independently of whether the state changed, ingests any new PR
-// review feedback / failed GHA checks for tasks with an open PR (see
-// ingestPRFeedback in pr_review.go) — a task can sit on "pr_open" across many
-// sweeps while new reviews/comments/check runs keep arriving.
+// review feedback / failed GHA checks / base-branch merge conflicts for tasks
+// with an open PR (see ingestPRFeedback in pr_review.go) — a task can sit on
+// "pr_open" across many sweeps while new reviews/comments/check runs keep
+// arriving and the base branch keeps moving underneath it.
 func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 	log := slog.With("component", "ghsync", "task_id", task.ID)
 	state, prURL, prNumber, err := s.getPR(ctx, repo.ghName, task.Branch)
@@ -163,7 +164,7 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 	}
 
 	if prNumber != 0 {
-		s.ingestPRFeedback(ctx, task, repo, prNumber)
+		s.ingestPRFeedback(ctx, task, repo, prNumber, state)
 	}
 
 	if state == task.GitState {
