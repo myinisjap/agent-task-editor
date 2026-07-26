@@ -19,14 +19,6 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
-### Added
-- **In-app help modals on every page.** Each page (Overview, Board, Chat,
-  Workflows, Agents, Providers, Pricing, Repos, Templates, Health, Cost &
-  Usage, Agent Performance) now has an "i" info button that opens a modal
-  explaining what the page does and how to configure it — aimed at making the
-  app more approachable for new users. Closes on the ✕ button, clicking the
-  backdrop, or pressing Escape.
-
 ### Changed
 - **Further mobile layout fixes across the app.** The Workflow page now stacks
   the flowchart preview and YAML editor vertically (instead of side by side)
@@ -56,6 +48,12 @@ triggers the "Release" workflow the same way.
   workflow picker.
 
 ### Added
+- **In-app help modals on every page.** Each page (Overview, Board, Chat,
+  Workflows, Agents, Providers, Pricing, Repos, Templates, Health, Cost &
+  Usage, Agent Performance) now has an "i" info button that opens a modal
+  explaining what the page does and how to configure it — aimed at making the
+  app more approachable for new users. Closes on the ✕ button, clicking the
+  backdrop, or pressing Escape.
 - **New "Factory" dashboard visualization.** The Overview's optional "Visualize
   tasks" view gains a third style, chosen from a segmented Office / Robots /
   Factory picker (replacing the old standalone "Robots" toggle; an existing
