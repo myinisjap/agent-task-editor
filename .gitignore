@@ -7,6 +7,7 @@ backend/bin/
 *.db.backup
 backend/coverage.out
 backend/test_results.txt
+backend/test-output.log
 frontend/frontend_test_results.txt
 
 # Node

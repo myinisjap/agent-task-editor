@@ -97,10 +97,20 @@ Notes:
 The dispatcher runs a background goroutine that sweeps the database every 5 seconds:
 
 1. Queries `ListAgentPickupTasks` — tasks whose label appears in any agent-triggerable transition AND whose `active_agent_run_id IS NULL`, ordered by `priority` (urgent → high → normal → low) then oldest first. See [Task Priority](#task-priority) below.
-2. Loads all agent configs, matches each task to the first config whose `labels` array contains the task's label.
-3. Creates an `agent_runs` record with status `pending`.
-4. Sets the task's `active_agent_run_id` (and updates `current_agent_run_id`) — this prevents the next sweep from double-dispatching.
-5. Submits a `Job` to the worker pool. If the pool queue is full, marks the run `failed` and clears `active_agent_run_id`.
+2. Computes each repo's current in-flight run count (`CountActiveRunsByRepo`) and skips any task whose repo is already at its effective concurrency limit — see [Per-Repo Concurrency Limits](#per-repo-concurrency-limits) below.
+3. Loads all agent configs, matches each task to the first config whose `labels` array contains the task's label.
+4. Creates an `agent_runs` record with status `pending`.
+5. Sets the task's `active_agent_run_id` (and updates `current_agent_run_id`) — this prevents the next sweep from double-dispatching.
+6. Submits a `Job` to the worker pool. If the pool queue is full, marks the run `failed` and clears `active_agent_run_id`.
+
+## Per-Repo Concurrency Limits
+
+Each repo has an optional `max_concurrent_runs` column (nullable, editable on the Repos page). It caps how many agent runs the dispatcher will keep in flight against that repo at once, independent of how many free slots the global worker pool has:
+
+- **Unset (`null`, the default)** — no repo-specific cap; the dispatcher falls back to the global `MAX_WORKERS` limit, preserving pre-#255 behavior exactly.
+- **Set to a positive integer** — the dispatcher skips any further tasks for that repo once its in-flight run count (`active_agent_run_id IS NOT NULL`, same signal `ListAgentPickupTasks` excludes on) reaches this value, even if the pool has free workers. This prevents one repo with many eligible tasks (e.g. from a schedule or bulk GitHub Issues import) from monopolizing every worker slot and starving every other repo.
+- The limit is enforced per-sweep: in-flight counts are loaded once at the start of a sweep and updated in-process as tasks are dispatched within that sweep, so a repo hitting its limit mid-sweep is skipped for the rest of that sweep too.
+- The Dashboard's "Repo concurrency" section shows live in-use vs. effective-limit slots per repo (only repos with at least one in-flight run are listed).
 
 ## Worker Pool
 

@@ -27,7 +27,7 @@ func TestDashboardGet_ClaudeUsageUnavailableWithoutCredentials(t *testing.T) {
 
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewDashboardHandler(q)
+	h := handlers.NewDashboardHandler(q, 5)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	w := httptest.NewRecorder()
@@ -151,7 +151,7 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 		t.Fatalf("finalize failed run: %v", err)
 	}
 
-	h := handlers.NewDashboardHandler(q)
+	h := handlers.NewDashboardHandler(q, 5)
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	w := httptest.NewRecorder()
 	h.Get(w, req)
@@ -331,7 +331,7 @@ func TestDashboardGet_InterventionQueueExcludesSupersededRuns(t *testing.T) {
 		t.Fatalf("set replied task active run: %v", err)
 	}
 
-	h := handlers.NewDashboardHandler(q)
+	h := handlers.NewDashboardHandler(q, 5)
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	w := httptest.NewRecorder()
 	h.Get(w, req)
@@ -361,5 +361,141 @@ func TestDashboardGet_InterventionQueueExcludesSupersededRuns(t *testing.T) {
 	if len(body.ActiveAgents) != 1 || body.ActiveAgents[0].RunID != newRun.ID {
 		t.Errorf("expected active_agents to contain only the new run %q, got %+v",
 			newRun.ID, body.ActiveAgents)
+	}
+}
+
+// TestDashboardGet_RepoConcurrency covers the repo_concurrency breakdown
+// (issue #255): a repo with an explicit max_concurrent_runs override reports
+// that value as its limit, a repo with no override falls back to the
+// server's global MAX_WORKERS, and a repo with zero in-flight runs is
+// omitted entirely.
+func TestDashboardGet_RepoConcurrency(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	// Repo A: explicit cap of 1, one in-flight run.
+	cappedLimit := int64(1)
+	cappedRepoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: cappedRepoID, Name: "capped-repo", Path: t.TempDir(), WorkflowID: &wfID,
+		MaxConcurrentRuns: &cappedLimit,
+	}); err != nil {
+		t.Fatalf("create capped repo: %v", err)
+	}
+	cappedTask, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "capped task", WorkflowID: wfID, RepoID: cappedRepoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create capped task: %v", err)
+	}
+	cappedRun, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID: uuid.NewString(), TaskID: cappedTask.ID,
+	})
+	if err != nil {
+		t.Fatalf("create capped run: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &cappedRun.ID, ActiveAgentRunID: &cappedRun.ID, ID: cappedTask.ID,
+	}); err != nil {
+		t.Fatalf("set capped task active run: %v", err)
+	}
+
+	// Repo B: no override, one in-flight run — falls back to global MAX_WORKERS.
+	defaultRepoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: defaultRepoID, Name: "default-repo", Path: t.TempDir(), WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create default repo: %v", err)
+	}
+	defaultTask, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "default task", WorkflowID: wfID, RepoID: defaultRepoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create default task: %v", err)
+	}
+	defaultRun, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID: uuid.NewString(), TaskID: defaultTask.ID,
+	})
+	if err != nil {
+		t.Fatalf("create default run: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &defaultRun.ID, ActiveAgentRunID: &defaultRun.ID, ID: defaultTask.ID,
+	}); err != nil {
+		t.Fatalf("set default task active run: %v", err)
+	}
+
+	// Repo C: no in-flight runs at all — must not appear in the response.
+	idleRepoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: idleRepoID, Name: "idle-repo", Path: t.TempDir(), WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create idle repo: %v", err)
+	}
+
+	h := handlers.NewDashboardHandler(q, 5)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		RepoConcurrency []struct {
+			RepoID   string `json:"repo_id"`
+			RepoName string `json:"repo_name"`
+			InUse    int64  `json:"in_use"`
+			Limit    int    `json:"limit"`
+		} `json:"repo_concurrency"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(body.RepoConcurrency) != 2 {
+		t.Fatalf("expected 2 repo_concurrency rows (idle repo excluded), got %d: %+v",
+			len(body.RepoConcurrency), body.RepoConcurrency)
+	}
+
+	byID := map[string]struct {
+		InUse int64
+		Limit int
+	}{}
+	for _, r := range body.RepoConcurrency {
+		byID[r.RepoID] = struct {
+			InUse int64
+			Limit int
+		}{r.InUse, r.Limit}
+	}
+
+	capped, ok := byID[cappedRepoID]
+	if !ok {
+		t.Fatalf("expected capped repo in response, got %+v", body.RepoConcurrency)
+	}
+	if capped.InUse != 1 || capped.Limit != 1 {
+		t.Errorf("capped repo: expected in_use=1 limit=1 (repo-specific override), got in_use=%d limit=%d",
+			capped.InUse, capped.Limit)
+	}
+
+	def, ok := byID[defaultRepoID]
+	if !ok {
+		t.Fatalf("expected default repo in response, got %+v", body.RepoConcurrency)
+	}
+	if def.InUse != 1 || def.Limit != 5 {
+		t.Errorf("default repo: expected in_use=1 limit=5 (global MAX_WORKERS fallback), got in_use=%d limit=%d",
+			def.InUse, def.Limit)
+	}
+
+	if _, ok := byID[idleRepoID]; ok {
+		t.Errorf("expected idle repo (no in-flight runs) to be excluded from repo_concurrency")
 	}
 }
