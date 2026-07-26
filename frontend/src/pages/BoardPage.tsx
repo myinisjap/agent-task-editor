@@ -97,6 +97,13 @@ export default function BoardPage() {
                        event.type === 'task.updated' ? event.payload.id : event.payload.task_id
         api.tasks.get(taskId).then(upsert).catch(() => {})
       }
+      if (event.type === 'task.created_bulk') {
+        // The importer batches an entire sweep's new tasks into one event
+        // rather than one task.created per issue — do a single board
+        // refresh instead of fetching event.payload.ids one by one, or the
+        // batching wouldn't save anything on the frontend.
+        fetchTasks(showArchived ? { archived: 'all' } : undefined)
+      }
       if (event.type === 'task.rate_limited') {
         setRateLimitedTaskIds(prev => {
           const next = new Map(prev)
@@ -118,7 +125,8 @@ export default function BoardPage() {
       }
     })
     return off
-  }, [upsert])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upsert, showArchived])
 
   const workflow = active()
   const labels = workflow?.labels ?? []
