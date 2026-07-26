@@ -13,7 +13,7 @@ export default function CommandFilterEditor({ provider, allowlist, denylist, onA
 
   return (
     <>
-      <Field label="Command allowlist (JSON array of glob patterns)" className="col-span-2">
+      <Field label="Command allowlist (JSON array of glob patterns)" className="sm:col-span-2">
         <textarea
           value={allowlist}
           onChange={(e) => onAllowlistChange(e.target.value)}
@@ -28,7 +28,7 @@ export default function CommandFilterEditor({ provider, allowlist, denylist, onA
         </p>
       </Field>
 
-      <Field label="Command denylist (JSON array of glob patterns)" className="col-span-2">
+      <Field label="Command denylist (JSON array of glob patterns)" className="sm:col-span-2">
         <textarea
           value={denylist}
           onChange={(e) => onDenylistChange(e.target.value)}

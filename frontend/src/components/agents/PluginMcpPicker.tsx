@@ -23,7 +23,7 @@ export default function PluginMcpPicker({
 
   return (
     <>
-      <Field label="Plugins" className="col-span-2">
+      <Field label="Plugins" className="sm:col-span-2">
         <ChipPicker
           selected={selectedPlugins}
           available={(claudeOptions?.plugins ?? []).map((p) => ({ value: p.id, label: p.marketplace ? `${p.name} (${p.marketplace})` : p.name }))}
@@ -33,7 +33,7 @@ export default function PluginMcpPicker({
         <p className="mt-1 text-xs text-slate-500">Discovered from your Claude home dir. Off by default — toggle to enable per agent.</p>
       </Field>
 
-      <Field label="MCP servers" className="col-span-2">
+      <Field label="MCP servers" className="sm:col-span-2">
         <ChipPicker
           selected={selectedMcpServers}
           available={(claudeOptions?.mcp_servers ?? []).map((name) => ({ value: name, label: name }))}

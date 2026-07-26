@@ -61,7 +61,7 @@ export default function ProviderConfigForm({
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-2xl">
-        <Field label="Name" className="col-span-2">
+        <Field label="Name" className="sm:col-span-2">
           <input
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
@@ -105,7 +105,7 @@ export default function ProviderConfigForm({
           />
         </Field>
 
-        <Field label="Env vars (JSON object)" className="col-span-2" hint="API keys and other environment variables merged into the provider CLI's environment.">
+        <Field label="Env vars (JSON object)" className="sm:col-span-2" hint="API keys and other environment variables merged into the provider CLI's environment.">
           <textarea
             value={form.env}
             onChange={(e) => setForm((f) => ({ ...f, env: e.target.value }))}
