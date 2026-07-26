@@ -7,9 +7,11 @@ package tasksource
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
 
 // ExternalTask is a candidate task fetched from an external source.
@@ -28,6 +30,24 @@ type Source interface {
 	// Fetch returns all currently-matching candidate tasks for the repo.
 	// It must apply the repo's own filter settings (e.g. issue_sync_label).
 	Fetch(ctx context.Context, repo gen.Repo) ([]ExternalTask, error)
+}
+
+// ExternalComment is one human comment on an external item.
+type ExternalComment struct {
+	ID        string
+	Author    string
+	Body      string
+	CreatedAt string // RFC3339, as reported by the source
+	// TrustedAuthor is true when the source vouches for the author having
+	// write access to the repo. Only trusted comments are ingested.
+	TrustedAuthor bool
+}
+
+// CommentSource is an optional Source capability: reading the human comment
+// thread on an external item. A Source that doesn't implement it simply has
+// no comments ingested.
+type CommentSource interface {
+	FetchComments(ctx context.Context, repo gen.Repo, ref string) ([]ExternalComment, error)
 }
 
 // GitHubIssues imports open GitHub issues via the `gh` CLI, honouring the
@@ -61,4 +81,43 @@ func (GitHubIssues) Fetch(ctx context.Context, repo gen.Repo) ([]ExternalTask, e
 		})
 	}
 	return tasks, nil
+}
+
+// FetchComments implements CommentSource for GitHubIssues: it reads the
+// issue's comment thread via the gh CLI. TrustedAuthor is set from
+// author_association (OWNER/MEMBER/COLLABORATOR only — CONTRIBUTOR/NONE/etc
+// are untrusted). Comments containing this system's own write-back marker
+// (see writeback.MarkerComment) are dropped entirely, since those are this
+// system reading its own PR-opened/closed notices back as if they were human
+// input.
+func (GitHubIssues) FetchComments(ctx context.Context, repo gen.Repo, ref string) ([]ExternalComment, error) {
+	ghName, issueNumber, ok := writeback.ParseSourceRef(ref)
+	if !ok {
+		return nil, fmt.Errorf("source ref %q is not a github issue ref", ref)
+	}
+
+	comments, err := ghclient.GetIssueComments(ctx, ghName, issueNumber)
+	if err != nil {
+		return nil, fmt.Errorf("get issue comments for %s: %w", ref, err)
+	}
+
+	out := make([]ExternalComment, 0, len(comments))
+	for _, c := range comments {
+		if strings.Contains(c.Body, writeback.MarkerComment) {
+			continue
+		}
+		trusted := false
+		switch c.AuthorAssociation {
+		case "OWNER", "MEMBER", "COLLABORATOR":
+			trusted = true
+		}
+		out = append(out, ExternalComment{
+			ID:            c.ID,
+			Author:        c.Author,
+			Body:          c.Body,
+			CreatedAt:     c.CreatedAt,
+			TrustedAuthor: trusted,
+		})
+	}
+	return out, nil
 }
