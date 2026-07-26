@@ -19,6 +19,8 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-26
+
 ### Changed
 - **Further mobile layout fixes across the app.** The Workflow page now stacks
   the flowchart preview and YAML editor vertically (instead of side by side)
@@ -46,6 +48,36 @@ triggers the "Release" workflow the same way.
   A repo's own `workflow_id` setting is unchanged and still used by GitHub
   issue import and scheduled/recurring tasks, which have no interactive
   workflow picker.
+
+- **Default task-start label now derives from the workflow instead of a
+  hard-coded `not_ready`.** New tasks created without an explicit label —
+  GitHub Issue imports, scheduled tasks, and API creates that omit a label —
+  and schedules with an empty `target_label` now land on the workflow's
+  *human-gate label*: the lowest `sort_order` `agent_ignore` label (falling
+  back to the first label if none is marked `agent_ignore`). The
+  "agent-in-progress" issue write-back likewise fires when a task first leaves
+  that gate label rather than one named `not_ready`. For the default seeded
+  workflow this is still `not_ready`, so nothing changes there — but custom
+  workflows that don't define a `not_ready` label no longer strand imported,
+  scheduled, or unlabeled tasks on a non-existent column. The schedule editor's
+  default and "skips human review" warning now reference the selected repo's
+  gate label.
+- **Reorganized the sidebar navigation into collapsible categories.** The
+  flat 11-link menu is now grouped into `Insights` (Cost & Usage,
+  Performance), `Work` (Board, Chat), `Configuration` (Workflow, Agents,
+  Providers, Repos, Templates), and `System` (Health), with Dashboard kept as
+  a standalone top-level link. Each group header is a keyboard-accessible
+  toggle (`aria-expanded`/`aria-controls`) that expands/collapses its links;
+  the group containing the current route opens automatically and the
+  expand/collapse state persists across sessions via `localStorage`. The
+  link list scrolls independently of the pinned theme toggle so long,
+  fully-expanded menus don't clip on short mobile viewports.
+- **Dependency version bumps** (consolidated Dependabot PRs): frontend
+  `@testing-library/jest-dom` 6.9.1→7.0.0, `tailwindcss` 4.3.2→4.3.3,
+  `react-dom` 19.2.7→19.2.8, `@tanstack/react-virtual` 3.14.5→3.14.8,
+  `oxlint` 1.74.0→1.75.0; backend `github.com/prometheus/client_golang`
+  1.23.2→1.24.0; CI actions `setup-go` v6→v7 and
+  `create-github-app-token` v2→v3.
 
 ### Added
 - **In-app help modals on every page.** Each page (Overview, Board, Chat,
@@ -160,37 +192,6 @@ triggers the "Release" workflow the same way.
   (`assistant` → `message.content[].tool_use`) rather than only the
   hand-built top-level shapes. Plain user-turn text (not a `tool_result`) is
   now surfaced too instead of falling through to a raw JSON blob.
-
-### Changed
-- **Default task-start label now derives from the workflow instead of a
-  hard-coded `not_ready`.** New tasks created without an explicit label —
-  GitHub Issue imports, scheduled tasks, and API creates that omit a label —
-  and schedules with an empty `target_label` now land on the workflow's
-  *human-gate label*: the lowest `sort_order` `agent_ignore` label (falling
-  back to the first label if none is marked `agent_ignore`). The
-  "agent-in-progress" issue write-back likewise fires when a task first leaves
-  that gate label rather than one named `not_ready`. For the default seeded
-  workflow this is still `not_ready`, so nothing changes there — but custom
-  workflows that don't define a `not_ready` label no longer strand imported,
-  scheduled, or unlabeled tasks on a non-existent column. The schedule editor's
-  default and "skips human review" warning now reference the selected repo's
-  gate label.
-- **Reorganized the sidebar navigation into collapsible categories.** The
-  flat 11-link menu is now grouped into `Insights` (Cost & Usage,
-  Performance), `Work` (Board, Chat), `Configuration` (Workflow, Agents,
-  Providers, Repos, Templates), and `System` (Health), with Dashboard kept as
-  a standalone top-level link. Each group header is a keyboard-accessible
-  toggle (`aria-expanded`/`aria-controls`) that expands/collapses its links;
-  the group containing the current route opens automatically and the
-  expand/collapse state persists across sessions via `localStorage`. The
-  link list scrolls independently of the pinned theme toggle so long,
-  fully-expanded menus don't clip on short mobile viewports.
-- **Dependency version bumps** (consolidated Dependabot PRs): frontend
-  `@testing-library/jest-dom` 6.9.1→7.0.0, `tailwindcss` 4.3.2→4.3.3,
-  `react-dom` 19.2.7→19.2.8, `@tanstack/react-virtual` 3.14.5→3.14.8,
-  `oxlint` 1.74.0→1.75.0; backend `github.com/prometheus/client_golang`
-  1.23.2→1.24.0; CI actions `setup-go` v6→v7 and
-  `create-github-app-token` v2→v3.
 
 ## [0.13.0] - 2026-07-21
 
