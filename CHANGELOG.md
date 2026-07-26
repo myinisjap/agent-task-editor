@@ -19,6 +19,52 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Imported GitHub issues now stay in sync with their board tasks.** The
+  importer was create-only: once a task existed for an issue, nothing about
+  that issue was ever looked at again, so an edited title or body never
+  propagated, a `bug` → `chore` relabel never updated the task's type, and a
+  closed issue left its task on the board indefinitely. Each sweep now also
+  updates drifted fields and reconciles issues that have disappeared from the
+  fetch. Configured per repo:
+  - `issue_sync_update_policy` (`gate` | `always` | `never`, default `gate`) —
+    when upstream changes are applied. The default applies them only while the
+    task is still on the workflow's human-gate label, so an issue can be
+    refined before work starts, and freezes the task once a human or agent
+    moves it.
+  - `issue_sync_gone_action` (`flag` | `archive` | `move`, default `flag`) and
+    `issue_sync_gone_label` — what happens when an issue is closed or loses the
+    sync filter label. The default records it and takes no workflow action; the
+    task detail page shows a warning badge instead of the task silently
+    looking like any other. A task with a running agent is only ever flagged,
+    never archived or moved, and the flag clears automatically if the issue
+    reopens.
+- **Issue comment ingestion (opt-in, `issue_comment_sync_enabled`).** The
+  comment thread on a task's source issue is read onto the task and rendered
+  into the agent's prompt. This closes the last feedback channel nothing read:
+  PR review comments already reached agents, but the pre-work conversation on
+  the issue — where the cheapest course correction lives — did not. Off by
+  default, and limited to comments from authors with write access to the repo,
+  because it widens the prompt-injection surface: previously an attacker had to
+  file or edit an issue matching the sync filter, whereas anyone who can
+  comment on a synced issue would otherwise get text in front of an agent. The
+  prompt section marks its contents as data rather than instructions and fences
+  them so a comment cannot forge the delimiter and escape into trusted context.
+  Comments this system posted itself are filtered out, so an agent never reads
+  its own "PR opened" notice back as human input.
+- `GET /tasks/{id}/source-comments` returns a task's ingested issue thread.
+
+### Fixed
+- **The GitHub issue fetch no longer silently truncates at 200 issues.** It now
+  paginates the full result set. Beyond dropping issues outright on busy repos,
+  the cap would have made the new reconciliation mistake a truncated page for a
+  closed issue.
+
+### Changed
+- The Repos help modal described issue import as create-only, which is no
+  longer accurate; it now covers ongoing sync, the update policy, what happens
+  when an issue closes, and comment sync.
+
 ## [0.14.0] - 2026-07-26
 
 ### Changed

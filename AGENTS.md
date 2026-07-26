@@ -33,7 +33,7 @@ agent-task-editor/
 │       ├── ghsync/           # Background poller: refreshes task GitHub PR state via `gh` CLI
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
-│       ├── tasksource/       # Task import from external trackers (GitHub Issues)
+│       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues)
 │       ├── workflow/         # State machine engine
 │       └── ws/               # WebSocket hub and client management
 └── frontend/                 # React + TypeScript + Vite + Tailwind

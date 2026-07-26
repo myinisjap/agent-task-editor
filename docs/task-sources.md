@@ -3,7 +3,9 @@
 Tasks are normally created by hand on the board, but they can also be
 **imported from an external tracker**. v1 ships one source: **GitHub
 Issues**. A background poller (`internal/tasksource`) sweeps every repo that
-has issue sync enabled and creates a board task for each matching open issue.
+has issue sync enabled, creates a board task for each matching open issue, and
+keeps existing tasks in step with their issue afterwards — see
+[Keeping imported tasks in sync](#keeping-imported-tasks-in-sync).
 
 ## Enabling it
 
@@ -47,14 +49,20 @@ For each matching open issue the importer creates a task with:
 - **source / source_ref** — `github` / `owner/repo#123`, shown as a link back
   to the issue on the task detail page
 
-Pull requests are never imported (`gh issue list` excludes them).
+Pull requests are never imported. Issues are fetched from the REST API
+(`gh api repos/{owner}/{repo}/issues --paginate`), which *does* return pull
+requests, so the importer drops any entry carrying a `pull_request` field.
+The fetch is fully paginated — earlier versions capped it at 200 issues per
+sweep and silently ignored the rest, which also meant reconciliation (below)
+could mistake a truncated page for a closed issue.
 
 ## Deduplication
 
 `(source, source_ref)` is unique across tasks (enforced by a partial unique
-index), and the importer skips any issue that already has a task —
-regardless of what column that task has moved to since. Closing the issue or
-finishing the task does not cause a re-import.
+index), so an issue is only ever imported **once**. A second sweep doesn't
+create a duplicate task — it updates the existing one instead, subject to the
+policy in the next section. Closing the issue or finishing the task does not
+cause a re-import.
 
 **Deleting** an imported task while its issue is still open and still
 matches the filter *will* re-import it on the next sweep. To keep an issue
@@ -66,6 +74,122 @@ of deleting the task.
 The importer sweeps on a fixed interval, configurable via the
 `ISSUE_SYNC_INTERVAL` env var / `issue_sync_interval` YAML key (Go duration
 syntax, default `60s`).
+
+## Keeping imported tasks in sync
+
+Import is not a one-shot copy. Each sweep does three things beyond creating
+tasks for new issues:
+
+1. **Field updates** — an issue whose title, body, or labels changed upstream
+   has those changes written to its task.
+2. **Reconciliation** — a task whose issue no longer appears in the fetch (it
+   was closed, or lost the filter label) is flagged rather than left sitting on
+   the board indefinitely.
+3. **Comment ingestion** (opt-in) — the issue's comment thread is read onto the
+   task and passed to the agent as untrusted context.
+
+All three are governed per repo:
+
+| Repo field | Default | Meaning |
+|---|---|---|
+| `issue_sync_update_policy` | `gate` | When upstream field/comment changes are applied. `gate` = only while the task is still on the workflow's human-gate label; `always` = at any label; `never` = never |
+| `issue_sync_gone_action` | `flag` | What happens when the issue closes or stops matching the filter. `flag` = record it only; `archive` = also archive the task; `move` = also move it to `issue_sync_gone_label` |
+| `issue_sync_gone_label` | _(empty)_ | Destination label when the action is `move`. Required when setting `move` |
+| `issue_comment_sync_enabled` | `0` | `1` to ingest the issue's comment thread |
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"issue_sync_update_policy": "gate", "issue_sync_gone_action": "flag", "issue_comment_sync_enabled": true}'
+```
+
+### Field updates and the freeze policy
+
+On a sweep, a task's `title`, `description`, and `type` are compared against
+its issue and rewritten when they differ — so an edited issue body propagates,
+and relabelling an issue `bug` → `chore` upstream updates the task's type
+through the same label heuristic used at import. Nothing else is touched: the
+task's label, archived flag, and write-back state are never changed by a field
+update.
+
+The default `gate` policy exists because the board and the issue can both be
+edited, and there is no sensible automatic merge when they disagree. Under
+`gate`, upstream wins only while the task is still parked on the human-gate
+label — untouched by a human and not yet picked up by an agent — which covers
+the common case of an issue being refined before work starts. Once the task
+moves, it's frozen and the board is authoritative. Set `always` if you'd rather
+upstream keep winning, or `never` to make import a pure one-shot copy.
+
+An unset or unrecognized value reads as `gate`.
+
+### Reconciliation of closed or unlabeled issues
+
+Each sweep also asks the reverse question: which previously-imported tasks for
+this repo did *not* appear in the fetch? Since only open, filter-matching
+issues come back, a closed issue — or one whose filter label was removed —
+simply drops out, which is how it goes unnoticed.
+
+Those tasks get `source_state = "gone"`, surfaced on the task detail page as a
+warning badge beside the issue link. The repo's `issue_sync_gone_action` then
+decides whether anything further happens.
+
+The default is deliberately to **flag and stop**. An agent may be mid-run, and
+a closed issue is not always a cancelled one — someone may have closed it by
+mistake, or as a duplicate that still needs the work. Flagging makes the
+situation visible and lets a human decide.
+
+Three guarantees hold regardless of the configured action:
+
+- **A task with an active agent run is only ever flagged**, never archived or
+  moved, even under `archive` or `move`. It's re-evaluated on the next sweep
+  once the run finishes.
+- **Reconciliation never deletes a task or clears its `source`/`source_ref`.**
+  It only sets state and optionally archives or moves, so the re-import
+  behavior described under [Deduplication](#deduplication) is unchanged.
+- **The flag is reversible.** If the issue is reopened or regains the filter
+  label, the next sweep clears `source_state` automatically.
+
+One caveat worth knowing: reconciliation infers "gone" from absence, so if a
+`gh` call ever succeeds while returning nothing (an auth scope change, for
+instance), every imported task for that repo would be flagged in one sweep.
+With the default `flag` action that's cosmetic and self-correcting on the next
+successful sweep. It's a reason to prefer `flag` over `archive`/`move` unless
+you have a specific need.
+
+### Issue comment ingestion
+
+The issue thread is where clarification usually happens *before* work starts,
+and it was previously invisible: PR review comments are ingested (see the
+section below), but nothing ever read the source issue. With
+`issue_comment_sync_enabled`, each sweep reads the issue's comments into
+`task_source_comments` (deduped by GitHub comment id), shows them on the task
+detail page, and renders them into the agent's prompt under a
+`SOURCE ISSUE COMMENTS` section.
+
+Two filters apply, and both matter:
+
+- **Write access only.** A comment is ingested only when its GitHub
+  `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`. Comments from
+  outside contributors and drive-by accounts are skipped.
+- **Our own write-backs are dropped.** Comments carrying the
+  `<!-- agent-task-editor:writeback -->` marker this system posts are filtered
+  out, so an agent never reads its own "a PR has been opened" notice back as
+  human input.
+
+Ingestion follows the same `issue_sync_update_policy` as field updates, so by
+default comments stop flowing once the task leaves the gate label.
+
+**This is a prompt-injection surface, and it is off by default for that
+reason.** Without comment sync, injecting text into an agent prompt requires
+filing or editing an issue that matches the sync filter. With it, anyone who
+can comment on a synced issue can get text in front of an agent — a much lower
+bar on a public repo, which is why ingestion is limited to authors with write
+access. The rendered prompt section states explicitly that its contents are
+data rather than instructions, wraps them in untrusted-content markers, and
+strips the closing marker from every comment body so a comment can't forge the
+delimiter and escape into trusted prompt context. Source comments are also
+never passed to the MCP sidecar the way review comments are — there is no
+resolve loop for them. See the notes on prompt trust boundaries in issue #79.
 
 ## Status write-back
 
