@@ -34,13 +34,24 @@ vi.mock('../api/client', async () => {
       workflows: { list: (...args: unknown[]) => workflowsListMock(...args) },
       repos: { list: vi.fn().mockResolvedValue([]) },
       dashboard: { costByTask: (...args: unknown[]) => costByTaskMock(...args) },
+      // OnboardingChecklist (rendered by BoardPage) calls these on mount.
+      providerConfigs: { list: vi.fn().mockResolvedValue([]) },
+      agents: { list: vi.fn().mockResolvedValue([]) },
+      health: { providers: vi.fn().mockResolvedValue({ checks: [] }) },
     },
   }
 })
 
+// wsOnHandler captures the handler BoardPage registers via wsClient.on so
+// tests can simulate incoming WS events without a real socket.
+let wsOnHandler: ((event: { type: string; payload: unknown }) => void) | null = null
+
 vi.mock('../api/ws', () => ({
   wsClient: {
-    on: vi.fn(() => () => {}),
+    on: vi.fn((h: (event: { type: string; payload: unknown }) => void) => {
+      wsOnHandler = h
+      return () => {}
+    }),
     subscribeTask: vi.fn(),
     unsubscribeTask: vi.fn(),
   },
@@ -195,5 +206,50 @@ describe('BoardPage bulk actions', () => {
     })
     // Selection is NOT cleared on partial failure.
     expect(screen.getByText('2 selected')).toBeInTheDocument()
+  })
+})
+
+describe('BoardPage task.created_bulk handling', () => {
+  beforeEach(() => {
+    bulkMock.mockReset()
+    costByTaskMock.mockReset().mockResolvedValue([])
+    tasksListMock.mockReset()
+    workflowsListMock.mockReset()
+    wsOnHandler = null
+    seedStores([task({ id: 'task-1', title: 'Task one' })])
+  })
+
+  it('a single task.created_bulk event triggers exactly one task list refresh, not one fetch per id', async () => {
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(wsOnHandler).not.toBeNull()
+    })
+    // Mount's own fetchTasks() call.
+    const callsAfterMount = tasksListMock.mock.calls.length
+    expect(callsAfterMount).toBeGreaterThan(0)
+
+    tasksListMock.mockResolvedValue({
+      items: [task({ id: 'task-1' }), task({ id: 'task-2' }), task({ id: 'task-3' })],
+      nextCursor: null,
+    })
+
+    wsOnHandler!({
+      type: 'task.created_bulk',
+      payload: { repo_id: 'r1', source: 'github', count: 2, ids: ['task-2', 'task-3'] },
+    })
+
+    await waitFor(() => {
+      expect(tasksListMock.mock.calls.length).toBe(callsAfterMount + 1)
+    })
+    await waitFor(() => {
+      expect(useTasksStore.getState().tasks.map((t) => t.id)).toEqual(
+        expect.arrayContaining(['task-1', 'task-2', 'task-3']),
+      )
+    })
   })
 })
