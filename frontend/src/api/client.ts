@@ -317,12 +317,13 @@ export const api = {
   repos: {
     list: () => request<Repo[]>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
     // max_concurrent_runs: omit the key to leave it unchanged, or pass null to
     // clear it back to "use the global default" — the backend distinguishes
     // an omitted field from an explicit null (see ReposHandler.Update).
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null }) =>
+
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),

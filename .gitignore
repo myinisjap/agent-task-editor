@@ -31,3 +31,8 @@ backend/mcp-server
 .omc/
 .claude/
 .qwen/
+
+# Ad-hoc local test-run transcripts (not build artifacts, but shouldn't be committed)
+backend/test_output.txt
+backend/test_backend.log
+frontend/test_output.txt

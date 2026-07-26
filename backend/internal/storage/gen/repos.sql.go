@@ -10,9 +10,9 @@ import (
 )
 
 const createRepo = `-- name: CreateRepo :one
-INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs
+INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label
 `
 
 type CreateRepoParams struct {
@@ -30,6 +30,7 @@ type CreateRepoParams struct {
 	IssueSyncGoneLabel            string  `json:"issue_sync_gone_label"`
 	IssueCommentSyncEnabled       int64   `json:"issue_comment_sync_enabled"`
 	MaxConcurrentRuns             *int64  `json:"max_concurrent_runs"`
+	IssueWritebackLabel           string  `json:"issue_writeback_label"`
 }
 
 func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, error) {
@@ -48,6 +49,7 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		arg.IssueSyncGoneLabel,
 		arg.IssueCommentSyncEnabled,
 		arg.MaxConcurrentRuns,
+		arg.IssueWritebackLabel,
 	)
 	var i Repo
 	err := row.Scan(
@@ -68,6 +70,7 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		&i.IssueSyncGoneLabel,
 		&i.IssueCommentSyncEnabled,
 		&i.MaxConcurrentRuns,
+		&i.IssueWritebackLabel,
 	)
 	return i, err
 }
@@ -82,7 +85,7 @@ func (q *Queries) DeleteRepo(ctx context.Context, id string) error {
 }
 
 const getRepo = `-- name: GetRepo :one
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs FROM repos WHERE id = ?
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label FROM repos WHERE id = ?
 `
 
 func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
@@ -106,12 +109,13 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 		&i.IssueSyncGoneLabel,
 		&i.IssueCommentSyncEnabled,
 		&i.MaxConcurrentRuns,
+		&i.IssueWritebackLabel,
 	)
 	return i, err
 }
 
 const listIssueSyncRepos = `-- name: ListIssueSyncRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
@@ -141,6 +145,7 @@ func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
 			&i.IssueSyncGoneLabel,
 			&i.IssueCommentSyncEnabled,
 			&i.MaxConcurrentRuns,
+			&i.IssueWritebackLabel,
 		); err != nil {
 			return nil, err
 		}
@@ -156,7 +161,7 @@ func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
 }
 
 const listRepos = `-- name: ListRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs FROM repos ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label FROM repos ORDER BY created_at DESC
 `
 
 func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
@@ -186,6 +191,7 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 			&i.IssueSyncGoneLabel,
 			&i.IssueCommentSyncEnabled,
 			&i.MaxConcurrentRuns,
+			&i.IssueWritebackLabel,
 		); err != nil {
 			return nil, err
 		}
@@ -219,9 +225,9 @@ func (q *Queries) SetRepoCloneStatus(ctx context.Context, arg SetRepoCloneStatus
 
 const updateRepo = `-- name: UpdateRepo :one
 UPDATE repos
-SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?, pr_review_auto_transition_enabled = ?, issue_sync_update_policy = ?, issue_sync_gone_action = ?, issue_sync_gone_label = ?, issue_comment_sync_enabled = ?, max_concurrent_runs = ?
+SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?, pr_review_auto_transition_enabled = ?, issue_sync_update_policy = ?, issue_sync_gone_action = ?, issue_sync_gone_label = ?, issue_comment_sync_enabled = ?, max_concurrent_runs = ?, issue_writeback_label = ?
 WHERE id = ?
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label
 `
 
 type UpdateRepoParams struct {
@@ -238,6 +244,7 @@ type UpdateRepoParams struct {
 	IssueSyncGoneLabel            string  `json:"issue_sync_gone_label"`
 	IssueCommentSyncEnabled       int64   `json:"issue_comment_sync_enabled"`
 	MaxConcurrentRuns             *int64  `json:"max_concurrent_runs"`
+	IssueWritebackLabel           string  `json:"issue_writeback_label"`
 	ID                            string  `json:"id"`
 }
 
@@ -256,6 +263,7 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		arg.IssueSyncGoneLabel,
 		arg.IssueCommentSyncEnabled,
 		arg.MaxConcurrentRuns,
+		arg.IssueWritebackLabel,
 		arg.ID,
 	)
 	var i Repo
@@ -277,6 +285,7 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		&i.IssueSyncGoneLabel,
 		&i.IssueCommentSyncEnabled,
 		&i.MaxConcurrentRuns,
+		&i.IssueWritebackLabel,
 	)
 	return i, err
 }

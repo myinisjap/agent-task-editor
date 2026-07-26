@@ -538,10 +538,17 @@ components:
             1 = status write-back to the source GitHub issue is enabled for
             this repo's imported tasks (requires remote_url; independent of
             issue_sync_enabled): comments on the issue when a task's PR
-            opens, applies the "agent-in-progress" label when a task first
-            leaves the workflow's human-gate label ("not_ready" in the default
-            workflow), and closes the issue with a comment when the
-            PR merges. 0 = off. See docs/task-sources.md.
+            opens, applies the issue_writeback_label (or the "agent-in-progress"
+            default) when a task first leaves the workflow's human-gate label
+            ("not_ready" in the default workflow), and closes the issue with a
+            comment when the PR merges. 0 = off. See docs/task-sources.md.
+        issue_writeback_label:
+          type: string
+          description: >
+            Label applied to the source GitHub issue when a task first leaves
+            the workflow's human-gate label. Empty (the default) falls back to
+            "agent-in-progress". The label must already exist on the GitHub
+            repo, or the write-back silently no-ops. See docs/task-sources.md.
         pr_review_auto_transition_enabled:
           type: integer
           description: >
@@ -2212,6 +2219,7 @@ paths:
                 issue_sync_enabled:  { type: boolean }
                 issue_sync_label:    { type: string }
                 issue_writeback_enabled: { type: boolean }
+                issue_writeback_label: { type: string }
                 pr_review_auto_transition_enabled: { type: boolean }
                 issue_sync_update_policy:
                   type: string
