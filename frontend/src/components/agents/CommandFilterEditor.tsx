@@ -1,4 +1,5 @@
 import Field from './Field'
+import { getCapability } from '../../lib/providerCapabilities'
 
 export default function CommandFilterEditor({ provider, allowlist, denylist, onAllowlistChange, onDenylistChange }: {
   provider: string
@@ -7,6 +8,9 @@ export default function CommandFilterEditor({ provider, allowlist, denylist, onA
   onAllowlistChange: (v: string) => void
   onDenylistChange: (v: string) => void
 }) {
+  const allowlistCap = getCapability(provider, 'commandAllowlist')
+  const denylistCap = getCapability(provider, 'commandDenylist')
+
   return (
     <>
       <Field label="Command allowlist (JSON array of glob patterns)" className="col-span-2">
@@ -20,12 +24,7 @@ export default function CommandFilterEditor({ provider, allowlist, denylist, onA
         <p className="mt-1 text-xs text-slate-500">
           If non-empty, only run_bash/Bash commands matching a pattern here are allowed. "*" is a wildcard.
           Best-effort string matching, not a sandbox.{' '}
-          {provider === 'opencode' && 'Not enforced for the opencode provider.'}
-          {provider === 'claude' &&
-            'Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist below instead.'}
-          {provider === 'gemini_cli' && 'Not enforced for the gemini_cli provider (no confirmed CLI allowlist flag).'}
-          {provider === 'codex_cli' &&
-            'Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md).'}
+          {allowlistCap.support !== 'full' && allowlistCap.note}
         </p>
       </Field>
 
@@ -39,11 +38,7 @@ export default function CommandFilterEditor({ provider, allowlist, denylist, onA
         />
         <p className="mt-1 text-xs text-slate-500">
           Commands matching any pattern here are always denied, checked before the allowlist.{' '}
-          {provider === 'opencode' && 'Not enforced for the opencode provider.'}
-          {provider === 'qwen_code' && 'Not enforced for the qwen_code provider (no confirmed CLI denylist flag).'}
-          {provider === 'gemini_cli' && 'Not enforced for the gemini_cli provider (no confirmed CLI denylist flag).'}
-          {provider === 'codex_cli' &&
-            'Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md).'}
+          {denylistCap.support !== 'full' && denylistCap.note}
         </p>
       </Field>
     </>

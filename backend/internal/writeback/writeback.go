@@ -22,9 +22,10 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
-// InProgressLabel is the fixed label applied to the source issue when an
-// imported task first leaves "not_ready". Not currently configurable — see
-// docs/task-sources.md for why a fixed default was chosen for v2.
+// InProgressLabel is the default label applied to the source issue when an
+// imported task first leaves "not_ready". Per-repo configurable via
+// repos.issue_writeback_label; this constant is the fallback used when that
+// column is empty. See docs/task-sources.md for the full behavior writeup.
 const InProgressLabel = "agent-in-progress"
 
 // MarkerComment is embedded (as an HTML comment, invisible when rendered) in
@@ -123,12 +124,13 @@ func eligible(task gen.Task, repo gen.Repo) (ghName string, issueNumber int, ok 
 	return ParseSourceRef(task.SourceRef)
 }
 
-// OnLeaveNotReady applies the InProgressLabel to the task's source issue the
-// first time the task moves off "not_ready". Best-effort: on a `gh` failure
-// this still marks the flag done rather than retrying forever, since this is
-// explicitly the "optional" signal (see docs/task-sources.md) and infinite
-// retry noise for a one-time cosmetic label is worse than an occasional miss
-// (e.g. the repo not having the label defined yet).
+// OnLeaveNotReady applies the repo's configured in-progress label (or
+// InProgressLabel if unset) to the task's source issue the first time the
+// task moves off "not_ready". Best-effort: on a `gh` failure this still
+// marks the flag done rather than retrying forever, since this is explicitly
+// the "optional" signal (see docs/task-sources.md) and infinite retry noise
+// for a one-time cosmetic label is worse than an occasional miss (e.g. the
+// repo not having the label defined yet).
 func (wb *Writeback) OnLeaveNotReady(ctx context.Context, task gen.Task, repo gen.Repo) {
 	log := slog.With("component", "writeback", "task_id", task.ID)
 	if task.WritebackInProgressSent != 0 {
@@ -138,8 +140,12 @@ func (wb *Writeback) OnLeaveNotReady(ctx context.Context, task gen.Task, repo ge
 	if !ok {
 		return
 	}
-	if err := wb.addLabel(ctx, ghName, issueNumber, InProgressLabel); err != nil {
-		log.Warn("writeback: add in-progress label failed", "ref", task.SourceRef, "err", err)
+	label := strings.TrimSpace(repo.IssueWritebackLabel)
+	if label == "" {
+		label = InProgressLabel
+	}
+	if err := wb.addLabel(ctx, ghName, issueNumber, label); err != nil {
+		log.Warn("writeback: add in-progress label failed", "ref", task.SourceRef, "label", label, "err", err)
 	}
 	if err := wb.q.SetTaskWritebackInProgress(ctx, task.ID); err != nil {
 		log.Warn("writeback: mark in-progress done failed", "err", err)

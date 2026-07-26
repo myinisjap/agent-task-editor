@@ -75,17 +75,33 @@ For per-provider deep-dives (credentials, tool availability, limitations, setup)
 
 A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`gemini_cli`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`).
 
+The table below is **generated** from [`frontend/src/lib/providerCapabilities.ts`](../frontend/src/lib/providerCapabilities.ts) — the same definition `AgentConfigForm`, `ProviderConfigForm`, and `CommandFilterEditor` read to surface these gaps inline in the UI at config time. Run `npm run gen:capability-docs` (from `frontend/`) after changing that file; do not hand-edit the table.
+
+Two rows below aren't config-gated capabilities (no corresponding form control) and are hand-maintained: **Repo-editing tools** and **`search`/grep-style tool**.
+
 | Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` | `llm` | `opencode` |
 |---|---|---|---|---|---|---|---|
-| Task-editor tools (5: transitions, complete, request-human, notes, store-info) | ✅ MCP | ✅ MCP | ✅ MCP | ✅ MCP | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | ❌ text marker only (`OUTCOME: success`/`failure`) |
 | Repo-editing tools | ✅ full CLI toolset | ✅ own CLI toolset | ✅ own CLI toolset | ✅ own CLI toolset | ⚠️ `read_file`/`write_file`/`str_replace`/`list_files`/`list_dir`/`search`/`run_bash` | ⚠️ same as `anthropic` | ✅ own (outside our control) |
 | `search`/grep-style tool | via CLI's own tools | via CLI's own tools | via CLI's own tools | via CLI's own tools | ✅ `search` (ripgrep-backed) | ✅ `search` (ripgrep-backed) | via CLI's own tools |
-| Command allowlist / denylist | ✅ / ✅ | ✅ / ❌ | ❌ / ❌ | ❌ / ❌ (native sandbox instead) | ✅ / ✅ (Go) | ✅ / ✅ (Go) | ❌ / ❌ |
-| Cost & tokens | ✅ authoritative | ✅ authoritative | ⚠️ tokens only, no cost | ⚠️ tokens only, no cost | ⚠️ estimated (pricing table) | ⚠️ estimated (pricing table) | ❌ zero (not exposed by CLI) |
-| Image attachments | ✅ `--image` | ❌ (CLI gap) | — (see provider doc) | — (see provider doc) | ❌ (not yet implemented) | ❌ (not yet implemented, backend-dependent) | ❌ |
-| Plugins + user MCP servers | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `max_turns` | ✅ | ✅ | ✅ | ✅ | ✅ (loop) | ✅ (loop) | ❌ not enforced |
-| Session resume | ✅ `session_id` + `--resume` | ⚠️ session recorded, not resumed (no verified CLI flag) | ⚠️ thread id recorded, not resumed | ⚠️ thread id recorded, not resumed | ✅ achievable (persist messages) — not yet implemented | ✅ achievable (persist messages) — not yet implemented | ❓ unverified |
+
+<!-- BEGIN capability-matrix (generated) -->
+
+_Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capability-docs` — do not hand-edit._
+
+| Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` | `llm` | `opencode` |
+|---|---|---|---|---|---|---|---|
+| Task-editor tools (5: transitions, complete, request-human, notes, store-info) | ✅ All 5 task-editor tools via the MCP sidecar. | ✅ All 5 task-editor tools via the MCP sidecar. | ✅ All 5 task-editor tools via the MCP sidecar. | ✅ All 5 task-editor tools via the MCP sidecar. | ⚠️ 4 of 5 native task-editor tools (no resolve_comment/create_subtask). | ⚠️ 4 of 5 native task-editor tools (no resolve_comment/create_subtask). | ❌ No MCP tools — relies on a text OUTCOME: success/failure marker instead of task-editor tool calls. |
+| Label / workflow transitions | ✅ | ✅ | ✅ | ✅ | ✅ signal_complete implemented natively. | ✅ signal_complete implemented natively. | ❌ Cannot signal workflow transitions via MCP tools; tasks handled by this agent may not move to the next label automatically. |
+| Plugins + user MCP servers | ✅ Supports Claude plugins and user-level MCP servers. | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ MCP servers / plugins are not supported by the opencode provider. |
+| Command allowlist | ⚠️ Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist instead. | ✅ | ❌ Not enforced for the gemini_cli provider (no confirmed CLI allowlist flag). | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
+| Command denylist | ✅ | ❌ Not enforced for the qwen_code provider (no confirmed CLI denylist flag). | ❌ Not enforced for the gemini_cli provider (no confirmed CLI denylist flag). | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
+| Cost & tokens | ✅ Authoritative cost and token counts. | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Estimated from a pricing table, not authoritative. | ⚠️ Estimated from a pricing table, not authoritative. | ❌ Cost is not exposed by the CLI — a cost budget cap will not fire for this provider. |
+| Image attachments | ✅ Supported via --image. | ❌ CLI gap. | ❌ See docs/providers/gemini_cli.md. | ❌ See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ |
+| `max_turns` | ✅ | ✅ | ✅ | ✅ | ✅ Enforced via the tool-use loop. | ✅ Enforced via the tool-use loop. | ❌ Not enforced. |
+| Session resume | ✅ session_id + --resume. | ⚠️ Session recorded, not resumed (no verified CLI flag). | ⚠️ Thread id recorded, not resumed. | ⚠️ Thread id recorded, not resumed. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Unverified. |
+| Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |
+
+<!-- END capability-matrix (generated) -->
 
 Notes:
 - `anthropic`/`llm` gained `get_task_transitions`, `list_dir`, `search`, and `str_replace` as native tools; `signal_complete` now takes `outcome: "success"|"failure"` — identical to the MCP version (previously it took a raw `next_label`, which was a bug: the schema advertised `next_label` but the implementation always read `outcome`, silently dropping the model's completion signal).

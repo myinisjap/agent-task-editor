@@ -2750,6 +2750,7 @@ export interface paths {
                         issue_sync_enabled?: boolean;
                         issue_sync_label?: string;
                         issue_writeback_enabled?: boolean;
+                        issue_writeback_label?: string;
                         pr_review_auto_transition_enabled?: boolean;
                         /** @enum {string} */
                         issue_sync_update_policy?: "gate" | "always" | "never";
@@ -3927,8 +3928,10 @@ export interface components {
             issue_sync_enabled?: number;
             /** @description Only import issues carrying this label (empty = all open issues). */
             issue_sync_label?: string;
-            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the "agent-in-progress" label when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
+            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the issue_writeback_label (or the "agent-in-progress" default) when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
             issue_writeback_enabled?: number;
+            /** @description Label applied to the source GitHub issue when a task first leaves the workflow's human-gate label. Empty (the default) falls back to "agent-in-progress". The label must already exist on the GitHub repo, or the write-back silently no-ops. See docs/task-sources.md. */
+            issue_writeback_label?: string;
             /** @description 1 = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. 0 = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
             pr_review_auto_transition_enabled?: number;
             /**

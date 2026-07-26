@@ -12,7 +12,8 @@
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps chromium",
-    "gen:api": "openapi-typescript ../openapi.yaml -o src/api/types.ts"
+    "gen:api": "openapi-typescript ../openapi.yaml -o src/api/types.ts",
+    "gen:capability-docs": "node ../scripts/gen-capability-docs.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

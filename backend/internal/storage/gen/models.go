@@ -118,6 +118,7 @@ type Repo struct {
 	IssueSyncGoneAction           string    `json:"issue_sync_gone_action"`
 	IssueSyncGoneLabel            string    `json:"issue_sync_gone_label"`
 	IssueCommentSyncEnabled       int64     `json:"issue_comment_sync_enabled"`
+	IssueWritebackLabel           string    `json:"issue_writeback_label"`
 }
 
 type Task struct {

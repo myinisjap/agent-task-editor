@@ -53,6 +53,21 @@ triggers the "Release" workflow the same way.
   Comments this system posted itself are filtered out, so an agent never reads
   its own "PR opened" notice back as human input.
 - `GET /tasks/{id}/source-comments` returns a task's ingested issue thread.
+- **Per-repo configurable issue write-back label.** The label applied to a
+  task's source GitHub issue when it first leaves the workflow's human-gate
+  label was previously a fixed `agent-in-progress`. It's now configurable via
+  `repos.issue_writeback_label` (the "In-progress label" field on the Repos
+  page, under "Issue write-back"); leaving it blank preserves the previous
+  `agent-in-progress` default. The label — default or custom — still must
+  already exist on the GitHub repo, or the write-back silently no-ops.
+- **Provider capability gaps surfaced inline at config time.** `AgentConfigForm`
+  and `ProviderConfigForm` now flag unsupported options for the selected
+  provider (MCP servers/plugins, subtasks, session resume, cost tracking,
+  label transitions, command allow/denylist enforcement) instead of silently
+  hiding controls or letting a misconfigured agent fail at run time. The
+  capability data lives in `frontend/src/lib/providerCapabilities.ts`, the
+  single source of truth also used to keep `docs/agents.md`'s capability
+  matrix in sync.
 
 ### Fixed
 - **The GitHub issue fetch no longer silently truncates at 200 issues.** It now

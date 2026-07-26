@@ -622,6 +622,68 @@ func TestReposUpdate_IssueWritebackRoundTrip(t *testing.T) {
 	}
 }
 
+// TestReposUpdate_IssueWritebackLabelRoundTrip verifies issue_writeback_label
+// round-trips through create + PATCH, survives an unrelated PATCH, and that
+// omitting it on create defaults to "" (which writeback.go falls back from).
+func TestReposUpdate_IssueWritebackLabelRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo2")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":                  "myorg/myrepo2",
+		"path":                  repoDir,
+		"remote_url":            "https://github.com/myorg/myrepo2",
+		"issue_writeback_label": "wip",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+	if got := repo["issue_writeback_label"]; got != "wip" {
+		t.Errorf("issue_writeback_label after create = %v, want %q", got, "wip")
+	}
+
+	// A PATCH that doesn't mention the field must not reset it.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed2"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_writeback_label"]; got != "wip" {
+		t.Errorf("issue_writeback_label after unrelated patch = %v, want %q", got, "wip")
+	}
+
+	// PATCH can change it to a different label.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"issue_writeback_label": "in progress"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch 2: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_writeback_label"]; got != "in progress" {
+		t.Errorf("issue_writeback_label after patch = %v, want %q", got, "in progress")
+	}
+
+	// PATCH can clear it back to "" (default).
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"issue_writeback_label": ""})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch 3: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["issue_writeback_label"]; got != "" {
+		t.Errorf("issue_writeback_label after clearing = %v, want empty", got)
+	}
+}
+
 // TestReposCreate_PrReviewAutoTransitionRequiresRemote verifies that enabling
 // PR-review auto-transition without a GitHub remote_url is rejected, mirroring
 // TestReposCreate_IssueWritebackRequiresRemote.

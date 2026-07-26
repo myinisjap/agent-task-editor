@@ -201,6 +201,7 @@ to check the board.
 | Repo field | Meaning |
 |---|---|
 | `issue_writeback_enabled` | `1` to turn write-back on for this repo's imported tasks |
+| `issue_writeback_label` | Label applied when a task first leaves the human-gate label. Empty (default) = `agent-in-progress`. Must already exist on the GitHub repo. |
 
 Only one prerequisite is enforced when enabling write-back:
 
@@ -230,16 +231,18 @@ the human clicking a button or blocking a background sweep.
 1. **Task leaves the human-gate label** (optional intermediate signal) — the
    first time a task's label moves off the workflow's human-gate label (the
    lowest `sort_order` `agent_ignore` label — `not_ready` in the default
-   workflow), agent- or human-triggered, the source issue gets an
-   `agent-in-progress` label via
-   `gh issue edit --add-label agent-in-progress`. This label name is
-   currently **fixed, not configurable** per repo; a future request could add
-   a per-repo custom label field, but v2 ships a sensible default. If the
-   repo doesn't already have an `agent-in-progress` label defined, the `gh`
-   call fails — this is logged and ignored, and (unlike the two triggers
-   below) is **not retried**: this is explicitly the optional signal, and
-   retrying a call that's already failed on every future sweep/transition
-   forever is worse than an occasional missed label.
+   workflow), agent- or human-triggered, the source issue gets a label via
+   `gh issue edit --add-label <label>`. The label is **configurable per
+   repo** via `repos.issue_writeback_label` (`PATCH /repos/{id}` with
+   `{"issue_writeback_label": "..."}`, or the "In-progress label" field on
+   the Repos page under the "Issue write-back" checkbox); an unset/blank
+   value falls back to the default `agent-in-progress`
+   (`writeback.InProgressLabel`). Either way, the label — default or
+   custom — **must already exist on the GitHub repo**: if it doesn't, the
+   `gh` call fails — this is logged and ignored, and (unlike the two
+   triggers below) is **not retried**: this is explicitly the optional
+   signal, and retrying a call that's already failed on every future
+   sweep/transition forever is worse than an occasional missed label.
 2. **PR opened** — the first time a task gets a non-empty `pr_url`, the
    source issue gets a comment linking the PR
    (`gh issue comment --body "..."`).
