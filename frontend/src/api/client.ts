@@ -29,6 +29,7 @@ export type ModelList = Schemas['ModelList']
 export type ClaudeOptions = Schemas['ClaudeOptions']
 export type Repo = Schemas['Repo']
 export type ReviewComment = Schemas['ReviewComment']
+export type TaskSourceComment = Schemas['TaskSourceComment']
 export type AgentRun = Schemas['AgentRun']
 // Named *Entry historically; the schema is TaskLabelHistory.
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
@@ -216,6 +217,11 @@ export const api = {
     // listLabelHistory returns the task's label-transition audit trail
     // (oldest first), including the resolved actor for human transitions.
     listLabelHistory: (id: string) => request<TaskLabelHistoryEntry[]>(`/tasks/${id}/label-history`),
+    // sourceComments returns the comment thread ingested from the task's
+    // source item (e.g. its GitHub issue), oldest first. Empty when the repo
+    // hasn't opted into issue_comment_sync_enabled or nothing's been
+    // ingested yet.
+    sourceComments: (id: string) => request<TaskSourceComment[]>(`/tasks/${id}/source-comments`),
     // cancelRun signals an in-flight run to stop. The pool marks the run
     // "cancelled" and pauses the task asynchronously, then broadcasts
     // task.agent_done, so callers rely on the WS event rather than the response.
@@ -311,9 +317,9 @@ export const api = {
   repos: {
     list: () => request<Repo[]>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; pr_review_auto_transition_enabled?: boolean }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; pr_review_auto_transition_enabled?: boolean }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean }) =>
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),

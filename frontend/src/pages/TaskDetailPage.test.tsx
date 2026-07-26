@@ -18,6 +18,7 @@ vi.mock('../api/client', async () => {
         get: vi.fn(),
         runs: vi.fn(),
         listLabelHistory: vi.fn().mockResolvedValue([]),
+        sourceComments: vi.fn().mockResolvedValue([]),
         subtasks: vi.fn().mockResolvedValue([]),
         dependencies: vi.fn().mockResolvedValue({ blocked_by: [], blocking: [], blocked_by_count: 0, blocking_count: 0 }),
         reviewComments: vi.fn().mockResolvedValue([]),
@@ -108,6 +109,7 @@ describe('TaskDetailPage tab switching', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.tasks.listLabelHistory).mockResolvedValue([])
+    vi.mocked(api.tasks.sourceComments).mockResolvedValue([])
     vi.mocked(api.tasks.subtasks).mockResolvedValue([])
     vi.mocked(api.tasks.dependencies).mockResolvedValue({ blocked_by: [], blocking: [], blocked_by_count: 0, blocking_count: 0 })
     vi.mocked(api.tasks.reviewComments).mockResolvedValue([])

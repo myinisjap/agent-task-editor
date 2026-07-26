@@ -45,6 +45,9 @@ export type WSEvent =
   | { type: 'task.created'; payload: Pick<Task, 'id' | 'title' | 'label' | 'repo_id' | 'source' | 'source_ref'> }
   | { type: 'task.updated'; payload: Task }
   | { type: 'task.subtask_conflict'; payload: { task_id: string; parent_id: string; files: string[] } }
+  // Emitted by the GitHub Issues importer when it ingests a new comment from
+  // a task's source issue thread (see GET /tasks/{id}/source-comments).
+  | { type: 'task.source_comment_added'; payload: { task_id: string; comment_id: string } }
 
 type Handler = (event: WSEvent) => void
 

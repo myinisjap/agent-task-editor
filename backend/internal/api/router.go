@@ -194,6 +194,9 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Label history — audit trail of transitions (who/what triggered them)
 			r.Get("/tasks/{id}/label-history", tasksH.ListLabelHistory)
 
+			// Ingested source-issue comment thread (see tasksource.Importer)
+			r.Get("/tasks/{id}/source-comments", tasksH.ListSourceComments)
+
 			// Mints a short-lived, single-use ticket for authenticating the
 			// WebSocket upgrade (GET /ws?ticket=...) without putting the
 			// long-lived API token in the URL. Bearer-gated: minting a ticket
