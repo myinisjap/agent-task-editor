@@ -27,11 +27,13 @@ import (
 // docs/task-sources.md for why a fixed default was chosen for v2.
 const InProgressLabel = "agent-in-progress"
 
-// markerComment is embedded (as an HTML comment, invisible when rendered) in
+// MarkerComment is embedded (as an HTML comment, invisible when rendered) in
 // every comment/close body this package posts, purely so a human glancing at
 // the issue can tell an agent-task-editor write-back apart from their own
 // comments. It plays no role in idempotency — that's tracked in the DB.
-const markerComment = "<!-- agent-task-editor:writeback -->"
+// Exported so the issue-sync importer can filter this system's own
+// write-back comments out of the ingested comment thread.
+const MarkerComment = "<!-- agent-task-editor:writeback -->"
 
 // querier is the subset of *gen.Queries the writeback package needs. Kept
 // narrow so tests can substitute a real sqlite-backed *gen.Queries without
@@ -158,7 +160,7 @@ func (wb *Writeback) OnPROpened(ctx context.Context, task gen.Task, repo gen.Rep
 	if !ok {
 		return
 	}
-	body := fmt.Sprintf("%s\nA pull request has been opened for this issue: %s", markerComment, task.PrUrl)
+	body := fmt.Sprintf("%s\nA pull request has been opened for this issue: %s", MarkerComment, task.PrUrl)
 	if err := wb.commentOnIssue(ctx, ghName, issueNumber, body); err != nil {
 		log.Warn("writeback: PR-opened comment failed", "ref", task.SourceRef, "err", err)
 		return
@@ -181,7 +183,7 @@ func (wb *Writeback) OnPRMerged(ctx context.Context, task gen.Task, repo gen.Rep
 	if !ok {
 		return
 	}
-	body := fmt.Sprintf("%s\nClosing — the pull request for this issue has merged: %s", markerComment, task.PrUrl)
+	body := fmt.Sprintf("%s\nClosing — the pull request for this issue has merged: %s", MarkerComment, task.PrUrl)
 	if err := wb.closeWithComment(ctx, ghName, issueNumber, body); err != nil {
 		log.Warn("writeback: PR-merged close failed", "ref", task.SourceRef, "err", err)
 		return

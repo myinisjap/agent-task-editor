@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -361,53 +362,125 @@ type Issue struct {
 	Labels []string // label names only
 }
 
-// ListOpenIssues returns open issues for the given repo (org/repo format),
-// optionally filtered to issues carrying the given label (empty = all open
-// issues). Pull requests are never included — `gh issue list` excludes them.
+// ListOpenIssues returns every open issue for the given repo (org/repo
+// format), optionally filtered to issues carrying the given label (empty =
+// all open issues). Pull requests are never included: the REST /issues
+// endpoint returns both issues and PRs, so any element carrying a non-null
+// pull_request field is skipped, matching `gh issue list`'s behavior of
+// excluding PRs.
+//
+// Uses `gh api ... --paginate` rather than `gh issue list --limit N` so the
+// result is never silently truncated (see issue #265) — reconciliation of
+// disappeared issues depends on the fetch being complete.
 func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error) {
-	args := []string{"issue", "list",
-		"--repo", repoName,
-		"--state", "open",
-		"--json", "number,title,body,url,labels",
-		"--limit", "200",
-	}
+	q := url.Values{}
+	q.Set("state", "open")
+	q.Set("per_page", "100")
 	if label != "" {
-		args = append(args, "--label", label)
+		q.Set("labels", label)
 	}
+	path := fmt.Sprintf("repos/%s/issues?%s", repoName, q.Encode())
+
 	metrics.GhCallsTotal.WithLabelValues("issue_list").Inc()
-	out, err := runGH(ctx, args...).Output()
+	out, err := runGH(ctx, "api", path, "--paginate").Output()
 	if err != nil {
 		return nil, err
 	}
 
-	var raw []struct {
-		Number int    `json:"number"`
-		Title  string `json:"title"`
-		Body   string `json:"body"`
-		URL    string `json:"url"`
-		Labels []struct {
-			Name string `json:"name"`
-		} `json:"labels"`
+	// --paginate concatenates one JSON array per page back-to-back rather than
+	// merging them into a single array, so decode with a streaming decoder that
+	// consumes each array in turn (mirrors GetPRReviewComments below).
+	dec := json.NewDecoder(strings.NewReader(string(out)))
+	var issues []Issue
+	for dec.More() {
+		var page []struct {
+			Number      int    `json:"number"`
+			Title       string `json:"title"`
+			Body        string `json:"body"`
+			HTMLURL     string `json:"html_url"`
+			PullRequest *struct {
+				URL string `json:"url"`
+			} `json:"pull_request"`
+			Labels []struct {
+				Name string `json:"name"`
+			} `json:"labels"`
+		}
+		if err := dec.Decode(&page); err != nil {
+			return nil, err
+		}
+		for _, r := range page {
+			if r.PullRequest != nil {
+				// The REST /issues endpoint also returns pull requests; skip them
+				// so behavior matches `gh issue list`, which excludes PRs. Without
+				// this, PRs would start getting imported as tasks.
+				continue
+			}
+			labels := make([]string, 0, len(r.Labels))
+			for _, l := range r.Labels {
+				labels = append(labels, l.Name)
+			}
+			issues = append(issues, Issue{
+				Number: r.Number,
+				Title:  r.Title,
+				Body:   r.Body,
+				URL:    r.HTMLURL,
+				Labels: labels,
+			})
+		}
 	}
-	if err := json.Unmarshal(out, &raw); err != nil {
+	return issues, nil
+}
+
+// IssueComment is a single comment on a GitHub issue (not a PR review
+// comment — see PRReviewComment).
+type IssueComment struct {
+	ID                string // GitHub comment id, stringified
+	Author            string // user.login
+	AuthorAssociation string // OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR | NONE ...
+	Body              string
+	CreatedAt         string // RFC3339, as returned by GitHub
+}
+
+// GetIssueComments returns every comment on the given issue, in the order
+// GitHub returns them (oldest first). Paginates through the full result set.
+func GetIssueComments(ctx context.Context, repoName string, issueNumber int) ([]IssueComment, error) {
+	metrics.GhCallsTotal.WithLabelValues("issue_comments").Inc()
+	cmd := runGH(ctx, "api",
+		fmt.Sprintf("repos/%s/issues/%d/comments", repoName, issueNumber),
+		"--paginate",
+	)
+	out, err := cmd.Output()
+	if err != nil {
 		return nil, err
 	}
 
-	issues := make([]Issue, 0, len(raw))
-	for _, r := range raw {
-		labels := make([]string, 0, len(r.Labels))
-		for _, l := range r.Labels {
-			labels = append(labels, l.Name)
+	// Same --paginate concatenation caveat as GetPRReviewComments/ListOpenIssues.
+	dec := json.NewDecoder(strings.NewReader(string(out)))
+	var comments []IssueComment
+	for dec.More() {
+		var page []struct {
+			ID                int64  `json:"id"`
+			Body              string `json:"body"`
+			AuthorAssociation string `json:"author_association"`
+			User              struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			CreatedAt string `json:"created_at"`
 		}
-		issues = append(issues, Issue{
-			Number: r.Number,
-			Title:  r.Title,
-			Body:   r.Body,
-			URL:    r.URL,
-			Labels: labels,
-		})
+		if err := dec.Decode(&page); err != nil {
+			return nil, err
+		}
+		for _, c := range page {
+			comments = append(comments, IssueComment{
+				ID:                fmt.Sprint(c.ID),
+				Author:            c.User.Login,
+				AuthorAssociation: c.AuthorAssociation,
+				Body:              c.Body,
+				CreatedAt:         c.CreatedAt,
+			})
+		}
 	}
-	return issues, nil
+	return comments, nil
 }
 
 // AddIssueLabel adds a label to a GitHub issue via the gh CLI. Used by the
