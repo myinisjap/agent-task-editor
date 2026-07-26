@@ -119,6 +119,7 @@ type Repo struct {
 	IssueSyncGoneLabel            string    `json:"issue_sync_gone_label"`
 	IssueCommentSyncEnabled       int64     `json:"issue_comment_sync_enabled"`
 	MaxConcurrentRuns             *int64    `json:"max_concurrent_runs"`
+	IssueWritebackLabel           string    `json:"issue_writeback_label"`
 }
 
 type Task struct {

@@ -81,8 +81,31 @@ triggers the "Release" workflow the same way.
   Comments this system posted itself are filtered out, so an agent never reads
   its own "PR opened" notice back as human input.
 - `GET /tasks/{id}/source-comments` returns a task's ingested issue thread.
+- **Per-repo configurable issue write-back label.** The label applied to a
+  task's source GitHub issue when it first leaves the workflow's human-gate
+  label was previously a fixed `agent-in-progress`. It's now configurable via
+  `repos.issue_writeback_label` (the "In-progress label" field on the Repos
+  page, under "Issue write-back"); leaving it blank preserves the previous
+  `agent-in-progress` default. The label — default or custom — still must
+  already exist on the GitHub repo, or the write-back silently no-ops.
+- **Provider capability gaps surfaced inline at config time.** `AgentConfigForm`
+  and `ProviderConfigForm` now flag unsupported options for the selected
+  provider (MCP servers/plugins, subtasks, session resume, cost tracking,
+  label transitions, command allow/denylist enforcement) instead of silently
+  hiding controls or letting a misconfigured agent fail at run time. The
+  capability data lives in `frontend/src/lib/providerCapabilities.ts`, the
+  single source of truth also used to keep `docs/agents.md`'s capability
+  matrix in sync.
 
 ### Fixed
+- **Two-column forms no longer collapse into overlapping, unreadable fields on
+  mobile.** The Agent config, Provider config, Templates, and schedule forms use
+  a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded
+  `col-span-2`. At mobile widths that spanned a second column the grid didn't
+  have, so CSS created an implicit one: the single-width fields were crushed
+  into a sliver of the first track while their labels overlapped each other and
+  hint text wrapped one word per line. Those rows are now `sm:col-span-2`, so
+  everything stacks in a single full-width column below the `sm` breakpoint.
 - **The GitHub issue fetch no longer silently truncates at 200 issues.** It now
   paginates the full result set. Beyond dropping issues outright on busy repos,
   the cap would have made the new reconciliation mistake a truncated page for a

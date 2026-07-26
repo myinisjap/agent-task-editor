@@ -162,7 +162,7 @@ export default function TemplatesPage() {
                 <option value="spike">spike</option>
               </select>
             </div>
-            <div className="flex flex-col gap-1.5 col-span-2">
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
               <label className="text-xs font-medium text-slate-400">Task title</label>
               <input
                 value={form.title}
@@ -171,7 +171,7 @@ export default function TemplatesPage() {
                 className={inputCls}
               />
             </div>
-            <div className="flex flex-col gap-1.5 col-span-2">
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
               <label className="text-xs font-medium text-slate-400">Task description</label>
               <textarea
                 value={form.description}
@@ -263,7 +263,7 @@ export default function TemplatesPage() {
                         <option value="spike">spike</option>
                       </select>
                     </div>
-                    <div className="flex flex-col gap-1.5 col-span-2">
+                    <div className="flex flex-col gap-1.5 sm:col-span-2">
                       <label className="text-xs font-medium text-slate-400">Task title</label>
                       <input
                         value={editForm.title}
@@ -271,7 +271,7 @@ export default function TemplatesPage() {
                         className={inputCls}
                       />
                     </div>
-                    <div className="flex flex-col gap-1.5 col-span-2">
+                    <div className="flex flex-col gap-1.5 sm:col-span-2">
                       <label className="text-xs font-medium text-slate-400">Task description</label>
                       <textarea
                         value={editForm.description}

@@ -72,6 +72,7 @@ type createRepoBody struct {
 	IssueSyncEnabled              bool    `json:"issue_sync_enabled"`
 	IssueSyncLabel                string  `json:"issue_sync_label"`
 	IssueWritebackEnabled         bool    `json:"issue_writeback_enabled"`
+	IssueWritebackLabel           string  `json:"issue_writeback_label"`
 	PrReviewAutoTransitionEnabled bool    `json:"pr_review_auto_transition_enabled"`
 	IssueSyncUpdatePolicy         string  `json:"issue_sync_update_policy"`
 	IssueSyncGoneAction           string  `json:"issue_sync_gone_action"`
@@ -175,6 +176,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueSyncEnabled:              issueSyncEnabled,
 		IssueSyncLabel:                strings.TrimSpace(body.IssueSyncLabel),
 		IssueWritebackEnabled:         issueWritebackEnabled,
+		IssueWritebackLabel:           strings.TrimSpace(body.IssueWritebackLabel),
 		PrReviewAutoTransitionEnabled: prReviewAutoTransitionEnabled,
 		IssueSyncUpdatePolicy:         issueSyncUpdatePolicy,
 		IssueSyncGoneAction:           issueSyncGoneAction,
@@ -462,6 +464,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncEnabled              *bool   `json:"issue_sync_enabled"`
 		IssueSyncLabel                *string `json:"issue_sync_label"`
 		IssueWritebackEnabled         *bool   `json:"issue_writeback_enabled"`
+		IssueWritebackLabel           *string `json:"issue_writeback_label"`
 		PrReviewAutoTransitionEnabled *bool   `json:"pr_review_auto_transition_enabled"`
 		IssueSyncUpdatePolicy         *string `json:"issue_sync_update_policy"`
 		IssueSyncGoneAction           *string `json:"issue_sync_gone_action"`
@@ -541,6 +544,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if *body.IssueWritebackEnabled {
 			issueWritebackEnabled = 1
 		}
+	}
+
+	issueWritebackLabel := existing.IssueWritebackLabel
+	if body.IssueWritebackLabel != nil {
+		issueWritebackLabel = strings.TrimSpace(*body.IssueWritebackLabel)
 	}
 
 	prReviewAutoTransitionEnabled := existing.PrReviewAutoTransitionEnabled
@@ -670,6 +678,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncEnabled:              issueSyncEnabled,
 		IssueSyncLabel:                issueSyncLabel,
 		IssueWritebackEnabled:         issueWritebackEnabled,
+		IssueWritebackLabel:           issueWritebackLabel,
 		PrReviewAutoTransitionEnabled: prReviewAutoTransitionEnabled,
 		IssueSyncUpdatePolicy:         issueSyncUpdatePolicy,
 		IssueSyncGoneAction:           issueSyncGoneAction,
