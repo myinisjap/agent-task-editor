@@ -100,7 +100,15 @@ func (GitHubIssues) FetchComments(ctx context.Context, repo gen.Repo, ref string
 	if err != nil {
 		return nil, fmt.Errorf("get issue comments for %s: %w", ref, err)
 	}
+	return mapIssueComments(comments), nil
+}
 
+// mapIssueComments converts ghclient.IssueComment values into
+// ExternalComment, applying the write-access-only trust classification and
+// dropping this system's own write-back marker comments. Split out from
+// FetchComments so the classification logic is unit-testable without
+// shelling out to `gh`.
+func mapIssueComments(comments []ghclient.IssueComment) []ExternalComment {
 	out := make([]ExternalComment, 0, len(comments))
 	for _, c := range comments {
 		if strings.Contains(c.Body, writeback.MarkerComment) {
@@ -119,5 +127,5 @@ func (GitHubIssues) FetchComments(ctx context.Context, repo gen.Repo, ref string
 			TrustedAuthor: trusted,
 		})
 	}
-	return out, nil
+	return out
 }
