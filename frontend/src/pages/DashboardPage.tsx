@@ -185,7 +185,7 @@ export default function DashboardPage() {
           <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
             Active agents ({dash.active_agents.length})
           </h2>
-          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-hidden">
+          <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-slate-500 border-b border-slate-800">

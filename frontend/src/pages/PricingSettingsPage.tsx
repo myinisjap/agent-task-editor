@@ -130,7 +130,7 @@ export default function PricingSettingsPage() {
         <div className="text-sm text-slate-500">Loading…</div>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-[1fr_140px_140px_auto] gap-2 text-xs text-slate-500 px-1">
+          <div className="grid grid-cols-[1fr_88px_88px_auto] sm:grid-cols-[1fr_140px_140px_auto] gap-2 text-xs text-slate-500 px-1">
             <span>Model</span>
             <span>Input $/1M</span>
             <span>Output $/1M</span>
@@ -138,7 +138,7 @@ export default function PricingSettingsPage() {
           </div>
 
           {rows.map((row, i) => (
-            <div key={i} className="grid grid-cols-[1fr_140px_140px_auto] gap-2 items-center">
+            <div key={i} className="grid grid-cols-[1fr_88px_88px_auto] sm:grid-cols-[1fr_140px_140px_auto] gap-2 items-center">
               <input
                 type="text"
                 value={row.model}

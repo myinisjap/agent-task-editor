@@ -170,7 +170,7 @@ export default function ReposPage() {
         >
           <h2 className="text-sm font-semibold text-slate-200">New Repo</h2>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-slate-400">
                 Name <span className="text-slate-600">(auto-filled from GitHub URL)</span>
@@ -356,7 +356,7 @@ export default function ReposPage() {
                 >
                   <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Edit Repo</h3>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-medium text-slate-400">Name</label>
                       <input

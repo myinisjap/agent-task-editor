@@ -28,6 +28,14 @@ triggers the "Release" workflow the same way.
   backdrop, or pressing Escape.
 
 ### Changed
+- **Further mobile layout fixes across the app.** The Workflow page now stacks
+  the flowchart preview and YAML editor vertically (instead of side by side)
+  on narrow screens, and its legend wraps instead of overflowing. The Repo,
+  Template, Agent, Provider, and Schedule forms now collapse their two-column
+  field grids to a single column on narrow screens. The Model Pricing table
+  narrows its price columns on mobile so the model name field stays usable.
+  The Overview page's "Active agents" table now scrolls horizontally on
+  mobile instead of clipping its content.
 - **Repo Workflow field is now scoped to GitHub issue import.** Since a task's
   workflow is chosen per task, the repo's `workflow_id` is only still used by
   issue import (and scheduled tasks), so the Workflow picker on the Add/Edit

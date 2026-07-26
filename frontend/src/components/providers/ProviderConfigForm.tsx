@@ -40,7 +40,7 @@ export default function ProviderConfigForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-5 max-w-2xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-2xl">
         <Field label="Name" className="col-span-2">
           <input
             value={form.name}

@@ -315,9 +315,9 @@ export default function WorkflowPage() {
       ) : (
         <>
           {/* Split pane: flowchart left, YAML editor right */}
-          <div className="flex-1 p-4 min-h-0 flex gap-4 overflow-hidden">
+          <div className="flex-1 p-4 min-h-0 flex flex-col md:flex-row gap-4 overflow-auto md:overflow-hidden">
             {/* Left: Flowchart */}
-            <div className="flex-1 min-w-0 flex flex-col gap-1">
+            <div className="flex-1 min-w-0 min-h-[40vh] md:min-h-0 flex flex-col gap-1">
               <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">
                 Visual Preview
                 <span className="ml-1 normal-case font-normal">(reflects last saved state)</span>
@@ -328,7 +328,7 @@ export default function WorkflowPage() {
             </div>
 
             {/* Right: YAML Editor */}
-            <div className="flex-1 min-w-0 flex flex-col gap-1">
+            <div className="flex-1 min-w-0 min-h-[40vh] md:min-h-0 flex flex-col gap-1">
               <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">YAML Editor</span>
               <textarea
                 value={yaml}
@@ -350,7 +350,7 @@ export default function WorkflowPage() {
           </div>
 
           {/* Legend */}
-          <div className="flex items-center gap-6 px-6 py-2 border-t border-slate-800 flex-shrink-0">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2 border-t border-slate-800 flex-shrink-0">
             <span className="text-xs text-slate-500">Legend:</span>
             <div className="flex items-center gap-1.5">
               <svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#22c55e" strokeWidth="2" markerEnd="url(#arrow)" /></svg>
