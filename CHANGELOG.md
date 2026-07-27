@@ -310,6 +310,21 @@ triggers the "Release" workflow the same way.
     mode) and fixed the errors it surfaced, including a task-card priority
     `<select>` that could cast an invalid value straight into `Task['priority']`.
 
+### Deprecated
+- **The `anthropic` and `llm` providers are disabled for new/updated provider
+  configs and may be removed in a future release.** Both run on a
+  hand-maintained Go tool-use loop (rather than a vendor CLI) with permanent
+  parity gaps — no `resolve_comment`/`create_subtask`, no MCP servers, no
+  session resume, no image attachments, and cost estimated from a pricing
+  table instead of reported. Neither is offered in the provider dropdown
+  anymore, and `POST`/`PATCH` of a provider config using either now returns
+  `400`. Existing provider/agent configs already on `anthropic` or `llm`
+  keep dispatching and running exactly as before — nothing changes for them.
+  The `openai` dropdown option (a dead alias for the same `llm` code path
+  that always failed validation) is also removed. See
+  [docs/providers/anthropic.md](docs/providers/anthropic.md) and
+  [docs/providers/llm.md](docs/providers/llm.md).
+
 ## [0.14.0] - 2026-07-26
 
 ### Changed

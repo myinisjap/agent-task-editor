@@ -1,15 +1,19 @@
 # Provider: `llm` (OpenAI-Compatible API)
 
-The `llm` provider calls any OpenAI-compatible REST endpoint. It's the catch-all for any provider string that doesn't match `claude`, `anthropic`, `opencode`, or `qwen_code`. Like the `anthropic` provider, it uses a native Go tool-use loop — no CLI binary needed.
+> **Deprecated — disabled for now and may be removed in a future release.** `POST`/`PATCH` of a provider config
+> with `provider: "llm"` (or the `openai` alias below) is rejected; neither is offered in the UI's provider
+> dropdown anymore. Existing provider/agent configs already using `llm` continue to dispatch and run as described
+> below — this page remains for anyone maintaining one of those configs.
+
+The `llm` provider calls any OpenAI-compatible REST endpoint. Historically it was also the catch-all backend for any provider string that didn't match a known provider — that fallback has been removed; an unrecognized provider string now fails the run explicitly instead of silently being dispatched as an OpenAI-compatible call. Like the (also deprecated) `anthropic` provider, it uses a native Go tool-use loop — no CLI binary needed.
 
 ## Provider String
 
-Any string that doesn't match the specific provider names — convention is to use `llm`, `openai`, or a descriptive name like `custom`:
+`llm`, or the historical `openai` alias for the same code path — both deprecated (see above):
 
 ```
 "provider": "llm"
 "provider": "openai"
-"provider": "custom"
 ```
 
 ## How It Works

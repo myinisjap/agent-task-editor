@@ -47,9 +47,10 @@ function cell(entry) {
 }
 
 async function main() {
-  const { PROVIDER_CAPABILITIES, KNOWN_PROVIDERS } = await import(capabilitiesPath)
+  const { PROVIDER_CAPABILITIES, KNOWN_PROVIDERS, DEPRECATED_PROVIDERS } = await import(capabilitiesPath)
 
-  const header = `| Capability | ${KNOWN_PROVIDERS.map((p) => `\`${p}\``).join(' | ')} |`
+  const columnLabel = (p) => (DEPRECATED_PROVIDERS?.has(p) ? `\`${p}\` (deprecated)` : `\`${p}\``)
+  const header = `| Capability | ${KNOWN_PROVIDERS.map(columnLabel).join(' | ')} |`
   const divider = `|---|${KNOWN_PROVIDERS.map(() => '---').join('|')}|`
   const rows = ROWS.map(([key, label]) => {
     const cells = KNOWN_PROVIDERS.map((p) => cell(PROVIDER_CAPABILITIES[p]?.[key]))

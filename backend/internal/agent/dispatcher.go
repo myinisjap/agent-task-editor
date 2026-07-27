@@ -390,6 +390,10 @@ var (
 	ErrNoMatchingConfig = errors.New("no enabled agent config available for this task")
 	// ErrPoolSaturated means the worker pool queue was full and the run was dropped.
 	ErrPoolSaturated = errors.New("agent worker pool is full")
+	// ErrProviderUnavailable means the agent config's provider is disabled or
+	// unrecognized, so ProviderFactory returned nil and the run could not be
+	// dispatched.
+	ErrProviderUnavailable = errors.New("agent config's provider is disabled or unknown")
 )
 
 // DispatchReply starts a new run for a task whose active run is waiting_human,
@@ -503,6 +507,20 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 
 	transitions := d.buildTransitionHints(ctx, t.ID, t.WorkflowID, t.Label)
 	provider := d.ProviderFactory(agentCfg)
+	if provider == nil {
+		// The provider is disabled (deprecated write-path rejection doesn't
+		// apply retroactively to rows already in the DB, but the factory
+		// still has no runner for it) or the provider string is otherwise
+		// unrecognized. Fail the run cleanly instead of enqueuing a job with
+		// a nil Provider, which would panic the pool worker goroutine.
+		log.Error("dispatcher: no runner for provider", "provider", agentCfg.Provider)
+		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status: "failed",
+			ID:     runID,
+		})
+		_ = d.q.ClearActiveAgentRun(ctx, t.ID)
+		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
+	}
 
 	// If this is a parent with subtasks that conflicted on merge-back, hand the
 	// work agent the conflict context so it resolves the merges on this branch.

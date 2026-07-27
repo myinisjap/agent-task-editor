@@ -72,7 +72,11 @@ func (h *ProviderConfigsHandler) Create(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
+		return
+	}
+	if deprecatedProviders[body.Provider] {
+		Err(w, http.StatusBadRequest, fmt.Sprintf("provider %q is deprecated and disabled for new configs; existing configs continue to run", body.Provider))
 		return
 	}
 	if body.Env == "" {
@@ -104,7 +108,7 @@ func (h *ProviderConfigsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if body.Provider != "" && !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
 		return
 	}
 
@@ -113,6 +117,17 @@ func (h *ProviderConfigsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		Err(w, http.StatusNotFound, "provider config not found")
 		return
 	}
+
+	// Only reject the deprecated provider when it's actually changing to (or
+	// being set to) a deprecated value. An existing deprecated config that
+	// PATCHes with its own provider unchanged (or omits provider entirely,
+	// meaning "unchanged") must keep working — that's the whole point of
+	// deprecating rather than removing these providers.
+	if body.Provider != "" && body.Provider != existing.Provider && deprecatedProviders[body.Provider] {
+		Err(w, http.StatusBadRequest, fmt.Sprintf("provider %q is deprecated and disabled for new configs; existing configs continue to run", body.Provider))
+		return
+	}
+
 	if body.Name == "" {
 		body.Name = existing.Name
 	}

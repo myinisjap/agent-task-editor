@@ -36,10 +36,21 @@ export type ProviderCapabilities = Partial<Record<Capability, CapabilityEntry>>
 
 // Ordered list of known providers, matching docs/agents.md's Capability
 // Matrix column order. `agentTemplates.ts`'s PROVIDERS list is the
-// UI-selectable dropdown (which also includes `openai`, an alias with no
-// dedicated capability row — it's treated as the OpenAI-compatible `llm`
-// path by the backend).
+// UI-selectable dropdown; it no longer includes `anthropic`, `llm`, or the
+// `openai` alias for the same OpenAI-compatible path — all three are
+// deprecated (see DEPRECATED_PROVIDERS below) and no longer selectable for
+// new/updated configs. They're kept here so existing configs on those
+// providers still get their capability rows and warnings rendered.
 export const KNOWN_PROVIDERS = ['claude', 'qwen_code', 'gemini_cli', 'codex_cli', 'anthropic', 'llm', 'opencode'] as const
+
+// Providers disabled for new/updated provider configs (rejected by the
+// backend) and hidden from agentTemplates.ts's PROVIDERS dropdown, but still
+// present in PROVIDER_CAPABILITIES above so existing configs on these
+// providers keep rendering accurate capability warnings and model lists.
+// "openai" was a dead dropdown alias for the same deprecated `llm` path and
+// never had its own capability row. See docs/providers/anthropic.md and
+// docs/providers/llm.md for the deprecation notice.
+export const DEPRECATED_PROVIDERS = new Set(['anthropic', 'llm', 'openai'])
 
 export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
   claude: {

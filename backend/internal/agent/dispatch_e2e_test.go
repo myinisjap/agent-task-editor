@@ -853,3 +853,47 @@ func TestE2E_RepoConcurrencyLimit_UnsetFallsBackToPool(t *testing.T) {
 	close(step1.release)
 	close(step2.release)
 }
+
+// TestE2E_NilProviderFailsRunCleanly covers the deprecated-provider landmine
+// fix: if ProviderFactory returns nil (e.g. the agent config's provider is
+// disabled/unrecognized), startRun must fail the run and clear the task's
+// lock instead of enqueuing a job with a nil Provider, which would panic the
+// pool worker goroutine. See internal/api/handlers/agents.go's
+// deprecatedProviders and cmd/server/main.go's providerFactory default case.
+func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+	h := newE2EHarness(t, fp)
+	// Override the harness's always-succeed factory with one that mimics a
+	// disabled/unrecognized provider by returning nil.
+	h.disp.ProviderFactory = func(AgentConfig) Provider { return nil }
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID := h.seedTaskOnReady(t, wfID)
+
+	// The task must NOT end up stuck with an active run lock — startRun's nil
+	// guard should mark the run failed and clear the lock synchronously
+	// within the same dispatch, without ever reaching the pool.
+	deadline := time.Now().Add(5 * time.Second)
+	var task gen.Task
+	for time.Now().Before(deadline) {
+		var err error
+		task, err = h.q.GetTask(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		runs, err := h.q.ListAgentRuns(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("list runs: %v", err)
+		}
+		if len(runs) > 0 {
+			if task.ActiveAgentRunID != nil {
+				t.Fatalf("expected task lock to be cleared after nil-provider failure, still active run %q", *task.ActiveAgentRunID)
+			}
+			if runs[0].Status != "failed" {
+				t.Fatalf("expected run to be marked failed, got %q", runs[0].Status)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for a run to be created and failed for the nil-provider task")
+}

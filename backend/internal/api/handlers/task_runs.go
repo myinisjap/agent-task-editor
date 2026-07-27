@@ -146,6 +146,8 @@ func (h *TasksHandler) ReplyRun(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusConflict, err.Error())
 	case errors.Is(err, agent.ErrPoolSaturated):
 		Err(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, agent.ErrProviderUnavailable):
+		Err(w, http.StatusConflict, err.Error())
 	case errors.Is(err, sql.ErrNoRows):
 		Err(w, http.StatusNotFound, "task not found")
 	default:

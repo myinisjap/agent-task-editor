@@ -69,7 +69,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `REPO_BASE_DIR` | _(none)_ | Restrict repo paths; empty = any path allowed (warns on startup) |
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
 | `MCP_BOARD_PATH` | _(none)_ | Path to mcp-board binary; enables the board tools (list_repos/list_workflows/create_task) inside chat sessions. See `docs/board-mcp.md` |
-| `LLM_API_KEY` | _(none)_ | API key for `anthropic` or `llm` provider |
+| `LLM_API_KEY` | _(none)_ | API key for the `anthropic` or `llm` providers. Both are **deprecated** — disabled for new/updated provider configs, may be removed in a future release; only relevant to existing configs still using them. |
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer (see `docs/task-sources.md`) |
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set to `true` behind corporate TLS-inspecting proxies. Disables SSL verification for git clone, npm, and the claude CLI (Node.js). Set in your shell or a `.env` file — docker compose passes it as a build arg (npm install of claude-code) and runtime env vars (`GIT_SSL_NO_VERIFY`, `NPM_CONFIG_STRICT_SSL`, `NODE_TLS_REJECT_UNAUTHORIZED`). |
