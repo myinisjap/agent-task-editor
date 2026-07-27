@@ -157,6 +157,7 @@ type Task struct {
 	WritebackClosed         int64      `json:"writeback_closed"`
 	SourceState             string     `json:"source_state"`
 	SourceStateAt           *time.Time `json:"source_state_at"`
+	PrMergeable             string     `json:"pr_mergeable"`
 }
 
 type TaskDependency struct {
@@ -182,6 +183,7 @@ type TaskPrReviewState struct {
 	LastReviewSubmittedAt *string   `json:"last_review_submitted_at"`
 	LastFailedCheckSha    *string   `json:"last_failed_check_sha"`
 	UpdatedAt             time.Time `json:"updated_at"`
+	LastConflictSha       *string   `json:"last_conflict_sha"`
 }
 
 type TaskReviewComment struct {

@@ -298,8 +298,8 @@ comment-scraping based) — it's purely for human legibility.
 
 This is the reverse direction of the loop above: instead of writing task
 status *to* GitHub, `internal/ghsync`'s sweep reads GitHub PR reviews, inline
-review comments, and check-run results back *into* the task, for any task
-with a branch and an open PR — not just imported ones.
+review comments, check-run results, and merge-conflict status back *into* the
+task, for any task with a branch and an open PR — not just imported ones.
 
 On every sweep, for each task with a resolved PR number, the syncer:
 
@@ -317,7 +317,12 @@ On every sweep, for each task with a resolved PR number, the syncer:
    and, if the set of failing check names differs from what was last
    surfaced for the current head commit, appends their names/links to the
    same feedback block.
-4. If that combined block is non-empty, it's **appended** (not overwritten)
+4. **Checks whether the PR still merges cleanly** into its base branch
+   (`gh pr list --json mergeable,baseRefName`, folded into the head-SHA call
+   the ingestion cursor already makes, so it costs no extra `gh` invocation)
+   and appends a resolve-the-conflict note to the same block the first time a
+   conflict is seen. See "Merge conflict detection" below.
+5. If that combined block is non-empty, it's **appended** (not overwritten)
    to the task's current agent run's `Feedback` column — read-modify-write,
    so it never clobbers a note a human already left via Reject. This is the
    same column rendered under the `FEEDBACK FROM PRIOR REVIEW:` prompt
@@ -326,8 +331,9 @@ On every sweep, for each task with a resolved PR number, the syncer:
 ### Tracking / fresh-cycle-on-push
 
 A per-task row in `task_pr_review_state` tracks a cursor (last-seen review
-submission timestamp, a fingerprint of the last-surfaced failing checks) plus
-the PR's head commit SHA as of the last sweep. Re-sweeps only surface
+submission timestamp, a fingerprint of the last-surfaced failing checks, the
+head commit + base branch a conflict was last surfaced at) plus the PR's head
+commit SHA as of the last sweep. Re-sweeps only surface
 reviews/checks newer than the cursor, so feedback is never duplicated across
 sweeps.
 
@@ -343,6 +349,39 @@ say, is logged and swallowed and does not prevent comments or checks from
 still being ingested that sweep, mirroring the write-back error-handling
 style above.
 
+### Merge conflict detection
+
+A PR that merged cleanly when it was opened can start conflicting later
+without the task's branch changing at all — someone else merged something
+into the base branch first. Because the sweep re-reads every non-terminal
+PR-bearing task on each interval, it notices:
+
+- **The task row** carries `pr_mergeable`: `mergeable`, `conflicting`,
+  `unknown`, or empty before the first check. It's written only when the
+  verdict changes, and each change publishes a
+  [`task.pr_mergeable_changed`](websocket.md#taskpr_mergeable_changed) WS
+  event; the board and task detail views render a conflict marker from it.
+  `GET /tasks/{id}/github-status` refreshes it on demand too.
+- **The agent** gets a feedback line telling it to update the branch against
+  the latest base branch, resolve the conflicted files, and push.
+
+`unknown` is normal and transient rather than an error: GitHub computes the
+test merge asynchronously after every push to either branch, so a freshly
+pushed PR reports `UNKNOWN` for a few seconds. Nothing is surfaced to the
+agent on an `unknown` verdict, and the conflict cursor is left alone — that
+way a verdict flapping `conflicting -> unknown -> conflicting` doesn't read
+as a brand-new conflict each time.
+
+The feedback is deduped on `"<head sha>|<base ref>"`, so:
+
+| Situation | Surfaced again? |
+|---|---|
+| Same conflict, next sweep | No — already told the agent |
+| Agent pushed, still conflicting | Yes — the resolution attempt failed |
+| PR retargeted to a different base, still conflicting | Yes |
+| Went `mergeable`, then conflicts again at the same commit | Yes — the cursor is cleared on a clean verdict |
+| PR merged or closed while conflicting | No — the verdict is recorded, but a closed PR is nobody's problem |
+
 ### Auto-transition (opt-in)
 
 | Repo field | Meaning |
@@ -354,7 +393,8 @@ stays wherever a human put it — someone still has to click Reject (or
 whatever the workflow's manual transition is) to send it back to an agent.
 Setting `pr_review_auto_transition_enabled: 1` on the repo skips that click:
 the first time a sweep ingests new feedback for a task (a changes-requested
-review, a new inline comment, or a newly-failing check), the task is
+review, a new inline comment, a newly-failing check, or a newly-detected merge
+conflict), the task is
 transitioned along its workflow's "failure" human-transition path — the same
 destination label a manual Reject would use. If no such transition is
 defined from the task's current label, or the transition is otherwise

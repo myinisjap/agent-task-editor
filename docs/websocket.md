@@ -168,6 +168,28 @@ worktree and deletes the task's local branch from the repo's main clone
 }
 ```
 
+### `task.pr_mergeable_changed`
+GitHub's verdict on whether the task's PR still merges cleanly into its base
+branch changed (fired by the background GitHub sync). Only published on a
+change, not on every sweep. `unknown` means GitHub hasn't finished computing
+the test merge — it does so asynchronously after each push to either branch —
+so a verdict often goes `unknown` before settling on `mergeable`/`conflicting`.
+
+When it becomes `conflicting`, the sync also appends a resolve-the-conflict
+note to the task's current agent run feedback (and, for repos with
+`pr_review_auto_transition_enabled`, moves the task back along its workflow's
+failure path). See [task-sources.md](task-sources.md#merge-conflict-detection).
+
+```json
+{
+  "type": "task.pr_mergeable_changed",
+  "payload": {
+    "task_id": "uuid",
+    "pr_mergeable": "mergeable | conflicting | unknown"
+  }
+}
+```
+
 ### `task.subtask_conflict`
 A subtask's branch conflicted on merge into its parent. `task_id` here is the
 *child* (conflicting) task. A `task.updated` event is published for both the

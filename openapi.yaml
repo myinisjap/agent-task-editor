@@ -89,6 +89,18 @@ components:
             URL of the GitHub pull request opened for this task's branch (via
             POST /tasks/{id}/pr, or discovered by the GitHub PR status sweep).
             Empty until a PR exists.
+        pr_mergeable:
+          type: string
+          enum: ["", mergeable, conflicting, unknown]
+          description: >
+            GitHub's verdict on whether this task's pull request still merges
+            cleanly into its base branch, refreshed by the GitHub PR status
+            sweep (and by GET /tasks/{id}/github-status). Empty until the task
+            has a PR that has been checked; "unknown" while GitHub is still
+            computing the test merge, which it does asynchronously after every
+            push to either branch. When it flips to "conflicting", the sweep
+            also appends a resolve-the-conflict note to the task's current
+            agent run feedback.
         transient_retry_count:
           type: integer
           description: >
@@ -1565,10 +1577,11 @@ paths:
       summary: Refresh and return the task's live GitHub PR state via the gh CLI
       description: >
         Queries gh for the current PR state of the task's branch and persists
-        it. If the live query fails, returns the previously stored git_state
-        and pr_url instead of erroring, with an additional error field
-        describing the failure. Returns git_state "none" without querying gh
-        if the task has no branch yet.
+        it. When a PR exists, also refreshes GitHub's merge-conflict verdict
+        for it (pr_mergeable). If the live query fails, returns the previously
+        stored git_state and pr_url instead of erroring, with an additional
+        error field describing the failure. Returns git_state "none" without
+        querying gh if the task has no branch yet.
       parameters:
         - name: id
           in: path
@@ -1581,9 +1594,10 @@ paths:
               schema:
                 type: object
                 properties:
-                  git_state: { type: string, enum: ["", none, pushed, pr_open, pr_merged, pr_closed] }
-                  pr_url:    { type: string }
-                  error:     { type: string, nullable: true, description: "Present only when the live gh query failed" }
+                  git_state:    { type: string, enum: ["", none, pushed, pr_open, pr_merged, pr_closed] }
+                  pr_url:       { type: string }
+                  pr_mergeable: { type: string, enum: ["", mergeable, conflicting, unknown], description: "Omitted from the no-branch response; otherwise the stored verdict, refreshed when a PR exists" }
+                  error:        { type: string, nullable: true, description: "Present only when the live gh query failed" }
         "400": { description: Repo has no/invalid GitHub remote }
         "404": { description: Task not found }
 

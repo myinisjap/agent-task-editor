@@ -39,6 +39,10 @@ export type WSEvent =
   // exist and can be fetched via the REST logs endpoint ("load earlier").
   | { type: 'agent.log_replay'; payload: { task_id: string; run_id: string; has_more: boolean; entries: AgentLog[] } }
   | { type: 'task.git_state_changed'; payload: { task_id: string; git_state: Task['git_state']; pr_url: string } }
+  // Emitted by the GitHub PR status sweep when GitHub's merge-conflict verdict
+  // for a task's PR changes (e.g. the base branch moved and the PR now
+  // conflicts). Only sent on a change, not on every sweep.
+  | { type: 'task.pr_mergeable_changed'; payload: { task_id: string; pr_mergeable: Task['pr_mergeable'] } }
   | { type: 'task.review_comments_changed'; payload: { task_id: string; run_id: string; resolved: number } }
   // task.created payloads carry a subset of Task fields (always includes id);
   // consumers should refetch the task for full data.

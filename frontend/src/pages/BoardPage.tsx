@@ -92,7 +92,7 @@ export default function BoardPage() {
 
   useEffect(() => {
     const off = wsClient.on((event) => {
-      if (event.type === 'task.label_changed' || event.type === 'task.updated' || event.type === 'task.created' || event.type === 'task.git_state_changed') {
+      if (event.type === 'task.label_changed' || event.type === 'task.updated' || event.type === 'task.created' || event.type === 'task.git_state_changed' || event.type === 'task.pr_mergeable_changed') {
         // Refresh the task from API to get latest data
         const taskId = event.type === 'task.created' ? event.payload.id :
                        event.type === 'task.updated' ? event.payload.id : event.payload.task_id

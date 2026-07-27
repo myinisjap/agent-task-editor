@@ -13,14 +13,19 @@ import (
 )
 
 // ingestPRFeedback checks a task's PR for new changes-requested reviews,
-// inline review comments, and failed GHA checks since the last sweep, and
-// surfaces them to the agent:
+// inline review comments, failed GHA checks, and merge conflicts with the base
+// branch since the last sweep, and surfaces them to the agent:
 //   - inline review comments (have a file/line anchor) are inserted into
 //     task_review_comments (source='github') so they flow through the
 //     existing OPEN REVIEW COMMENTS prompt section and resolve loop.
-//   - changes_requested review bodies and failed check names/links (no
-//     anchor) are appended to the current run's Feedback column, rendered
-//     under the FEEDBACK FROM PRIOR REVIEW: prompt section.
+//   - changes_requested review bodies, failed check names/links, and a
+//     base-branch merge conflict (no anchor) are appended to the current run's
+//     Feedback column, rendered under the FEEDBACK FROM PRIOR REVIEW: prompt
+//     section.
+//
+// prState is the PR state resolved by the caller this sweep ("pr_open",
+// "pr_merged", ...); merge-conflict detection only applies while the PR is
+// still open.
 //
 // Ingestion is cursor-based (task_pr_review_state) and idempotent: re-sweeps
 // never duplicate feedback already surfaced. When the PR's head commit SHA
@@ -32,7 +37,7 @@ import (
 // Every step is best-effort: a `gh` hiccup on one signal (reviews, comments,
 // checks) is logged and swallowed rather than aborting the others or failing
 // the sweep, mirroring the writeback package's error-handling style.
-func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoInfo, prNumber int) {
+func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, prState string) {
 	if prNumber == 0 || s.q == nil {
 		return
 	}
@@ -57,6 +62,8 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 	// fresh feedback cycle so reviews/checks against the old commit don't
 	// keep being (re-)considered "new" forever, but also don't re-inject
 	// anything we've already surfaced under the old head.
+	// LastConflictSha is deliberately not reset here: it already embeds the head
+	// SHA, so a push produces a different fingerprint on its own.
 	freshCycle := head.HeadSHA != "" && head.HeadSHA != state.HeadSha
 	if freshCycle {
 		state.LastReviewSubmittedAt = nil
@@ -77,6 +84,10 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 		feedbackParts = append(feedbackParts, parts...)
 		changed = true
 	}
+	if parts := s.ingestMergeConflict(ctx, task, head, prState, &state, log); len(parts) > 0 {
+		feedbackParts = append(feedbackParts, parts...)
+		changed = true
+	}
 
 	if len(feedbackParts) > 0 {
 		s.appendRunFeedback(ctx, task, strings.Join(feedbackParts, "\n\n"), log)
@@ -90,6 +101,7 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 		HeadSha:               state.HeadSha,
 		LastReviewSubmittedAt: state.LastReviewSubmittedAt,
 		LastFailedCheckSha:    state.LastFailedCheckSha,
+		LastConflictSha:       state.LastConflictSha,
 	}); err != nil {
 		log.Warn("ghsync: upsert pr review state", "err", err)
 	}
@@ -248,6 +260,84 @@ func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo rep
 	state.LastFailedCheckSha = &fingerprint
 
 	return []string{fmt.Sprintf("GitHub Actions — failed checks on the current commit:\n%s", strings.Join(lines, "\n"))}
+}
+
+// ingestMergeConflict records GitHub's mergeability verdict for the task's PR
+// on the task row and returns feedback text the first time a conflict is seen
+// for the PR's current head commit.
+//
+// GitHub recomputes mergeability asynchronously whenever either side moves, so
+// a PR that merged cleanly when it was opened can start conflicting later
+// without the task's branch changing at all - which is exactly the case worth
+// telling the agent about.
+//
+// Dedup rules (state.LastConflictSha holds "<head sha>|<base ref>"):
+//   - conflicting, same fingerprint as last time: already surfaced, stay quiet.
+//   - conflicting, new fingerprint (agent pushed, or the PR was retargeted):
+//     surface it again, since the last resolution attempt evidently failed.
+//   - mergeable: clear the cursor, so a conflict reintroduced by a later
+//     base-branch move is surfaced again even at an unchanged head commit.
+//   - unknown: GitHub has not finished the test merge. Report nothing and
+//     leave the cursor alone - clearing it here would make a conflict flap
+//     back into fresh feedback every time the verdict briefly goes UNKNOWN.
+func (s *Syncer) ingestMergeConflict(ctx context.Context, task gen.Task, head ghclient.PRHead, prState string, state *gen.TaskPrReviewState, log *slog.Logger) []string {
+	if head.Mergeable == "" {
+		return nil // getPRHead is unwired or failed - nothing was observed
+	}
+	s.setPRMergeable(ctx, task, string(head.Mergeable), log)
+
+	if head.Mergeable == ghclient.MergeableClean {
+		state.LastConflictSha = nil
+		return nil
+	}
+	// Only an open PR can be usefully un-conflicted; a merged/closed one is
+	// nobody's problem, and GitHub's verdict on it is meaningless.
+	if head.Mergeable != ghclient.MergeableConflicting || prState != "pr_open" {
+		return nil
+	}
+
+	fingerprint := head.HeadSHA + "|" + head.BaseRef
+	prev := ""
+	if state.LastConflictSha != nil {
+		prev = *state.LastConflictSha
+	}
+	if fingerprint == prev {
+		return nil // same conflict already surfaced for this commit
+	}
+	state.LastConflictSha = &fingerprint
+
+	base := head.BaseRef
+	if base == "" {
+		base = "its base branch"
+	}
+	log.Info("ghsync: PR conflicts with base branch", "base_ref", head.BaseRef, "head_sha", head.HeadSHA)
+	return []string{fmt.Sprintf(
+		"GitHub — merge conflict: this PR no longer merges cleanly into %s. "+
+			"Update the branch against the latest %s (merge it in or rebase onto it), "+
+			"resolve every conflicted file, and push the resolution.", base, base)}
+}
+
+// setPRMergeable persists a change in the task's PR mergeability and notifies
+// connected clients. A no-op when the verdict is unchanged, so a task isn't
+// rewritten (or an event published) on every sweep. Best-effort: a write
+// failure is logged and swallowed, like the rest of the ingestion path.
+func (s *Syncer) setPRMergeable(ctx context.Context, task gen.Task, mergeable string, log *slog.Logger) {
+	if task.PrMergeable == mergeable {
+		return
+	}
+	if _, err := s.q.SetTaskPRMergeable(ctx, gen.SetTaskPRMergeableParams{
+		PrMergeable: mergeable,
+		ID:          task.ID,
+	}); err != nil {
+		log.Warn("ghsync: set pr mergeable", "mergeable", mergeable, "err", err)
+		return
+	}
+	if s.hub != nil {
+		s.hub.Publish("task.pr_mergeable_changed", map[string]any{
+			"task_id":      task.ID,
+			"pr_mergeable": mergeable,
+		})
+	}
 }
 
 // appendRunFeedback appends newFeedback to the task's current agent run's

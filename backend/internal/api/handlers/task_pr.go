@@ -295,13 +295,14 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, prURL, _, ghErr := ghclient.GetPRForBranch(r.Context(), ghName, task.Branch)
+	state, prURL, prNumber, ghErr := ghclient.GetPRForBranch(r.Context(), ghName, task.Branch)
 	if ghErr != nil {
 		// Don't fail hard — return what we have stored plus the error detail
 		JSON(w, http.StatusOK, map[string]any{
-			"git_state": task.GitState,
-			"pr_url":    task.PrUrl,
-			"error":     ghErr.Error(),
+			"git_state":    task.GitState,
+			"pr_url":       task.PrUrl,
+			"pr_mergeable": task.PrMergeable,
+			"error":        ghErr.Error(),
 		})
 		return
 	}
@@ -322,6 +323,14 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refresh GitHub's merge-conflict verdict alongside the PR state, so a
+	// manual refresh surfaces a conflict without waiting for the next ghsync
+	// sweep. Best-effort: an unreachable/erroring gh here just leaves the
+	// stored value in place rather than failing the whole refresh.
+	if prNumber != 0 {
+		updated = refreshPRMergeable(r.Context(), h.q, updated, ghName)
+	}
+
 	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
 	// the task wasn't imported or the repo doesn't have it enabled).
 	if h.wb != nil {
@@ -330,9 +339,32 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSON(w, http.StatusOK, map[string]any{
-		"git_state": updated.GitState,
-		"pr_url":    updated.PrUrl,
+		"git_state":    updated.GitState,
+		"pr_url":       updated.PrUrl,
+		"pr_mergeable": updated.PrMergeable,
 	})
+}
+
+// refreshPRMergeable re-reads GitHub's mergeability verdict for the task's PR
+// and persists it if it changed, returning the (possibly updated) task. Any
+// failure leaves the task untouched: this is a nice-to-have alongside the PR
+// state, never a reason to fail the caller.
+func refreshPRMergeable(ctx context.Context, q *gen.Queries, task gen.Task, ghName string) gen.Task {
+	head, err := ghclient.GetPRHead(ctx, ghName, task.Branch)
+	if err != nil || head.Mergeable == "" {
+		return task
+	}
+	if string(head.Mergeable) == task.PrMergeable {
+		return task
+	}
+	updated, err := q.SetTaskPRMergeable(ctx, gen.SetTaskPRMergeableParams{
+		PrMergeable: string(head.Mergeable),
+		ID:          task.ID,
+	})
+	if err != nil {
+		return task
+	}
+	return updated
 }
 
 // UpdateGitState allows humans or agents to manually set the git state of a task.
