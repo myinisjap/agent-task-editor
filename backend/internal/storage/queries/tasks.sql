@@ -300,3 +300,20 @@ SELECT
 FROM tasks p
 JOIN tasks c ON c.parent_task_id = p.id
 GROUP BY p.id;
+
+-- name: ListSubtaskRollupsForParents :many
+-- Same as ListSubtaskRollups but scoped to a specific set of parent ids, so
+-- callers that already know which tasks they're rendering (a single task, or
+-- one page of a list) don't pay for a self-join across the whole table.
+SELECT
+    p.id AS parent_id,
+    COUNT(c.id) AS total,
+    SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM workflow_labels wl
+        WHERE wl.workflow_id = c.workflow_id AND wl.name = c.label AND wl.is_terminal != 0
+    ) THEN 1 ELSE 0 END) AS done,
+    SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts
+FROM tasks p
+JOIN tasks c ON c.parent_task_id = p.id
+WHERE p.id IN (sqlc.slice('parent_ids'))
+GROUP BY p.id;
