@@ -14,7 +14,7 @@ import (
 func TestHealth_ReturnsOKJSON(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false)
+	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
@@ -44,7 +44,7 @@ func TestHealth_ReturnsOKJSON(t *testing.T) {
 func TestHealth_DefaultsVersionToDev(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "", false)
+	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "", false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
@@ -56,5 +56,122 @@ func TestHealth_DefaultsVersionToDev(t *testing.T) {
 	}
 	if body["version"] != "dev" {
 		t.Errorf("expected version 'dev', got %q", body["version"])
+	}
+}
+
+// fakeDispatcherLiveness lets tests control what /readyz sees as the
+// dispatch loop's last-sweep heartbeat.
+type fakeDispatcherLiveness struct {
+	last time.Time
+}
+
+func (f fakeDispatcherLiveness) LastSweep() time.Time { return f.last }
+
+// TestReadyz_OKWhenDBUpAndDispatcherFresh verifies /readyz reports 200 when
+// the DB responds to a ping and the dispatcher's heartbeat is recent.
+func TestReadyz_OKWhenDBUpAndDispatcherFresh(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now()})
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	h.Readyz(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Errorf("expected status 'ok', got %q", body["status"])
+	}
+}
+
+// TestReadyz_UnhealthyWhenDispatcherStale verifies /readyz reports 503 when
+// the dispatcher hasn't ticked recently (a wedged dispatch loop).
+func TestReadyz_UnhealthyWhenDispatcherStale(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now().Add(-time.Hour)})
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	h.Readyz(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if body["status"] != "unhealthy" {
+		t.Errorf("expected status 'unhealthy', got %q", body["status"])
+	}
+	if body["dispatcher"] != "stale" {
+		t.Errorf("expected dispatcher 'stale', got %q", body["dispatcher"])
+	}
+}
+
+// TestReadyz_UnhealthyWhenDispatcherNeverSwept verifies /readyz reports 503
+// when the dispatcher reports a zero LastSweep (Run never started).
+func TestReadyz_UnhealthyWhenDispatcherNeverSwept(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{})
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	h.Readyz(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReadyz_OKWithNilDispatcher verifies /readyz skips the dispatcher check
+// entirely when no DispatcherLiveness was wired in (e.g. alternate wiring
+// or a test harness), reporting 200 based on DB health alone.
+func TestReadyz_OKWithNilDispatcher(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	h.Readyz(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReadyz_UnhealthyWhenDBClosed verifies /readyz reports 503 when the DB
+// ping fails (e.g. the underlying connection is closed).
+func TestReadyz_UnhealthyWhenDBClosed(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now()})
+
+	if err := db.SQL().Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	h.Readyz(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if body["db"] != "error" {
+		t.Errorf("expected db 'error', got %q", body["db"])
 	}
 }

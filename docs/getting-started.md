@@ -65,6 +65,14 @@ The app is served at `https://your.domain.com/tasks`. TLS is handled by Traefik 
 
 > **Note:** The frontend nginx is the only container exposed to Traefik. It proxies `/tasks/api/` and `/tasks/ws` to the backend internally, so the backend container has no public port.
 
+## Backend Resilience: Restart Policy, Readiness, and Memory Limit
+
+The `backend` service in `docker-compose.yml` / `docker-compose.release.yml` is configured with:
+
+- `restart: unless-stopped` — the container is restarted automatically after a crash or OOM kill (and on daemon restart), unless you've explicitly stopped it.
+- A healthcheck against `GET /readyz` (not `/healthz`) — this actually checks DB connectivity and that the dispatch loop is still ticking, so Docker detects a wedged backend (e.g. a locked SQLite file or a hung sweep) instead of it appearing healthy forever. See [`docs/api.md`](api.md#get-readyz).
+- A default memory ceiling of **2 GB** via `deploy.resources.limits.memory` — a modest cap that leaves headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to. If you run many concurrent agent runs and hit this ceiling (the container gets OOM-killed and auto-restarts), raise `memory:` under the backend service's `deploy.resources.limits` in your compose file.
+
 ## Environment Variables
 
 All variables can also be set via a YAML config file pointed to by `CONFIG_FILE` (env vars always take precedence over file values).
@@ -119,6 +127,7 @@ Each Chat-tab session keeps a live interactive CLI subprocess (plus a scrollback
 | `LOG_RETENTION_DAYS` | `0` | If set to a positive number, enables a built-in pruner that deletes `agent_logs` rows for terminal-status runs (`completed`/`failed`/`waiting_human`) older than this many days. `0` = keep forever (disabled, the default). |
 | `LOG_RETENTION_INTERVAL` | `1h` | How often the log pruner runs. Accepts Go duration strings. Only meaningful when `LOG_RETENTION_DAYS` is set. |
 | `WORKTREE_SWEEP_INTERVAL` | `10m` | How often the built-in orphan-worktree sweeper reconciles each repo's `.ate-worktrees/<id>` directories against live (non-archived) task/chat-session ids, reclaiming anything else — worktrees left behind by archiving a task on a non-terminal label, or orphaned by a crash. Always on (unlike `BACKUP_DIR`, there's no disable switch); this only controls the interval. Accepts Go duration strings (1-minute minimum). |
+| `GIT_TIMEOUT` | `120s` | Bounds every individual `git` shell-out made by the agent package (worktree `fetch`/`add`, safety-net `commit`, `push`, subtask `merge`, branch cleanup). Without this bound a stalled remote or an interactive credential prompt could hang a `git` call indefinitely, blocking the whole dispatch sweep loop (tasks dispatch serially) since nothing else could run. With it, a stuck git call fails just that one task within `GIT_TIMEOUT`, is classified as a transient failure eligible for retry, and dispatch keeps working on the rest of the board. Interactive credential prompts are also suppressed (`GIT_TERMINAL_PROMPT=0` and related env vars) so an auth prompt fails fast rather than hanging on stdin. Accepts Go duration strings. |
 
 See [backup.md](backup.md) for the full backup/restore guide, including the "Agent log retention" and "Orphaned worktree sweeper" sections.
 
@@ -339,7 +348,7 @@ Set `MCP_SERVER_PATH=/path/to/mcp-server` in the backend environment. `./dev.sh 
 
 1. **Register a repository** — go to Settings → Repos → Add Repo. Enter the local filesystem path of the repository agents should work in.
 2. **Create an agent config** — go to Settings → Agents → New Agent. Select a provider, enter a model name, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
-3. **Create a task** — go to the Board, click New Task. Select the repo and fill in the title/description.
+3. **Create a task** — go to the Board, click New Task. Select the repo and fill in the title/description. To create a variant of an existing task instead, use the "⧉ Duplicate" action (task detail header or a board card's hover controls) to open the same form pre-filled from that task.
 4. **Move it to `plan`** — drag it or use the label selector. The dispatcher will pick it up within 5 seconds and start an agent run.
 5. **Watch the logs** — click on the task to open the detail view; live logs stream in real time.
 

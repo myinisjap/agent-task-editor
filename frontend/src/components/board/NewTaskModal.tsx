@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
-import type { Repo, TaskTemplate, Workflow } from '../../api/client'
+import type { Repo, Task, TaskTemplate, Workflow } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { PRIORITY_LEVELS } from '../../lib/priority'
 
@@ -11,6 +11,15 @@ type Props = {
   // the workflow named "Default", else the alphabetically-first workflow —
   // matching the backend's own default-resolution behavior.
   workflow?: Workflow
+  // When set, the modal opens in "Duplicate" mode: title/description/type/
+  // priority/repo/workflow are pre-filled from this task, and the heading
+  // reads "Duplicate Task". The source task itself is never mutated — this
+  // only seeds the form's initial state. Deliberately NOT copied: run
+  // history, label history, diff comments, PR link, worktree/git state,
+  // subtasks, and attachments (we don't have the source files client-side).
+  // The clone always starts fresh via the normal POST /tasks create path,
+  // landing on the workflow's starting label.
+  source?: Task
   onClose: () => void
 }
 
@@ -21,22 +30,22 @@ function sortWorkflowsAlphabetically(list: Workflow[]): Workflow[] {
 }
 
 // pickDefaultWorkflowId chooses the initial workflow selection: the hinted
-// workflow if still present, else the one named "Default", else the
+// workflow id if still present, else the one named "Default", else the
 // alphabetically-first workflow.
-function pickDefaultWorkflowId(sorted: Workflow[], hint?: Workflow): string {
-  if (hint && sorted.some((w) => w.id === hint.id)) return hint.id
+function pickDefaultWorkflowId(sorted: Workflow[], hintId?: string): string {
+  if (hintId && sorted.some((w) => w.id === hintId)) return hintId
   const named = sorted.find((w) => w.name === 'Default')
   if (named) return named.id
   return sorted[0]?.id ?? ''
 }
 
-export default function NewTaskModal({ workflow, onClose }: Props) {
+export default function NewTaskModal({ workflow, source, onClose }: Props) {
   const { upsert } = useTasksStore()
   const [repos, setRepos] = useState<Repo[]>([])
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [type, setType] = useState<'feature' | 'bug' | 'chore' | 'spike'>('feature')
-  const [priority, setPriority] = useState(0)
+  const [title, setTitle] = useState(() => (source ? `${source.title} (copy)` : ''))
+  const [description, setDescription] = useState(() => source?.description ?? '')
+  const [type, setType] = useState<'feature' | 'bug' | 'chore' | 'spike'>(() => source?.type ?? 'feature')
+  const [priority, setPriority] = useState<number>(() => source?.priority ?? 0)
   const [repoId, setRepoId] = useState('')
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [workflowId, setWorkflowId] = useState('')
@@ -54,12 +63,16 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
     // workflow is now chosen independently, so show every repo.
     api.repos.list().then((r) => {
       setRepos(r)
-      if (r.length > 0) setRepoId(r[0].id)
+      // When duplicating, prefer the source task's repo if it still exists;
+      // otherwise fall back to the first repo (source may reference a repo
+      // that's since been removed).
+      const preferred = source && r.some((repo) => repo.id === source.repo_id) ? source.repo_id : r[0]?.id
+      if (preferred) setRepoId(preferred)
     })
     api.workflows.list().then((w) => {
       const sorted = sortWorkflowsAlphabetically(w)
       setWorkflows(sorted)
-      setWorkflowId(pickDefaultWorkflowId(sorted, workflow))
+      setWorkflowId(pickDefaultWorkflowId(sorted, source?.workflow_id ?? workflow?.id))
     })
     api.templates.list().then(setTemplates).catch(() => {})
     titleRef.current?.focus()
@@ -177,7 +190,7 @@ export default function NewTaskModal({ workflow, onClose }: Props) {
     >
       <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-          <h2 className="text-sm font-semibold text-slate-100">New Task</h2>
+          <h2 className="text-sm font-semibold text-slate-100">{source ? 'Duplicate Task' : 'New Task'}</h2>
           <button
             onClick={onClose}
             className="text-slate-500 hover:text-slate-300 transition-colors text-lg leading-none"

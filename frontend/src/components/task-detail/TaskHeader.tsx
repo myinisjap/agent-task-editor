@@ -48,6 +48,7 @@ export default function TaskHeader({
   onBack,
   labels,
   onMoveLabel,
+  onDuplicate,
 }: {
   task: Task
   repos: Repo[]
@@ -79,6 +80,8 @@ export default function TaskHeader({
   onBack: () => void
   labels: WorkflowLabel[]
   onMoveLabel: (toLabel: string) => void
+  /** When set, renders a "Duplicate" button that opens a pre-filled New Task modal for this task. */
+  onDuplicate?: () => void
 }) {
   // Cumulative cost across every run this task has had (all statuses,
   // matching how the dispatcher's cost-budget guard counts spend; see
@@ -164,6 +167,15 @@ export default function TaskHeader({
               title="Edit task"
             >
               ✎ Edit
+            </button>
+          )}
+          {onDuplicate && (
+            <button
+              onClick={onDuplicate}
+              className="text-xs text-indigo-400 hover:text-indigo-300"
+              title="Duplicate task — opens a pre-filled New Task form"
+            >
+              ⧉ Duplicate
             </button>
           )}
           <button

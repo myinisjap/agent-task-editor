@@ -191,3 +191,56 @@ func TestMigration046DownStep(t *testing.T) {
 		}
 	}
 }
+
+// TestMigration048DownStep verifies migration 048's down migration (which
+// drops workflow_labels.wip_limit and wip_limit_hard) applies cleanly
+// against this repo's SQLite driver/version.
+func TestMigration048DownStep(t *testing.T) {
+	const targetVersion = 47
+	dbPath := t.TempDir() + "/migtest048down.db"
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	driver, err := sqlite3.WithInstance(db.SQL(), &sqlite3.Config{})
+	if err != nil {
+		t.Fatalf("driver: %v", err)
+	}
+	src, err := iofs.New(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatalf("source: %v", err)
+	}
+	m, err := migrate.NewWithInstance("iofs", src, "sqlite3", driver)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+
+	if err := m.Migrate(targetVersion); err != nil {
+		t.Fatalf("down to version %d (048 rollback): %v", targetVersion, err)
+	}
+
+	// workflow_labels.wip_limit / wip_limit_hard should be gone.
+	rows, err := db.SQL().Query(`PRAGMA table_info(workflow_labels)`)
+	if err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if name == "wip_limit" || name == "wip_limit_hard" {
+			t.Fatalf("column %q still present after down migration", name)
+		}
+	}
+}

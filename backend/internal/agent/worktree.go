@@ -3,12 +3,14 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // worktreeDir is the subdirectory under a repo where per-task worktrees live.
@@ -272,8 +274,56 @@ func excludeWorktreeDir(repoPath string) {
 	_, _ = f.WriteString("\n" + worktreeDir + "/\n")
 }
 
-// git runs a git command in dir and returns combined output.
+// gitTimeout bounds each individual git invocation made through git() below.
+// Without a bound, a stalled remote or a credential prompt can hang a git
+// call indefinitely, which in turn blocks dispatch (tasks are dispatched
+// serially). Set from config at startup via SetGitTimeout; defaults to 120s
+// so it's still safe if a caller forgets to configure it explicitly.
+var gitTimeout = 120 * time.Second
+
+// gitRunner is the seam that actually executes git. It's a package-level var
+// so tests can swap it out to simulate a hung/slow git call without shelling
+// out to a real process. Defaults to runGit.
+var gitRunner = runGit
+
+// SetGitTimeout configures the bound applied to every git invocation made by
+// this package. Ignored if d <= 0 (keeps the existing/default value).
+func SetGitTimeout(d time.Duration) {
+	if d > 0 {
+		gitTimeout = d
+	}
+}
+
+// git runs a git command in dir, bounded by gitTimeout, and returns combined
+// output. If the command doesn't complete within the timeout, the error is
+// wrapped as *ErrTransient so callers (and the pool's retry policy) treat it
+// as a transient infrastructure problem rather than a genuine task failure,
+// and the repo/args/elapsed time are logged so the culprit is obvious.
 func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	cctx, cancel := context.WithTimeout(ctx, gitTimeout)
+	defer cancel()
+
+	start := time.Now()
+	out, err := gitRunner(cctx, dir, args...)
+	if err != nil && cctx.Err() == context.DeadlineExceeded {
+		elapsed := time.Since(start)
+		slog.Error("git command timed out", "dir", dir, "args", args, "elapsed", elapsed, "timeout", gitTimeout)
+		return out, &ErrTransient{Cause: fmt.Errorf("git %s timed out after %s: %w", strings.Join(args, " "), elapsed, err)}
+	}
+	return out, err
+}
+
+// runGit is the real gitRunner implementation: it shells out to the git
+// binary. GIT_TERMINAL_PROMPT and related credential-helper env vars are
+// suppressed so an interactive auth prompt fails fast instead of blocking on
+// stdin forever.
+func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+		"SSH_ASKPASS=",
+		"GCM_INTERACTIVE=never",
+	)
 	return cmd.CombinedOutput()
 }

@@ -349,7 +349,9 @@ components:
         agent_ignore: { type: integer }
         is_terminal:  { type: integer }
         create_pr:    { type: integer, description: "When non-zero, a task entering this label auto-opens a GitHub PR (pushes the branch first)." }
-      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr]
+        wip_limit:      { type: integer, nullable: true, description: "Max tasks allowed in this label column; null = unlimited (soft/visual by default)." }
+        wip_limit_hard: { type: integer, description: "When non-zero, the dispatcher stops picking up tasks whose success target is this label once it is at its wip_limit (backpressure)." }
+      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit_hard]
 
     WorkflowTransition:
       type: object

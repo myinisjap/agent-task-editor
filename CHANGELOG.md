@@ -20,6 +20,17 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Per-label WIP limits.** Labels can now carry an optional `wip_limit`
+  (nullable — `null`/unset means unlimited, unchanged from before this
+  feature). The board column header shows `count / limit` and flags the
+  column visually once its count reaches or exceeds the limit. Enforcement is soft by default
+  (visual only); an opt-in `wip_limit_hard` flag makes the dispatcher apply
+  backpressure instead — it skips picking up a task whose agent "success"
+  transition targets a label already at or over its limit, so work queues
+  upstream on its current label rather than erroring mid-run or piling into
+  an already-full column. Configurable via the workflow YAML (`wip_limit`,
+  `wip_limit_hard` on a label) or the JSON workflow API. See
+  `docs/workflows.md`.
 - **Merge-conflict detection on open PRs.** The GitHub PR status sweep now
   also asks GitHub whether each task's open PR still merges cleanly into its
   base branch, so a PR that goes stale because someone else merged first is
@@ -81,6 +92,15 @@ triggers the "Release" workflow the same way.
   Comments this system posted itself are filtered out, so an agent never reads
   its own "PR opened" notice back as human input.
 - `GET /tasks/{id}/source-comments` returns a task's ingested issue thread.
+- **Duplicate an existing task.** A "⧉ Duplicate" action on the task detail
+  page and on each board card opens the New Task modal pre-filled with the
+  source task's title (suffixed `(copy)`), description, type, priority, repo,
+  and workflow — editable before creation, same as any new task. The clone
+  starts clean: no run history, label history, diff comments, PR link,
+  worktree/git state, subtasks, or attachments carry over, and it lands on the
+  workflow's starting label like any other new task. The source task is never
+  modified. No new endpoint was needed — the existing `POST /tasks` create
+  path already covers every field involved.
 - **Archiving a task now reclaims its worktree, and a new sweeper catches
   everything else.** Archiving is the documented way to retire a dead or
   abandoned task, and such a task is typically on a non-terminal label — none
@@ -154,8 +174,37 @@ triggers the "Release" workflow the same way.
   protocol-level upgrade failure (inside `websocket.Accept` itself, after
   auth has already passed) is unchanged — there's no HTTP response left to
   shape at that point, so it's just logged.
+- **`GET /readyz` readiness probe.** Unlike `/healthz` (a static liveness
+  stub), `/readyz` pings the database and checks that the dispatch loop has
+  ticked recently, returning `503` if either check fails. The Docker Compose
+  healthcheck for the `backend` service now targets `/readyz` instead of
+  `/healthz`, so a backend with a locked SQLite file or a wedged dispatch
+  loop is reported unhealthy instead of appearing healthy forever. See
+  [docs/api.md](docs/api.md#get-readyz).
+- **Backend restart policy and default memory ceiling.** The `backend`
+  service in `docker-compose.yml` / `docker-compose.release.yml` now has
+  `restart: unless-stopped` (previously only `frontend` restarted
+  automatically) and a default 2 GB memory limit via
+  `deploy.resources.limits.memory`, so a crashed or OOM-killed backend comes
+  back on its own instead of staying down until an operator notices, and a
+  runaway agent run can no longer consume unbounded host memory. See
+  [docs/getting-started.md](docs/getting-started.md#backend-resilience-restart-policy-readiness-and-memory-limit).
 
 ### Fixed
+- **Task read paths no longer scale with total task count.** `GET /tasks` and
+  `GET /tasks/{id}` computed their derived dependency-count and subtask-rollup
+  badges by self-joining/scanning the *entire* `tasks` table on every
+  request, regardless of page size — so a single-task fetch cost the same as
+  listing every task in the system. Those queries are now scoped to just the
+  ids being returned (`ListTaskDependencyCountsForTasks` /
+  `ListSubtaskRollupsForParents`, new migration `049_task_read_indexes` adds
+  the `tasks(created_at DESC, id DESC)` index backing cursor pagination).
+  Separately, the SQLite connection pool was capped at a single connection,
+  which serialized every read behind every write (and behind every other
+  read) and defeated WAL mode entirely; the pool now allows several
+  concurrent connections, with `_txlock=immediate` added to the DSN so
+  write transactions take SQLite's write lock up front instead of risking a
+  `SQLITE_BUSY` upgrade race between connections.
 - **Two-column forms no longer collapse into overlapping, unreadable fields on
   mobile.** The Agent config, Provider config, Templates, and schedule forms use
   a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded
@@ -168,6 +217,22 @@ triggers the "Release" workflow the same way.
   paginates the full result set. Beyond dropping issues outright on busy repos,
   the cap would have made the new reconciliation mistake a truncated page for a
   closed issue.
+- **A hung `git` call on one repo could halt agent dispatch system-wide.**
+  Every `git` shell-out the agent package makes (worktree `fetch`/`add`,
+  safety-net `commit`, `push`, subtask `merge`, branch cleanup) is now bounded
+  by a configurable `GIT_TIMEOUT` (default `120s`); a stalled remote or a
+  stuck interactive credential prompt previously hung that `git` call
+  indefinitely, which blocked the dispatcher's serial sweep loop and stalled
+  agent dispatch for every task on every repo until the process was
+  restarted. A timed-out `git` call now fails just that one task within
+  `GIT_TIMEOUT`, is classified as a transient failure (eligible for the
+  existing retry policy) instead of a silent stall, and logs the repo,
+  command, and elapsed time so the culprit is obvious. Interactive credential
+  prompts are also suppressed (`GIT_TERMINAL_PROMPT=0` and related env vars)
+  so an auth prompt fails fast rather than blocking on stdin. See
+  [getting-started.md](docs/getting-started.md#backup). Dispatching tasks
+  concurrently (rather than serially) was considered but deferred as a
+  separate, larger change.
 
 ### Changed
 - The Repos help modal described issue import as create-only, which is no
@@ -182,6 +247,35 @@ triggers the "Release" workflow the same way.
   writers and flood connected clients. See
   [task-sources.md](docs/task-sources.md) and
   [websocket.md](docs/websocket.md).
+- **Frontend hardening pass** (#253):
+  - Routes are now code-split with `React.lazy`/`Suspense`, so the two
+    heaviest per-route dependencies — `@xterm/xterm` (Chat) and
+    `@xyflow/react` + `dagre` (Workflow) — no longer ship in the initial
+    bundle for users who only ever open e.g. the Board.
+  - The WebSocket client's reconnect now uses capped exponential backoff with
+    full jitter instead of a flat 3s retry, so a server restart doesn't have
+    every open tab hammering `/ws-ticket` + `/ws` in lockstep. A new
+    connection-status indicator ("Live" / "Reconnecting…" / "Offline") is
+    shown in the sidebar on every route.
+  - The Board's `task.updated` WebSocket handler now applies the event's
+    payload (already a full task) directly instead of triggering an extra
+    `GET /tasks/{id}` round-trip.
+  - Board task cards are keyboard-focusable and describe themselves via
+    `aria-label`; Enter opens a focused task and a new `KeyboardSensor`
+    (Space to pick up/drop, arrow keys to move) makes drag-and-drop between
+    columns reachable without a mouse.
+  - The page-level error boundary now resets when navigating to a different
+    route, instead of a render crash on one page sticking across every
+    subsequent navigation until a full reload.
+  - `GitStateBadge`'s git/PR-state detail is now exposed via `aria-label`
+    and `role="img"`, and the badge is a keyboard focus stop, instead of
+    being reachable only through a native `title` tooltip.
+  - Very large diff files in the PR review viewer now render collapsed by
+    default instead of every line of every file being expanded up front.
+  - Enabled `strictNullChecks` in the frontend TypeScript config (see
+    `frontend/AGENTS.md`, previously inaccurately described as full `strict`
+    mode) and fixed the errors it surfaced, including a task-card priority
+    `<select>` that could cast an invalid value straight into `Task['priority']`.
 
 ## [0.14.0] - 2026-07-26
 
