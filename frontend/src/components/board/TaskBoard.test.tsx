@@ -32,7 +32,7 @@ vi.mock('../../api/client', async () => {
   }
 })
 
-function label(name: string, sortOrder: number): WorkflowLabel {
+function label(name: string, sortOrder: number, overrides: Partial<WorkflowLabel> = {}): WorkflowLabel {
   return {
     id: name,
     workflow_id: 'wf',
@@ -42,6 +42,9 @@ function label(name: string, sortOrder: number): WorkflowLabel {
     agent_ignore: 0,
     is_terminal: 0,
     create_pr: 0,
+    wip_limit: null,
+    wip_limit_hard: 0,
+    ...overrides,
   }
 }
 

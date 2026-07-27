@@ -50,6 +50,7 @@ sql:
       - "internal/storage/migrations/045_repo_max_concurrent_runs.up.sql"
       - "internal/storage/migrations/046_issue_writeback_label.up.sql"
       - "internal/storage/migrations/047_pr_merge_conflict.up.sql"
+      - "internal/storage/migrations/048_label_wip_limit.up.sql"
     gen:
       go:
         package: "gen"
