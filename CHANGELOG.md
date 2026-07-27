@@ -148,6 +148,20 @@ triggers the "Release" workflow the same way.
   matrix in sync.
 
 ### Fixed
+- **Task read paths no longer scale with total task count.** `GET /tasks` and
+  `GET /tasks/{id}` computed their derived dependency-count and subtask-rollup
+  badges by self-joining/scanning the *entire* `tasks` table on every
+  request, regardless of page size — so a single-task fetch cost the same as
+  listing every task in the system. Those queries are now scoped to just the
+  ids being returned (`ListTaskDependencyCountsForTasks` /
+  `ListSubtaskRollupsForParents`, new migration `049_task_read_indexes` adds
+  the `tasks(created_at DESC, id DESC)` index backing cursor pagination).
+  Separately, the SQLite connection pool was capped at a single connection,
+  which serialized every read behind every write (and behind every other
+  read) and defeated WAL mode entirely; the pool now allows several
+  concurrent connections, with `_txlock=immediate` added to the DSN so
+  write transactions take SQLite's write lock up front instead of risking a
+  `SQLITE_BUSY` upgrade race between connections.
 - **Two-column forms no longer collapse into overlapping, unreadable fields on
   mobile.** The Agent config, Provider config, Templates, and schedule forms use
   a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded

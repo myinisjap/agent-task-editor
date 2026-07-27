@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"strings"
 )
 
 const createTaskDependency = `-- name: CreateTaskDependency :exec
@@ -166,6 +167,73 @@ func (q *Queries) ListTaskDependencyCounts(ctx context.Context) ([]ListTaskDepen
 	var items []ListTaskDependencyCountsRow
 	for rows.Next() {
 		var i ListTaskDependencyCountsRow
+		if err := rows.Scan(&i.TaskID, &i.BlockedByCount, &i.BlockingCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskDependencyCountsForTasks = `-- name: ListTaskDependencyCountsForTasks :many
+SELECT
+    t.id AS task_id,
+    (
+        SELECT COUNT(*) FROM task_dependencies d
+        JOIN tasks dt ON dt.id = d.depends_on_task_id
+        WHERE d.task_id = t.id
+          AND dt.archived = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM workflow_labels wl
+              WHERE wl.workflow_id = dt.workflow_id
+                AND wl.name = dt.label
+                AND wl.is_terminal != 0
+          )
+    ) AS blocked_by_count,
+    (
+        SELECT COUNT(*) FROM task_dependencies d2
+        WHERE d2.depends_on_task_id = t.id
+    ) AS blocking_count
+FROM tasks t
+WHERE t.id IN (/*SLICE:task_ids*/?)
+  AND EXISTS (SELECT 1 FROM task_dependencies d3 WHERE d3.task_id = t.id OR d3.depends_on_task_id = t.id)
+`
+
+type ListTaskDependencyCountsForTasksRow struct {
+	TaskID         string `json:"task_id"`
+	BlockedByCount int64  `json:"blocked_by_count"`
+	BlockingCount  int64  `json:"blocking_count"`
+}
+
+// Same as ListTaskDependencyCounts but scoped to a specific set of task ids,
+// so callers that already know which tasks they're rendering (a single task,
+// or one page of a list) don't pay for a query that scans every task with an
+// edge, regardless of whether it's on the current page.
+func (q *Queries) ListTaskDependencyCountsForTasks(ctx context.Context, taskIds []string) ([]ListTaskDependencyCountsForTasksRow, error) {
+	query := listTaskDependencyCountsForTasks
+	var queryParams []interface{}
+	if len(taskIds) > 0 {
+		for _, v := range taskIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", strings.Repeat(",?", len(taskIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTaskDependencyCountsForTasksRow
+	for rows.Next() {
+		var i ListTaskDependencyCountsForTasksRow
 		if err := rows.Scan(&i.TaskID, &i.BlockedByCount, &i.BlockingCount); err != nil {
 			return nil, err
 		}

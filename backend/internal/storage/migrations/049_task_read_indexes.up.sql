@@ -1,0 +1,13 @@
+-- Covers ORDER BY created_at DESC, id DESC in SearchTasksPage/SearchTasks so
+-- pagination is an index scan instead of a full-table sort as the tasks
+-- table grows.
+--
+-- Other hot-path lookups used by the dispatcher pickup query and the
+-- dependency/subtask rollup queries are already indexed:
+--   - tasks(parent_task_id)              -- idx_tasks_parent (029)
+--   - task_dependencies(task_id)         -- idx_task_deps_task (028)
+--   - task_dependencies(depends_on_task_id) -- idx_task_deps_depends (028)
+--   - workflow_labels(workflow_id, name) -- UNIQUE(workflow_id, name) (001)
+--   - workflow_transitions(workflow_id, from_label, to_label)
+--                                         -- UNIQUE(...) covers (workflow_id, from_label) (001)
+CREATE INDEX idx_tasks_created_id ON tasks(created_at DESC, id DESC);
