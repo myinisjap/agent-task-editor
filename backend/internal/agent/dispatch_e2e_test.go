@@ -870,8 +870,13 @@ func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
 	taskID := h.seedTaskOnReady(t, wfID)
 
 	// The task must NOT end up stuck with an active run lock — startRun's nil
-	// guard should mark the run failed and clear the lock synchronously
-	// within the same dispatch, without ever reaching the pool.
+	// guard should mark the run failed and clear the lock. persistRunRow
+	// creates the run row (and sets the task's active-run pointer) *before*
+	// the nil-provider guard runs, so there's a real, expected window where
+	// ListAgentRuns already returns the row while it's still "pending" and
+	// the lock is still set. Poll until the run reaches its terminal
+	// "failed" state (not just until it exists) before asserting the lock
+	// was cleared, instead of failing on that intermediate state.
 	deadline := time.Now().Add(5 * time.Second)
 	var task gen.Task
 	for time.Now().Before(deadline) {
@@ -884,13 +889,12 @@ func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("list runs: %v", err)
 		}
-		if len(runs) > 0 {
-			if task.ActiveAgentRunID != nil {
-				t.Fatalf("expected task lock to be cleared after nil-provider failure, still active run %q", *task.ActiveAgentRunID)
-			}
-			if runs[0].Status != "failed" {
-				t.Fatalf("expected run to be marked failed, got %q", runs[0].Status)
-			}
+		// SetAgentRunCompleted (status -> "failed") and ClearActiveAgentRun run
+		// as two sequential statements in the same synchronous code path, but
+		// poll for both conditions together (rather than failing as soon as
+		// status flips to "failed") so there's no window to false-fail on the
+		// gap between those two statements either.
+		if len(runs) > 0 && runs[0].Status == "failed" && task.ActiveAgentRunID == nil {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
