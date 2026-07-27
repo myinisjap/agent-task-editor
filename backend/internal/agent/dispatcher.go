@@ -461,13 +461,11 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 // missing directory the same as an empty WorktreePath reprovisions it here
 // rather than handing the agent a nonexistent cwd.
 func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Repo) (string, error) {
-	workDir := t.WorktreePath
-	if workDir != "" {
+	if workDir := t.WorktreePath; workDir != "" {
 		if fi, statErr := os.Stat(workDir); statErr == nil && fi.IsDir() {
 			return workDir, nil
 		}
 		slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
-		workDir = ""
 	}
 
 	var wtPath, branch, baseRef string
