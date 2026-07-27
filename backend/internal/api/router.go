@@ -26,7 +26,7 @@ import (
 // Version var. maxWorkers is the global MAX_WORKERS setting (informational
 // only here) — the dashboard uses it as the effective per-repo concurrency
 // limit fallback for repos with no repos.max_concurrent_runs override.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher)
@@ -41,7 +41,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	schedulesH := handlers.NewSchedulesHandler(q)
 	dashH := handlers.NewDashboardHandler(q, maxWorkers)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
-	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates)
+	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates, dispatcherLiveness)
 	backupH := handlers.NewBackupHandler(db)
 	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	logRetentionSettingsH := handlers.NewLogRetentionSettingsHandler(q)
@@ -78,6 +78,11 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	// (docker/k8s) can healthcheck without needing API_TOKEN. Returns only a
 	// static {status, version}; leaks nothing sensitive. See docs/api.md.
 	r.Get("/healthz", healthH.Healthz)
+
+	// Readiness probe — like /healthz but also verifies DB connectivity and
+	// that the dispatch loop is still ticking, so a wedged backend reports
+	// unhealthy to Docker. Unauthenticated for the same reason as /healthz.
+	r.Get("/readyz", healthH.Readyz)
 
 	// Everything below requires the Bearer token (when one is configured).
 	r.Group(func(r chi.Router) {

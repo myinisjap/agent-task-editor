@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
 import { useNotificationsStore, notificationsSupported } from '../../stores/notifications'
+import { useWsStatus } from '../../lib/useWsStatus'
+import type { WSStatus } from '../../api/ws'
 
 interface NavGroup {
   key: string
@@ -52,6 +54,12 @@ const groups: NavGroup[] = [
 
 const STORAGE_KEY = 'nav-open-groups'
 
+const WS_STATUS_CONFIG: Record<WSStatus, { label: string; dotClassName: string }> = {
+  open: { label: 'Live', dotClassName: 'bg-emerald-400' },
+  connecting: { label: 'Reconnecting…', dotClassName: 'bg-amber-400 animate-pulse' },
+  closed: { label: 'Offline', dotClassName: 'bg-red-400' },
+}
+
 /** Which group (if any) contains the given pathname. */
 function groupForPath(pathname: string): string | null {
   const group = groups.find((g) => g.links.some((l) => l.to !== '/' && pathname.startsWith(l.to)))
@@ -79,6 +87,7 @@ export default function NavSidebar() {
   const notificationsEnabled = useNotificationsStore((s) => s.enabled)
   const notificationsPermission = useNotificationsStore((s) => s.permission)
   const toggleNotifications = useNotificationsStore((s) => s.toggle)
+  const wsStatus = useWsStatus()
   const location = useLocation()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     loadOpenGroups(groupForPath(location.pathname)),
@@ -189,6 +198,17 @@ export default function NavSidebar() {
               </div>
             )
           })}
+        </div>
+
+        <div
+          className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-400 shrink-0"
+          title={`WebSocket: ${WS_STATUS_CONFIG[wsStatus].label}`}
+        >
+          <span
+            aria-hidden="true"
+            className={`inline-block w-2 h-2 rounded-full ${WS_STATUS_CONFIG[wsStatus].dotClassName}`}
+          />
+          <span>{WS_STATUS_CONFIG[wsStatus].label}</span>
         </div>
 
         {notificationsSupported() && (
