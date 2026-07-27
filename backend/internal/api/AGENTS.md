@@ -5,7 +5,8 @@ Chi v5 router wired in `router.go`. All HTTP handlers and middleware live under 
 ## Router Structure
 
 ```
-GET  /healthz               (no auth)
+GET  /healthz               (no auth; static liveness stub)
+GET  /readyz                (no auth; DB ping + dispatcher heartbeat — what the compose healthcheck targets)
 GET  /ws                    (auth via single-use ?ticket=, see POST /ws-ticket below; deprecated ?token= fallback still accepted)
 GET  /metrics                (Prometheus scrape; gated by its own METRICS_TOKEN, outside /api/v1 and outside the main bearer group)
 /api/v1/

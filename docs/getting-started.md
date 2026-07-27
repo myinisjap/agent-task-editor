@@ -65,6 +65,14 @@ The app is served at `https://your.domain.com/tasks`. TLS is handled by Traefik 
 
 > **Note:** The frontend nginx is the only container exposed to Traefik. It proxies `/tasks/api/` and `/tasks/ws` to the backend internally, so the backend container has no public port.
 
+## Backend Resilience: Restart Policy, Readiness, and Memory Limit
+
+The `backend` service in `docker-compose.yml` / `docker-compose.release.yml` is configured with:
+
+- `restart: unless-stopped` — the container is restarted automatically after a crash or OOM kill (and on daemon restart), unless you've explicitly stopped it.
+- A healthcheck against `GET /readyz` (not `/healthz`) — this actually checks DB connectivity and that the dispatch loop is still ticking, so Docker detects a wedged backend (e.g. a locked SQLite file or a hung sweep) instead of it appearing healthy forever. See [`docs/api.md`](api.md#get-readyz).
+- A default memory ceiling of **2 GB** via `deploy.resources.limits.memory` — a modest cap that leaves headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to. If you run many concurrent agent runs and hit this ceiling (the container gets OOM-killed and auto-restarts), raise `memory:` under the backend service's `deploy.resources.limits` in your compose file.
+
 ## Environment Variables
 
 All variables can also be set via a YAML config file pointed to by `CONFIG_FILE` (env vars always take precedence over file values).
