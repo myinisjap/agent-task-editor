@@ -10,6 +10,7 @@
 // layer (see task notes — Playwright E2E deferred).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import TaskCard from './TaskCard'
 import type { Task } from '../../api/client'
@@ -88,5 +89,40 @@ describe('TaskCard hover-only controls (#147)', () => {
 
     const pauseButton = screen.getByTitle('Pause task')
     expect(pauseButton.className).toContain('opacity-0')
+  })
+})
+
+describe('TaskCard duplicate action', () => {
+  beforeEach(() => {
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+    useReposStore.setState({ repos: [], loading: false, error: null })
+  })
+
+  it('does not render a duplicate button when onDuplicate is not provided', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask()} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByTitle('Duplicate task')).not.toBeInTheDocument()
+  })
+
+  it('renders a duplicate button when onDuplicate is provided and invokes it with the task', async () => {
+    const user = userEvent.setup()
+    const onDuplicate = vi.fn()
+    const task = baseTask({ id: 'task-42' })
+
+    render(
+      <MemoryRouter>
+        <TaskCard task={task} onDuplicate={onDuplicate} />
+      </MemoryRouter>,
+    )
+
+    const dupButton = screen.getByTitle('Duplicate task')
+    expect(dupButton).toBeInTheDocument()
+
+    await user.click(dupButton)
+    expect(onDuplicate).toHaveBeenCalledWith(task)
   })
 })

@@ -53,6 +53,15 @@ triggers the "Release" workflow the same way.
   Comments this system posted itself are filtered out, so an agent never reads
   its own "PR opened" notice back as human input.
 - `GET /tasks/{id}/source-comments` returns a task's ingested issue thread.
+- **Duplicate an existing task.** A "⧉ Duplicate" action on the task detail
+  page and on each board card opens the New Task modal pre-filled with the
+  source task's title (suffixed `(copy)`), description, type, priority, repo,
+  and workflow — editable before creation, same as any new task. The clone
+  starts clean: no run history, label history, diff comments, PR link,
+  worktree/git state, subtasks, or attachments carry over, and it lands on the
+  workflow's starting label like any other new task. The source task is never
+  modified. No new endpoint was needed — the existing `POST /tasks` create
+  path already covers every field involved.
 
 ### Fixed
 - **The GitHub issue fetch no longer silently truncates at 200 issues.** It now
