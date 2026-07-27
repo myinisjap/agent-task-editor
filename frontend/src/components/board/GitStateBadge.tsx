@@ -26,10 +26,14 @@ export default function GitStateBadge({ branch, gitState, prMergeable }: GitStat
   const state = deriveGitState(branch ?? '', gitState ?? '')
   if (state === 'none') return null
   const config = GIT_STATE_CONFIG[state]
+  const detail = `${config.label}${branch ? ` (${branch})` : ''}`
   const icon = (
     <span
       className={`text-xs font-mono select-none ${config.className}`}
-      title={`${config.label}${branch ? ` (${branch})` : ''}`}
+      title={detail}
+      aria-label={detail}
+      role="img"
+      tabIndex={0}
     >
       {config.icon}
     </span>

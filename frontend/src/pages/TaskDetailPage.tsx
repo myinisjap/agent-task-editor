@@ -81,14 +81,18 @@ export default function TaskDetailPage() {
   // Initial load
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     Promise.all([api.tasks.get(id), api.tasks.runs(id), api.tasks.listLabelHistory(id), api.tasks.sourceComments(id)])
       .then(([t, r, h, c]) => {
+        if (cancelled) return
         setTask(t)
         setRuns(r ?? [])
         setLabelHistory(h ?? [])
         setSourceComments(c ?? [])
         if (r && r.length > 0) setSelectedRun(r[0].id)
       })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [id])
 
   // Load workflow when task is available
