@@ -3842,6 +3842,10 @@ export interface components {
             is_terminal: number;
             /** @description When non-zero, a task entering this label auto-opens a GitHub PR (pushes the branch first). */
             create_pr: number;
+            /** @description Max tasks allowed in this label column; null = unlimited (soft/visual by default). */
+            wip_limit?: number | null;
+            /** @description When non-zero, the dispatcher stops picking up tasks whose success target is this label once it is at its wip_limit (backpressure). */
+            wip_limit_hard: number;
         };
         WorkflowTransition: {
             id: string;

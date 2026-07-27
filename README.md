@@ -13,6 +13,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 ## Features at a Glance
 
 - **Kanban board** with drag-and-drop between columns
+- **Per-label WIP limits** — optional column cap shown as `count / limit`, with an over-limit visual flag; opt-in hard mode makes the dispatcher hold new work back from a full column instead of piling up silently
 - **Live log streaming** — agent stdout, tool calls, and tool results streamed in real time
 - **Log replay** — reconnecting clients receive all prior logs for the current run
 - **Per-task git worktrees** — concurrent agents on the same repo don't conflict

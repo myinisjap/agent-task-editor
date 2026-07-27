@@ -20,6 +20,17 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Per-label WIP limits.** Labels can now carry an optional `wip_limit`
+  (nullable — `null`/unset means unlimited, unchanged from before this
+  feature). The board column header shows `count / limit` and flags the
+  column visually once its count reaches or exceeds the limit. Enforcement is soft by default
+  (visual only); an opt-in `wip_limit_hard` flag makes the dispatcher apply
+  backpressure instead — it skips picking up a task whose agent "success"
+  transition targets a label already at or over its limit, so work queues
+  upstream on its current label rather than erroring mid-run or piling into
+  an already-full column. Configurable via the workflow YAML (`wip_limit`,
+  `wip_limit_hard` on a label) or the JSON workflow API. See
+  `docs/workflows.md`.
 - **Merge-conflict detection on open PRs.** The GitHub PR status sweep now
   also asks GitHub whether each task's open PR still merges cleanly into its
   base branch, so a PR that goes stale because someone else merged first is

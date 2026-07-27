@@ -14,6 +14,14 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 | `agent_ignore` | bool | Agents cannot move tasks to this label; dispatcher skips tasks already here |
 | `is_terminal` | bool | No further transitions; task is complete |
 | `create_pr` | bool | Any transition into this label pushes the task's branch and auto-opens (or reuses) a GitHub PR. Requires a GitHub remote and an authenticated `gh`; best-effort, so a failure is logged and the transition still commits. Equivalent to clicking "Create PR" manually. **At most one label per workflow may set this** — saving a workflow with two is rejected. |
+| `wip_limit` | int, nullable | Max number of (non-archived) tasks allowed on this label. `null`/unset = unlimited — a label with no limit behaves exactly as before this feature existed. Must be a positive integer when set; `0` or negative is rejected. |
+| `wip_limit_hard` | bool | Enforcement mode for `wip_limit`. **Soft (default, `false`)**: the board column header shows `count / limit` and flags the column when over capacity, but nothing is blocked. **Hard (`true`)**: in addition to the visual flag, the dispatcher will not pick up a task whose agent "success" transition would land it on this label while the label is already at or over its limit — the task simply stays where it is and is re-evaluated on the next sweep (a few seconds later), so work queues upstream instead of erroring mid-run. Hard mode never blocks a run that is already in flight from landing in a full column; that stays visual-only. Setting `wip_limit_hard` without a `wip_limit` has no effect (there's nothing to enforce). |
+
+## WIP limits and the dispatcher
+
+Hard WIP limits are enforced at exactly one point: the dispatcher's sweep, right before it would start a new agent run for a task. Before dispatching, it resolves the task's current label's unambiguous agent-triggerable "success" transition target. If that target label has `wip_limit_hard: true` and its current occupancy (non-archived tasks currently on that label, matching what the board column count shows) is `>= wip_limit`, the dispatcher skips this task for the current sweep — no run is started, no error is recorded, and the task's label doesn't change. It's picked up again on a later sweep once the target label has room.
+
+If the current label has no single unambiguous "success" transition (e.g. none defined, or more than one agent transition could plausibly be "success"), the WIP check is skipped entirely for that task — an ambiguous target is treated as "unknown" rather than guessing, so it never blocks dispatch.
 
 ## Transitions
 
@@ -123,9 +131,14 @@ labels:
   - name: in-progress
     color: "#F59E0B"
     sort_order: 1
+  - name: review
+    color: "#EC4899"
+    sort_order: 2
+    wip_limit: 5        # column shows "count / 5" and flags over-limit
+    wip_limit_hard: true # dispatcher also stops routing new work here once full
   - name: done
     color: "#10B981"
-    sort_order: 2
+    sort_order: 3
     is_terminal: true
 transitions:
   - from: backlog

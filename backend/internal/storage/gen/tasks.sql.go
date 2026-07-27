@@ -86,6 +86,24 @@ func (q *Queries) CountSubtasks(ctx context.Context, parentTaskID *string) (int6
 	return count, err
 }
 
+const countTasksByLabel = `-- name: CountTasksByLabel :one
+SELECT COUNT(*) FROM tasks WHERE workflow_id = ? AND label = ? AND archived = 0
+`
+
+type CountTasksByLabelParams struct {
+	WorkflowID string `json:"workflow_id"`
+	Label      string `json:"label"`
+}
+
+// Occupancy of a label column for WIP-limit purposes; mirrors the board's
+// default view, which hides archived tasks.
+func (q *Queries) CountTasksByLabel(ctx context.Context, arg CountTasksByLabelParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTasksByLabel, arg.WorkflowID, arg.Label)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countTasksBySource = `-- name: CountTasksBySource :one
 SELECT COUNT(*) FROM tasks WHERE source = ? AND source_ref = ?
 `

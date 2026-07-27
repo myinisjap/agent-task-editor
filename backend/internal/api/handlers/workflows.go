@@ -106,11 +106,13 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Labels      []struct {
-			Name        string `json:"name"`
-			Color       string `json:"color"`
-			SortOrder   int64  `json:"sort_order"`
-			AgentIgnore bool   `json:"agent_ignore"`
-			IsTerminal  bool   `json:"is_terminal"`
+			Name         string `json:"name"`
+			Color        string `json:"color"`
+			SortOrder    int64  `json:"sort_order"`
+			AgentIgnore  bool   `json:"agent_ignore"`
+			IsTerminal   bool   `json:"is_terminal"`
+			WipLimit     *int64 `json:"wip_limit"`
+			WipLimitHard bool   `json:"wip_limit_hard"`
 		} `json:"labels"`
 		Transitions []struct {
 			FromLabel     string  `json:"from_label"`
@@ -167,14 +169,20 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if l.IsTerminal {
 			isTerminal = 1
 		}
+		wipLimitHard := int64(0)
+		if l.WipLimitHard {
+			wipLimitHard = 1
+		}
 		if _, err := tq.CreateWorkflowLabel(r.Context(), gen.CreateWorkflowLabelParams{
-			ID:          uuid.NewString(),
-			WorkflowID:  wfID,
-			Name:        l.Name,
-			Color:       l.Color,
-			SortOrder:   l.SortOrder,
-			AgentIgnore: agentIgnore,
-			IsTerminal:  isTerminal,
+			ID:           uuid.NewString(),
+			WorkflowID:   wfID,
+			Name:         l.Name,
+			Color:        l.Color,
+			SortOrder:    l.SortOrder,
+			AgentIgnore:  agentIgnore,
+			IsTerminal:   isTerminal,
+			WipLimit:     l.WipLimit,
+			WipLimitHard: wipLimitHard,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
