@@ -170,17 +170,21 @@ matching on the command string, not a sandbox.
 
 ## Image Attachments
 
-**Not supported — and currently broken.** `buildClaudeArgs` appends one
-`--image <abs-path>` flag per task attachment, but **the `claude` CLI has no
-`--image` flag** (verified against v2.1.220: `error: unknown option '--image'`,
-and the string appears nowhere in the CLI bundle). Because the flag is rejected
-during argument parsing, a `claude`-provider run against a task that has
-attachments aborts before it starts.
+**Not visually supported, but available as files.** The `claude` CLI has no
+flag for passing local image paths for visual model input (verified against
+v2.1.220: `error: unknown option '--image'`, and the string appears nowhere in
+the CLI bundle), so `buildClaudeArgs` does not attempt to pass one.
 
-Independently of the flag, the dispatcher already copies task attachments into
-the run's worktree and lists their relative paths in the prompt, so an agent can
-open them with its normal `Read` tool. Dropping the `--image` flags from
-`buildClaudeArgs` would therefore fix the failure without losing any capability.
+Instead, the dispatcher copies every task attachment into the run's worktree
+under `.task_attachments/` and the prompt lists their relative paths, so the
+agent can open them with its normal `Read` tool. This gives the agent access
+to attachment contents (e.g. text files, or an image's bytes/metadata via
+`Read`), but it is not the same as true multimodal visual input into the
+model.
+
+If real visual image input is wanted later, it would require a different
+mechanism — the CLI's `--file <file_id:relative_path>` resource specs, not
+local absolute paths — and is not currently implemented.
 
 ## Model Selection
 

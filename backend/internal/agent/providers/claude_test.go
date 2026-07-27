@@ -292,6 +292,28 @@ func TestBuildClaudeArgs_MaxTurnsConfigured(t *testing.T) {
 	}
 }
 
+// TestBuildClaudeArgs_NoImageFlag verifies that buildClaudeArgs never emits
+// an --image flag, even when the input carries attachment paths. The claude
+// CLI has no --image flag and rejects it at argument parsing, so passing
+// attachments this way must never regress (see docs/providers/claude.md §
+// Image Attachments). Attachments reach the agent instead as files under
+// .task_attachments/ in the worktree, listed in the prompt.
+func TestBuildClaudeArgs_NoImageFlag(t *testing.T) {
+	args, err := buildClaudeArgs(agent.RunInput{
+		Task:               agent.Task{Title: "t"},
+		AgentConfig:        agent.AgentConfig{},
+		AttachmentAbsPaths: []string{"/tmp/uploads/abc/photo.png"},
+	}, false, nil)
+	if err != nil {
+		t.Fatalf("buildClaudeArgs: %v", err)
+	}
+	for _, a := range args {
+		if a == "--image" {
+			t.Fatalf("buildClaudeArgs emitted unsupported --image flag: %v", args)
+		}
+	}
+}
+
 // TestBuildClaudeSettingsJSON_FallbackNoInventory verifies that a selected
 // plugin is explicitly enabled even when it isn't present in the discovered
 // inventory (or discovery finds nothing at all). HOME is pointed at an empty
