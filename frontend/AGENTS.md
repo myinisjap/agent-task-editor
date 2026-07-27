@@ -5,7 +5,7 @@ React 19 + TypeScript + Vite + Tailwind CSS. Single-page application served by n
 ## Stack
 
 - **React 19** with functional components and hooks
-- **TypeScript** — strict mode enabled
+- **TypeScript** — `strictNullChecks` enabled (full `strict` in progress; see `tsconfig.app.json`)
 - **Vite** — dev server (`:5173`) + production bundler
 - **Tailwind CSS** — utility-first styling
 - **Zustand** — lightweight global state

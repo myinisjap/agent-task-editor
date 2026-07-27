@@ -188,6 +188,35 @@ triggers the "Release" workflow the same way.
   writers and flood connected clients. See
   [task-sources.md](docs/task-sources.md) and
   [websocket.md](docs/websocket.md).
+- **Frontend hardening pass** (#253):
+  - Routes are now code-split with `React.lazy`/`Suspense`, so the two
+    heaviest per-route dependencies — `@xterm/xterm` (Chat) and
+    `@xyflow/react` + `dagre` (Workflow) — no longer ship in the initial
+    bundle for users who only ever open e.g. the Board.
+  - The WebSocket client's reconnect now uses capped exponential backoff with
+    full jitter instead of a flat 3s retry, so a server restart doesn't have
+    every open tab hammering `/ws-ticket` + `/ws` in lockstep. A new
+    connection-status indicator ("Live" / "Reconnecting…" / "Offline") is
+    shown in the sidebar on every route.
+  - The Board's `task.updated` WebSocket handler now applies the event's
+    payload (already a full task) directly instead of triggering an extra
+    `GET /tasks/{id}` round-trip.
+  - Board task cards are keyboard-focusable and describe themselves via
+    `aria-label`; Enter opens a focused task and a new `KeyboardSensor`
+    (Space to pick up/drop, arrow keys to move) makes drag-and-drop between
+    columns reachable without a mouse.
+  - The page-level error boundary now resets when navigating to a different
+    route, instead of a render crash on one page sticking across every
+    subsequent navigation until a full reload.
+  - `GitStateBadge`'s git/PR-state detail is now exposed via `aria-label`
+    and `role="img"`, and the badge is a keyboard focus stop, instead of
+    being reachable only through a native `title` tooltip.
+  - Very large diff files in the PR review viewer now render collapsed by
+    default instead of every line of every file being expanded up front.
+  - Enabled `strictNullChecks` in the frontend TypeScript config (see
+    `frontend/AGENTS.md`, previously inaccurately described as full `strict`
+    mode) and fixed the errors it surfaced, including a task-card priority
+    `<select>` that could cast an invalid value straight into `Task['priority']`.
 
 ## [0.14.0] - 2026-07-26
 

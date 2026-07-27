@@ -1,21 +1,55 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { lazy, Suspense } from 'react'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import NavSidebar from './components/shared/NavSidebar'
 import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
-import BoardPage from './pages/BoardPage'
-import ChatPage from './pages/ChatPage'
-import DashboardPage from './pages/DashboardPage'
-import UsagePage from './pages/UsagePage'
-import AgentPerformancePage from './pages/AgentPerformancePage'
-import TaskDetailPage from './pages/TaskDetailPage'
-import WorkflowPage from './pages/WorkflowPage'
-import AgentConfigPage from './pages/AgentConfigPage'
-import ProviderConfigPage from './pages/ProviderConfigPage'
-import PricingSettingsPage from './pages/PricingSettingsPage'
-import ReposPage from './pages/ReposPage'
-import TemplatesPage from './pages/TemplatesPage'
-import HealthPage from './pages/HealthPage'
+
+// Lazy-loaded so heavy per-route dependencies (@xterm/xterm for ChatPage,
+// @xyflow/react + dagre for WorkflowPage via WorkflowFlowchart) don't ship in
+// the initial bundle for users who only ever open e.g. /board.
+const BoardPage = lazy(() => import('./pages/BoardPage'))
+const ChatPage = lazy(() => import('./pages/ChatPage'))
+const DashboardPage = lazy(() => import('./pages/DashboardPage'))
+const UsagePage = lazy(() => import('./pages/UsagePage'))
+const AgentPerformancePage = lazy(() => import('./pages/AgentPerformancePage'))
+const TaskDetailPage = lazy(() => import('./pages/TaskDetailPage'))
+const WorkflowPage = lazy(() => import('./pages/WorkflowPage'))
+const AgentConfigPage = lazy(() => import('./pages/AgentConfigPage'))
+const ProviderConfigPage = lazy(() => import('./pages/ProviderConfigPage'))
+const PricingSettingsPage = lazy(() => import('./pages/PricingSettingsPage'))
+const ReposPage = lazy(() => import('./pages/ReposPage'))
+const TemplatesPage = lazy(() => import('./pages/TemplatesPage'))
+const HealthPage = lazy(() => import('./pages/HealthPage'))
+
+function AppRoutes() {
+  // Remount the boundary (and the lazy Suspense subtree) per route so a
+  // render crash on one page doesn't stick across subsequent navigation —
+  // without this, ErrorBoundary's fallback stays up until a full reload
+  // because Routes lives inside a single, never-reset boundary instance.
+  const location = useLocation()
+  return (
+    <ErrorBoundary key={location.pathname}>
+      <Suspense fallback={<div className="p-6 text-slate-400 text-sm">Loading…</div>}>
+        <Routes>
+          <Route path="/"                      element={<DashboardPage />} />
+          <Route path="/dashboard/usage"       element={<UsagePage />} />
+          <Route path="/dashboard/performance" element={<AgentPerformancePage />} />
+          <Route path="/board"                 element={<BoardPage />} />
+          <Route path="/chat"                  element={<ChatPage />} />
+          <Route path="/tasks/:id"             element={<TaskDetailPage />} />
+          <Route path="/workflow"              element={<WorkflowPage />} />
+          <Route path="/agents"                element={<AgentConfigPage />} />
+          <Route path="/providers"             element={<ProviderConfigPage />} />
+          <Route path="/settings/pricing"      element={<PricingSettingsPage />} />
+          <Route path="/repos"                 element={<ReposPage />} />
+          <Route path="/templates"             element={<TemplatesPage />} />
+          <Route path="/health"                element={<HealthPage />} />
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
+  )
+}
 
 export default function App() {
   // Registered once at the app root (not per-page) so "human needed"
@@ -32,23 +66,7 @@ export default function App() {
         <div className="flex h-dvh overflow-hidden">
           <NavSidebar />
           <main className="flex-1 overflow-auto bg-slate-950 pt-12 md:pt-0">
-            <ErrorBoundary>
-            <Routes>
-              <Route path="/"                      element={<DashboardPage />} />
-              <Route path="/dashboard/usage"       element={<UsagePage />} />
-              <Route path="/dashboard/performance" element={<AgentPerformancePage />} />
-              <Route path="/board"                 element={<BoardPage />} />
-              <Route path="/chat"                  element={<ChatPage />} />
-              <Route path="/tasks/:id"             element={<TaskDetailPage />} />
-              <Route path="/workflow"              element={<WorkflowPage />} />
-              <Route path="/agents"                element={<AgentConfigPage />} />
-              <Route path="/providers"             element={<ProviderConfigPage />} />
-              <Route path="/settings/pricing"      element={<PricingSettingsPage />} />
-              <Route path="/repos"                 element={<ReposPage />} />
-              <Route path="/templates"             element={<TemplatesPage />} />
-              <Route path="/health"                element={<HealthPage />} />
-            </Routes>
-            </ErrorBoundary>
+            <AppRoutes />
           </main>
         </div>
       </ApiTokenGate>
