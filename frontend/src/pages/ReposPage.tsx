@@ -15,11 +15,15 @@ type EditForm = {
   issue_sync_enabled: boolean
   issue_sync_label: string
   issue_writeback_enabled: boolean
+  issue_writeback_label: string
   pr_review_auto_transition_enabled: boolean
   issue_sync_update_policy: IssueSyncUpdatePolicy
   issue_sync_gone_action: IssueSyncGoneAction
   issue_sync_gone_label: string
   issue_comment_sync_enabled: boolean
+  // Empty string = no repo-specific cap (falls back to the global
+  // MAX_WORKERS). Kept as a string so the input can be blank rather than 0.
+  max_concurrent_runs: string
 }
 
 const BLANK_FORM: EditForm = {
@@ -30,11 +34,13 @@ const BLANK_FORM: EditForm = {
   issue_sync_enabled: false,
   issue_sync_label: '',
   issue_writeback_enabled: false,
+  issue_writeback_label: '',
   pr_review_auto_transition_enabled: false,
   issue_sync_update_policy: 'gate',
   issue_sync_gone_action: 'flag',
   issue_sync_gone_label: '',
   issue_comment_sync_enabled: false,
+  max_concurrent_runs: '',
 }
 
 export default function ReposPage() {
@@ -106,11 +112,13 @@ export default function ReposPage() {
         issue_sync_enabled: form.issue_sync_enabled,
         issue_sync_label: form.issue_sync_label.trim(),
         issue_writeback_enabled: form.issue_writeback_enabled,
+        issue_writeback_label: form.issue_writeback_label.trim(),
         pr_review_auto_transition_enabled: form.pr_review_auto_transition_enabled,
         issue_sync_update_policy: form.issue_sync_update_policy,
         issue_sync_gone_action: form.issue_sync_gone_action,
         issue_sync_gone_label: form.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: form.issue_comment_sync_enabled,
+        max_concurrent_runs: form.max_concurrent_runs.trim() ? Number(form.max_concurrent_runs) : undefined,
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -132,11 +140,13 @@ export default function ReposPage() {
       issue_sync_enabled: !!repo.issue_sync_enabled,
       issue_sync_label: repo.issue_sync_label ?? '',
       issue_writeback_enabled: !!repo.issue_writeback_enabled,
+      issue_writeback_label: repo.issue_writeback_label ?? '',
       pr_review_auto_transition_enabled: !!repo.pr_review_auto_transition_enabled,
       issue_sync_update_policy: repo.issue_sync_update_policy ?? 'gate',
       issue_sync_gone_action: repo.issue_sync_gone_action ?? 'flag',
       issue_sync_gone_label: repo.issue_sync_gone_label ?? '',
       issue_comment_sync_enabled: !!repo.issue_comment_sync_enabled,
+      max_concurrent_runs: repo.max_concurrent_runs != null ? String(repo.max_concurrent_runs) : '',
     })
     setEditError('')
   }
@@ -161,11 +171,13 @@ export default function ReposPage() {
         issue_sync_enabled: editForm.issue_sync_enabled,
         issue_sync_label: editForm.issue_sync_label.trim(),
         issue_writeback_enabled: editForm.issue_writeback_enabled,
+        issue_writeback_label: editForm.issue_writeback_label.trim(),
         pr_review_auto_transition_enabled: editForm.pr_review_auto_transition_enabled,
         issue_sync_update_policy: editForm.issue_sync_update_policy,
         issue_sync_gone_action: editForm.issue_sync_gone_action,
         issue_sync_gone_label: editForm.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: editForm.issue_comment_sync_enabled,
+        max_concurrent_runs: editForm.max_concurrent_runs.trim() ? Number(editForm.max_concurrent_runs) : null,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -359,6 +371,24 @@ export default function ReposPage() {
               </span>
             </label>
 
+            {form.issue_writeback_enabled && (
+              <div className="flex flex-col gap-1.5 pl-6">
+                <label className="text-xs font-medium text-slate-400">
+                  In-progress label <span className="text-slate-600">(blank = default agent-in-progress)</span>
+                </label>
+                <input
+                  value={form.issue_writeback_label}
+                  onChange={(e) => setForm((f) => ({ ...f, issue_writeback_label: e.target.value }))}
+                  placeholder="agent-in-progress"
+                  className={inputCls}
+                />
+                <span className="text-xs text-slate-600">
+                  Applied to the source issue when a task first leaves the human-gate label. The label must
+                  already exist on the GitHub repo, or the write-back is silently skipped.
+                </span>
+              </div>
+            )}
+
             <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
               <input
                 type="checkbox"
@@ -371,6 +401,20 @@ export default function ReposPage() {
                 (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
               </span>
             </label>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-slate-400">
+                Max concurrent agent runs <span className="text-slate-600">(blank = use the global default)</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={form.max_concurrent_runs}
+                onChange={(e) => setForm((f) => ({ ...f, max_concurrent_runs: e.target.value }))}
+                placeholder="unset"
+                className={`${inputCls} max-w-[10rem]`}
+              />
+            </div>
           </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -429,6 +473,14 @@ export default function ReposPage() {
                       title="Auto-transitioning tasks back to their failure-path label on GitHub changes-requested reviews, new review comments, or failed checks"
                     >
                       PR auto-transition
+                    </span>
+                  )}
+                  {repo.max_concurrent_runs != null && (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/30 shrink-0"
+                      title="The dispatcher will not run more than this many agents on this repo at once, regardless of free global worker slots"
+                    >
+                      Max {repo.max_concurrent_runs} concurrent
                     </span>
                   )}
                   <button
@@ -596,6 +648,24 @@ export default function ReposPage() {
                       </span>
                     </label>
 
+                    {editForm.issue_writeback_enabled && (
+                      <div className="flex flex-col gap-1.5 pl-6">
+                        <label className="text-xs font-medium text-slate-400">
+                          In-progress label <span className="text-slate-600">(blank = default agent-in-progress)</span>
+                        </label>
+                        <input
+                          value={editForm.issue_writeback_label}
+                          onChange={(e) => setEditForm((f) => ({ ...f, issue_writeback_label: e.target.value }))}
+                          placeholder="agent-in-progress"
+                          className={inputCls}
+                        />
+                        <span className="text-xs text-slate-600">
+                          Applied to the source issue when a task first leaves the human-gate label. The label
+                          must already exist on the GitHub repo, or the write-back is silently skipped.
+                        </span>
+                      </div>
+                    )}
+
                     <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
                       <input
                         type="checkbox"
@@ -608,6 +678,20 @@ export default function ReposPage() {
                         (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
                       </span>
                     </label>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-slate-400">
+                        Max concurrent agent runs <span className="text-slate-600">(blank = use the global default)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={editForm.max_concurrent_runs}
+                        onChange={(e) => setEditForm((f) => ({ ...f, max_concurrent_runs: e.target.value }))}
+                        placeholder="unset"
+                        className={`${inputCls} max-w-[10rem]`}
+                      />
+                    </div>
                   </div>
 
                   {editError && <p className="text-xs text-red-400">{editError}</p>}

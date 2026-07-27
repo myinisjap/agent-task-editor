@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -71,11 +72,16 @@ type createRepoBody struct {
 	IssueSyncEnabled              bool    `json:"issue_sync_enabled"`
 	IssueSyncLabel                string  `json:"issue_sync_label"`
 	IssueWritebackEnabled         bool    `json:"issue_writeback_enabled"`
+	IssueWritebackLabel           string  `json:"issue_writeback_label"`
 	PrReviewAutoTransitionEnabled bool    `json:"pr_review_auto_transition_enabled"`
 	IssueSyncUpdatePolicy         string  `json:"issue_sync_update_policy"`
 	IssueSyncGoneAction           string  `json:"issue_sync_gone_action"`
 	IssueSyncGoneLabel            string  `json:"issue_sync_gone_label"`
 	IssueCommentSyncEnabled       bool    `json:"issue_comment_sync_enabled"`
+	// MaxConcurrentRuns is an optional per-repo cap on concurrent agent runs
+	// (nil/omitted = no repo-specific cap; the dispatcher falls back to the
+	// global MAX_WORKERS). See resolveMaxConcurrentRuns.
+	MaxConcurrentRuns *int64 `json:"max_concurrent_runs"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +162,11 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		issueCommentSyncEnabled = 1
 	}
 
+	maxConcurrentRuns, ok := resolveMaxConcurrentRuns(w, body.MaxConcurrentRuns)
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -165,11 +176,13 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueSyncEnabled:              issueSyncEnabled,
 		IssueSyncLabel:                strings.TrimSpace(body.IssueSyncLabel),
 		IssueWritebackEnabled:         issueWritebackEnabled,
+		IssueWritebackLabel:           strings.TrimSpace(body.IssueWritebackLabel),
 		PrReviewAutoTransitionEnabled: prReviewAutoTransitionEnabled,
 		IssueSyncUpdatePolicy:         issueSyncUpdatePolicy,
 		IssueSyncGoneAction:           issueSyncGoneAction,
 		IssueSyncGoneLabel:            issueSyncGoneLabel,
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
+		MaxConcurrentRuns:             maxConcurrentRuns,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -318,6 +331,25 @@ func resolveIssueSyncGoneAction(w http.ResponseWriter, action, goneLabel string)
 	return action, true
 }
 
+// resolveMaxConcurrentRuns validates the optional per-repo concurrency cap.
+// nil (omitted or explicitly null) means "no repo-specific cap" — preserved
+// as nil so the dispatcher falls back to the global MAX_WORKERS, matching
+// the "unset limit preserves today's behavior exactly" acceptance criterion.
+// A provided value must be a positive integer; 0 or negative is rejected
+// rather than silently treated as unlimited, since '0 means unlimited' is
+// used elsewhere in this codebase (e.g. max_retries) and would be a
+// confusing inconsistency here.
+func resolveMaxConcurrentRuns(w http.ResponseWriter, v *int64) (resolved *int64, ok bool) {
+	if v == nil {
+		return nil, true
+	}
+	if *v <= 0 {
+		Err(w, http.StatusBadRequest, "max_concurrent_runs must be a positive integer, or omitted/null to use the global default")
+		return nil, false
+	}
+	return v, true
+}
+
 // startAsyncClone marks the freshly-created repo row 'cloning' and kicks off the
 // background clone. Runs in the background so a slow clone of a large repo doesn't
 // exceed the server's WriteTimeout and get cut off mid-clone. The UI shows a
@@ -418,6 +450,12 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		Err(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
 	var body struct {
 		Name                          *string `json:"name"`
 		Path                          *string `json:"path"`
@@ -426,15 +464,34 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncEnabled              *bool   `json:"issue_sync_enabled"`
 		IssueSyncLabel                *string `json:"issue_sync_label"`
 		IssueWritebackEnabled         *bool   `json:"issue_writeback_enabled"`
+		IssueWritebackLabel           *string `json:"issue_writeback_label"`
 		PrReviewAutoTransitionEnabled *bool   `json:"pr_review_auto_transition_enabled"`
 		IssueSyncUpdatePolicy         *string `json:"issue_sync_update_policy"`
 		IssueSyncGoneAction           *string `json:"issue_sync_gone_action"`
 		IssueSyncGoneLabel            *string `json:"issue_sync_gone_label"`
 		IssueCommentSyncEnabled       *bool   `json:"issue_comment_sync_enabled"`
+		// MaxConcurrentRuns is decoded normally here (nil covers both
+		// "omitted" and "explicit null" — Go's encoding/json can't tell
+		// those apart even with a double pointer, since it never calls the
+		// field's Unmarshaler/sets a non-nil outer pointer for a JSON
+		// `null`). The two are disambiguated below via maxConcurrentRunsSet,
+		// which checks for key presence in the raw JSON object instead.
+		MaxConcurrentRuns *int64 `json:"max_concurrent_runs"`
 	}
-	if err := decode(r, &body); err != nil {
+	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+
+	// Determine whether max_concurrent_runs was present in the request body
+	// at all (vs. simply absent), since a plain/double pointer can't
+	// distinguish "omitted" from "explicit null" for this field. Presence +
+	// nil value means "explicit null" (clear the cap); presence + non-nil
+	// means "set/replace the cap"; absence means "leave existing untouched".
+	var rawFields map[string]json.RawMessage
+	maxConcurrentRunsSet := false
+	if err := json.Unmarshal(bodyBytes, &rawFields); err == nil {
+		_, maxConcurrentRunsSet = rawFields["max_concurrent_runs"]
 	}
 
 	// Merge: use provided value or fall back to existing.
@@ -489,6 +546,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	issueWritebackLabel := existing.IssueWritebackLabel
+	if body.IssueWritebackLabel != nil {
+		issueWritebackLabel = strings.TrimSpace(*body.IssueWritebackLabel)
+	}
+
 	prReviewAutoTransitionEnabled := existing.PrReviewAutoTransitionEnabled
 	if body.PrReviewAutoTransitionEnabled != nil {
 		prReviewAutoTransitionEnabled = 0
@@ -537,6 +599,20 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if *body.IssueCommentSyncEnabled {
 			issueCommentSyncEnabled = 1
 		}
+	}
+
+	// max_concurrent_runs: see the maxConcurrentRunsSet doc comment above.
+	// Field absent from the request body preserves the existing value;
+	// field present with `null` clears it back to nil (use the global
+	// default); field present with a number sets/replaces it (validated
+	// below).
+	maxConcurrentRuns := existing.MaxConcurrentRuns
+	if maxConcurrentRunsSet {
+		resolved, ok := resolveMaxConcurrentRuns(w, body.MaxConcurrentRuns)
+		if !ok {
+			return
+		}
+		maxConcurrentRuns = resolved
 	}
 
 	if issueSyncEnabled != 0 {
@@ -602,11 +678,13 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncEnabled:              issueSyncEnabled,
 		IssueSyncLabel:                issueSyncLabel,
 		IssueWritebackEnabled:         issueWritebackEnabled,
+		IssueWritebackLabel:           issueWritebackLabel,
 		PrReviewAutoTransitionEnabled: prReviewAutoTransitionEnabled,
 		IssueSyncUpdatePolicy:         issueSyncUpdatePolicy,
 		IssueSyncGoneAction:           issueSyncGoneAction,
 		IssueSyncGoneLabel:            issueSyncGoneLabel,
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
+		MaxConcurrentRuns:             maxConcurrentRuns,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

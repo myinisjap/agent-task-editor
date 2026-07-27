@@ -56,6 +56,15 @@ The fetch is fully paginated — earlier versions capped it at 200 issues per
 sweep and silently ignored the rest, which also meant reconciliation (below)
 could mistake a truncated page for a closed issue.
 
+New tasks for one repo's sweep are created inside a **single database
+transaction** (one commit for the whole batch, not one per issue) and, if
+any were created, a **single `task.created_bulk`** WebSocket event is
+published for the repo instead of one `task.created` per issue (see
+[websocket.md](websocket.md)). Both changes exist to keep a large first
+import (or backlog catch-up) from repeatedly acquiring SQLite's write lock
+and from flooding connected clients with one event — and one board refetch —
+per issue.
+
 ## Deduplication
 
 `(source, source_ref)` is unique across tasks (enforced by a partial unique
@@ -201,6 +210,7 @@ to check the board.
 | Repo field | Meaning |
 |---|---|
 | `issue_writeback_enabled` | `1` to turn write-back on for this repo's imported tasks |
+| `issue_writeback_label` | Label applied when a task first leaves the human-gate label. Empty (default) = `agent-in-progress`. Must already exist on the GitHub repo. |
 
 Only one prerequisite is enforced when enabling write-back:
 
@@ -230,16 +240,18 @@ the human clicking a button or blocking a background sweep.
 1. **Task leaves the human-gate label** (optional intermediate signal) — the
    first time a task's label moves off the workflow's human-gate label (the
    lowest `sort_order` `agent_ignore` label — `not_ready` in the default
-   workflow), agent- or human-triggered, the source issue gets an
-   `agent-in-progress` label via
-   `gh issue edit --add-label agent-in-progress`. This label name is
-   currently **fixed, not configurable** per repo; a future request could add
-   a per-repo custom label field, but v2 ships a sensible default. If the
-   repo doesn't already have an `agent-in-progress` label defined, the `gh`
-   call fails — this is logged and ignored, and (unlike the two triggers
-   below) is **not retried**: this is explicitly the optional signal, and
-   retrying a call that's already failed on every future sweep/transition
-   forever is worse than an occasional missed label.
+   workflow), agent- or human-triggered, the source issue gets a label via
+   `gh issue edit --add-label <label>`. The label is **configurable per
+   repo** via `repos.issue_writeback_label` (`PATCH /repos/{id}` with
+   `{"issue_writeback_label": "..."}`, or the "In-progress label" field on
+   the Repos page under the "Issue write-back" checkbox); an unset/blank
+   value falls back to the default `agent-in-progress`
+   (`writeback.InProgressLabel`). Either way, the label — default or
+   custom — **must already exist on the GitHub repo**: if it doesn't, the
+   `gh` call fails — this is logged and ignored, and (unlike the two
+   triggers below) is **not retried**: this is explicitly the optional
+   signal, and retrying a call that's already failed on every future
+   sweep/transition forever is worse than an occasional missed label.
 2. **PR opened** — the first time a task gets a non-empty `pr_url`, the
    source issue gets a comment linking the PR
    (`gh issue comment --body "..."`).
@@ -286,8 +298,8 @@ comment-scraping based) — it's purely for human legibility.
 
 This is the reverse direction of the loop above: instead of writing task
 status *to* GitHub, `internal/ghsync`'s sweep reads GitHub PR reviews, inline
-review comments, and check-run results back *into* the task, for any task
-with a branch and an open PR — not just imported ones.
+review comments, check-run results, and merge-conflict status back *into* the
+task, for any task with a branch and an open PR — not just imported ones.
 
 On every sweep, for each task with a resolved PR number, the syncer:
 
@@ -305,7 +317,12 @@ On every sweep, for each task with a resolved PR number, the syncer:
    and, if the set of failing check names differs from what was last
    surfaced for the current head commit, appends their names/links to the
    same feedback block.
-4. If that combined block is non-empty, it's **appended** (not overwritten)
+4. **Checks whether the PR still merges cleanly** into its base branch
+   (`gh pr list --json mergeable,baseRefName`, folded into the head-SHA call
+   the ingestion cursor already makes, so it costs no extra `gh` invocation)
+   and appends a resolve-the-conflict note to the same block the first time a
+   conflict is seen. See "Merge conflict detection" below.
+5. If that combined block is non-empty, it's **appended** (not overwritten)
    to the task's current agent run's `Feedback` column — read-modify-write,
    so it never clobbers a note a human already left via Reject. This is the
    same column rendered under the `FEEDBACK FROM PRIOR REVIEW:` prompt
@@ -314,8 +331,9 @@ On every sweep, for each task with a resolved PR number, the syncer:
 ### Tracking / fresh-cycle-on-push
 
 A per-task row in `task_pr_review_state` tracks a cursor (last-seen review
-submission timestamp, a fingerprint of the last-surfaced failing checks) plus
-the PR's head commit SHA as of the last sweep. Re-sweeps only surface
+submission timestamp, a fingerprint of the last-surfaced failing checks, the
+head commit + base branch a conflict was last surfaced at) plus the PR's head
+commit SHA as of the last sweep. Re-sweeps only surface
 reviews/checks newer than the cursor, so feedback is never duplicated across
 sweeps.
 
@@ -331,6 +349,39 @@ say, is logged and swallowed and does not prevent comments or checks from
 still being ingested that sweep, mirroring the write-back error-handling
 style above.
 
+### Merge conflict detection
+
+A PR that merged cleanly when it was opened can start conflicting later
+without the task's branch changing at all — someone else merged something
+into the base branch first. Because the sweep re-reads every non-terminal
+PR-bearing task on each interval, it notices:
+
+- **The task row** carries `pr_mergeable`: `mergeable`, `conflicting`,
+  `unknown`, or empty before the first check. It's written only when the
+  verdict changes, and each change publishes a
+  [`task.pr_mergeable_changed`](websocket.md#taskpr_mergeable_changed) WS
+  event; the board and task detail views render a conflict marker from it.
+  `GET /tasks/{id}/github-status` refreshes it on demand too.
+- **The agent** gets a feedback line telling it to update the branch against
+  the latest base branch, resolve the conflicted files, and push.
+
+`unknown` is normal and transient rather than an error: GitHub computes the
+test merge asynchronously after every push to either branch, so a freshly
+pushed PR reports `UNKNOWN` for a few seconds. Nothing is surfaced to the
+agent on an `unknown` verdict, and the conflict cursor is left alone — that
+way a verdict flapping `conflicting -> unknown -> conflicting` doesn't read
+as a brand-new conflict each time.
+
+The feedback is deduped on `"<head sha>|<base ref>"`, so:
+
+| Situation | Surfaced again? |
+|---|---|
+| Same conflict, next sweep | No — already told the agent |
+| Agent pushed, still conflicting | Yes — the resolution attempt failed |
+| PR retargeted to a different base, still conflicting | Yes |
+| Went `mergeable`, then conflicts again at the same commit | Yes — the cursor is cleared on a clean verdict |
+| PR merged or closed while conflicting | No — the verdict is recorded, but a closed PR is nobody's problem |
+
 ### Auto-transition (opt-in)
 
 | Repo field | Meaning |
@@ -342,7 +393,8 @@ stays wherever a human put it — someone still has to click Reject (or
 whatever the workflow's manual transition is) to send it back to an agent.
 Setting `pr_review_auto_transition_enabled: 1` on the repo skips that click:
 the first time a sweep ingests new feedback for a task (a changes-requested
-review, a new inline comment, or a newly-failing check), the task is
+review, a new inline comment, a newly-failing check, or a newly-detected merge
+conflict), the task is
 transitioned along its workflow's "failure" human-transition path — the same
 destination label a manual Reject would use. If no such transition is
 defined from the task's current label, or the transition is otherwise

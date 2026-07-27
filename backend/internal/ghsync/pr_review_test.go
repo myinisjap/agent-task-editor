@@ -128,7 +128,7 @@ func TestIngestPRFeedback_ChangesRequestedReview_AppendsFeedback(t *testing.T) {
 	task = seedRunForTask(t, q, task.ID)
 	repo := repoInfo{ghName: "acme/widgets", repo: mustGetRepo(t, q, repoID)}
 
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 
 	run, err := q.GetAgentRun(ctx, *task.CurrentAgentRunID)
 	if err != nil {
@@ -142,7 +142,7 @@ func TestIngestPRFeedback_ChangesRequestedReview_AppendsFeedback(t *testing.T) {
 	}
 
 	// Re-sweep with the same reviews: no duplicate feedback should be appended.
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 	run2, err := q.GetAgentRun(ctx, *task.CurrentAgentRunID)
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestIngestPRFeedback_FailedChecks_AppendsFeedback(t *testing.T) {
 	task = seedRunForTask(t, q, task.ID)
 	repo := repoInfo{ghName: "acme/widgets", repo: mustGetRepo(t, q, repoID)}
 
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 
 	run, err := q.GetAgentRun(ctx, *task.CurrentAgentRunID)
 	if err != nil {
@@ -187,7 +187,7 @@ func TestIngestPRFeedback_FailedChecks_AppendsFeedback(t *testing.T) {
 	}
 
 	// Re-sweep with the same failing check on the same commit: no duplicate append.
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 	run2, err := q.GetAgentRun(ctx, *task.CurrentAgentRunID)
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestIngestPRFeedback_InlineComments_DedupedAcrossSweeps(t *testing.T) {
 	task := newTestTask(t, q, repoID, wfID, label, "feature-branch", "", "pushed", "")
 	repo := repoInfo{ghName: "acme/widgets", repo: mustGetRepo(t, q, repoID)}
 
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 
 	comments, err := q.ListOpenTaskReviewComments(ctx, task.ID)
 	if err != nil {
@@ -237,7 +237,7 @@ func TestIngestPRFeedback_InlineComments_DedupedAcrossSweeps(t *testing.T) {
 	}
 
 	// Re-sweep: the same comment ID should not be inserted again.
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 	comments2, err := q.ListOpenTaskReviewComments(ctx, task.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +289,7 @@ func TestIngestPRFeedback_HeadSHAChange_ResetsReviewCursor(t *testing.T) {
 	task = seedRunForTask(t, q, task.ID)
 	repo := repoInfo{ghName: "acme/widgets", repo: mustGetRepo(t, q, repoID)}
 
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 	run1, err := q.GetAgentRun(ctx, *task.CurrentAgentRunID)
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func TestIngestPRFeedback_HeadSHAChange_ResetsReviewCursor(t *testing.T) {
 	// the ONLY way "fix B" surfaces on the second call given the >= lastSeen
 	// exclusive comparison is that the cursor reset on head-SHA change).
 	headSHA = "sha2"
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 
 	state, err := q.GetTaskPRReviewState(ctx, task.ID)
 	if err != nil {
@@ -346,7 +346,7 @@ func TestIngestPRFeedback_AutoTransition_EnabledOnRepo(t *testing.T) {
 	task = seedRunForTask(t, q, task.ID)
 	repo := repoInfo{ghName: "acme/widgets", repo: mustGetRepo(t, q, repoID)}
 
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 
 	updated, err := q.GetTask(ctx, task.ID)
 	if err != nil {
@@ -389,7 +389,7 @@ func TestIngestPRFeedback_AutoTransition_DisabledOnRepo_NoOp(t *testing.T) {
 	task = seedRunForTask(t, q, task.ID)
 	repo := repoInfo{ghName: "acme/widgets", repo: mustGetRepo(t, q, repoID)}
 
-	s.ingestPRFeedback(ctx, task, repo, 1)
+	s.ingestPRFeedback(ctx, task, repo, 1, "pr_open")
 
 	updated, err := q.GetTask(ctx, task.ID)
 	if err != nil {

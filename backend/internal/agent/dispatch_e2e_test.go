@@ -721,3 +721,135 @@ func TestE2E_FailoverAllBlocked_NoDispatch(t *testing.T) {
 		t.Fatalf("expected 0 runs while all matching configs are blocked, got %d", len(runs))
 	}
 }
+
+// seedTwoTasksOnRepoWithLimit creates a single repo with the given
+// max_concurrent_runs (nil = unset/global fallback), one enabled agent
+// config matching "ready", and two tasks both sitting on "ready" against
+// that repo. Used to exercise Dispatcher.repoAtLimit end-to-end: with a
+// limit of 1, only one of the two tasks should ever hold an active run at
+// once.
+func (h *e2eHarness) seedTwoTasksOnRepoWithLimit(t *testing.T, wfID string, limit *int64) (task1ID, task2ID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	repoID := uuid.NewString()
+	if _, err := h.q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "repo", Path: h.repo, WorkflowID: &wfID, MaxConcurrentRuns: limit,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	pcID := h.createProviderConfig(t, "fake", "none")
+	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: uuid.NewString(), Name: "fake-agent", ProviderConfigID: pcID,
+		Labels: `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1,
+	}); err != nil {
+		t.Fatalf("create agent config: %v", err)
+	}
+
+	task1ID = uuid.NewString()
+	if _, err := h.q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: task1ID, Title: "task one", WorkflowID: wfID, RepoID: repoID, Label: "ready",
+	}); err != nil {
+		t.Fatalf("create task 1: %v", err)
+	}
+	task2ID = uuid.NewString()
+	if _, err := h.q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: task2ID, Title: "task two", WorkflowID: wfID, RepoID: repoID, Label: "ready",
+	}); err != nil {
+		t.Fatalf("create task 2: %v", err)
+	}
+	return task1ID, task2ID
+}
+
+// TestE2E_RepoConcurrencyLimit covers issue #255: a repo with
+// max_concurrent_runs=1 and two eligible tasks must only ever have one
+// active run at a time — the second task is skipped by the dispatcher's
+// repoAtLimit check until the first run's lock is released, even though the
+// pool has a free worker slot (NewPool(2, ...) in newE2EHarness).
+func TestE2E_RepoConcurrencyLimit(t *testing.T) {
+	// Two distinct steps — the first task's run gates on step1's channels
+	// while we assert the limit; the second task's eventual run (once the
+	// first finishes and frees the repo's only slot) uses step2 and
+	// completes immediately (ungated), since by that point there's nothing
+	// further to observe about it beyond "it got dispatched".
+	step1 := fakeStep{result: Result{Status: "completed", Outcome: "success"}, started: make(chan struct{}), release: make(chan struct{})}
+	step2 := fakeStep{result: Result{Status: "completed", Outcome: "success"}}
+	fp := &fakeProvider{steps: []fakeStep{step1, step2}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	limit := int64(1)
+	task1ID, task2ID := h.seedTwoTasksOnRepoWithLimit(t, wfID, &limit)
+
+	// Exactly one of the two tasks should pick up a run; the other must stay
+	// unlocked while the first is gated in-flight (holding the repo's only slot).
+	select {
+	case <-step1.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider was never invoked — dispatcher did not pick up either task")
+	}
+
+	// Give the dispatcher several more sweeps' worth of time to (not) also
+	// dispatch the second task while the first holds the repo's only slot.
+	time.Sleep(200 * time.Millisecond)
+
+	task1, err := h.q.GetTask(context.Background(), task1ID)
+	if err != nil {
+		t.Fatalf("get task1: %v", err)
+	}
+	task2, err := h.q.GetTask(context.Background(), task2ID)
+	if err != nil {
+		t.Fatalf("get task2: %v", err)
+	}
+	lockedCount := 0
+	if task1.ActiveAgentRunID != nil {
+		lockedCount++
+	}
+	if task2.ActiveAgentRunID != nil {
+		lockedCount++
+	}
+	if lockedCount != 1 {
+		t.Fatalf("expected exactly 1 task locked with an active run while repo is at its limit of 1, got %d (task1 active=%v, task2 active=%v)", lockedCount, task1.ActiveAgentRunID, task2.ActiveAgentRunID)
+	}
+
+	// Let the first run finish; the second task should then get its turn.
+	// step2 (the second task's run) is ungated and completes immediately, so
+	// poll for it having left "ready" entirely (workflow transition on
+	// success) rather than the transient active_agent_run_id lock, which can
+	// already be cleared again by the time this observes it.
+	close(step1.release)
+
+	secondTaskID := task2ID
+	if task1.ActiveAgentRunID == nil {
+		secondTaskID = task1ID
+	}
+	second := h.pollTask(t, secondTaskID, func(tk gen.Task) bool { return tk.Label != "ready" }, "second task to be dispatched and transition once the repo's slot freed up")
+	if second.Label != "next" {
+		t.Fatalf("expected the second task to transition to 'next' on success, got label %q", second.Label)
+	}
+}
+
+// TestE2E_RepoConcurrencyLimit_UnsetFallsBackToPool is the negative control
+// for TestE2E_RepoConcurrencyLimit: with no repo-specific limit (nil), the
+// pool's global MAX_WORKERS (2 in this harness) is the only cap, so both
+// tasks on the same repo can be in flight simultaneously — "unset limit
+// preserves today's behavior exactly" per the acceptance criteria.
+func TestE2E_RepoConcurrencyLimit_UnsetFallsBackToPool(t *testing.T) {
+	// Two distinct steps (one per task's run) so each gets its own
+	// started/release channel pair — sharing a single fakeStep across two
+	// concurrently in-flight runs would double-close its channels.
+	step1 := fakeStep{result: Result{Status: "completed", Outcome: "success"}, started: make(chan struct{}), release: make(chan struct{})}
+	step2 := fakeStep{result: Result{Status: "completed", Outcome: "success"}, started: make(chan struct{}), release: make(chan struct{})}
+	fp := &fakeProvider{steps: []fakeStep{step1, step2}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	task1ID, task2ID := h.seedTwoTasksOnRepoWithLimit(t, wfID, nil)
+
+	task1 := h.pollTask(t, task1ID, func(tk gen.Task) bool { return tk.ActiveAgentRunID != nil }, "task1 to be dispatched")
+	task2 := h.pollTask(t, task2ID, func(tk gen.Task) bool { return tk.ActiveAgentRunID != nil }, "task2 to be dispatched")
+	if task1.ActiveAgentRunID == nil || task2.ActiveAgentRunID == nil {
+		t.Fatalf("expected both tasks to hold an active run with no repo-specific limit set")
+	}
+	close(step1.release)
+	close(step2.release)
+}

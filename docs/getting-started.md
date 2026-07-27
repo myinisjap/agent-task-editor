@@ -342,3 +342,5 @@ Set `MCP_SERVER_PATH=/path/to/mcp-server` in the backend environment. `./dev.sh 
 3. **Create a task** — go to the Board, click New Task. Select the repo and fill in the title/description.
 4. **Move it to `plan`** — drag it or use the label selector. The dispatcher will pick it up within 5 seconds and start an agent run.
 5. **Watch the logs** — click on the task to open the detail view; live logs stream in real time.
+
+> **In-app guidance:** until the instance is fully set up, the Board shows a dismissible onboarding checklist that walks through these steps in order (add a repo → configure a provider → create an agent config → create your first task), checking each one off automatically as it's completed. It also surfaces any failing `/health/providers` readiness check (e.g. Claude CLI not authenticated) inline against the step it blocks, so problems show up where you're already looking instead of only on the Health page. Dismiss it any time — it stays dismissed, and it stops appearing on its own once every step passes.

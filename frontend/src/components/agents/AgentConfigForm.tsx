@@ -5,6 +5,7 @@ import Field from './Field'
 import PluginMcpPicker from './PluginMcpPicker'
 import CommandFilterEditor from './CommandFilterEditor'
 import LabelPicker from './LabelPicker'
+import { getCapability } from '../../lib/providerCapabilities'
 
 export type FormState = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'>
 
@@ -41,6 +42,11 @@ export default function AgentConfigForm({
   // form field — provider/model/env now live on the referenced ProviderConfig.
   const selectedProviderConfig = providerConfigs.find((pc) => pc.id === form.provider_config_id)
   const providerStr = selectedProviderConfig?.provider ?? ''
+  const mcpCap = getCapability(providerStr, 'mcpServers')
+  const subtasksCap = getCapability(providerStr, 'subtasks')
+  const sessionResumeCap = getCapability(providerStr, 'sessionResume')
+  const costTrackingCap = getCapability(providerStr, 'costTracking')
+  const labelTransitionsCap = getCapability(providerStr, 'labelTransitions')
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -67,6 +73,22 @@ export default function AgentConfigForm({
         )}
       </div>
 
+      {providerStr && labelTransitionsCap.support !== 'full' && (
+        <div className="max-w-2xl mb-5 px-3 py-2 rounded border border-amber-700/50 bg-amber-950/30 text-xs text-amber-300">
+          ⚠️ The <span className="font-mono">{providerStr}</span> provider cannot signal workflow transitions via
+          MCP tools — tasks handled by this agent may not move to the next label automatically (it relies on a
+          text <span className="font-mono">OUTCOME: success/failure</span> marker). See{' '}
+          <a
+            href="https://github.com/myinisjap/agent-task-editor/blob/main/docs/agents.md#capability-matrix"
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:text-amber-200"
+          >
+            docs/agents.md
+          </a>.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-2xl">
         <Field label="Name">
           <input
@@ -77,7 +99,7 @@ export default function AgentConfigForm({
           />
         </Field>
 
-        <Field label="Provider config" className="col-span-2" hint="Which provider/model/API key this agent runs against. Manage provider configs (and their env vars) on the Providers page — they can be shared across agent configs and chat sessions.">
+        <Field label="Provider config" className="sm:col-span-2" hint="Which provider/model/API key this agent runs against. Manage provider configs (and their env vars) on the Providers page — they can be shared across agent configs and chat sessions.">
           <select
             value={form.provider_config_id}
             onChange={(e) => setForm((f) => ({ ...f, provider_config_id: e.target.value }))}
@@ -166,6 +188,11 @@ export default function AgentConfigForm({
             className="input"
             min={0}
           />
+          {form.max_cost_usd > 0 && providerStr && costTrackingCap.support !== 'full' && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ {costTrackingCap.note ?? `Cost is not reliably tracked for the ${providerStr} provider — this budget cap may not fire.`}
+            </p>
+          )}
         </Field>
 
         <Field label="Resume sessions" hint="Claude provider only: re-runs on the same task continue the previous run's session (full prior context) instead of starting cold. Turn off for stages that should review with fresh eyes.">
@@ -177,6 +204,13 @@ export default function AgentConfigForm({
             />
             Resume previous session on re-runs
           </label>
+          {(form.resume_sessions ?? true) && providerStr && sessionResumeCap.support !== 'full' && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ {sessionResumeCap.note
+                ? `Session resume is not fully supported for the ${providerStr} provider: ${sessionResumeCap.note}`
+                : `Session resume is not supported for the ${providerStr} provider.`}
+            </p>
+          )}
         </Field>
 
         <Field label="Subtasks" hint="claude/qwen_code/gemini_cli/codex_cli only: expose the create_subtask tool so this agent (typically the planner) can decompose its task into child tasks. Children branch off the parent's branch and merge back automatically. Off by default.">
@@ -188,6 +222,11 @@ export default function AgentConfigForm({
             />
             Allow this agent to create subtasks
           </label>
+          {form.subtasks_enabled && providerStr && subtasksCap.support !== 'full' && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ Subtasks require the create_subtask MCP tool, not available on the {providerStr} provider.
+            </p>
+          )}
           {form.subtasks_enabled && (
             <label className="flex items-center gap-2 text-xs text-slate-400 mt-2">
               Max subtasks per task
@@ -202,7 +241,7 @@ export default function AgentConfigForm({
           )}
         </Field>
 
-        <Field label="Labels" className="col-span-2">
+        <Field label="Labels" className="sm:col-span-2">
           <LabelPicker
             selected={(() => { try { return JSON.parse(form.labels) } catch { return [] } })()}
             available={availableLabels}
@@ -210,7 +249,7 @@ export default function AgentConfigForm({
           />
         </Field>
 
-        {providerStr === 'claude' && (
+        {providerStr === 'claude' ? (
           <PluginMcpPicker
             claudeOptions={claudeOptions}
             enabledPlugins={form.enabled_plugins ?? '[]'}
@@ -218,9 +257,15 @@ export default function AgentConfigForm({
             onPluginsChange={(json) => setForm((f) => ({ ...f, enabled_plugins: json }))}
             onMcpServersChange={(json) => setForm((f) => ({ ...f, enabled_mcp_servers: json }))}
           />
-        )}
+        ) : providerStr && mcpCap.support !== 'full' ? (
+          <Field label="Plugins / MCP servers" className="sm:col-span-2">
+            <p className="text-xs text-slate-500">
+              MCP servers / plugins are not supported by the {providerStr} provider.
+            </p>
+          </Field>
+        ) : null}
 
-        <Field label="System prompt" className="col-span-2">
+        <Field label="System prompt" className="sm:col-span-2">
           <textarea
             value={form.system_prompt}
             onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}

@@ -39,10 +39,21 @@ export type WSEvent =
   // exist and can be fetched via the REST logs endpoint ("load earlier").
   | { type: 'agent.log_replay'; payload: { task_id: string; run_id: string; has_more: boolean; entries: AgentLog[] } }
   | { type: 'task.git_state_changed'; payload: { task_id: string; git_state: Task['git_state']; pr_url: string } }
+  // Emitted by the GitHub PR status sweep when GitHub's merge-conflict verdict
+  // for a task's PR changes (e.g. the base branch moved and the PR now
+  // conflicts). Only sent on a change, not on every sweep.
+  | { type: 'task.pr_mergeable_changed'; payload: { task_id: string; pr_mergeable: Task['pr_mergeable'] } }
   | { type: 'task.review_comments_changed'; payload: { task_id: string; run_id: string; resolved: number } }
   // task.created payloads carry a subset of Task fields (always includes id);
   // consumers should refetch the task for full data.
   | { type: 'task.created'; payload: Pick<Task, 'id' | 'title' | 'label' | 'repo_id' | 'source' | 'source_ref'> }
+  // Emitted by the GitHub Issues importer instead of one task.created per
+  // item when a sweep creates one or more tasks for a repo — batches what
+  // would otherwise be a per-issue event storm (and per-client GET storm)
+  // into a single event. ids is capped server-side (see
+  // maxCreatedIDsInEvent in the importer); count is always exact. Consumers
+  // should do a single list/board refresh rather than fetching each id.
+  | { type: 'task.created_bulk'; payload: { repo_id: string; source: string; count: number; ids: string[] } }
   | { type: 'task.updated'; payload: Task }
   | { type: 'task.subtask_conflict'; payload: { task_id: string; parent_id: string; files: string[] } }
   // Emitted by the GitHub Issues importer when it ingests a new comment from
