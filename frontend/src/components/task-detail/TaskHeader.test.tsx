@@ -1,3 +1,4 @@
+import type React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -43,7 +44,11 @@ function baseTask(overrides: Partial<Task> = {}): Task {
 
 const noop = () => {}
 
-function renderHeader(TaskHeader: typeof TaskHeaderType, task: Task) {
+function renderHeader(
+  TaskHeader: typeof TaskHeaderType,
+  task: Task,
+  extraProps: Partial<React.ComponentProps<typeof TaskHeaderType>> = {},
+) {
   return render(
     <TaskHeader
       task={task}
@@ -77,6 +82,7 @@ function renderHeader(TaskHeader: typeof TaskHeaderType, task: Task) {
       onBack={noop}
       labels={[]}
       onMoveLabel={noop}
+      {...extraProps}
     />,
   )
 }
@@ -174,5 +180,23 @@ describe('TaskHeader agent notes modal', () => {
   it('does not show the gone badge for a source task still in sync', () => {
     renderHeader(TaskHeader, baseTask({ source: 'github', source_ref: 'org/repo#7', source_state: '' }))
     expect(screen.queryByText(/source issue closed or unlabeled/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('TaskHeader duplicate action', () => {
+  it('does not render a Duplicate button when onDuplicate is not provided', () => {
+    renderHeader(TaskHeader, baseTask())
+    expect(screen.queryByText(/Duplicate/)).not.toBeInTheDocument()
+  })
+
+  it('renders a Duplicate button and calls onDuplicate when clicked', async () => {
+    const user = userEvent.setup()
+    const onDuplicate = vi.fn()
+    renderHeader(TaskHeader, baseTask(), { onDuplicate })
+
+    const button = screen.getByText(/Duplicate/)
+    await user.click(button)
+
+    expect(onDuplicate).toHaveBeenCalledTimes(1)
   })
 })

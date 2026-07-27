@@ -9,6 +9,7 @@ type Props = {
   tasks: Task[]
   runningTaskIds: Set<string>
   rateLimitedTaskIds?: Map<string, string>
+  onDuplicate?: (task: Task) => void
   className?: string
   selectedIds?: Set<string>
   onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
@@ -21,7 +22,7 @@ type Props = {
  * - Tasks show a small label badge indicating which actual column they're in.
  * - Dropping a task onto this column moves it to the first label in the group.
  */
-export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLimitedTaskIds, className, selectedIds, onToggleSelect }: Props) {
+export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLimitedTaskIds, onDuplicate, className, selectedIds, onToggleSelect }: Props) {
   // Use the first label's name as the droppable id so DnD moves tasks here
   const dropId = labels[0]?.name ?? '__agent-group__'
   const { setNodeRef, isOver } = useDroppable({ id: dropId })
@@ -60,6 +61,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
             isRunning={runningTaskIds.has(task.id)}
             rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
             onDelete={() => handleDelete(task.id)}
+            onDuplicate={onDuplicate}
             showColumnLabel={task.label}
             selected={selectedIds?.has(task.id)}
             onToggleSelect={
