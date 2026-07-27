@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -81,6 +82,24 @@ SELECT COUNT(*) FROM tasks WHERE parent_task_id = ?
 
 func (q *Queries) CountSubtasks(ctx context.Context, parentTaskID *string) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countSubtasks, parentTaskID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTasksByLabel = `-- name: CountTasksByLabel :one
+SELECT COUNT(*) FROM tasks WHERE workflow_id = ? AND label = ? AND archived = 0
+`
+
+type CountTasksByLabelParams struct {
+	WorkflowID string `json:"workflow_id"`
+	Label      string `json:"label"`
+}
+
+// Occupancy of a label column for WIP-limit purposes; mirrors the board's
+// default view, which hides archived tasks.
+func (q *Queries) CountTasksByLabel(ctx context.Context, arg CountTasksByLabelParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTasksByLabel, arg.WorkflowID, arg.Label)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -628,6 +647,69 @@ func (q *Queries) ListSubtaskRollups(ctx context.Context) ([]ListSubtaskRollupsR
 	var items []ListSubtaskRollupsRow
 	for rows.Next() {
 		var i ListSubtaskRollupsRow
+		if err := rows.Scan(
+			&i.ParentID,
+			&i.Total,
+			&i.Done,
+			&i.Conflicts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSubtaskRollupsForParents = `-- name: ListSubtaskRollupsForParents :many
+SELECT
+    p.id AS parent_id,
+    COUNT(c.id) AS total,
+    SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM workflow_labels wl
+        WHERE wl.workflow_id = c.workflow_id AND wl.name = c.label AND wl.is_terminal != 0
+    ) THEN 1 ELSE 0 END) AS done,
+    SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts
+FROM tasks p
+JOIN tasks c ON c.parent_task_id = p.id
+WHERE p.id IN (/*SLICE:parent_ids*/?)
+GROUP BY p.id
+`
+
+type ListSubtaskRollupsForParentsRow struct {
+	ParentID  string   `json:"parent_id"`
+	Total     int64    `json:"total"`
+	Done      *float64 `json:"done"`
+	Conflicts *float64 `json:"conflicts"`
+}
+
+// Same as ListSubtaskRollups but scoped to a specific set of parent ids, so
+// callers that already know which tasks they're rendering (a single task, or
+// one page of a list) don't pay for a self-join across the whole table.
+func (q *Queries) ListSubtaskRollupsForParents(ctx context.Context, parentIds []string) ([]ListSubtaskRollupsForParentsRow, error) {
+	query := listSubtaskRollupsForParents
+	var queryParams []interface{}
+	if len(parentIds) > 0 {
+		for _, v := range parentIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:parent_ids*/?", strings.Repeat(",?", len(parentIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:parent_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSubtaskRollupsForParentsRow
+	for rows.Next() {
+		var i ListSubtaskRollupsForParentsRow
 		if err := rows.Scan(
 			&i.ParentID,
 			&i.Total,

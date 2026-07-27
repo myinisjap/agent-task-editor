@@ -96,10 +96,19 @@ export default function BoardPage() {
 
   useEffect(() => {
     const off = wsClient.on((event) => {
-      if (event.type === 'task.label_changed' || event.type === 'task.updated' || event.type === 'task.created' || event.type === 'task.git_state_changed' || event.type === 'task.pr_mergeable_changed') {
-        // Refresh the task from API to get latest data
-        const taskId = event.type === 'task.created' ? event.payload.id :
-                       event.type === 'task.updated' ? event.payload.id : event.payload.task_id
+      if (event.type === 'task.updated') {
+        // Payload is already a full Task — apply it directly instead of an
+        // extra REST round-trip (and the lag that round-trip introduces).
+        upsert(event.payload)
+      } else if (
+        event.type === 'task.label_changed' ||
+        event.type === 'task.created' ||
+        event.type === 'task.git_state_changed' ||
+        event.type === 'task.pr_mergeable_changed'
+      ) {
+        // These payloads carry only partial fields (or, for task.created, a
+        // subset the sender says to refetch) — get the full task from the API.
+        const taskId = event.type === 'task.created' ? event.payload.id : event.payload.task_id
         api.tasks.get(taskId).then(upsert).catch(() => {})
       }
       if (event.type === 'task.created_bulk') {

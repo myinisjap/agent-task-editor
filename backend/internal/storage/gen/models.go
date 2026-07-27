@@ -245,14 +245,16 @@ type Workflow struct {
 }
 
 type WorkflowLabel struct {
-	ID          string `json:"id"`
-	WorkflowID  string `json:"workflow_id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	SortOrder   int64  `json:"sort_order"`
-	AgentIgnore int64  `json:"agent_ignore"`
-	IsTerminal  int64  `json:"is_terminal"`
-	CreatePr    int64  `json:"create_pr"`
+	ID           string `json:"id"`
+	WorkflowID   string `json:"workflow_id"`
+	Name         string `json:"name"`
+	Color        string `json:"color"`
+	SortOrder    int64  `json:"sort_order"`
+	AgentIgnore  int64  `json:"agent_ignore"`
+	IsTerminal   int64  `json:"is_terminal"`
+	CreatePr     int64  `json:"create_pr"`
+	WipLimit     *int64 `json:"wip_limit"`
+	WipLimitHard int64  `json:"wip_limit_hard"`
 }
 
 type WorkflowTransition struct {

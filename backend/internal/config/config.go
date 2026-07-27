@@ -91,6 +91,16 @@ type Config struct {
 	// without an attached WebSocket connection before it's reaped (subprocess
 	// killed, scrollback released). 0 (the default) disables idle reaping.
 	ChatIdleTimeout time.Duration `yaml:"chat_idle_timeout"`
+
+	// GitTimeout bounds each individual shell-out to `git` performed by the
+	// agent package (worktree provisioning, fetch, commit, push, merge,
+	// branch cleanup). Without a bound, a stalled remote or an interactive
+	// credential prompt can hang a `git` call indefinitely, which in turn
+	// blocks the whole dispatch sweep loop since tasks are dispatched
+	// serially. With this bound, a stuck git call fails that one task within
+	// GitTimeout and dispatch keeps working on the next task/sweep instead of
+	// stalling system-wide.
+	GitTimeout time.Duration `yaml:"git_timeout"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -111,6 +121,7 @@ func Defaults() Config {
 		WorktreeSweepInterval: 10 * time.Minute,
 		ChatMaxSessions:       0,
 		ChatIdleTimeout:       0,
+		GitTimeout:            120 * time.Second,
 	}
 }
 
@@ -273,6 +284,13 @@ func Load(path string) (Config, error) {
 			cfg.ChatIdleTimeout = d
 		} else {
 			slog.Warn("invalid CHAT_IDLE_TIMEOUT; using default", "value", v, "default", cfg.ChatIdleTimeout)
+		}
+	}
+	if v := os.Getenv("GIT_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.GitTimeout = d
+		} else {
+			slog.Warn("invalid GIT_TIMEOUT; using default", "value", v, "default", cfg.GitTimeout)
 		}
 	}
 

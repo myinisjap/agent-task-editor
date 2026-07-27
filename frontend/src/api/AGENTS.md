@@ -57,7 +57,7 @@ wsClient.unsubscribeTask(taskId)     // send unsubscribe message
 
 ### Reconnect Behaviour
 
-On `close`, reconnects after a flat 3s delay via `setTimeout(() => this.connect(), 3000)`. On `open`, re-sends all active subscriptions so no events are missed.
+On `close`, reconnects using capped exponential backoff with full jitter: `delay = min(30s, 1s * 2^attempts)`, then jittered to `[delay/2, delay]`, with `attempts` incrementing on every close and resetting to 0 only on a confirmed `open`. This avoids every open tab hammering `/ws-ticket` + `/ws` in lockstep on a server restart. On `open`, re-sends all active subscriptions so no events are missed. `wsClient.getStatus()` / `wsClient.onStatusChange(fn)` expose `'connecting' | 'open' | 'closed'` for UI (see `lib/useWsStatus.ts`, rendered in `NavSidebar`).
 
 ### Event Routing
 
