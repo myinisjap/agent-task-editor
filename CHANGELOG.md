@@ -66,7 +66,12 @@ triggers the "Release" workflow the same way.
   periodically reconciles every repo's `.ate-worktrees/*` against live
   (non-archived) task/chat-session ids and reclaims anything else, so disk
   usage under `.ate-worktrees/` is bounded by live tasks rather than by every
-  task ever created — this also catches a worktree orphaned by a crash. See
+  task ever created — this also catches a worktree orphaned by a crash.
+  Archiving also clears the task's `worktree_path`, and `ensureWorktree` now
+  verifies its recorded worktree still exists before reusing it — otherwise
+  unarchiving a task (or a run reprovisioned after the sweeper reclaimed its
+  worktree) would hand the next agent run a cwd that no longer exists rather
+  than reprovisioning a fresh one. See
   [docs/backup.md#orphaned-worktree-sweeper](docs/backup.md#orphaned-worktree-sweeper).
 - **Chat terminal sessions can now be capped and idle-reaped.** Each Chat-tab
   session keeps a live CLI subprocess (plus a scrollback buffer) running

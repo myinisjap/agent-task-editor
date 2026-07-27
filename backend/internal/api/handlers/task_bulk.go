@@ -80,15 +80,23 @@ func (h *TasksHandler) SetArchived(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Archived {
-		h.reclaimWorktreeOnArchive(r.Context(), task)
+		h.reclaimWorktreeOnArchive(r.Context(), &task)
 	}
 	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
 // reclaimWorktreeOnArchive removes an archived task's worktree directory,
-// keeping its branch. Best-effort: logged, never surfaced as a request
-// error, since the archive itself already succeeded.
-func (h *TasksHandler) reclaimWorktreeOnArchive(ctx context.Context, task gen.Task) {
+// keeping its branch, and clears the task's worktree_path (both in the DB
+// and on the caller's copy of task, so a response built from it right after
+// doesn't show a path that's already gone) so a later unarchive +
+// re-dispatch reprovisions a fresh worktree instead of reusing a directory
+// that no longer exists. Dispatcher.ensureWorktree also verifies the
+// directory still exists as defense in depth — e.g. against the periodic
+// sweeper's reclaim, which never touches this DB row at all — but clearing
+// it here keeps the task's own record accurate immediately. Best-effort
+// throughout: logged, never surfaced as a request error, since the archive
+// itself already succeeded.
+func (h *TasksHandler) reclaimWorktreeOnArchive(ctx context.Context, task *gen.Task) {
 	if task.WorktreePath == "" {
 		return
 	}
@@ -100,6 +108,11 @@ func (h *TasksHandler) reclaimWorktreeOnArchive(ctx context.Context, task gen.Ta
 	if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
 		slog.Warn("archive: remove worktree", "task_id", task.ID, "err", err)
 	}
+	if err := h.q.ClearTaskWorktreePath(ctx, task.ID); err != nil {
+		slog.Warn("archive: clear worktree_path", "task_id", task.ID, "err", err)
+		return
+	}
+	task.WorktreePath = ""
 }
 
 // bulkResult reports the outcome of a bulk action for one task.
@@ -164,7 +177,7 @@ func (h *TasksHandler) Bulk(w http.ResponseWriter, r *http.Request) {
 			var task gen.Task
 			task, err = h.q.SetTaskArchived(ctx, gen.SetTaskArchivedParams{Archived: archived, ID: id})
 			if err == nil && body.Action == "archive" {
-				h.reclaimWorktreeOnArchive(ctx, task)
+				h.reclaimWorktreeOnArchive(ctx, &task)
 			}
 		}
 		res := bulkResult{ID: id, Ok: err == nil}

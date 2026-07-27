@@ -1162,6 +1162,97 @@ func TestTasks_SetArchived_ReclaimsWorktree(t *testing.T) {
 	} else if strings.TrimSpace(string(out)) == "" {
 		t.Error("expected the task's branch to survive archiving (kept for review)")
 	}
+
+	// worktree_path must be cleared, both in the DB and in the response body
+	// returned from this same request — otherwise a later unarchive +
+	// re-dispatch would try to reuse a directory that no longer exists (see
+	// Dispatcher.ensureWorktree's defense-in-depth check for the belt-and-
+	// suspenders half of this fix).
+	var respBody struct {
+		WorktreePath string `json:"worktree_path"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &respBody); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if respBody.WorktreePath != "" {
+		t.Errorf("expected worktree_path cleared in the response body, got %q", respBody.WorktreePath)
+	}
+	reloaded, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if reloaded.WorktreePath != "" {
+		t.Errorf("expected worktree_path cleared in the DB, got %q", reloaded.WorktreePath)
+	}
+	if reloaded.Branch != branch {
+		t.Errorf("expected branch to remain unchanged, got %q want %q", reloaded.Branch, branch)
+	}
+}
+
+// TestTasks_SetArchived_ThenUnarchive_LeavesWorktreePathEmpty is the
+// handler-level half of the stale-worktree_path regression test: archiving
+// clears worktree_path (see TestTasks_SetArchived_ReclaimsWorktree), and
+// unarchiving must not resurrect or otherwise repopulate it — it stays empty
+// until the next real dispatch reprovisions a worktree. The dispatcher-level
+// half (that ensureWorktree reprovisions rather than reusing a stale,
+// deleted path) is covered directly in internal/agent's dispatcher tests,
+// since that's where Dispatcher.ensureWorktree lives.
+func TestTasks_SetArchived_ThenUnarchive_LeavesWorktreePathEmpty(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Archive then unarchive", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	staleWtPath, _, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: "some-branch", WorktreePath: staleWtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	// Archive: reclaims (removes) the worktree dir and must clear worktree_path.
+	archiveBody := map[string]bool{"archived": true}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, archiveBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("archive: expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	// Unarchive: flips the flag back; must not resurrect the stale path.
+	unarchiveBody := map[string]bool{"archived": false}
+	req = httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, unarchiveBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unarchive: expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	unarchived, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if unarchived.WorktreePath != "" {
+		t.Fatalf("worktree_path should still be empty after unarchiving (nothing re-provisions it until dispatch), got %q", unarchived.WorktreePath)
+	}
 }
 
 // TestTasks_Archived_ExcludedFromAgentPickup confirms the dispatcher's

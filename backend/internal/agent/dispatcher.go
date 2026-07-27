@@ -399,30 +399,43 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 // its own worktree on its own branch so concurrent agents on the same repo don't
 // conflict. A subtask's branch is cut from its parent's branch (not the repo
 // base) so its work merges back cleanly.
+//
+// t.WorktreePath can be stale — pointing at a directory that no longer exists
+// — for a task that was archived (worktree reclaimed; see
+// api/handlers.reclaimWorktreeOnArchive) and later unarchived, or one whose
+// worktree the periodic sweeper reclaimed out from under it (see
+// internal/worktreesweep, which never touches the DB row). Treating a
+// missing directory the same as an empty WorktreePath reprovisions it here
+// rather than handing the agent a nonexistent cwd.
 func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Repo) (string, error) {
 	workDir := t.WorktreePath
-	if workDir == "" {
-		var wtPath, branch, baseRef string
-		var perr error
-		if base := d.parentBranchBase(ctx, t); base != "" {
-			wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
-		} else {
-			wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+	if workDir != "" {
+		if fi, statErr := os.Stat(workDir); statErr == nil && fi.IsDir() {
+			return workDir, nil
 		}
-		if perr != nil {
-			return "", fmt.Errorf("provision worktree: %w", perr)
-		}
-		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
-			Branch:       branch,
-			WorktreePath: wtPath,
-			BaseRef:      baseRef,
-			ID:           t.ID,
-		}); err != nil {
-			return "", fmt.Errorf("persist worktree: %w", err)
-		}
-		workDir = wtPath
+		slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
+		workDir = ""
 	}
-	return workDir, nil
+
+	var wtPath, branch, baseRef string
+	var perr error
+	if base := d.parentBranchBase(ctx, t); base != "" {
+		wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
+	} else {
+		wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+	}
+	if perr != nil {
+		return "", fmt.Errorf("provision worktree: %w", perr)
+	}
+	if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch:       branch,
+		WorktreePath: wtPath,
+		BaseRef:      baseRef,
+		ID:           t.ID,
+	}); err != nil {
+		return "", fmt.Errorf("persist worktree: %w", err)
+	}
+	return wtPath, nil
 }
 
 // resolveAgentConfig builds the effective agent config for the run and resolves

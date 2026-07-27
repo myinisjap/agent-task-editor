@@ -250,6 +250,19 @@ worktrees found this way are torn down the same way as anywhere else — via
 `git worktree prune`) for a directory a crash left behind before git ever
 registered it as a worktree.
 
+**Stale `worktree_path` is handled two ways.** Because the sweeper reclaims a
+worktree directory without touching the owning task's `worktree_path`
+column, that column can point at a directory that no longer exists — the
+same can happen to an archived task even without the sweeper's involvement,
+since archiving is expected to have already cleared it (see above), but
+defense in depth costs little here. `Dispatcher.ensureWorktree` therefore
+verifies the recorded directory still exists before reusing it on the next
+dispatch, reprovisioning a fresh worktree (on the task's existing branch,
+same as if it had never been provisioned) instead of handing the agent a
+cwd that doesn't exist. Archiving separately clears `worktree_path` itself
+immediately, so an unarchived task's record is accurate right away rather
+than only self-correcting on its next dispatch.
+
 ## Litestream sidecar (continuous offsite replication)
 
 For continuous, near-real-time replication to S3-compatible storage, run

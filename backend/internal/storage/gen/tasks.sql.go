@@ -21,6 +21,19 @@ func (q *Queries) ClearActiveAgentRun(ctx context.Context, id string) error {
 	return err
 }
 
+const clearTaskWorktreePath = `-- name: ClearTaskWorktreePath :exec
+UPDATE tasks
+SET worktree_path = '', updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+// Clears only worktree_path (branch/base_ref are kept: the branch survives
+// in the repo's main clone after the worktree dir is removed).
+func (q *Queries) ClearTaskWorktreePath(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, clearTaskWorktreePath, id)
+	return err
+}
+
 const countSubtasks = `-- name: CountSubtasks :one
 SELECT COUNT(*) FROM tasks WHERE parent_task_id = ?
 `

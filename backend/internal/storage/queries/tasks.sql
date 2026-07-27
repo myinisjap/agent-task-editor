@@ -106,6 +106,13 @@ UPDATE tasks
 SET branch = ?, worktree_path = ?, base_ref = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
+-- name: ClearTaskWorktreePath :exec
+-- Clears only worktree_path (branch/base_ref are kept: the branch survives
+-- in the repo's main clone after the worktree dir is removed).
+UPDATE tasks
+SET worktree_path = '', updated_at = CURRENT_TIMESTAMP
+WHERE id = ?;
+
 -- name: ClearActiveAgentRun :exec
 UPDATE tasks
 SET active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
