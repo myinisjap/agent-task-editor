@@ -511,14 +511,35 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		// The provider is disabled (deprecated write-path rejection doesn't
 		// apply retroactively to rows already in the DB, but the factory
 		// still has no runner for it) or the provider string is otherwise
-		// unrecognized. Fail the run cleanly instead of enqueuing a job with
-		// a nil Provider, which would panic the pool worker goroutine.
+		// unrecognized. This is a permanent, config-level problem, not a
+		// transient one, so it must NOT clear the task's active-run lock:
+		// ListAgentPickupTasks only re-selects a task once active_agent_run_id
+		// is NULL, and this failure happens before any real provider work runs
+		// (unlike a normal "failed" terminal run, which is naturally
+		// rate-limited by however long the real attempt took). Clearing the
+		// lock here let the 15ms-interval sweep immediately re-dispatch the
+		// same task, hot-looping runs every tick until a human intervened —
+		// caught by TestE2E_NilProviderFailsRunCleanly flaking under -race as
+		// multiple same-second-resolution created_at rows raced for "first".
+		// Instead, escalate straight to waiting_human (same shape as
+		// checkCostBudget's exhausted-budget escalation) so the task stays
+		// locked on this run until a human fixes the config and replies.
+		msg := fmt.Sprintf("agent config's provider is disabled or unknown: %q", agentCfg.Provider)
 		log.Error("dispatcher: no runner for provider", "provider", agentCfg.Provider)
-		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-			Status: "failed",
+		if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status: "waiting_human",
+			Notes:  &msg,
 			ID:     runID,
-		})
-		_ = d.q.ClearActiveAgentRun(ctx, t.ID)
+		}); err != nil {
+			log.Warn("dispatcher: mark nil-provider run waiting_human", "err", err)
+		}
+		if d.Publisher != nil {
+			d.Publisher.Publish("task.needs_human", map[string]any{
+				"task_id": t.ID,
+				"run_id":  runID,
+				"message": msg,
+			})
+		}
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
 	}
 
