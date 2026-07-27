@@ -100,6 +100,15 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API) |
 | `LLM_API_KEY` | _(empty)_ | API key for `llm` or `anthropic` provider |
 
+### Chat Terminal Sessions
+
+Each Chat-tab session keeps a live interactive CLI subprocess (plus a scrollback buffer) running across WebSocket disconnects so a browser refresh reattaches to the same session. By default nothing bounds how many of these accumulate or how long an unattached one stays alive; the following opt-in settings cap that growth.
+
+| Variable | Default | Description |
+|---|---|---|
+| `CHAT_MAX_SESSIONS` | `0` (unlimited) | Maximum number of concurrent chat terminal subprocesses. Only refuses *new* sessions once at the cap (`ErrTooManySessions`, surfaced as the WebSocket closing with an error) — reattaching to an already-running session is never blocked by the cap. |
+| `CHAT_IDLE_TIMEOUT` | `0` (disabled) | If set, how long a chat terminal session may go without an attached WebSocket connection before it's reaped (subprocess killed, scrollback released). Accepts Go duration strings (e.g. `2h`, `30m`). |
+
 ### Backup
 
 | Variable | Default | Description |
@@ -109,8 +118,9 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `BACKUP_KEEP` | `7` | **Initial** value only — seeds the DB-backed setting on first migration. Number of most-recent snapshots to retain in `BACKUP_DIR` before pruning older ones. Editable afterwards without a restart via `PUT /api/v1/backup/settings` or the Health page. |
 | `LOG_RETENTION_DAYS` | `0` | If set to a positive number, enables a built-in pruner that deletes `agent_logs` rows for terminal-status runs (`completed`/`failed`/`waiting_human`) older than this many days. `0` = keep forever (disabled, the default). |
 | `LOG_RETENTION_INTERVAL` | `1h` | How often the log pruner runs. Accepts Go duration strings. Only meaningful when `LOG_RETENTION_DAYS` is set. |
+| `WORKTREE_SWEEP_INTERVAL` | `10m` | How often the built-in orphan-worktree sweeper reconciles each repo's `.ate-worktrees/<id>` directories against live (non-archived) task/chat-session ids, reclaiming anything else — worktrees left behind by archiving a task on a non-terminal label, or orphaned by a crash. Always on (unlike `BACKUP_DIR`, there's no disable switch); this only controls the interval. Accepts Go duration strings (1-minute minimum). |
 
-See [backup.md](backup.md) for the full backup/restore guide, including the "Agent log retention" section.
+See [backup.md](backup.md) for the full backup/restore guide, including the "Agent log retention" and "Orphaned worktree sweeper" sections.
 
 ### Other
 
@@ -332,3 +342,5 @@ Set `MCP_SERVER_PATH=/path/to/mcp-server` in the backend environment. `./dev.sh 
 3. **Create a task** — go to the Board, click New Task. Select the repo and fill in the title/description. To create a variant of an existing task instead, use the "⧉ Duplicate" action (task detail header or a board card's hover controls) to open the same form pre-filled from that task.
 4. **Move it to `plan`** — drag it or use the label selector. The dispatcher will pick it up within 5 seconds and start an agent run.
 5. **Watch the logs** — click on the task to open the detail view; live logs stream in real time.
+
+> **In-app guidance:** until the instance is fully set up, the Board shows a dismissible onboarding checklist that walks through these steps in order (add a repo → configure a provider → create an agent config → create your first task), checking each one off automatically as it's completed. It also surfaces any failing `/health/providers` readiness check (e.g. Claude CLI not authenticated) inline against the step it blocks, so problems show up where you're already looking instead of only on the Health page. Dismiss it any time — it stays dismissed, and it stops appearing on its own once every step passes.

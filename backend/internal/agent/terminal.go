@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 	"nhooyr.io/websocket"
@@ -44,9 +45,27 @@ type TerminalManager struct {
 	// ChatMCP, when set, wires extra MCP tools (the board server) into each
 	// session's CLI. Nil disables the feature (no change to the launched CLI).
 	ChatMCP ChatMCPProvisioner
+
+	// MaxSessions caps the number of concurrent PTY subprocesses this manager
+	// will keep alive at once. Each session holds a live subprocess plus a
+	// scrollbackCap buffer indefinitely (until its process exits or it's
+	// explicitly reaped), so on a long-lived board with no bound this grows
+	// without limit. 0 (the zero value) means unlimited — set by the caller
+	// (see cmd/server/main.go) after construction; unset by default so
+	// existing deployments see no behavior change until configured.
+	MaxSessions int
+
+	// IdleTimeout, if > 0, is how long a session may go without an attached
+	// WebSocket connection before ReapLoop stops it, releasing its subprocess
+	// and scrollback buffer. 0 (the default) disables idle reaping — a
+	// session then lives until its process exits or Stop is called
+	// explicitly, matching pre-existing behavior.
+	IdleTimeout time.Duration
 }
 
-// NewTerminalManager builds an empty manager.
+// NewTerminalManager builds an empty manager. MaxSessions/IdleTimeout default
+// to unbounded/disabled; set the exported fields after construction to
+// enable them (see cmd/server/main.go).
 func NewTerminalManager() *TerminalManager {
 	return &TerminalManager{sessions: make(map[string]*ptySession)}
 }
@@ -59,16 +78,23 @@ type ptySession struct {
 	cmd *exec.Cmd
 	tty *os.File // PTY master
 
-	mu         sync.Mutex
-	scrollback []byte    // ring of recent output, capped at scrollbackCap
-	attached   io.Writer // current WS writer, nil when detached
-	done       chan struct{}
-	cleanup    func() // removes per-session MCP temp files; run after the process exits
+	mu             sync.Mutex
+	scrollback     []byte    // ring of recent output, capped at scrollbackCap
+	attached       io.Writer // current WS writer, nil when detached
+	lastDetachedAt time.Time // when attached last went nil; zero while attached
+	done           chan struct{}
+	cleanup        func() // removes per-session MCP temp files; run after the process exits
 }
 
 // ErrTerminalUnsupported means the session's provider has no interactive CLI
 // (e.g. the `anthropic` API provider, which is not a terminal program).
 var ErrTerminalUnsupported = errors.New("provider has no interactive terminal")
+
+// ErrTooManySessions is returned by Attach/ensure when MaxSessions is set and
+// starting a new session's process would exceed it. Existing sessions
+// (including idle ones not yet reaped) are unaffected; only *new* sessions are
+// refused until one exits or is reaped.
+var ErrTooManySessions = errors.New("too many concurrent terminal sessions")
 
 // Attach connects conn to the session's PTY, starting the process on first use.
 // It blocks until the connection closes (client disconnect or process exit),
@@ -94,12 +120,14 @@ func (m *TerminalManager) Attach(ctx context.Context, sessionID, repoPath, provi
 		_, _ = wsw.Write(s.scrollback)
 	}
 	s.attached = wsw
+	s.lastDetachedAt = time.Time{} // attached: not idle
 	s.mu.Unlock()
 
 	defer func() {
 		s.mu.Lock()
 		if s.attached == wsw {
 			s.attached = nil
+			s.lastDetachedAt = time.Now() // starts this session's idle clock for ReapLoop
 		}
 		s.mu.Unlock()
 	}()
@@ -137,6 +165,13 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	defer m.mu.Unlock()
 	if s, ok := m.sessions[sessionID]; ok {
 		return s, nil
+	}
+
+	// Cap concurrent live processes. Only applies to *starting a new* session —
+	// an already-running session (handled above) is never refused, since a
+	// reattach must never fail just because the manager is at capacity.
+	if m.MaxSessions > 0 && len(m.sessions) >= m.MaxSessions {
+		return nil, ErrTooManySessions
 	}
 
 	name, args, err := buildTerminalCommand(provider, model, resume)
@@ -225,6 +260,58 @@ func (m *TerminalManager) Stop(sessionID string) {
 		_ = s.cmd.Process.Kill()
 	}
 	_ = s.tty.Close()
+}
+
+// reapCheckInterval is how often ReapLoop scans for idle sessions. Fixed
+// (rather than derived from IdleTimeout) so a long IdleTimeout still gets
+// reaped reasonably promptly after crossing the threshold, and a short one in
+// tests doesn't require a matching tiny interval.
+const reapCheckInterval = 30 * time.Second
+
+// ReapLoop periodically stops sessions that have had no attached WebSocket
+// connection for at least IdleTimeout, releasing their subprocess and
+// scrollback buffer. No-op (never stops anything) while IdleTimeout <= 0.
+// Runs until ctx is cancelled; intended to be started once from cmd/server
+// alongside the manager, mirroring the internal/backup and
+// internal/logretention scheduler pattern.
+func (m *TerminalManager) ReapLoop(ctx context.Context) {
+	ticker := time.NewTicker(reapCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.reapIdleOnce()
+		}
+	}
+}
+
+// reapIdleOnce stops every session that's been detached for at least
+// IdleTimeout. Exported behavior only through ReapLoop; kept unexported and
+// directly callable so tests don't need to wait on the ticker.
+func (m *TerminalManager) reapIdleOnce() {
+	if m.IdleTimeout <= 0 {
+		return
+	}
+	now := time.Now()
+
+	var toReap []string
+	m.mu.Lock()
+	for id, s := range m.sessions {
+		s.mu.Lock()
+		idleSince := s.lastDetachedAt
+		s.mu.Unlock()
+		if !idleSince.IsZero() && now.Sub(idleSince) >= m.IdleTimeout {
+			toReap = append(toReap, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, id := range toReap {
+		slog.Info("terminal: reaping idle session", "session_id", id, "idle_timeout", m.IdleTimeout)
+		m.Stop(id)
+	}
 }
 
 // appendScrollback appends to the ring, trimming to scrollbackCap. Caller holds s.mu.

@@ -136,3 +136,58 @@ func TestMigration042DownStep(t *testing.T) {
 		}
 	}
 }
+
+// TestMigration046DownStep verifies migration 046's down migration (which
+// drops repos.issue_writeback_label) applies cleanly against this repo's
+// SQLite driver/version. 046 is the latest migration at the time this test
+// was written, so Migrate(45) rolls back just that one step and exercises
+// its down migration directly.
+func TestMigration046DownStep(t *testing.T) {
+	const targetVersion = 45
+	dbPath := t.TempDir() + "/migtest.db"
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	driver, err := sqlite3.WithInstance(db.SQL(), &sqlite3.Config{})
+	if err != nil {
+		t.Fatalf("driver: %v", err)
+	}
+	src, err := iofs.New(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatalf("source: %v", err)
+	}
+	m, err := migrate.NewWithInstance("iofs", src, "sqlite3", driver)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+
+	if err := m.Migrate(targetVersion); err != nil {
+		t.Fatalf("down to version %d (046 rollback): %v", targetVersion, err)
+	}
+
+	// repos.issue_writeback_label column should be gone.
+	rows, err := db.SQL().Query(`PRAGMA table_info(repos)`)
+	if err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if name == "issue_writeback_label" {
+			t.Fatal("column \"issue_writeback_label\" still present after down migration")
+		}
+	}
+}

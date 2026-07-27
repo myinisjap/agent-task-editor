@@ -1107,7 +1107,7 @@ export interface paths {
         };
         /**
          * Refresh and return the task's live GitHub PR state via the gh CLI
-         * @description Queries gh for the current PR state of the task's branch and persists it. If the live query fails, returns the previously stored git_state and pr_url instead of erroring, with an additional error field describing the failure. Returns git_state "none" without querying gh if the task has no branch yet.
+         * @description Queries gh for the current PR state of the task's branch and persists it. When a PR exists, also refreshes GitHub's merge-conflict verdict for it (pr_mergeable). If the live query fails, returns the previously stored git_state and pr_url instead of erroring, with an additional error field describing the failure. Returns git_state "none" without querying gh if the task has no branch yet.
          */
         get: {
             parameters: {
@@ -1129,6 +1129,11 @@ export interface paths {
                             /** @enum {string} */
                             git_state?: "" | "none" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
                             pr_url?: string;
+                            /**
+                             * @description Omitted from the no-branch response; otherwise the stored verdict, refreshed when a PR exists
+                             * @enum {string}
+                             */
+                            pr_mergeable?: "" | "mergeable" | "conflicting" | "unknown";
                             /** @description Present only when the live gh query failed */
                             error?: string | null;
                         };
@@ -2750,6 +2755,7 @@ export interface paths {
                         issue_sync_enabled?: boolean;
                         issue_sync_label?: string;
                         issue_writeback_enabled?: boolean;
+                        issue_writeback_label?: string;
                         pr_review_auto_transition_enabled?: boolean;
                         /** @enum {string} */
                         issue_sync_update_policy?: "gate" | "always" | "never";
@@ -3677,6 +3683,11 @@ export interface components {
             git_state?: "" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
             /** @description URL of the GitHub pull request opened for this task's branch (via POST /tasks/{id}/pr, or discovered by the GitHub PR status sweep). Empty until a PR exists. */
             pr_url?: string;
+            /**
+             * @description GitHub's verdict on whether this task's pull request still merges cleanly into its base branch, refreshed by the GitHub PR status sweep (and by GET /tasks/{id}/github-status). Empty until the task has a PR that has been checked; "unknown" while GitHub is still computing the test merge, which it does asynchronously after every push to either branch. When it flips to "conflicting", the sweep also appends a resolve-the-conflict note to the task's current agent run feedback.
+             * @enum {string}
+             */
+            pr_mergeable?: "" | "mergeable" | "conflicting" | "unknown";
             /** @description Number of consecutive automatic retries this task has had for transient provider errors (rate limits, network blips, upstream 5xx). Reset to 0 on a genuine failure or a successful run. */
             transient_retry_count?: number;
             /**
@@ -3927,8 +3938,10 @@ export interface components {
             issue_sync_enabled?: number;
             /** @description Only import issues carrying this label (empty = all open issues). */
             issue_sync_label?: string;
-            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the "agent-in-progress" label when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
+            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the issue_writeback_label (or the "agent-in-progress" default) when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
             issue_writeback_enabled?: number;
+            /** @description Label applied to the source GitHub issue when a task first leaves the workflow's human-gate label. Empty (the default) falls back to "agent-in-progress". The label must already exist on the GitHub repo, or the write-back silently no-ops. See docs/task-sources.md. */
+            issue_writeback_label?: string;
             /** @description 1 = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. 0 = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
             pr_review_auto_transition_enabled?: number;
             /**
@@ -3952,6 +3965,8 @@ export interface components {
             clone_status?: "ready" | "cloning" | "error";
             /** @description Human-readable failure detail when clone_status is 'error'. */
             clone_error?: string;
+            /** @description Optional cap on the number of agent runs the dispatcher will keep in flight against this repo at once. null (the default) means "no repo-specific cap" — the dispatcher falls back to the server's global MAX_WORKERS limit, preserving pre-existing behavior. A repo saturated with eligible tasks is skipped by the dispatcher once its in-flight run count reaches this limit (or the global fallback), leaving worker slots free for other repos. See GET /dashboard's repo_concurrency for live in-use vs. limit. */
+            max_concurrent_runs?: number | null;
             /** Format: date-time */
             created_at: string;
         };
@@ -4144,6 +4159,13 @@ export interface components {
                 /** Format: date-time */
                 weekly_resets_at?: string | null;
             };
+            /** @description Per-repo worker-slot breakdown: how many of a repo's effective concurrency limit (its max_concurrent_runs if set, else the server's global MAX_WORKERS) are currently occupied by in-flight agent runs. Only repos with at least one in-flight run are included, sorted by in_use descending. */
+            repo_concurrency: {
+                repo_id: string;
+                repo_name: string;
+                in_use: number;
+                limit: number;
+            }[];
         };
         /** @description A single provider/onboarding readiness row. */
         ProviderCheck: {

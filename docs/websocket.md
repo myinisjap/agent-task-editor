@@ -168,6 +168,28 @@ worktree and deletes the task's local branch from the repo's main clone
 }
 ```
 
+### `task.pr_mergeable_changed`
+GitHub's verdict on whether the task's PR still merges cleanly into its base
+branch changed (fired by the background GitHub sync). Only published on a
+change, not on every sweep. `unknown` means GitHub hasn't finished computing
+the test merge — it does so asynchronously after each push to either branch —
+so a verdict often goes `unknown` before settling on `mergeable`/`conflicting`.
+
+When it becomes `conflicting`, the sync also appends a resolve-the-conflict
+note to the task's current agent run feedback (and, for repos with
+`pr_review_auto_transition_enabled`, moves the task back along its workflow's
+failure path). See [task-sources.md](task-sources.md#merge-conflict-detection).
+
+```json
+{
+  "type": "task.pr_mergeable_changed",
+  "payload": {
+    "task_id": "uuid",
+    "pr_mergeable": "mergeable | conflicting | unknown"
+  }
+}
+```
+
 ### `task.subtask_conflict`
 A subtask's branch conflicted on merge into its parent. `task_id` here is the
 *child* (conflicting) task. A `task.updated` event is published for both the
@@ -185,11 +207,10 @@ child and the parent right after this event.
 ```
 
 ### `task.created`
-A new task was created by a background source: either the GitHub Issues
-importer (see [task-sources.md](task-sources.md), `source: "github"`) or a
-fired task schedule (see [task-templates.md](task-templates.md),
-`source: "schedule"`). The payload is a subset of task fields — clients
-should refetch the task for full data.
+A new task was created by a background source: a fired task schedule (see
+[task-templates.md](task-templates.md), `source: "schedule"`) or any other
+single-item creator. The payload is a subset of task fields — clients should
+refetch the task for full data.
 
 ```json
 {
@@ -201,6 +222,27 @@ should refetch the task for full data.
     "repo_id": "uuid",
     "source": "github",
     "source_ref": "owner/repo#123"
+  }
+}
+```
+
+### `task.created_bulk`
+Emitted by the GitHub Issues importer (see [task-sources.md](task-sources.md))
+instead of one `task.created` per issue: a sweep that creates one or more
+tasks for a repo emits a single `task.created_bulk` event for that repo, once
+the whole batch has committed. `count` is always exact; `ids` is capped
+server-side (currently 500) to keep the payload itself from being large
+enough to contend with a client's bounded WebSocket send buffer — clients
+should do a single task-list/board refresh rather than fetching each id.
+
+```json
+{
+  "type": "task.created_bulk",
+  "payload": {
+    "repo_id": "uuid",
+    "source": "github",
+    "count": 37,
+    "ids": ["uuid", "uuid", "..."]
   }
 }
 ```

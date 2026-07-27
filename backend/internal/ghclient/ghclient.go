@@ -142,24 +142,55 @@ func CreatePR(ctx context.Context, repoName, branch, base, title, body string) (
 	return "pr_open", url, nil
 }
 
-// PRHead holds a PR's number and current head commit SHA, used by ghsync to
-// detect when the agent has pushed a new commit (see GetPRHead).
-type PRHead struct {
-	Number  int
-	HeadSHA string
+// Mergeability is GitHub's verdict on whether a PR can be merged into its
+// base branch without conflicts. GitHub computes this asynchronously after
+// each push to either branch, so MergeableUnknown is a normal transient answer
+// rather than an error — the next sweep usually has a definite one.
+type Mergeability string
+
+const (
+	MergeableUnknown     Mergeability = "unknown"     // GitHub hasn't computed the test merge yet
+	MergeableClean       Mergeability = "mergeable"   // merges cleanly into the base branch
+	MergeableConflicting Mergeability = "conflicting" // conflicts with the base branch
+)
+
+// normalizeMergeable maps gh's GraphQL mergeable enum (MERGEABLE /
+// CONFLICTING / UNKNOWN) onto a Mergeability. An empty or unrecognised value
+// maps to MergeableUnknown so a gh version that grows a new enum member can
+// never be read as "conflicting".
+func normalizeMergeable(raw string) Mergeability {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "MERGEABLE":
+		return MergeableClean
+	case "CONFLICTING":
+		return MergeableConflicting
+	default:
+		return MergeableUnknown
+	}
 }
 
-// GetPRHead returns the PR number and head commit SHA for the given branch,
-// or a zero PRHead if no PR exists yet for the branch. Used to detect a fresh
-// push since the last sweep (the review/feedback ingestion cursor resets when
-// the head SHA changes).
+// PRHead holds a PR's number, current head commit SHA, base branch, and
+// mergeability, used by ghsync to detect when the agent has pushed a new
+// commit and whether the PR currently conflicts with its base (see GetPRHead).
+type PRHead struct {
+	Number    int
+	HeadSHA   string
+	BaseRef   string
+	Mergeable Mergeability
+}
+
+// GetPRHead returns the PR number, head commit SHA, base branch, and
+// mergeability for the given branch, or a zero PRHead if no PR exists yet for
+// the branch. Used to detect a fresh push since the last sweep (the
+// review/feedback ingestion cursor resets when the head SHA changes) and to
+// spot a PR that has started conflicting with its base branch.
 func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_list_head").Inc()
 	cmd := runGH(ctx, "pr", "list",
 		"--repo", repoName,
 		"--head", branch,
 		"--state", "all",
-		"--json", "number,headRefOid",
+		"--json", "number,headRefOid,baseRefName,mergeable",
 		"--limit", "1",
 	)
 	out, err := cmd.Output()
@@ -167,8 +198,10 @@ func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 		return PRHead{}, err
 	}
 	var prs []struct {
-		Number     int    `json:"number"`
-		HeadRefOid string `json:"headRefOid"`
+		Number      int    `json:"number"`
+		HeadRefOid  string `json:"headRefOid"`
+		BaseRefName string `json:"baseRefName"`
+		Mergeable   string `json:"mergeable"`
 	}
 	if err := json.Unmarshal(out, &prs); err != nil {
 		return PRHead{}, err
@@ -176,7 +209,12 @@ func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 	if len(prs) == 0 {
 		return PRHead{}, nil
 	}
-	return PRHead{Number: prs[0].Number, HeadSHA: prs[0].HeadRefOid}, nil
+	return PRHead{
+		Number:    prs[0].Number,
+		HeadSHA:   prs[0].HeadRefOid,
+		BaseRef:   prs[0].BaseRefName,
+		Mergeable: normalizeMergeable(prs[0].Mergeable),
+	}, nil
 }
 
 // Review is a single review left on a PR (a "changes requested"/"approved"/

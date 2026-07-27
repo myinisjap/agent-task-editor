@@ -68,6 +68,12 @@ func openTestDB(t *testing.T) *gen.Queries {
 // seedRepo creates a workflow + repo, with issue write-back optionally enabled.
 func seedRepo(t *testing.T, q *gen.Queries, writebackEnabled bool) gen.Repo {
 	t.Helper()
+	return seedRepoWithLabel(t, q, writebackEnabled, "")
+}
+
+// seedRepoWithLabel is like seedRepo but also sets issue_writeback_label.
+func seedRepoWithLabel(t *testing.T, q *gen.Queries, writebackEnabled bool, writebackLabel string) gen.Repo {
+	t.Helper()
 	ctx := context.Background()
 
 	wf, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{
@@ -92,6 +98,7 @@ func seedRepo(t *testing.T, q *gen.Queries, writebackEnabled bool) gen.Repo {
 		IssueSyncEnabled:      0,
 		IssueSyncLabel:        "",
 		IssueWritebackEnabled: wbEnabled,
+		IssueWritebackLabel:   writebackLabel,
 	})
 	if err != nil {
 		t.Fatalf("create repo: %v", err)
@@ -250,6 +257,32 @@ func TestOnLeaveNotReady_MarksDoneEvenOnGHFailure(t *testing.T) {
 	}
 	if updated.WritebackInProgressSent == 0 {
 		t.Fatal("expected writeback_in_progress_sent to be set even though gh call failed (optional signal, no retry)")
+	}
+}
+
+func TestOnLeaveNotReady_CustomLabel(t *testing.T) {
+	q := openTestDB(t)
+	repo := seedRepoWithLabel(t, q, true, "wip")
+	task := seedSourcedTask(t, q, repo, "acme/widgets#1")
+	wb, fg := newWritebackWithFake(q)
+
+	wb.OnLeaveNotReady(context.Background(), task, repo)
+
+	if len(fg.labelCalls) != 1 || fg.labelCalls[0] != "wip" {
+		t.Fatalf("expected one add-label call with %q, got %v", "wip", fg.labelCalls)
+	}
+}
+
+func TestOnLeaveNotReady_BlankLabelFallsBackToDefault(t *testing.T) {
+	q := openTestDB(t)
+	repo := seedRepoWithLabel(t, q, true, "   ") // whitespace-only counts as unset
+	task := seedSourcedTask(t, q, repo, "acme/widgets#1")
+	wb, fg := newWritebackWithFake(q)
+
+	wb.OnLeaveNotReady(context.Background(), task, repo)
+
+	if len(fg.labelCalls) != 1 || fg.labelCalls[0] != InProgressLabel {
+		t.Fatalf("expected one add-label call with default %q, got %v", InProgressLabel, fg.labelCalls)
 	}
 }
 

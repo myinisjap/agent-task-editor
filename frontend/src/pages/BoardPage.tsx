@@ -4,6 +4,7 @@ import { useWorkflowStore } from '../stores/workflow'
 import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
+import OnboardingChecklist from '../components/board/OnboardingChecklist'
 import { api, type BulkAction, type Task, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
@@ -95,11 +96,18 @@ export default function BoardPage() {
 
   useEffect(() => {
     const off = wsClient.on((event) => {
-      if (event.type === 'task.label_changed' || event.type === 'task.updated' || event.type === 'task.created' || event.type === 'task.git_state_changed') {
+      if (event.type === 'task.label_changed' || event.type === 'task.updated' || event.type === 'task.created' || event.type === 'task.git_state_changed' || event.type === 'task.pr_mergeable_changed') {
         // Refresh the task from API to get latest data
         const taskId = event.type === 'task.created' ? event.payload.id :
                        event.type === 'task.updated' ? event.payload.id : event.payload.task_id
         api.tasks.get(taskId).then(upsert).catch(() => {})
+      }
+      if (event.type === 'task.created_bulk') {
+        // The importer batches an entire sweep's new tasks into one event
+        // rather than one task.created per issue — do a single board
+        // refresh instead of fetching event.payload.ids one by one, or the
+        // batching wouldn't save anything on the frontend.
+        fetchTasks(showArchived ? { archived: 'all' } : undefined)
       }
       if (event.type === 'task.rate_limited') {
         setRateLimitedTaskIds(prev => {
@@ -122,7 +130,8 @@ export default function BoardPage() {
       }
     })
     return off
-  }, [upsert])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upsert, showArchived])
 
   const workflow = active()
   const labels = workflow?.labels ?? []
@@ -243,6 +252,8 @@ export default function BoardPage() {
           <BoardHelp />
         </HelpModal>
       )}
+
+      <OnboardingChecklist />
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 mb-4">

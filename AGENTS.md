@@ -30,7 +30,7 @@ agent-task-editor/
 │       ├── api/              # Chi router, handlers, middleware
 │       ├── config/           # YAML + env var config
 │       ├── ghclient/         # Thin `gh` CLI wrapper (PR lookup/create, issue listing, repo name parsing)
-│       ├── ghsync/           # Background poller: refreshes task GitHub PR state via `gh` CLI
+│       ├── ghsync/           # Background poller: refreshes task GitHub PR state (incl. merge conflicts) via `gh` CLI
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
 │       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues)
@@ -143,3 +143,4 @@ If `API_TOKEN` is set, add `-H "Authorization: Bearer <token>"` to every request
 - The MCP sidecar communicates via a temp file (`RESULT_FILE`) written at the end of a tool call, then read by the runner after the subprocess exits.
 - `REPO_BASE_DIR` is optional (warn-only) to support development without it; production deployments should set it.
 - Agent `Bash`/`run_bash` tool calls execute inside the **backend** container against bind-mounted repos, so any compiler/runtime an agent needs must be installed in `backend/Dockerfile`'s *final* image stage, not just available on the host. It currently ships Go 1.26 (copied from the Dockerfile's own builder stage for exact version parity with the server binary) and Node 26/npm (covers Vite/React/TS projects). To add another language, edit the final stage of `backend/Dockerfile` and rebuild — see `docs/getting-started.md#supported-languages--extending-the-toolchain`. `frontend/Dockerfile` is unrelated to this — it only builds/serves this app's own UI in production.
+- `frontend/src/lib/providerCapabilities.ts` is the single source of truth for per-provider capability gaps (MCP support, label transitions, cost tracking, command allow/denylist, etc.), read by `AgentConfigForm`/`ProviderConfigForm`/`CommandFilterEditor` to surface warnings inline. `docs/agents.md`'s Capability Matrix table is generated from it — after editing the TS file, run `npm run gen:capability-docs` (from `frontend/`) to regenerate the table between the `<!-- BEGIN/END capability-matrix (generated) -->` markers. Don't hand-edit that table.

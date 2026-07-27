@@ -1,10 +1,25 @@
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import type { ModelList, ProviderConfig } from '../../api/client'
 import { PROVIDERS } from '../../lib/agentTemplates'
+import { PROVIDER_CAPABILITIES, type Capability } from '../../lib/providerCapabilities'
 import Field from '../agents/Field'
 import ModelSelector from '../agents/ModelSelector'
 
 export type FormState = Omit<ProviderConfig, 'id' | 'created_at' | 'updated_at'>
+
+// Display labels for the capability-gap summary shown under the provider
+// dropdown. Subset of Capability — only the ones worth flagging at a glance
+// when picking a provider; command allow/denylist and detailed notes are
+// covered per-field elsewhere (AgentConfigForm, CommandFilterEditor).
+const GAP_SUMMARY_CAPS: { key: Capability; label: string }[] = [
+  { key: 'labelTransitions', label: 'workflow label transitions' },
+  { key: 'mcpServers', label: 'MCP servers / plugins' },
+  { key: 'costTracking', label: 'cost tracking' },
+  { key: 'commandAllowlist', label: 'command allowlist' },
+  { key: 'commandDenylist', label: 'command denylist' },
+  { key: 'subtasks', label: 'subtasks' },
+  { key: 'sessionResume', label: 'session resume' },
+]
 
 export default function ProviderConfigForm({
   selected,
@@ -29,6 +44,11 @@ export default function ProviderConfigForm({
   onDelete: () => void
   helpButton?: ReactNode
 }) {
+  const caps = PROVIDER_CAPABILITIES[form.provider]
+  const gaps = caps
+    ? GAP_SUMMARY_CAPS.filter(({ key }) => (caps[key]?.support ?? 'none') !== 'full').map(({ label }) => label)
+    : []
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-6">
@@ -41,7 +61,7 @@ export default function ProviderConfigForm({
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-2xl">
-        <Field label="Name" className="col-span-2">
+        <Field label="Name" className="sm:col-span-2">
           <input
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
@@ -60,6 +80,19 @@ export default function ProviderConfigForm({
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
+          {gaps.length > 0 && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ Not fully supported: {gaps.join(', ')}. See{' '}
+              <a
+                href="https://github.com/myinisjap/agent-task-editor/blob/main/docs/agents.md#capability-matrix"
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-amber-300"
+              >
+                docs/agents.md
+              </a>.
+            </p>
+          )}
         </Field>
 
         <Field label="Model">
@@ -72,7 +105,7 @@ export default function ProviderConfigForm({
           />
         </Field>
 
-        <Field label="Env vars (JSON object)" className="col-span-2" hint="API keys and other environment variables merged into the provider CLI's environment.">
+        <Field label="Env vars (JSON object)" className="sm:col-span-2" hint="API keys and other environment variables merged into the provider CLI's environment.">
           <textarea
             value={form.env}
             onChange={(e) => setForm((f) => ({ ...f, env: e.target.value }))}

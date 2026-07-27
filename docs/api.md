@@ -29,6 +29,7 @@ Key fields returned by task endpoints:
 | `agent_notes` | string | Persistent markdown notes written by agents |
 | `git_state` | string | `""`, `pushed`, `pr_open`, `pr_merged`, `pr_closed` |
 | `pr_url` | string | URL of the GitHub PR for the branch (set by `POST /tasks/{id}/pr` or the ghsync sweep); empty until a PR exists |
+| `pr_mergeable` | string | `""`, `mergeable`, `conflicting`, `unknown` — GitHub's verdict on whether the PR still merges cleanly into its base branch, refreshed by the ghsync sweep; `unknown` while GitHub is still computing the test merge |
 | `attachments` | string[] | Relative paths to uploaded attachment files |
 | `paused` | boolean | Paused tasks are never picked up by the dispatcher |
 | `archived` | boolean | Archived tasks are hidden from the default board view, skipped by the GitHub PR sweep, and never dispatched |
@@ -219,9 +220,9 @@ One-click PR creation. Pushes the task's branch to origin, then runs `gh pr crea
 **Idempotent** — if a PR already exists for the branch, that PR is returned instead of erroring. Requires the repo to have a GitHub remote, the task to have a provisioned branch (else `400`), and the `gh` CLI to be authenticated (a `gh pr create` failure returns `502`).
 
 ### `GET /tasks/{id}/github-status`
-Fetches live GitHub PR state for the task's branch. Returns:
+Fetches live GitHub PR state for the task's branch, and (when a PR exists) refreshes GitHub's merge-conflict verdict for it. Returns:
 ```json
-{ "git_state": "pr_open", "pr_url": "https://github.com/..." }
+{ "git_state": "pr_open", "pr_url": "https://github.com/...", "pr_mergeable": "conflicting" }
 ```
 
 ### `PATCH /tasks/{id}/git-state`
@@ -678,8 +679,8 @@ values; setting `remote_url` or `workflow_id` to an empty string clears it.
 `internal/ghsync` automatically transitions a task along its workflow's
 "failure" human path (same target as a manual Reject) the first time a sweep
 ingests new PR review feedback for it — a `changes_requested` review, a new
-inline review comment, or a newly-failing GitHub Actions check. Off by
-default; feedback is always ingested and surfaced in the next run's prompt
+inline review comment, a newly-failing GitHub Actions check, or a
+newly-detected merge conflict with the PR's base branch. Off by default; feedback is always ingested and surfaced in the next run's prompt
 regardless of this flag. See [task-sources.md](task-sources.md).
 
 ### `DELETE /repos/{id}`

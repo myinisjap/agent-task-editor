@@ -20,6 +20,34 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Merge-conflict detection on open PRs.** The GitHub PR status sweep now
+  also asks GitHub whether each task's open PR still merges cleanly into its
+  base branch, so a PR that goes stale because someone else merged first is
+  noticed without anyone opening GitHub. The verdict is stored on the task as
+  `pr_mergeable` (`mergeable` / `conflicting` / `unknown`), pushed to the UI as
+  a new `task.pr_mergeable_changed` WebSocket event, rendered as a conflict
+  marker on the board card and task detail header, and refreshed on demand by
+  `GET /tasks/{id}/github-status`. When a conflict first appears, the sweep
+  appends a "resolve the conflict" note to the task's current agent run
+  feedback (and, for repos with `pr_review_auto_transition_enabled`, moves the
+  task back along its workflow's failure path) so an agent picks the work back
+  up. The check rides along with the existing PR head-SHA lookup, so it costs
+  no additional `gh` call per sweep.
+- **Per-repo concurrency limits.** Repos can now set an optional
+  `max_concurrent_runs` cap (Repos page) on how many agent runs the
+  dispatcher will keep in flight against that repo at once, independent of
+  the global `MAX_WORKERS` pool size. Previously one repo with many eligible
+  tasks (e.g. from a schedule or a bulk GitHub Issues import) could occupy
+  every worker slot and starve every other repo indefinitely. Leaving the
+  cap unset preserves prior behavior exactly (falls back to the global
+  limit). The Dashboard's new "Repo concurrency" section shows live in-use
+  vs. effective-limit worker slots per repo.
+- **First-run onboarding checklist on the Board** that sequences setup steps
+  (add a repo → configure a provider → create an agent config → create your
+  first task), checks each off live as configuration lands, folds in
+  `/health/providers` readiness checks so a failing credential check (e.g.
+  Claude CLI not authenticated) surfaces against the relevant step, and stays
+  dismissed permanently once dismissed or once all steps pass (#258).
 - **Imported GitHub issues now stay in sync with their board tasks.** The
   importer was create-only: once a task existed for an issue, nothing about
   that issue was ever looked at again, so an edited title or body never
@@ -62,8 +90,61 @@ triggers the "Release" workflow the same way.
   workflow's starting label like any other new task. The source task is never
   modified. No new endpoint was needed — the existing `POST /tasks` create
   path already covers every field involved.
+- **Archiving a task now reclaims its worktree, and a new sweeper catches
+  everything else.** Archiving is the documented way to retire a dead or
+  abandoned task, and such a task is typically on a non-terminal label — none
+  of the existing teardown paths (reaching a terminal label, task delete,
+  ghsync's post-merge cleanup) ever fired for it, and archived tasks are
+  excluded from every sweep that might otherwise revisit them, so its
+  `.ate-worktrees/<id>` directory persisted forever. `PATCH /tasks/{id}/archive`
+  and the bulk `archive` action now tear down the worktree immediately,
+  best-effort (branch kept for review, same as every other teardown path). A
+  new always-on sweeper (`WORKTREE_SWEEP_INTERVAL`, default `10m`) also
+  periodically reconciles every repo's `.ate-worktrees/*` against live
+  (non-archived) task/chat-session ids and reclaims anything else, so disk
+  usage under `.ate-worktrees/` is bounded by live tasks rather than by every
+  task ever created — this also catches a worktree orphaned by a crash.
+  Archiving also clears the task's `worktree_path`, and `ensureWorktree` now
+  verifies its recorded worktree still exists before reusing it — otherwise
+  unarchiving a task (or a run reprovisioned after the sweeper reclaimed its
+  worktree) would hand the next agent run a cwd that no longer exists rather
+  than reprovisioning a fresh one. See
+  [docs/backup.md#orphaned-worktree-sweeper](docs/backup.md#orphaned-worktree-sweeper).
+- **Chat terminal sessions can now be capped and idle-reaped.** Each Chat-tab
+  session keeps a live CLI subprocess (plus a scrollback buffer) running
+  indefinitely across WebSocket disconnects, with nothing previously bounding
+  how many accumulate or how long an unattached one stays alive. New opt-in
+  settings `CHAT_MAX_SESSIONS` (refuses starting *new* sessions past the cap;
+  reattaching to an existing session is never blocked) and
+  `CHAT_IDLE_TIMEOUT` (reaps a session's subprocess after it's gone unattached
+  for this long) — both default to off/unlimited, so behavior is unchanged
+  unless explicitly configured. See
+  [docs/getting-started.md#chat-terminal-sessions](docs/getting-started.md#chat-terminal-sessions).
+- **Per-repo configurable issue write-back label.** The label applied to a
+  task's source GitHub issue when it first leaves the workflow's human-gate
+  label was previously a fixed `agent-in-progress`. It's now configurable via
+  `repos.issue_writeback_label` (the "In-progress label" field on the Repos
+  page, under "Issue write-back"); leaving it blank preserves the previous
+  `agent-in-progress` default. The label — default or custom — still must
+  already exist on the GitHub repo, or the write-back silently no-ops.
+- **Provider capability gaps surfaced inline at config time.** `AgentConfigForm`
+  and `ProviderConfigForm` now flag unsupported options for the selected
+  provider (MCP servers/plugins, subtasks, session resume, cost tracking,
+  label transitions, command allow/denylist enforcement) instead of silently
+  hiding controls or letting a misconfigured agent fail at run time. The
+  capability data lives in `frontend/src/lib/providerCapabilities.ts`, the
+  single source of truth also used to keep `docs/agents.md`'s capability
+  matrix in sync.
 
 ### Fixed
+- **Two-column forms no longer collapse into overlapping, unreadable fields on
+  mobile.** The Agent config, Provider config, Templates, and schedule forms use
+  a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded
+  `col-span-2`. At mobile widths that spanned a second column the grid didn't
+  have, so CSS created an implicit one: the single-width fields were crushed
+  into a sliver of the first track while their labels overlapped each other and
+  hint text wrapped one word per line. Those rows are now `sm:col-span-2`, so
+  everything stacks in a single full-width column below the `sm` breakpoint.
 - **The GitHub issue fetch no longer silently truncates at 200 issues.** It now
   paginates the full result set. Beyond dropping issues outright on busy repos,
   the cap would have made the new reconciliation mistake a truncated page for a
@@ -73,6 +154,15 @@ triggers the "Release" workflow the same way.
 - The Repos help modal described issue import as create-only, which is no
   longer accurate; it now covers ongoing sync, the update policy, what happens
   when an issue closes, and comment sync.
+- **GitHub issue import now creates a repo's new tasks in a single DB
+  transaction per sweep, and emits one batched `task.created_bulk` WebSocket
+  event instead of one `task.created` per issue.** Previously each imported
+  issue was its own implicit commit (repeatedly acquiring SQLite's
+  single-writer lock) and its own broadcast event (each triggering a
+  per-client task refetch) — a large backlog import could contend with other
+  writers and flood connected clients. See
+  [task-sources.md](docs/task-sources.md) and
+  [websocket.md](docs/websocket.md).
 
 ## [0.14.0] - 2026-07-26
 

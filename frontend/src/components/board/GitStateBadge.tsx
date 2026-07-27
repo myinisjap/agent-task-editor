@@ -18,18 +18,35 @@ const GIT_STATE_CONFIG: Record<GitState, { label: string; icon: string; classNam
 interface GitStateBadgeProps {
   branch?: string
   gitState?: string
+  /** GitHub's mergeability verdict for the task's PR (see Task.pr_mergeable). */
+  prMergeable?: string
 }
 
-export default function GitStateBadge({ branch, gitState }: GitStateBadgeProps) {
+export default function GitStateBadge({ branch, gitState, prMergeable }: GitStateBadgeProps) {
   const state = deriveGitState(branch ?? '', gitState ?? '')
   if (state === 'none') return null
   const config = GIT_STATE_CONFIG[state]
-  return (
+  const icon = (
     <span
       className={`text-xs font-mono select-none ${config.className}`}
       title={`${config.label}${branch ? ` (${branch})` : ''}`}
     >
       {config.icon}
+    </span>
+  )
+  // Only an open PR can be usefully un-conflicted; a merged/closed one keeps
+  // whatever verdict GitHub last reported, which isn't worth flagging.
+  if (state !== 'pr_open' || prMergeable !== 'conflicting') return icon
+  return (
+    <span className="inline-flex items-center gap-1">
+      {icon}
+      <span
+        className="text-xs font-mono select-none text-red-400"
+        title="PR conflicts with its base branch"
+        aria-label="merge conflict"
+      >
+        ⚠
+      </span>
     </span>
   )
 }

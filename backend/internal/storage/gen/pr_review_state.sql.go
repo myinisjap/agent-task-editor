@@ -10,7 +10,7 @@ import (
 )
 
 const getTaskPRReviewState = `-- name: GetTaskPRReviewState :one
-SELECT task_id, head_sha, last_review_submitted_at, last_failed_check_sha, updated_at FROM task_pr_review_state WHERE task_id = ?
+SELECT task_id, head_sha, last_review_submitted_at, last_failed_check_sha, updated_at, last_conflict_sha FROM task_pr_review_state WHERE task_id = ?
 `
 
 func (q *Queries) GetTaskPRReviewState(ctx context.Context, taskID string) (TaskPrReviewState, error) {
@@ -22,19 +22,21 @@ func (q *Queries) GetTaskPRReviewState(ctx context.Context, taskID string) (Task
 		&i.LastReviewSubmittedAt,
 		&i.LastFailedCheckSha,
 		&i.UpdatedAt,
+		&i.LastConflictSha,
 	)
 	return i, err
 }
 
 const upsertTaskPRReviewState = `-- name: UpsertTaskPRReviewState :one
-INSERT INTO task_pr_review_state (task_id, head_sha, last_review_submitted_at, last_failed_check_sha, updated_at)
-VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+INSERT INTO task_pr_review_state (task_id, head_sha, last_review_submitted_at, last_failed_check_sha, last_conflict_sha, updated_at)
+VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 ON CONFLICT(task_id) DO UPDATE SET
     head_sha = excluded.head_sha,
     last_review_submitted_at = excluded.last_review_submitted_at,
     last_failed_check_sha = excluded.last_failed_check_sha,
+    last_conflict_sha = excluded.last_conflict_sha,
     updated_at = CURRENT_TIMESTAMP
-RETURNING task_id, head_sha, last_review_submitted_at, last_failed_check_sha, updated_at
+RETURNING task_id, head_sha, last_review_submitted_at, last_failed_check_sha, updated_at, last_conflict_sha
 `
 
 type UpsertTaskPRReviewStateParams struct {
@@ -42,6 +44,7 @@ type UpsertTaskPRReviewStateParams struct {
 	HeadSha               string  `json:"head_sha"`
 	LastReviewSubmittedAt *string `json:"last_review_submitted_at"`
 	LastFailedCheckSha    *string `json:"last_failed_check_sha"`
+	LastConflictSha       *string `json:"last_conflict_sha"`
 }
 
 func (q *Queries) UpsertTaskPRReviewState(ctx context.Context, arg UpsertTaskPRReviewStateParams) (TaskPrReviewState, error) {
@@ -50,6 +53,7 @@ func (q *Queries) UpsertTaskPRReviewState(ctx context.Context, arg UpsertTaskPRR
 		arg.HeadSha,
 		arg.LastReviewSubmittedAt,
 		arg.LastFailedCheckSha,
+		arg.LastConflictSha,
 	)
 	var i TaskPrReviewState
 	err := row.Scan(
@@ -58,6 +62,7 @@ func (q *Queries) UpsertTaskPRReviewState(ctx context.Context, arg UpsertTaskPRR
 		&i.LastReviewSubmittedAt,
 		&i.LastFailedCheckSha,
 		&i.UpdatedAt,
+		&i.LastConflictSha,
 	)
 	return i, err
 }

@@ -93,16 +93,64 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 	}
 	slog.Debug("dispatcher sweep: active configs", "component", "dispatcher", "config_count", len(configs))
 
+	// Per-repo in-flight run counts, refreshed once per sweep and decremented
+	// in-process as this sweep dispatches tasks (see repoInUse below) so a
+	// repo at its configured limit is skipped for the rest of this sweep too,
+	// not just re-evaluated on the next tick.
+	inUse, err := d.repoInUseCounts(ctx)
+	if err != nil {
+		slog.Error("dispatcher: count active runs by repo", "component", "dispatcher", "err", err)
+		return
+	}
+
 	for _, t := range tasks {
-		d.dispatch(ctx, t, configs)
+		d.dispatch(ctx, t, configs, inUse)
 	}
 }
 
-func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig) {
+// repoInUseCounts returns the current number of in-flight agent runs per
+// repo (see CountActiveRunsByRepo), keyed by repo_id.
+func (d *Dispatcher) repoInUseCounts(ctx context.Context) (map[string]int64, error) {
+	rows, err := d.q.CountActiveRunsByRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		counts[r.RepoID] = r.InUse
+	}
+	return counts, nil
+}
+
+// repoAtLimit reports whether repoID has no free slot under its effective
+// concurrency limit: repos.max_concurrent_runs when set (non-nil), otherwise
+// the pool's global MAX_WORKERS — this is the "unset limit preserves today's
+// behavior exactly" fallback from the acceptance criteria. inUse is the
+// sweep-scoped in-flight count map from repoInUseCounts, mutated by dispatch
+// as tasks are dispatched so limits are enforced within a single sweep too.
+func (d *Dispatcher) repoAtLimit(repo gen.Repo, inUse map[string]int64) bool {
+	limit := d.pool.MaxWorkers()
+	if repo.MaxConcurrentRuns != nil && *repo.MaxConcurrentRuns > 0 {
+		limit = int(*repo.MaxConcurrentRuns)
+	}
+	return inUse[repo.ID] >= int64(limit)
+}
+
+func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig, inUse map[string]int64) {
 	log := slog.With("component", "dispatcher", "task_id", t.ID)
 
 	if t.Paused != 0 { // defense-in-depth; ListAgentPickupTasks already filters paused tasks
 		log.Debug("dispatcher: skipping paused task")
+		return
+	}
+
+	repo, err := d.q.GetRepo(ctx, t.RepoID)
+	if err != nil {
+		log.Error("dispatcher: get repo", "err", err)
+		return
+	}
+	if d.repoAtLimit(repo, inUse) {
+		log.Debug("dispatcher: skipping, repo at its concurrency limit", "repo_id", repo.ID)
 		return
 	}
 
@@ -142,7 +190,12 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 
 	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
 		log.Error("dispatcher: start run", "err", err)
+		return
 	}
+	// Reflect this dispatch in the sweep-scoped in-use map immediately so a
+	// repo hitting its limit mid-sweep is skipped for the remaining tasks in
+	// this same sweep, not just re-evaluated on the next tick.
+	inUse[repo.ID]++
 }
 
 // effectiveBudget resolves the effective cost budget for a task from its
@@ -399,30 +452,41 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 // its own worktree on its own branch so concurrent agents on the same repo don't
 // conflict. A subtask's branch is cut from its parent's branch (not the repo
 // base) so its work merges back cleanly.
+//
+// t.WorktreePath can be stale — pointing at a directory that no longer exists
+// — for a task that was archived (worktree reclaimed; see
+// api/handlers.reclaimWorktreeOnArchive) and later unarchived, or one whose
+// worktree the periodic sweeper reclaimed out from under it (see
+// internal/worktreesweep, which never touches the DB row). Treating a
+// missing directory the same as an empty WorktreePath reprovisions it here
+// rather than handing the agent a nonexistent cwd.
 func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Repo) (string, error) {
-	workDir := t.WorktreePath
-	if workDir == "" {
-		var wtPath, branch, baseRef string
-		var perr error
-		if base := d.parentBranchBase(ctx, t); base != "" {
-			wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
-		} else {
-			wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+	if workDir := t.WorktreePath; workDir != "" {
+		if fi, statErr := os.Stat(workDir); statErr == nil && fi.IsDir() {
+			return workDir, nil
 		}
-		if perr != nil {
-			return "", fmt.Errorf("provision worktree: %w", perr)
-		}
-		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
-			Branch:       branch,
-			WorktreePath: wtPath,
-			BaseRef:      baseRef,
-			ID:           t.ID,
-		}); err != nil {
-			return "", fmt.Errorf("persist worktree: %w", err)
-		}
-		workDir = wtPath
+		slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
 	}
-	return workDir, nil
+
+	var wtPath, branch, baseRef string
+	var perr error
+	if base := d.parentBranchBase(ctx, t); base != "" {
+		wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
+	} else {
+		wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+	}
+	if perr != nil {
+		return "", fmt.Errorf("provision worktree: %w", perr)
+	}
+	if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch:       branch,
+		WorktreePath: wtPath,
+		BaseRef:      baseRef,
+		ID:           t.ID,
+	}); err != nil {
+		return "", fmt.Errorf("persist worktree: %w", err)
+	}
+	return wtPath, nil
 }
 
 // resolveAgentConfig builds the effective agent config for the run and resolves

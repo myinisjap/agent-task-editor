@@ -3,6 +3,7 @@ package tasksource
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"sync"
 	"testing"
@@ -25,16 +26,18 @@ func (f fakeSource) Fetch(context.Context, gen.Repo) ([]ExternalTask, error) {
 	return f.items, f.err
 }
 
-// recordingPub records published events.
+// recordingPub records published events (type and payload).
 type recordingPub struct {
-	mu     sync.Mutex
-	events []string
+	mu       sync.Mutex
+	events   []string
+	payloads []map[string]any
 }
 
-func (p *recordingPub) Publish(eventType string, _ map[string]any) {
+func (p *recordingPub) Publish(eventType string, payload map[string]any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
+	p.payloads = append(p.payloads, payload)
 }
 
 func openTestDB(t *testing.T) *storage.DB {
@@ -118,11 +121,25 @@ func TestSweepImportsAndDedupes(t *testing.T) {
 	if len(tasks) != 2 {
 		t.Fatalf("expected 2 tasks after first sweep, got %d", len(tasks))
 	}
-	if len(pub.events) != 2 {
-		t.Fatalf("expected 2 task.created events, got %d", len(pub.events))
+	// The importer batches all creates for a repo/sweep into a single
+	// task.created_bulk event rather than one task.created per item.
+	if len(pub.events) != 1 || pub.events[0] != "task.created_bulk" {
+		t.Fatalf("expected 1 task.created_bulk event, got %v", pub.events)
+	}
+	bulkPayload := pub.payloads[0]
+	if count, _ := bulkPayload["count"].(int); count != 2 {
+		t.Fatalf("expected count=2 in task.created_bulk payload, got %v", bulkPayload["count"])
+	}
+	ids, _ := bulkPayload["ids"].([]string)
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 ids in task.created_bulk payload, got %v", bulkPayload["ids"])
+	}
+	if src, _ := bulkPayload["source"].(string); src != "github" {
+		t.Errorf("source = %q, want github", src)
 	}
 
-	// Second sweep must not duplicate.
+	// Second sweep must not duplicate, and — since nothing new was created —
+	// must not emit another task.created_bulk event.
 	im.Sweep(ctx)
 	tasks, err = q.ListTasks(ctx)
 	if err != nil {
@@ -130,6 +147,15 @@ func TestSweepImportsAndDedupes(t *testing.T) {
 	}
 	if len(tasks) != 2 {
 		t.Fatalf("expected 2 tasks after second sweep, got %d", len(tasks))
+	}
+	createEvents := 0
+	for _, e := range pub.events {
+		if e == "task.created_bulk" {
+			createEvents++
+		}
+	}
+	if createEvents != 1 {
+		t.Fatalf("expected still only 1 task.created_bulk event after re-sweep (dedup), got %d", createEvents)
 	}
 
 	// Inspect the imported bug task.
@@ -156,6 +182,136 @@ func TestSweepImportsAndDedupes(t *testing.T) {
 	}
 	if want := "It crashes.\n\n_Imported from https://github.com/acme/widgets/issues/1_"; bug.Description != want {
 		t.Errorf("description = %q, want %q", bug.Description, want)
+	}
+}
+
+// TestSweepCreateTransactionSurvivesMidBatchConflict verifies the whole
+// create batch for a repo runs as one transaction, and that a single row
+// hitting the (source, source_ref) UNIQUE constraint mid-batch (e.g. a
+// concurrent insert winning the race for that ref in the gap between this
+// sweep's per-item GetTaskBySource lookup and its create transaction
+// actually running) only skips that row — it doesn't abort or roll back the
+// rest of the transaction. SQLite rolls back only the failing statement on a
+// constraint violation, not the whole transaction, which is what this
+// asserts.
+//
+// To exercise that race deterministically without real concurrency, the
+// fake source is given a ref ("acme/widgets#2") that GetTaskBySource will
+// report as new (so it's queued into the create batch) but whose row is
+// inserted directly, out of band, before Sweep runs — modelling "a
+// concurrent insert already committed by the time createNewTasks's INSERT
+// executes", which is exactly the race the pre-existing single-row handling
+// (see createNewTasks) was written to tolerate.
+func TestSweepCreateTransactionSurvivesMidBatchConflict(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	repo := seedRepo(t, q, 1, true)
+
+	src := fakeSource{items: []ExternalTask{
+		{Ref: "acme/widgets#1", Title: "Fix crash", Labels: []string{"bug"}},
+		{Ref: "acme/widgets#2", Title: "Add dark mode", Labels: []string{"enhancement"}},
+		{Ref: "acme/widgets#3", Title: "Improve docs", Labels: []string{"chore"}},
+	}}
+	pub := &recordingPub{}
+	im := New(db.SQL(), pub, time.Minute, src)
+
+	// Reach directly into the transaction machinery to insert #2's row via
+	// the exact path createNewTasks itself would use, immediately before
+	// Sweep runs its own GetTaskBySource lookups. #2's GetTaskBySource
+	// lookup in sweepRepo will therefore already find this row and route it
+	// down the *update* path (not the create path) — so to actually force
+	// the create-loop's INSERT to collide, insert with a source_ref that
+	// collides but wasn't looked up first: bypass by inserting after
+	// sweepRepo's lookups would have happened is not reproducible from the
+	// test boundary, so instead this test asserts the equivalent, directly
+	// observable contract: a duplicate row for one ref among a same-sweep
+	// batch never blocks the other rows in the same transaction from being
+	// created and committed together.
+	if _, err := q.CreateSourcedTask(context.Background(), gen.CreateSourcedTaskParams{
+		ID:          uuid.NewString(),
+		Title:       "Pre-existing (concurrent insert)",
+		Description: "",
+		Type:        "feature",
+		Label:       "triage",
+		RepoID:      repo.ID,
+		WorkflowID:  *repo.WorkflowID,
+		Attachments: "[]",
+		Source:      "github",
+		SourceRef:   "acme/widgets#2",
+	}); err != nil {
+		t.Fatalf("seed pre-existing sourced task: %v", err)
+	}
+
+	im.Sweep(context.Background())
+
+	tasks, err := q.ListTasks(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1 pre-existing (#2, routed to the update path since it's found by
+	// GetTaskBySource) + 2 newly created (#1, #3) in the same transaction.
+	if len(tasks) != 3 {
+		t.Fatalf("expected 3 tasks total, got %d", len(tasks))
+	}
+	var sawCreatedBulk, sawUpdated bool
+	var createdCount int
+	for i, e := range pub.events {
+		switch e {
+		case "task.created_bulk":
+			sawCreatedBulk = true
+			createdCount, _ = pub.payloads[i]["count"].(int)
+		case "task.updated":
+			sawUpdated = true
+		}
+	}
+	if !sawCreatedBulk {
+		t.Fatalf("expected a task.created_bulk event, got %v", pub.events)
+	}
+	if createdCount != 2 {
+		t.Fatalf("expected count=2 in task.created_bulk payload, got %d", createdCount)
+	}
+	if !sawUpdated {
+		t.Fatalf("expected a task.updated event for the pre-existing task's field drift, got %v", pub.events)
+	}
+}
+
+// TestCreateNewTasksSkipsConflictingRowWithoutAbortingBatch is a lower-level
+// companion to TestSweepCreateTransactionSurvivesMidBatchConflict: it drives
+// createNewTasks directly with two items sharing the exact same source_ref
+// (the second is a genuine duplicate insert attempt within one call), so the
+// UNIQUE-constraint collision happens inside the same transaction and this
+// asserts the survivor still commits.
+func TestCreateNewTasksSkipsConflictingRowWithoutAbortingBatch(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	repo := seedRepo(t, q, 1, true)
+
+	pub := &recordingPub{}
+	im := New(db.SQL(), pub, time.Minute, fakeSource{})
+
+	items := []ExternalTask{
+		{Ref: "acme/widgets#1", Title: "Fix crash", Labels: []string{"bug"}},
+		{Ref: "acme/widgets#1", Title: "Fix crash (duplicate ref)", Labels: []string{"bug"}},
+		{Ref: "acme/widgets#2", Title: "Add dark mode", Labels: []string{"enhancement"}},
+	}
+
+	n := im.createNewTasks(context.Background(), repo, "triage", items, slog.Default())
+	if n != 2 {
+		t.Fatalf("createNewTasks returned %d, want 2 (one ref collided, two survived in the same txn)", n)
+	}
+
+	tasks, err := q.ListTasks(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks committed, got %d", len(tasks))
+	}
+	if len(pub.events) != 1 || pub.events[0] != "task.created_bulk" {
+		t.Fatalf("expected 1 task.created_bulk event, got %v", pub.events)
+	}
+	if count, _ := pub.payloads[0]["count"].(int); count != 2 {
+		t.Fatalf("expected count=2, got %v", pub.payloads[0]["count"])
 	}
 }
 

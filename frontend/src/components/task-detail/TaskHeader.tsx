@@ -359,8 +359,16 @@ export default function TaskHeader({
             </Row>
             <Row label="Git">
               <div className="flex items-center gap-2">
-                <GitStateBadge branch={task.branch} gitState={task.git_state} />
+                <GitStateBadge branch={task.branch} gitState={task.git_state} prMergeable={task.pr_mergeable} />
                 <span className="text-xs text-slate-400">{task.git_state || 'branched'}</span>
+                {task.git_state === 'pr_open' && task.pr_mergeable === 'conflicting' && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 font-medium"
+                    title="GitHub reports this PR no longer merges cleanly into its base branch"
+                  >
+                    merge conflict
+                  </span>
+                )}
                 <button
                   onClick={onSyncGitState}
                   className="text-xs text-slate-500 hover:text-slate-300 transition-colors"

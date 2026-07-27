@@ -130,6 +130,8 @@ export default function TaskDetailPage() {
         refreshTask()
       } else if (event.type === 'task.git_state_changed' && event.payload.task_id === id) {
         setTask((t) => t ? { ...t, git_state: event.payload.git_state, pr_url: event.payload.pr_url || t.pr_url } : t)
+      } else if (event.type === 'task.pr_mergeable_changed' && event.payload.task_id === id) {
+        setTask((t) => t ? { ...t, pr_mergeable: event.payload.pr_mergeable } : t)
       } else if (event.type === 'task.updated' && event.payload.id === id) {
         // Covers the importer's reconciliation sweep (source_state flips to
         // 'gone'/back, or a field-drift update) — refetch for full data since

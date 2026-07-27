@@ -398,7 +398,7 @@ export default function TaskCard({
           {task.type}
         </span>
         <span className="text-xs text-slate-500 truncate">{task.id.slice(0, 8)}</span>
-        <GitStateBadge branch={task.branch} gitState={task.git_state} />
+        <GitStateBadge branch={task.branch} gitState={task.git_state} prMergeable={task.pr_mergeable} />
         {repoName && (
           <span className="text-xs text-slate-400 truncate max-w-[80px] ml-auto" title={repoName}>
             {repoName}
