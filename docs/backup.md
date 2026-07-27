@@ -202,6 +202,54 @@ surfaced as a `db_size` check on `GET /api/v1/health/providers` (and
 therefore the frontend's **Health** page), so bloat is observable before
 it's a problem — independent of whether retention is enabled.
 
+## Orphaned worktree sweeper
+
+Every task and chat session that runs against a real repo gets its own git
+worktree at `<repo>/.ate-worktrees/<id>`. Most of the time these are torn
+down automatically: when a task reaches a terminal label, on explicit task
+delete, and after ghsync confirms a PR merged. **Archiving a task**, however,
+is the one common path that skips all three — a task is typically archived
+while still sitting on a *non-terminal* label (it's the documented way to
+retire a dead or abandoned task), and archived tasks are excluded from every
+sweep that might otherwise revisit them. Left unhandled, that worktree would
+persist forever. A crash between provisioning a worktree and the owning
+task/session being fully registered can also leave one behind with nothing
+to reclaim it.
+
+To close both gaps:
+
+- Archiving a task (`PATCH /tasks/{id}/archive`, or the bulk `archive`
+  action) now tears down its worktree immediately, best-effort, the same way
+  the other teardown paths do — the branch itself is always kept for review.
+- A built-in sweeper periodically reconciles every registered repo's
+  `.ate-worktrees/*` directories against the current set of live ids
+  (non-archived task ids, plus all chat session ids) and removes anything
+  else. This is what actually bounds `.ate-worktrees/` disk usage by *live*
+  tasks rather than by every task ever created, and it's also what catches a
+  crash-orphaned worktree that no cleanup path ever ran for.
+
+The sweeper is always on (there's no disable switch, unlike `BACKUP_DIR`);
+the only configurable knob is how often it runs:
+
+| Variable | Default | Description |
+|---|---|---|
+| `WORKTREE_SWEEP_INTERVAL` | `10m` | How often the sweeper reconciles `.ate-worktrees/*` across all repos. Accepts Go duration strings (1-minute minimum). |
+
+```yaml
+environment:
+  - WORKTREE_SWEEP_INTERVAL=10m
+```
+
+The sweeper is deliberately conservative: if it can't list repos, tasks, or
+chat sessions from the database for any reason, it skips that run entirely
+(logging a warning) rather than risk deleting a live checkout on incomplete
+information. A directory is only ever removed if its name is exactly a
+known, safe id (no path traversal, no partial matches), and archived-task
+worktrees found this way are torn down the same way as anywhere else — via
+`git worktree remove`, falling back to a direct removal (plus
+`git worktree prune`) for a directory a crash left behind before git ever
+registered it as a worktree.
+
 ## Litestream sidecar (continuous offsite replication)
 
 For continuous, near-real-time replication to S3-compatible storage, run

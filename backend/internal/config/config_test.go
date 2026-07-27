@@ -322,6 +322,92 @@ func TestLoad_InvalidLogRetentionInterval_UsesDefault(t *testing.T) {
 	}
 }
 
+func TestLoad_WorktreeSweepIntervalEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("WORKTREE_SWEEP_INTERVAL", "5m")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.WorktreeSweepInterval != 5*time.Minute {
+		t.Errorf("expected worktree sweep interval 5m, got %v", cfg.WorktreeSweepInterval)
+	}
+}
+
+func TestLoad_InvalidWorktreeSweepInterval_UsesDefault(t *testing.T) {
+	t.Setenv("WORKTREE_SWEEP_INTERVAL", "not-a-duration")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.WorktreeSweepInterval != config.Defaults().WorktreeSweepInterval {
+		t.Errorf("expected default worktree sweep interval on invalid input, got %v", cfg.WorktreeSweepInterval)
+	}
+}
+
+func TestLoad_ChatMaxSessionsEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("CHAT_MAX_SESSIONS", "10")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.ChatMaxSessions != 10 {
+		t.Errorf("expected chat max sessions 10, got %d", cfg.ChatMaxSessions)
+	}
+}
+
+func TestLoad_ChatMaxSessionsZero_ExplicitlyUnlimited(t *testing.T) {
+	// 0 is a valid, explicit "unlimited" value and must be settable via env,
+	// not just left at the zero-value default.
+	t.Setenv("CHAT_MAX_SESSIONS", "0")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.ChatMaxSessions != 0 {
+		t.Errorf("expected chat max sessions 0, got %d", cfg.ChatMaxSessions)
+	}
+}
+
+func TestLoad_InvalidChatMaxSessions_UsesDefault(t *testing.T) {
+	t.Setenv("CHAT_MAX_SESSIONS", "not-a-number")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.ChatMaxSessions != config.Defaults().ChatMaxSessions {
+		t.Errorf("expected default chat max sessions on invalid input, got %d", cfg.ChatMaxSessions)
+	}
+}
+
+func TestLoad_ChatIdleTimeoutEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("CHAT_IDLE_TIMEOUT", "2h")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.ChatIdleTimeout != 2*time.Hour {
+		t.Errorf("expected chat idle timeout 2h, got %v", cfg.ChatIdleTimeout)
+	}
+}
+
+func TestLoad_InvalidChatIdleTimeout_UsesDefault(t *testing.T) {
+	t.Setenv("CHAT_IDLE_TIMEOUT", "not-a-duration")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.ChatIdleTimeout != config.Defaults().ChatIdleTimeout {
+		t.Errorf("expected default chat idle timeout on invalid input, got %v", cfg.ChatIdleTimeout)
+	}
+}
+
 func TestLoad_LogRetentionFromYAML(t *testing.T) {
 	t.Setenv("LOG_RETENTION_DAYS", "")
 	t.Setenv("LOG_RETENTION_INTERVAL", "")

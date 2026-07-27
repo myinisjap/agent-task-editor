@@ -53,6 +53,31 @@ triggers the "Release" workflow the same way.
   Comments this system posted itself are filtered out, so an agent never reads
   its own "PR opened" notice back as human input.
 - `GET /tasks/{id}/source-comments` returns a task's ingested issue thread.
+- **Archiving a task now reclaims its worktree, and a new sweeper catches
+  everything else.** Archiving is the documented way to retire a dead or
+  abandoned task, and such a task is typically on a non-terminal label — none
+  of the existing teardown paths (reaching a terminal label, task delete,
+  ghsync's post-merge cleanup) ever fired for it, and archived tasks are
+  excluded from every sweep that might otherwise revisit them, so its
+  `.ate-worktrees/<id>` directory persisted forever. `PATCH /tasks/{id}/archive`
+  and the bulk `archive` action now tear down the worktree immediately,
+  best-effort (branch kept for review, same as every other teardown path). A
+  new always-on sweeper (`WORKTREE_SWEEP_INTERVAL`, default `10m`) also
+  periodically reconciles every repo's `.ate-worktrees/*` against live
+  (non-archived) task/chat-session ids and reclaims anything else, so disk
+  usage under `.ate-worktrees/` is bounded by live tasks rather than by every
+  task ever created — this also catches a worktree orphaned by a crash. See
+  [docs/backup.md#orphaned-worktree-sweeper](docs/backup.md#orphaned-worktree-sweeper).
+- **Chat terminal sessions can now be capped and idle-reaped.** Each Chat-tab
+  session keeps a live CLI subprocess (plus a scrollback buffer) running
+  indefinitely across WebSocket disconnects, with nothing previously bounding
+  how many accumulate or how long an unattached one stays alive. New opt-in
+  settings `CHAT_MAX_SESSIONS` (refuses starting *new* sessions past the cap;
+  reattaching to an existing session is never blocked) and
+  `CHAT_IDLE_TIMEOUT` (reaps a session's subprocess after it's gone unattached
+  for this long) — both default to off/unlimited, so behavior is unchanged
+  unless explicitly configured. See
+  [docs/getting-started.md#chat-terminal-sessions](docs/getting-started.md#chat-terminal-sessions).
 
 ### Fixed
 - **The GitHub issue fetch no longer silently truncates at 200 issues.** It now

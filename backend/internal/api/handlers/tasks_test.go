@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -1086,6 +1087,83 @@ func TestTasks_SetArchived_NotFound(t *testing.T) {
 	}
 }
 
+// initGitRepo creates a minimal one-commit git repo at dir, so a real
+// `git worktree add`/`remove` can be exercised against it.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "test")
+	if err := os.WriteFile(dir+"/README.md", []byte("hi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-m", "init")
+}
+
+// TestTasks_SetArchived_ReclaimsWorktree verifies that archiving a task with
+// a provisioned worktree removes the worktree directory (best-effort
+// teardown mirroring engine.OnTerminal/Delete's), while its branch — and the
+// task's own worktree_path DB field, matching every other teardown path —
+// are left alone.
+func TestTasks_SetArchived_ReclaimsWorktree(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Non-terminal but archived", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	wtPath, branch, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: branch, WorktreePath: wtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("expected worktree dir to exist before archiving: %v", err)
+	}
+
+	body := map[string]bool{"archived": true}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree dir to be removed after archiving, stat err=%v", err)
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "branch", "--list", branch).CombinedOutput(); err != nil {
+		t.Fatalf("git branch --list: %v: %s", err, out)
+	} else if strings.TrimSpace(string(out)) == "" {
+		t.Error("expected the task's branch to survive archiving (kept for review)")
+	}
+}
+
 // TestTasks_Archived_ExcludedFromAgentPickup confirms the dispatcher's
 // ListAgentPickupTasks query never returns an archived task, even when its
 // label is otherwise eligible for agent pickup.
@@ -1161,6 +1239,52 @@ func TestTasks_Bulk_Archive(t *testing.T) {
 		if task.Archived == 0 {
 			t.Errorf("task %s: expected archived", id)
 		}
+	}
+}
+
+// TestTasks_Bulk_Archive_ReclaimsWorktree verifies the bulk "archive" action
+// tears down each archived task's worktree the same way the single-task
+// SetArchived endpoint does.
+func TestTasks_Bulk_Archive_ReclaimsWorktree(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Bulk archived", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	wtPath, branch, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: branch, WorktreePath: wtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	body := map[string]any{"ids": []string{task.ID}, "action": "archive"}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree dir to be removed after bulk archive, stat err=%v", err)
 	}
 }
 

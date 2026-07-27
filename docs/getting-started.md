@@ -100,6 +100,15 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API) |
 | `LLM_API_KEY` | _(empty)_ | API key for `llm` or `anthropic` provider |
 
+### Chat Terminal Sessions
+
+Each Chat-tab session keeps a live interactive CLI subprocess (plus a scrollback buffer) running across WebSocket disconnects so a browser refresh reattaches to the same session. By default nothing bounds how many of these accumulate or how long an unattached one stays alive; the following opt-in settings cap that growth.
+
+| Variable | Default | Description |
+|---|---|---|
+| `CHAT_MAX_SESSIONS` | `0` (unlimited) | Maximum number of concurrent chat terminal subprocesses. Only refuses *new* sessions once at the cap (`ErrTooManySessions`, surfaced as the WebSocket closing with an error) — reattaching to an already-running session is never blocked by the cap. |
+| `CHAT_IDLE_TIMEOUT` | `0` (disabled) | If set, how long a chat terminal session may go without an attached WebSocket connection before it's reaped (subprocess killed, scrollback released). Accepts Go duration strings (e.g. `2h`, `30m`). |
+
 ### Backup
 
 | Variable | Default | Description |
@@ -109,8 +118,9 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `BACKUP_KEEP` | `7` | **Initial** value only — seeds the DB-backed setting on first migration. Number of most-recent snapshots to retain in `BACKUP_DIR` before pruning older ones. Editable afterwards without a restart via `PUT /api/v1/backup/settings` or the Health page. |
 | `LOG_RETENTION_DAYS` | `0` | If set to a positive number, enables a built-in pruner that deletes `agent_logs` rows for terminal-status runs (`completed`/`failed`/`waiting_human`) older than this many days. `0` = keep forever (disabled, the default). |
 | `LOG_RETENTION_INTERVAL` | `1h` | How often the log pruner runs. Accepts Go duration strings. Only meaningful when `LOG_RETENTION_DAYS` is set. |
+| `WORKTREE_SWEEP_INTERVAL` | `10m` | How often the built-in orphan-worktree sweeper reconciles each repo's `.ate-worktrees/<id>` directories against live (non-archived) task/chat-session ids, reclaiming anything else — worktrees left behind by archiving a task on a non-terminal label, or orphaned by a crash. Always on (unlike `BACKUP_DIR`, there's no disable switch); this only controls the interval. Accepts Go duration strings (1-minute minimum). |
 
-See [backup.md](backup.md) for the full backup/restore guide, including the "Agent log retention" section.
+See [backup.md](backup.md) for the full backup/restore guide, including the "Agent log retention" and "Orphaned worktree sweeper" sections.
 
 ### Other
 
