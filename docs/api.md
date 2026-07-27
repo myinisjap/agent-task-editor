@@ -818,12 +818,35 @@ Liveness probe. Returns `200 OK` with `{"status":"ok","version":"<version>"}`.
 `version` is the running build's version: `"dev"` for local/unstamped builds,
 or the release tag (e.g. `"v1.4.0"`) for GHCR images, stamped at build time
 via `-ldflags "-X main.Version=<tag>"` (see `backend/Dockerfile`'s `VERSION`
-build-arg and `.github/workflows/release.yml`). (Served at the server root,
-**not** under `/api/v1`, and mounted **outside** `API_TOKEN`/`API_TOKENS`
-bearer auth — like `/metrics`, it's intentionally unauthenticated so
-container/orchestrator healthchecks (see `docker-compose.yml`) work without
-needing to inject the token. It returns only a static status/version and
-leaks no sensitive data.)
+build-arg and `.github/workflows/release.yml`). Deliberately a static stub —
+it never touches the DB or the dispatcher, so it can't detect a wedged
+backend (see `/readyz` below for that). (Served at the server root, **not**
+under `/api/v1`, and mounted **outside** `API_TOKEN`/`API_TOKENS` bearer
+auth — like `/metrics`, it's intentionally unauthenticated so
+container/orchestrator healthchecks work without needing to inject the
+token. It returns only a static status/version and leaks no sensitive data.)
+
+### `GET /readyz`
+Readiness probe. Unlike `/healthz`, this actually verifies the backend can do
+useful work: it pings the database and checks that the dispatch loop (the
+sweeper that picks up agent-triggerable tasks) has ticked recently.
+
+- `200 OK` with `{"status":"ok","version":"<version>"}` when the DB responds
+  to a ping and the dispatch loop's last sweep began less than ~30s ago (a
+  comfortable multiple of the dispatcher's 5s sweep interval, chosen so a
+  single slow-but-healthy sweep doesn't flap the probe).
+- `503 Service Unavailable` with `{"status":"unhealthy","db":"error","detail":"..."}`
+  if the DB ping fails (e.g. a locked/corrupted SQLite file).
+- `503 Service Unavailable` with `{"status":"unhealthy","dispatcher":"stale"}`
+  if the dispatch loop hasn't ticked recently (e.g. it's wedged on a hung git
+  operation inside a sweep).
+
+This is the endpoint the Docker Compose healthcheck now targets (see
+`docker-compose.yml` / `docker-compose.release.yml`), so a backend with a
+locked DB or a wedged dispatch loop is reported unhealthy and restarted
+instead of appearing healthy forever. Like `/healthz`, it's served at the
+server root and mounted **outside** bearer auth so orchestrators can probe
+without `API_TOKEN`.
 
 ### `GET /health/providers`
 Provider / onboarding readiness checks. Surfaces first-run misconfiguration at a

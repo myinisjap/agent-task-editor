@@ -29,6 +29,7 @@ var nonAPIRoutes = map[string]bool{
 	"GET /ws":      true,
 	"GET /metrics": true,
 	"GET /healthz": true,
+	"GET /readyz":  true,
 }
 
 // openAPIRepoRootPath locates openapi.yaml relative to this test file's own

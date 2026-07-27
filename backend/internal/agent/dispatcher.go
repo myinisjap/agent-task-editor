@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +41,12 @@ type Dispatcher struct {
 	// when a sweep-dispatch is skipped for budget-exhaustion, mirroring how
 	// Pool.handleTransientFailure publishes the same event on escalation.
 	Publisher Publisher
+	// lastSweep records (as UnixNano) the time the dispatch loop last began
+	// a sweep tick. Read via LastSweep by the /readyz readiness probe to
+	// detect a wedged dispatch loop (e.g. a hung git op inside a sweep).
+	// Stored atomically since Run's ticker goroutine writes it while an
+	// HTTP handler goroutine reads it concurrently.
+	lastSweep atomic.Int64
 }
 
 // NewDispatcher creates a Dispatcher with a 5-second sweep interval.
@@ -61,6 +68,11 @@ func (d *Dispatcher) SetUploadDir(dir string) {
 
 // Run sweeps on interval until ctx is cancelled.
 func (d *Dispatcher) Run(ctx context.Context) {
+	// Record an initial heartbeat before the loop starts so /readyz doesn't
+	// report "never swept" during the up-to-interval window before the first
+	// tick (e.g. right after the backend starts).
+	d.lastSweep.Store(time.Now().UnixNano())
+
 	ticker := time.NewTicker(d.interval)
 	defer ticker.Stop()
 	for {
@@ -68,9 +80,26 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Record the heartbeat at the start of the tick, before sweep
+			// runs, so a sweep that hangs mid-execution causes the
+			// heartbeat to go stale — that's the "wedged loop" /readyz is
+			// meant to detect. Recording after sweep() returns would hide
+			// a hang for as long as it lasts.
+			d.lastSweep.Store(time.Now().UnixNano())
 			d.sweep(ctx)
 		}
 	}
+}
+
+// LastSweep returns the time the dispatch loop last began a sweep tick.
+// Used by the /readyz readiness probe to detect a wedged dispatch loop.
+// Returns the zero Time if Run has never been started.
+func (d *Dispatcher) LastSweep() time.Time {
+	ns := d.lastSweep.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 func (d *Dispatcher) sweep(ctx context.Context) {

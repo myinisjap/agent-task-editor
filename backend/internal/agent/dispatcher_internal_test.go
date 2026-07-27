@@ -1,8 +1,12 @@
 package agent
 
 import (
+	"context"
+	"os"
 	"testing"
+	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -200,4 +204,92 @@ func TestDispatcher_repoAtLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDispatcher_LastSweep_SetBeforeLoopStarts verifies Run records an
+// initial heartbeat before entering its ticker loop, so /readyz doesn't see
+// a zero LastSweep during the window before the first tick.
+func TestDispatcher_LastSweep_SetBeforeLoopStarts(t *testing.T) {
+	f, err := os.CreateTemp("", "dispatcher-heartbeat-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+
+	db, err := storage.Open(f.Name())
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	d := NewDispatcher(db.SQL(), &Pool{maxWorkers: 1}, nil, nil)
+	// Use a long interval so this test only exercises the pre-loop
+	// heartbeat, not a real tick.
+	d.interval = time.Hour
+
+	if !d.LastSweep().IsZero() {
+		t.Fatal("expected LastSweep to be zero before Run starts")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		d.Run(ctx)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !d.LastSweep().IsZero() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected LastSweep to be set shortly after Run starts, still zero")
+}
+
+// TestDispatcher_LastSweep_AdvancesOnTick verifies LastSweep advances as the
+// dispatch loop ticks.
+func TestDispatcher_LastSweep_AdvancesOnTick(t *testing.T) {
+	f, err := os.CreateTemp("", "dispatcher-heartbeat-tick-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+
+	db, err := storage.Open(f.Name())
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	d := NewDispatcher(db.SQL(), &Pool{maxWorkers: 1}, nil, nil)
+	d.interval = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		d.Run(ctx)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	first := d.LastSweep()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cur := d.LastSweep(); cur.After(first) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected LastSweep to advance after ticks, it did not")
 }

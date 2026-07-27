@@ -16,7 +16,7 @@ func setupHealthRouter(t *testing.T, mcpBinary, repoBaseDir, llmBaseURL, llmAPIK
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, "", 24*time.Hour, 7, "dev", false)
+	h := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, "", 24*time.Hour, 7, "dev", false, nil)
 
 	// Register the agents and provider-configs create routes too, so tests
 	// can seed configs and observe how provider-specific checks are
@@ -158,7 +158,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 	q := gen.New(db.SQL())
 
 	t.Run("disabled when BackupDir is empty", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", false)
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", false, nil)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -177,7 +177,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 	})
 
 	t.Run("ok when BackupDir is set", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "/data/backups", 24*time.Hour, 7, "dev", false)
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "/data/backups", 24*time.Hour, 7, "dev", false, nil)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -228,7 +228,7 @@ func TestProvidersEndpoint_VersionCheck(t *testing.T) {
 	q := gen.New(db.SQL())
 
 	t.Run("version row present with configured version", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false)
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -254,7 +254,7 @@ func TestProvidersEndpoint_VersionCheck(t *testing.T) {
 	})
 
 	t.Run("update_check row present when checkForUpdates is enabled", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", true)
+		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", true, nil)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)

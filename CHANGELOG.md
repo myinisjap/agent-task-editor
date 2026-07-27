@@ -146,6 +146,21 @@ triggers the "Release" workflow the same way.
   capability data lives in `frontend/src/lib/providerCapabilities.ts`, the
   single source of truth also used to keep `docs/agents.md`'s capability
   matrix in sync.
+- **`GET /readyz` readiness probe.** Unlike `/healthz` (a static liveness
+  stub), `/readyz` pings the database and checks that the dispatch loop has
+  ticked recently, returning `503` if either check fails. The Docker Compose
+  healthcheck for the `backend` service now targets `/readyz` instead of
+  `/healthz`, so a backend with a locked SQLite file or a wedged dispatch
+  loop is reported unhealthy instead of appearing healthy forever. See
+  [docs/api.md](docs/api.md#get-readyz).
+- **Backend restart policy and default memory ceiling.** The `backend`
+  service in `docker-compose.yml` / `docker-compose.release.yml` now has
+  `restart: unless-stopped` (previously only `frontend` restarted
+  automatically) and a default 2 GB memory limit via
+  `deploy.resources.limits.memory`, so a crashed or OOM-killed backend comes
+  back on its own instead of staying down until an operator notices, and a
+  runaway agent run can no longer consume unbounded host memory. See
+  [docs/getting-started.md](docs/getting-started.md#backend-resilience-restart-policy-readiness-and-memory-limit).
 
 ### Fixed
 - **Task read paths no longer scale with total task count.** `GET /tasks` and
