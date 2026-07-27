@@ -71,10 +71,25 @@ describe('TaskColumn WIP limit badge', () => {
     expect(badge.title).toMatch(/dispatcher will hold/i)
   })
 
-  it('does not flag over-limit when count equals the limit exactly', () => {
+  it('flags hard limit when count equals the limit exactly (matches dispatcher, which blocks at >= limit)', () => {
     renderColumn(label({ wip_limit: 2, wip_limit_hard: 1 }), [task('1'), task('2')])
     const badge = screen.getByTestId('column-count-badge')
     expect(badge.textContent).toBe('2 / 2')
+    expect(badge.className).toContain('red')
+    expect(badge.title).toMatch(/dispatcher will hold/i)
+  })
+
+  it('flags soft limit when count equals the limit exactly', () => {
+    renderColumn(label({ wip_limit: 2, wip_limit_hard: 0 }), [task('1'), task('2')])
+    const badge = screen.getByTestId('column-count-badge')
+    expect(badge.textContent).toBe('2 / 2')
+    expect(badge.className).toContain('amber')
+  })
+
+  it('does not flag when count is below the limit', () => {
+    renderColumn(label({ wip_limit: 3, wip_limit_hard: 1 }), [task('1'), task('2')])
+    const badge = screen.getByTestId('column-count-badge')
+    expect(badge.textContent).toBe('2 / 3')
     expect(badge.className).not.toContain('red')
     expect(badge.className).not.toContain('amber')
   })
