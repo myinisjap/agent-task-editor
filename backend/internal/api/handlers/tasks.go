@@ -121,8 +121,9 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusInternalServerError, cerr.Error())
 			return
 		}
-		counts := h.dependencyCountMap(r.Context())
-		rollups := h.subtaskRollupMap(r.Context())
+		ids := taskIDs(children)
+		counts := h.dependencyCountMap(r.Context(), ids)
+		rollups := h.subtaskRollupMap(r.Context(), ids)
 		positions := h.queuePositionMap(r.Context())
 		resp := toTaskResponses(children)
 		for i := range resp {
@@ -152,14 +153,26 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		tasks = tasks[:limit]
 		w.Header().Set("X-Next-Cursor", tasks[len(tasks)-1].ID)
 	}
-	counts := h.dependencyCountMap(r.Context())
-	rollups := h.subtaskRollupMap(r.Context())
+	ids := taskIDs(tasks)
+	counts := h.dependencyCountMap(r.Context(), ids)
+	rollups := h.subtaskRollupMap(r.Context(), ids)
 	positions := h.queuePositionMap(r.Context())
 	resp := toTaskResponses(tasks)
 	for i := range resp {
 		resp[i] = applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions)
 	}
 	JSON(w, http.StatusOK, resp)
+}
+
+// taskIDs extracts the ids from a slice of tasks, for scoping the derived
+// dependency-count / subtask-rollup queries to exactly the tasks being
+// returned instead of the whole table.
+func taskIDs(tasks []gen.Task) []string {
+	ids := make([]string, len(tasks))
+	for i, t := range tasks {
+		ids[i] = t.ID
+	}
+	return ids
 }
 
 func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -366,8 +379,9 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "task not found")
 		return
 	}
-	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context()))
-	resp = applyRollup(resp, h.subtaskRollupMap(r.Context()))
+	ids := []string{task.ID}
+	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context(), ids))
+	resp = applyRollup(resp, h.subtaskRollupMap(r.Context(), ids))
 	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
 	JSON(w, http.StatusOK, resp)
 }

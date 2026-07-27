@@ -5,7 +5,7 @@ import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
 import OnboardingChecklist from '../components/board/OnboardingChecklist'
-import { api, type BulkAction, type TaskCost } from '../api/client'
+import { api, type BulkAction, type Task, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
@@ -28,6 +28,10 @@ export default function BoardPage() {
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
   const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
   const [showNewTask, setShowNewTask] = useState(false)
+  // Source task for the "Duplicate" flow — when set, the New Task modal opens
+  // pre-filled from this task instead of blank. Mutually exclusive with
+  // showNewTask so only one modal instance is ever mounted at a time.
+  const [duplicateSource, setDuplicateSource] = useState<Task | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [condensed, setCondensed] = useState<boolean>(() => {
     try {
@@ -92,10 +96,19 @@ export default function BoardPage() {
 
   useEffect(() => {
     const off = wsClient.on((event) => {
-      if (event.type === 'task.label_changed' || event.type === 'task.updated' || event.type === 'task.created' || event.type === 'task.git_state_changed' || event.type === 'task.pr_mergeable_changed') {
-        // Refresh the task from API to get latest data
-        const taskId = event.type === 'task.created' ? event.payload.id :
-                       event.type === 'task.updated' ? event.payload.id : event.payload.task_id
+      if (event.type === 'task.updated') {
+        // Payload is already a full Task — apply it directly instead of an
+        // extra REST round-trip (and the lag that round-trip introduces).
+        upsert(event.payload)
+      } else if (
+        event.type === 'task.label_changed' ||
+        event.type === 'task.created' ||
+        event.type === 'task.git_state_changed' ||
+        event.type === 'task.pr_mergeable_changed'
+      ) {
+        // These payloads carry only partial fields (or, for task.created, a
+        // subset the sender says to refetch) — get the full task from the API.
+        const taskId = event.type === 'task.created' ? event.payload.id : event.payload.task_id
         api.tasks.get(taskId).then(upsert).catch(() => {})
       }
       if (event.type === 'task.created_bulk') {
@@ -347,6 +360,14 @@ export default function BoardPage() {
         <NewTaskModal workflow={workflow} onClose={() => setShowNewTask(false)} />
       )}
 
+      {duplicateSource && (
+        <NewTaskModal
+          workflow={workflow}
+          source={duplicateSource}
+          onClose={() => setDuplicateSource(null)}
+        />
+      )}
+
       {loading ? (
         <div className="text-slate-400 text-sm">Loading…</div>
       ) : labels.length === 0 ? (
@@ -361,6 +382,7 @@ export default function BoardPage() {
             runningTaskIds={runningTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
             onAddTask={() => setShowNewTask(true)}
+            onDuplicate={(task) => setDuplicateSource(task)}
             condensed={condensed}
             transitions={transitions}
             selectedIds={selectedIds}

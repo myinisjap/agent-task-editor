@@ -13,6 +13,7 @@ import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
+import NewTaskModal from '../components/board/NewTaskModal'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -40,6 +41,7 @@ export default function TaskDetailPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
+  const [duplicating, setDuplicating] = useState(false)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
@@ -81,14 +83,18 @@ export default function TaskDetailPage() {
   // Initial load
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     Promise.all([api.tasks.get(id), api.tasks.runs(id), api.tasks.listLabelHistory(id), api.tasks.sourceComments(id)])
       .then(([t, r, h, c]) => {
+        if (cancelled) return
         setTask(t)
         setRuns(r ?? [])
         setLabelHistory(h ?? [])
         setSourceComments(c ?? [])
         if (r && r.length > 0) setSelectedRun(r[0].id)
       })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [id])
 
   // Load workflow when task is available
@@ -407,7 +413,12 @@ export default function TaskDetailPage() {
               onBack={() => navigate('/board')}
               labels={workflow?.labels ?? []}
               onMoveLabel={handleMoveLabel}
+              onDuplicate={() => setDuplicating(true)}
             />
+
+            {duplicating && task && (
+              <NewTaskModal source={task} onClose={() => setDuplicating(false)} />
+            )}
 
             <SubtasksPanel
               task={task}

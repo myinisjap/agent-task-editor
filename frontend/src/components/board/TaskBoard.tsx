@@ -1,5 +1,13 @@
 import { useState, useEffect } from 'react'
-import { DndContext, MouseSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core'
+import {
+  DndContext,
+  KeyboardCode,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
 import type { DragEndEvent } from '@dnd-kit/core'
 import type { Task, WorkflowLabel, WorkflowTransition } from '../../api/client'
 import { api } from '../../api/client'
@@ -70,6 +78,7 @@ type Props = {
   runningTaskIds: Set<string>
   rateLimitedTaskIds?: Map<string, string>
   onAddTask?: () => void
+  onDuplicate?: (task: Task) => void
   condensed?: boolean
   transitions?: WorkflowTransition[]
   selectedIds?: Set<string>
@@ -82,6 +91,7 @@ export default function TaskBoard({
   runningTaskIds,
   rateLimitedTaskIds,
   onAddTask,
+  onDuplicate,
   condensed = false,
   transitions = [],
   selectedIds,
@@ -90,10 +100,24 @@ export default function TaskBoard({
   const { upsert } = useTasksStore()
   const isMobile = useIsMobile()
 
-  // Require 5px movement to start a drag so clicks still navigate
+  // Require 5px movement to start a drag so clicks still navigate. KeyboardSensor
+  // uses its default coordinate getter (arrow keys) — the board uses
+  // useDraggable/useDroppable rather than useSortable, so no custom
+  // sortableKeyboardCoordinates is needed. Key mapping on a focused card:
+  // Space picks up/drops, Enter opens the task (TaskCard's onKeyDown). By
+  // default dnd-kit treats both Space AND Enter as pick-up/drop, which would
+  // swallow Enter before the card's own onKeyDown could use it to navigate —
+  // restrict "start"/"end" to Space only so the two don't collide.
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(KeyboardSensor, {
+      keyboardCodes: {
+        start: [KeyboardCode.Space],
+        cancel: [KeyboardCode.Esc],
+        end: [KeyboardCode.Space],
+      },
+    }),
   )
 
   const byLabel = (name: string) => tasks.filter((t) => t.label === name)
@@ -212,6 +236,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
+                  onDuplicate={onDuplicate}
                   onAddTask={clampedCondensed === 0 ? onAddTask : undefined}
                   isStartingColumn={clampedCondensed === 0}
                   isTerminal={!!currentGroup.label.is_terminal}
@@ -225,6 +250,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
+                  onDuplicate={onDuplicate}
                   className="w-full"
                 />
               )}
@@ -249,6 +275,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
+                  onDuplicate={onDuplicate}
                   onAddTask={i === 0 ? onAddTask : undefined}
                   isStartingColumn={i === 0}
                   isTerminal={!!group.label.is_terminal}
@@ -267,6 +294,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
+                  onDuplicate={onDuplicate}
                 />
               )
             }
@@ -303,6 +331,7 @@ export default function TaskBoard({
               rateLimitedTaskIds={rateLimitedTaskIds}
               selectedIds={selectedIds}
               onToggleSelect={onToggleSelect}
+              onDuplicate={onDuplicate}
               onAddTask={clampedNormal === 0 ? onAddTask : undefined}
               isStartingColumn={clampedNormal === 0}
               isTerminal={!!currentLabel.is_terminal}
@@ -327,6 +356,7 @@ export default function TaskBoard({
             rateLimitedTaskIds={rateLimitedTaskIds}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
+            onDuplicate={onDuplicate}
             onAddTask={i === 0 ? onAddTask : undefined}
             isStartingColumn={i === 0}
             isTerminal={!!label.is_terminal}

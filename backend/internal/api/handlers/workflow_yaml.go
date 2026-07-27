@@ -12,19 +12,21 @@ import (
 
 // yamlWorkflow is the portable YAML representation of a workflow.
 type yamlWorkflow struct {
-	Name        string            `yaml:"name"`
-	Description string            `yaml:"description,omitempty"`
-	Labels      []yamlLabel       `yaml:"labels"`
-	Transitions []yamlTransition  `yaml:"transitions"`
+	Name        string           `yaml:"name"`
+	Description string           `yaml:"description,omitempty"`
+	Labels      []yamlLabel      `yaml:"labels"`
+	Transitions []yamlTransition `yaml:"transitions"`
 }
 
 type yamlLabel struct {
-	Name        string `yaml:"name"`
-	Color       string `yaml:"color"`
-	SortOrder   int    `yaml:"sort_order"`
-	AgentIgnore bool   `yaml:"agent_ignore,omitempty"`
-	IsTerminal  bool   `yaml:"is_terminal,omitempty"`
-	CreatePR    bool   `yaml:"create_pr,omitempty"`
+	Name         string `yaml:"name"`
+	Color        string `yaml:"color"`
+	SortOrder    int    `yaml:"sort_order"`
+	AgentIgnore  bool   `yaml:"agent_ignore,omitempty"`
+	IsTerminal   bool   `yaml:"is_terminal,omitempty"`
+	CreatePR     bool   `yaml:"create_pr,omitempty"`
+	WipLimit     *int   `yaml:"wip_limit,omitempty"`
+	WipLimitHard bool   `yaml:"wip_limit_hard,omitempty"`
 }
 
 type yamlTransition struct {
@@ -47,6 +49,11 @@ func (wf yamlWorkflow) validate() error {
 	}
 	if createPR > 1 {
 		return fmt.Errorf("at most one label may set create_pr; found %d", createPR)
+	}
+	for _, l := range wf.Labels {
+		if l.WipLimit != nil && *l.WipLimit <= 0 {
+			return fmt.Errorf("label %q: wip_limit must be a positive integer if set", l.Name)
+		}
 	}
 	return nil
 }
@@ -71,13 +78,20 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 
 	out := yamlWorkflow{Name: wf.Name, Description: wf.Description}
 	for _, l := range labels {
+		var wipLimit *int
+		if l.WipLimit != nil {
+			v := int(*l.WipLimit)
+			wipLimit = &v
+		}
 		out.Labels = append(out.Labels, yamlLabel{
-			Name:        l.Name,
-			Color:       l.Color,
-			SortOrder:   int(l.SortOrder),
-			AgentIgnore: l.AgentIgnore != 0,
-			IsTerminal:  l.IsTerminal != 0,
-			CreatePR:    l.CreatePr != 0,
+			Name:         l.Name,
+			Color:        l.Color,
+			SortOrder:    int(l.SortOrder),
+			AgentIgnore:  l.AgentIgnore != 0,
+			IsTerminal:   l.IsTerminal != 0,
+			CreatePR:     l.CreatePr != 0,
+			WipLimit:     wipLimit,
+			WipLimitHard: l.WipLimitHard != 0,
 		})
 	}
 	for _, t := range transitions {
@@ -160,15 +174,26 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 		if l.CreatePR {
 			createPR = 1
 		}
+		wipLimitHard := int64(0)
+		if l.WipLimitHard {
+			wipLimitHard = 1
+		}
+		var wipLimit *int64
+		if l.WipLimit != nil {
+			v := int64(*l.WipLimit)
+			wipLimit = &v
+		}
 		if _, err := tq.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
-			ID:          uuid.NewString(),
-			WorkflowID:  wfID,
-			Name:        l.Name,
-			Color:       l.Color,
-			SortOrder:   int64(l.SortOrder),
-			AgentIgnore: agentIgnore,
-			IsTerminal:  isTerminal,
-			CreatePr:    createPR,
+			ID:           uuid.NewString(),
+			WorkflowID:   wfID,
+			Name:         l.Name,
+			Color:        l.Color,
+			SortOrder:    int64(l.SortOrder),
+			AgentIgnore:  agentIgnore,
+			IsTerminal:   isTerminal,
+			CreatePr:     createPR,
+			WipLimit:     wipLimit,
+			WipLimitHard: wipLimitHard,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
@@ -254,15 +279,26 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 		if l.CreatePR {
 			createPR = 1
 		}
+		wipLimitHard := int64(0)
+		if l.WipLimitHard {
+			wipLimitHard = 1
+		}
+		var wipLimit *int64
+		if l.WipLimit != nil {
+			v := int64(*l.WipLimit)
+			wipLimit = &v
+		}
 		if _, err := h.q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
-			ID:          uuid.NewString(),
-			WorkflowID:  wfID,
-			Name:        l.Name,
-			Color:       l.Color,
-			SortOrder:   int64(l.SortOrder),
-			AgentIgnore: agentIgnore,
-			IsTerminal:  isTerminal,
-			CreatePr:    createPR,
+			ID:           uuid.NewString(),
+			WorkflowID:   wfID,
+			Name:         l.Name,
+			Color:        l.Color,
+			SortOrder:    int64(l.SortOrder),
+			AgentIgnore:  agentIgnore,
+			IsTerminal:   isTerminal,
+			CreatePr:     createPR,
+			WipLimit:     wipLimit,
+			WipLimitHard: wipLimitHard,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return

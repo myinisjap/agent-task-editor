@@ -85,3 +85,30 @@ SELECT
     ) AS blocking_count
 FROM tasks t
 WHERE EXISTS (SELECT 1 FROM task_dependencies d3 WHERE d3.task_id = t.id OR d3.depends_on_task_id = t.id);
+
+-- name: ListTaskDependencyCountsForTasks :many
+-- Same as ListTaskDependencyCounts but scoped to a specific set of task ids,
+-- so callers that already know which tasks they're rendering (a single task,
+-- or one page of a list) don't pay for a query that scans every task with an
+-- edge, regardless of whether it's on the current page.
+SELECT
+    t.id AS task_id,
+    (
+        SELECT COUNT(*) FROM task_dependencies d
+        JOIN tasks dt ON dt.id = d.depends_on_task_id
+        WHERE d.task_id = t.id
+          AND dt.archived = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM workflow_labels wl
+              WHERE wl.workflow_id = dt.workflow_id
+                AND wl.name = dt.label
+                AND wl.is_terminal != 0
+          )
+    ) AS blocked_by_count,
+    (
+        SELECT COUNT(*) FROM task_dependencies d2
+        WHERE d2.depends_on_task_id = t.id
+    ) AS blocking_count
+FROM tasks t
+WHERE t.id IN (sqlc.slice('task_ids'))
+  AND EXISTS (SELECT 1 FROM task_dependencies d3 WHERE d3.task_id = t.id OR d3.depends_on_task_id = t.id);

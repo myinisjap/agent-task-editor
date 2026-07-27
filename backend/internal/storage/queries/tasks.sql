@@ -130,6 +130,11 @@ SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_
 -- name: ListTasksByLabel :many
 SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable FROM tasks WHERE label = ? ORDER BY created_at DESC;
 
+-- name: CountTasksByLabel :one
+-- Occupancy of a label column for WIP-limit purposes; mirrors the board's
+-- default view, which hides archived tasks.
+SELECT COUNT(*) FROM tasks WHERE workflow_id = ? AND label = ? AND archived = 0;
+
 -- name: ListAgentPickupTasks :many
 SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at, t.source, t.source_ref, t.archived, t.pr_url, t.parent_task_id, t.created_by_run_id, t.merge_status, t.max_cost_usd, t.priority, t.writeback_in_progress_sent, t.writeback_pr_commented, t.writeback_closed, t.source_state, t.source_state_at, t.pr_mergeable FROM tasks t
 WHERE t.label IN (
@@ -294,4 +299,21 @@ SELECT
     SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts
 FROM tasks p
 JOIN tasks c ON c.parent_task_id = p.id
+GROUP BY p.id;
+
+-- name: ListSubtaskRollupsForParents :many
+-- Same as ListSubtaskRollups but scoped to a specific set of parent ids, so
+-- callers that already know which tasks they're rendering (a single task, or
+-- one page of a list) don't pay for a self-join across the whole table.
+SELECT
+    p.id AS parent_id,
+    COUNT(c.id) AS total,
+    SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM workflow_labels wl
+        WHERE wl.workflow_id = c.workflow_id AND wl.name = c.label AND wl.is_terminal != 0
+    ) THEN 1 ELSE 0 END) AS done,
+    SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts
+FROM tasks p
+JOIN tasks c ON c.parent_task_id = p.id
+WHERE p.id IN (sqlc.slice('parent_ids'))
 GROUP BY p.id;

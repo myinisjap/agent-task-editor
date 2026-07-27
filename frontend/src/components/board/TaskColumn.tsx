@@ -13,6 +13,7 @@ type Props = {
   runningTaskIds: Set<string>
   rateLimitedTaskIds?: Map<string, string>
   onAddTask?: () => void
+  onDuplicate?: (task: Task) => void
   isStartingColumn?: boolean
   isTerminal?: boolean
   className?: string
@@ -20,13 +21,30 @@ type Props = {
   onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const { remove } = useTasksStore()
   const [expanded, setExpanded] = useState(false)
 
   const shouldCollapse = !!isTerminal && tasks.length > MAX_VISIBLE
   const visibleTasks = shouldCollapse && !expanded ? tasks.slice(0, MAX_VISIBLE) : tasks
+
+  const wipLimit = label.wip_limit != null && label.wip_limit > 0 ? label.wip_limit : null
+  // >= matches the dispatcher's enforcement point: a hard-limited column is
+  // already actively blocking new dispatch once it *reaches* its limit, not
+  // only once it exceeds it (see checkWIPLimit in backend/internal/agent/dispatcher.go).
+  const isAtOrOverLimit = wipLimit != null && tasks.length >= wipLimit
+  const isHardAtOrOverLimit = isAtOrOverLimit && label.wip_limit_hard !== 0
+  const badgeClassName = isAtOrOverLimit
+    ? isHardAtOrOverLimit
+      ? 'text-xs text-red-300 bg-red-900/60 border border-red-700 rounded-full px-2 py-0.5'
+      : 'text-xs text-amber-300 bg-amber-900/40 border border-amber-700 rounded-full px-2 py-0.5'
+    : 'text-xs text-slate-500 bg-slate-800 rounded-full px-2 py-0.5'
+  const badgeTitle = isHardAtOrOverLimit
+    ? `At/over WIP limit (${tasks.length}/${wipLimit}) — dispatcher will hold new tasks back from this label until it drops below the limit`
+    : isAtOrOverLimit
+      ? `At/over WIP limit (${tasks.length}/${wipLimit}) — visual warning only, dispatch is not blocked`
+      : undefined
 
   const handleDelete = async (taskId: string) => {
     try {
@@ -40,8 +58,12 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
   return (
     <div className={`flex flex-col shrink-0${className ? ` ${className}` : ' w-72'}`}>
       <div className="flex items-center justify-between px-3 py-2 mb-2">
-        <span className="text-sm font-semibold text-slate-300 uppercase tracking-wide">{label.name}</span>
-        <span className="text-xs text-slate-500 bg-slate-800 rounded-full px-2 py-0.5">{tasks.length}</span>
+        <span className={`text-sm font-semibold uppercase tracking-wide ${isAtOrOverLimit ? (isHardAtOrOverLimit ? 'text-red-300' : 'text-amber-300') : 'text-slate-300'}`}>
+          {label.name}
+        </span>
+        <span className={badgeClassName} title={badgeTitle} data-testid="column-count-badge">
+          {wipLimit != null ? `${tasks.length} / ${wipLimit}` : tasks.length}
+        </span>
       </div>
       <div
         ref={setNodeRef}
@@ -54,6 +76,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             isRunning={runningTaskIds.has(task.id)}
             rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
             onDelete={() => handleDelete(task.id)}
+            onDuplicate={onDuplicate}
             isEditable={isStartingColumn}
             selected={selectedIds?.has(task.id)}
             onToggleSelect={

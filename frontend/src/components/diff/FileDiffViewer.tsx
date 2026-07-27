@@ -217,6 +217,20 @@ function CommentEditor({ onSave, onCancel, lineLabel }: CommentEditorProps) {
   )
 }
 
+// Files with more lines than this render collapsed by default. Rendering
+// every line of every file expanded is what makes a large diff slow — most
+// files in a PR are small, but a handful of large ones (generated code,
+// lockfiles, vendored files) dominate render cost if forced open. This is
+// a conservative alternative to full virtualization: it avoids fighting the
+// gutter-drag multi-line selection/inline-comment-editor interactions that
+// virtualizing would need to preserve, at the cost of an extra click to
+// inspect a big file.
+const AUTO_COLLAPSE_LINE_THRESHOLD = 300
+
+function countLines(file: FileDiff): number {
+  return file.hunks.reduce((sum, h) => sum + h.lines.length, 0)
+}
+
 type FileBlockProps = {
   file: FileDiff
   comments: DiffComment[]
@@ -226,7 +240,8 @@ type FileBlockProps = {
 }
 
 function FileBlock({ file, comments, onAddComment, onRemoveComment, onReopenComment }: FileBlockProps) {
-  const [collapsed, setCollapsed] = useState(false)
+  const lineCount = countLines(file)
+  const [collapsed, setCollapsed] = useState(() => lineCount > AUTO_COLLAPSE_LINE_THRESHOLD)
   const [dragAnchor, setDragAnchor] = useState<LineTarget | null>(null)
   const [selection, setSelection] = useState<{ side: 'old' | 'new'; from: number; to: number } | null>(null)
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -311,6 +326,11 @@ function FileBlock({ file, comments, onAddComment, onRemoveComment, onReopenComm
           </span>
         )}
         <span className="text-xs text-slate-500">{file.hunks.length} hunk{file.hunks.length !== 1 ? 's' : ''}</span>
+        {collapsed && lineCount > AUTO_COLLAPSE_LINE_THRESHOLD && (
+          <span className="text-xs text-slate-500" title="Large file — collapsed by default for performance">
+            ({lineCount} lines)
+          </span>
+        )}
       </button>
 
       {!collapsed && (

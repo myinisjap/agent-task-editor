@@ -9,6 +9,11 @@ doesn't have to retype the same task boilerplate every time.
 template as a new task on a repo, on a schedule, without any human clicking
 "new task".
 
+If you just want to re-run a *specific* task with small tweaks — a run that
+half-worked, or the same change applied to a second repo — use **Duplicate**
+(on the task detail page or a board card) instead of a template: it pre-fills
+the new-task form from that one task rather than a saved reusable shape.
+
 ## Task templates
 
 Managed on the **Templates** page in the UI, or via the API:
