@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -43,6 +46,15 @@ func (h *TasksHandler) SetPaused(w http.ResponseWriter, r *http.Request) {
 // from the default board view (GET /tasks excludes them unless
 // archived=all|only is passed), skipped by the ghsync PR-status sweep, and
 // never dispatched to agents. Archiving does not change the task's label.
+//
+// Archiving also reclaims the task's worktree (best-effort): a task is
+// typically archived while sitting on a non-terminal label, so none of the
+// other teardown paths (engine.OnTerminal, task delete, ghsync's post-merge
+// cleanup) would ever fire for it, and excluding archived tasks from the
+// ghsync sweep means nothing else would revisit it either. See
+// internal/worktreesweep for the periodic sweep that catches anything missed
+// here (e.g. a crash mid-request). The branch itself is kept for review, same
+// as every other teardown path.
 func (h *TasksHandler) SetArchived(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Archived bool `json:"archived"`
@@ -67,7 +79,40 @@ func (h *TasksHandler) SetArchived(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if body.Archived {
+		h.reclaimWorktreeOnArchive(r.Context(), &task)
+	}
 	JSON(w, http.StatusOK, toTaskResponse(task))
+}
+
+// reclaimWorktreeOnArchive removes an archived task's worktree directory,
+// keeping its branch, and clears the task's worktree_path (both in the DB
+// and on the caller's copy of task, so a response built from it right after
+// doesn't show a path that's already gone) so a later unarchive +
+// re-dispatch reprovisions a fresh worktree instead of reusing a directory
+// that no longer exists. Dispatcher.ensureWorktree also verifies the
+// directory still exists as defense in depth — e.g. against the periodic
+// sweeper's reclaim, which never touches this DB row at all — but clearing
+// it here keeps the task's own record accurate immediately. Best-effort
+// throughout: logged, never surfaced as a request error, since the archive
+// itself already succeeded.
+func (h *TasksHandler) reclaimWorktreeOnArchive(ctx context.Context, task *gen.Task) {
+	if task.WorktreePath == "" {
+		return
+	}
+	repo, err := h.q.GetRepo(ctx, task.RepoID)
+	if err != nil {
+		slog.Warn("archive: get repo for worktree removal", "task_id", task.ID, "err", err)
+		return
+	}
+	if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
+		slog.Warn("archive: remove worktree", "task_id", task.ID, "err", err)
+	}
+	if err := h.q.ClearTaskWorktreePath(ctx, task.ID); err != nil {
+		slog.Warn("archive: clear worktree_path", "task_id", task.ID, "err", err)
+		return
+	}
+	task.WorktreePath = ""
 }
 
 // bulkResult reports the outcome of a bulk action for one task.
@@ -129,7 +174,11 @@ func (h *TasksHandler) Bulk(w http.ResponseWriter, r *http.Request) {
 			if body.Action == "archive" {
 				archived = 1
 			}
-			_, err = h.q.SetTaskArchived(ctx, gen.SetTaskArchivedParams{Archived: archived, ID: id})
+			var task gen.Task
+			task, err = h.q.SetTaskArchived(ctx, gen.SetTaskArchivedParams{Archived: archived, ID: id})
+			if err == nil && body.Action == "archive" {
+				h.reclaimWorktreeOnArchive(ctx, &task)
+			}
 		}
 		res := bulkResult{ID: id, Ok: err == nil}
 		if err != nil {

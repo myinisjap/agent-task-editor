@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -207,6 +208,119 @@ func TestTerminalManager_ChatMCPInjectsEnv(t *testing.T) {
 	case <-cleanupCalled:
 	case <-time.After(5 * time.Second):
 		t.Error("cleanup was not called after Stop")
+	}
+}
+
+// TestTerminalManager_MaxSessionsCapsNewSessionsOnly verifies that once
+// MaxSessions live processes are running, starting a *new* session is
+// refused with ErrTooManySessions, while reattaching to an *existing*
+// session (even one at/over the cap boundary) is never refused — a full
+// manager must not lock out a client reconnecting to its own session.
+func TestTerminalManager_MaxSessionsCapsNewSessionsOnly(t *testing.T) {
+	m := NewTerminalManager()
+	m.MaxSessions = 1
+	orig := buildTerminalCommand
+	buildTerminalCommand = func(_, _ string, _ bool) (string, []string, error) { return "sh", nil, nil }
+	t.Cleanup(func() { buildTerminalCommand = orig })
+
+	repoDir := t.TempDir()
+
+	// First session starts fine (0 < cap 1).
+	s1, err := m.ensure("sess-1", repoDir, "claude", "", false)
+	if err != nil {
+		t.Fatalf("first session should start under the cap: %v", err)
+	}
+	defer m.Stop("sess-1")
+	if s1 == nil {
+		t.Fatal("expected a non-nil session")
+	}
+
+	// A second, *new* session is refused: starting it would exceed the cap.
+	if _, err := m.ensure("sess-2", repoDir, "claude", "", false); !errors.Is(err, ErrTooManySessions) {
+		t.Fatalf("expected ErrTooManySessions for a new session over the cap, got %v", err)
+	}
+
+	// Reattaching to the *existing* session (sess-1) must still succeed even
+	// though the manager is at capacity.
+	if _, err := m.ensure("sess-1", repoDir, "claude", "", false); err != nil {
+		t.Fatalf("reattach to an existing session must never be refused by the cap: %v", err)
+	}
+}
+
+// TestTerminalManager_ReapIdleOnceStopsDetachedSessionsPastTimeout verifies
+// that reapIdleOnce stops a session whose lastDetachedAt is older than
+// IdleTimeout, releases it from the session map, and leaves a
+// still-attached (or recently-detached) session alone.
+func TestTerminalManager_ReapIdleOnceStopsDetachedSessionsPastTimeout(t *testing.T) {
+	m := NewTerminalManager()
+	m.IdleTimeout = 50 * time.Millisecond
+	orig := buildTerminalCommand
+	buildTerminalCommand = func(_, _ string, _ bool) (string, []string, error) { return "sh", nil, nil }
+	t.Cleanup(func() { buildTerminalCommand = orig })
+
+	repoDir := t.TempDir()
+
+	idle, err := m.ensure("idle-sess", repoDir, "claude", "", false)
+	if err != nil {
+		t.Fatalf("ensure idle-sess: %v", err)
+	}
+	fresh, err := m.ensure("fresh-sess", repoDir, "claude", "", false)
+	if err != nil {
+		t.Fatalf("ensure fresh-sess: %v", err)
+	}
+	defer m.Stop("fresh-sess") // no-op if already reaped by the (unexpected) failure path
+
+	// idle-sess has been detached "a while" (past the timeout); fresh-sess
+	// only just detached (well within it).
+	idle.mu.Lock()
+	idle.lastDetachedAt = time.Now().Add(-time.Hour)
+	idle.mu.Unlock()
+	fresh.mu.Lock()
+	fresh.lastDetachedAt = time.Now()
+	fresh.mu.Unlock()
+
+	m.reapIdleOnce()
+
+	m.mu.Lock()
+	_, idleStillPresent := m.sessions["idle-sess"]
+	_, freshStillPresent := m.sessions["fresh-sess"]
+	m.mu.Unlock()
+
+	if idleStillPresent {
+		t.Error("expected idle-sess to be reaped (stopped and removed)")
+	}
+	if !freshStillPresent {
+		t.Error("expected fresh-sess (detached well within IdleTimeout) to survive")
+	}
+}
+
+// TestTerminalManager_ReapIdleOnceDisabledByDefault verifies IdleTimeout<=0
+// (the zero value) never reaps anything, preserving pre-existing behavior
+// for callers that don't opt in.
+func TestTerminalManager_ReapIdleOnceDisabledByDefault(t *testing.T) {
+	m := NewTerminalManager() // IdleTimeout left at its zero value
+	orig := buildTerminalCommand
+	buildTerminalCommand = func(_, _ string, _ bool) (string, []string, error) { return "sh", nil, nil }
+	t.Cleanup(func() { buildTerminalCommand = orig })
+
+	repoDir := t.TempDir()
+	s, err := m.ensure("never-idle", repoDir, "claude", "", false)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	defer m.Stop("never-idle")
+
+	s.mu.Lock()
+	s.lastDetachedAt = time.Now().Add(-24 * time.Hour)
+	s.mu.Unlock()
+
+	m.reapIdleOnce()
+
+	m.mu.Lock()
+	_, present := m.sessions["never-idle"]
+	m.mu.Unlock()
+	if !present {
+		t.Error("expected reapIdleOnce to be a no-op when IdleTimeout is disabled (0)")
 	}
 }
 

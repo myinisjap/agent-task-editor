@@ -34,5 +34,6 @@ backend/mcp-server
 
 # Ad-hoc local test-run transcripts (not build artifacts, but shouldn't be committed)
 backend/test_output.txt
+backend/test_output.log
 backend/test_backend.log
 frontend/test_output.txt
