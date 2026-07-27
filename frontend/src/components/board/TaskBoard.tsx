@@ -70,6 +70,7 @@ type Props = {
   runningTaskIds: Set<string>
   rateLimitedTaskIds?: Map<string, string>
   onAddTask?: () => void
+  onDuplicate?: (task: Task) => void
   condensed?: boolean
   transitions?: WorkflowTransition[]
   selectedIds?: Set<string>
@@ -82,6 +83,7 @@ export default function TaskBoard({
   runningTaskIds,
   rateLimitedTaskIds,
   onAddTask,
+  onDuplicate,
   condensed = false,
   transitions = [],
   selectedIds,
@@ -212,6 +214,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
+                  onDuplicate={onDuplicate}
                   onAddTask={clampedCondensed === 0 ? onAddTask : undefined}
                   isStartingColumn={clampedCondensed === 0}
                   isTerminal={!!currentGroup.label.is_terminal}
@@ -225,6 +228,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
+                  onDuplicate={onDuplicate}
                   className="w-full"
                 />
               )}
@@ -249,6 +253,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
+                  onDuplicate={onDuplicate}
                   onAddTask={i === 0 ? onAddTask : undefined}
                   isStartingColumn={i === 0}
                   isTerminal={!!group.label.is_terminal}
@@ -267,6 +272,7 @@ export default function TaskBoard({
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
+                  onDuplicate={onDuplicate}
                 />
               )
             }
@@ -303,6 +309,7 @@ export default function TaskBoard({
               rateLimitedTaskIds={rateLimitedTaskIds}
               selectedIds={selectedIds}
               onToggleSelect={onToggleSelect}
+              onDuplicate={onDuplicate}
               onAddTask={clampedNormal === 0 ? onAddTask : undefined}
               isStartingColumn={clampedNormal === 0}
               isTerminal={!!currentLabel.is_terminal}
@@ -327,6 +334,7 @@ export default function TaskBoard({
             rateLimitedTaskIds={rateLimitedTaskIds}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
+            onDuplicate={onDuplicate}
             onAddTask={i === 0 ? onAddTask : undefined}
             isStartingColumn={i === 0}
             isTerminal={!!label.is_terminal}

@@ -33,6 +33,34 @@ func GateLabel(labels []gen.WorkflowLabel) (gate, first string) {
 	return "", first
 }
 
+// SuccessTarget returns the unambiguous to_label an agent-triggerable
+// transition from fromLabel would land on for the "success" outcome. A
+// transition qualifies if its trigger is not "human" and its Path is nil,
+// "success", or "either". If zero or more than one transition qualifies, ok
+// is false — callers should treat an ambiguous or missing target as "don't
+// know" rather than guessing (e.g. skip a WIP-limit check rather than block
+// on an uncertain target).
+func SuccessTarget(transitions []gen.WorkflowTransition, fromLabel string) (target string, ok bool) {
+	found := false
+	for _, t := range transitions {
+		if t.FromLabel != fromLabel {
+			continue
+		}
+		if t.TriggerType == "human" {
+			continue
+		}
+		if t.Path != nil && *t.Path != "success" && *t.Path != "either" {
+			continue
+		}
+		if found {
+			return "", false
+		}
+		target = t.ToLabel
+		found = true
+	}
+	return target, found
+}
+
 // TransitionTrigger identifies who initiated a label change.
 type TransitionTrigger string
 

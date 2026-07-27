@@ -13,6 +13,7 @@ import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
+import NewTaskModal from '../components/board/NewTaskModal'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -40,6 +41,7 @@ export default function TaskDetailPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
+  const [duplicating, setDuplicating] = useState(false)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
@@ -407,7 +409,12 @@ export default function TaskDetailPage() {
               onBack={() => navigate('/board')}
               labels={workflow?.labels ?? []}
               onMoveLabel={handleMoveLabel}
+              onDuplicate={() => setDuplicating(true)}
             />
+
+            {duplicating && task && (
+              <NewTaskModal source={task} onClose={() => setDuplicating(false)} />
+            )}
 
             <SubtasksPanel
               task={task}

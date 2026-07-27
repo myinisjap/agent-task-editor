@@ -23,6 +23,7 @@ export default function TaskCard({
   isRunning,
   rateLimitedUntil,
   onDelete,
+  onDuplicate,
   isEditable,
   showColumnLabel,
   selected,
@@ -32,6 +33,8 @@ export default function TaskCard({
   isRunning?: boolean
   rateLimitedUntil?: string
   onDelete?: () => void
+  /** When set, renders a "Duplicate task" button that opens a pre-filled New Task modal for this task. */
+  onDuplicate?: (task: Task) => void
   isEditable?: boolean
   /** When set, renders a muted column-name badge on the card (used in condensed view) */
   showColumnLabel?: string
@@ -353,6 +356,19 @@ export default function TaskCard({
               title="Edit task"
             >
               ✎
+            </button>
+          )}
+          {onDuplicate && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onDuplicate(task)
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
+              title="Duplicate task"
+            >
+              ⧉
             </button>
           )}
           {onDelete && (

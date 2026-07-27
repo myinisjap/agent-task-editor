@@ -20,6 +20,17 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Per-label WIP limits.** Labels can now carry an optional `wip_limit`
+  (nullable — `null`/unset means unlimited, unchanged from before this
+  feature). The board column header shows `count / limit` and flags the
+  column visually once its count reaches or exceeds the limit. Enforcement is soft by default
+  (visual only); an opt-in `wip_limit_hard` flag makes the dispatcher apply
+  backpressure instead — it skips picking up a task whose agent "success"
+  transition targets a label already at or over its limit, so work queues
+  upstream on its current label rather than erroring mid-run or piling into
+  an already-full column. Configurable via the workflow YAML (`wip_limit`,
+  `wip_limit_hard` on a label) or the JSON workflow API. See
+  `docs/workflows.md`.
 - **Merge-conflict detection on open PRs.** The GitHub PR status sweep now
   also asks GitHub whether each task's open PR still merges cleanly into its
   base branch, so a PR that goes stale because someone else merged first is
@@ -81,6 +92,15 @@ triggers the "Release" workflow the same way.
   Comments this system posted itself are filtered out, so an agent never reads
   its own "PR opened" notice back as human input.
 - `GET /tasks/{id}/source-comments` returns a task's ingested issue thread.
+- **Duplicate an existing task.** A "⧉ Duplicate" action on the task detail
+  page and on each board card opens the New Task modal pre-filled with the
+  source task's title (suffixed `(copy)`), description, type, priority, repo,
+  and workflow — editable before creation, same as any new task. The clone
+  starts clean: no run history, label history, diff comments, PR link,
+  worktree/git state, subtasks, or attachments carry over, and it lands on the
+  workflow's starting label like any other new task. The source task is never
+  modified. No new endpoint was needed — the existing `POST /tasks` create
+  path already covers every field involved.
 - **Archiving a task now reclaims its worktree, and a new sweeper catches
   everything else.** Archiving is the documented way to retire a dead or
   abandoned task, and such a task is typically on a non-terminal label — none
@@ -128,6 +148,20 @@ triggers the "Release" workflow the same way.
   matrix in sync.
 
 ### Fixed
+- **Task read paths no longer scale with total task count.** `GET /tasks` and
+  `GET /tasks/{id}` computed their derived dependency-count and subtask-rollup
+  badges by self-joining/scanning the *entire* `tasks` table on every
+  request, regardless of page size — so a single-task fetch cost the same as
+  listing every task in the system. Those queries are now scoped to just the
+  ids being returned (`ListTaskDependencyCountsForTasks` /
+  `ListSubtaskRollupsForParents`, new migration `049_task_read_indexes` adds
+  the `tasks(created_at DESC, id DESC)` index backing cursor pagination).
+  Separately, the SQLite connection pool was capped at a single connection,
+  which serialized every read behind every write (and behind every other
+  read) and defeated WAL mode entirely; the pool now allows several
+  concurrent connections, with `_txlock=immediate` added to the DSN so
+  write transactions take SQLite's write lock up front instead of risking a
+  `SQLITE_BUSY` upgrade race between connections.
 - **Two-column forms no longer collapse into overlapping, unreadable fields on
   mobile.** The Agent config, Provider config, Templates, and schedule forms use
   a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded

@@ -46,20 +46,22 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 }
 
 const createWorkflowLabel = `-- name: CreateWorkflowLabel :one
-INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr
+INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard
 `
 
 type CreateWorkflowLabelParams struct {
-	ID          string `json:"id"`
-	WorkflowID  string `json:"workflow_id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	SortOrder   int64  `json:"sort_order"`
-	AgentIgnore int64  `json:"agent_ignore"`
-	IsTerminal  int64  `json:"is_terminal"`
-	CreatePr    int64  `json:"create_pr"`
+	ID           string `json:"id"`
+	WorkflowID   string `json:"workflow_id"`
+	Name         string `json:"name"`
+	Color        string `json:"color"`
+	SortOrder    int64  `json:"sort_order"`
+	AgentIgnore  int64  `json:"agent_ignore"`
+	IsTerminal   int64  `json:"is_terminal"`
+	CreatePr     int64  `json:"create_pr"`
+	WipLimit     *int64 `json:"wip_limit"`
+	WipLimitHard int64  `json:"wip_limit_hard"`
 }
 
 func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLabelParams) (WorkflowLabel, error) {
@@ -72,6 +74,8 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		arg.AgentIgnore,
 		arg.IsTerminal,
 		arg.CreatePr,
+		arg.WipLimit,
+		arg.WipLimitHard,
 	)
 	var i WorkflowLabel
 	err := row.Scan(
@@ -83,6 +87,8 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		&i.AgentIgnore,
 		&i.IsTerminal,
 		&i.CreatePr,
+		&i.WipLimit,
+		&i.WipLimitHard,
 	)
 	return i, err
 }
@@ -214,7 +220,7 @@ func (q *Queries) GetWorkflowTransition(ctx context.Context, arg GetWorkflowTran
 }
 
 const listWorkflowLabels = `-- name: ListWorkflowLabels :many
-SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
 `
 
 func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]WorkflowLabel, error) {
@@ -235,6 +241,8 @@ func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]
 			&i.AgentIgnore,
 			&i.IsTerminal,
 			&i.CreatePr,
+			&i.WipLimit,
+			&i.WipLimitHard,
 		); err != nil {
 			return nil, err
 		}

@@ -5,7 +5,7 @@ import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
 import OnboardingChecklist from '../components/board/OnboardingChecklist'
-import { api, type BulkAction, type TaskCost } from '../api/client'
+import { api, type BulkAction, type Task, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
@@ -28,6 +28,10 @@ export default function BoardPage() {
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
   const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
   const [showNewTask, setShowNewTask] = useState(false)
+  // Source task for the "Duplicate" flow — when set, the New Task modal opens
+  // pre-filled from this task instead of blank. Mutually exclusive with
+  // showNewTask so only one modal instance is ever mounted at a time.
+  const [duplicateSource, setDuplicateSource] = useState<Task | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [condensed, setCondensed] = useState<boolean>(() => {
     try {
@@ -347,6 +351,14 @@ export default function BoardPage() {
         <NewTaskModal workflow={workflow} onClose={() => setShowNewTask(false)} />
       )}
 
+      {duplicateSource && (
+        <NewTaskModal
+          workflow={workflow}
+          source={duplicateSource}
+          onClose={() => setDuplicateSource(null)}
+        />
+      )}
+
       {loading ? (
         <div className="text-slate-400 text-sm">Loading…</div>
       ) : labels.length === 0 ? (
@@ -361,6 +373,7 @@ export default function BoardPage() {
             runningTaskIds={runningTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
             onAddTask={() => setShowNewTask(true)}
+            onDuplicate={(task) => setDuplicateSource(task)}
             condensed={condensed}
             transitions={transitions}
             selectedIds={selectedIds}

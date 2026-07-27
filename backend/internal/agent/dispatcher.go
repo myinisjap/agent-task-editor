@@ -188,6 +188,17 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		return
 	}
 
+	// WIP backpressure: only gates the sweep path, same as the cost-budget
+	// guard above. A hard-limited label that is already full simply isn't
+	// dispatched into this sweep — the task stays on its current label and is
+	// re-evaluated next sweep. This never blocks a run that is already in
+	// flight from completing into a full column (that stays soft/visual).
+	if blocked, err := d.checkWIPLimit(ctx, t); err != nil {
+		log.Error("dispatcher: wip limit check", "err", err)
+	} else if blocked {
+		return
+	}
+
 	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
 		var transientErr transientErr
 		log.Error("dispatcher: start run", "err", err, "transient", errors.As(err, &transientErr))
@@ -282,6 +293,63 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 		})
 	}
 
+	return true, nil
+}
+
+// checkWIPLimit resolves the task's agent-triggerable "success" transition
+// target and, if that target label opted into hard WIP enforcement
+// (wip_limit_hard) and is already at or over its wip_limit, returns true so
+// the dispatcher skips this sweep's dispatch — pure backpressure, no error,
+// no run created. The task simply stays put and is re-evaluated next sweep.
+//
+// An ambiguous or missing success target (e.g. no unambiguous agent
+// transition out of the current label) is treated as "unknown" and never
+// blocks dispatch — we never guess our way into starving a task.
+func (d *Dispatcher) checkWIPLimit(ctx context.Context, t gen.Task) (bool, error) {
+	transitions, err := d.q.ListWorkflowTransitions(ctx, t.WorkflowID)
+	if err != nil {
+		return false, fmt.Errorf("list workflow transitions: %w", err)
+	}
+	target, ok := workflow.SuccessTarget(transitions, t.Label)
+	if !ok || target == "" {
+		return false, nil
+	}
+
+	labels, err := d.q.ListWorkflowLabels(ctx, t.WorkflowID)
+	if err != nil {
+		return false, fmt.Errorf("list workflow labels: %w", err)
+	}
+	var targetLabel *gen.WorkflowLabel
+	for i := range labels {
+		if labels[i].Name == target {
+			targetLabel = &labels[i]
+			break
+		}
+	}
+	if targetLabel == nil || targetLabel.WipLimitHard == 0 || targetLabel.WipLimit == nil {
+		return false, nil
+	}
+	limit := *targetLabel.WipLimit
+	if limit <= 0 {
+		return false, nil // treat non-positive limits as unlimited
+	}
+
+	count, err := d.q.CountTasksByLabel(ctx, gen.CountTasksByLabelParams{
+		WorkflowID: t.WorkflowID,
+		Label:      target,
+	})
+	if err != nil {
+		return false, fmt.Errorf("count tasks by label: %w", err)
+	}
+
+	if count < limit {
+		return false, nil
+	}
+
+	slog.With("component", "dispatcher", "task_id", t.ID).Info(
+		"dispatcher: WIP limit reached, applying backpressure",
+		"target_label", target, "count", count, "limit", limit,
+	)
 	return true, nil
 }
 
