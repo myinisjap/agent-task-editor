@@ -189,7 +189,8 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	}
 
 	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
-		log.Error("dispatcher: start run", "err", err)
+		var transientErr transientErr
+		log.Error("dispatcher: start run", "err", err, "transient", errors.As(err, &transientErr))
 		return
 	}
 	// Reflect this dispatch in the sweep-scoped in-use map immediately so a

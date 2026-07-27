@@ -140,6 +140,22 @@ triggers the "Release" workflow the same way.
   paginates the full result set. Beyond dropping issues outright on busy repos,
   the cap would have made the new reconciliation mistake a truncated page for a
   closed issue.
+- **A hung `git` call on one repo could halt agent dispatch system-wide.**
+  Every `git` shell-out the agent package makes (worktree `fetch`/`add`,
+  safety-net `commit`, `push`, subtask `merge`, branch cleanup) is now bounded
+  by a configurable `GIT_TIMEOUT` (default `120s`); a stalled remote or a
+  stuck interactive credential prompt previously hung that `git` call
+  indefinitely, which blocked the dispatcher's serial sweep loop and stalled
+  agent dispatch for every task on every repo until the process was
+  restarted. A timed-out `git` call now fails just that one task within
+  `GIT_TIMEOUT`, is classified as a transient failure (eligible for the
+  existing retry policy) instead of a silent stall, and logs the repo,
+  command, and elapsed time so the culprit is obvious. Interactive credential
+  prompts are also suppressed (`GIT_TERMINAL_PROMPT=0` and related env vars)
+  so an auth prompt fails fast rather than blocking on stdin. See
+  [getting-started.md](docs/getting-started.md#backup). Dispatching tasks
+  concurrently (rather than serially) was considered but deferred as a
+  separate, larger change.
 
 ### Changed
 - The Repos help modal described issue import as create-only, which is no
