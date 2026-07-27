@@ -1,6 +1,22 @@
 -- name: ListRepos :many
 SELECT * FROM repos ORDER BY created_at DESC;
 
+-- name: ListReposPage :many
+-- Cursor-paginated repo listing, newest first. Positional params (?1 after
+-- cursor = created_at then id of last row, ?2 limit) sidestep the sqlc
+-- SQLite byte-offset bug; keep this comment ASCII-only. Ordering is
+-- (created_at, id) descending so the cursor is a stable total order,
+-- matching SearchTasksPage/ListAgentLogsPage. ListIssueSyncRepos (the
+-- internal issue-sync-enabled lookup) is deliberately left unpaginated.
+SELECT r.* FROM repos r
+WHERE (
+    ?1 = ''
+    OR r.created_at < (SELECT created_at FROM repos WHERE id = ?1)
+    OR (r.created_at = (SELECT created_at FROM repos WHERE id = ?1) AND r.id < ?1)
+  )
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT ?2;
+
 -- name: GetRepo :one
 SELECT * FROM repos WHERE id = ?;
 

@@ -32,12 +32,36 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 - **Reject** (`POST /tasks/{id}/reject`) — follows the `failure` human transition from the current label; the optional `to_label` body field overrides it. Returns `400` if no `failure` transition exists and no override is given.
 - **MoveLabel** (`PATCH /tasks/{id}/label`) — human-triggered move validated through `engine.Transition`; used by board drag-and-drop.
 - **List** (`GET /tasks`) — backed by the cursor-paginated `SearchTasksPage` query; supports `q` (title/description substring), `label`, `repo_id`, `type`, `git_state`, and tri-state `archived` (`''` hides archived, `only`, `all`). Invalid `archived` values return `400`. Paginates newest-first with `?limit=` (default 200, cap 500) and `?after=<cursor>`; the body stays a plain array and the next-page cursor (the last task's id) is returned in the `X-Next-Cursor` header (absent on the final page). Fetches `limit+1` internally to decide whether to emit the header.
+- **ListRuns** (`GET /tasks/{id}/runs`, in `task_runs.go`) — same cursor-pagination shape as `List` above, backed by `ListAgentRunsPage`. `?limit=` (default 100, cap 500) / `?after=<cursor>`, `X-Next-Cursor` on more pages. A task's *lifetime* cumulative cost is not derivable from a single page (a long-lived task with retries/reruns can have unbounded runs); it's surfaced separately as `Task.cumulative_cost_usd` (computed via `SumTaskCost` in `Get`, `tasks.go`) so the frontend cost badge doesn't need to sum a page of runs.
 - **GetRunLogs** (`GET /tasks/{id}/runs/{run_id}/logs`) — cursor-paginated log fetch (`ListAgentLogsPage`), body in chronological order (oldest first). `?limit=` (default 200, cap 1000); omit `?before=` for the newest page (tail), or pass a prior `X-Prev-Cursor` to load earlier. When older entries remain, sets `X-Has-More: true` + `X-Prev-Cursor` (oldest id in the page). Fetches newest-first `limit+1`, trims, then reverses for the body. This is the "load earlier" path complementing the capped WS `agent.log_replay`.
 - **SetArchived** (`PATCH /tasks/{id}/archive`) — toggles the `archived` flag; does not touch `label`. Archived tasks are hidden from the default list, skipped by ghsync, and never dispatched.
 - **Bulk** (`POST /tasks/bulk`) — applies `move`/`pause`/`resume`/`archive`/`unarchive` to a list of ids; per-task results, `207` when any task fails. `move` goes through `engine.Transition` per task.
 - **CancelRun** (`POST /tasks/{id}/runs/{run_id}/cancel`) — kill switch for an in-flight run. Validates the run belongs to the task and is `running`, then calls the injected `RunCanceller` (the agent pool, passed through `NewRouter` → `NewTasksHandler`). Returns `202` once cancellation is *signalled* — the pool marks the run `cancelled`, pauses the task, and broadcasts `task.agent_done` asynchronously — `409` if the run isn't running or is no longer registered in the pool, `404` if the run doesn't belong to the task. Decoupled from the pool via the `RunCanceller` interface so tests inject a fake; nil-safe (reports `409` when no pool is wired).
 - **ReplyRun** (`POST /tasks/{id}/runs/{run_id}/reply`) — answers a `waiting_human` run's `request_human` question with text. Validates the run belongs to the task and is the task's *active* run, then calls the injected `ReplyDispatcher` (the agent dispatcher, passed through `NewRouter` → `NewTasksHandler`), which starts a continuation run (session-resumed for `claude`, cold with a `RESPONSE FROM HUMAN` prompt section otherwise). `202` + new run id; `400` empty message; `404` wrong task; `409` not the active waiting run / no config; `503` pool saturated. Nil-safe (reports `503` when no dispatcher is wired, e.g. in tests).
 - **CreatePR** (`POST /tasks/{id}/pr`) — one-click PR creation: pushes the branch (from the worktree if present, else the main clone), then `ghclient.CreatePR` runs `gh pr create` (title from the task, body from `buildPRBody`). Idempotent — an existing PR for the branch is returned instead of erroring. The resulting URL + `git_state` are persisted via `SetTaskPR`. `400` for no branch / non-GitHub remote, `502` when `gh pr create` fails. Contrast with **PRURL** (`GET /tasks/{id}/pr-url`), which only builds a pre-filled compare URL and needs no `gh` auth.
+
+## Config-List Pagination
+
+`GET /provider-configs` (`providers.go`), `GET /agents` (`agents.go`), `GET
+/repos` (`repos.go`), and `GET /workflows` (`workflows.go`) all follow the
+same cursor-pagination shape as `TasksHandler.List` above: `?limit=`
+(default 200, cap 500 — see `defaultConfigPageLimit`/`maxConfigPageLimit` in
+`tasks.go`) / `?after=<cursor>`, `X-Next-Cursor` on more pages, body stays a
+plain array. Each is backed by a `...Page` sqlc query cursored on
+`(created_at, id)`, mirroring `SearchTasksPage`. Two things to know:
+
+- `agents.go`'s `List` pages `ListAllAgentConfigsPage` (all configs, enabled
+  or not); the internal enabled-only lookup (`ListAgentConfigs`, used by
+  dispatch/label-conflict checks) is deliberately left unpaginated.
+- `workflows.go`'s `List` pages the raw `workflows` rows first via
+  `ListWorkflowsPage`, then runs the per-row `buildResponse` (labels +
+  transitions fan-out) only over the trimmed page — not over the full table.
+
+The frontend's `api.workflows.list()` / `api.agents.list()` /
+`api.providerConfigs.list()` / `api.repos.list()` still return a plain
+`Promise<T[]>` to callers (dropdowns/stores assume the full list fits in
+memory): `client.ts`'s `listAllPages()` helper loops on `X-Next-Cursor`,
+concatenating every page, so no consumer had to change.
 
 ## Review Comments Handler Notes
 
@@ -63,3 +87,14 @@ Defined in `respond.go`:
 JSON(w, status, v)     // marshal v as JSON with status
 Err(w, status, msg)    // { "error": msg }
 ```
+
+Every handler in this package routes errors through `Err`, so every
+`/api/v1/*` response — success or failure — is JSON with a consistent shape.
+This also holds outside this package for the two other pre-response-body
+rejection points: `middleware.BearerAuth`'s 401 (inlines the same `{"error":
+"unauthorized"}` shape rather than importing `handlers`, to avoid a risk of
+import cycle) and `ws.ServeWS`'s pre-upgrade auth rejection (same shape, via
+`encoding/json`). The one place that stays plain-text/no-body is a genuine
+WebSocket upgrade failure inside `websocket.Accept` itself (after auth has
+already passed) — at that point the library owns the response and there's
+nothing meaningful to serialize; it's just logged.

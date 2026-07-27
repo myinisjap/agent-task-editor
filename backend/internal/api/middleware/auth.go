@@ -64,8 +64,14 @@ func BearerAuth(bearerToken string, namedTokens map[string]string) func(http.Han
 			}
 
 			if !matched {
+				// Inlined rather than reusing handlers.Err — importing the
+				// handlers package here would risk a cycle since handlers
+				// depends on middleware for auth context/actor lookups. This
+				// mirrors Err's exact {"error": "..."} shape.
 				w.Header().Set("WWW-Authenticate", `Bearer realm="agent-task-editor"`)
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
 				return
 			}
 

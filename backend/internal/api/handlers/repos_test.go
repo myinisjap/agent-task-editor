@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -800,6 +802,64 @@ func TestReposList_Empty(t *testing.T) {
 	}
 	if len(repos) != 0 {
 		t.Errorf("expected empty list, got %d items", len(repos))
+	}
+}
+
+// TestReposList_Pagination verifies limit/after cursor pagination walks the
+// full repo list without dupes or gaps.
+func TestReposList_Pagination(t *testing.T) {
+	router, q := setupReposRouter(t, "")
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+			ID:   uuid.NewString(),
+			Name: "repo",
+			Path: t.TempDir(),
+		}); err != nil {
+			t.Fatalf("create repo: %v", err)
+		}
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		qs := "?limit=2"
+		if cursor != "" {
+			qs += "&after=" + cursor
+		}
+		req := httptest.NewRequest(http.MethodGet, "/repos"+qs, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET repos%s: expected 200, got %d: %s", qs, w.Code, w.Body)
+		}
+		var page []gen.Repo
+		if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d repos, expected <= 2", len(page))
+		}
+		for _, repo := range page {
+			if seen[repo.ID] {
+				t.Fatalf("repo %s returned on more than one page", repo.ID)
+			}
+			seen[repo.ID] = true
+		}
+		next := w.Header().Get("X-Next-Cursor")
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 repos, saw %d", len(seen))
 	}
 }
 

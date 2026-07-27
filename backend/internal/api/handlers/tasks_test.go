@@ -28,19 +28,20 @@ import (
 // The Attachments field is []string because the handler serialises the stored
 // JSON string as a proper JSON array, not a raw string.
 type apiTask struct {
-	ID            string   `json:"id"`
-	Title         string   `json:"title"`
-	Description   string   `json:"description"`
-	Type          string   `json:"type"`
-	Label         string   `json:"label"`
-	RepoID        string   `json:"repo_id"`
-	WorkflowID    string   `json:"workflow_id"`
-	AgentNotes    string   `json:"agent_notes"`
-	Attachments   []string `json:"attachments"`
-	Paused        bool     `json:"paused"`
-	Archived      bool     `json:"archived"`
-	Priority      int      `json:"priority"`
-	QueuePosition *int     `json:"queue_position"`
+	ID                string   `json:"id"`
+	Title             string   `json:"title"`
+	Description       string   `json:"description"`
+	Type              string   `json:"type"`
+	Label             string   `json:"label"`
+	RepoID            string   `json:"repo_id"`
+	WorkflowID        string   `json:"workflow_id"`
+	AgentNotes        string   `json:"agent_notes"`
+	Attachments       []string `json:"attachments"`
+	Paused            bool     `json:"paused"`
+	Archived          bool     `json:"archived"`
+	Priority          int      `json:"priority"`
+	QueuePosition     *int     `json:"queue_position"`
+	CumulativeCostUsd float64  `json:"cumulative_cost_usd"`
 }
 
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
@@ -637,6 +638,54 @@ func TestTasks_Get_Found(t *testing.T) {
 	}
 }
 
+// TestTasks_Get_CumulativeCostUsd verifies GET /tasks/{id} surfaces the
+// task's lifetime recorded cost across every run (SumTaskCost), not just what
+// the first page of GET /tasks/{id}/runs would sum to.
+func TestTasks_Get_CumulativeCostUsd(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Costed task",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	for _, cost := range []float64{1.25, 2.50} {
+		run, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: task.ID})
+		if err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if _, err := q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status:  "completed",
+			CostUsd: cost,
+			ID:      run.ID,
+		}); err != nil {
+			t.Fatalf("complete run: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var got apiTask
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.CumulativeCostUsd != 3.75 {
+		t.Errorf("expected cumulative_cost_usd 3.75, got %v", got.CumulativeCostUsd)
+	}
+}
+
 // ---------- Update ----------
 
 func TestTasks_Update_OK(t *testing.T) {
@@ -862,6 +911,105 @@ func TestTasks_ListRuns_Empty(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// listRunsPage GETs /tasks/{id}/runs with the given query and returns the
+// decoded runs plus the X-Next-Cursor header.
+func listRunsPage(t *testing.T, r http.Handler, taskID, query string) ([]gen.AgentRun, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/runs"+query, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET runs%s: expected 200, got %d: %s", query, w.Code, w.Body)
+	}
+	var runs []gen.AgentRun
+	if err := json.NewDecoder(w.Body).Decode(&runs); err != nil {
+		t.Fatal(err)
+	}
+	return runs, w.Header().Get("X-Next-Cursor")
+}
+
+func TestTasks_ListRuns_Pagination(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Task with many runs",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	// Create 5 runs; created_at is assigned by CURRENT_TIMESTAMP so several may
+	// share a second — the (created_at, id) cursor must still not skip or repeat.
+	for i := 0; i < 5; i++ {
+		if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+			ID:     uuid.NewString(),
+			TaskID: task.ID,
+		}); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		q := "?limit=2"
+		if cursor != "" {
+			q += "&after=" + cursor
+		}
+		page, next := listRunsPage(t, r, task.ID, q)
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d runs, expected <= 2", len(page))
+		}
+		for _, run := range page {
+			if seen[run.ID] {
+				t.Fatalf("run %s returned on more than one page", run.ID)
+			}
+			seen[run.ID] = true
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 runs, saw %d", len(seen))
+	}
+	if _, next := listRunsPage(t, r, task.ID, "?limit=5"); next != "" {
+		t.Errorf("a full-size page covering every run should have no next cursor, got %q", next)
+	}
+}
+
+func TestTasks_ListRuns_LimitCapped(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// An over-max limit must be clamped rather than rejected.
+	page, _ := listRunsPage(t, r, task.ID, "?limit=100000")
+	if len(page) != 1 {
+		t.Fatalf("expected the single run back, got %d", len(page))
 	}
 }
 

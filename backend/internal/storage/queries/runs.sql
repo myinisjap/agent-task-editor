@@ -1,6 +1,22 @@
 -- name: ListAgentRuns :many
 SELECT * FROM agent_runs WHERE task_id = ? ORDER BY created_at DESC;
 
+-- name: ListAgentRunsPage :many
+-- Cursor-paginated agent-run listing for a task, newest first. Positional
+-- params (?1 task_id, ?2 after cursor = created_at then id of last row, ?3
+-- limit) sidestep the sqlc SQLite byte-offset bug; keep this comment
+-- ASCII-only. Ordering is (created_at, id) descending so the cursor is a
+-- stable total order, matching SearchTasksPage/ListAgentLogsPage.
+SELECT r.* FROM agent_runs r
+WHERE r.task_id = ?1
+  AND (
+    ?2 = ''
+    OR r.created_at < (SELECT created_at FROM agent_runs WHERE id = ?2)
+    OR (r.created_at = (SELECT created_at FROM agent_runs WHERE id = ?2) AND r.id < ?2)
+  )
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT ?3;
+
 -- name: GetAgentRun :one
 SELECT * FROM agent_runs WHERE id = ?;
 

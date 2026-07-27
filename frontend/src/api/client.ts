@@ -136,6 +136,29 @@ async function requestWithHeaders<T>(path: string, init?: RequestInit): Promise<
   return { data, headers: res.headers }
 }
 
+// listAllPages fetches every page of a now-paginated config-list endpoint
+// (provider configs, agent configs, repos, workflows) and concatenates them
+// into a single array, looping on X-Next-Cursor until it's empty. These
+// endpoints are still exposed to callers as a plain array (stores/dropdowns
+// across the app assume the full list fits in memory, which holds for
+// realistic config counts) — this keeps the request bounded per-page on the
+// wire while leaving every existing caller's Promise<T[]> signature intact.
+async function listAllPages<T>(path: string): Promise<T[]> {
+  const items: T[] = []
+  let after: string | undefined
+  for (;;) {
+    const params = new URLSearchParams()
+    if (after) params.set('after', after)
+    const qs = params.toString()
+    const { data, headers } = await requestWithHeaders<T[]>(`${path}${qs ? `?${qs}` : ''}`)
+    if (Array.isArray(data)) items.push(...data)
+    const next = headers.get('X-Next-Cursor')
+    if (!next) break
+    after = next
+  }
+  return items
+}
+
 export const api = {
   tasks: {
     // list returns a single page of tasks (newest first). Pass `after` (a
@@ -212,7 +235,19 @@ export const api = {
       request<ReviewComment>(`/tasks/${id}/review-comments/${commentId}`, { method: 'PATCH', body: JSON.stringify(body) }),
     deleteReviewComment: (id: string, commentId: string) =>
       request<void>(`/tasks/${id}/review-comments/${commentId}`, { method: 'DELETE' }),
-    runs: (id: string) => request<AgentRun[]>(`/tasks/${id}/runs`),
+    // runs returns a single page of a task's agent runs (newest first). Pass
+    // `after` (a cursor from a previous page's nextCursor) and `limit` to
+    // page through. The task's lifetime cumulative cost is not derivable
+    // from a single page of runs; use Task.cumulative_cost_usd (from
+    // tasks.get) instead of summing this page client-side.
+    runs: async (id: string, opts?: { after?: string; limit?: number }): Promise<Page<AgentRun>> => {
+      const params = new URLSearchParams()
+      if (opts?.after) params.set('after', opts.after)
+      if (opts?.limit) params.set('limit', String(opts.limit))
+      const qs = params.toString()
+      const { data, headers } = await requestWithHeaders<AgentRun[]>(`/tasks/${id}/runs${qs ? `?${qs}` : ''}`)
+      return { items: data ?? [], nextCursor: headers.get('X-Next-Cursor') || null }
+    },
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     // listLabelHistory returns the task's label-transition audit trail
     // (oldest first), including the resolved actor for human transitions.
@@ -257,7 +292,7 @@ export const api = {
     },
   },
   workflows: {
-    list: () => request<Workflow[]>('/workflows'),
+    list: () => listAllPages<Workflow>('/workflows'),
     get: (id: string) => request<Workflow>(`/workflows/${id}`),
     create: (body: { name: string; description?: string }) =>
       request<Workflow>('/workflows', { method: 'POST', body: JSON.stringify(body) }),
@@ -271,7 +306,7 @@ export const api = {
       request<Workflow>('/workflows/import', { method: 'POST', body: yaml, headers: { 'Content-Type': 'application/yaml' } }),
   },
   agents: {
-    list: () => request<AgentConfig[]>('/agents'),
+    list: () => listAllPages<AgentConfig>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
     create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents`, {
@@ -306,7 +341,7 @@ export const api = {
     claudeOptions: () => request<ClaudeOptions>('/agents/claude-options'),
   },
   providerConfigs: {
-    list: () => request<ProviderConfig[]>('/provider-configs'),
+    list: () => listAllPages<ProviderConfig>('/provider-configs'),
     get: (id: string) => request<ProviderConfig>(`/provider-configs/${id}`),
     create: (body: Omit<ProviderConfig, 'id' | 'created_at' | 'updated_at'>) =>
       request<ProviderConfig>('/provider-configs', { method: 'POST', body: JSON.stringify(body) }),
@@ -315,7 +350,7 @@ export const api = {
     delete: (id: string) => request<void>(`/provider-configs/${id}`, { method: 'DELETE' }),
   },
   repos: {
-    list: () => request<Repo[]>('/repos'),
+    list: () => listAllPages<Repo>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
     create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),

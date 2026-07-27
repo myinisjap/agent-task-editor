@@ -139,19 +139,19 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.bearerToken != "" && !h.hub.ConsumeTicket(r.URL.Query().Get("ticket")) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		Err(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	sess, err := h.q.GetChatSession(r.Context(), id)
 	if err != nil {
-		http.Error(w, "chat session not found", http.StatusNotFound)
+		Err(w, http.StatusNotFound, "chat session not found")
 		return
 	}
 	repo, err := h.q.GetRepo(r.Context(), sess.RepoID)
 	if err != nil {
-		http.Error(w, "repo lookup failed", http.StatusInternalServerError)
+		Err(w, http.StatusInternalServerError, "repo lookup failed")
 		return
 	}
 	// Resolve the session's provider config to the concrete provider/model
@@ -159,7 +159,7 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 	// provider config rather than inlining these).
 	pc, err := h.q.GetProviderConfig(r.Context(), sess.ProviderConfigID)
 	if err != nil {
-		http.Error(w, "provider config lookup failed", http.StatusInternalServerError)
+		Err(w, http.StatusInternalServerError, "provider config lookup failed")
 		return
 	}
 
@@ -175,11 +175,11 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 	if workDir == "" {
 		wtPath, _, _, perr := agent.ProvisionChatWorktree(r.Context(), repo.Path, id, sess.Title)
 		if perr != nil {
-			http.Error(w, "provision worktree failed", http.StatusInternalServerError)
+			Err(w, http.StatusInternalServerError, "provision worktree failed")
 			return
 		}
 		if err := h.q.SetChatSessionWorktree(r.Context(), gen.SetChatSessionWorktreeParams{WorktreePath: wtPath, ID: id}); err != nil {
-			http.Error(w, "persist worktree failed", http.StatusInternalServerError)
+			Err(w, http.StatusInternalServerError, "persist worktree failed")
 			return
 		}
 		workDir = wtPath

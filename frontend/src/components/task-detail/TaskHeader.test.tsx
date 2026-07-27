@@ -62,7 +62,6 @@ function renderHeader(TaskHeader: typeof TaskHeaderType, task: Task) {
       setEditMaxCostUsd={noop}
       editPriority={0}
       setEditPriority={noop}
-      runs={[]}
       taskSaving={false}
       taskSaveError=""
       onStartEdit={noop}

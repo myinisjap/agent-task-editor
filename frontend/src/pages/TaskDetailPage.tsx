@@ -50,7 +50,7 @@ export default function TaskDetailPage() {
 
   const refreshRuns = useCallback(() => {
     if (!id) return
-    api.tasks.runs(id).then((r) => {
+    api.tasks.runs(id).then(({ items: r }) => {
       setRuns(r ?? [])
       if (r && r.length > 0) {
         setSelectedRun((prev) => prev ?? r[0].id)
@@ -82,7 +82,8 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (!id) return
     Promise.all([api.tasks.get(id), api.tasks.runs(id), api.tasks.listLabelHistory(id), api.tasks.sourceComments(id)])
-      .then(([t, r, h, c]) => {
+      .then(([t, runsPage, h, c]) => {
+        const r = runsPage.items
         setTask(t)
         setRuns(r ?? [])
         setLabelHistory(h ?? [])
@@ -392,7 +393,6 @@ export default function TaskDetailPage() {
               setEditMaxCostUsd={setEditMaxCostUsd}
               editPriority={editPriority}
               setEditPriority={setEditPriority}
-              runs={runs}
               taskSaving={taskSaving}
               taskSaveError={taskSaveError}
               onStartEdit={handleStartEdit}

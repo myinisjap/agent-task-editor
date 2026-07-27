@@ -207,6 +207,16 @@ components:
             currently pickup-eligible (e.g. blocked, paused, archived, or not
             on an agent-triggerable label) or when the pool has idle
             capacity and the task would be dispatched immediately.
+        cumulative_cost_usd:
+          type: number
+          format: double
+          description: >
+            Task's lifetime recorded cost across every run regardless of
+            status (matching how the dispatcher's cost-budget guard counts
+            spend). Only populated on GET /tasks/{id}; omitted (0) on list
+            responses. Needed because GET /tasks/{id}/runs is paginated, so a
+            client-side sum over a single page of runs would undercount once
+            a task has more runs than fit on one page.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
       required: [id, title, description, type, label, repo_id, workflow_id, created_at, updated_at]
@@ -1667,8 +1677,29 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: limit
+          in: query
+          description: Page size. Defaults to 100; values above 500 are clamped to 500.
+          schema: { type: integer, default: 100, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last run from the previous
+            page (returned in that response's X-Next-Cursor header). Omit for
+            the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of the task's agent runs, newest first. When more runs
+            remain, the id to pass as the next `after` cursor is returned in
+            the X-Next-Cursor header (absent on the final page). The task's
+            lifetime cumulative cost is not derivable from a single page; see
+            Task.cumulative_cost_usd on GET /tasks/{id}.
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more runs remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentRun" } }
@@ -1958,8 +1989,28 @@ paths:
   /workflows:
     get:
       summary: List workflows
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last workflow from the
+            previous page (returned in that response's X-Next-Cursor header).
+            Omit for the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of workflows, newest first. When more workflows remain,
+            the id to pass as the next `after` cursor is returned in the
+            X-Next-Cursor header (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more workflows remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/Workflow" } }
@@ -2065,8 +2116,28 @@ paths:
   /agents:
     get:
       summary: List agent configs
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last agent config from
+            the previous page (returned in that response's X-Next-Cursor
+            header). Omit for the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of agent configs (enabled or not), newest first. When more
+            configs remain, the id to pass as the next `after` cursor is
+            returned in the X-Next-Cursor header (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more configs remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentConfig" } }
@@ -2139,8 +2210,28 @@ paths:
   /provider-configs:
     get:
       summary: List provider configs
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last provider config from
+            the previous page (returned in that response's X-Next-Cursor
+            header). Omit for the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of provider configs, newest first. When more configs
+            remain, the id to pass as the next `after` cursor is returned in
+            the X-Next-Cursor header (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more configs remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/ProviderConfig" } }
@@ -2188,8 +2279,28 @@ paths:
   /repos:
     get:
       summary: List repos
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last repo from the
+            previous page (returned in that response's X-Next-Cursor header).
+            Omit for the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of repos, newest first. When more repos remain, the id to
+            pass as the next `after` cursor is returned in the X-Next-Cursor
+            header (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more repos remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/Repo" } }

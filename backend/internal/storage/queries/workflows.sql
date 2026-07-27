@@ -1,6 +1,21 @@
 -- name: ListWorkflows :many
 SELECT * FROM workflows ORDER BY created_at DESC;
 
+-- name: ListWorkflowsPage :many
+-- Cursor-paginated workflow listing, newest first. Positional params (?1
+-- after cursor = created_at then id of last row, ?2 limit) sidestep the
+-- sqlc SQLite byte-offset bug; keep this comment ASCII-only. Ordering is
+-- (created_at, id) descending so the cursor is a stable total order,
+-- matching SearchTasksPage/ListAgentLogsPage.
+SELECT w.* FROM workflows w
+WHERE (
+    ?1 = ''
+    OR w.created_at < (SELECT created_at FROM workflows WHERE id = ?1)
+    OR (w.created_at = (SELECT created_at FROM workflows WHERE id = ?1) AND w.id < ?1)
+  )
+ORDER BY w.created_at DESC, w.id DESC
+LIMIT ?2;
+
 -- name: GetWorkflow :one
 SELECT * FROM workflows WHERE id = ?;
 

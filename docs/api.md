@@ -6,6 +6,25 @@ Authentication: `Authorization: Bearer <API_TOKEN>` on all requests (if `API_TOK
 
 Request bodies are JSON unless noted. Responses are JSON. Request bodies are limited to 1 MB (task creation allows 50 MB for image uploads).
 
+**Errors:** every `/api/v1/*` error response is JSON with a single consistent
+shape, `{ "error": "message" }`, regardless of status code (400/401/404/409/
+5xx/...). The one exception is a genuine WebSocket protocol-level upgrade
+failure (a rejection that happens *inside* the upgrade handshake itself,
+after auth has already passed) — those are logged server-side and the
+connection is simply not established, with no HTTP body to parse. Pre-upgrade
+rejections (bad/missing auth token or ticket) are JSON like everything else.
+
+**List pagination:** `GET /tasks`, `GET /tasks/{id}/runs`, `GET
+/provider-configs`, `GET /agents`, `GET /repos`, and `GET /workflows` are all
+cursor-paginated on `(created_at, id)`, newest first. Each accepts
+`?limit=` (clamped to an endpoint-specific max) and `?after=` (the id of the
+last item from the previous page); when more items remain, the response
+carries an `X-Next-Cursor` response header with the id to pass as the next
+`after` — absent on the final page. The response body stays a plain JSON
+array in every case. `GET /tasks/{id}/runs/{run_id}/logs` uses the same
+cursor mechanics but with `before`/`X-Prev-Cursor`/`X-Has-More` since it pages
+backwards from the most recent entry (see that endpoint below).
+
 ---
 
 ## Tasks
@@ -37,6 +56,7 @@ Key fields returned by task endpoints:
 | `current_agent_run_id` | UUID? | ID of the most recent agent run |
 | `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
 | `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
+| `cumulative_cost_usd` | number | Task's lifetime recorded cost across every run regardless of status (matching the dispatcher's cost-budget guard). Only populated on `GET /tasks/{id}`, since `GET /tasks/{id}/runs` is paginated — omitted (`0`) on list responses |
 
 ---
 
@@ -458,7 +478,22 @@ Delete a schedule. Returns `204`.
 | `session_id` | string | Provider-side conversation session for this run (claude/qwen stream-json `session_id`); used to resume the session on a later run (see [agents.md § Session Resume](agents.md#session-resume)). Empty when the provider has no session |
 
 ### `GET /tasks/{id}/runs`
-List all agent runs for a task (newest first).
+List a page of agent runs for a task (newest first) — cursor-paginated on
+`(created_at, id)`, the same convention as `GET /tasks`.
+
+Query params:
+
+| Param | Meaning |
+|---|---|
+| `limit` | Page size (default 100, clamped to 500) |
+| `after` | Cursor for the next page — the id of the last run from the previous page |
+
+When more runs remain, the response includes an `X-Next-Cursor` header whose
+value is the id to pass as `after` on the next request. The header is absent on
+the final page. A long-lived task with retries/reruns can accumulate runs
+without bound, so **do not** sum `cost_usd` over a single page to get a task's
+total spend — use `Task.cumulative_cost_usd` (from `GET /tasks/{id}`) instead,
+which is computed server-side across every run.
 
 ### `GET /tasks/{id}/runs/{run_id}`
 Get a single run record.
@@ -534,7 +569,8 @@ Serve a task attachment image. Not auth-gated by default (images are referenced 
 ## Workflows
 
 ### `GET /workflows`
-List all workflows.
+List a page of workflows, newest first (cursor-paginated on `(created_at,
+id)`; `limit` default 200, max 500 — see Pagination note above).
 
 ### `POST /workflows`
 Create a workflow.
@@ -566,7 +602,9 @@ Import a workflow from YAML. Body is `application/yaml` or `text/yaml`.
 ## Agent Configs
 
 ### `GET /agents`
-List all agent configs.
+List a page of agent configs (enabled or not), newest first (cursor-paginated
+on `(created_at, id)`; `limit` default 200, max 500 — see Pagination note
+above).
 
 ### `POST /agents`
 Create an agent config.
@@ -644,7 +682,9 @@ providers have no equivalent.
 ## Repositories
 
 ### `GET /repos`
-List registered repositories.
+List a page of registered repositories, newest first (cursor-paginated on
+`(created_at, id)`; `limit` default 200, max 500 — see Pagination note
+above).
 
 ### `POST /repos`
 Register a repository.
