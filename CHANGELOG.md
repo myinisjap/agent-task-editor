@@ -191,6 +191,24 @@ triggers the "Release" workflow the same way.
   [docs/getting-started.md](docs/getting-started.md#backend-resilience-restart-policy-readiness-and-memory-limit).
 
 ### Fixed
+- **Session resume now works for `qwen_code`, `codex_cli`, and `opencode`, not
+  just `claude`.** `Dispatcher.resolveAgentConfig` previously gated its prior-
+  session lookup to `provider == "claude"`, so `ResumeSessionID` was always
+  empty for every other provider and their already-correct `--resume`/`resume
+  <id>`/`--session` invocations were dead code (see #281). The gate is now a
+  `providerSupportsResume` check covering `claude`, `qwen_code`, `codex_cli`,
+  and `opencode`. `opencode` additionally needed its own fix (#283):
+  `classifyOpencodeJSON` was discarding the `sessionID` field the CLI stamps
+  on every NDJSON event, so the runner never had an id to persist in the first
+  place — it's now parsed and threaded onto both completed and failed
+  `agent.Result`s. `gemini_cli` is intentionally **not** included yet: its
+  runner also records a session id and its `--resume` invocation is correct,
+  but `GeminiRunner` scopes `GEMINI_CLI_HOME` to a per-run temp directory that
+  is deleted when the run ends, destroying the CLI's own session storage
+  before a later run could resume it. That storage-lifetime problem is
+  tracked separately in #284. See
+  [docs/agents.md § Session Resume](docs/agents.md#session-resume) and the
+  updated `qwen_code`/`codex_cli`/`opencode`/`gemini_cli` provider docs.
 - **The provider capability matrix now matches what the providers actually do.**
   An audit against the installed CLIs (`claude` v2.1.220, `@qwen-code/qwen-code`
   v0.21.0, `@google/gemini-cli` v0.52.0, `@openai/codex` v0.145.0, `opencode-ai`

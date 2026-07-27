@@ -17,41 +17,47 @@ import (
 // this provider rather than guessing. If a future opencode version adds
 // usage reporting to one of these message types, wire it up the same way
 // parse_streamjson.go's classifyStreamJSON does for the "result" message.
-func classifyOpencodeJSON(line string) (agent.LogEntry, string) {
+//
+// The CLI stamps a top-level "sessionID" field onto every emitted event
+// (verified against opencode-ai v1.18.6), so it's extracted here regardless
+// of event type and returned alongside the log entry/outcome so the caller
+// can persist it for session resume (see #283).
+func classifyOpencodeJSON(line string) (agent.LogEntry, string, string) {
 	var raw struct {
-		Type string `json:"type"`
-		Part struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionID"`
+		Part      struct {
 			Type   string `json:"type"`
 			Text   string `json:"text"`
 			Reason string `json:"reason"`
 		} `json:"part"`
 	}
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, ""
+		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, "", ""
 	}
 
 	switch raw.Type {
 	case "text":
 		outcome := extractOutcome(raw.Part.Text)
-		return agent.LogEntry{Type: agent.LogStdout, Content: raw.Part.Text, At: time.Now()}, outcome
+		return agent.LogEntry{Type: agent.LogStdout, Content: raw.Part.Text, At: time.Now()}, outcome, raw.SessionID
 	case "tool_use":
-		return agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, ""
+		return agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, "", raw.SessionID
 	case "tool_result":
-		return agent.LogEntry{Type: agent.LogToolResult, Content: line, At: time.Now()}, ""
+		return agent.LogEntry{Type: agent.LogToolResult, Content: line, At: time.Now()}, "", raw.SessionID
 	case "step_finish":
 		// step_finish with reason="stop" means the agent is done
 		if raw.Part.Reason == "stop" {
-			return agent.LogEntry{Type: agent.LogSystem, Content: "step finished", At: time.Now()}, ""
+			return agent.LogEntry{Type: agent.LogSystem, Content: "step finished", At: time.Now()}, "", raw.SessionID
 		}
-		return agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("step finished: %s", raw.Part.Reason), At: time.Now()}, ""
+		return agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("step finished: %s", raw.Part.Reason), At: time.Now()}, "", raw.SessionID
 	case "step_start":
-		return agent.LogEntry{Type: agent.LogSystem, Content: "step started", At: time.Now()}, ""
+		return agent.LogEntry{Type: agent.LogSystem, Content: "step started", At: time.Now()}, "", raw.SessionID
 	default:
 		// Log unknown types as raw stdout for debuggability
 		text := raw.Part.Text
 		if text == "" {
 			text = line
 		}
-		return agent.LogEntry{Type: agent.LogStdout, Content: text, At: time.Now()}, ""
+		return agent.LogEntry{Type: agent.LogStdout, Content: text, At: time.Now()}, "", raw.SessionID
 	}
 }

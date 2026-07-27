@@ -67,6 +67,10 @@ manages its own tool permissions via its own global config, outside task-editor'
 control). If you need to restrict shell command execution for an agent config, use
 the `claude`, `qwen_code`, `anthropic`, or `llm` providers instead.
 
+## Session Resume
+
+Every event on `opencode run --format json`'s NDJSON output carries a top-level `sessionID` field (verified against opencode-ai v1.18.6), which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes the CLI with `--session <sessionID>`, so prior context carries forward instead of starting cold.
+
 ## Cost & Usage Reporting
 
 **Not recorded — but this is a parser gap, not a CLI gap.** `input_tokens`,
@@ -96,6 +100,7 @@ _Verified against `opencode-ai` v1.18.6._ See [agents.md § Cost & Usage Trackin
 | Rate limit detection | ✅ Implemented — stdout/stderr are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit` |
 | Cost & usage reporting | ❌ Not recorded (parser gap, not a CLI gap — see above) |
 | Command allowlist/denylist | ❌ Not enforced |
+| Session resume | ✅ `sessionID` + `--session` (see above) |
 
 ## Setup Checklist
 

@@ -45,7 +45,9 @@ UPDATE agent_runs SET session_id = ? WHERE id = ?;
 
 -- name: GetLatestTaskSession :one
 -- Latest non-empty provider session recorded for this task under this agent
--- config, used to resume the session on the next run (claude provider).
+-- config, used to resume the session on the next run. Honored today for
+-- claude, qwen_code, codex_cli, and opencode (see
+-- agent.providerSupportsResume); gemini_cli is pending #284.
 -- Positional params: ?1 task_id, ?2 agent_config_id.
 SELECT session_id FROM agent_runs
 WHERE task_id = ?1 AND agent_config_id = ?2 AND session_id != ''

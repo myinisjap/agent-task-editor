@@ -64,6 +64,10 @@ Not yet supported by this provider, even though `codex exec` itself has a docume
 
 Codex has its own, arguably stronger, native safety system instead of a glob allow/deny list: a sandbox policy (`--sandbox read-only|workspace-write|danger-full-access`) and an approval policy (`--ask-for-approval untrusted|on-request|never`, plus the all-or-nothing `--dangerously-bypass-approvals-and-sandbox` this provider uses for headless operation). Because this provider must run fully unattended, it always passes `--dangerously-bypass-approvals-and-sandbox`, which **disables both the sandbox and the approval prompts** — Codex will execute any command the model proposes, unsandboxed, exactly like `qwen_code`'s `--approval-mode yolo` or `gemini_cli`'s `--yolo` do for their respective CLIs. If you need enforced command restrictions, prefer `claude` (denylist only), `anthropic`, or `llm`; there is currently no way to combine Codex's finer-grained sandbox/approval system with this codebase's per-run non-interactive requirement.
 
+## Session Resume
+
+The `thread.started` event carries a `thread_id`, which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes `codex exec ... resume <thread_id> "<prompt>"` (Codex 0.145.0's `codex exec resume` subcommand), so prior context carries forward instead of starting cold. The runner's flag-before-subcommand argument order (flags, then `resume <id>`, then the prompt) parses correctly against a live CLI — confirmed by observing it reach the resume lookup and fail only on a nonexistent thread id, not on argument parsing.
+
 ## Model Selection
 
 Pass `model` on the referenced [Provider Config](../agents.md#provider-configs). It is passed via `--model <model>` to the CLI.
