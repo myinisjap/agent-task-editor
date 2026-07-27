@@ -28,7 +28,7 @@ const SUPPORT_ICON = { full: '✅', partial: '⚠️', none: '❌' }
 
 // Rows to render, in table order: [Capability key, display label].
 const ROWS = [
-  ['taskEditorTools', 'Task-editor tools (5: transitions, complete, request-human, notes, store-info)'],
+  ['taskEditorTools', 'Task-editor tools (6: transitions, complete, request-human, notes, store-info, resolve-comment)'],
   ['labelTransitions', 'Label / workflow transitions'],
   ['mcpServers', 'Plugins + user MCP servers'],
   ['commandAllowlist', 'Command allowlist'],

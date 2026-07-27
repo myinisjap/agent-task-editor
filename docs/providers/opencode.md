@@ -52,7 +52,8 @@ To see available models: `opencode models` (the UI calls `GET /api/v1/agents/mod
 
 ## Image Attachments
 
-Not supported.
+**Not wired up.** `opencode run` has an `-f`/`--file` flag for attaching files to the
+message (verified against v1.18.6), but task attachments are not passed to it.
 
 ## Max Turns
 
@@ -66,6 +67,22 @@ manages its own tool permissions via its own global config, outside task-editor'
 control). If you need to restrict shell command execution for an agent config, use
 the `claude`, `qwen_code`, `anthropic`, or `llm` providers instead.
 
+## Cost & Usage Reporting
+
+**Not recorded — but this is a parser gap, not a CLI gap.** `input_tokens`,
+`output_tokens`, and `cost_usd` are all left at `0` (not estimated) for this
+provider because `classifyOpencodeJSON` only reads `type`, `part.type`,
+`part.text`, and `part.reason` off each NDJSON line.
+
+The CLI does emit the data: opencode's `step-finish` part carries both a `cost`
+number and a `tokens` object (`{input, output, reasoning, cache: {read, write}}`),
+and `run --format json` surfaces that part as the `step_finish` event this parser
+already handles. Reading those two fields into `runUsage` — the same way
+`parse_streamjson.go` does for the `claude`/`qwen_code` `result` message — would
+close the gap. Until then, a cost budget cap will not fire for this provider.
+
+_Verified against `opencode-ai` v1.18.6._ See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
 ## Limitations
 
 | Feature | Status |
@@ -74,10 +91,10 @@ the `claude`, `qwen_code`, `anthropic`, or `llm` providers instead.
 | `update_task_notes` | ❌ Not available |
 | `store_info` | ❌ Not available |
 | `request_human` | ❌ Not available |
-| Image attachments | ❌ Not supported |
+| Image attachments | ❌ Not wired up — `opencode run` has an `-f`/`--file` flag, but attachments are not passed to it |
 | Outcome signalling | ⚠️ Text-based only (`OUTCOME: success/failure`) |
-| Rate limit detection | ❌ Not implemented |
-| Cost & usage reporting | ❌ Not available — `opencode run --format json` does not currently expose a token/usage field in any observed message shape, so `input_tokens`/`output_tokens`/`cost_usd` are left at `0` (not estimated) for this provider. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking). |
+| Rate limit detection | ✅ Implemented — stdout/stderr are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit` |
+| Cost & usage reporting | ❌ Not recorded (parser gap, not a CLI gap — see above) |
 | Command allowlist/denylist | ❌ Not enforced |
 
 ## Setup Checklist
