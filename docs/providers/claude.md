@@ -1,6 +1,6 @@
 # Provider: `claude`
 
-The `claude` provider runs the Claude CLI in headless mode and is the most feature-rich option — it supports MCP tools, image attachments, and uses the `~/.claude` OAuth credentials so a Claude Max subscription covers all costs.
+The `claude` provider runs the Claude CLI in headless mode and is the most feature-rich option — it supports MCP tools, session resume, plugins and user MCP servers, and uses the `~/.claude` OAuth credentials so a Claude Max subscription covers all costs.
 
 ## Provider String
 
@@ -77,7 +77,7 @@ refresh the file. That manual step is no longer needed. Failure modes:
 
 ## MCP Tools
 
-**All 5 MCP tools are supported** when `MCP_SERVER_PATH` is set.
+**All 6 MCP tools are supported** (7 with `create_subtask`, which is exposed only when the agent config enables subtasks) when `MCP_SERVER_PATH` is set.
 
 | Tool | Description |
 |---|---|
@@ -86,6 +86,8 @@ refresh the file. That manual step is no longer needed. Failure modes:
 | `mcp__task-editor__request_human` | Pauses the run for human input |
 | `mcp__task-editor__update_task_notes` | Writes persistent notes for subsequent agents |
 | `mcp__task-editor__store_info` | Stores a summary visible in the task UI |
+| `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
+| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
 
 Without `MCP_SERVER_PATH`, these tools are unavailable and the run completes with status `completed` (no label transition is attempted).
 
@@ -100,7 +102,15 @@ mcp__task-editor__signal_complete
 mcp__task-editor__request_human
 mcp__task-editor__update_task_notes
 mcp__task-editor__store_info
+mcp__task-editor__resolve_comment
 ```
+
+Note that `mcp__task-editor__create_subtask` is **not** in this list even when
+subtasks are enabled. That is harmless: `--allowedTools` is an auto-approve
+list, not an exclusive allowlist (see "Command Allowlist / Denylist" below), so
+omitting a tool does not block it — verified against v2.1.220, where a `Bash`
+call succeeded with only `Read` passed to `--allowedTools` and an empty
+`permission_denials` array in the result.
 
 For each MCP server name in the agent config's `enabled_mcp_servers`, a bare `mcp__<server>` entry is also appended so that server's tools aren't blocked by the allowlist (server-level wildcarding, inferred from CLI docs — worth re-verifying against a live run if tool calls from a selected MCP server are unexpectedly denied).
 
@@ -160,7 +170,17 @@ matching on the command string, not a sandbox.
 
 ## Image Attachments
 
-Supported. Files uploaded to a task are passed via `--image <path>` flags. The server resolves absolute paths from the `UPLOAD_DIR`.
+**Not supported — and currently broken.** `buildClaudeArgs` appends one
+`--image <abs-path>` flag per task attachment, but **the `claude` CLI has no
+`--image` flag** (verified against v2.1.220: `error: unknown option '--image'`,
+and the string appears nowhere in the CLI bundle). Because the flag is rejected
+during argument parsing, a `claude`-provider run against a task that has
+attachments aborts before it starts.
+
+Independently of the flag, the dispatcher already copies task attachments into
+the run's worktree and lists their relative paths in the prompt, so an agent can
+open them with its normal `Read` tool. Dropping the `--image` flags from
+`buildClaudeArgs` would therefore fix the failure without losing any capability.
 
 ## Model Selection
 

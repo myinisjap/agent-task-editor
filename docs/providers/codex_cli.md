@@ -31,7 +31,7 @@ The `codex` binary authenticates via **"Sign in with ChatGPT"** (`codex login`, 
 
 ## MCP Tools
 
-**All 5 MCP tools are supported** when `MCP_SERVER_PATH` is set, via a different wiring mechanism than `claude`/`qwen_code`:
+**All 6 MCP tools are supported** (7 with `create_subtask`, which is exposed only when the agent config enables subtasks) when `MCP_SERVER_PATH` is set, via a different wiring mechanism than `claude`/`qwen_code`:
 
 | Tool | Description |
 |---|---|
@@ -40,6 +40,8 @@ The `codex` binary authenticates via **"Sign in with ChatGPT"** (`codex login`, 
 | `mcp__task-editor__request_human` | Pauses the run for human input |
 | `mcp__task-editor__update_task_notes` | Writes persistent notes for subsequent agents |
 | `mcp__task-editor__store_info` | Stores a summary visible in the task UI |
+| `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
+| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
 
 Codex configures MCP servers via `[mcp_servers.<name>]` TOML sections in `$CODEX_HOME/config.toml` (there is also a `codex mcp add` CLI subcommand that writes the same format — used here only to confirm the exact shape, not invoked at runtime). Because that's a persistent config file rather than a per-invocation flag, this provider:
 

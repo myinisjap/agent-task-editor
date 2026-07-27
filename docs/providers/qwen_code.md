@@ -26,7 +26,7 @@ The `qwen` CLI is not installed in the backend image by default — build with `
 
 ## MCP Tools
 
-**All 5 MCP tools are supported** when `MCP_SERVER_PATH` is set — identical to the `claude` provider.
+**All 6 MCP tools are supported** (7 with `create_subtask`, which is exposed only when the agent config enables subtasks) when `MCP_SERVER_PATH` is set — identical to the `claude` provider.
 
 | Tool | Description |
 |---|---|
@@ -35,6 +35,8 @@ The `qwen` CLI is not installed in the backend image by default — build with `
 | `mcp__task-editor__request_human` | Pauses the run for human input |
 | `mcp__task-editor__update_task_notes` | Writes persistent notes for subsequent agents |
 | `mcp__task-editor__store_info` | Stores a summary visible in the task UI |
+| `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
+| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
 
 Qwen uses `--allowed-tools` (space-separated, multiple flags) rather than a comma-separated string like Claude:
 
@@ -44,6 +46,7 @@ Qwen uses `--allowed-tools` (space-separated, multiple flags) rather than a comm
 --allowed-tools mcp__task-editor__request_human
 --allowed-tools mcp__task-editor__update_task_notes
 --allowed-tools mcp__task-editor__store_info
+--allowed-tools mcp__task-editor__resolve_comment
 ```
 
 See [mcp-tools.md](../mcp-tools.md) for full tool reference.
@@ -54,14 +57,23 @@ Not yet supported. Reserved for when the `qwen` CLI gains an `--image` flag.
 
 ## Command Allowlist / Denylist
 
-`command_allowlist` patterns are enforced natively by the `qwen` CLI: each pattern is
-appended as a `Bash(pattern)` entry to `--allowed-tools`, the same tool-restriction
-syntax the `claude` CLI's `--allowedTools` accepts.
+**Neither is enforced for this provider.**
 
-`command_denylist` is **not currently enforced** for this provider — there is no
-confirmed `qwen` CLI flag equivalent to claude's `--disallowedTools` /
-`permissions.deny` settings key. If you need denylist enforcement, prefer the
-`claude`, `anthropic`, or `llm` providers, or rely solely on `command_allowlist` here.
+`command_allowlist` patterns are appended as `Bash(pattern)` entries to
+`--allowed-tools`, but that flag does not restrict anything: qwen documents it as
+*"Tools to allow, will bypass confirmation"* — an auto-approve list, exactly like
+the `claude` CLI's `--allowedTools`. On top of that, this runner always passes
+`--approval-mode yolo` (*"auto-approve all tools"*), which auto-approves
+everything anyway, so the allowlist entries are a complete no-op here.
+
+`command_denylist` is **not currently enforced** either, because the runner never
+passes a deny flag. Note that qwen *does* have one: `--exclude-tools` ("Tools to
+exclude"), which the CLI folds into its `permissionsDeny` policy. Wiring
+`command_denylist` through to `--exclude-tools` would close this gap; until then,
+prefer the `claude` (denylist only), `anthropic`, or `llm` providers if you need
+enforced command restrictions.
+
+_Verified against `@qwen-code/qwen-code` v0.21.0's registered CLI options._
 
 ## Model Selection
 
@@ -73,7 +85,9 @@ Like the `claude` provider, if the agent completes without calling `signal_compl
 
 ## Cost & Usage Reporting
 
-Like the `claude` provider, token usage and cost are parsed from the CLI's `result` stream-json message (`usage` + `total_cost_usd`) via the same `classifyStreamJSON` parser, and are used as-is (not estimated) — assuming the `qwen` CLI's stream-json output stays compatible with `claude`'s. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+Token usage is parsed from the CLI's `result` stream-json message (`usage`) via the same `classifyStreamJSON` parser as the `claude` provider, and is used as-is (not estimated).
+
+**No total-cost figure is reported by the Qwen Code CLI**, unlike `claude`. The parser also looks for `total_cost_usd` on the same envelope, but qwen's result message doesn't carry that field (verified against v0.21.0: its `buildResultMessage` emits `usage` + `permission_denials` and the string `total_cost_usd` appears nowhere in the package), so `cost_usd` is left at `0` for this provider rather than estimated — the same situation as `gemini_cli`/`codex_cli`. A cost budget cap will not reliably fire here. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
 ## Setup Checklist
 

@@ -30,7 +30,7 @@ The `gemini` binary authenticates via a Google account OAuth login (`gemini` int
 
 ## MCP Tools
 
-**All 5 MCP tools are supported** when `MCP_SERVER_PATH` is set, via a different wiring mechanism than `claude`/`qwen_code`:
+**All 6 MCP tools are supported** (7 with `create_subtask`, which is exposed only when the agent config enables subtasks) when `MCP_SERVER_PATH` is set, via a different wiring mechanism than `claude`/`qwen_code`:
 
 | Tool | Description |
 |---|---|
@@ -39,6 +39,8 @@ The `gemini` binary authenticates via a Google account OAuth login (`gemini` int
 | `mcp__task-editor__request_human` | Pauses the run for human input |
 | `mcp__task-editor__update_task_notes` | Writes persistent notes for subsequent agents |
 | `mcp__task-editor__store_info` | Stores a summary visible in the task UI |
+| `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
+| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
 
 Unlike `claude`/`qwen_code`, the Gemini CLI does not accept a per-invocation `--mcp-config <file>` flag. Instead it reads `{"mcpServers": {...}}` from a `settings.json` file under its "home" directory (`$GEMINI_CLI_HOME/.gemini/settings.json`, or `~/.gemini/settings.json` if `GEMINI_CLI_HOME` is unset — confirmed by reading the installed CLI's bundled source). Because that's a persistent config location rather than a per-run flag, this provider:
 
@@ -57,7 +59,11 @@ Not yet supported. Reserved for if/when the `gemini` CLI's non-interactive mode 
 
 ## Command Allowlist / Denylist
 
-**Neither `command_allowlist` nor `command_denylist` is enforced for this provider.** There is no confirmed Gemini CLI flag equivalent to claude's `--allowedTools`/`--disallowedTools` or a native command-glob restriction system in non-interactive mode. If you need allowlist/denylist enforcement, prefer `claude` (denylist only), `anthropic`, or `llm`.
+**Neither `command_allowlist` nor `command_denylist` is enforced for this provider.** The runner passes neither to the CLI.
+
+There is no Gemini CLI denylist flag at all. There *is* an `--allowed-tools` flag, but it would not help: the CLI documents it as "Tools that are allowed to run without confirmation" — auto-approve, not an exclusive allowlist — and marks it deprecated in favor of the Policy Engine. The runner also always passes `--yolo`, which auto-approves everything regardless. If you need allowlist/denylist enforcement, prefer `claude` (denylist only), `anthropic`, or `llm`.
+
+_Verified against `@google/gemini-cli` v0.52.0's registered CLI options._
 
 ## Model Selection
 

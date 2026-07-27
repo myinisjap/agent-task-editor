@@ -43,7 +43,7 @@ export const KNOWN_PROVIDERS = ['claude', 'qwen_code', 'gemini_cli', 'codex_cli'
 
 export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
   claude: {
-    taskEditorTools: { support: 'full', note: 'All 5 task-editor tools via the MCP sidecar.' },
+    taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
     labelTransitions: { support: 'full' },
     mcpServers: { support: 'full', note: 'Supports Claude plugins and user-level MCP servers.' },
     commandAllowlist: {
@@ -52,37 +52,61 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     commandDenylist: { support: 'full' },
     costTracking: { support: 'full', note: 'Authoritative cost and token counts.' },
-    imageAttachments: { support: 'full', note: 'Supported via --image.' },
+    imageAttachments: {
+      support: 'none',
+      note: 'The claude CLI has no --image flag (verified against v2.1.220), but the runner still passes one per attachment — a task with attachments currently fails at launch. Known bug; the dispatcher also copies attachments into the worktree, so agents can read them as files.',
+    },
     maxTurns: { support: 'full' },
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   qwen_code: {
-    taskEditorTools: { support: 'full', note: 'All 5 task-editor tools via the MCP sidecar.' },
+    taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
     labelTransitions: { support: 'full' },
     mcpServers: { support: 'none' },
-    commandAllowlist: { support: 'full' },
-    commandDenylist: { support: 'none', note: 'Not enforced for the qwen_code provider (no confirmed CLI denylist flag).' },
-    costTracking: { support: 'full', note: 'Authoritative cost and token counts.' },
-    imageAttachments: { support: 'none', note: 'CLI gap.' },
-    maxTurns: { support: 'full' },
-    sessionResume: { support: 'partial', note: 'Session recorded, not resumed (no verified CLI flag).' },
+    commandAllowlist: {
+      support: 'none',
+      note: "Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect.",
+    },
+    commandDenylist: {
+      support: 'none',
+      note: "Not enforced for the qwen_code provider — the runner does not pass qwen's --exclude-tools flag, which does map to a deny policy (present in qwen 0.21.0).",
+    },
+    costTracking: {
+      support: 'partial',
+      note: "Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire.",
+    },
+    imageAttachments: { support: 'none', note: 'No image flag on the qwen CLI.' },
+    maxTurns: { support: 'full', note: 'Enforced via --max-session-turns.' },
+    sessionResume: {
+      support: 'partial',
+      note: 'Session id is recorded and the CLI supports --resume, but the dispatcher only resumes the claude provider, so runs always start cold.',
+    },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   gemini_cli: {
-    taskEditorTools: { support: 'full', note: 'All 5 task-editor tools via the MCP sidecar.' },
+    taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
     labelTransitions: { support: 'full' },
     mcpServers: { support: 'none' },
-    commandAllowlist: { support: 'none', note: 'Not enforced for the gemini_cli provider (no confirmed CLI allowlist flag).' },
-    commandDenylist: { support: 'none', note: 'Not enforced for the gemini_cli provider (no confirmed CLI denylist flag).' },
+    commandAllowlist: {
+      support: 'none',
+      note: "Not enforced for the gemini_cli provider — the runner does not pass --allowed-tools, and that flag only skips confirmation (and is deprecated in favor of the Policy Engine) rather than restricting commands.",
+    },
+    commandDenylist: { support: 'none', note: 'Not enforced for the gemini_cli provider — the gemini CLI has no denylist flag.' },
     costTracking: { support: 'partial', note: 'Tokens only, no cost — a cost budget cap will not reliably fire.' },
     imageAttachments: { support: 'none', note: 'See docs/providers/gemini_cli.md.' },
-    maxTurns: { support: 'full' },
-    sessionResume: { support: 'partial', note: 'Thread id recorded, not resumed.' },
+    maxTurns: {
+      support: 'none',
+      note: 'Not enforced — the gemini CLI has no turn-cap flag, so only the run timeout bounds a run.',
+    },
+    sessionResume: {
+      support: 'partial',
+      note: 'Session id is recorded and the CLI supports --resume, but the dispatcher only resumes the claude provider, so runs always start cold.',
+    },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   codex_cli: {
-    taskEditorTools: { support: 'full', note: 'All 5 task-editor tools via the MCP sidecar.' },
+    taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
     labelTransitions: { support: 'full' },
     mcpServers: { support: 'none' },
     commandAllowlist: {
@@ -94,13 +118,22 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       note: 'Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md).',
     },
     costTracking: { support: 'partial', note: 'Tokens only, no cost — a cost budget cap will not reliably fire.' },
-    imageAttachments: { support: 'none', note: 'See docs/providers/codex_cli.md.' },
-    maxTurns: { support: 'full' },
-    sessionResume: { support: 'partial', note: 'Thread id recorded, not resumed.' },
+    imageAttachments: {
+      support: 'none',
+      note: 'codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md.',
+    },
+    maxTurns: {
+      support: 'none',
+      note: 'Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run.',
+    },
+    sessionResume: {
+      support: 'partial',
+      note: 'Thread id is recorded and `codex exec resume` exists, but the dispatcher only resumes the claude provider, so runs always start cold.',
+    },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   anthropic: {
-    taskEditorTools: { support: 'partial', note: '4 of 5 native task-editor tools (no resolve_comment/create_subtask).' },
+    taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
     labelTransitions: { support: 'full', note: 'signal_complete implemented natively.' },
     mcpServers: { support: 'none' },
     commandAllowlist: { support: 'full', note: 'Enforced in Go.' },
@@ -112,7 +145,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
   },
   llm: {
-    taskEditorTools: { support: 'partial', note: '4 of 5 native task-editor tools (no resolve_comment/create_subtask).' },
+    taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
     labelTransitions: { support: 'full', note: 'signal_complete implemented natively.' },
     mcpServers: { support: 'none' },
     commandAllowlist: { support: 'full', note: 'Enforced in Go.' },
@@ -137,11 +170,11 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     commandDenylist: { support: 'none', note: 'Not enforced for the opencode provider.' },
     costTracking: {
       support: 'none',
-      note: 'Cost is not exposed by the CLI — a cost budget cap will not fire for this provider.',
+      note: "Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire.",
     },
-    imageAttachments: { support: 'none' },
-    maxTurns: { support: 'none', note: 'Not enforced.' },
-    sessionResume: { support: 'none', note: 'Unverified.' },
+    imageAttachments: { support: 'none', note: 'opencode run has an -f/--file flag, but attachments are not wired through to it.' },
+    maxTurns: { support: 'none', note: 'Not enforced — the opencode CLI has no turn-cap flag.' },
+    sessionResume: { support: 'none', note: 'The runner never records a session id, so there is nothing to resume from.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
   },
 }

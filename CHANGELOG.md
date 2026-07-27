@@ -137,6 +137,39 @@ triggers the "Release" workflow the same way.
   matrix in sync.
 
 ### Fixed
+- **The provider capability matrix now matches what the providers actually do.**
+  An audit against the installed CLIs (`claude` v2.1.220, `@qwen-code/qwen-code`
+  v0.21.0, `@google/gemini-cli` v0.52.0, `@openai/codex` v0.145.0, `opencode-ai`
+  v1.18.6) and this codebase's own runners found eight rows that over- or
+  under-stated support. `frontend/src/lib/providerCapabilities.ts` — read by the
+  agent/provider config forms to warn about gaps at config time, and the source
+  of `docs/agents.md`'s generated table — has been corrected, along with the
+  affected per-provider docs:
+  - `claude` **image attachments** were listed as supported "via `--image`". The
+    `claude` CLI has no `--image` flag, so a task with attachments currently
+    fails at launch — now marked unsupported and flagged as a known bug.
+  - `gemini_cli` and `codex_cli` **`max_turns`** were listed as enforced. Neither
+    CLI has a turn-cap flag and neither runner passes one; both are now ❌, and
+    the note explains that only the run timeout bounds those runs.
+  - `qwen_code` **cost tracking** claimed authoritative cost. Qwen's stream-json
+    `result` carries token usage but no `total_cost_usd`, so it is tokens-only
+    like `gemini_cli`/`codex_cli` — a cost budget cap will not reliably fire.
+  - `qwen_code` **command allowlist** was listed as enforced. Qwen's
+    `--allowed-tools` only bypasses confirmation, and the runner always passes
+    `--approval-mode yolo`, so allowlist entries are a no-op.
+  - `anthropic`/`llm` **task-editor tools** said "4 of 5"; the sidecar exposes
+    six tools (seven with `create_subtask`) and these providers implement five
+    natively, so it is now "5 of 7". The MCP-backed providers' "All 5" notes and
+    the generated row label were stale for the same reason.
+  - **Session resume** notes blamed missing CLI flags. The real reason
+    `qwen_code`/`gemini_cli`/`codex_cli` never resume is that
+    `Dispatcher.resolveAgentConfig` gates resume to the `claude` provider;
+    `opencode` differs again in never recording a session id at all.
+  - **`opencode` cost tracking** blamed the CLI. Opencode's `step_finish` part
+    does carry `cost` and `tokens`; the gap is that `classifyOpencodeJSON`
+    doesn't read them. Its docs also wrongly listed rate-limit detection as
+    unimplemented (it is implemented) and image attachments as impossible
+    (`opencode run` has `-f`/`--file`, just unwired).
 - **Two-column forms no longer collapse into overlapping, unreadable fields on
   mobile.** The Agent config, Provider config, Templates, and schedule forms use
   a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded
