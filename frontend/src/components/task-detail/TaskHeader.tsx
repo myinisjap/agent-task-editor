@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, authedRawFetch, type Task, type Repo, type AgentRun, type WorkflowLabel } from '../../api/client'
+import { api, authedRawFetch, type Task, type Repo, type WorkflowLabel } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
@@ -34,7 +34,6 @@ export default function TaskHeader({
   setEditMaxCostUsd,
   editPriority,
   setEditPriority,
-  runs,
   taskSaving,
   taskSaveError,
   onStartEdit,
@@ -67,7 +66,6 @@ export default function TaskHeader({
   setEditMaxCostUsd: (v: string) => void
   editPriority: number
   setEditPriority: (v: number) => void
-  runs?: AgentRun[]
   taskSaving: boolean
   taskSaveError: string
   onStartEdit: () => void
@@ -85,10 +83,13 @@ export default function TaskHeader({
   /** When set, renders a "Duplicate" button that opens a pre-filled New Task modal for this task. */
   onDuplicate?: () => void
 }) {
-  // Cumulative cost across every run this task has had — a simple client-side
-  // SUM over the already-fetched runs list (all statuses, matching how the
-  // dispatcher's cost-budget guard counts spend; see docs/agents.md).
-  const cumulativeCost = (runs ?? []).reduce((sum, r) => sum + (r.cost_usd ?? 0), 0)
+  // Cumulative cost across every run this task has had (all statuses,
+  // matching how the dispatcher's cost-budget guard counts spend; see
+  // docs/agents.md). Computed server-side (SumTaskCost) and returned on the
+  // task itself, since GET /tasks/{id}/runs is now paginated — a client-side
+  // SUM over one page of runs would silently undercount once a task has more
+  // runs than fit on a page.
+  const cumulativeCost = task.cumulative_cost_usd ?? 0
 
   // Attachments are fetched through the authed client and rendered as blob
   // URLs — a bare <img src="/api/v1/uploads/..."> can't carry the

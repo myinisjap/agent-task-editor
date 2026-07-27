@@ -325,6 +325,56 @@ func (q *Queries) ListWorkflows(ctx context.Context) ([]Workflow, error) {
 	return items, nil
 }
 
+const listWorkflowsPage = `-- name: ListWorkflowsPage :many
+SELECT w.id, w.name, w.description, w.created_at, w.updated_at FROM workflows w
+WHERE (
+    ?1 = ''
+    OR w.created_at < (SELECT created_at FROM workflows WHERE id = ?1)
+    OR (w.created_at = (SELECT created_at FROM workflows WHERE id = ?1) AND w.id < ?1)
+  )
+ORDER BY w.created_at DESC, w.id DESC
+LIMIT ?2
+`
+
+type ListWorkflowsPageParams struct {
+	Column1 interface{} `json:"column_1"`
+	Limit   int64       `json:"limit"`
+}
+
+// Cursor-paginated workflow listing, newest first. Positional params (?1
+// after cursor = created_at then id of last row, ?2 limit) sidestep the
+// sqlc SQLite byte-offset bug; keep this comment ASCII-only. Ordering is
+// (created_at, id) descending so the cursor is a stable total order,
+// matching SearchTasksPage/ListAgentLogsPage.
+func (q *Queries) ListWorkflowsPage(ctx context.Context, arg ListWorkflowsPageParams) ([]Workflow, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkflowsPage, arg.Column1, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workflow
+	for rows.Next() {
+		var i Workflow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateWorkflow = `-- name: UpdateWorkflow :one
 UPDATE workflows
 SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP

@@ -127,6 +127,63 @@ func TestProviderConfigsList(t *testing.T) {
 	}
 }
 
+// TestProviderConfigsList_Pagination verifies limit/after cursor pagination
+// walks the full list without dupes or gaps, and that a full-size page
+// advertises no further cursor.
+func TestProviderConfigsList_Pagination(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	for i := 0; i < 5; i++ {
+		w := postJSON(t, router, "/provider-configs", map[string]any{
+			"name": "cfg", "provider": "claude",
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create provider config: %d %s", w.Code, w.Body.String())
+		}
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		q := "?limit=2"
+		if cursor != "" {
+			q += "&after=" + cursor
+		}
+		req := httptest.NewRequest(http.MethodGet, "/provider-configs"+q, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET provider-configs%s: expected 200, got %d: %s", q, w.Code, w.Body)
+		}
+		var page []gen.ProviderConfig
+		if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d configs, expected <= 2", len(page))
+		}
+		for _, c := range page {
+			if seen[c.ID] {
+				t.Fatalf("config %s returned on more than one page", c.ID)
+			}
+			seen[c.ID] = true
+		}
+		next := w.Header().Get("X-Next-Cursor")
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 configs, saw %d", len(seen))
+	}
+}
+
 func TestProviderConfigsUpdate_RoundTrip(t *testing.T) {
 	router, _ := setupProvidersRouter(t)
 

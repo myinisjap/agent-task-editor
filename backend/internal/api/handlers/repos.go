@@ -45,11 +45,25 @@ func NewReposHandler(q *gen.Queries, repoBaseDir string, pub RepoEventPublisher)
 	return &ReposHandler{q: q, repoBaseDir: repoBaseDir, pub: pub}
 }
 
+// List returns a page of repos, newest first. Query parameters:
+//   - limit: page size (default 200, capped at 500)
+//   - after: cursor (the id of the last repo from the previous page)
+//
+// The body is a plain JSON array. When more repos remain, the id to pass as
+// the next ?after= cursor is returned in the X-Next-Cursor header.
 func (h *ReposHandler) List(w http.ResponseWriter, r *http.Request) {
-	repos, err := h.q.ListRepos(r.Context())
+	limit := parsePageLimit(r.URL.Query().Get("limit"), defaultConfigPageLimit, maxConfigPageLimit)
+	repos, err := h.q.ListReposPage(r.Context(), gen.ListReposPageParams{
+		Column1: r.URL.Query().Get("after"),
+		Limit:   int64(limit) + 1,
+	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if len(repos) > limit {
+		repos = repos[:limit]
+		w.Header().Set("X-Next-Cursor", repos[len(repos)-1].ID)
 	}
 	JSON(w, http.StatusOK, repos)
 }

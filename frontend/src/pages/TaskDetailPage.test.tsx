@@ -93,7 +93,7 @@ function run(overrides: Partial<AgentRun> = {}): AgentRun {
 
 function renderPage(taskFixture: Task, runs: AgentRun[] = []) {
   vi.mocked(api.tasks.get).mockResolvedValue(taskFixture)
-  vi.mocked(api.tasks.runs).mockResolvedValue(runs)
+  vi.mocked(api.tasks.runs).mockResolvedValue({ items: runs, nextCursor: null })
   vi.mocked(api.workflows.get).mockResolvedValue(workflow())
 
   return render(

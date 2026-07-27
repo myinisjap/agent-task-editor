@@ -163,6 +163,58 @@ func (q *Queries) ListProviderConfigs(ctx context.Context) ([]ProviderConfig, er
 	return items, nil
 }
 
+const listProviderConfigsPage = `-- name: ListProviderConfigsPage :many
+SELECT p.id, p.name, p.provider, p.model, p.env, p.created_at, p.updated_at FROM provider_configs p
+WHERE (
+    ?1 = ''
+    OR p.created_at < (SELECT created_at FROM provider_configs WHERE id = ?1)
+    OR (p.created_at = (SELECT created_at FROM provider_configs WHERE id = ?1) AND p.id < ?1)
+  )
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT ?2
+`
+
+type ListProviderConfigsPageParams struct {
+	Column1 interface{} `json:"column_1"`
+	Limit   int64       `json:"limit"`
+}
+
+// Cursor-paginated provider-config listing, newest first. Positional params
+// (?1 after cursor = created_at then id of last row, ?2 limit) sidestep the
+// sqlc SQLite byte-offset bug; keep this comment ASCII-only. Ordering is
+// (created_at, id) descending so the cursor is a stable total order,
+// matching SearchTasksPage/ListAgentLogsPage.
+func (q *Queries) ListProviderConfigsPage(ctx context.Context, arg ListProviderConfigsPageParams) ([]ProviderConfig, error) {
+	rows, err := q.db.QueryContext(ctx, listProviderConfigsPage, arg.Column1, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProviderConfig
+	for rows.Next() {
+		var i ProviderConfig
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Provider,
+			&i.Model,
+			&i.Env,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateProviderConfig = `-- name: UpdateProviderConfig :one
 UPDATE provider_configs
 SET name = ?, provider = ?, model = ?, env = ?, updated_at = CURRENT_TIMESTAMP

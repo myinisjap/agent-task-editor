@@ -70,7 +70,12 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 			}
 		}
 		if !authorized {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			// This runs before websocket.Accept, so it's a normal HTTP
+			// response — match handlers.Err's {"error": "..."} JSON shape
+			// rather than plain text.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
 	}

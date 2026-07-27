@@ -34,6 +34,14 @@ type taskResponse struct {
 	// pickup-eligible (e.g. blocked, paused, archived, already running, or on
 	// a non-agent-triggerable label).
 	QueuePosition *int `json:"queue_position"`
+	// CumulativeCostUsd is the task's lifetime recorded cost across every run
+	// regardless of status (SumTaskCost), matching how the dispatcher's
+	// cost-budget guard counts spend. Only populated on the single-task GET
+	// (Get), since GET /tasks/{id}/runs is now paginated and a client-side sum
+	// over one page of runs would silently undercount once a task has more
+	// runs than fit on a page (see TaskHeader's cost badge). Omitted (zero
+	// value) on list responses to avoid an extra query per row.
+	CumulativeCostUsd float64 `json:"cumulative_cost_usd"`
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the

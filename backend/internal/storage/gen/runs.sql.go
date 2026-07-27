@@ -412,6 +412,68 @@ func (q *Queries) ListAgentRuns(ctx context.Context, taskID string) ([]AgentRun,
 	return items, nil
 }
 
+const listAgentRunsPage = `-- name: ListAgentRunsPage :many
+SELECT r.id, r.task_id, r.agent_config_id, r.status, r.feedback, r.stored_info, r.started_at, r.completed_at, r.created_at, r.notes, r.input_tokens, r.output_tokens, r.cost_usd, r.session_id, r.cost_unknown FROM agent_runs r
+WHERE r.task_id = ?1
+  AND (
+    ?2 = ''
+    OR r.created_at < (SELECT created_at FROM agent_runs WHERE id = ?2)
+    OR (r.created_at = (SELECT created_at FROM agent_runs WHERE id = ?2) AND r.id < ?2)
+  )
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT ?3
+`
+
+type ListAgentRunsPageParams struct {
+	TaskID  string      `json:"task_id"`
+	Column2 interface{} `json:"column_2"`
+	Limit   int64       `json:"limit"`
+}
+
+// Cursor-paginated agent-run listing for a task, newest first. Positional
+// params (?1 task_id, ?2 after cursor = created_at then id of last row, ?3
+// limit) sidestep the sqlc SQLite byte-offset bug; keep this comment
+// ASCII-only. Ordering is (created_at, id) descending so the cursor is a
+// stable total order, matching SearchTasksPage/ListAgentLogsPage.
+func (q *Queries) ListAgentRunsPage(ctx context.Context, arg ListAgentRunsPageParams) ([]AgentRun, error) {
+	rows, err := q.db.QueryContext(ctx, listAgentRunsPage, arg.TaskID, arg.Column2, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentRun
+	for rows.Next() {
+		var i AgentRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.AgentConfigID,
+			&i.Status,
+			&i.Feedback,
+			&i.StoredInfo,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.Notes,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
+			&i.SessionID,
+			&i.CostUnknown,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunDurationsByAgentConfig = `-- name: ListRunDurationsByAgentConfig :many
 SELECT ar.agent_config_id AS agent_config_id,
        CAST((julianday(ar.completed_at) - julianday(ar.started_at)) * 86400.0 AS REAL) AS duration_secs

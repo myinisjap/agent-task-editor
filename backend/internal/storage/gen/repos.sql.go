@@ -206,6 +206,70 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 	return items, nil
 }
 
+const listReposPage = `-- name: ListReposPage :many
+SELECT r.id, r.name, r.path, r.remote_url, r.workflow_id, r.created_at, r.issue_sync_enabled, r.issue_sync_label, r.clone_status, r.clone_error, r.issue_writeback_enabled, r.pr_review_auto_transition_enabled, r.issue_sync_update_policy, r.issue_sync_gone_action, r.issue_sync_gone_label, r.issue_comment_sync_enabled, r.max_concurrent_runs, r.issue_writeback_label FROM repos r
+WHERE (
+    ?1 = ''
+    OR r.created_at < (SELECT created_at FROM repos WHERE id = ?1)
+    OR (r.created_at = (SELECT created_at FROM repos WHERE id = ?1) AND r.id < ?1)
+  )
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT ?2
+`
+
+type ListReposPageParams struct {
+	Column1 interface{} `json:"column_1"`
+	Limit   int64       `json:"limit"`
+}
+
+// Cursor-paginated repo listing, newest first. Positional params (?1 after
+// cursor = created_at then id of last row, ?2 limit) sidestep the sqlc
+// SQLite byte-offset bug; keep this comment ASCII-only. Ordering is
+// (created_at, id) descending so the cursor is a stable total order,
+// matching SearchTasksPage/ListAgentLogsPage. ListIssueSyncRepos (the
+// internal issue-sync-enabled lookup) is deliberately left unpaginated.
+func (q *Queries) ListReposPage(ctx context.Context, arg ListReposPageParams) ([]Repo, error) {
+	rows, err := q.db.QueryContext(ctx, listReposPage, arg.Column1, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Repo
+	for rows.Next() {
+		var i Repo
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Path,
+			&i.RemoteUrl,
+			&i.WorkflowID,
+			&i.CreatedAt,
+			&i.IssueSyncEnabled,
+			&i.IssueSyncLabel,
+			&i.CloneStatus,
+			&i.CloneError,
+			&i.IssueWritebackEnabled,
+			&i.PrReviewAutoTransitionEnabled,
+			&i.IssueSyncUpdatePolicy,
+			&i.IssueSyncGoneAction,
+			&i.IssueSyncGoneLabel,
+			&i.IssueCommentSyncEnabled,
+			&i.MaxConcurrentRuns,
+			&i.IssueWritebackLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setRepoCloneStatus = `-- name: SetRepoCloneStatus :exec
 UPDATE repos
 SET clone_status = ?, clone_error = ?

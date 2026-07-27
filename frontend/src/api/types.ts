@@ -1308,7 +1308,12 @@ export interface paths {
         /** List agent runs for a task */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Page size. Defaults to 100; values above 500 are clamped to 500. */
+                    limit?: number;
+                    /** @description Cursor for the next page: the id of the last run from the previous page (returned in that response's X-Next-Cursor header). Omit for the first page. */
+                    after?: string;
+                };
                 header?: never;
                 path: {
                     id: string;
@@ -1317,8 +1322,11 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
+                /** @description A page of the task's agent runs, newest first. When more runs remain, the id to pass as the next `after` cursor is returned in the X-Next-Cursor header (absent on the final page). The task's lifetime cumulative cost is not derivable from a single page; see Task.cumulative_cost_usd on GET /tasks/{id}. */
                 200: {
                     headers: {
+                        /** @description Cursor for the next page; absent when no more runs remain. */
+                        "X-Next-Cursor"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -1946,15 +1954,23 @@ export interface paths {
         /** List workflows */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Page size. Defaults to 200; values above 500 are clamped to 500. */
+                    limit?: number;
+                    /** @description Cursor for the next page: the id of the last workflow from the previous page (returned in that response's X-Next-Cursor header). Omit for the first page. */
+                    after?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
             };
             requestBody?: never;
             responses: {
+                /** @description A page of workflows, newest first. When more workflows remain, the id to pass as the next `after` cursor is returned in the X-Next-Cursor header (absent on the final page). */
                 200: {
                     headers: {
+                        /** @description Cursor for the next page; absent when no more workflows remain. */
+                        "X-Next-Cursor"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -2235,15 +2251,23 @@ export interface paths {
         /** List agent configs */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Page size. Defaults to 200; values above 500 are clamped to 500. */
+                    limit?: number;
+                    /** @description Cursor for the next page: the id of the last agent config from the previous page (returned in that response's X-Next-Cursor header). Omit for the first page. */
+                    after?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
             };
             requestBody?: never;
             responses: {
+                /** @description A page of agent configs (enabled or not), newest first. When more configs remain, the id to pass as the next `after` cursor is returned in the X-Next-Cursor header (absent on the final page). */
                 200: {
                     headers: {
+                        /** @description Cursor for the next page; absent when no more configs remain. */
+                        "X-Next-Cursor"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -2460,15 +2484,23 @@ export interface paths {
         /** List provider configs */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Page size. Defaults to 200; values above 500 are clamped to 500. */
+                    limit?: number;
+                    /** @description Cursor for the next page: the id of the last provider config from the previous page (returned in that response's X-Next-Cursor header). Omit for the first page. */
+                    after?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
             };
             requestBody?: never;
             responses: {
+                /** @description A page of provider configs, newest first. When more configs remain, the id to pass as the next `after` cursor is returned in the X-Next-Cursor header (absent on the final page). */
                 200: {
                     headers: {
+                        /** @description Cursor for the next page; absent when no more configs remain. */
+                        "X-Next-Cursor"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -2632,15 +2664,23 @@ export interface paths {
         /** List repos */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Page size. Defaults to 200; values above 500 are clamped to 500. */
+                    limit?: number;
+                    /** @description Cursor for the next page: the id of the last repo from the previous page (returned in that response's X-Next-Cursor header). Omit for the first page. */
+                    after?: string;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
             };
             requestBody?: never;
             responses: {
+                /** @description A page of repos, newest first. When more repos remain, the id to pass as the next `after` cursor is returned in the X-Next-Cursor header (absent on the final page). */
                 200: {
                     headers: {
+                        /** @description Cursor for the next page; absent when no more repos remain. */
+                        "X-Next-Cursor"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -3740,6 +3780,11 @@ export interface components {
             priority?: -1 | 0 | 1 | 2;
             /** @description Derived, read-time 0-based position in the current agent-pickup queue (priority DESC, created_at ASC) among tasks eligible for dispatch, computed only when the worker pool has no free slot (all MAX_WORKERS busy). Null/absent when the task is not currently pickup-eligible (e.g. blocked, paused, archived, or not on an agent-triggerable label) or when the pool has idle capacity and the task would be dispatched immediately. */
             queue_position?: number | null;
+            /**
+             * Format: double
+             * @description Task's lifetime recorded cost across every run regardless of status (matching how the dispatcher's cost-budget guard counts spend). Only populated on GET /tasks/{id}; omitted (0) on list responses. Needed because GET /tasks/{id}/runs is paginated, so a client-side sum over a single page of runs would undercount once a task has more runs than fit on one page.
+             */
+            cumulative_cost_usd?: number;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

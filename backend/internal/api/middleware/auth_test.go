@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
@@ -61,6 +62,12 @@ func TestBearerAuth_NoHeader_Rejects(t *testing.T) {
 	}
 	if www := w.Header().Get("WWW-Authenticate"); www == "" {
 		t.Error("expected WWW-Authenticate header in 401 response")
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected JSON content-type on 401 response, got %q", ct)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"unauthorized"}` {
+		t.Errorf("expected JSON error body, got %q", got)
 	}
 }
 

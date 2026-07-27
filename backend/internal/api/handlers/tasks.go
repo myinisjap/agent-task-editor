@@ -47,10 +47,14 @@ func validPriority(p int) bool {
 // max) and ?after=/?before= cursors; the response carries the next cursor in a
 // header so the body shape stays a plain array.
 const (
-	defaultTaskPageLimit = 200
-	maxTaskPageLimit     = 500
-	defaultLogPageLimit  = 200
-	maxLogPageLimit      = 1000
+	defaultTaskPageLimit   = 200
+	maxTaskPageLimit       = 500
+	defaultLogPageLimit    = 200
+	maxLogPageLimit        = 1000
+	defaultRunPageLimit    = 100
+	maxRunPageLimit        = 500
+	defaultConfigPageLimit = 200
+	maxConfigPageLimit     = 500
 )
 
 // parsePageLimit parses a ?limit= value, falling back to def when empty or
@@ -383,6 +387,9 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context(), ids))
 	resp = applyRollup(resp, h.subtaskRollupMap(r.Context(), ids))
 	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
+	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
+		resp.CumulativeCostUsd = cost
+	}
 	JSON(w, http.StatusOK, resp)
 }
 

@@ -125,11 +125,26 @@ func NewAgentsHandler(q *gen.Queries) *AgentsHandler {
 	return &AgentsHandler{q: q}
 }
 
+// List returns a page of agent configs (enabled or not), newest first. Query
+// parameters:
+//   - limit: page size (default 200, capped at 500)
+//   - after: cursor (the id of the last config from the previous page)
+//
+// The body is a plain JSON array. When more configs remain, the id to pass
+// as the next ?after= cursor is returned in the X-Next-Cursor header.
 func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
-	configs, err := h.q.ListAllAgentConfigs(r.Context())
+	limit := parsePageLimit(r.URL.Query().Get("limit"), defaultConfigPageLimit, maxConfigPageLimit)
+	configs, err := h.q.ListAllAgentConfigsPage(r.Context(), gen.ListAllAgentConfigsPageParams{
+		Column1: r.URL.Query().Get("after"),
+		Limit:   int64(limit) + 1,
+	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if len(configs) > limit {
+		configs = configs[:limit]
+		w.Header().Set("X-Next-Cursor", configs[len(configs)-1].ID)
 	}
 	safe := make([]agentConfigView, len(configs))
 	for i, c := range configs {

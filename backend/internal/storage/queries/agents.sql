@@ -4,6 +4,23 @@ SELECT * FROM agent_configs WHERE enabled = 1 ORDER BY priority ASC, created_at 
 -- name: ListAllAgentConfigs :many
 SELECT * FROM agent_configs ORDER BY created_at DESC;
 
+-- name: ListAllAgentConfigsPage :many
+-- Cursor-paginated agent-config listing (all, enabled or not), newest first.
+-- Positional params (?1 after cursor = created_at then id of last row, ?2
+-- limit) sidestep the sqlc SQLite byte-offset bug; keep this comment
+-- ASCII-only. Ordering is (created_at, id) descending so the cursor is a
+-- stable total order, matching SearchTasksPage/ListAgentLogsPage. Used only
+-- by the HTTP List handler; ListAgentConfigs (the internal enabled-only
+-- lookup) is deliberately left unpaginated.
+SELECT a.* FROM agent_configs a
+WHERE (
+    ?1 = ''
+    OR a.created_at < (SELECT created_at FROM agent_configs WHERE id = ?1)
+    OR (a.created_at = (SELECT created_at FROM agent_configs WHERE id = ?1) AND a.id < ?1)
+  )
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT ?2;
+
 -- name: GetAgentConfig :one
 SELECT * FROM agent_configs WHERE id = ?;
 

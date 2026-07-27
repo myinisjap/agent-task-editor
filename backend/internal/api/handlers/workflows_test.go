@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,6 +50,70 @@ func TestWorkflows_List_ContainsSeeded(t *testing.T) {
 	}
 	if len(wfs) == 0 {
 		t.Error("expected at least the seeded default workflow")
+	}
+}
+
+// TestWorkflows_List_Pagination verifies limit/after cursor pagination walks
+// the full workflow list (including the seeded default) without dupes or
+// gaps.
+func TestWorkflows_List_Pagination(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+
+	// Create 4 more workflows on top of the seeded default (5 total).
+	for i := 0; i < 4; i++ {
+		body := map[string]string{"name": fmt.Sprintf("wf-%d", i)}
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/workflows", jsonBody(t, body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create workflow: %d %s", w.Code, w.Body.String())
+		}
+	}
+
+	type wfID struct {
+		ID string `json:"id"`
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		qs := "?limit=2"
+		if cursor != "" {
+			qs += "&after=" + cursor
+		}
+		req := httptest.NewRequest(http.MethodGet, "/workflows"+qs, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET workflows%s: expected 200, got %d: %s", qs, w.Code, w.Body)
+		}
+		var page []wfID
+		if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d workflows, expected <= 2", len(page))
+		}
+		for _, wf := range page {
+			if seen[wf.ID] {
+				t.Fatalf("workflow %s returned on more than one page", wf.ID)
+			}
+			seen[wf.ID] = true
+		}
+		next := w.Header().Get("X-Next-Cursor")
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 workflows, saw %d", len(seen))
 	}
 }
 

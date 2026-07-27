@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -55,6 +56,63 @@ func mkProviderConfig(t *testing.T, q *gen.Queries) string {
 		t.Fatalf("create provider config: %v", err)
 	}
 	return pc.ID
+}
+
+// TestAgentsList_Pagination verifies limit/after cursor pagination walks the
+// full agent-config list (enabled or not) without dupes or gaps.
+func TestAgentsList_Pagination(t *testing.T) {
+	r, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	for i := 0; i < 5; i++ {
+		w := postJSON(t, r, "/agents", map[string]any{
+			"name": "agent", "provider_config_id": pcID,
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create agent config: %d %s", w.Code, w.Body.String())
+		}
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		qs := "?limit=2"
+		if cursor != "" {
+			qs += "&after=" + cursor
+		}
+		req := httptest.NewRequest(http.MethodGet, "/agents"+qs, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET agents%s: expected 200, got %d: %s", qs, w.Code, w.Body)
+		}
+		var page []agentConfigResponse
+		if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d configs, expected <= 2", len(page))
+		}
+		for _, c := range page {
+			if seen[c.ID] {
+				t.Fatalf("config %s returned on more than one page", c.ID)
+			}
+			seen[c.ID] = true
+		}
+		next := w.Header().Get("X-Next-Cursor")
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 configs, saw %d", len(seen))
+	}
 }
 
 // TestAgentsCreate_EnabledPluginsAndMCPServers_DefaultOff verifies that

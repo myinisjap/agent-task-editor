@@ -146,6 +146,34 @@ triggers the "Release" workflow the same way.
   capability data lives in `frontend/src/lib/providerCapabilities.ts`, the
   single source of truth also used to keep `docs/agents.md`'s capability
   matrix in sync.
+- **`GET /tasks/{id}/runs` and the config list endpoints are now cursor-
+  paginated**, extending the pattern already used by `GET /tasks` and run
+  logs. `GET /tasks/{id}/runs` (default limit 100, cap 500) is the one that
+  matters most — a long-lived task with retries/reruns can accumulate runs
+  indefinitely, and every task-detail load used to fetch every one of them.
+  `GET /provider-configs`, `GET /agents`, `GET /repos`, and `GET /workflows`
+  (all default limit 200, cap 500) get the same treatment for consistency.
+  Each accepts `?limit=`/`?after=` and returns the next-page cursor in an
+  `X-Next-Cursor` header, mirroring `GET /tasks`. Since a task's lifetime
+  cost is no longer derivable by summing a single page of runs, `GET
+  /tasks/{id}` now also returns `cumulative_cost_usd` (computed server-side
+  across every run, any status) and the task-detail cost badge reads it from
+  there instead of summing the fetched runs client-side. The frontend's
+  `api.workflows.list()`/`api.agents.list()`/`api.providerConfigs.list()`/
+  `api.repos.list()` still resolve to a plain array — the client transparently
+  pages through `X-Next-Cursor` and concatenates — so no dropdown/store
+  callers needed to change.
+- **Every `/api/v1/*` error response is now JSON with a consistent shape.**
+  A handful of paths — the chat/terminal WebSocket upgrade's pre-upgrade
+  checks (`internal/api/handlers/chat.go`), the bearer-auth 401
+  (`middleware/auth.go`), and the main WebSocket endpoint's pre-upgrade auth
+  rejection (`internal/ws/client.go`) — previously returned plain-text
+  `http.Error` bodies, forcing clients to special-case exactly the paths
+  where clean error handling matters most (a misconfigured token). They now
+  all emit `{"error": "..."}` like every other handler. A genuine WebSocket
+  protocol-level upgrade failure (inside `websocket.Accept` itself, after
+  auth has already passed) is unchanged — there's no HTTP response left to
+  shape at that point, so it's just logged.
 - **`GET /readyz` readiness probe.** Unlike `/healthz` (a static liveness
   stub), `/readyz` pings the database and checks that the dispatch loop has
   ticked recently, returning `503` if either check fails. The Docker Compose
