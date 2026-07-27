@@ -50,6 +50,7 @@ func main() {
 		slog.Error("failed to load config", "err", err)
 		os.Exit(1)
 	}
+	agent.SetGitTimeout(cfg.GitTimeout)
 
 	slog.Info("agent-task-editor starting", "version", Version)
 	if cfg.APIToken != "" {
