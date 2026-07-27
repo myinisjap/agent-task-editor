@@ -408,6 +408,30 @@ func TestLoad_InvalidChatIdleTimeout_UsesDefault(t *testing.T) {
 	}
 }
 
+func TestLoad_GitTimeoutEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("GIT_TIMEOUT", "45s")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.GitTimeout != 45*time.Second {
+		t.Errorf("expected git timeout 45s, got %v", cfg.GitTimeout)
+	}
+}
+
+func TestLoad_InvalidGitTimeout_UsesDefault(t *testing.T) {
+	t.Setenv("GIT_TIMEOUT", "not-a-duration")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.GitTimeout != config.Defaults().GitTimeout {
+		t.Errorf("expected default git timeout on invalid input, got %v", cfg.GitTimeout)
+	}
+}
+
 func TestLoad_LogRetentionFromYAML(t *testing.T) {
 	t.Setenv("LOG_RETENTION_DAYS", "")
 	t.Setenv("LOG_RETENTION_INTERVAL", "")
