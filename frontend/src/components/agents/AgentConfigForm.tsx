@@ -47,6 +47,7 @@ export default function AgentConfigForm({
   const sessionResumeCap = getCapability(providerStr, 'sessionResume')
   const costTrackingCap = getCapability(providerStr, 'costTracking')
   const labelTransitionsCap = getCapability(providerStr, 'labelTransitions')
+  const maxTurnsCap = getCapability(providerStr, 'maxTurns')
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -146,6 +147,11 @@ export default function AgentConfigForm({
             min={1}
             max={200}
           />
+          {form.max_turns > 0 && providerStr && maxTurnsCap.support !== 'full' && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ {maxTurnsCap.note ?? `Max turns is not enforced for the ${providerStr} provider.`}
+            </p>
+          )}
         </Field>
 
         <Field label="Max retries" hint="Auto-retries for transient errors (rate limits, network blips). 0 disables auto-retry.">

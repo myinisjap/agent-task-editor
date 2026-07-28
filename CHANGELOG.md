@@ -243,6 +243,16 @@ triggers the "Release" workflow the same way.
   `task.label_changed` handler so it clears immediately on any label move
   instead of staying stuck until an unrelated `agent_done` or a WS
   reconnect happened to clean it up.
+- **The agent config form now warns when `max_turns` is set on a provider
+  that doesn't enforce it.** `codex_cli` and `opencode` have no turn-cap
+  flag, so a run on those providers is only bounded by `timeout_secs`
+  regardless of `max_turns`; the form previously accepted and saved the
+  field on those providers with no indication it does nothing. The form now
+  reads the existing `maxTurns` provider capability (already correct in
+  `providerCapabilities.ts`) and shows an inline warning under the field
+  when a cap is set (`max_turns > 0`) on a provider whose support is not
+  `full`, mirroring the existing cost-tracking/subtasks/session-resume
+  capability warnings (#286).
 - **`qwen_code`'s `command_denylist` is now enforced; the no-op
   `command_allowlist` mapping was removed.** `buildQwenArgs` previously
   translated `command_allowlist` patterns into `--allowed-tools
