@@ -89,8 +89,15 @@ func classifyStreamJSON(line string) streamEvent {
 			switch subtype {
 			case "success":
 				outcome = "success"
-			case "error_max_turns", "error":
+			case "error":
 				outcome = "failure"
+				// error_max_turns is intentionally NOT mapped to a "failure"
+				// outcome here: it is signalled structurally via Class
+				// (ClassMaxTurns, from classifyResultMessage below) / the
+				// provider-level agent.ErrMaxTurns instead, so pool.go can
+				// escalate to waiting_human rather than resolving a normal
+				// completed+failure outcome that fires the workflow's failure
+				// edge and re-dispatches with a fresh turn budget.
 			}
 		}
 		var apiErrorStatus int
@@ -116,7 +123,7 @@ func classifyStreamJSON(line string) streamEvent {
 // stream-json "result" envelope — a *typed* terminal event — so the providers
 // can prefer it over sniffing arbitrary log lines. Returns ClassNone for a
 // successful result, or for an error whose text carries no recognizable
-// infra/auth/rate-limit signal (a genuine failure such as error_max_turns).
+// infra/auth/rate-limit/max-turns signal.
 func classifyResultMessage(raw map[string]json.RawMessage) agent.Classification {
 	subtype := strings.Trim(string(raw["subtype"]), `"`)
 	isErr := false
@@ -130,12 +137,22 @@ func classifyResultMessage(raw map[string]json.RawMessage) agent.Classification 
 	// The structured api_error_status is authoritative when present — more
 	// robust than sniffing the human-readable result text, which can change
 	// wording across CLI releases (e.g. Claude's session-limit message
-	// carries no "429"/"rate limit" substring at all).
+	// carries no "429"/"rate limit" substring at all). Checked ahead of the
+	// max-turns subtype below so a result that carries BOTH a 429 and
+	// error_max_turns still classifies as a rate limit (back off, don't
+	// escalate).
 	if v, ok := raw["api_error_status"]; ok {
 		var status int
 		if err := json.Unmarshal(v, &status); err == nil && status == 429 {
 			return agent.ClassRateLimit
 		}
+	}
+	// error_max_turns is a structural signal (the subtype itself), not text
+	// to sniff: the agent hit its configured turn cap. Escalate rather than
+	// treat as a genuine task failure — re-dispatching would silently hand
+	// the next run a fresh turn budget.
+	if subtype == "error_max_turns" {
+		return agent.ClassMaxTurns
 	}
 	// Classify the structured error text, if any.
 	if v, ok := raw["result"]; ok {

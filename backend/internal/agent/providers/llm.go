@@ -282,7 +282,9 @@ func (r *LLMRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- 
 		}
 	}
 
-	return agent.Result{Status: "failed"}, fmt.Errorf("exceeded max turns (%d)", maxTurns)
+	res := agent.Result{Status: "failed"}
+	acc.attach(ctx, &res)
+	return res, &agent.ErrMaxTurns{MaxTurns: maxTurns}
 }
 
 func (r *LLMRunner) executeTool(ctx context.Context, repoPath string, policy CommandPolicy, tc toolCall, transitions []agent.TransitionHint) (string, *agent.Result) {

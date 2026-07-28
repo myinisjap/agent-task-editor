@@ -29,3 +29,21 @@ func (e *ErrTransient) Transient() bool { return true }
 type transientErr interface {
 	Transient() bool
 }
+
+// ErrMaxTurns marks a run as having exhausted its configured turn budget
+// (AgentConfig.MaxTurns) without finishing. Providers that enforce the cap in
+// a Go-side loop (anthropic, llm) return this instead of a bare error so
+// pool.handleProviderError can detect it via errors.As and escalate to
+// waiting_human — re-dispatching would hand the next run a fresh turn budget,
+// silently voiding the cap.
+//
+// It deliberately does NOT implement Transient(): turn exhaustion must not
+// consume the task's transient-retry budget, and must not be caught by the
+// transientErr check in handleProviderError.
+type ErrMaxTurns struct {
+	MaxTurns int
+}
+
+func (e *ErrMaxTurns) Error() string {
+	return fmt.Sprintf("exceeded max turns (%d)", e.MaxTurns)
+}

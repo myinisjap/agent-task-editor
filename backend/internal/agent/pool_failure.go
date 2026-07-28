@@ -103,6 +103,60 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, reason strin
 	}
 }
 
+// handleMaxTurnsExhausted marks the run waiting_human when the agent hit its
+// configured max_turns cap without finishing. Unlike handleTransientFailure,
+// this never auto-retries and never touches the transient-retry budget —
+// turn exhaustion is neither an infra blip nor a genuine task failure, it's
+// the operator's own cap doing its job. Re-dispatching (as a plain "failed"/
+// ClassGenuine run would) would silently hand the next run a fresh turn
+// budget, voiding the cap. The task's active-run lock is deliberately left
+// set (no ClearActiveAgentRun) so it stays locked until a human raises
+// max_turns, replies, or otherwise re-dispatches — consistent with every
+// other waiting_human escalation (login, exhausted retry budget, exhausted
+// cost budget, rework loop).
+func (p *Pool) handleMaxTurnsExhausted(ctx context.Context, job Job, result Result, mt *ErrMaxTurns, startedAt time.Time) {
+	bg := context.Background()
+	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
+
+	msg := fmt.Sprintf("Agent hit its turn limit (%d turns) without completing. Review the work so far and re-dispatch or raise max_turns.", mt.MaxTurns)
+
+	costUnknown := int64(0)
+	if result.CostUnknown {
+		costUnknown = 1
+	}
+	if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
+		Status:       "waiting_human",
+		StoredInfo:   result.StoredInfo,
+		Notes:        &msg,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		CostUnknown:  costUnknown,
+		ID:           job.RunID,
+	}); err != nil {
+		log.Warn("pool: max-turns escalation: set run status", "err", err)
+	}
+
+	metrics.RunClassificationTotal.WithLabelValues(string(ClassMaxTurns)).Inc()
+	metrics.RunTerminalTotal.WithLabelValues("waiting_human").Inc()
+	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
+
+	if p.pub != nil {
+		p.pub.Publish("task.needs_human", map[string]any{
+			"task_id": job.Input.Task.ID,
+			"run_id":  job.RunID,
+			"message": msg,
+		})
+		p.pub.Publish("task.agent_done", map[string]any{
+			"task_id": job.Input.Task.ID,
+			"run_id":  job.RunID,
+			"status":  "waiting_human",
+		})
+	}
+
+	log.Warn("pool: agent hit max turns, escalating to waiting_human", "max_turns", mt.MaxTurns)
+}
+
 // handleCancelled records a human-requested stop. It marks the run "cancelled"
 // with a note, resets the transient-retry budget (a cancel is not a failure),
 // pauses the task, and clears the active-run lock. Pausing — rather than only

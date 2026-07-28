@@ -50,6 +50,12 @@ func TestClassifyLine(t *testing.T) {
 		// No signal.
 		{"plain text", "compiling package foo", ClassNone},
 		{"empty", "", ClassNone},
+		// ClassMaxTurns is deliberately NOT in classPatterns: it is a
+		// structural signal (subtype/typed error), not text-sniffed, so a raw
+		// line merely mentioning "max turns" must not be classified by
+		// ClassifyLine — see classifyResultMessage in
+		// providers/parse_streamjson.go for the actual structural check.
+		{"max turns text is not structurally classified", "exceeded max turns (50)", ClassNone},
 
 		// Case-insensitivity.
 		{"upper rate limit", "RATE LIMIT EXCEEDED", ClassRateLimit},
