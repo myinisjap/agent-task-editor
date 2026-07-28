@@ -220,6 +220,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		rateLimited  bool
 		rateLimitMsg string
 		transient    bool
+		maxTurnsHit  bool
 		usage        *runUsage
 		mu           sync.Mutex
 	)
@@ -276,6 +277,10 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 			case agent.ClassTransient:
 				mu.Lock()
 				transient = true
+				mu.Unlock()
+			case agent.ClassMaxTurns:
+				mu.Lock()
+				maxTurnsHit = true
 				mu.Unlock()
 			}
 		}
@@ -345,6 +350,24 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		if tr {
 			return agent.Result{Status: "failed", SessionID: finalSession}, info, &agent.ErrTransient{Cause: fmt.Errorf("claude CLI exited with transient infra error: %w", err)}
 		}
+	}
+
+	// claude exits 0 on error_max_turns (unlike auth errors/crashes, which
+	// exit non-zero), so this must be checked regardless of err — otherwise
+	// the MCP/outcome fallthrough below would report the run as a normal
+	// "completed" result and the turn cap would silently have no effect.
+	mu.Lock()
+	mth := maxTurnsHit
+	mu.Unlock()
+	if mth {
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "claude hit its configured max-turns limit", At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		configuredMaxTurns := input.AgentConfig.MaxTurns
+		if configuredMaxTurns <= 0 {
+			configuredMaxTurns = 50
+		}
+		return res, info, &agent.ErrMaxTurns{MaxTurns: int(configuredMaxTurns)}
 	}
 
 	// MCP result takes priority; fall back to OUTCOME text parsing if the

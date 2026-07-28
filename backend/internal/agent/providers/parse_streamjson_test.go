@@ -159,9 +159,18 @@ func TestClassifyResultMessage(t *testing.T) {
 			want: agent.ClassNone,
 		},
 		{
-			name: "error_max_turns is genuine (no infra signal)",
+			name: "error_max_turns escalates to waiting_human, not a genuine failure",
 			line: `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns"}`,
-			want: agent.ClassNone,
+			want: agent.ClassMaxTurns,
+		},
+		{
+			// A result that hit the turn cap but ALSO carries a 429 must still
+			// classify as rate limit — back off and retry against the retry
+			// budget, don't escalate. The api_error_status check must be
+			// evaluated before the error_max_turns subtype check.
+			name: "error_max_turns with api_error_status 429 is still rate limit",
+			line: `{"type":"result","subtype":"error_max_turns","is_error":true,"api_error_status":429,"result":"reached max turns"}`,
+			want: agent.ClassRateLimit,
 		},
 		{
 			name: "error with rate-limit text",
@@ -195,6 +204,23 @@ func TestClassifyResultMessage(t *testing.T) {
 				t.Errorf("classifyStreamJSON(%q) classification = %q, want %q", tc.line, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestClassifyStreamJSON_ErrorMaxTurnsOutcome verifies that error_max_turns
+// no longer maps to outcome:"failure". That mapping used to make a max-turns
+// result look like a normal completed+failure run (firing the workflow's
+// failure edge and getting re-dispatched with a fresh turn budget) — it must
+// now be signalled purely via Class (ClassMaxTurns) so the pool can escalate
+// to waiting_human instead.
+func TestClassifyStreamJSON_ErrorMaxTurnsOutcome(t *testing.T) {
+	line := `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns"}`
+	ev := classifyStreamJSON(line)
+	if ev.Outcome != "" {
+		t.Errorf("want empty outcome for error_max_turns, got %q", ev.Outcome)
+	}
+	if ev.Class != agent.ClassMaxTurns {
+		t.Errorf("want Class=ClassMaxTurns, got %q", ev.Class)
 	}
 }
 

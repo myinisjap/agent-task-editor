@@ -217,7 +217,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// short-circuits the rest of the run; a genuine error falls through as a plain
 	// failed result.
 	if err != nil {
-		if p.handleProviderError(ctx, job, err, startedAt, log) {
+		if p.handleProviderError(ctx, job, err, result, startedAt, log) {
 			return
 		}
 		result = Result{Status: "failed"}
@@ -327,12 +327,24 @@ func (p *Pool) persistRunSession(job Job, result Result, log *slog.Logger) {
 	}
 }
 
-// handleProviderError classifies a non-nil provider error. A rate-limit or
-// transient error is fully handled here (recording the failure and scheduling
-// retry/escalation) and returns true so run() short-circuits. A genuine error
-// is logged and returns false, letting run() fall through as a plain failed
-// result.
-func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, startedAt time.Time, log *slog.Logger) bool {
+// handleProviderError classifies a non-nil provider error. A rate-limit,
+// transient, or max-turns error is fully handled here (recording the failure
+// and scheduling retry/escalation) and returns true so run() short-circuits.
+// A genuine error is logged and returns false, letting run() fall through as
+// a plain failed result. result carries any usage the provider accumulated
+// before returning the error, so it can be preserved on the persisted run row.
+func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, result Result, startedAt time.Time, log *slog.Logger) bool {
+	// Checked before the transientErr interface check below (belt-and-
+	// suspenders): ErrMaxTurns deliberately does NOT implement Transient(),
+	// but ordering this first guarantees a turn-limit run can never be
+	// mistaken for a transient one even if that changes.
+	var mt *ErrMaxTurns
+	if errors.As(err, &mt) {
+		log.Warn("pool: agent run hit max turns", "classification", string(ClassMaxTurns), "max_turns", mt.MaxTurns)
+		p.handleMaxTurnsExhausted(ctx, job, result, mt, startedAt)
+		return true
+	}
+
 	var rl *ErrRateLimit
 	if errors.As(err, &rl) {
 		log.Warn("pool: agent run rate limited", "classification", string(ClassRateLimit), "reset_at", rl.ResetAt, "msg", rl.Message)

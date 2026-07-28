@@ -1,6 +1,8 @@
 package providers
 
 import (
+	"context"
+	"os"
 	"testing"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -85,5 +87,60 @@ func TestBuildQwenArgs_NoCommandAllowlist_NoExtraFlags(t *testing.T) {
 		if a == "--allowed-tools" {
 			t.Fatalf("expected no --allowed-tools flags without mcpCfg/allowlist, found one at index %d in args=%v", i, args)
 		}
+	}
+}
+
+// TestQwenRunner_ErrorMaxTurns verifies that a subtype:"error_max_turns"
+// stream-json result — which qwen, like claude, may emit with exit code 0 —
+// drives Run to return *agent.ErrMaxTurns rather than reporting a normal
+// "completed" result. Reuses the claude_test.go TestMain subprocess-helper
+// pattern via a separate QWEN_TEST_HELPER env var.
+func TestQwenRunner_ErrorMaxTurns(t *testing.T) {
+	runner := &QwenRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := agent.RunInput{
+		RunID: "qwen-test-run",
+		Task:  agent.Task{ID: "task-1", Title: "test task"},
+		AgentConfig: agent.AgentConfig{
+			Env:         map[string]string{"QWEN_TEST_HELPER": "error_max_turns"},
+			TimeoutSecs: 10,
+			MaxTurns:    9,
+		},
+		RepoPath: os.TempDir(),
+	}
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	for range logCh {
+	}
+	res := <-ch
+
+	var mt *agent.ErrMaxTurns
+	if e, ok := res.err.(*agent.ErrMaxTurns); ok {
+		mt = e
+	}
+	if mt == nil {
+		t.Fatalf("want *agent.ErrMaxTurns, got err=%v (%T)", res.err, res.err)
+	}
+	if mt.MaxTurns != 9 {
+		t.Errorf("want MaxTurns=9, got %d", mt.MaxTurns)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if res.r.SessionID != "qwen-max-turns-session" {
+		t.Errorf("want session id preserved, got %q", res.r.SessionID)
+	}
+	if res.r.InputTokens != 30 || res.r.OutputTokens != 40 {
+		t.Errorf("want usage preserved (30/40), got (%d/%d)", res.r.InputTokens, res.r.OutputTokens)
 	}
 }

@@ -19,7 +19,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
 | `timeout_secs` | Maximum run duration in seconds (0 = 600s default) |
-| `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default) |
+| `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default). Applies to `claude`, `qwen_code`, `anthropic`, and `llm` (see the capability table below — `codex_cli`/`opencode` don't enforce it). Hitting the cap **escalates the run to `waiting_human`** with an explanatory note rather than retrying — see [Retry Policy](#retry-policy) below. |
 | `max_retries` | Number of automatic consecutive retries allowed for a task after a **transient** provider error (rate limit, network blip, upstream 5xx) before it's left `failed`/escalated to `waiting_human`. `0` disables auto-retry. Default `3`. See [Retry Policy](#retry-policy) below. |
 | `retry_backoff_secs` | Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (`base * 2^attempt`, capped at 10 minutes) is applied on top. Default `30`. |
 | `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
@@ -103,7 +103,7 @@ _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capab
 | Command denylist | ✅ | ❌ Not enforced for the qwen_code provider — the runner does not pass qwen's --exclude-tools flag, which does map to a deny policy (present in qwen 0.21.0). | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
 | Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Estimated from a pricing table, not authoritative. | ⚠️ Estimated from a pricing table, not authoritative. | ❌ Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire. |
 | Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
-| `max_turns` | ✅ | ✅ Enforced via --max-session-turns. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. | ✅ Enforced via the tool-use loop. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
+| `max_turns` | ✅ Enforced via --max-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
 | Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
 | Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |
 
@@ -505,6 +505,19 @@ so humans aren't paged for problems that will resolve themselves:
   rate-limit block: a `429` still blocks the *whole config* from new
   dispatches for a backoff window (protects shared credentials/quota) **and**
   counts against the *specific task's* retry budget.
+- **Turn-limit exhaustion** — the agent hit its configured `max_turns` cap
+  without finishing (`claude`, `qwen_code`, `anthropic`, `llm`; see the
+  [`max_turns` field](#fields) above). This is neither a genuine failure nor
+  a transient one: the agent didn't fail at the work, it was cut off by a
+  limit the operator set on purpose. Re-dispatching would silently hand the
+  next run a fresh turn budget, voiding the cap entirely. Unlike a genuine
+  failure, a turn-limit run **escalates straight to `waiting_human`** with an
+  explanatory note ("Agent hit its turn limit (N turns) without completing
+  ...") and the task stays locked — the same as an exhausted retry/cost
+  budget or an auth failure. It does **not** consume the transient-retry
+  budget. To continue, raise `max_turns` on the agent config, or reply to /
+  re-dispatch the run — the session id is preserved, so a resume-capable
+  provider picks the conversation back up.
 
 ## Environment Variable Security
 

@@ -3,9 +3,9 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -61,8 +61,12 @@ func TestLLMRunner_ExceedsConfiguredMaxTurns(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error from exceeding max turns, got nil")
 	}
-	if !strings.Contains(err.Error(), "exceeded max turns (1)") {
-		t.Fatalf("expected 'exceeded max turns (1)' error, got: %v", err)
+	var mt *agent.ErrMaxTurns
+	if !errors.As(err, &mt) {
+		t.Fatalf("expected *agent.ErrMaxTurns, got: %v (%T)", err, err)
+	}
+	if mt.MaxTurns != 1 {
+		t.Fatalf("expected MaxTurns=1, got %d", mt.MaxTurns)
 	}
 }
 

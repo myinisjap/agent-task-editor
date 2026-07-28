@@ -21,9 +21,9 @@ const (
 	// failure category itself — it is the "no match" result of ClassifyLine.
 	ClassNone Classification = ""
 	// ClassGenuine is a real task/agent failure (the work itself failed, a
-	// non-zero exit with no infra signal, error_max_turns): no auto-retry,
-	// immediate re-dispatch. This is the pool-level default when nothing more
-	// specific matched.
+	// non-zero exit with no infra signal): no auto-retry, immediate
+	// re-dispatch. This is the pool-level default when nothing more specific
+	// matched.
 	ClassGenuine Classification = "genuine"
 	// ClassTransient is an infrastructure blip (network reset, upstream 5xx,
 	// ambiguous timeout): bounded auto-retry against the task's retry budget.
@@ -34,6 +34,14 @@ const (
 	// ClassAuth is a login/auth failure: escalate to waiting_human so a human
 	// can re-authenticate rather than retrying forever.
 	ClassAuth Classification = "auth"
+	// ClassMaxTurns means the agent hit its configured turn cap
+	// (AgentConfig.MaxTurns) without finishing: escalate to waiting_human.
+	// Re-dispatching would silently void the operator's cap by handing the
+	// next run a fresh turn budget. Applies to the providers that actually
+	// enforce the cap (claude, qwen_code, anthropic, llm) — surfaced
+	// structurally via a typed error / result subtype, not text-sniffed, so
+	// it deliberately has no classPatterns entry below.
+	ClassMaxTurns Classification = "max_turns"
 )
 
 // classPattern is one substring→classification rule. Substr must be lowercase;
