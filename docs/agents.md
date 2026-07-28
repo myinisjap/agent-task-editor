@@ -62,18 +62,25 @@ automatically migrated to their own dedicated provider config on upgrade
 | Provider string | Description | MCP Tools | Details |
 |---|---|---|---|
 | `claude` | Claude CLI subprocess (`claude -p ...`) | ✅ All 5 (MCP sidecar) | [providers/claude.md](providers/claude.md) |
-| `anthropic` | Anthropic Messages API (direct HTTP) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/anthropic.md](providers/anthropic.md) |
+| `anthropic` **(deprecated)** | Anthropic Messages API (direct HTTP) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/anthropic.md](providers/anthropic.md) |
 | `opencode` | Opencode CLI (`opencode run --format json`) | ❌ None | [providers/opencode.md](providers/opencode.md) |
 | `qwen_code` | Qwen Code CLI (`qwen -p ...`) | ✅ All 5 (MCP sidecar) | [providers/qwen_code.md](providers/qwen_code.md) |
 | `gemini_cli` | Gemini CLI (`gemini -p ...`) | ✅ All 5 (MCP sidecar) | [providers/gemini_cli.md](providers/gemini_cli.md) |
 | `codex_cli` | Codex CLI (`codex exec --json ...`) | ✅ All 5 (MCP sidecar) | [providers/codex_cli.md](providers/codex_cli.md) |
-| _(any other value)_ | OpenAI-compatible API at `LLM_BASE_URL` | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/llm.md](providers/llm.md) |
+| `llm` **(deprecated)** | OpenAI-compatible API at `LLM_BASE_URL` | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/llm.md](providers/llm.md) |
+
+> **`anthropic` and `llm` are deprecated: disabled for new/updated provider configs and may be removed in a future
+> release.** They're no longer offered in the UI's provider dropdown, and `POST`/`PATCH` of a provider config using
+> either is rejected. Existing provider/agent configs already using them continue to dispatch, run, and report cost
+> as before. `llm` was previously also the catch-all for any unrecognized provider string (including the dead
+> `openai` dropdown alias); that fallback has been removed; an unrecognized provider string now fails the run
+> explicitly instead of silently being treated as an OpenAI-compatible call.
 
 For per-provider deep-dives (credentials, tool availability, limitations, setup), see the [providers/](providers/) directory.
 
 ### Capability Matrix
 
-A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`gemini_cli`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`).
+A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`gemini_cli`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`, both **deprecated** — see the note above).
 
 The table below is **generated** from [`frontend/src/lib/providerCapabilities.ts`](../frontend/src/lib/providerCapabilities.ts) — the same definition `AgentConfigForm`, `ProviderConfigForm`, and `CommandFilterEditor` read to surface these gaps inline in the UI at config time. Run `npm run gen:capability-docs` (from `frontend/`) after changing that file; do not hand-edit the table.
 
@@ -88,7 +95,7 @@ Two rows below aren't config-gated capabilities (no corresponding form control) 
 
 _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capability-docs` — do not hand-edit._
 
-| Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` | `llm` | `opencode` |
+| Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` (deprecated) | `llm` (deprecated) | `opencode` |
 |---|---|---|---|---|---|---|---|
 | Task-editor tools (6: transitions, complete, request-human, notes, store-info, resolve-comment) | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ❌ No MCP tools — relies on a text OUTCOME: success/failure marker instead of task-editor tool calls. |
 | Label / workflow transitions | ✅ | ✅ | ✅ | ✅ | ✅ signal_complete implemented natively. | ✅ signal_complete implemented natively. | ❌ Cannot signal workflow transitions via MCP tools; tasks handled by this agent may not move to the next label automatically. |

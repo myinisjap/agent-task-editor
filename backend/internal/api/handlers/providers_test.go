@@ -1,9 +1,11 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -53,6 +55,44 @@ func TestProviderConfigsCreate_RejectsUnknownProvider(t *testing.T) {
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unknown provider, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestProviderConfigsCreate_RejectsDeprecatedProvider verifies anthropic and
+// llm are rejected for new provider configs with a message distinguishing
+// "deprecated" from "unknown" (they remain in knownProviders so existing
+// configs keep working, but new writes are blocked).
+func TestProviderConfigsCreate_RejectsDeprecatedProvider(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	for _, p := range []string{"anthropic", "llm"} {
+		w := postJSON(t, router, "/provider-configs", map[string]any{
+			"name": "deprecated-" + p, "provider": p,
+		})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("provider %q: expected 400, got %d: %s", p, w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "deprecated") || !strings.Contains(body, p) {
+			t.Errorf("provider %q: expected deprecation message mentioning provider, got %q", p, body)
+		}
+	}
+}
+
+// TestProviderConfigsCreate_RejectsOpenAIAlias verifies "openai" — the dead
+// dropdown option that aliased to the deprecated llm/OpenAI-compatible path
+// — is rejected too. It was never in knownProviders, so it surfaces as an
+// "unknown provider" 400 rather than the "deprecated" message; either way,
+// the fix here is that it can no longer be selected in the UI (see
+// agentTemplates.ts) so this 400 should never be user-visible in practice.
+func TestProviderConfigsCreate_RejectsOpenAIAlias(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{
+		"name": "openai-alias", "provider": "openai",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for openai, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -207,6 +247,69 @@ func TestProviderConfigsUpdate_RoundTrip(t *testing.T) {
 	}
 	if updated.Name != "renamed" || updated.Provider != "opencode" || updated.Model != "gpt-4" {
 		t.Errorf("unexpected updated config: %+v", updated)
+	}
+}
+
+// TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider verifies a
+// config on a non-deprecated provider cannot be switched to anthropic/llm.
+func TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{"name": "x", "provider": "claude"})
+	var created gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/provider-configs/"+created.ID, map[string]any{"provider": "anthropic"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 changing to deprecated provider, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "deprecated") {
+		t.Errorf("expected deprecation message, got %q", w.Body.String())
+	}
+}
+
+// TestProviderConfigsUpdate_ExistingDeprecatedProviderKeepsWorking verifies
+// that a config already on a deprecated provider (e.g. seeded before the
+// deprecation, or migrated data) can still be edited as long as the
+// provider itself isn't changing — the whole point of deprecating rather
+// than deleting these providers is that existing configs keep working.
+func TestProviderConfigsUpdate_ExistingDeprecatedProviderKeepsWorking(t *testing.T) {
+	router, q := setupProvidersRouter(t)
+
+	seeded, err := q.CreateProviderConfig(context.Background(), gen.CreateProviderConfigParams{
+		ID:       "seed-anthropic",
+		Name:     "legacy-anthropic",
+		Provider: "anthropic",
+		Model:    "claude-3-opus",
+		Env:      "{}",
+	})
+	if err != nil {
+		t.Fatalf("seed provider config: %v", err)
+	}
+
+	// Sending the same (unchanged) provider back must succeed.
+	w := putJSON(t, router, "/provider-configs/"+seeded.ID, map[string]any{
+		"name": "legacy-anthropic-renamed", "provider": "anthropic",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating unrelated fields on existing deprecated config, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Omitting provider entirely (meaning "unchanged") must also succeed.
+	w = putJSON(t, router, "/provider-configs/"+seeded.ID, map[string]any{
+		"model": "claude-3-sonnet",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating model on existing deprecated config with provider omitted, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.Provider != "anthropic" {
+		t.Errorf("expected provider to remain 'anthropic', got %q", updated.Provider)
 	}
 }
 

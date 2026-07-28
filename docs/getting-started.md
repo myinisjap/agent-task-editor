@@ -105,8 +105,8 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 |---|---|---|
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, `gemini_cli`, and `codex_cli` providers). |
 | `MCP_BOARD_PATH` | _(empty)_ | Path to the `mcp-board` binary. Enables the board tools (`list_repos`/`list_workflows`/`create_task`) inside Chat-tab sessions, so a chat can create tickets. Set automatically by the Docker images and `./dev.sh dev`. See [board-mcp.md](board-mcp.md). |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API) |
-| `LLM_API_KEY` | _(empty)_ | API key for `llm` or `anthropic` provider |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API). **Deprecated**: the `llm` provider is disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using it. |
+| `LLM_API_KEY` | _(empty)_ | API key for the `llm` or `anthropic` providers. **Deprecated**: both providers are disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using them. |
 
 ### Chat Terminal Sessions
 
@@ -209,13 +209,17 @@ volumes:
 
 Run `./dev.sh login` to authenticate the CLI inside the container.
 
-### Anthropic API (`anthropic` provider)
+### Anthropic API (`anthropic` provider) — deprecated
 
-Set `LLM_API_KEY` to your Anthropic API key. No binary needed. See [providers/anthropic.md](providers/anthropic.md).
+**Disabled for new/updated provider configs and may be removed in a future release.** Not offered in the UI's
+provider dropdown; existing configs continue to run. Set `LLM_API_KEY` to your Anthropic API key. No binary
+needed. See [providers/anthropic.md](providers/anthropic.md).
 
-### OpenAI / LLM (`llm` provider)
+### OpenAI / LLM (`llm` provider) — deprecated
 
-Set `LLM_BASE_URL` and `LLM_API_KEY`. Works with any OpenAI-compatible API. See [providers/llm.md](providers/llm.md).
+**Disabled for new/updated provider configs and may be removed in a future release.** Not offered in the UI's
+provider dropdown; existing configs continue to run. Set `LLM_BASE_URL` and `LLM_API_KEY`. Works with any
+OpenAI-compatible API. See [providers/llm.md](providers/llm.md).
 
 ### Opencode (`opencode` provider)
 

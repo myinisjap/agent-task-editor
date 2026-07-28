@@ -273,10 +273,14 @@ export function ProvidersHelp() {
         <h3 className="text-slate-100 font-semibold">Provider types</h3>
         <ul className="flex flex-col gap-1 list-disc list-inside">
           <li><code className="bg-slate-800 rounded px-1 font-mono">claude</code> — the Claude Code CLI, authenticated via its own login/session</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">anthropic</code> — direct Anthropic API calls using an API key</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">llm</code> — any OpenAI-compatible API (OpenAI, local servers, etc.)</li>
           <li><code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code>, <code className="bg-slate-800 rounded px-1 font-mono">gemini_cli</code>, <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code>, <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> — other CLI-based providers</li>
         </ul>
+        <p>
+          <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code> (direct Anthropic API calls) and{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> (any OpenAI-compatible API) are{' '}
+          <strong>deprecated and disabled for new configs</strong> — they're no longer offered here, but existing
+          configs on them keep running.
+        </p>
       </section>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Checking readiness</h3>

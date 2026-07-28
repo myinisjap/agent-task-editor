@@ -139,4 +139,9 @@ export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_a
   },
 ]
 
-export const PROVIDERS = ['claude', 'opencode', 'openai', 'llm', 'anthropic', 'qwen_code', 'gemini_cli', 'codex_cli']
+// anthropic, llm, and the openai alias are deprecated: disabled for new
+// provider configs (rejected by the backend) and hidden from the dropdown
+// here. Existing configs on those providers keep dispatching; see
+// providerCapabilities.ts's DEPRECATED_PROVIDERS for the UI-facing warning
+// shown when editing one.
+export const PROVIDERS = ['claude', 'opencode', 'qwen_code', 'gemini_cli', 'codex_cli']

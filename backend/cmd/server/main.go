@@ -213,8 +213,11 @@ func main() {
 			}
 			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		case "anthropic":
-			// Calls the Anthropic Messages API directly — no CLI binary needed.
-			// Requires LLM_API_KEY to be set. Billed per-token (not Claude Max).
+			// Deprecated: disabled for new/updated provider configs (see
+			// deprecatedProviders in handlers/providers.go), retained here so
+			// existing configs keep dispatching. Calls the Anthropic Messages
+			// API directly — no CLI binary needed. Requires LLM_API_KEY to be
+			// set. Billed per-token (not Claude Max).
 			return &providers.AnthropicRunner{APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
 		case "opencode":
 			return &providers.OpencodeRunner{}
@@ -236,8 +239,16 @@ func main() {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
-		default:
+		case "llm", "openai":
+			// Deprecated: disabled for new/updated provider configs (see
+			// deprecatedProviders in handlers/providers.go), retained here so
+			// existing configs keep dispatching. "openai" is the historical
+			// dead dropdown alias for this same OpenAI-compatible path.
 			return &providers.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
+		default:
+			// Unrecognized provider string: fail explicitly instead of
+			// silently falling back to an OpenAI-compatible call.
+			return nil
 		}
 	}
 

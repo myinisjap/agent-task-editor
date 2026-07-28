@@ -11,8 +11,8 @@ The `providers` package implements the concrete agent backends (claude, anthropi
 | `claude_discovery.go` | `ListInstalledClaudePlugins`/`ListAvailableClaudeMCPServers` — discovers Claude plugins (`~/.claude/plugins/installed_plugins.json`) and user-level MCP servers (`~/.claude.json`'s global `mcpServers`) installed/configured on the machine, for per-agent-config selection (`enabled_plugins`/`enabled_mcp_servers`); `claude`-provider only |
 | `claude_reset.go` | `parseClaudeResetTime` — parses Claude's "resets 6pm (America/Chicago)"-style session/usage-limit text into an exact `agent.ErrRateLimit.ResetAt` (+1min retry buffer), so the pool can schedule an exact retry instead of falling back to `BlockWithBackoff`. Blank-imports `time/tzdata` (embeds IANA tzdata into the binary — the prod container has no `/usr/share/zoneinfo`) |
 | `claude_usage.go` | `FetchClaudeUsage`, `ErrNoClaudeCredentials` — fetches the Claude Max usage widget data (5-hour/weekly percentages) from Anthropic's OAuth usage endpoint; used by the dashboard |
-| `anthropic.go` | `AnthropicRunner` — calls the Anthropic Messages API directly |
-| `llm.go` | `LLMRunner` — calls any OpenAI-compatible API |
+| `anthropic.go` | `AnthropicRunner` — calls the Anthropic Messages API directly. **Deprecated provider** (disabled for new/updated configs; existing configs still dispatch through this runner) — see "Adding a New Provider" below |
+| `llm.go` | `LLMRunner` — calls any OpenAI-compatible API. **Deprecated provider**, same as above; also backs the retired `openai` dropdown alias |
 | `qwen.go` | `QwenRunner` — runs the Qwen Code CLI; reuses `MCPManager` and the claude stream-json envelope via `parse_qwen.go` |
 | `gemini.go` | `GeminiRunner` — runs the Gemini CLI; own event schema, parsed via `parse_gemini.go` |
 | `codex.go` | `CodexRunner` — runs the Codex CLI (`codex exec --json`); own event schema, parsed via `parse_codex.go` |
@@ -47,6 +47,18 @@ These runtime mechanisms are documented in `../AGENTS.md` (the core `agent` pack
 1. Implement `agent.Provider` in a new file here (e.g. `providers/newthing.go`); if it needs its own event-parsing logic, give it a dedicated `parse_newthing.go` per the one-parser-per-provider rule above.
 2. Add a new case to `providerFactory` in `cmd/server/main.go`.
 3. Add the provider string to `knownProviders` in `internal/api/handlers/agents.go` (validated on both agent-config and provider-config create/update — see `internal/api/handlers/providers.go`).
+
+**`anthropic` and `llm` are deprecated** (disabled for new/updated provider configs; may be removed in a future
+release — see `docs/providers/anthropic.md`/`docs/providers/llm.md`). They're deliberately still registered at all
+three points above — `providerFactory`'s explicit `case "anthropic"` / `case "llm", "openai"`, and `knownProviders`
+— because existing configs on them must keep dispatching. What's new is `deprecatedProviders` in
+`internal/api/handlers/agents.go`, checked only by `providers.go`'s `Create`/`Update` write paths to reject
+*new* configs (or an existing config's provider *changing* to a deprecated one) without touching reads, model
+lists, or dispatch. Don't remove `anthropic`/`llm` from `providerFactory`'s `case` list or `knownProviders` to
+"finish" the deprecation — that would break existing configs. Also don't let `providerFactory`'s `default` branch
+silently resolve to a runner again (it now returns `nil`, and the dispatcher fails the run cleanly on a nil
+provider — see `dispatcher.go`'s `startRun` nil-provider guard) — that was the pre-deprecation landmine that made
+`llm`, `openai`, and any unrecognized provider string all silently become OpenAI-compatible calls.
 
 `AgentConfig.Provider`/`.Model`/`.Env` (the fields providers actually read off `input.AgentConfig`) are populated from the joined `ProviderConfig` — see `../AGENTS.md` § Adding a New Provider and [docs/agents.md § Provider Configs](../../../../docs/agents.md#provider-configs) for the full resolution path. A new provider implementation never needs to know about that split; it only ever reads `Provider`/`.Model`/`.Env` off `input.AgentConfig` the same way every other provider does.
 

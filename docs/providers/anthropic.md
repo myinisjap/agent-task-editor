@@ -1,5 +1,10 @@
 # Provider: `anthropic`
 
+> **Deprecated — disabled for now and may be removed in a future release.** `POST`/`PATCH` of a provider config
+> with `provider: "anthropic"` is rejected; it's no longer offered in the UI's provider dropdown. Existing
+> provider/agent configs already using it continue to dispatch and run as described below — this page remains for
+> anyone maintaining one of those configs.
+
 The `anthropic` provider calls the Anthropic Messages API directly — no CLI binary required. It uses a native Go tool-use loop instead of the MCP sidecar.
 
 ## Provider String
