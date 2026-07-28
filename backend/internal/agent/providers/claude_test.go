@@ -448,6 +448,26 @@ func TestClaudeRunner_CostWatchdogKillsRun(t *testing.T) {
 	if res.r.SessionID != "cost-watchdog-session" {
 		t.Errorf("want session id preserved from the assistant message, got %q", res.r.SessionID)
 	}
+	// Regression coverage: a killed run never reaches its terminal "result"
+	// event, so the persisted Result must come from the watchdog's own
+	// cumulative-usage snapshot (attemptInfo.costExceededUsage), not from
+	// applyUsage(nil) silently leaving everything at zero — see
+	// pool.handleCostBudgetExceeded / SetAgentRunCompleted, which persist
+	// res.CostUSD/InputTokens/OutputTokens onto the run row, and
+	// SumTaskCost, which sums cost_usd across every run including killed
+	// ones for the pre-dispatch budget guard.
+	if res.r.InputTokens != 1_000_000 {
+		t.Errorf("want InputTokens=1,000,000 (from the assistant-message usage), got %d", res.r.InputTokens)
+	}
+	if res.r.OutputTokens != 1_000_000 {
+		t.Errorf("want OutputTokens=1,000,000 (from the assistant-message usage), got %d", res.r.OutputTokens)
+	}
+	// $10/1M input + $10/1M output * 1M each = $20; CostSpentUSD defaults to
+	// 0 in this test (makeInput doesn't set it), so this run's own
+	// incremental cost equals the full projection.
+	if res.r.CostUSD != 20.0 {
+		t.Errorf("want CostUSD=20.0 (this run's own incremental cost, not left at 0), got %v", res.r.CostUSD)
+	}
 
 	var sawKillLog bool
 	for _, e := range logs {
@@ -457,6 +477,61 @@ func TestClaudeRunner_CostWatchdogKillsRun(t *testing.T) {
 	}
 	if !sawKillLog {
 		t.Error("expected a cost-watchdog system log line")
+	}
+}
+
+// TestClaudeRunner_CostWatchdogKillsRun_SubtractsPriorSpend mirrors the qwen
+// test of the same name: when a task already has prior recorded spend
+// (input.CostSpentUSD > 0), the killed run's own persisted CostUSD must be
+// only its *own* incremental cost — the watchdog's projected total minus the
+// prior-spend baseline — not the full task-wide projection, or SumTaskCost
+// would double-count prior runs' cost every time it sums cost_usd across a
+// task's runs.
+func TestClaudeRunner_CostWatchdogKillsRun_SubtractsPriorSpend(t *testing.T) {
+	runner := helperRunner("cost_watchdog_kill")
+	runner.PriceResolver = fakePriceResolver{inPer1M: 10, outPer1M: 10, known: true}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := makeInput("cost_watchdog_kill")
+	// Budget 25, 6 already spent by prior runs on this task -> only $19 of
+	// headroom, well below the $20 this run's own usage will project.
+	input.CostBudgetUSD = 25.00
+	input.CostSpentUSD = 6.00
+	input.CostWarnRatio = 0.8
+	input.AgentConfig.TimeoutSecs = 10
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Run to return — watchdog likely failed to cancel the subprocess")
+	}
+
+	var ce *agent.ErrCostBudgetExceeded
+	if !errors.As(res.err, &ce) {
+		t.Fatalf("want *agent.ErrCostBudgetExceeded, got err=%v (%T)", res.err, res.err)
+	}
+	// ce.SpentUSD is the task-wide projection (prior 6 + this run's 20 = 26).
+	if ce.SpentUSD != 26.0 {
+		t.Errorf("want ErrCostBudgetExceeded.SpentUSD=26.0 (prior 6 + this run's 20), got %v", ce.SpentUSD)
+	}
+	// res.r.CostUSD must be only this run's own incremental cost (26 - 6 =
+	// 20), not the task-wide 26 -- SumTaskCost will separately add the prior
+	// runs' own persisted 6.
+	if res.r.CostUSD != 20.0 {
+		t.Errorf("want Result.CostUSD=20.0 (this run's own cost, prior spend subtracted out), got %v", res.r.CostUSD)
 	}
 }
 

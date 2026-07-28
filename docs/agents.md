@@ -317,6 +317,16 @@ field (and the WS event's `message`) carry:
 mid-run cost budget exceeded: $<spent> of $<budget>
 ```
 
+A killed run never reaches its terminal `result` stream-json event — the
+only place token usage/cost is normally read from — so the provider
+persists the watchdog's own cumulative-usage snapshot (input/output tokens
+observed so far, and this run's own incremental cost — the projection minus
+whatever prior runs had already spent) onto the run instead of leaving
+`cost_usd`/tokens at `0`. This keeps `SumTaskCost` (the pre-dispatch guard
+above, and the Task Detail cumulative-cost view) accurate across repeated
+kill → raise-budget → resume cycles: a killed run's real spend still counts
+toward the task's total, so it can't be "reset" by killing and resuming it.
+
 **This projection is an estimate, not the provider's own authoritative
 billed cost.** Claude/qwen only report a `total_cost_usd` on the terminal
 `result` event of a stream-json run — by definition too late for a mid-run

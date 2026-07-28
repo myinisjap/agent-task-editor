@@ -173,7 +173,14 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		cumOutputTokens int64
 		costWarned      bool
 		costExceeded    *agent.ErrCostBudgetExceeded
-		mu              sync.Mutex
+		// costExceededUsage snapshots this run's own cumulative token usage
+		// and incremental cost (projected minus the watchdog's prior-spend
+		// baseline) at the moment the watchdog cancels the subprocess. A
+		// killed run never reaches its terminal "result" event, so this is
+		// the only usage/cost data available to persist — see claude.go's
+		// attemptInfo.costExceededUsage for the full rationale.
+		costExceededUsage *runUsage
+		mu                sync.Mutex
 	)
 	wg.Add(2)
 
@@ -248,6 +255,16 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 							if exceeded {
 								mu.Lock()
 								costExceeded = &agent.ErrCostBudgetExceeded{SpentUSD: projected, BudgetUSD: input.CostBudgetUSD}
+								// This run's own incremental cost is the
+								// projection minus the watchdog's prior-spend
+								// baseline (input.CostSpentUSD) — projected
+								// includes cost already recorded by earlier
+								// runs, which must not be double-counted here.
+								costExceededUsage = &runUsage{
+									InputTokens:  inTok,
+									OutputTokens: outTok,
+									CostUSD:      projected - input.CostSpentUSD,
+								}
 								mu.Unlock()
 								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the budget ($%.2f) — cancelling run", projected, input.CostBudgetUSD), At: time.Now()}
 								cancel()
@@ -286,6 +303,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	mth := maxTurnsHit
 	finalCostWarned := costWarned
 	finalCostExceeded := costExceeded
+	finalCostExceededUsage := costExceededUsage
 	mu.Unlock()
 
 	if finalCostExceeded != nil {
@@ -294,7 +312,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		// rather than classifying as transient/rate-limit.
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "qwen run stopped: mid-run cost budget exceeded", At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
-		applyUsage(&res, finalUsage)
+		// A killed run never reaches its terminal "result" event, so
+		// finalUsage is always nil here — persist the watchdog's own
+		// cumulative-usage/incremental-cost snapshot instead, or the run
+		// would record cost_usd=0 despite having genuinely spent money.
+		applyUsage(&res, finalCostExceededUsage)
 		return res, finalCostExceeded
 	}
 

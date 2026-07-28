@@ -162,7 +162,16 @@ see `docs/agents.md#cost-budgets` for the user-facing writeup:
   `waiting_human` with notes `mid-run cost budget exceeded: $<spent> of
   $<budget>`, leaves the task locked, publishes `task.needs_human` +
   `task.agent_done`. Never retried — re-dispatching would just spend against
-  the same already-exhausted budget again.
+  the same already-exhausted budget again. A killed run never reaches its
+  terminal `result` event, so `applyUsage` (which normally reads token/cost
+  usage from that event) has nothing to read — `claude.go`/`qwen.go` instead
+  populate `Result.InputTokens`/`OutputTokens`/`CostUSD` from the watchdog's
+  own cumulative-usage snapshot at the moment it cancelled (this run's own
+  incremental cost = projected total minus `RunInput.CostSpentUSD`, so prior
+  runs' cost isn't double-counted). `handleCostBudgetExceeded` persists these
+  onto the run row exactly like every other terminal path, so `SumTaskCost`
+  doesn't undercount a killed run and a kill→raise-budget→resume cycle can't
+  silently reset the task's cost ledger.
 - **Early warning**: independent of both guards above, a `task.cost_warning`
   WS event fires once cumulative/projected spend crosses a global, DB-backed
   `warn_ratio` threshold (default 0.8; `Dispatcher.resolveCostWarnRatio`,

@@ -306,9 +306,19 @@ func TestE2E_CostBudget(t *testing.T) {
 // budget. This test exercises the pool's escalation given the typed error;
 // the projection/cancellation logic itself lives in
 // providers/cost_watchdog_test.go and the claude/qwen provider tests.
+//
+// It also covers the regression where a killed run's usage/cost never made
+// it into the persisted agent_runs row: claude.go/qwen.go now populate
+// Result.CostUSD/InputTokens/OutputTokens from the watchdog's own
+// cumulative-usage snapshot (since a killed run never reaches its terminal
+// "result" event for applyUsage to read), so this fake provider's Result
+// mirrors that by setting them explicitly — pool.handleCostBudgetExceeded
+// must persist them onto SetAgentRunCompleted, and SumTaskCost (the guard
+// that a repeated kill/resume cycle relies on to not overspend) must see
+// them.
 func TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked(t *testing.T) {
 	fp := &fakeProvider{steps: []fakeStep{
-		{err: &ErrCostBudgetExceeded{SpentUSD: 12.34, BudgetUSD: 10.00}, result: Result{Status: "failed", SessionID: "sess-1"}},
+		{err: &ErrCostBudgetExceeded{SpentUSD: 12.34, BudgetUSD: 10.00}, result: Result{Status: "failed", SessionID: "sess-1", CostUSD: 12.34, InputTokens: 500_000, OutputTokens: 300_000}},
 	}}
 	h := newE2EHarness(t, fp)
 	wfID := seedE2EWorkflow(t, h.q)
@@ -334,6 +344,25 @@ func TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked(t *testing.T) {
 	}
 	if !h.pub.has("task.needs_human") {
 		t.Error("expected task.needs_human event on mid-run cost budget exceeded")
+	}
+
+	// Regression: the killed run's own cost/tokens must be persisted, not
+	// left at zero — otherwise SumTaskCost (which the pre-dispatch guard and
+	// the task-detail cumulative-cost view both read) would silently
+	// undercount this run's real spend, letting a kill/resume cycle
+	// overspend the same "budget" repeatedly.
+	if run.CostUsd != 12.34 {
+		t.Errorf("expected run.CostUsd 12.34 (persisted from the watchdog's usage snapshot), got %v", run.CostUsd)
+	}
+	if run.InputTokens != 500_000 || run.OutputTokens != 300_000 {
+		t.Errorf("expected run tokens (500000, 300000), got (%d, %d)", run.InputTokens, run.OutputTokens)
+	}
+	spent, err := h.q.SumTaskCost(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("sum task cost: %v", err)
+	}
+	if spent != 12.34 {
+		t.Errorf("expected SumTaskCost to include the killed run's cost (12.34), got %v", spent)
 	}
 
 	// Same regression guard as TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked:

@@ -29,7 +29,10 @@ triggers the "Release" workflow the same way.
   subprocess the moment projected cost crosses the effective budget,
   escalating to `waiting_human` instead of a plain failure (`codex_cli`,
   `opencode` remain unsupported and are documented as such — see the
-  provider capability matrix). There's also a new configurable early-warning
+  provider capability matrix). A killed run's own token usage/cost is
+  persisted from the watchdog's cumulative-usage snapshot (never left at
+  `$0`), so the task's recorded spend stays accurate across repeated
+  kill/resume cycles. There's also a new configurable early-warning
   threshold (default 80%, `GET`/`PUT /api/v1/settings/cost-warning`) that
   fires a `task.cost_warning` WebSocket event ahead of the hard cap, shown as
   a badge on the board and a banner on Task Detail. See [docs/agents.md §

@@ -185,6 +185,17 @@ type attemptInfo struct {
 	// projected cost crossed the effective budget. Run() must not retry a
 	// resume/cold-start fallback when this is set.
 	costExceeded *agent.ErrCostBudgetExceeded
+	// costExceededUsage carries the run's own cumulative token usage (and
+	// this run's own incremental cost, i.e. costExceeded.SpentUSD minus the
+	// watchdog's prior-spend baseline — NOT the full task-wide projection) at
+	// the moment the watchdog cancelled the subprocess. The killed run never
+	// reaches its terminal "result" event, so this is the only usage/cost
+	// data available to persist — without it, the run's agent_runs row would
+	// record cost_usd=0 despite having genuinely spent money, and
+	// SumTaskCost (which the pre-dispatch budget guard and dashboards read)
+	// would silently undercount, letting a kill/resume/re-kill cycle
+	// repeatedly overspend the same "budget".
+	costExceededUsage *runUsage
 }
 
 // shouldFallBackToColdStart reports whether a resumed attempt failed in a way
@@ -299,6 +310,16 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 							}
 							if exceeded {
 								info.costExceeded = &agent.ErrCostBudgetExceeded{SpentUSD: projected, BudgetUSD: input.CostBudgetUSD}
+								// This run's own incremental cost is the
+								// projection minus the watchdog's prior-spend
+								// baseline (input.CostSpentUSD) — projected
+								// includes cost already recorded by earlier
+								// runs, which must not be double-counted here.
+								info.costExceededUsage = &runUsage{
+									InputTokens:  cumInputTokens,
+									OutputTokens: cumOutputTokens,
+									CostUSD:      projected - input.CostSpentUSD,
+								}
 								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the budget ($%.2f) — cancelling run", projected, input.CostBudgetUSD), At: time.Now()}
 								cancel()
 							}
@@ -382,7 +403,12 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		// a budget stop must escalate to waiting_human, not retry.
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "claude run stopped: mid-run cost budget exceeded", At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession}
-		applyUsage(&res, finalUsage)
+		// A killed run never reaches its terminal "result" event, so
+		// finalUsage is always nil here — persist the watchdog's own
+		// cumulative-usage/incremental-cost snapshot instead, or the run
+		// would record cost_usd=0 despite having genuinely spent money (see
+		// attemptInfo.costExceededUsage).
+		applyUsage(&res, info.costExceededUsage)
 		return res, info, info.costExceeded
 	}
 
