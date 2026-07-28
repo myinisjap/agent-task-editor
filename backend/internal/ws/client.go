@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -80,15 +81,27 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 		}
 	}
 
-	// Build origin pattern list from the same CORS config used by the middleware.
+	// Build origin pattern list from the same CORS config used by the
+	// middleware. CORS_ORIGINS entries are full origins (scheme + host,
+	// e.g. "http://localhost:5173"), matching the exact-string comparison
+	// against the Origin header done by middleware.CORS. nhooyr's
+	// OriginPatterns, however, matches only against the request Origin's
+	// host (no scheme) via filepath.Match — so patterns must be reduced to
+	// just the host here, or every legitimately configured origin would be
+	// silently rejected.
 	var originPatterns []string
 	if corsOrigins == "*" || corsOrigins == "" {
 		originPatterns = []string{"*"}
 	} else {
 		for _, o := range strings.Split(corsOrigins, ",") {
-			if s := strings.TrimSpace(o); s != "" {
-				originPatterns = append(originPatterns, s)
+			s := strings.TrimSpace(o)
+			if s == "" {
+				continue
 			}
+			if u, err := url.Parse(s); err == nil && u.Host != "" {
+				s = u.Host
+			}
+			originPatterns = append(originPatterns, s)
 		}
 	}
 
