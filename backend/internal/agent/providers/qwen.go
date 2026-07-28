@@ -147,6 +147,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		sessionID   string
 		rateLimited bool
 		transient   bool
+		maxTurnsHit bool
 		usage       *runUsage
 		mu          sync.Mutex
 	)
@@ -191,6 +192,10 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 			case agent.ClassTransient:
 				mu.Lock()
 				transient = true
+				mu.Unlock()
+			case agent.ClassMaxTurns:
+				mu.Lock()
+				maxTurnsHit = true
 				mu.Unlock()
 			}
 			if ev.Usage != nil {
@@ -243,7 +248,24 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	mu.Lock()
 	finalUsage := usage
 	finalSession := sessionID
+	mth := maxTurnsHit
 	mu.Unlock()
+
+	// qwen may exit 0 on the max-session-turns subtype (mirrors claude's
+	// error_max_turns behavior), so this must be checked regardless of err —
+	// otherwise the MCP/outcome fallthrough below would report the run as a
+	// normal "completed" result and the turn cap would silently have no
+	// effect.
+	if mth {
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "qwen hit its configured max-turns limit", At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		configuredMaxTurns := input.AgentConfig.MaxTurns
+		if configuredMaxTurns <= 0 {
+			configuredMaxTurns = 50
+		}
+		return res, &agent.ErrMaxTurns{MaxTurns: int(configuredMaxTurns)}
+	}
 
 	// MCP result takes priority; fall back to OUTCOME text parsing if the
 	// agent completed without calling signal_complete.

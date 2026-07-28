@@ -941,6 +941,87 @@ func TestPool_TransientFailure_EscalatesAfterMaxRetries(t *testing.T) {
 	}
 }
 
+// TestPool_MaxTurns_EscalatesToWaitingHuman verifies that a run whose
+// provider returns *agent.ErrMaxTurns escalates straight to waiting_human
+// (no auto-retry, no re-dispatch), leaves the task's active-run lock set,
+// publishes task.needs_human, leaves the transient-retry budget untouched,
+// and records the run under the max_turns classification (distinguishable
+// from genuine/transient/rate_limit) — the regression from the issue.
+func TestPool_MaxTurns_EscalatesToWaitingHuman(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// Mirror a real dispatch: the dispatcher sets active_agent_run_id before
+	// handing the job to the pool.
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ActiveAgentRunID: &runID,
+		ID:               taskID,
+	}); err != nil {
+		t.Fatalf("seed active run: %v", err)
+	}
+
+	provider := &mockProvider{
+		result: agent.Result{Status: "failed", SessionID: "resume-me"},
+		err:    &agent.ErrMaxTurns{MaxTurns: 12},
+	}
+
+	beforeWaitingHuman := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("waiting_human"))
+	beforeMaxTurns := testutil.ToFloat64(metrics.RunClassificationTotal.WithLabelValues(string(agent.ClassMaxTurns)))
+
+	_, stop := startPool(t, pool)
+
+	// max_retries > 0 to prove the turn-limit escalation is NOT routed through
+	// the transient-retry budget (which would bump/reset the counter).
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "waiting_human")
+	stop()
+
+	if !pub.hasEvent("task.needs_human") {
+		t.Error("expected task.needs_human event on max-turns exhaustion")
+	}
+	if !pub.hasEvent("task.agent_done") {
+		t.Error("expected task.agent_done event on max-turns exhaustion")
+	}
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.ActiveAgentRunID == nil {
+		t.Error("expected active_agent_run_id to remain set (locked) while waiting_human")
+	}
+	if task.TransientRetryCount != 0 {
+		t.Errorf("expected transient_retry_count untouched (0) by a max-turns run, got %d", task.TransientRetryCount)
+	}
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.Status != "waiting_human" {
+		t.Errorf("expected run status waiting_human, got %q", run.Status)
+	}
+	if run.Notes == nil || !strings.Contains(*run.Notes, "turn limit") {
+		t.Errorf("expected run notes to explain the turn-limit escalation, got %v", run.Notes)
+	}
+
+	afterWaitingHuman := testutil.ToFloat64(metrics.RunTerminalTotal.WithLabelValues("waiting_human"))
+	if afterWaitingHuman-beforeWaitingHuman != 1 {
+		t.Errorf("expected RunTerminalTotal{waiting_human} to increment by 1, got delta %v", afterWaitingHuman-beforeWaitingHuman)
+	}
+	afterMaxTurns := testutil.ToFloat64(metrics.RunClassificationTotal.WithLabelValues(string(agent.ClassMaxTurns)))
+	if afterMaxTurns-beforeMaxTurns != 1 {
+		t.Errorf("expected RunClassificationTotal{max_turns} to increment by 1, got delta %v", afterMaxTurns-beforeMaxTurns)
+	}
+}
+
 func TestPool_GenuineFailure_DoesNotConsumeRetryBudget(t *testing.T) {
 	db := openAgentTestDB(t)
 	pub := &testPub{}

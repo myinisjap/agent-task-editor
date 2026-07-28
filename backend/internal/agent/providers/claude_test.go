@@ -54,8 +54,14 @@ func TestMain(m *testing.M) {
 		// from the task, with a non-zero exit (as real 429s from the CLI do).
 		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"duration_ms":844,"duration_api_ms":0,"num_turns":1,"result":"You've hit your session limit ` + "·" + ` resets 6pm (America/Chicago)","stop_reason":"stop_sequence","session_id":"16228fd1-bcd9-4dee-b14d-7537b3bce8ea","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0},"modelUsage":{},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","uuid":"044c12cd-40a6-4e81-8ee8-e7da2e1f9c23"}`)
 		os.Exit(1)
+	case "error_max_turns":
+		// Simulate: claude exhausts its configured --max-turns and exits 0
+		// (unlike auth errors/crashes, which exit non-zero) with a
+		// subtype:"error_max_turns" result — the case that must NOT be
+		// treated as a normal "completed" run.
+		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns","session_id":"max-turns-session","total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20}}`)
+		os.Exit(0)
 	}
-
 	switch os.Getenv("CODEX_TEST_HELPER") {
 	case "exit0_success":
 		fmt.Println(`{"type":"thread.started","thread_id":"thread-1"}`)
@@ -78,6 +84,10 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Qwen reuses this same subprocess-helper pattern (and the same
+	// stream-json envelope/parser as claude — see parse_qwen.go), via a
+	// separate env var so both providers' helper tests can share one
+	// TestMain/binary.
 	switch os.Getenv("QWEN_TEST_HELPER") {
 	case "exit0_success":
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":5,"output_tokens":7}}`)
@@ -91,6 +101,11 @@ func TestMain(m *testing.M) {
 		// that actual (if surprising) behavior.
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
 		os.Exit(1)
+	case "error_max_turns":
+		// Simulate: qwen exhausts its configured --max-session-turns and
+		// exits 0 (mirrors claude's error_max_turns behavior).
+		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns","session_id":"qwen-max-turns-session","total_cost_usd":0.02,"usage":{"input_tokens":30,"output_tokens":40}}`)
+		os.Exit(0)
 	}
 
 	switch os.Getenv("OPENCODE_TEST_HELPER") {
@@ -293,6 +308,61 @@ func asErrRateLimit(err error, target **agent.ErrRateLimit) bool {
 	}
 	*target = rl
 	return true
+}
+
+// asErrMaxTurns is a small errors.As wrapper local to this test file,
+// mirroring asErrRateLimit above.
+func asErrMaxTurns(err error, target **agent.ErrMaxTurns) bool {
+	mt, ok := err.(*agent.ErrMaxTurns)
+	if !ok {
+		return false
+	}
+	*target = mt
+	return true
+}
+
+// TestClaudeRunner_ErrorMaxTurns verifies that a subtype:"error_max_turns"
+// stream-json result — which the real CLI emits with exit code 0, unlike
+// auth errors/crashes which exit non-zero — drives Run to return
+// *agent.ErrMaxTurns rather than reporting a normal "completed" result. This
+// is the Path B regression from the issue: exiting 0 must not let the
+// MCP/outcome fallthrough win.
+func TestClaudeRunner_ErrorMaxTurns(t *testing.T) {
+	runner := helperRunner("error_max_turns")
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := makeInput("error_max_turns")
+	input.AgentConfig.MaxTurns = 7
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+	res := <-ch
+
+	var mt *agent.ErrMaxTurns
+	if !asErrMaxTurns(res.err, &mt) {
+		t.Fatalf("want *agent.ErrMaxTurns, got err=%v (%T)", res.err, res.err)
+	}
+	if mt.MaxTurns != 7 {
+		t.Errorf("want MaxTurns=7, got %d", mt.MaxTurns)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if res.r.SessionID != "max-turns-session" {
+		t.Errorf("want session id preserved, got %q", res.r.SessionID)
+	}
+	if res.r.InputTokens != 10 || res.r.OutputTokens != 20 {
+		t.Errorf("want usage preserved (10/20), got (%d/%d)", res.r.InputTokens, res.r.OutputTokens)
+	}
 }
 
 func contains(s, sub string) bool {

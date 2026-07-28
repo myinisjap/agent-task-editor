@@ -433,6 +433,60 @@ func TestE2E_TransientRetryThenEscalate(t *testing.T) {
 	}
 }
 
+// TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked is the core regression
+// guard for the issue: a run that exhausts its configured max_turns must NOT
+// be re-dispatched with a fresh turn budget. It escalates straight to
+// waiting_human, the task stays locked (active_agent_run_id set), and a
+// second sweep produces no second run — unlike a plain "failed"/genuine
+// result (compare TestE2E_GoldenPath's failure path), which the dispatcher
+// would immediately re-pick once the lock cleared.
+func TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{
+		{err: &ErrMaxTurns{MaxTurns: 5}, result: Result{Status: "failed", SessionID: "sess-1"}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID := h.seedTaskOnReady(t, wfID)
+
+	esc := h.pollTask(t, taskID, func(tk gen.Task) bool {
+		return tk.ActiveAgentRunID != nil && tk.TransientRetryCount == 0
+	}, "run to hit max_turns and escalate to waiting_human")
+
+	run, err := h.q.GetAgentRun(context.Background(), *esc.ActiveAgentRunID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.Status != "waiting_human" {
+		t.Errorf("expected escalated run status 'waiting_human', got %q", run.Status)
+	}
+	if esc.Label != "ready" {
+		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
+	}
+	if !h.pub.has("task.needs_human") {
+		t.Error("expected task.needs_human event on max-turns exhaustion")
+	}
+
+	// Give the dispatcher room to sweep several times and confirm it never
+	// starts a second run — this is the regression: with the old ClassGenuine
+	// "failed" behavior, clearing the lock let the very next sweep re-pick the
+	// task and hand a fresh provider a fresh --max-turns budget, forever.
+	time.Sleep(200 * time.Millisecond)
+	still, err := h.q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if still.ActiveAgentRunID == nil || *still.ActiveAgentRunID != *esc.ActiveAgentRunID {
+		t.Fatalf("expected task to stay locked on run %q, got %v", *esc.ActiveAgentRunID, still.ActiveAgentRunID)
+	}
+	runs, err := h.q.ListAgentRuns(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Errorf("expected exactly 1 run after max-turns exhaustion (no re-dispatch), got %d", len(runs))
+	}
+}
+
 // TestE2E_TerminalLabelTearsDownWorktree covers scenario 4: completing with the
 // outcome that routes to a terminal label runs OnTerminal, which (with no remote
 // configured) skips the push and removes the worktree while keeping the branch.

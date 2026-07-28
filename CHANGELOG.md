@@ -358,6 +358,26 @@ triggers the "Release" workflow the same way.
   separate, larger change.
 
 ### Changed
+- **A run that exhausts `max_turns` now escalates to `waiting_human` instead
+  of silently re-dispatching with a fresh turn budget.** Previously, hitting
+  the configured turn cap ended the run as a plain `failed`/genuine failure
+  (or, for `claude`/`qwen_code`, a `completed`+`failure` outcome) — either
+  way the task's dispatch lock cleared and the very next sweep re-picked it
+  up with a brand-new `--max-turns`/tool-use-loop budget, so `max_turns`
+  bounded a single run but nothing at all bounded the task: it could loop
+  indefinitely, burning tokens against the cost budget, with no human ever
+  notified. Turn exhaustion now gets its own classification
+  (`RunClassificationTotal{max_turns}`, distinct from `genuine`) and escalates
+  the run straight to `waiting_human` with an explanatory note ("Agent hit
+  its turn limit (N turns) without completing…"), a `task.needs_human` event,
+  and the task's active-run lock left in place — the same shape as the
+  existing auth-failure, exhausted-retry-budget, exhausted-cost-budget, and
+  rework-loop escalations. It does not consume the transient-retry budget.
+  Applies to every provider that actually enforces the cap: `claude`,
+  `qwen_code`, `anthropic`, `llm` (`codex_cli`/`opencode` don't enforce
+  `max_turns` at all — tracked separately). To continue past the cap, raise
+  `max_turns` on the agent config or reply to / re-dispatch the run. See
+  [docs/agents.md § Retry Policy](docs/agents.md#retry-policy).
 - **The Logs tab now shows one row per tool call instead of three blocks.** A
   tool result is folded into the call that produced it, so the row carries the
   tool name, its command/arguments, and an outcome chip (`ok`, `40 lines`,
