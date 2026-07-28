@@ -225,6 +225,17 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Board "agent running" indicator now works.** The pulsing dot on a task
+  card never rendered for any task: `BoardPage`'s `runningTaskIds` state had
+  no setter and was never populated, even though the `task.agent_started` /
+  `task.agent_done` WS events it needed were already being handled in the
+  same effect for other purposes. The dot now activates on
+  `task.agent_started`, clears on `task.agent_done` (success or failure), is
+  seeded on load (and on every task upsert) from a task's
+  `active_agent_run_id` so a mid-run page refresh still shows it, and is
+  cleared whenever the WebSocket connection drops so a missed `agent_done`
+  can't leave it stuck — it re-seeds correctly once tasks are refetched
+  after reconnect.
 - **`qwen_code`'s `command_denylist` is now enforced; the no-op
   `command_allowlist` mapping was removed.** `buildQwenArgs` previously
   translated `command_allowlist` patterns into `--allowed-tools

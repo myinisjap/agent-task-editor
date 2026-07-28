@@ -45,6 +45,9 @@ vi.mock('../api/client', async () => {
 // wsOnHandler captures the handler BoardPage registers via wsClient.on so
 // tests can simulate incoming WS events without a real socket.
 let wsOnHandler: ((event: { type: string; payload: unknown }) => void) | null = null
+// wsStatusHandler captures the handler BoardPage registers via
+// wsClient.onStatusChange so tests can simulate connect/disconnect.
+let wsStatusHandler: ((status: 'connecting' | 'open' | 'closed') => void) | null = null
 
 vi.mock('../api/ws', () => ({
   wsClient: {
@@ -52,6 +55,11 @@ vi.mock('../api/ws', () => ({
       wsOnHandler = h
       return () => {}
     }),
+    onStatusChange: vi.fn((h: (status: 'connecting' | 'open' | 'closed') => void) => {
+      wsStatusHandler = h
+      return () => {}
+    }),
+    getStatus: vi.fn(() => 'open'),
     subscribeTask: vi.fn(),
     unsubscribeTask: vi.fn(),
   },
@@ -250,6 +258,87 @@ describe('BoardPage task.created_bulk handling', () => {
       expect(useTasksStore.getState().tasks.map((t) => t.id)).toEqual(
         expect.arrayContaining(['task-1', 'task-2', 'task-3']),
       )
+    })
+  })
+})
+
+// Regression guard for #249 — runningTaskIds was dead state and the "Agent
+// running" pulse dot never rendered. These tests drive the board through
+// real task.agent_started / task.agent_done WS events (captured via the
+// wsClient.on mock) and through the active_agent_run_id seed path.
+describe('BoardPage running indicator (#249)', () => {
+  beforeEach(() => {
+    bulkMock.mockReset()
+    costByTaskMock.mockReset().mockResolvedValue([])
+    tasksListMock.mockReset()
+    workflowsListMock.mockReset()
+    wsOnHandler = null
+    wsStatusHandler = null
+  })
+
+  it('shows the running dot after task.agent_started and clears it after task.agent_done', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one' })])
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(wsOnHandler).not.toBeNull())
+    expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
+
+    wsOnHandler!({
+      type: 'task.agent_started',
+      payload: { task_id: 'task-1', run_id: 'r1', agent_name: 'a' },
+    })
+
+    expect(await screen.findByTitle('Agent running')).toBeInTheDocument()
+
+    wsOnHandler!({
+      type: 'task.agent_done',
+      payload: { task_id: 'task-1', run_id: 'r1', status: 'success' },
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
+    })
+  })
+
+  it('seeds the running dot from active_agent_run_id on load, without any WS event', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one', active_agent_run_id: 'run-9' })])
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByTitle('Agent running')).toBeInTheDocument()
+  })
+
+  it('clears the running dot when the WS connection drops', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one' })])
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(wsOnHandler).not.toBeNull())
+    await waitFor(() => expect(wsStatusHandler).not.toBeNull())
+
+    wsOnHandler!({
+      type: 'task.agent_started',
+      payload: { task_id: 'task-1', run_id: 'r1', agent_name: 'a' },
+    })
+    expect(await screen.findByTitle('Agent running')).toBeInTheDocument()
+
+    wsStatusHandler!('closed')
+
+    await waitFor(() => {
+      expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
     })
   })
 })
