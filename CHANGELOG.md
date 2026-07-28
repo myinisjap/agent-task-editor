@@ -294,6 +294,16 @@ triggers the "Release" workflow the same way.
   separate, larger change.
 
 ### Changed
+- **The Logs tab now shows one row per tool call instead of three blocks.** A
+  tool result is folded into the call that produced it, so the row carries the
+  tool name, its command/arguments, and an outcome chip (`ok`, `40 lines`,
+  `error`, `running`); the disclosure arrow reveals the full output. Previously
+  the separate result row showed a reflowed 120-character preview of the output
+  and expanding it repeated that same text in full — the preview is gone, so
+  the output is shown exactly once, untruncated. Failures still auto-expand, a
+  result short enough to fit on the row is shown inline with no arrow, a call
+  still awaiting its result is marked `running` while the run is live, and a
+  result whose call isn't loaded still renders on its own row.
 - The Repos help modal described issue import as create-only, which is no
   longer accurate; it now covers ongoing sync, the update policy, what happens
   when an issue closes, and comment sync.
