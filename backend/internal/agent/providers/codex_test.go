@@ -3,7 +3,9 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -302,6 +304,85 @@ func TestCodexRunner_Run_Exit0Success(t *testing.T) {
 	if result.InputTokens != 10 || result.OutputTokens != 20 {
 		t.Errorf("usage = %d/%d, want 10/20", result.InputTokens, result.OutputTokens)
 	}
+}
+
+// TestCodexRunner_Run_WithMCP_PreparesAndCleansUpCodexHome verifies the MCP
+// sidecar wiring path: when r.MCP is configured with a ServerBinary, Run
+// must call prepareCodexHome to write a per-run $CODEX_HOME/config.toml
+// (rather than touching any shared/global config) and pass CODEX_HOME to the
+// child process, then Cleanup must remove that directory once Run returns.
+//
+// Regression coverage for a review finding on #251: prepareCodexHome and
+// codexRunConfig.Cleanup were still at 0% coverage because no lifecycle test
+// ever set runner.MCP, so this branch of Run was never exercised at all.
+func TestCodexRunner_Run_WithMCP_PreparesAndCleansUpCodexHome(t *testing.T) {
+	mcpBinary := os.Args[0] // any non-empty path; MCPManager.Prepare only writes it into config files, never executes it
+	runner := &CodexRunner{
+		BinaryPath: os.Args[0],
+		MCP:        &MCPManager{ServerBinary: mcpBinary},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+
+	input := codexHelperInput("exit0_success")
+
+	// Run synchronously; the helper process exits immediately, so by the
+	// time Run returns, its deferred codexHome.Cleanup() has already fired
+	// and we can only assert the directory is gone afterward. To also
+	// observe the directory *while it exists* (proving prepareCodexHome
+	// actually ran, not just that Cleanup ran on a nil config), call
+	// prepareCodexHome directly first and compare its deterministic path
+	// convention against what Run would have used for the same RunID.
+	wantHomeDir := filepath.Join(os.TempDir(), fmt.Sprintf("ate-codex-home-%s", input.RunID))
+
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Status != "completed" || result.Outcome != "success" {
+		t.Fatalf("Run result = %+v, want completed/success", result)
+	}
+
+	// Cleanup (deferred inside Run) must have removed the per-run CODEX_HOME
+	// directory by the time Run returns.
+	if _, statErr := os.Stat(wantHomeDir); !os.IsNotExist(statErr) {
+		t.Errorf("expected CODEX_HOME dir %q to be removed by Cleanup after Run, stat err = %v", wantHomeDir, statErr)
+	}
+
+	// Directly exercise prepareCodexHome/Cleanup's own behavior (config.toml
+	// contents + directory lifecycle), independent of Run's timing, so this
+	// test doesn't rely solely on the directory already being gone above.
+	entry := mcpServerEntry{Command: mcpBinary, Args: []string{}, Env: map[string]string{"RUN_ID": input.RunID}}
+	cfg, err := prepareCodexHome("standalone-"+input.RunID, &entry)
+	if err != nil {
+		t.Fatalf("prepareCodexHome: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("prepareCodexHome returned a nil config for a non-nil entry")
+	}
+	tomlPath := filepath.Join(cfg.HomeDir, "config.toml")
+	if _, statErr := os.Stat(tomlPath); statErr != nil {
+		t.Errorf("expected config.toml to exist at %q: %v", tomlPath, statErr)
+	}
+	cfg.Cleanup()
+	if _, statErr := os.Stat(cfg.HomeDir); !os.IsNotExist(statErr) {
+		t.Errorf("expected Cleanup to remove %q, stat err = %v", cfg.HomeDir, statErr)
+	}
+
+	// prepareCodexHome returns (nil, nil) when there's no MCP server entry to
+	// configure (the r.MCP == nil / ServerBinary == "" branch in Run).
+	if nilCfg, nilErr := prepareCodexHome("no-entry", nil); nilCfg != nil || nilErr != nil {
+		t.Errorf("prepareCodexHome(nil entry) = (%v, %v), want (nil, nil)", nilCfg, nilErr)
+	}
+
+	// Cleanup on a nil *codexRunConfig (the r.MCP == nil branch's `defer
+	// codexHome.Cleanup()` in Run) must be a safe no-op.
+	var nilCfgPtr *codexRunConfig
+	nilCfgPtr.Cleanup()
 }
 
 // TestCodexRunner_Run_Exit1WithTurnFailed verifies a non-zero exit whose

@@ -3,7 +3,9 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -226,6 +228,90 @@ func TestGeminiRunner_Run_Exit0Success(t *testing.T) {
 	if result.InputTokens != 10 || result.OutputTokens != 20 {
 		t.Errorf("usage = %d/%d, want 10/20", result.InputTokens, result.OutputTokens)
 	}
+}
+
+// TestGeminiRunner_Run_WithMCP_PreparesAndCleansUpGeminiHome verifies the MCP
+// sidecar wiring path: when r.MCP is configured with a ServerBinary, Run
+// must call prepareGeminiHome to write a per-run
+// $GEMINI_CLI_HOME/.gemini/settings.json (rather than touching any
+// shared/global config) and pass GEMINI_CLI_HOME to the child process, then
+// Cleanup must remove that directory once Run returns. Also exercises
+// mcpSidecarEnv (the env-var builder passed into the settings.json entry).
+//
+// Regression coverage for a review finding on #251: prepareGeminiHome and
+// geminiRunConfig.Cleanup were still at 0% coverage because no lifecycle
+// test ever set runner.MCP, so this branch of Run was never exercised.
+func TestGeminiRunner_Run_WithMCP_PreparesAndCleansUpGeminiHome(t *testing.T) {
+	mcpBinary := os.Args[0] // any non-empty path; MCPManager.Prepare only writes it into config files, never executes it
+	runner := &GeminiRunner{
+		BinaryPath: os.Args[0],
+		MCP:        &MCPManager{ServerBinary: mcpBinary},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+
+	input := geminiHelperInput("exit0_success")
+	wantHomeDir := filepath.Join(os.TempDir(), fmt.Sprintf("ate-gemini-home-%s", input.RunID))
+
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Status != "completed" || result.Outcome != "success" {
+		t.Fatalf("Run result = %+v, want completed/success", result)
+	}
+
+	// Cleanup (deferred inside Run) must have removed the per-run
+	// GEMINI_CLI_HOME directory by the time Run returns.
+	if _, statErr := os.Stat(wantHomeDir); !os.IsNotExist(statErr) {
+		t.Errorf("expected GEMINI_CLI_HOME dir %q to be removed by Cleanup after Run, stat err = %v", wantHomeDir, statErr)
+	}
+
+	// Directly exercise prepareGeminiHome/Cleanup's own behavior
+	// (settings.json contents + directory lifecycle), independent of Run's
+	// timing.
+	env := mcpSidecarEnv(input, "http://backend.local", "tok-123")
+	if env["RUN_ID"] != input.RunID {
+		t.Errorf("mcpSidecarEnv RUN_ID = %q, want %q", env["RUN_ID"], input.RunID)
+	}
+	if _, ok := env["RESULT_FILE"]; !ok {
+		t.Errorf("mcpSidecarEnv missing RESULT_FILE, got %+v", env)
+	}
+	entry := mcpServerEntry{Type: "stdio", Command: mcpBinary, Args: []string{}, Env: env}
+	cfg, err := prepareGeminiHome("standalone-"+input.RunID, &entry)
+	if err != nil {
+		t.Fatalf("prepareGeminiHome: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("prepareGeminiHome returned a nil config for a non-nil entry")
+	}
+	settingsPath := filepath.Join(cfg.HomeDir, ".gemini", "settings.json")
+	data, statErr := os.ReadFile(settingsPath)
+	if statErr != nil {
+		t.Fatalf("expected settings.json to exist at %q: %v", settingsPath, statErr)
+	}
+	if !contains(string(data), `"task-editor"`) {
+		t.Errorf("expected settings.json to contain the task-editor server entry, got:\n%s", data)
+	}
+	cfg.Cleanup()
+	if _, statErr := os.Stat(cfg.HomeDir); !os.IsNotExist(statErr) {
+		t.Errorf("expected Cleanup to remove %q, stat err = %v", cfg.HomeDir, statErr)
+	}
+
+	// prepareGeminiHome returns (nil, nil) when there's no MCP server entry
+	// to configure (the r.MCP == nil / ServerBinary == "" branch in Run).
+	if nilCfg, nilErr := prepareGeminiHome("no-entry", nil); nilCfg != nil || nilErr != nil {
+		t.Errorf("prepareGeminiHome(nil entry) = (%v, %v), want (nil, nil)", nilCfg, nilErr)
+	}
+
+	// Cleanup on a nil *geminiRunConfig (the r.MCP == nil branch's `defer
+	// geminiHome.Cleanup()` in Run) must be a safe no-op.
+	var nilCfgPtr *geminiRunConfig
+	nilCfgPtr.Cleanup()
 }
 
 // TestGeminiRunner_Run_Exit1WithErrorResult verifies a non-zero exit whose
