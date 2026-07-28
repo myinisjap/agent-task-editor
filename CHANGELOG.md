@@ -224,6 +224,14 @@ triggers the "Release" workflow the same way.
     doesn't read them. Its docs also wrongly listed rate-limit detection as
     unimplemented (it is implemented) and image attachments as impossible
     (`opencode run` has `-f`/`--file`, just unwired).
+- **The `claude` provider no longer passes an unsupported `--image` flag.**
+  `buildClaudeArgs` used to append one `--image <abs-path>` flag per task
+  attachment, but the `claude` CLI has no `--image` flag and rejected it at
+  argument parsing — so every `claude`-provider run against a task with at
+  least one attachment failed instantly, before any model call. The flags are
+  no longer sent; attachments are still made available to the agent as files
+  under `.task_attachments/` in the run's worktree (listed in the prompt), so
+  no capability is lost. See `docs/providers/claude.md` § Image Attachments.
 - **Task read paths no longer scale with total task count.** `GET /tasks` and
   `GET /tasks/{id}` computed their derived dependency-count and subtask-rollup
   badges by self-joining/scanning the *entire* `tasks` table on every

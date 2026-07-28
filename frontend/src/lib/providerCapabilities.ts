@@ -54,7 +54,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     costTracking: { support: 'full', note: 'Authoritative cost and token counts.' },
     imageAttachments: {
       support: 'none',
-      note: 'The claude CLI has no --image flag (verified against v2.1.220), but the runner still passes one per attachment — a task with attachments currently fails at launch. Known bug; the dispatcher also copies attachments into the worktree, so agents can read them as files.',
+      note: 'The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool.',
     },
     maxTurns: { support: 'full' },
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
