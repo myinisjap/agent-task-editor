@@ -20,6 +20,20 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Mid-run cost kill switch + budget early warning.** `max_cost_usd`
+  budgets previously only gated the *next* dispatch, so a single runaway run
+  could blow arbitrarily far past its cap before anything noticed. Providers
+  with mid-run priced usage (`claude`, and `qwen_code` when its configured
+  model is priced) now watch incremental token usage as a run streams,
+  project total cost via the pricing table, and cancel the in-flight
+  subprocess the moment projected cost crosses the effective budget,
+  escalating to `waiting_human` instead of a plain failure (`codex_cli`,
+  `opencode` remain unsupported and are documented as such — see the
+  provider capability matrix). There's also a new configurable early-warning
+  threshold (default 80%, `GET`/`PUT /api/v1/settings/cost-warning`) that
+  fires a `task.cost_warning` WebSocket event ahead of the hard cap, shown as
+  a badge on the board and a banner on Task Detail. See [docs/agents.md §
+  Cost Budgets](docs/agents.md#cost-budgets).
 - **Per-label WIP limits.** Labels can now carry an optional `wip_limit`
   (nullable — `null`/unset means unlimited, unchanged from before this
   feature). The board column header shows `count / limit` and flags the

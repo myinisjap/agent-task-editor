@@ -12,6 +12,7 @@ type Props = {
   tasks: Task[]
   runningTaskIds: Set<string>
   rateLimitedTaskIds?: Map<string, string>
+  costWarnedTaskIds?: Set<string>
   onAddTask?: () => void
   onDuplicate?: (task: Task) => void
   isStartingColumn?: boolean
@@ -21,7 +22,7 @@ type Props = {
   onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const { remove } = useTasksStore()
   const [expanded, setExpanded] = useState(false)
@@ -75,6 +76,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             task={task}
             isRunning={runningTaskIds.has(task.id)}
             rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
+            costWarned={costWarnedTaskIds?.has(task.id)}
             onDelete={() => handleDelete(task.id)}
             onDuplicate={onDuplicate}
             isEditable={isStartingColumn}

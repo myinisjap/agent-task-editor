@@ -80,6 +80,8 @@ If the agent completes without calling `signal_complete`, the runner scans the f
 
 The `turn.completed` event reports `usage.input_tokens` / `usage.output_tokens` (also `cached_input_tokens` and `reasoning_output_tokens`, not currently surfaced), which are used as-is. **No total-cost figure is reported by the Codex CLI's JSON output** — `cost_usd` is left at `0` for this provider rather than estimated. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
+**Mid-run cost kill switch: not supported.** Codex captures tokens (above) but they are never priced against a pricing table for this provider (tracked as [#245](https://github.com/myinisjap/agent-task-editor/issues/245)), so a mid-run cost projection isn't possible. Only the pre-dispatch `max_cost_usd` guard applies, and it too will not reliably fire since `cost_usd` is always `0` for this provider. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
+
 ## Setup Checklist
 
 1. Install the `codex` CLI (`npm i -g @openai/codex`) and add it to `PATH` (or mount it into the container; see the backend `Dockerfile`'s `INSTALL_CODEX_CLI` build arg)

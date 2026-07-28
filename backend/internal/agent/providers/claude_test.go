@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -61,6 +62,23 @@ func TestMain(m *testing.M) {
 		// treated as a normal "completed" run.
 		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns","session_id":"max-turns-session","total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20}}`)
 		os.Exit(0)
+	case "cost_watchdog_kill":
+		// Simulate: a long-running agent whose incremental per-turn usage
+		// (assistant-message usage, real CLIs never report total_cost_usd on
+		// these) projects well past its configured cost budget partway
+		// through. The watchdog (see cost_watchdog.go) should cancel this
+		// subprocess before it reaches the final "result" line below — the
+		// test's RunInput sets a tiny CostBudgetUSD so a single assistant
+		// message's tokens (priced via the test's fakePriceResolver) already
+		// exceed it. Sleep briefly after each message so the scan goroutine
+		// has time to observe usage and call cancel() before the process
+		// would otherwise exit on its own, keeping the test deterministic
+		// about *why* the process ended (watchdog kill, not a natural exit).
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":1000000,"output_tokens":1000000}},"session_id":"cost-watchdog-session"}`)
+		time.Sleep(2 * time.Second)
+		// Only reached if the watchdog failed to cancel the run in time.
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":1000000,"output_tokens":1000000},"total_cost_usd":100}`)
+		os.Exit(0)
 	}
 	switch os.Getenv("CODEX_TEST_HELPER") {
 	case "exit0_success":
@@ -105,6 +123,14 @@ func TestMain(m *testing.M) {
 		// Simulate: qwen exhausts its configured --max-session-turns and
 		// exits 0 (mirrors claude's error_max_turns behavior).
 		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns","session_id":"qwen-max-turns-session","total_cost_usd":0.02,"usage":{"input_tokens":30,"output_tokens":40}}`)
+		os.Exit(0)
+	case "cost_watchdog_kill":
+		// Mirrors claude's "cost_watchdog_kill" helper mode above — qwen
+		// shares the same stream-json envelope/watchdog wiring (see qwen.go).
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":1000000,"output_tokens":1000000}},"session_id":"qwen-cost-watchdog-session"}`)
+		time.Sleep(2 * time.Second)
+		// Only reached if the watchdog failed to cancel the run in time.
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":1000000,"output_tokens":1000000},"total_cost_usd":100}`)
 		os.Exit(0)
 	}
 
@@ -362,6 +388,75 @@ func TestClaudeRunner_ErrorMaxTurns(t *testing.T) {
 	}
 	if res.r.InputTokens != 10 || res.r.OutputTokens != 20 {
 		t.Errorf("want usage preserved (10/20), got (%d/%d)", res.r.InputTokens, res.r.OutputTokens)
+	}
+}
+
+// TestClaudeRunner_CostWatchdogKillsRun verifies the mid-run cost watchdog
+// (see cost_watchdog.go): a subprocess that emits an assistant-message usage
+// block whose projected cost (via the runner's PriceResolver) crosses a tiny
+// configured CostBudgetUSD is cancelled before it reaches its own "result"
+// line, and Run returns *agent.ErrCostBudgetExceeded rather than treating the
+// resulting context-cancellation as a plain failure/transient error. Run()
+// must also not attempt any resume/cold-start fallback in this case.
+func TestClaudeRunner_CostWatchdogKillsRun(t *testing.T) {
+	runner := helperRunner("cost_watchdog_kill")
+	runner.PriceResolver = fakePriceResolver{inPer1M: 10, outPer1M: 10, known: true}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := makeInput("cost_watchdog_kill")
+	// 1,000,000 input + 1,000,000 output tokens at $10/1M each = $10 + $10 =
+	// $20 projected, comfortably over this tiny budget.
+	input.CostBudgetUSD = 1.00
+	input.CostWarnRatio = 0.8
+	input.AgentConfig.TimeoutSecs = 10
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	logs := drainLogs(logCh)
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Run to return — watchdog likely failed to cancel the subprocess")
+	}
+
+	var ce *agent.ErrCostBudgetExceeded
+	if !errors.As(res.err, &ce) {
+		t.Fatalf("want *agent.ErrCostBudgetExceeded, got err=%v (%T)", res.err, res.err)
+	}
+	if ce.BudgetUSD != 1.00 {
+		t.Errorf("want BudgetUSD=1.00, got %v", ce.BudgetUSD)
+	}
+	if ce.SpentUSD <= ce.BudgetUSD {
+		t.Errorf("want SpentUSD (%v) to exceed BudgetUSD (%v)", ce.SpentUSD, ce.BudgetUSD)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if !res.r.CostWarned {
+		t.Error("want CostWarned=true — crossing the budget also crosses the warn ratio")
+	}
+	if res.r.SessionID != "cost-watchdog-session" {
+		t.Errorf("want session id preserved from the assistant message, got %q", res.r.SessionID)
+	}
+
+	var sawKillLog bool
+	for _, e := range logs {
+		if e.Type == agent.LogSystem && contains(e.Content, "cost watchdog") {
+			sawKillLog = true
+		}
+	}
+	if !sawKillLog {
+		t.Error("expected a cost-watchdog system log line")
 	}
 }
 

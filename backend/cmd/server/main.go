@@ -211,7 +211,7 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
 		case "anthropic":
 			// Deprecated: disabled for new/updated provider configs (see
 			// deprecatedProviders in handlers/providers.go), retained here so
@@ -226,7 +226,7 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
 		case "codex_cli":
 			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {

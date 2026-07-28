@@ -42,6 +42,12 @@ const (
 	// structurally via a typed error / result subtype, not text-sniffed, so
 	// it deliberately has no classPatterns entry below.
 	ClassMaxTurns Classification = "max_turns"
+	// ClassCostBudget means a provider's mid-run cost watchdog cancelled the
+	// run because projected cost crossed the task's effective cost budget
+	// (see ErrCostBudgetExceeded): escalate to waiting_human. Surfaced
+	// structurally via the typed error, not text-sniffed, so it deliberately
+	// has no classPatterns entry below.
+	ClassCostBudget Classification = "cost_budget"
 )
 
 // classPattern is one substring→classification rule. Substr must be lowercase;

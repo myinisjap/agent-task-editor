@@ -100,6 +100,8 @@ Token usage is parsed from the CLI's `result` stream-json message (`usage`) via 
 
 **No total-cost figure is reported by the Qwen Code CLI**, unlike `claude`. The parser also looks for `total_cost_usd` on the same envelope, but qwen's result message doesn't carry that field (verified against v0.21.0: its `buildResultMessage` emits `usage` + `permission_denials` and the string `total_cost_usd` appears nowhere in the package), so `cost_usd` is left at `0` for this provider rather than estimated — the same situation as `codex_cli`. A cost budget cap will not reliably fire here. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
+**Mid-run cost kill switch: supported only when the configured model is priced.** `qwen_code` shares the same watchdog mechanism as `claude` (incremental token usage from `assistant` stream-json messages, projected via the pricing table), since — as above — it never gets an authoritative `total_cost_usd` to use instead, mid-run or otherwise. If the configured model isn't in the pricing table the watchdog can't project a cost and is a silent no-op; only the pre-dispatch budget guard applies (and it too under-reports, since `cost_usd` is always `0` for this provider). See [agents.md § Cost Budgets](../agents.md#cost-budgets).
+
 ## Setup Checklist
 
 1. Install the `qwen` CLI (`npm i -g @qwen-code/qwen-code`) and add it to `PATH` (or mount it into the container; see the backend `Dockerfile`'s `INSTALL_QWEN_CLI` build arg)

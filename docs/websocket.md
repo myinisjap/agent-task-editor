@@ -105,7 +105,9 @@ An agent run completed (any terminal run status).
 
 ### `task.needs_human`
 The agent called `request_human` and is waiting for input. Also published on
-cost-budget or retry-budget exhaustion (see `internal/agent`).
+cost-budget exhaustion (pre-dispatch, or a mid-run kill by a provider's cost
+watchdog — see `docs/agents.md#cost-budgets`) or retry-budget exhaustion (see
+`internal/agent`).
 
 ```json
 {
@@ -120,6 +122,34 @@ cost-budget or retry-budget exhaustion (see `internal/agent`).
 
 The frontend surfaces this as an opt-in browser notification (see
 [Client-Side Behaviour](#client-side-behaviour)).
+
+### `task.cost_warning`
+A task's cumulative recorded cost crossed the configurable early-warning
+threshold (default 80%, `GET`/`PUT /api/v1/settings/cost-warning`) of its
+effective cost budget (`max_cost_usd`) — ahead of the hard budget guard at
+100% (see `docs/agents.md#cost-budgets`). Fired from two places: a
+provider's mid-run cost watchdog (`claude`, `qwen_code` when priced) while a
+run is still in flight, or the dispatcher's pre-dispatch check for any
+provider when a new run is about to start on a task already past the
+threshold. `run_id` is only present for the mid-run variant. Fires at most
+once per run (watchdog) or once per task until the budget changes
+(pre-dispatch).
+
+```json
+{
+  "type": "task.cost_warning",
+  "payload": {
+    "task_id": "uuid",
+    "run_id": "uuid",
+    "spent_usd": 4.10,
+    "budget_usd": 5.00
+  }
+}
+```
+
+The board shows a "💰 Budget warning" badge on the task card and Task Detail
+shows a banner while a warning is outstanding for a task; both clear on the
+task's next label change.
 
 ### `task.review_comments_changed`
 Fired after a completed run applies `resolve_comment` resolutions from the

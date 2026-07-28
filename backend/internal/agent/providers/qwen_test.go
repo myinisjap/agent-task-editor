@@ -192,6 +192,63 @@ func TestQwenRunner_ErrorMaxTurns(t *testing.T) {
 	}
 }
 
+// TestQwenRunner_CostWatchdogKillsRun mirrors
+// TestClaudeRunner_CostWatchdogKillsRun: verifies qwen's mid-run cost
+// watchdog wiring (see qwen.go, cost_watchdog.go) cancels a subprocess whose
+// projected cost crosses a tiny configured CostBudgetUSD, returning
+// *agent.ErrCostBudgetExceeded rather than a plain failure.
+func TestQwenRunner_CostWatchdogKillsRun(t *testing.T) {
+	runner := &QwenRunner{
+		BinaryPath:    os.Args[0],
+		PriceResolver: fakePriceResolver{inPer1M: 10, outPer1M: 10, known: true},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := qwenHelperInput("cost_watchdog_kill")
+	input.CostBudgetUSD = 1.00
+	input.CostWarnRatio = 0.8
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	for range logCh {
+	}
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Run to return — watchdog likely failed to cancel the subprocess")
+	}
+
+	var ce *agent.ErrCostBudgetExceeded
+	if !errors.As(res.err, &ce) {
+		t.Fatalf("want *agent.ErrCostBudgetExceeded, got err=%v (%T)", res.err, res.err)
+	}
+	if ce.BudgetUSD != 1.00 {
+		t.Errorf("want BudgetUSD=1.00, got %v", ce.BudgetUSD)
+	}
+	if ce.SpentUSD <= ce.BudgetUSD {
+		t.Errorf("want SpentUSD (%v) to exceed BudgetUSD (%v)", ce.SpentUSD, ce.BudgetUSD)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if !res.r.CostWarned {
+		t.Error("want CostWarned=true — crossing the budget also crosses the warn ratio")
+	}
+	if res.r.SessionID != "qwen-cost-watchdog-session" {
+		t.Errorf("want session id preserved from the assistant message, got %q", res.r.SessionID)
+	}
+}
+
 // --- Subprocess lifecycle tests (generalized from claude_test.go's
 // CLAUDE_TEST_HELPER re-exec harness — see TestMain in claude_test.go) ---
 

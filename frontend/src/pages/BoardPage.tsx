@@ -27,6 +27,10 @@ export default function BoardPage() {
   const [costByTask, setCostByTask] = useState<Record<string, number>>({})
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
   const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
+  // Set of taskIds that have crossed the cost early-warning threshold (see
+  // task.cost_warning WS event) — cleared when a task's label changes (a new
+  // run/lifecycle stage) or on task.updated (in case cost_warned resets server-side).
+  const [costWarnedTaskIds, setCostWarnedTaskIds] = useState(() => new Set<string>())
   const [showNewTask, setShowNewTask] = useState(false)
   // Source task for the "Duplicate" flow — when set, the New Task modal opens
   // pre-filled from this task instead of blank. Mutually exclusive with
@@ -111,6 +115,16 @@ export default function BoardPage() {
         const taskId = event.type === 'task.created' ? event.payload.id : event.payload.task_id
         api.tasks.get(taskId).then(upsert).catch(() => {})
       }
+      if (event.type === 'task.label_changed') {
+        // A label change moves the task to a new lifecycle stage — clear any
+        // stale budget-warning badge from a prior stage/run.
+        setCostWarnedTaskIds(prev => {
+          if (!prev.has(event.payload.task_id)) return prev
+          const next = new Set(prev)
+          next.delete(event.payload.task_id)
+          return next
+        })
+      }
       if (event.type === 'task.created_bulk') {
         // The importer batches an entire sweep's new tasks into one event
         // rather than one task.created per issue — do a single board
@@ -136,6 +150,14 @@ export default function BoardPage() {
       if (event.type === 'task.agent_done') {
         // A run just recorded its cost — refresh the per-task cost map.
         refreshCostByTask()
+      }
+      if (event.type === 'task.cost_warning') {
+        setCostWarnedTaskIds(prev => {
+          if (prev.has(event.payload.task_id)) return prev
+          const next = new Set(prev)
+          next.add(event.payload.task_id)
+          return next
+        })
       }
     })
     return off
@@ -381,6 +403,7 @@ export default function BoardPage() {
             tasks={filteredTasks}
             runningTaskIds={runningTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
+            costWarnedTaskIds={costWarnedTaskIds}
             onAddTask={() => setShowNewTask(true)}
             onDuplicate={(task) => setDuplicateSource(task)}
             condensed={condensed}

@@ -1039,6 +1039,28 @@ curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/
 The frontend's **Configuration → Pricing** page provides an editable table
 UI (add/remove rows, Save) for this endpoint.
 
+### `GET /settings/cost-warning` / `PUT /settings/cost-warning`
+Reads/replaces the single global **cost early-warning threshold**: the
+fraction of a task's effective `max_cost_usd` budget at which a
+`task.cost_warning` WebSocket event fires, ahead of the hard budget
+guard/mid-run kill switch at 100% (see [agents.md § Cost
+Budgets](agents.md#cost-budgets)). `GET` returns the current setting. `PUT`
+validates `warn_ratio` is `> 0` and `<= 1`, rejecting otherwise with `400`.
+Takes effect on the very next dispatch/run check without a restart — both
+the dispatcher's pre-dispatch check and the provider-side mid-run watchdog
+read it fresh.
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/settings/cost-warning
+curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"warn_ratio": 0.8}' \
+  http://localhost:8080/api/v1/settings/cost-warning
+```
+
+```json
+{ "warn_ratio": 0.8, "updated_at": "2026-07-28T12:00:00Z" }
+```
+
 ---
 
 ## WebSocket Auth

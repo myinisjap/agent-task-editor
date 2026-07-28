@@ -18,11 +18,12 @@ The `providers` package implements the concrete agent backends (claude, anthropi
 | `opencode.go` | `OpencodeRunner` — runs the opencode CLI; own event schema, parsed via `parse_opencode.go`. No MCP support (`ponytail`-marked known gap) |
 | `tools.go` | Shared tool implementations for `anthropic` and `llm` providers (read_file, write_file, run_bash, list_dir, search, str_replace, `CommandPolicy`, `runAccumulators`) |
 | `mcp.go` | `MCPManager`, `SubtaskEnv` — prepares/cleans up the MCP sidecar config and result file |
-| `pricing.go` | `estimateCostUSD` — manually maintained USD-per-1M-token pricing table used by the `anthropic`/`llm` providers (not the `claude` CLI provider, which reports its own authoritative cost) |
+| `pricing.go` | `estimateCostUSD`/`estimateCostUSDWithResolver`, `PriceResolver` — manually maintained USD-per-1M-token pricing table used by the `anthropic`/`llm` providers for their authoritative `cost_usd`, and by `claude`/`qwen_code`'s mid-run cost watchdog (`cost_watchdog.go`) to *project* cost from incremental tokens (those two CLIs report their own authoritative total cost, but only at run end — too late for a mid-run kill switch) |
+| `cost_watchdog.go` | `costWatchdog`/`newCostWatchdog` — pure accumulator that projects total task cost (prior spend + this run's cumulative token usage, priced via `pricing.go`) as incremental usage arrives and reports when it crosses the warning ratio or hard budget; used by `claude.go`/`qwen.go`'s stdout scan loops, which own actually cancelling the subprocess and constructing `agent.ErrCostBudgetExceeded` |
 | `prompt.go` | `buildPrompt`, `buildResumePrompt`, `buildSystemPrompt`, `writeHumanReplySection`, `writeSubtaskConflictSection`, `writeFeedbackSection`, `writeReviewCommentsSection`, `writeSourceCommentsSection` — prompt assembly shared by every provider |
 | `cli.go` | `mergeEnv`, `rawDump`/`openRawDump`/`WriteLine`/`Close` — infrastructure shared by every CLI-subprocess runner (env sanitization, dev-only raw stdout capture gated by `AGENT_RAW_LOG_DIR`) |
 | `parse.go` | Generic parser helpers shared across providers: `runUsage`, `applyUsage`, `extractOutcome`, `is429Line`/`isTransientLine` (thin wrappers over `agent.ClassifyLine`) |
-| `parse_streamjson.go` | Wire-format helpers for the claude-style stream-json format: `classifyStreamJSON`, `classifyResultMessage`, `extractResultUsage`, `assistantHasToolUse`. Classifies each line's `LogType` and passes the **raw line** through as `Content` — display shaping (extracting text, summarizing tool calls) is the frontend's job (`parseAgentLog.ts`). This is a format library owned by **no provider** — nothing provider-specific lives here |
+| `parse_streamjson.go` | Wire-format helpers for the claude-style stream-json format: `classifyStreamJSON`, `classifyResultMessage`, `extractResultUsage`, `extractAssistantUsage`, `assistantHasToolUse`. Classifies each line's `LogType` and passes the **raw line** through as `Content` — display shaping (extracting text, summarizing tool calls) is the frontend's job (`parseAgentLog.ts`). This is a format library owned by **no provider** — nothing provider-specific lives here. `streamEvent.Usage` is populated for both `"result"` messages (authoritative final total, `IsResult=true`) *and* `"assistant"` messages (per-turn-incremental, no cost — callers must sum across messages themselves; feeds the cost watchdog) |
 | `parse_claude.go` | Claude's parse entry point: `isResumeErrorLine` and claude-specific result handling. `claude.go` calls `classifyStreamJSON` directly (stream-json is claude's native format) |
 | `parse_qwen.go` | `classifyQwenJSON` — qwen's parse entry point, a thin delegation to `parse_streamjson.go`'s `classifyStreamJSON` (qwen reuses claude's exact envelope today). `qwen.go` calls this, never `classifyStreamJSON` directly. Intentionally near-trivial — the home for future qwen-specific parsing divergence |
 | `parse_codex.go` | `classifyCodexJSON`, `classifyCodexItem` + envelope types (`codexItemEnvelope`) — codex's own JSONL event schema (`{"type":"thread.started"\|"turn.started"\|"turn.completed"\|"turn.failed"\|"item.started"\|"item.updated"\|"item.completed"\|"error",...}`) |
@@ -32,9 +33,20 @@ The `providers` package implements the concrete agent backends (claude, anthropi
 
 Each provider's parsing logic lives in exactly one `parse_<name>.go` file — no file may contain parsing logic for more than one provider. `parse_streamjson.go` is the sole exception: it is shared wire-format code owned by no provider, reached only through a provider's own parser (`claude.go` calling `classifyStreamJSON` directly since that *is* claude's format; `parse_qwen.go`'s `classifyQwenJSON` delegating to it since qwen reuses claude's envelope). A runner file (`claude.go`, `qwen.go`, `codex.go`, `opencode.go`) calls only its own `parse_<name>.go` entry point — never another provider's parser and never `parse_streamjson.go` directly (except `claude.go`, per above). This layout exists so future per-provider parsing changes land in one file each, without touching siblings.
 
-## Branch-per-task / Worktrees, Run Cancellation, Retry Policy, Session Resume, Review Comments, Rework-Loop, Dispatch Locking, Subtask Coordinator
+## Branch-per-task / Worktrees, Run Cancellation, Retry Policy, Cost Budgets, Session Resume, Review Comments, Rework-Loop, Dispatch Locking, Subtask Coordinator
 
 These runtime mechanisms are documented in `../AGENTS.md` (the core `agent` package) — they're owned by `pool.go`/`dispatcher.go`/`worktree.go`/`subtasks.go`, not by this package. This package only supplies the `Provider` implementations those mechanisms drive.
+
+For the mid-run cost kill switch specifically (see `../AGENTS.md`'s "Cost
+Budgets" section for the full picture): only `claude.go` and `qwen.go` wire
+`cost_watchdog.go` into their stdout scan loop, since only they get
+per-message token usage from a claude-style stream-json envelope
+(`parse_streamjson.go`'s `extractAssistantUsage`) that can be priced via
+`pricing.go`. `codex.go`/`opencode.go` intentionally do not — `codex` tokens
+are never priced (blocked on #245), and `opencode` records no usage at all.
+Do not add watchdog wiring to a provider without first confirming it has
+*priced, incremental* usage available before the run's terminal event —
+otherwise it either can't project a cost (no-op) or would have to guess.
 
 ## Environment Variable Security
 

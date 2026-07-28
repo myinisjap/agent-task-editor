@@ -93,6 +93,8 @@ Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) 
 
 Token usage (`input_tokens`/`output_tokens`) is summed from the response's OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`) across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens against the user-editable pricing table (`GET`/`PUT /api/v1/settings/pricing`, Configuration → Pricing in the UI), falling back to a small hardcoded map (`internal/agent/providers/pricing.go`) for any model with no matching row — accuracy depends on the model ID matching an entry in one of the two. A model matching neither has that run's `cost_unknown` flag set instead of silently showing `$0`. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
+**Mid-run cost kill switch: not supported.** No watchdog wiring for this (deprecated) provider — `max_cost_usd` only prevents the *next* dispatch once already exhausted. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
+
 ## Rate Limit Handling
 
 Detects HTTP 429 responses. Reads `x-ratelimit-reset-requests`, `x-ratelimit-reset-tokens`, and `retry-after` headers to determine when to retry.

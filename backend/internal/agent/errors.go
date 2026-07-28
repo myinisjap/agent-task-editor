@@ -47,3 +47,25 @@ type ErrMaxTurns struct {
 func (e *ErrMaxTurns) Error() string {
 	return fmt.Sprintf("exceeded max turns (%d)", e.MaxTurns)
 }
+
+// ErrCostBudgetExceeded marks a run as having been killed mid-flight because
+// its projected cost (prior runs' recorded spend plus this run's incremental
+// token usage, priced via the provider's pricing table) crossed the task's
+// effective cost budget (see RunInput.CostBudgetUSD / dispatcher.
+// effectiveBudget). Providers that watch usage mid-run (claude, qwen —
+// see providers/cost_watchdog.go) cancel their own subprocess and return this
+// instead of letting the run continue unbounded, so pool.handleProviderError
+// can detect it via errors.As and escalate to waiting_human — re-dispatching
+// would simply start spending against the same already-exhausted budget again.
+//
+// It deliberately does NOT implement Transient(): a budget stop is a policy
+// decision, not a retryable infra blip, and must not consume (or be masked
+// by) the task's transient-retry budget.
+type ErrCostBudgetExceeded struct {
+	SpentUSD  float64
+	BudgetUSD float64
+}
+
+func (e *ErrCostBudgetExceeded) Error() string {
+	return fmt.Sprintf("mid-run cost budget exceeded: $%.2f of $%.2f", e.SpentUSD, e.BudgetUSD)
+}

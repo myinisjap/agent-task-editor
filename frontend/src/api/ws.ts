@@ -33,6 +33,13 @@ export type WSEvent =
   | { type: 'task.agent_done'; payload: { task_id: string; run_id: string; status: AgentRun['status'] } }
   | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string } }
   | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
+  // Emitted when a task's cumulative recorded cost crosses the configurable
+  // early-warning threshold (see GET/PUT /settings/cost-warning, default
+  // 80%) of its effective cost budget — either from a provider's mid-run
+  // cost watchdog (claude, qwen_code — before the hard kill at 100%) or from
+  // the dispatcher's pre-dispatch check (any provider). run_id is omitted for
+  // the dispatcher's pre-dispatch variant (no run is in flight yet).
+  | { type: 'task.cost_warning'; payload: { task_id: string; run_id?: string; spent_usd: number; budget_usd: number } }
   | { type: 'agent.log'; payload: { task_id: string; run_id: string; entry: AgentLog } }
   // Sent once on subscribe: the tail of the run's persisted log as a single
   // batched message (capped server-side). has_more signals that earlier entries

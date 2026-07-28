@@ -213,6 +213,20 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 	p.persistRunSession(job, result, log)
 
+	// Surface the early-warning threshold regardless of how the run
+	// ultimately ends (including a hard cost-budget kill below, so the board
+	// still gets the warning even on a run that also gets the terminal
+	// needs_human escalation) — the watchdog observed projected cost cross
+	// CostWarnRatio*budget at some point during the run.
+	if result.CostWarned && p.pub != nil {
+		p.pub.Publish("task.cost_warning", map[string]any{
+			"task_id":    job.Input.Task.ID,
+			"run_id":     job.RunID,
+			"spent_usd":  job.Input.CostSpentUSD + result.CostUSD,
+			"budget_usd": job.Input.CostBudgetUSD,
+		})
+	}
+
 	// Classify a provider error. A transient/rate-limit error is handled here and
 	// short-circuits the rest of the run; a genuine error falls through as a plain
 	// failed result.
@@ -342,6 +356,17 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 	if errors.As(err, &mt) {
 		log.Warn("pool: agent run hit max turns", "classification", string(ClassMaxTurns), "max_turns", mt.MaxTurns)
 		p.handleMaxTurnsExhausted(ctx, job, result, mt, startedAt)
+		return true
+	}
+
+	// Checked before the transientErr interface check below for the same
+	// reason as ErrMaxTurns above: ErrCostBudgetExceeded deliberately does
+	// NOT implement Transient(), but ordering this first guarantees a
+	// budget-killed run can never be mistaken for a transient one.
+	var ce *ErrCostBudgetExceeded
+	if errors.As(err, &ce) {
+		log.Warn("pool: agent run hit cost budget", "classification", string(ClassCostBudget), "spent_usd", ce.SpentUSD, "budget_usd", ce.BudgetUSD)
+		p.handleCostBudgetExceeded(ctx, job, result, ce, startedAt)
 		return true
 	}
 
