@@ -319,6 +319,30 @@ func (h *e2eHarness) pollTask(t *testing.T, taskID string, cond func(gen.Task) b
 	return gen.Task{}
 }
 
+// pollAgentRun waits until cond(run) holds or the deadline elapses. Needed
+// because pollTask's conditions are typically satisfied by task-row fields
+// (e.g. active_agent_run_id) that are written synchronously at dispatch time
+// — before pool.run() has even invoked the provider, let alone persisted the
+// run's terminal status/cost/tokens via SetAgentRunCompleted. Asserting on
+// run fields immediately after a pollTask race is therefore inherently
+// flaky (especially under -race on a loaded CI runner); callers that need
+// the run's terminal state should poll for it explicitly via this helper
+// instead of assuming pollTask's return already implies it landed.
+func (h *e2eHarness) pollAgentRun(t *testing.T, runID string, cond func(gen.AgentRun) bool, msg string) gen.AgentRun {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		run, err := h.q.GetAgentRun(context.Background(), runID)
+		if err == nil && cond(run) {
+			return run
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	run, _ := h.q.GetAgentRun(context.Background(), runID)
+	t.Fatalf("timed out waiting for run %s: %s (status=%q cost_usd=%v)", runID, msg, run.Status, run.CostUsd)
+	return gen.AgentRun{}
+}
+
 // TestE2E_GoldenPath covers issue #58 scenarios 1 & 2: a task on an agent label
 // is picked up (run created, active_agent_run_id set while running), the fake
 // provider completes with outcome success, and the task transitions, clears its

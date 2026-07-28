@@ -328,13 +328,14 @@ func TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked(t *testing.T) {
 		return tk.ActiveAgentRunID != nil && tk.TransientRetryCount == 0
 	}, "run to hit the cost budget and escalate to waiting_human")
 
-	run, err := h.q.GetAgentRun(context.Background(), *esc.ActiveAgentRunID)
-	if err != nil {
-		t.Fatalf("get agent run: %v", err)
-	}
-	if run.Status != "waiting_human" {
-		t.Errorf("expected escalated run status 'waiting_human', got %q", run.Status)
-	}
+	// active_agent_run_id is set synchronously at dispatch time, before the
+	// fake provider even runs — pollTask above only proves the run started,
+	// not that it finished. Poll the run row itself for its terminal status
+	// before asserting on notes/cost/tokens, all of which are written
+	// together by pool.handleCostBudgetExceeded once the run completes.
+	run := h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
+		return r.Status == "waiting_human"
+	}, "run to be persisted as waiting_human after the cost-budget kill")
 	wantMsg := "mid-run cost budget exceeded: $12.34 of $10.00"
 	if run.Notes == nil || *run.Notes != wantMsg {
 		t.Errorf("expected notes %q, got %v", wantMsg, run.Notes)
