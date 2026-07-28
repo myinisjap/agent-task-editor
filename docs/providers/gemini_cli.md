@@ -65,6 +65,12 @@ There is no Gemini CLI denylist flag at all. There *is* an `--allowed-tools` fla
 
 _Verified against `@google/gemini-cli` v0.52.0's registered CLI options._
 
+## Session Resume
+
+**Not functional yet, despite the runner's resume argument being correct — tracked in #284.**
+
+The `init` event on the stream-json envelope carries a `session_id`, and the runner correctly passes `--resume <session_id>` on a later run for the same task (the CLI's `findSession` matches by UUID before falling back to a numeric index, so a UUID session id works despite the `--resume` help text reading as if it only accepts an index). The actual blocker is upstream of the CLI invocation: as described in "MCP Tools" above, `GEMINI_CLI_HOME` is set to a **fresh, isolated temp directory per run** and that directory is **removed when the run ends**. Gemini CLI v0.52.0 resolves its "home" directory (and therefore its session/chat history under `<home>/.gemini/tmp/<projectId>/chats`) from `GEMINI_CLI_HOME` when it's set, so every run's session storage is deleted as that run finishes — there is nothing left to resume from on the next run, regardless of the `--resume` flag. Fixing this requires giving MCP settings and session storage independent lifetimes (e.g. a persistent `GEMINI_CLI_HOME` while still isolating the per-run MCP settings file). Until then, `resume_sessions` has no effect for this provider — see the capability matrix in [agents.md](../agents.md#capability-matrix).
+
 ## Model Selection
 
 Pass `model` on the referenced [Provider Config](../agents.md#provider-configs). It is passed via `--model <model>` to the CLI.

@@ -26,7 +26,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `enabled_mcp_servers` | JSON array of Claude user-level MCP server names enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 | `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode`, `gemini_cli`, or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
 | `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `opencode`, `qwen_code`, `gemini_cli`, or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
-| `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude` provider only** (others ignore it). Default on. See [Session Resume](#session-resume) below. |
+| `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude`, `qwen_code`, `codex_cli`, and `opencode`** (`gemini_cli` does not yet honor this — see [Session Resume](#session-resume) below). Default on. |
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`gemini_cli`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. See [Cost Budgets](#cost-budgets) below. |
@@ -105,7 +105,7 @@ _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capab
 | Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Estimated from a pricing table, not authoritative. | ⚠️ Estimated from a pricing table, not authoritative. | ❌ Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire. |
 | Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ❌ See docs/providers/gemini_cli.md. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
 | `max_turns` | ✅ | ✅ Enforced via --max-session-turns. | ❌ Not enforced — the gemini CLI has no turn-cap flag, so only the run timeout bounds a run. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. | ✅ Enforced via the tool-use loop. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
-| Session resume | ✅ session_id + --resume. | ⚠️ Session id is recorded and the CLI supports --resume, but the dispatcher only resumes the claude provider, so runs always start cold. | ⚠️ Session id is recorded and the CLI supports --resume, but the dispatcher only resumes the claude provider, so runs always start cold. | ⚠️ Thread id is recorded and `codex exec resume` exists, but the dispatcher only resumes the claude provider, so runs always start cold. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ❌ The runner never records a session id, so there is nothing to resume from. |
+| Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ⚠️ Session id is recorded and the CLI supports --resume, but GeminiRunner scopes GEMINI_CLI_HOME to a per-run temp dir that is deleted on cleanup, destroying session storage before it could be resumed. Tracked in #284. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
 | Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |
 
 <!-- END capability-matrix (generated) -->
@@ -114,7 +114,7 @@ Notes:
 - `anthropic`/`llm` gained `get_task_transitions`, `list_dir`, `search`, and `str_replace` as native tools; `signal_complete` now takes `outcome: "success"|"failure"` — identical to the MCP version (previously it took a raw `next_label`, which was a bug: the schema advertised `next_label` but the implementation always read `outcome`, silently dropping the model's completion signal).
 - `opencode`'s MCP-via-project-config path (writing a per-run `opencode.json` pointing at the same sidecar) is unexplored; see the provider doc for current status. Until proven out, treat `opencode` as the chat-grade/experimental tier of the providers above.
 - Image attachments and session-continuity-via-persisted-messages for `anthropic`/`llm` are tracked as follow-up work, not implemented here.
-- **Session resume is `claude`-only by construction.** `qwen_code`/`gemini_cli`/`codex_cli` each record a session/thread id, and each runner already passes the CLI's resume flag when given one — but `Dispatcher.resolveAgentConfig` only looks up a prior session when `provider == "claude"`, so `ResumeSessionID` is always empty for the others and every run starts cold. That gate, not a missing CLI flag, is why those three are ⚠️ rather than ✅. `opencode` is ❌ for a different reason: its runner never returns a `SessionID` at all, so there is nothing to resume from.
+- **Session resume works for `claude`, `qwen_code`, `codex_cli`, and `opencode`.** `Dispatcher.resolveAgentConfig` looks up a prior session for any provider `providerSupportsResume` recognizes, and each of those four runners already records the right session/thread id and passes the CLI's resume flag correctly. `gemini_cli` is the lone holdout: its runner also records a session id and passes the right `--resume` flag, but `GeminiRunner` scopes `GEMINI_CLI_HOME` to a fresh temp directory per run and deletes it when the run ends, destroying session storage before a later run could ever resume it — tracked in #284, and deliberately excluded from `providerSupportsResume` until fixed (adding it early would silently no-op instead of resuming).
 - **`max_turns` is not enforced on every provider.** `claude` (`--max-turns`), `qwen_code` (`--max-session-turns`), and `anthropic`/`llm` (the Go tool-use loop) honor it. `gemini_cli`, `codex_cli`, and `opencode` have no turn-cap flag, so the field is stored but has no effect — on those three, only the agent config's run timeout bounds a run.
 
 ## Dispatcher
@@ -336,18 +336,28 @@ just "technically eligible."
 
 ## Session Resume
 
-Each `claude`/`qwen_code` run's stream-json output carries a `session_id`; the
-pool persists it on the run row. When the dispatcher starts a new run for a
-task whose **same agent config** previously recorded a session — a feedback
+Each run's provider output carries a session or thread id (`session_id` on
+the `claude`/`qwen_code` stream-json envelope, `sessionID` on every
+`opencode` NDJSON event, `thread_id` from codex's `thread.started` event);
+the pool persists it on the run row. When the dispatcher starts a new run for
+a task whose **same agent config** previously recorded a session — a feedback
 loop back to `work`, a re-run after a genuine failure, a reply to
-`request_human` — and the config's `resume_sessions` is on, the `claude`
-provider is invoked with `--resume <session_id>` so the new run continues the
-same conversation with full prior context, instead of re-deriving it from the
-repo. Currently `claude`-only; `qwen_code` records its session but is not
-resumed (no verified CLI flag semantics yet). `gemini_cli` and `codex_cli`
-also record a session/thread id (from their `init`/`thread.started` events)
-but likewise do not resume it — neither CLI's resume mechanism (`gemini
---resume`, `codex exec resume`) has been wired up yet.
+`request_human` — and the config's `resume_sessions` is on, `Dispatcher.
+resolveAgentConfig` looks up that prior session for any provider
+`providerSupportsResume` recognizes (`claude`, `qwen_code`, `codex_cli`,
+`opencode`) and passes it through so the runner resumes the same conversation
+with full prior context instead of re-deriving it from the repo:
+`--resume <session_id>` for `claude`/`qwen_code`, `codex exec ... resume
+<thread_id> "<prompt>"` for `codex_cli`, `--session <sessionID>` for
+`opencode`.
+
+`gemini_cli` also records a session id (from its `init` event) and its
+runner's `--resume <session_id>` invocation is correct, but it is **not**
+resumed today: `GeminiRunner` scopes `GEMINI_CLI_HOME` to a fresh temp
+directory per run and deletes it when the run ends, which destroys the
+CLI's own session storage before a later run could resume it. Enabling
+`gemini_cli` in `providerSupportsResume` before that storage-lifetime issue
+is fixed would silently no-op instead of resuming — tracked in #284.
 
 Behavior details:
 

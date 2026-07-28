@@ -68,6 +68,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	var (
 		wg          sync.WaitGroup
 		outcome     string
+		sessionID   string
 		rateLimited bool
 		transient   bool
 		mu          sync.Mutex
@@ -86,11 +87,16 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 				continue
 			}
 			rawDump.WriteLine(line)
-			entry, parsed := classifyOpencodeJSON(line)
+			entry, parsed, sid := classifyOpencodeJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
 				outcome = parsed
+				mu.Unlock()
+			}
+			if sid != "" {
+				mu.Lock()
+				sessionID = sid
 				mu.Unlock()
 			}
 			if is429Line(line) {
@@ -126,9 +132,13 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	wg.Wait()
 	err = cmd.Wait()
 
+	mu.Lock()
+	finalSession := sessionID
+	mu.Unlock()
+
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
-		return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
+		return agent.Result{Status: "failed", SessionID: finalSession}, &agent.ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode exited: %v", err), At: time.Now()}
@@ -137,12 +147,12 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		tr := transient
 		mu.Unlock()
 		if rl {
-			return agent.Result{Status: "failed"}, &agent.ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
+			return agent.Result{Status: "failed", SessionID: finalSession}, &agent.ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
-			return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
+			return agent.Result{Status: "failed", SessionID: finalSession}, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
 		}
 	}
 
-	return agent.Result{Status: "completed", Outcome: outcome}, nil
+	return agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}, nil
 }

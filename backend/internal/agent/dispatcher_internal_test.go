@@ -253,6 +253,128 @@ func TestDispatcher_LastSweep_SetBeforeLoopStarts(t *testing.T) {
 	t.Fatal("expected LastSweep to be set shortly after Run starts, still zero")
 }
 
+// TestProviderSupportsResume documents which providers' resume paths are
+// wired up in the dispatcher (see issue #281). qwen_code, codex_cli, and
+// opencode join claude here because their session-id recording and resume
+// invocation are both verified correct. gemini_cli is deliberately excluded:
+// its resume invocation is correct too, but GeminiRunner's per-run
+// GEMINI_CLI_HOME temp dir is deleted on cleanup, destroying session storage
+// before it could ever be resumed (tracked in #284) — enabling it here would
+// silently no-op instead of resuming.
+func TestProviderSupportsResume(t *testing.T) {
+	tests := []struct {
+		provider string
+		want     bool
+	}{
+		{"claude", true},
+		{"qwen_code", true},
+		{"codex_cli", true},
+		{"opencode", true},
+		{"gemini_cli", false},
+		{"unknown_provider", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			got := providerSupportsResume(tt.provider)
+			if got != tt.want {
+				t.Errorf("providerSupportsResume(%q) = %v, want %v", tt.provider, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDispatcher_ResolveAgentConfig_ResumeByProvider is an integration-style
+// test (real sqlite, real queries) of resolveAgentConfig: it seeds a task
+// with a completed run that recorded a session id, then verifies that
+// providers wired into providerSupportsResume get that session id back while
+// gemini_cli — deliberately excluded pending #284 — does not, even though a
+// session was recorded for it too. This is the regression test for issue
+// #281 ("session resume is silently claude-only").
+func TestDispatcher_ResolveAgentConfig_ResumeByProvider(t *testing.T) {
+	f, err := os.CreateTemp("", "dispatcher-resume-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+
+	db, err := storage.Open(f.Name())
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	q := gen.New(db.SQL())
+	d := NewDispatcher(db.SQL(), &Pool{maxWorkers: 1}, nil, nil)
+
+	wfID := "wf-1"
+	if _, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{ID: wfID, Name: "wf", Description: "test"}); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	repoID := "repo-1"
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoID, Name: "repo", Path: "/tmp/repo", WorkflowID: &wfID}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	for _, provider := range []string{"qwen_code", "codex_cli", "opencode", "gemini_cli"} {
+		provider := provider
+		t.Run(provider, func(t *testing.T) {
+			pcID := provider + "-pc"
+			if _, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+				ID: pcID, Name: provider, Provider: provider, Model: "none", Env: `{}`,
+			}); err != nil {
+				t.Fatalf("create provider config: %v", err)
+			}
+			acID := provider + "-ac"
+			if _, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+				ID: acID, Name: provider + "-agent", ProviderConfigID: pcID,
+				Labels: `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1, ResumeSessions: 1,
+			}); err != nil {
+				t.Fatalf("create agent config: %v", err)
+			}
+			taskID := provider + "-task"
+			if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+				ID: taskID, Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "ready",
+			}); err != nil {
+				t.Fatalf("create task: %v", err)
+			}
+			run, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: provider + "-run", TaskID: taskID, AgentConfigID: &acID})
+			if err != nil {
+				t.Fatalf("create agent run: %v", err)
+			}
+			if err := q.SetAgentRunSession(ctx, gen.SetAgentRunSessionParams{ID: run.ID, SessionID: "sess-" + provider}); err != nil {
+				t.Fatalf("set agent run session: %v", err)
+			}
+
+			matched, err := q.GetAgentConfig(ctx, acID)
+			if err != nil {
+				t.Fatalf("get agent config: %v", err)
+			}
+			task, err := q.GetTask(ctx, taskID)
+			if err != nil {
+				t.Fatalf("get task: %v", err)
+			}
+
+			_, resumeSessionID, err := d.resolveAgentConfig(ctx, task, matched)
+			if err != nil {
+				t.Fatalf("resolveAgentConfig: %v", err)
+			}
+
+			if provider == "gemini_cli" {
+				if resumeSessionID != "" {
+					t.Errorf("gemini_cli: expected no resume session (pending #284), got %q", resumeSessionID)
+				}
+				return
+			}
+			if resumeSessionID != "sess-"+provider {
+				t.Errorf("%s: expected resume session %q, got %q", provider, "sess-"+provider, resumeSessionID)
+			}
+		})
+	}
+}
+
 // TestDispatcher_LastSweep_AdvancesOnTick verifies LastSweep advances as the
 // dispatch loop ticks.
 func TestDispatcher_LastSweep_AdvancesOnTick(t *testing.T) {

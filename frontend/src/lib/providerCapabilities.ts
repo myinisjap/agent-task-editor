@@ -89,10 +89,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     imageAttachments: { support: 'none', note: 'No image flag on the qwen CLI.' },
     maxTurns: { support: 'full', note: 'Enforced via --max-session-turns.' },
-    sessionResume: {
-      support: 'partial',
-      note: 'Session id is recorded and the CLI supports --resume, but the dispatcher only resumes the claude provider, so runs always start cold.',
-    },
+    sessionResume: { support: 'full', note: 'session_id + --resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   gemini_cli: {
@@ -112,7 +109,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     sessionResume: {
       support: 'partial',
-      note: 'Session id is recorded and the CLI supports --resume, but the dispatcher only resumes the claude provider, so runs always start cold.',
+      note: 'Session id is recorded and the CLI supports --resume, but GeminiRunner scopes GEMINI_CLI_HOME to a per-run temp dir that is deleted on cleanup, destroying session storage before it could be resumed. Tracked in #284.',
     },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
@@ -137,10 +134,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'none',
       note: 'Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run.',
     },
-    sessionResume: {
-      support: 'partial',
-      note: 'Thread id is recorded and `codex exec resume` exists, but the dispatcher only resumes the claude provider, so runs always start cold.',
-    },
+    sessionResume: { support: 'full', note: 'thread_id + codex exec resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   anthropic: {
@@ -185,7 +179,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     imageAttachments: { support: 'none', note: 'opencode run has an -f/--file flag, but attachments are not wired through to it.' },
     maxTurns: { support: 'none', note: 'Not enforced — the opencode CLI has no turn-cap flag.' },
-    sessionResume: { support: 'none', note: 'The runner never records a session id, so there is nothing to resume from.' },
+    sessionResume: { support: 'full', note: 'sessionID + --session.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
   },
 }
