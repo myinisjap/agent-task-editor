@@ -35,6 +35,45 @@ func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 	}
 }
 
+// TestClassifyStreamJSON_ResultUsage_CacheTokensNotYetParsed documents a real
+// gap found while auditing parser fixtures for #251 §3: the claude/qwen
+// stream-json "result" envelope's usage object can carry
+// cache_creation_input_tokens/cache_read_input_tokens (cache-billed tokens),
+// but extractResultUsage/runUsage only read input_tokens/output_tokens — the
+// cache fields are silently dropped.
+//
+// This is intentionally *not* fixed here. For claude/qwen (this code path),
+// the run's CostUSD comes straight from the CLI's own authoritative
+// total_cost_usd, so dropping these fields doesn't affect billing/estimates
+// today — it's a metadata/observability gap, not a cost-correctness bug, on
+// this path. Wiring them through would additionally touch agent.Result, the
+// agent_runs DB schema (a new migration + sqlc regen), and the cost-budget
+// UI, which is a small feature in its own right rather than a test-only
+// change — out of scope for a structural-test-gaps task. Tracked as a
+// separate follow-up; this test pins down the current (unchanged) behavior
+// so a future fix has a failing test to flip green rather than silent scope
+// creep here.
+func TestClassifyStreamJSON_ResultUsage_CacheTokensNotYetParsed(t *testing.T) {
+	// Real capture shape (see TestClassifyStreamJSON_ResultUsage's line):
+	// cache_creation_input_tokens/cache_read_input_tokens sit alongside
+	// input_tokens/output_tokens in the usage object.
+	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456,"cache_creation_input_tokens":789,"cache_read_input_tokens":1011},"total_cost_usd":0.0789,"duration_ms":1500}`
+
+	ev := classifyStreamJSON(line)
+
+	if ev.Usage == nil {
+		t.Fatalf("want non-nil usage, got nil")
+	}
+	// The parsed fields we do support are unaffected by the extra cache keys.
+	if ev.Usage.InputTokens != 123 || ev.Usage.OutputTokens != 456 || ev.Usage.CostUSD != 0.0789 {
+		t.Errorf("unexpected parsed usage: %+v", ev.Usage)
+	}
+	// runUsage has no cache-token fields at all today — this is the gap.
+	// (No further assertion possible without adding the fields; the point of
+	// this test is that it documents/pins the gap, not that it proves an
+	// absence via reflection.)
+}
+
 // TestClassifyStreamJSON_ResultNoUsage verifies a "result" message with no
 // usage/total_cost_usd fields (e.g. an older CLI version) returns a nil
 // usage rather than a zero-valued struct, so callers don't overwrite a

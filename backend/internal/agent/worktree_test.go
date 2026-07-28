@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func initRepo(t *testing.T) string {
@@ -162,3 +164,112 @@ func TestDeleteLocalBranch(t *testing.T) {
 		t.Fatalf("delete empty branch name should be a no-op: %v", err)
 	}
 }
+
+// withGitRunner temporarily swaps the package-level gitRunner seam for fn,
+// restoring the original (runGit) in a t.Cleanup. See worktree.go's
+// `var gitRunner = runGit` — the seam that lets tests simulate a hung/failing
+// git call without shelling out to a real process (this is what unblocks the
+// #246 regression coverage: previously no test exercised gitTimeout at all).
+func withGitRunner(t *testing.T, fn func(ctx context.Context, dir string, args ...string) ([]byte, error)) {
+	t.Helper()
+	orig := gitRunner
+	gitRunner = fn
+	t.Cleanup(func() { gitRunner = orig })
+}
+
+// TestPushBranch_InvokesGitPushWithArgs verifies PushBranch shells out to
+// `git push -u origin <branch>` via the injectable gitRunner seam, and
+// propagates a wrapped error (including combined output) on failure. Direct
+// coverage for PushBranch (agent/worktree.go), which was previously 0%
+// covered — it writes to user repos, so exercising it only through the seam
+// (never a real `git push`) is deliberate.
+func TestPushBranch_InvokesGitPushWithArgs(t *testing.T) {
+	var gotArgs []string
+	withGitRunner(t, func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+		gotArgs = args
+		return []byte("ok"), nil
+	})
+
+	if err := PushBranch(context.Background(), "/some/worktree", "task-123-branch"); err != nil {
+		t.Fatalf("PushBranch: unexpected error: %v", err)
+	}
+	want := []string{"push", "-u", "origin", "task-123-branch"}
+	if len(gotArgs) != len(want) {
+		t.Fatalf("git args = %v, want %v", gotArgs, want)
+	}
+	for i, w := range want {
+		if gotArgs[i] != w {
+			t.Fatalf("git args = %v, want %v", gotArgs, want)
+		}
+	}
+}
+
+// TestPushBranch_PropagatesGitFailure verifies a failing gitRunner surfaces
+// as an error carrying the combined output (e.g. a rejected push).
+func TestPushBranch_PropagatesGitFailure(t *testing.T) {
+	withGitRunner(t, func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+		return []byte("! [rejected] task-branch -> task-branch (non-fast-forward)"), errFakeGit
+	})
+
+	err := PushBranch(context.Background(), "/some/worktree", "task-branch")
+	if err == nil {
+		t.Fatal("expected an error from a failing git push")
+	}
+	if !strings.Contains(err.Error(), "rejected") {
+		t.Errorf("expected the combined output in the error, got: %v", err)
+	}
+}
+
+// TestGit_TimeoutWrapsAsErrTransient verifies that when the injected
+// gitRunner doesn't return before gitTimeout elapses, git() wraps the
+// resulting context.DeadlineExceeded as *agent.ErrTransient (via SetGitTimeout
+// to keep the test fast) — this is the #246 regression: a hung git call
+// (e.g. a stalled remote or credential prompt) must be classified as
+// transient/retryable infrastructure trouble, not a genuine task failure.
+func TestGit_TimeoutWrapsAsErrTransient(t *testing.T) {
+	origTimeout := gitTimeout
+	SetGitTimeout(50 * time.Millisecond)
+	t.Cleanup(func() { gitTimeout = origTimeout })
+
+	withGitRunner(t, func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+		// Simulate a hung git process: block until the context (bound by
+		// gitTimeout) is cancelled, exactly like a stalled remote/credential
+		// prompt would.
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	_, err := git(context.Background(), "/some/worktree", "push", "-u", "origin", "branch")
+	if err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	var te *ErrTransient
+	if !errors.As(err, &te) {
+		t.Fatalf("want *ErrTransient, got %v (%T)", err, err)
+	}
+}
+
+// TestSetGitTimeout_IgnoresNonPositive verifies SetGitTimeout leaves the
+// existing timeout unchanged when given a zero or negative duration (guards
+// against a misconfiguration silently disabling the timeout).
+func TestSetGitTimeout_IgnoresNonPositive(t *testing.T) {
+	origTimeout := gitTimeout
+	t.Cleanup(func() { gitTimeout = origTimeout })
+
+	SetGitTimeout(5 * time.Second)
+	if gitTimeout != 5*time.Second {
+		t.Fatalf("gitTimeout = %v, want 5s", gitTimeout)
+	}
+	SetGitTimeout(0)
+	if gitTimeout != 5*time.Second {
+		t.Fatalf("SetGitTimeout(0) changed gitTimeout to %v, want unchanged 5s", gitTimeout)
+	}
+	SetGitTimeout(-1 * time.Second)
+	if gitTimeout != 5*time.Second {
+		t.Fatalf("SetGitTimeout(negative) changed gitTimeout to %v, want unchanged 5s", gitTimeout)
+	}
+}
+
+// errFakeGit is a small sentinel error used by the fake gitRunner in
+// TestPushBranch_PropagatesGitFailure.
+var errFakeGit = errors.New("git exited 1")
