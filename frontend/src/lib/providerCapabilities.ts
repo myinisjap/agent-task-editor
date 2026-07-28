@@ -77,11 +77,11 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     mcpServers: { support: 'none' },
     commandAllowlist: {
       support: 'none',
-      note: "Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect.",
+      note: "Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect. Use the denylist instead.",
     },
     commandDenylist: {
-      support: 'none',
-      note: "Not enforced for the qwen_code provider — the runner does not pass qwen's --exclude-tools flag, which does map to a deny policy (present in qwen 0.21.0).",
+      support: 'partial',
+      note: "Enforced via qwen's --exclude-tools flag (folds into its permissionsDeny policy), which is honored even under yolo mode. Per-pattern Bash(pattern) granularity mirrors --allowed-tools but has not been confirmed live for the deny path; if qwen only accepts bare tool names here, denial may degrade to blanket Bash exclusion.",
     },
     costTracking: {
       support: 'partial',
