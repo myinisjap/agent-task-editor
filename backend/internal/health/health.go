@@ -55,7 +55,7 @@ type Input struct {
 	LLMBaseURL  string
 	LLMAPIKey   string
 	// Providers is the set of provider strings used by enabled agent configs
-	// (e.g. "claude", "anthropic", "llm", "qwen_code", "opencode", "gemini_cli",
+	// (e.g. "claude", "anthropic", "llm", "qwen_code", "opencode",
 	// "codex_cli").
 	Providers map[string]bool
 
@@ -145,9 +145,6 @@ func Checks(in Input, d *Deps) []Check {
 	if in.Providers["opencode"] {
 		checks = append(checks, binaryCheck(deps, "opencode", "opencode CLI", "opencode provider",
 			"Install the opencode CLI and ensure it's on the server's PATH."))
-	}
-	if in.Providers["gemini_cli"] {
-		checks = append(checks, geminiCheck(deps))
 	}
 	if in.Providers["codex_cli"] {
 		checks = append(checks, codexCheck(deps))

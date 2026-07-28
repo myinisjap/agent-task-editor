@@ -24,10 +24,10 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `retry_backoff_secs` | Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (`base * 2^attempt`, capped at 10 minutes) is applied on top. Default `30`. |
 | `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
 | `enabled_mcp_servers` | JSON array of Claude user-level MCP server names enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
-| `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode`, `gemini_cli`, or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
-| `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `opencode`, `qwen_code`, `gemini_cli`, or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
-| `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude`, `qwen_code`, `codex_cli`, and `opencode`** (`gemini_cli` does not yet honor this — see [Session Resume](#session-resume) below). Default on. |
-| `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`gemini_cli`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
+| `command_allowlist` | JSON array of shell-command glob patterns (`"*"` wildcard). If non-empty, only commands matching at least one pattern may run via `run_bash`/`Bash`. Defaults to `[]` (no restriction). **Not enforced for `opencode` or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
+| `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `opencode`, `qwen_code`, or `codex_cli`.** See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
+| `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude`, `qwen_code`, `codex_cli`, and `opencode`** — see [Session Resume](#session-resume) below. Default on. |
+| `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. See [Cost Budgets](#cost-budgets) below. |
 
@@ -65,7 +65,6 @@ automatically migrated to their own dedicated provider config on upgrade
 | `anthropic` **(deprecated)** | Anthropic Messages API (direct HTTP) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/anthropic.md](providers/anthropic.md) |
 | `opencode` | Opencode CLI (`opencode run --format json`) | ❌ None | [providers/opencode.md](providers/opencode.md) |
 | `qwen_code` | Qwen Code CLI (`qwen -p ...`) | ✅ All 5 (MCP sidecar) | [providers/qwen_code.md](providers/qwen_code.md) |
-| `gemini_cli` | Gemini CLI (`gemini -p ...`) | ✅ All 5 (MCP sidecar) | [providers/gemini_cli.md](providers/gemini_cli.md) |
 | `codex_cli` | Codex CLI (`codex exec --json ...`) | ✅ All 5 (MCP sidecar) | [providers/codex_cli.md](providers/codex_cli.md) |
 | `llm` **(deprecated)** | OpenAI-compatible API at `LLM_BASE_URL` | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/llm.md](providers/llm.md) |
 
@@ -80,33 +79,33 @@ For per-provider deep-dives (credentials, tool availability, limitations, setup)
 
 ### Capability Matrix
 
-A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`gemini_cli`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`, both **deprecated** — see the note above).
+A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`, both **deprecated** — see the note above).
 
 The table below is **generated** from [`frontend/src/lib/providerCapabilities.ts`](../frontend/src/lib/providerCapabilities.ts) — the same definition `AgentConfigForm`, `ProviderConfigForm`, and `CommandFilterEditor` read to surface these gaps inline in the UI at config time. Run `npm run gen:capability-docs` (from `frontend/`) after changing that file; do not hand-edit the table.
 
 Two rows below aren't config-gated capabilities (no corresponding form control) and are hand-maintained: **Repo-editing tools** and **`search`/grep-style tool**.
 
-| Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` | `llm` | `opencode` |
-|---|---|---|---|---|---|---|---|
-| Repo-editing tools | ✅ full CLI toolset | ✅ own CLI toolset | ✅ own CLI toolset | ✅ own CLI toolset | ⚠️ `read_file`/`write_file`/`str_replace`/`list_files`/`list_dir`/`search`/`run_bash` | ⚠️ same as `anthropic` | ✅ own (outside our control) |
-| `search`/grep-style tool | via CLI's own tools | via CLI's own tools | via CLI's own tools | via CLI's own tools | ✅ `search` (ripgrep-backed) | ✅ `search` (ripgrep-backed) | via CLI's own tools |
+| Capability | `claude` | `qwen_code` | `codex_cli` | `anthropic` | `llm` | `opencode` |
+|---|---|---|---|---|---|---|
+| Repo-editing tools | ✅ full CLI toolset | ✅ own CLI toolset | ✅ own CLI toolset | ⚠️ `read_file`/`write_file`/`str_replace`/`list_files`/`list_dir`/`search`/`run_bash` | ⚠️ same as `anthropic` | ✅ own (outside our control) |
+| `search`/grep-style tool | via CLI's own tools | via CLI's own tools | via CLI's own tools | ✅ `search` (ripgrep-backed) | ✅ `search` (ripgrep-backed) | via CLI's own tools |
 
 <!-- BEGIN capability-matrix (generated) -->
 
 _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capability-docs` — do not hand-edit._
 
-| Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` (deprecated) | `llm` (deprecated) | `opencode` |
-|---|---|---|---|---|---|---|---|
-| Task-editor tools (6: transitions, complete, request-human, notes, store-info, resolve-comment) | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ❌ No MCP tools — relies on a text OUTCOME: success/failure marker instead of task-editor tool calls. |
-| Label / workflow transitions | ✅ | ✅ | ✅ | ✅ | ✅ signal_complete implemented natively. | ✅ signal_complete implemented natively. | ❌ Cannot signal workflow transitions via MCP tools; tasks handled by this agent may not move to the next label automatically. |
-| Plugins + user MCP servers | ✅ Supports Claude plugins and user-level MCP servers. | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ MCP servers / plugins are not supported by the opencode provider. |
-| Command allowlist | ⚠️ Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist instead. | ❌ Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect. | ❌ Not enforced for the gemini_cli provider — the runner does not pass --allowed-tools, and that flag only skips confirmation (and is deprecated in favor of the Policy Engine) rather than restricting commands. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
-| Command denylist | ✅ | ❌ Not enforced for the qwen_code provider — the runner does not pass qwen's --exclude-tools flag, which does map to a deny policy (present in qwen 0.21.0). | ❌ Not enforced for the gemini_cli provider — the gemini CLI has no denylist flag. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
-| Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Estimated from a pricing table, not authoritative. | ⚠️ Estimated from a pricing table, not authoritative. | ❌ Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire. |
-| Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ❌ See docs/providers/gemini_cli.md. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
-| `max_turns` | ✅ | ✅ Enforced via --max-session-turns. | ❌ Not enforced — the gemini CLI has no turn-cap flag, so only the run timeout bounds a run. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. | ✅ Enforced via the tool-use loop. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
-| Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ⚠️ Session id is recorded and the CLI supports --resume, but GeminiRunner scopes GEMINI_CLI_HOME to a per-run temp dir that is deleted on cleanup, destroying session storage before it could be resumed. Tracked in #284. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
-| Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |
+| Capability | `claude` | `qwen_code` | `codex_cli` | `anthropic` (deprecated) | `llm` (deprecated) | `opencode` |
+|---|---|---|---|---|---|---|
+| Task-editor tools (6: transitions, complete, request-human, notes, store-info, resolve-comment) | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ❌ No MCP tools — relies on a text OUTCOME: success/failure marker instead of task-editor tool calls. |
+| Label / workflow transitions | ✅ | ✅ | ✅ | ✅ signal_complete implemented natively. | ✅ signal_complete implemented natively. | ❌ Cannot signal workflow transitions via MCP tools; tasks handled by this agent may not move to the next label automatically. |
+| Plugins + user MCP servers | ✅ Supports Claude plugins and user-level MCP servers. | ❌ | ❌ | ❌ | ❌ | ❌ MCP servers / plugins are not supported by the opencode provider. |
+| Command allowlist | ⚠️ Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist instead. | ❌ Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
+| Command denylist | ✅ | ❌ Not enforced for the qwen_code provider — the runner does not pass qwen's --exclude-tools flag, which does map to a deny policy (present in qwen 0.21.0). | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
+| Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Estimated from a pricing table, not authoritative. | ⚠️ Estimated from a pricing table, not authoritative. | ❌ Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire. |
+| Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
+| `max_turns` | ✅ | ✅ Enforced via --max-session-turns. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. | ✅ Enforced via the tool-use loop. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
+| Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
+| Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |
 
 <!-- END capability-matrix (generated) -->
 
@@ -114,8 +113,8 @@ Notes:
 - `anthropic`/`llm` gained `get_task_transitions`, `list_dir`, `search`, and `str_replace` as native tools; `signal_complete` now takes `outcome: "success"|"failure"` — identical to the MCP version (previously it took a raw `next_label`, which was a bug: the schema advertised `next_label` but the implementation always read `outcome`, silently dropping the model's completion signal).
 - `opencode`'s MCP-via-project-config path (writing a per-run `opencode.json` pointing at the same sidecar) is unexplored; see the provider doc for current status. Until proven out, treat `opencode` as the chat-grade/experimental tier of the providers above.
 - Image attachments and session-continuity-via-persisted-messages for `anthropic`/`llm` are tracked as follow-up work, not implemented here.
-- **Session resume works for `claude`, `qwen_code`, `codex_cli`, and `opencode`.** `Dispatcher.resolveAgentConfig` looks up a prior session for any provider `providerSupportsResume` recognizes, and each of those four runners already records the right session/thread id and passes the CLI's resume flag correctly. `gemini_cli` is the lone holdout: its runner also records a session id and passes the right `--resume` flag, but `GeminiRunner` scopes `GEMINI_CLI_HOME` to a fresh temp directory per run and deletes it when the run ends, destroying session storage before a later run could ever resume it — tracked in #284, and deliberately excluded from `providerSupportsResume` until fixed (adding it early would silently no-op instead of resuming).
-- **`max_turns` is not enforced on every provider.** `claude` (`--max-turns`), `qwen_code` (`--max-session-turns`), and `anthropic`/`llm` (the Go tool-use loop) honor it. `gemini_cli`, `codex_cli`, and `opencode` have no turn-cap flag, so the field is stored but has no effect — on those three, only the agent config's run timeout bounds a run.
+- **Session resume works for `claude`, `qwen_code`, `codex_cli`, and `opencode`.** `Dispatcher.resolveAgentConfig` looks up a prior session for any provider `providerSupportsResume` recognizes, and each of those four runners already records the right session/thread id and passes the CLI's resume flag correctly.
+- **`max_turns` is not enforced on every provider.** `claude` (`--max-turns`), `qwen_code` (`--max-session-turns`), and `anthropic`/`llm` (the Go tool-use loop) honor it. `codex_cli` and `opencode` have no turn-cap flag, so the field is stored but has no effect — on those two, only the agent config's run timeout bounds a run.
 
 ## Dispatcher
 
@@ -187,7 +186,6 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 | `anthropic` | Messages API `usage` field, summed across every turn of the agentic loop | `cost_usd` is *estimated* by multiplying tokens by a USD-per-1M-token price. A model's price comes from the user-editable `model_pricing` table (`GET`/`PUT /api/v1/settings/pricing`, see below) if present, otherwise from a small hardcoded fallback map (`internal/agent/providers/pricing.go`). A model in neither is left at `cost_usd = 0` and the run is flagged `cost_unknown = true` rather than silently reported as free. |
 | `llm` | OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`), summed across every turn | Same estimation approach and pricing table as `anthropic`. |
 | `opencode` | Not currently exposed in `opencode run --format json` output | Usage/cost is left at `0` — not estimated — until opencode's JSON schema includes a usage field. |
-| `gemini_cli` | CLI's terminal `result` stream-json event (`stats.input_tokens`/`stats.output_tokens`) | Token counts are used as-is; the Gemini CLI's JSON output reports no cost figure, so `cost_usd` is left at `0`, not estimated. |
 | `codex_cli` | CLI's `turn.completed` JSONL event (`usage.input_tokens`/`usage.output_tokens`) | Token counts are used as-is; the Codex CLI's JSON output reports no cost figure, so `cost_usd` is left at `0`, not estimated. |
 
 ### Editable pricing table
@@ -253,7 +251,7 @@ budget if one is set.
 `max_cost_usd` can be set on an agent config and/or on an individual task
 to give the dispatcher an advisory spending cap. **This is not a mid-run
 kill switch** — no supported provider (`claude`, `anthropic`, `opencode`,
-`qwen_code`, `gemini_cli`, `codex_cli`, `llm`) exposes a way to abort an in-flight run once it crosses
+`qwen_code`, `codex_cli`, `llm`) exposes a way to abort an in-flight run once it crosses
 a cost threshold, so a single expensive run can still land over budget. The
 guard instead runs **before** each sweep-dispatch: if the task's
 cumulative recorded cost has already met or exceeded its effective budget,
@@ -351,14 +349,6 @@ with full prior context instead of re-deriving it from the repo:
 <thread_id> "<prompt>"` for `codex_cli`, `--session <sessionID>` for
 `opencode`.
 
-`gemini_cli` also records a session id (from its `init` event) and its
-runner's `--resume <session_id>` invocation is correct, but it is **not**
-resumed today: `GeminiRunner` scopes `GEMINI_CLI_HOME` to a fresh temp
-directory per run and deletes it when the run ends, which destroys the
-CLI's own session storage before a later run could resume it. Enabling
-`gemini_cli` in `providerSupportsResume` before that storage-lifetime issue
-is fixed would silently no-op instead of resuming — tracked in #284.
-
 Behavior details:
 
 - **Condensed prompt on resume.** A resumed conversation already contains the
@@ -427,9 +417,9 @@ The system prompt is the agent config's `system_prompt` field (defaults to a gen
 3. **Notes writing instruction:** tells the agent to call `update_task_notes` before `signal_complete`, using `append:true` if prior notes were present
 4. **Completion instruction:** `"When your work is complete, call the mcp__task-editor__signal_complete tool with outcome='success' if the work succeeded or outcome='failure' if it did not. If the MCP tool is unavailable, end your final response with exactly: OUTCOME: success  or  OUTCOME: failure"`
 
-## MCP Tools (claude, qwen_code, gemini_cli, and codex_cli providers)
+## MCP Tools (claude, qwen_code, and codex_cli providers)
 
-When `MCP_SERVER_PATH` is set, the `claude`, `qwen_code`, `gemini_cli`, and `codex_cli` providers launch an MCP sidecar that exposes 5 tools:
+When `MCP_SERVER_PATH` is set, the `claude`, `qwen_code`, and `codex_cli` providers launch an MCP sidecar that exposes 5 tools:
 
 | Tool | Description |
 |---|---|
@@ -452,7 +442,7 @@ For the `claude` provider only, each agent config can select which Claude Code p
 - **Enforcement at run time (`claude.go`):**
   - Plugins: the `claude` CLI is invoked with `--settings '{"enabledPlugins": {...}}'`, built by defaulting every discovered plugin to `false` and then setting `true` only for IDs present in `enabled_plugins`. A plugin selected but not present in the current discovery snapshot is still explicitly enabled (stale-inventory fallback).
   - MCP servers: for each name in `enabled_mcp_servers` (skipping the reserved `task-editor` name), its raw config entry is read from `~/.claude.json`'s global `mcpServers` map and merged into the `--mcp-config` file alongside the task-editor sidecar entry. A bare `mcp__<server>` entry is appended to `--allowedTools` per selected server so its tools aren't blocked — this wildcarding behavior is inferred from CLI docs and worth re-verifying against a live run if MCP tool calls are unexpectedly denied.
-- **Scope:** this is currently `claude`-provider-only. Other providers (`anthropic`, `opencode`, `qwen_code`, `gemini_cli`, `codex_cli`, generic `llm`) have the same DB columns available but ignore them entirely.
+- **Scope:** this is currently `claude`-provider-only. Other providers (`anthropic`, `opencode`, `qwen_code`, `codex_cli`, generic `llm`) have the same DB columns available but ignore them entirely.
 
 ## Command Allowlist / Denylist
 
@@ -483,7 +473,6 @@ concatenation, base64-decoded payloads, etc).
 | `claude` | Enforced natively by the `claude` CLI via `permissions.allow`/`permissions.deny` in the `--settings` JSON (same `Bash(pattern)` syntax as `--allowedTools`/`--disallowedTools`). Both allowlist and denylist supported; smoke-tested against a live `claude` binary. |
 | `qwen_code` | `command_allowlist` is enforced natively via `--allowed-tools Bash(pattern)` entries. `command_denylist` is **not enforced** — no confirmed `qwen` CLI denylist flag exists. |
 | `opencode` | **Not enforced at all** — opencode has no Bash tool wired up server-side; it manages tool permissions via its own global config. |
-| `gemini_cli` | **Not enforced at all** — no confirmed Gemini CLI allowlist/denylist flag exists. |
 | `codex_cli` | **Not enforced at all** — Codex has its own native sandbox/approval-mode system instead (`--sandbox`, `--ask-for-approval`), bypassed entirely by the `--dangerously-bypass-approvals-and-sandbox` flag this provider must pass for headless operation. See [providers/codex_cli.md](providers/codex_cli.md). |
 
 See the corresponding [provider docs](#providers) for details on each provider's mechanism.

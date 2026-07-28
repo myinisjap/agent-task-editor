@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { api, type AgentLog } from '../../api/client'
 import { wsClient } from '../../api/ws'
 import { LOG_PAGE_SIZE, mergeLogs, toLog } from '../../lib/agentLogMerge'
+import { groupLogRows } from '../../lib/groupAgentLog'
 
 // useRunLogs owns the log list, pagination, and virtualizer for a single
 // (taskId, runId) pair, including live updates via the WS message bus.
@@ -22,17 +23,23 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
   const [loadingEarlier, setLoadingEarlier] = useState(false)
   const logScrollRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
-  // When "load earlier" prepends N entries, this holds N so the post-render
-  // effect can re-anchor the viewport to the entry that was previously on top
-  // (otherwise the virtualized list would jump).
-  const anchorIndexRef = useRef<number | null>(null)
+  // After "load earlier" prepends entries, this holds the row that was on top
+  // so the post-render effect can re-anchor the viewport to it (otherwise the
+  // virtualized list would jump). The row count is a fallback for when that row
+  // no longer exists on its own — an orphan result folds into its call once the
+  // older page brings the call into view.
+  const anchorRef = useRef<{ key: string; rowCount: number } | null>(null)
+
+  // Display rows: a tool result is folded into the call that produced it, so a
+  // call and its output are one row rather than two. See groupAgentLog.
+  const rows = useMemo(() => groupLogRows(logs, debug, isRunning), [logs, debug, isRunning])
 
   // Virtualize the log list: only entries near the viewport are mounted, so a
   // run with thousands of entries stays smooth. Rows are variable-height
   // (markdown, expandable tool results), so heights are measured dynamically
   // via measureElement rather than estimated up front.
   const logVirtualizer = useVirtualizer({
-    count: logs.length,
+    count: rows.length,
     getScrollElement: () => logScrollRef.current,
     estimateSize: () => 44,
     overscan: 12,
@@ -62,19 +69,15 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
     try {
       const res = await api.tasks.runLogs(taskId, runId, { before: oldest, limit: LOG_PAGE_SIZE })
       autoScrollRef.current = false
-      setLogs((prev) => {
-        const merged = mergeLogs(prev, res.items)
-        // Number of entries added at the top — used to re-anchor the viewport.
-        anchorIndexRef.current = merged.length - prev.length
-        return merged
-      })
+      anchorRef.current = rows[0] ? { key: rows[0].key, rowCount: rows.length } : null
+      setLogs((prev) => mergeLogs(prev, res.items))
       setLogsHasEarlier(res.hasMore)
     } catch {
       // best-effort; leave the button so the user can retry
     } finally {
       setLoadingEarlier(false)
     }
-  }, [taskId, runId, logs, loadingEarlier])
+  }, [taskId, runId, logs, rows, loadingEarlier])
 
   // WS subscription (message-bus only — see doc comment above).
   useEffect(() => {
@@ -103,19 +106,22 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
   // prepends entries, re-anchor to the entry that was previously on top so the
   // view doesn't jump. Otherwise, when following the tail, scroll to the newest.
   useEffect(() => {
-    if (anchorIndexRef.current != null) {
-      const idx = anchorIndexRef.current
-      anchorIndexRef.current = null
+    const anchor = anchorRef.current
+    if (anchor) {
+      anchorRef.current = null
+      const found = rows.findIndex((r) => r.key === anchor.key)
+      const idx = found >= 0 ? found : rows.length - anchor.rowCount
       if (idx > 0) logVirtualizer.scrollToIndex(idx, { align: 'start' })
       return
     }
-    if (autoScrollRef.current && logs.length > 0) {
-      logVirtualizer.scrollToIndex(logs.length - 1, { align: 'end' })
+    if (autoScrollRef.current && rows.length > 0) {
+      logVirtualizer.scrollToIndex(rows.length - 1, { align: 'end' })
     }
-  }, [logs, logVirtualizer])
+  }, [rows, logVirtualizer])
 
   return {
     logs,
+    rows,
     logsHasEarlier,
     loadingEarlier,
     handleLoadEarlier,

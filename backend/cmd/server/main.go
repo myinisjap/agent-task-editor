@@ -227,12 +227,6 @@ func main() {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
-		case "gemini_cli":
-			var mcp *providers.MCPManager
-			if cfg.MCPBinary != "" {
-				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
-			}
-			return &providers.GeminiRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
 		case "codex_cli":
 			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {

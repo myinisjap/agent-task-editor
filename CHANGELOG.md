@@ -211,6 +211,19 @@ triggers the "Release" workflow the same way.
   was added, to absorb normal `-race` run-to-run jitter) instead of only
   reporting coverage with no gate.
 
+### Removed
+- **The `gemini_cli` provider has been removed.** The Gemini CLI is no longer
+  supported upstream in its previous form; Google's replacement CLI
+  (Antigravity) will be considered as a new provider in a separate future
+  issue, out of scope here. `GeminiRunner`, `classifyGeminiJSON`, the Gemini
+  health check, the `gemini_cli` entries in the provider dropdown/capability
+  matrix/OpenAPI enum, the Docker `INSTALL_GEMINI_CLI` build arg, and every
+  `gemini_cli`/Gemini mention across the docs have been deleted. Provider or
+  agent configs still pointing at `gemini_cli` will no longer dispatch — new
+  runs against them fail immediately with an "unknown provider" error instead
+  of launching the CLI — so switch any such configs to another provider
+  before upgrading.
+
 ### Fixed
 - **`opencode` runs that crashed with no output were silently reported as
   "completed" instead of "failed".** `OpencodeRunner.Run` fell through to
@@ -345,6 +358,16 @@ triggers the "Release" workflow the same way.
   separate, larger change.
 
 ### Changed
+- **The Logs tab now shows one row per tool call instead of three blocks.** A
+  tool result is folded into the call that produced it, so the row carries the
+  tool name, its command/arguments, and an outcome chip (`ok`, `40 lines`,
+  `error`, `running`); the disclosure arrow reveals the full output. Previously
+  the separate result row showed a reflowed 120-character preview of the output
+  and expanding it repeated that same text in full — the preview is gone, so
+  the output is shown exactly once, untruncated. Failures still auto-expand, a
+  result short enough to fit on the row is shown inline with no arrow, a call
+  still awaiting its result is marked `running` while the run is live, and a
+  result whose call isn't loaded still renders on its own row.
 - The Repos help modal described issue import as create-only, which is no
   longer accurate; it now covers ongoing sync, the update policy, what happens
   when an issue closes, and comment sync.

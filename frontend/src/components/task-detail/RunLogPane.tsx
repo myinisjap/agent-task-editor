@@ -11,6 +11,7 @@ export default function RunLogPane({ taskId, runId, isRunning }: {
 }) {
   const {
     logs,
+    rows,
     logsHasEarlier,
     loadingEarlier,
     handleLoadEarlier,
@@ -63,12 +64,12 @@ export default function RunLogPane({ taskId, runId, isRunning }: {
         <div style={{ height: logVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
           {logVirtualizer.getVirtualItems().map((vi) => (
             <div
-              key={logs[vi.index].id ?? vi.index}
+              key={rows[vi.index].key ?? vi.index}
               data-index={vi.index}
               ref={logVirtualizer.measureElement}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
             >
-              <AgentLogEntry log={logs[vi.index]} debug={debug} />
+              <AgentLogEntry row={rows[vi.index]} />
             </div>
           ))}
         </div>

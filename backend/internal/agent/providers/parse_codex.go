@@ -20,7 +20,7 @@ import (
 //	{"type":"item.completed","item":{...}}
 //	{"type":"error","message":"..."}
 //
-// This is a completely different vendor/schema from claude/qwen/gemini's
+// This is a completely different vendor/schema from claude/qwen's
 // stream formats, so it is parsed independently.
 //
 // Returns the log entry, an optional outcome ("success"/"failure") parsed

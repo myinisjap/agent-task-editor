@@ -21,10 +21,10 @@ name: Release
 #   ghcr.io/myinisjap/agent-task-editor-backend:{1.2.3,1.2,1,latest}
 #   ghcr.io/myinisjap/agent-task-editor-frontend:{1.2.3,1.2,1,latest}
 #
-# Also publishes an "-all-cli" variant of the backend image with the Gemini,
-# Codex, and Qwen CLIs baked in (normally gated behind opt-in build args —
-# see backend/Dockerfile), for users who want every provider available
-# without building locally:
+# Also publishes an "-all-cli" variant of the backend image with the Codex
+# and Qwen CLIs baked in (normally gated behind opt-in build args — see
+# backend/Dockerfile), for users who want every provider available without
+# building locally:
 #   ghcr.io/myinisjap/agent-task-editor-backend:{1.2.3,1.2,1,latest}-all-cli
 
 on:
@@ -136,7 +136,6 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend-all-cli
           build-args: |
             VERSION=${{ github.ref_name }}
-            INSTALL_GEMINI_CLI=true
             INSTALL_CODEX_CLI=true
             INSTALL_QWEN_CLI=true
 

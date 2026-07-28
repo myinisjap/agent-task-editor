@@ -72,7 +72,7 @@ func (h *ProviderConfigsHandler) Create(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, codex_cli", body.Provider))
 		return
 	}
 	if deprecatedProviders[body.Provider] {
@@ -108,7 +108,7 @@ func (h *ProviderConfigsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if body.Provider != "" && !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, gemini_cli, codex_cli", body.Provider))
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, codex_cli", body.Provider))
 		return
 	}
 

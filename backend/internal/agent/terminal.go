@@ -334,7 +334,6 @@ var buildTerminalCommand func(provider, model string, resume bool) (string, []st
 // history. These continue forms differ per CLI and were verified against each
 // tool's help/docs:
 //   - claude/qwen/opencode: `--continue` (cwd/project-scoped)
-//   - gemini: `--resume` with no id ("immediately loads the most recent session")
 //   - codex: `resume --last` (a subcommand; cwd-filtered by default)
 func terminalCommand(provider, model string, resume bool) (name string, args []string, err error) {
 	switch provider {
@@ -350,14 +349,6 @@ func terminalCommand(provider, model string, resume bool) (name string, args []s
 		name = "codex"
 		if resume {
 			args = append(args, "resume", "--last") // subcommand; cwd-filtered
-		}
-		if model != "" {
-			args = append(args, "--model", model)
-		}
-	case "gemini_cli":
-		name = "gemini"
-		if resume {
-			args = append(args, "--resume") // no id => most recent session
 		}
 		if model != "" {
 			args = append(args, "--model", model)

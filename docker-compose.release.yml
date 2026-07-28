@@ -5,8 +5,8 @@
 # Or use ./run.sh, which injects the required env vars for you (repo mount,
 # GitHub token, Claude auth) and defaults ATE_VERSION to "latest".
 #
-# The backend image also ships an "-all-cli" variant with the Gemini, Codex,
-# and Qwen CLIs preinstalled (see backend/Dockerfile's INSTALL_*_CLI build
+# The backend image also ships an "-all-cli" variant with the Codex and Qwen
+# CLIs preinstalled (see backend/Dockerfile's INSTALL_*_CLI build
 # args). Select it by setting ATE_CLI_SUFFIX=-all-cli (run.sh does this for
 # you via --all-cli).
 #

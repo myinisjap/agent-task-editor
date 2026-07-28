@@ -26,8 +26,6 @@ const boardMCPServerName = "task-editor-board"
 //
 // The wiring mirrors the task sidecar's per-provider mechanisms:
 //   - claude / qwen_code: a per-session --mcp-config JSON file
-//   - gemini_cli: a per-session GEMINI_CLI_HOME with .gemini/settings.json
-//     (plus --skip-trust so the CLI loads MCP servers in the worktree)
 //   - codex_cli: a per-session CODEX_HOME with config.toml
 //   - anything else (e.g. opencode): no injection (no per-invocation mechanism)
 func NewChatMCPProvisioner(binary, backendURL, apiToken string) agent.ChatMCPProvisioner {
@@ -58,22 +56,6 @@ func NewChatMCPProvisioner(binary, backendURL, apiToken string) agent.ChatMCPPro
 				return nil, nil, noop, fmt.Errorf("write chat mcp config: %w", err)
 			}
 			return []string{"--mcp-config", file}, nil, func() { _ = os.Remove(file) }, nil
-
-		case "gemini_cli":
-			dir := filepath.Join(os.TempDir(), fmt.Sprintf("ate-chat-gemini-%s", sessionID))
-			geminiDir := filepath.Join(dir, ".gemini")
-			if err := os.MkdirAll(geminiDir, 0700); err != nil {
-				return nil, nil, noop, fmt.Errorf("mkdir gemini home: %w", err)
-			}
-			settings := mcpConfig{MCPServers: map[string]mcpServerEntry{boardMCPServerName: entry}}
-			data, err := json.Marshal(settings)
-			if err != nil {
-				return nil, nil, noop, fmt.Errorf("marshal gemini settings: %w", err)
-			}
-			if err := os.WriteFile(filepath.Join(geminiDir, "settings.json"), data, 0600); err != nil {
-				return nil, nil, noop, fmt.Errorf("write gemini settings: %w", err)
-			}
-			return []string{"--skip-trust"}, []string{"GEMINI_CLI_HOME=" + dir}, func() { _ = os.RemoveAll(dir) }, nil
 
 		case "codex_cli":
 			dir := filepath.Join(os.TempDir(), fmt.Sprintf("ate-chat-codex-%s", sessionID))
