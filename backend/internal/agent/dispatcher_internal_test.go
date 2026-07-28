@@ -256,11 +256,7 @@ func TestDispatcher_LastSweep_SetBeforeLoopStarts(t *testing.T) {
 // TestProviderSupportsResume documents which providers' resume paths are
 // wired up in the dispatcher (see issue #281). qwen_code, codex_cli, and
 // opencode join claude here because their session-id recording and resume
-// invocation are both verified correct. gemini_cli is deliberately excluded:
-// its resume invocation is correct too, but GeminiRunner's per-run
-// GEMINI_CLI_HOME temp dir is deleted on cleanup, destroying session storage
-// before it could ever be resumed (tracked in #284) — enabling it here would
-// silently no-op instead of resuming.
+// invocation are both verified correct.
 func TestProviderSupportsResume(t *testing.T) {
 	tests := []struct {
 		provider string
@@ -270,7 +266,6 @@ func TestProviderSupportsResume(t *testing.T) {
 		{"qwen_code", true},
 		{"codex_cli", true},
 		{"opencode", true},
-		{"gemini_cli", false},
 		{"unknown_provider", false},
 		{"", false},
 	}
@@ -287,10 +282,9 @@ func TestProviderSupportsResume(t *testing.T) {
 // TestDispatcher_ResolveAgentConfig_ResumeByProvider is an integration-style
 // test (real sqlite, real queries) of resolveAgentConfig: it seeds a task
 // with a completed run that recorded a session id, then verifies that
-// providers wired into providerSupportsResume get that session id back while
-// gemini_cli — deliberately excluded pending #284 — does not, even though a
-// session was recorded for it too. This is the regression test for issue
-// #281 ("session resume is silently claude-only").
+// providers wired into providerSupportsResume get that session id back. This
+// is the regression test for issue #281 ("session resume is silently
+// claude-only").
 func TestDispatcher_ResolveAgentConfig_ResumeByProvider(t *testing.T) {
 	f, err := os.CreateTemp("", "dispatcher-resume-*.db")
 	if err != nil {
@@ -318,7 +312,7 @@ func TestDispatcher_ResolveAgentConfig_ResumeByProvider(t *testing.T) {
 		t.Fatalf("create repo: %v", err)
 	}
 
-	for _, provider := range []string{"qwen_code", "codex_cli", "opencode", "gemini_cli"} {
+	for _, provider := range []string{"qwen_code", "codex_cli", "opencode"} {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			pcID := provider + "-pc"
@@ -362,12 +356,6 @@ func TestDispatcher_ResolveAgentConfig_ResumeByProvider(t *testing.T) {
 				t.Fatalf("resolveAgentConfig: %v", err)
 			}
 
-			if provider == "gemini_cli" {
-				if resumeSessionID != "" {
-					t.Errorf("gemini_cli: expected no resume session (pending #284), got %q", resumeSessionID)
-				}
-				return
-			}
 			if resumeSessionID != "sess-"+provider {
 				t.Errorf("%s: expected resume session %q, got %q", provider, "sess-"+provider, resumeSessionID)
 			}

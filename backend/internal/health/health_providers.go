@@ -71,43 +71,6 @@ func llmCheck(in Input) Check {
 	return c
 }
 
-// geminiCheck verifies the gemini CLI is installed and appears authenticated.
-// Authentication is detected heuristically (env var or the OAuth cache file
-// the CLI itself writes on `gemini` login) rather than by invoking the CLI.
-func geminiCheck(d Deps) Check {
-	c := Check{ID: "gemini_cli", Name: "Gemini CLI"}
-	if _, err := d.LookPath("gemini"); err != nil {
-		c.Status = StatusError
-		c.Detail = "gemini binary not found on PATH"
-		c.Hint = "Install the Gemini CLI (npm i -g @google/gemini-cli) so the gemini_cli provider can run."
-		return c
-	}
-	if geminiAuthenticated(d) {
-		c.Status = StatusOK
-		c.Detail = "gemini CLI installed and credentials found"
-		return c
-	}
-	c.Status = StatusWarn
-	c.Detail = "gemini CLI installed but no credentials detected"
-	c.Hint = "Run `gemini` once to log in with a Google account, or set GEMINI_API_KEY / GOOGLE_API_KEY. Runs may fail with an auth error."
-	return c
-}
-
-// geminiAuthenticated reports whether Gemini CLI credentials appear to be
-// present: a GEMINI_API_KEY/GOOGLE_API_KEY env var, or the OAuth credential
-// cache the CLI writes to ~/.gemini/oauth_creds.json on `gemini` login.
-func geminiAuthenticated(d Deps) bool {
-	if d.Getenv("GEMINI_API_KEY") != "" || d.Getenv("GOOGLE_API_KEY") != "" {
-		return true
-	}
-	if home, err := d.HomeDir(); err == nil {
-		if d.FileExists(home + "/.gemini/oauth_creds.json") {
-			return true
-		}
-	}
-	return false
-}
-
 // codexCheck verifies the codex CLI is installed and appears authenticated.
 // Authentication is detected heuristically (env var or the auth cache file
 // the CLI itself writes on `codex login`) rather than by invoking the CLI.

@@ -48,7 +48,6 @@ func TestTerminalCommand(t *testing.T) {
 		{"claude", false, "claude", nil, false},
 		{"claude", true, "claude", []string{"--continue"}, false},
 		{"codex_cli", true, "codex", []string{"resume", "--last"}, false}, // subcommand
-		{"gemini_cli", true, "gemini", []string{"--resume"}, false},       // no id => most recent
 		{"qwen_code", true, "qwen", []string{"--continue"}, false},
 		{"opencode", true, "opencode", []string{"--continue"}, false},
 		{"anthropic", false, "", nil, true}, // API provider: no terminal

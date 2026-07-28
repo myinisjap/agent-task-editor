@@ -20,7 +20,7 @@ components:
           type: string
         provider:
           type: string
-          enum: [claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli]
+          enum: [claude, anthropic, llm, opencode, qwen_code, codex_cli]
           description: >
             `anthropic` and `llm` are deprecated: disabled for new/updated provider
             configs (POST/PATCH using either returns 400) and may be removed in a

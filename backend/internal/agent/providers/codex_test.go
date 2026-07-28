@@ -7,6 +7,11 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 )
 
+// containsArg reports whether v is present in args.
+func containsArg(args []string, v string) bool {
+	return slices.Contains(args, v)
+}
+
 // TestBuildCodexArgs_Basic verifies the core exec/non-interactive flags are
 // always present, and the prompt is the final positional argument.
 func TestBuildCodexArgs_Basic(t *testing.T) {

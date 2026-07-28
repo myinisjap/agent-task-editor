@@ -144,4 +144,4 @@ export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_a
 // here. Existing configs on those providers keep dispatching; see
 // providerCapabilities.ts's DEPRECATED_PROVIDERS for the UI-facing warning
 // shown when editing one.
-export const PROVIDERS = ['claude', 'opencode', 'qwen_code', 'gemini_cli', 'codex_cli']
+export const PROVIDERS = ['claude', 'opencode', 'qwen_code', 'codex_cli']
