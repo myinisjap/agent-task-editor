@@ -113,7 +113,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   it out of, all driven client-side off the existing WebSocket stream — see
   [websocket.md](websocket.md#client-side-behaviour)
 - **Inline diff review comments** — leave file/line-anchored comments on the diff; open comments are injected into every agent run's prompt until the agent resolves them via the `resolve_comment` MCP tool (resolutions show up threaded in the diff viewer)
-- **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
+- **File upload attachments** — attach files to tasks; copied into the agent's worktree under `.task_attachments/` and listed in the prompt so the agent can read them (see `docs/providers/claude.md` § Image Attachments for why this is file-based rather than a visual `--image` flag)
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once
   a PR is detected as merged, the task's local branch (and any leftover
   worktree) are automatically cleaned up (remote branches are left untouched)

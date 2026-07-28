@@ -20,7 +20,7 @@ type ClaudeRunner struct {
 	BinaryPath string
 	MCP        *MCPManager
 	// UploadDir is the server-side directory where task attachments are stored.
-	// Used to resolve absolute paths when passing --image flags to the claude CLI.
+	// Reserved for future use.
 	UploadDir string
 	// BackendURL / APIToken let the create_subtask MCP tool post children live to
 	// the backend REST API (same container). Set from server config.
@@ -97,10 +97,6 @@ func buildClaudeArgs(input agent.RunInput, sidecarEnabled bool, mcpCfg *MCPRunCo
 	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
-	}
-	// Pass attachment images as --image flags so Claude can see them visually.
-	for _, absPath := range input.AttachmentAbsPaths {
-		args = append(args, "--image", absPath)
 	}
 	return args, nil
 }

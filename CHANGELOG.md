@@ -242,6 +242,14 @@ triggers the "Release" workflow the same way.
     doesn't read them. Its docs also wrongly listed rate-limit detection as
     unimplemented (it is implemented) and image attachments as impossible
     (`opencode run` has `-f`/`--file`, just unwired).
+- **The `claude` provider no longer passes an unsupported `--image` flag.**
+  `buildClaudeArgs` used to append one `--image <abs-path>` flag per task
+  attachment, but the `claude` CLI has no `--image` flag and rejected it at
+  argument parsing — so every `claude`-provider run against a task with at
+  least one attachment failed instantly, before any model call. The flags are
+  no longer sent; attachments are still made available to the agent as files
+  under `.task_attachments/` in the run's worktree (listed in the prompt), so
+  no capability is lost. See `docs/providers/claude.md` § Image Attachments.
 - **Task read paths no longer scale with total task count.** `GET /tasks` and
   `GET /tasks/{id}` computed their derived dependency-count and subtask-rollup
   badges by self-joining/scanning the *entire* `tasks` table on every
@@ -327,6 +335,21 @@ triggers the "Release" workflow the same way.
     `frontend/AGENTS.md`, previously inaccurately described as full `strict`
     mode) and fixed the errors it surfaced, including a task-card priority
     `<select>` that could cast an invalid value straight into `Task['priority']`.
+
+### Deprecated
+- **The `anthropic` and `llm` providers are disabled for new/updated provider
+  configs and may be removed in a future release.** Both run on a
+  hand-maintained Go tool-use loop (rather than a vendor CLI) with permanent
+  parity gaps — no `resolve_comment`/`create_subtask`, no MCP servers, no
+  session resume, no image attachments, and cost estimated from a pricing
+  table instead of reported. Neither is offered in the provider dropdown
+  anymore, and `POST`/`PATCH` of a provider config using either now returns
+  `400`. Existing provider/agent configs already on `anthropic` or `llm`
+  keep dispatching and running exactly as before — nothing changes for them.
+  The `openai` dropdown option (a dead alias for the same `llm` code path
+  that always failed validation) is also removed. See
+  [docs/providers/anthropic.md](docs/providers/anthropic.md) and
+  [docs/providers/llm.md](docs/providers/llm.md).
 
 ## [0.14.0] - 2026-07-26
 

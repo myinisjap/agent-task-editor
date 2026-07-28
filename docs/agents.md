@@ -62,18 +62,25 @@ automatically migrated to their own dedicated provider config on upgrade
 | Provider string | Description | MCP Tools | Details |
 |---|---|---|---|
 | `claude` | Claude CLI subprocess (`claude -p ...`) | ✅ All 5 (MCP sidecar) | [providers/claude.md](providers/claude.md) |
-| `anthropic` | Anthropic Messages API (direct HTTP) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/anthropic.md](providers/anthropic.md) |
+| `anthropic` **(deprecated)** | Anthropic Messages API (direct HTTP) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/anthropic.md](providers/anthropic.md) |
 | `opencode` | Opencode CLI (`opencode run --format json`) | ❌ None | [providers/opencode.md](providers/opencode.md) |
 | `qwen_code` | Qwen Code CLI (`qwen -p ...`) | ✅ All 5 (MCP sidecar) | [providers/qwen_code.md](providers/qwen_code.md) |
 | `gemini_cli` | Gemini CLI (`gemini -p ...`) | ✅ All 5 (MCP sidecar) | [providers/gemini_cli.md](providers/gemini_cli.md) |
 | `codex_cli` | Codex CLI (`codex exec --json ...`) | ✅ All 5 (MCP sidecar) | [providers/codex_cli.md](providers/codex_cli.md) |
-| _(any other value)_ | OpenAI-compatible API at `LLM_BASE_URL` | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/llm.md](providers/llm.md) |
+| `llm` **(deprecated)** | OpenAI-compatible API at `LLM_BASE_URL` | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/llm.md](providers/llm.md) |
+
+> **`anthropic` and `llm` are deprecated: disabled for new/updated provider configs and may be removed in a future
+> release.** They're no longer offered in the UI's provider dropdown, and `POST`/`PATCH` of a provider config using
+> either is rejected. Existing provider/agent configs already using them continue to dispatch, run, and report cost
+> as before. `llm` was previously also the catch-all for any unrecognized provider string (including the dead
+> `openai` dropdown alias); that fallback has been removed; an unrecognized provider string now fails the run
+> explicitly instead of silently being treated as an OpenAI-compatible call.
 
 For per-provider deep-dives (credentials, tool availability, limitations, setup), see the [providers/](providers/) directory.
 
 ### Capability Matrix
 
-A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`gemini_cli`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`).
+A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`gemini_cli`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`, both **deprecated** — see the note above).
 
 The table below is **generated** from [`frontend/src/lib/providerCapabilities.ts`](../frontend/src/lib/providerCapabilities.ts) — the same definition `AgentConfigForm`, `ProviderConfigForm`, and `CommandFilterEditor` read to surface these gaps inline in the UI at config time. Run `npm run gen:capability-docs` (from `frontend/`) after changing that file; do not hand-edit the table.
 
@@ -88,7 +95,7 @@ Two rows below aren't config-gated capabilities (no corresponding form control) 
 
 _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capability-docs` — do not hand-edit._
 
-| Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` | `llm` | `opencode` |
+| Capability | `claude` | `qwen_code` | `gemini_cli` | `codex_cli` | `anthropic` (deprecated) | `llm` (deprecated) | `opencode` |
 |---|---|---|---|---|---|---|---|
 | Task-editor tools (6: transitions, complete, request-human, notes, store-info, resolve-comment) | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ❌ No MCP tools — relies on a text OUTCOME: success/failure marker instead of task-editor tool calls. |
 | Label / workflow transitions | ✅ | ✅ | ✅ | ✅ | ✅ signal_complete implemented natively. | ✅ signal_complete implemented natively. | ❌ Cannot signal workflow transitions via MCP tools; tasks handled by this agent may not move to the next label automatically. |
@@ -96,7 +103,7 @@ _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capab
 | Command allowlist | ⚠️ Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist instead. | ❌ Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect. | ❌ Not enforced for the gemini_cli provider — the runner does not pass --allowed-tools, and that flag only skips confirmation (and is deprecated in favor of the Policy Engine) rather than restricting commands. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
 | Command denylist | ✅ | ❌ Not enforced for the qwen_code provider — the runner does not pass qwen's --exclude-tools flag, which does map to a deny policy (present in qwen 0.21.0). | ❌ Not enforced for the gemini_cli provider — the gemini CLI has no denylist flag. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
 | Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Estimated from a pricing table, not authoritative. | ⚠️ Estimated from a pricing table, not authoritative. | ❌ Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire. |
-| Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), but the runner still passes one per attachment — a task with attachments currently fails at launch. Known bug; the dispatcher also copies attachments into the worktree, so agents can read them as files. | ❌ No image flag on the qwen CLI. | ❌ See docs/providers/gemini_cli.md. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
+| Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ❌ See docs/providers/gemini_cli.md. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
 | `max_turns` | ✅ | ✅ Enforced via --max-session-turns. | ❌ Not enforced — the gemini CLI has no turn-cap flag, so only the run timeout bounds a run. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. | ✅ Enforced via the tool-use loop. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
 | Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ⚠️ Session id is recorded and the CLI supports --resume, but GeminiRunner scopes GEMINI_CLI_HOME to a per-run temp dir that is deleted on cleanup, destroying session storage before it could be resumed. Tracked in #284. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
 | Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |

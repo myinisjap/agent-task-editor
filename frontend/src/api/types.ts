@@ -3676,7 +3676,10 @@ export interface components {
         ProviderConfig: {
             id: string;
             name: string;
-            /** @enum {string} */
+            /**
+             * @description `anthropic` and `llm` are deprecated: disabled for new/updated provider configs (POST/PATCH using either returns 400) and may be removed in a future release. Both remain valid enum values here only because existing provider configs already using them are still returned by GET/list endpoints and continue to dispatch and run.
+             * @enum {string}
+             */
             provider: "claude" | "anthropic" | "llm" | "opencode" | "qwen_code" | "gemini_cli" | "codex_cli";
             model: string;
             /** @description JSON object of environment variables (e.g. API keys) merged into the provider CLI's environment */
