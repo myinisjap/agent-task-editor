@@ -1,8 +1,12 @@
 package providers
 
 import (
+	"context"
+	"errors"
+	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 )
@@ -245,5 +249,141 @@ func TestClassifyCodexJSON_NonJSONLine(t *testing.T) {
 	}
 	if outcome != "" || usage != nil || class != agent.ClassNone || sid != "" {
 		t.Errorf("expected all-zero extras for non-JSON line, got %q %v %q %q", outcome, usage, class, sid)
+	}
+}
+
+// --- Subprocess lifecycle tests (generalized from claude_test.go's
+// CLAUDE_TEST_HELPER re-exec harness — see TestMain in claude_test.go) ---
+
+// codexHelperInput builds a minimal RunInput sufficient for CodexRunner.Run,
+// passing the helper mode via Env so the re-exec'd test binary knows which
+// fake-CLI behavior to emit.
+func codexHelperInput(mode string) agent.RunInput {
+	return agent.RunInput{
+		RunID:       "codex-test-run",
+		Task:        agent.Task{ID: "task-1", Title: "test task"},
+		AgentConfig: agent.AgentConfig{Env: map[string]string{"CODEX_TEST_HELPER": mode}, TimeoutSecs: 10},
+		RepoPath:    os.TempDir(),
+	}
+}
+
+func TestCodexRunner_Binary_DefaultsAndOverrides(t *testing.T) {
+	var r CodexRunner
+	if got := r.binary(); got != "codex" {
+		t.Errorf("binary() = %q, want default %q", got, "codex")
+	}
+	r.BinaryPath = "/opt/codex"
+	if got := r.binary(); got != "/opt/codex" {
+		t.Errorf("binary() = %q, want override %q", got, "/opt/codex")
+	}
+}
+
+func TestCodexRunner_Run_Exit0Success(t *testing.T) {
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), codexHelperInput("exit0_success"), logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("Status = %q, want completed", result.Status)
+	}
+	if result.Outcome != "success" {
+		t.Errorf("Outcome = %q, want success", result.Outcome)
+	}
+	if result.SessionID != "thread-1" {
+		t.Errorf("SessionID = %q, want thread-1", result.SessionID)
+	}
+	if result.InputTokens != 10 || result.OutputTokens != 20 {
+		t.Errorf("usage = %d/%d, want 10/20", result.InputTokens, result.OutputTokens)
+	}
+}
+
+// TestCodexRunner_Run_Exit1WithTurnFailed verifies a non-zero exit whose
+// stream carries a "turn.failed" event surfaces outcome=failure. Unlike
+// claude's runner (see TestClaudeExitCode1_IsFailed), codex's turn.failed
+// event is itself a resolved outcome ("failure"), not just discarded stdout
+// noise, so Status stays "completed" while Outcome reports the failure —
+// this matches codex.go's actual `err != nil && outcome == ""` gate.
+func TestCodexRunner_Run_Exit1WithTurnFailed(t *testing.T) {
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), codexHelperInput("exit1"), logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Outcome != "failure" {
+		t.Errorf("Outcome = %q, want failure", result.Outcome)
+	}
+}
+
+// TestCodexRunner_Run_Exit1NoOutcomeIsFailed verifies that a non-zero exit
+// with no parsed outcome at all (e.g. the process crashed before emitting a
+// terminal event) is reported as Status=failed.
+func TestCodexRunner_Run_Exit1NoOutcomeIsFailed(t *testing.T) {
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := codexHelperInput("")
+	input.AgentConfig.Env["CODEX_TEST_HELPER"] = "" // no case in TestMain -> falls through to real test run
+	// Instead of relying on a TestMain case, directly exercise a binary that
+	// exits 1 with no stdout at all via /bin/false-equivalent: reuse the test
+	// binary but with an unrecognized helper mode so it runs `go test` (not
+	// desired) — so instead point BinaryPath at a real "false" command that
+	// always exits 1 with no output, independent of the re-exec harness.
+	runner.BinaryPath = "false"
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("Status = %q, want failed", result.Status)
+	}
+}
+
+// TestCodexRunner_Run_TimeoutKillsProcess verifies that when AgentConfig's
+// timeout elapses while the (fake) CLI is still running, Run returns an
+// *agent.ErrTransient rather than hanging forever. Regression coverage for
+// the previously-untested context-cancel/timeout branch shared by every CLI
+// provider (see codex.go's runCtx, context.WithTimeout).
+func TestCodexRunner_Run_TimeoutKillsProcess(t *testing.T) {
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := codexHelperInput("")
+	input.AgentConfig.Env["HANG_TEST_HELPER"] = "30"
+	input.AgentConfig.TimeoutSecs = 1
+
+	start := time.Now()
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	elapsed := time.Since(start)
+
+	if elapsed > 10*time.Second {
+		t.Fatalf("Run took %s, want the 1s timeout to kill the process quickly", elapsed)
+	}
+	var te *agent.ErrTransient
+	if !errors.As(err, &te) {
+		t.Fatalf("want *agent.ErrTransient, got %v", err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("Status = %q, want failed", result.Status)
 	}
 }

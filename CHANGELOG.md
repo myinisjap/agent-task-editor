@@ -189,8 +189,59 @@ triggers the "Release" workflow the same way.
   back on its own instead of staying down until an operator notices, and a
   runaway agent run can no longer consume unbounded host memory. See
   [docs/getting-started.md](docs/getting-started.md#backend-resilience-restart-policy-readiness-and-memory-limit).
+- **Closed structural test gaps across the WS layer, provider subprocess
+  lifecycle, and CI coverage gating** (#251). Previously, every "WS event →
+  UI state" path in the frontend was unverified because tests mocked
+  `wsClient.on` as a permanent no-op — exactly how #249's dead running-
+  indicator regression survived; `TaskDetailPage.test.tsx` and a new
+  `api/ws.test.ts` now capture the real handler(s) and drive it with
+  simulated events (reconnect backoff, ticket-refresh-on-401,
+  resubscribe-on-reopen, malformed-message handling). On the backend, the
+  `claude_test.go` fake-binary re-exec harness (previously claude-only) is
+  now generalized to `codex`/`gemini`/`qwen`/`opencode`, adding real `Run`/
+  `binary`/`prepareXHome`/`Cleanup` lifecycle coverage plus a shared
+  context-cancel/timeout-kill test per provider — the prerequisite for the
+  #243 regression test. Also added: `internal/ws.ServeWS` end-to-end tests
+  (ticket vs. deprecated `?token=` auth, origin CORS, the 100-subscription
+  cap), `providers.mergeEnv`'s `dangerousEnvKeys` blocklist,
+  `extractOutcome`, `dispatcher.copyAttachmentsToWorktree`, `Terminal` WS
+  upgrade auth, and upload MIME-sniffing/path-safety checks. CI now fails a
+  PR if total statement coverage drops below a floor (55% backend and
+  frontend, a few points under the ~58.8%/~59.75% measured when this gate
+  was added, to absorb normal `-race` run-to-run jitter) instead of only
+  reporting coverage with no gate.
 
 ### Fixed
+- **`opencode` runs that crashed with no output were silently reported as
+  "completed" instead of "failed".** `OpencodeRunner.Run` fell through to
+  the success path whenever the CLI exited non-zero without a recognized
+  rate-limit/transient error *and* without a parsed `OUTCOME` marker, unlike
+  every other CLI provider (`codex`/`gemini`/`qwen`), which already treat
+  `err != nil && outcome == ""` as a failure. Found while generalizing the
+  provider lifecycle test harness (#251) — a task whose `opencode` run
+  crashed silently stuck as "completed" with an empty outcome, so it was
+  never marked failed or retried.
+- **`ws.ServeWS`'s origin-based CORS check silently rejected every
+  legitimately configured `CORS_ORIGINS` value.** `CORS_ORIGINS` entries are
+  full origins (scheme + host, e.g. `http://localhost:5173`), matching the
+  exact-string comparison the `CORS` HTTP middleware does — but they were
+  passed straight through as `nhooyr.io/websocket`'s `OriginPatterns`, which
+  matches only the request Origin header's *host* (no scheme). A configured
+  non-wildcard `CORS_ORIGINS` therefore never matched, and every WS upgrade
+  from an allowed browser origin was rejected as "not authorized". Found by
+  the new `ServeWS` origin tests (#251); `ServeWS` now strips the scheme
+  before building the pattern list, matching the middleware's semantics.
+- **Migration `008_agent_runs_fk_set_null`'s down migration was broken and
+  would fail if ever actually rolled back.** Its down script recreated
+  `agent_runs` with 8 columns, omitting `stored_info` (added by an earlier
+  migration, 006), so rolling 008 back after 006 had already run failed with
+  a SQLite column-count mismatch (`INSERT INTO agent_runs_old SELECT * FROM
+  agent_runs` — 9 source columns into an 8-column table). All 49 down
+  migrations existed but none had ever actually been executed end-to-end in
+  CI; a new up→down→up round-trip test (`TestMigrationsUpDownUpRoundTrip`,
+  #251) now runs every down migration in the chain against a scratch SQLite
+  file on every PR, and caught this on its first run. Fixed by including
+  `stored_info` in both the recreated table and the `INSERT`'s column list.
 - **Session resume now works for `qwen_code`, `codex_cli`, and `opencode`, not
   just `claude`.** `Dispatcher.resolveAgentConfig` previously gated its prior-
   session lookup to `provider == "claude"`, so `ResumeSessionID` was always

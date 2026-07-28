@@ -41,11 +41,34 @@ vi.mock('../api/client', async () => {
   }
 })
 
+// TaskDetailPage renders several child components (SubtasksPanel,
+// DependenciesPanel) that also register their own wsClient.on() handlers, so
+// capturing only "the last registered handler" (as a single module-level
+// variable) is unreliable — whichever component mounts/re-renders last wins,
+// not necessarily TaskDetailPage's own handler. Instead, track every
+// registered handler and broadcast simulated events to all of them, exactly
+// as the real wsClient would. Each handler is expected to ignore events it
+// doesn't recognize, so this mirrors production behavior.
+const wsHandlers = new Set<(event: { type: string; payload: Record<string, unknown> }) => void>()
+const wsUnsubscribe = vi.fn()
+const wsSubscribeTask = vi.fn()
+const wsUnsubscribeTask = vi.fn()
+
+function fireWsEvent(event: { type: string; payload: Record<string, unknown> }) {
+  for (const h of wsHandlers) h(event)
+}
+
 vi.mock('../api/ws', () => ({
   wsClient: {
-    on: vi.fn(() => () => {}),
-    subscribeTask: vi.fn(),
-    unsubscribeTask: vi.fn(),
+    on: vi.fn((h: (event: { type: string; payload: Record<string, unknown> }) => void) => {
+      wsHandlers.add(h)
+      return () => {
+        wsHandlers.delete(h)
+        wsUnsubscribe()
+      }
+    }),
+    subscribeTask: (...args: unknown[]) => wsSubscribeTask(...args),
+    unsubscribeTask: (...args: unknown[]) => wsUnsubscribeTask(...args),
   },
 }))
 
@@ -108,6 +131,10 @@ function renderPage(taskFixture: Task, runs: AgentRun[] = []) {
 describe('TaskDetailPage tab switching', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    wsHandlers.clear()
+    wsUnsubscribe.mockClear()
+    wsSubscribeTask.mockClear()
+    wsUnsubscribeTask.mockClear()
     vi.mocked(api.tasks.listLabelHistory).mockResolvedValue([])
     vi.mocked(api.tasks.sourceComments).mockResolvedValue([])
     vi.mocked(api.tasks.subtasks).mockResolvedValue([])
@@ -152,5 +179,105 @@ describe('TaskDetailPage tab switching', () => {
     await waitFor(() => {
       expect(api.tasks.diff).toHaveBeenCalledWith('task-1')
     })
+  })
+})
+
+describe('TaskDetailPage WS-driven state updates', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    wsHandlers.clear()
+    wsUnsubscribe.mockClear()
+    wsSubscribeTask.mockClear()
+    wsUnsubscribeTask.mockClear()
+    vi.mocked(api.tasks.listLabelHistory).mockResolvedValue([])
+    vi.mocked(api.tasks.sourceComments).mockResolvedValue([])
+    vi.mocked(api.tasks.subtasks).mockResolvedValue([])
+    vi.mocked(api.tasks.dependencies).mockResolvedValue({ blocked_by: [], blocking: [], blocked_by_count: 0, blocking_count: 0 })
+    vi.mocked(api.tasks.reviewComments).mockResolvedValue([])
+    vi.mocked(api.tasks.diff).mockResolvedValue({ branch: 'main', diff: '' })
+    vi.mocked(api.tasks.runLogs).mockResolvedValue({ items: [], hasMore: false, prevCursor: null })
+    vi.mocked(api.repos.list).mockResolvedValue([])
+    vi.mocked(api.agents.list).mockResolvedValue([])
+    vi.mocked(api.github.authStatus).mockResolvedValue({ authed: true, note: '' })
+  })
+
+  it('subscribes to the task WS channel and registers a handler, cleaned up on unmount', async () => {
+    const { unmount } = renderPage(task())
+    await screen.findByText('A detailed task')
+
+    expect(wsSubscribeTask).toHaveBeenCalledWith('task-1')
+    expect(wsHandlers.size).toBeGreaterThan(0)
+
+    unmount()
+    expect(wsHandlers.size).toBe(0)
+    expect(wsUnsubscribeTask).toHaveBeenCalledWith('task-1')
+  })
+
+  // Regression test for #249: a dead running-indicator caused by wsClient.on
+  // being mocked as a permanent no-op in tests, so no WS-driven state update
+  // was ever exercised. task.agent_started must refresh runs so a newly
+  // running run becomes the active/selected run, and task.agent_done must
+  // flip that run's status back off so the "Stop run" indicator disappears.
+  it('task.agent_started refreshes runs so the running indicator appears, and task.agent_done clears it', async () => {
+    renderPage(task(), [])
+    await screen.findByText('A detailed task')
+
+    // No runs yet — no "Stop run" indicator.
+    expect(screen.queryByRole('button', { name: /Stop run/i })).not.toBeInTheDocument()
+
+    // Simulate the run starting: refetch returns a running run.
+    vi.mocked(api.tasks.runs).mockResolvedValue({ items: [run({ id: 'run-live', status: 'running' })], nextCursor: null })
+    fireWsEvent({ type: 'task.agent_started', payload: { task_id: 'task-1', run_id: 'run-live' } })
+
+    expect(await screen.findByRole('button', { name: /Stop run/i })).toBeInTheDocument()
+
+    // Simulate completion: task.agent_done flips the tracked run's status.
+    fireWsEvent({ type: 'task.agent_done', payload: { task_id: 'task-1', run_id: 'run-live', status: 'completed' } })
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Stop run/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('ignores WS events for a different task id', async () => {
+    renderPage(task(), [run({ id: 'run-live', status: 'running' })])
+    await screen.findByText('A detailed task')
+    expect(await screen.findByRole('button', { name: /Stop run/i })).toBeInTheDocument()
+
+    vi.mocked(api.tasks.get).mockClear()
+    vi.mocked(api.tasks.runs).mockClear()
+    fireWsEvent({ type: 'task.agent_started', payload: { task_id: 'some-other-task', run_id: 'run-x' } })
+
+    // Give any accidental async handlers a chance to run, then assert no refetch happened.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(api.tasks.get).not.toHaveBeenCalled()
+    expect(api.tasks.runs).not.toHaveBeenCalled()
+  })
+
+  it('task.label_changed refetches the task and label history', async () => {
+    renderPage(task())
+    await screen.findByText('A detailed task')
+    vi.mocked(api.tasks.get).mockClear()
+    vi.mocked(api.tasks.listLabelHistory).mockClear()
+
+    fireWsEvent({ type: 'task.label_changed', payload: { task_id: 'task-1', from: 'todo', to: 'doing' } })
+
+    await waitFor(() => {
+      expect(api.tasks.get).toHaveBeenCalledWith('task-1')
+      expect(api.tasks.listLabelHistory).toHaveBeenCalledWith('task-1')
+    })
+  })
+
+  it('task.git_state_changed updates git_state/pr_url without a refetch', async () => {
+    renderPage(task())
+    await screen.findByText('A detailed task')
+    vi.mocked(api.tasks.get).mockClear()
+
+    fireWsEvent({ type: 'task.git_state_changed', payload: { task_id: 'task-1', git_state: 'dirty', pr_url: 'https://example.com/pr/1' } })
+
+    // This event patches local state directly rather than refetching.
+    await Promise.resolve()
+    expect(api.tasks.get).not.toHaveBeenCalled()
   })
 })

@@ -152,6 +152,18 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		if tr {
 			return agent.Result{Status: "failed", SessionID: finalSession}, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
 		}
+		// Bug fix (see TestOpencodeRunner_Run_Exit1NoOutputIsFailed): a non-zero
+		// exit with no rate-limit/transient classification and no parsed OUTCOME
+		// marker used to fall through to the "completed" return below with an
+		// empty Outcome. The pool only resolves a workflow transition when
+		// Status=="completed" && Outcome!="" (see pool.go), so a crash with no
+		// output silently left the task stuck as "completed" with no outcome —
+		// never marked failed, never retried. Every other CLI provider
+		// (codex/gemini/qwen) already has this same `err != nil && outcome == ""`
+		// fallback; opencode was the one provider missing it.
+		if outcome == "" {
+			return agent.Result{Status: "failed", SessionID: finalSession}, nil
+		}
 	}
 
 	return agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}, nil

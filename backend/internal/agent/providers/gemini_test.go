@@ -1,7 +1,11 @@
 package providers
 
 import (
+	"context"
+	"errors"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 )
@@ -172,5 +176,128 @@ func TestClassifyGeminiJSON_NonJSONLine(t *testing.T) {
 	}
 	if outcome != "" || usage != nil || class != agent.ClassNone || sid != "" {
 		t.Errorf("expected all-zero extras for non-JSON line, got %q %v %q %q", outcome, usage, class, sid)
+	}
+}
+
+// --- Subprocess lifecycle tests (generalized from claude_test.go's
+// CLAUDE_TEST_HELPER re-exec harness — see TestMain in claude_test.go) ---
+
+func geminiHelperInput(mode string) agent.RunInput {
+	return agent.RunInput{
+		RunID:       "gemini-test-run",
+		Task:        agent.Task{ID: "task-1", Title: "test task"},
+		AgentConfig: agent.AgentConfig{Env: map[string]string{"GEMINI_TEST_HELPER": mode}, TimeoutSecs: 10},
+		RepoPath:    os.TempDir(),
+	}
+}
+
+func TestGeminiRunner_Binary_DefaultsAndOverrides(t *testing.T) {
+	var r GeminiRunner
+	if got := r.binary(); got != "gemini" {
+		t.Errorf("binary() = %q, want default %q", got, "gemini")
+	}
+	r.BinaryPath = "/opt/gemini"
+	if got := r.binary(); got != "/opt/gemini" {
+		t.Errorf("binary() = %q, want override %q", got, "/opt/gemini")
+	}
+}
+
+func TestGeminiRunner_Run_Exit0Success(t *testing.T) {
+	runner := &GeminiRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), geminiHelperInput("exit0_success"), logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("Status = %q, want completed", result.Status)
+	}
+	if result.Outcome != "success" {
+		t.Errorf("Outcome = %q, want success", result.Outcome)
+	}
+	if result.SessionID != "gem-1" {
+		t.Errorf("SessionID = %q, want gem-1", result.SessionID)
+	}
+	if result.InputTokens != 10 || result.OutputTokens != 20 {
+		t.Errorf("usage = %d/%d, want 10/20", result.InputTokens, result.OutputTokens)
+	}
+}
+
+// TestGeminiRunner_Run_Exit1WithErrorResult verifies a non-zero exit whose
+// stream carries a typed "result" event with status=error surfaces
+// outcome=failure. Like codex (see TestCodexRunner_Run_Exit1WithTurnFailed),
+// this is itself a resolved outcome, not just discarded stdout noise, so
+// Status stays "completed" while Outcome reports the failure — matching
+// gemini.go's actual `err != nil && outcome == ""` gate.
+func TestGeminiRunner_Run_Exit1WithErrorResult(t *testing.T) {
+	runner := &GeminiRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), geminiHelperInput("exit1"), logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Outcome != "failure" {
+		t.Errorf("Outcome = %q, want failure", result.Outcome)
+	}
+}
+
+// TestGeminiRunner_Run_Exit1NoOutcomeIsFailed verifies a non-zero exit with
+// no parsed outcome at all (process crashed before any terminal event) is
+// reported as Status=failed.
+func TestGeminiRunner_Run_Exit1NoOutcomeIsFailed(t *testing.T) {
+	runner := &GeminiRunner{BinaryPath: "false"}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), geminiHelperInput(""), logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("Status = %q, want failed", result.Status)
+	}
+}
+
+// TestGeminiRunner_Run_TimeoutKillsProcess verifies the context-cancel/timeout
+// branch (shared by every CLI provider) actually kills a hung process and
+// returns *agent.ErrTransient instead of hanging.
+func TestGeminiRunner_Run_TimeoutKillsProcess(t *testing.T) {
+	runner := &GeminiRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := geminiHelperInput("")
+	input.AgentConfig.Env["HANG_TEST_HELPER"] = "30"
+	input.AgentConfig.TimeoutSecs = 1
+
+	start := time.Now()
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	elapsed := time.Since(start)
+
+	if elapsed > 10*time.Second {
+		t.Fatalf("Run took %s, want the 1s timeout to kill the process quickly", elapsed)
+	}
+	var te *agent.ErrTransient
+	if !errors.As(err, &te) {
+		t.Fatalf("want *agent.ErrTransient, got %v", err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("Status = %q, want failed", result.Status)
 	}
 }
