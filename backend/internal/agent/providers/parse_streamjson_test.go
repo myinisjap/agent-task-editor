@@ -92,7 +92,9 @@ func TestClassifyStreamJSON_ResultNoUsage(t *testing.T) {
 }
 
 // TestClassifyStreamJSON_NonResultMessagesReturnNilUsage verifies that
-// non-"result" message types never populate usage.
+// message types other than "result"/"assistant" never populate usage, and
+// that an "assistant" message with no usage block also stays nil (see
+// TestClassifyStreamJSON_AssistantUsage for the case where it does carry one).
 func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 	for _, line := range []string{
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
@@ -104,6 +106,48 @@ func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 		if ev.Usage != nil {
 			t.Errorf("line %q: want nil usage, got %+v", line, ev.Usage)
 		}
+	}
+}
+
+// TestClassifyStreamJSON_AssistantUsage verifies an "assistant" message
+// carrying a usage block is parsed into a per-turn (not cumulative) runUsage,
+// with cache tokens folded into InputTokens (see extractAssistantUsage) and
+// IsResult left false so callers know to sum rather than replace their
+// running total. Unlike a "result" message, CostUSD is always zero here — the
+// CLI never reports cost per-message.
+func TestClassifyStreamJSON_AssistantUsage(t *testing.T) {
+	line := `{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":20,"cache_read_input_tokens":30},"content":[{"type":"text","text":"working"}]}}`
+
+	ev := classifyStreamJSON(line)
+
+	if ev.Usage == nil {
+		t.Fatalf("want non-nil usage, got nil")
+	}
+	if ev.IsResult {
+		t.Error("want IsResult=false for an assistant message")
+	}
+	// 100 input + 20 cache_creation + 30 cache_read = 150 (folded into InputTokens).
+	if ev.Usage.InputTokens != 150 {
+		t.Errorf("want InputTokens=150 (100+20+30 cache folded in), got %d", ev.Usage.InputTokens)
+	}
+	if ev.Usage.OutputTokens != 50 {
+		t.Errorf("want OutputTokens=50, got %d", ev.Usage.OutputTokens)
+	}
+	if ev.Usage.CostUSD != 0 {
+		t.Errorf("want CostUSD=0 (assistant messages never carry cost), got %v", ev.Usage.CostUSD)
+	}
+}
+
+// TestClassifyStreamJSON_ResultUsage_IsResultTrue verifies IsResult is set
+// for "result" messages, distinguishing the authoritative-final-total meaning
+// of Usage from an assistant message's per-turn-incremental meaning.
+func TestClassifyStreamJSON_ResultUsage_IsResultTrue(t *testing.T) {
+	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456},"total_cost_usd":0.05}`
+
+	ev := classifyStreamJSON(line)
+
+	if !ev.IsResult {
+		t.Error("want IsResult=true for a result message")
 	}
 }
 

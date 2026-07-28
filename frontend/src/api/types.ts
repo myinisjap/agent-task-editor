@@ -3317,6 +3317,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/cost-warning": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the global mid-run cost early-warning threshold
+         * @description Returns the current warn_ratio (fraction of a task's effective cost budget at which task.cost_warning fires). See CostWarningSettings and docs/agents.md#cost-budgets.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CostWarningSettings"];
+                    };
+                };
+            };
+        };
+        /**
+         * Update the global mid-run cost early-warning threshold
+         * @description Persists a new warn_ratio. Takes effect on the very next dispatch/run without a process restart — both the dispatcher's pre-dispatch warning check and the provider-side mid-run cost watchdog read it fresh.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /**
+                         * Format: double
+                         * @description Must be greater than 0 and at most 1.
+                         */
+                        warn_ratio: number;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CostWarningSettings"];
+                    };
+                };
+                /** @description warn_ratio not in (0, 1] */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/pricing": {
         parameters: {
             query?: never;
@@ -3773,7 +3850,7 @@ export interface components {
             subtask_conflicts?: number;
             /**
              * Format: double
-             * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost (across every run, any status). 0 disables the cap (unlimited). If the matched agent config also has a nonzero max_cost_usd, the effective budget is the lower of the two. Not a mid-run kill switch — see AgentConfig.max_cost_usd and docs/agents.md#cost-budgets.
+             * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost (across every run, any status). 0 disables the cap (unlimited). If the matched agent config also has a nonzero max_cost_usd, the effective budget is the lower of the two. On providers with a mid-run cost watchdog (claude, qwen_code — see AgentConfig.max_cost_usd), this cap is also enforced as a kill switch against an in-flight run, not just the next dispatch. See docs/agents.md#cost-budgets.
              */
             max_cost_usd?: number;
             /**
@@ -3860,6 +3937,16 @@ export interface components {
             days: number;
             /** @description How often the pruner checks for logs to delete, in seconds. Minimum 60 (1 minute). Default 3600 (once an hour). */
             interval_seconds: number;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description DB-backed global threshold for the mid-run cost early-warning event (see docs/agents.md#cost-budgets, internal/agent/providers/ cost_watchdog.go, and migration 050_cost_warning). warn_ratio is the fraction of a task's effective cost budget (max_cost_usd) at which a task.cost_warning WebSocket event fires — both from the provider-side mid-run watchdog (claude, qwen_code) and from the dispatcher's pre-dispatch check (all providers) — ahead of the hard kill/exhaustion at 1.0. Read fresh on every relevant check, so a change here takes effect on the very next dispatch/run without a restart. */
+        CostWarningSettings: {
+            /**
+             * Format: double
+             * @description Fraction of the effective cost budget at which to warn. Must be greater than 0 and at most 1. Default 0.8 (80%).
+             */
+            warn_ratio: number;
             /** Format: date-time */
             updated_at: string;
         };
@@ -3957,7 +4044,7 @@ export interface components {
             command_denylist?: string;
             /**
              * Format: double
-             * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost so far (across every run for the task, any status). 0 disables the cap (unlimited). Default 0. If the task itself also has a nonzero max_cost_usd, the effective budget is the lower of the two. NOT a mid-run kill switch — no provider supports killing an in-flight run at a cost threshold; the guard only blocks the *next* dispatch once the budget is already exhausted. See docs/agents.md#cost-budgets.
+             * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost so far (across every run for the task, any status). 0 disables the cap (unlimited). Default 0. If the task itself also has a nonzero max_cost_usd, the effective budget is the lower of the two. Providers with a mid-run cost watchdog (claude, always; qwen_code, when the configured model is priced) additionally enforce this as a kill switch: they project cost from incremental token usage as the run progresses and cancel an in-flight run that crosses the cap, escalating to waiting_human — this projection is an *estimate* via the pricing table, not the provider's own authoritative billed cost. Other providers (codex_cli, opencode, anthropic, llm) only block the *next* dispatch once the budget is already exhausted. See docs/agents.md#cost-budgets.
              */
             max_cost_usd: number;
             /** Format: date-time */

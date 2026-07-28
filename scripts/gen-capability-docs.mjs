@@ -34,6 +34,7 @@ const ROWS = [
   ['commandAllowlist', 'Command allowlist'],
   ['commandDenylist', 'Command denylist'],
   ['costTracking', 'Cost & tokens'],
+  ['costWatchdog', 'Mid-run cost kill switch'],
   ['imageAttachments', 'Image attachments'],
   ['maxTurns', '`max_turns`'],
   ['sessionResume', 'Session resume'],

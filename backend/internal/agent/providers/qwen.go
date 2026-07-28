@@ -31,6 +31,15 @@ type QwenRunner struct {
 	// the backend REST API (same container). Set from server config.
 	BackendURL string
 	APIToken   string
+	// PriceResolver resolves model to USD-per-1M pricing for the mid-run cost
+	// watchdog (see cost_watchdog.go). Like claude, qwen's own terminal
+	// total_cost_usd (when present) is used as-is for the final persisted
+	// Result.CostUSD — this resolver is only consulted to *project* cost from
+	// incremental token usage while the run is still in flight. nil falls
+	// back to the hardcoded pricing table (defaultPriceResolver). The
+	// watchdog is a no-op if the configured model isn't in the pricing table
+	// (known=false) — see docs/providers/qwen_code.md.
+	PriceResolver PriceResolver
 }
 
 func (r *QwenRunner) binary() string {
@@ -153,16 +162,31 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started qwen pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg          sync.WaitGroup
-		outcome     string
-		sessionID   string
-		rateLimited bool
-		transient   bool
-		maxTurnsHit bool
-		usage       *runUsage
-		mu          sync.Mutex
+		wg              sync.WaitGroup
+		outcome         string
+		sessionID       string
+		rateLimited     bool
+		transient       bool
+		maxTurnsHit     bool
+		usage           *runUsage
+		cumInputTokens  int64
+		cumOutputTokens int64
+		costWarned      bool
+		costExceeded    *agent.ErrCostBudgetExceeded
+		// costExceededUsage snapshots this run's own cumulative token usage
+		// and incremental cost (projected minus the watchdog's prior-spend
+		// baseline) at the moment the watchdog cancels the subprocess. A
+		// killed run never reaches its terminal "result" event, so this is
+		// the only usage/cost data available to persist — see claude.go's
+		// attemptInfo.costExceededUsage for the full rationale.
+		costExceededUsage *runUsage
+		mu                sync.Mutex
 	)
 	wg.Add(2)
+
+	// Mid-run cost watchdog — same mechanism as claude.go's runAttempt. See
+	// cost_watchdog.go. Inert when input.CostBudgetUSD is 0.
+	watchdog := newCostWatchdog(input.CostBudgetUSD, input.CostSpentUSD, input.CostWarnRatio, r.PriceResolver, input.AgentConfig.Model)
 
 	// Stream stdout (stream-json lines) — same envelope as the claude CLI.
 	go func() {
@@ -210,9 +234,44 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 				mu.Unlock()
 			}
 			if ev.Usage != nil {
-				mu.Lock()
-				usage = ev.Usage
-				mu.Unlock()
+				if ev.IsResult {
+					mu.Lock()
+					usage = ev.Usage
+					mu.Unlock()
+				} else {
+					mu.Lock()
+					cumInputTokens += ev.Usage.InputTokens
+					cumOutputTokens += ev.Usage.OutputTokens
+					inTok, outTok := cumInputTokens, cumOutputTokens
+					mu.Unlock()
+					if watchdog.active() {
+						if projected, warn, exceeded := watchdog.observe(context.Background(), inTok, outTok); warn || exceeded {
+							if warn {
+								mu.Lock()
+								costWarned = true
+								mu.Unlock()
+								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the warning threshold (budget $%.2f)", projected, input.CostBudgetUSD), At: time.Now()}
+							}
+							if exceeded {
+								mu.Lock()
+								costExceeded = &agent.ErrCostBudgetExceeded{SpentUSD: projected, BudgetUSD: input.CostBudgetUSD}
+								// This run's own incremental cost is the
+								// projection minus the watchdog's prior-spend
+								// baseline (input.CostSpentUSD) — projected
+								// includes cost already recorded by earlier
+								// runs, which must not be double-counted here.
+								costExceededUsage = &runUsage{
+									InputTokens:  inTok,
+									OutputTokens: outTok,
+									CostUSD:      projected - input.CostSpentUSD,
+								}
+								mu.Unlock()
+								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the budget ($%.2f) — cancelling run", projected, input.CostBudgetUSD), At: time.Now()}
+								cancel()
+							}
+						}
+					}
+				}
 			}
 		}
 	}()
@@ -238,9 +297,32 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	wg.Wait()
 	err = cmd.Wait()
 
+	mu.Lock()
+	finalUsage := usage
+	finalSession := sessionID
+	mth := maxTurnsHit
+	finalCostWarned := costWarned
+	finalCostExceeded := costExceeded
+	finalCostExceededUsage := costExceededUsage
+	mu.Unlock()
+
+	if finalCostExceeded != nil {
+		// The watchdog already cancelled the subprocess; err here is just
+		// the resulting context-cancelled exit. Escalate to waiting_human
+		// rather than classifying as transient/rate-limit.
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "qwen run stopped: mid-run cost budget exceeded", At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
+		// A killed run never reaches its terminal "result" event, so
+		// finalUsage is always nil here — persist the watchdog's own
+		// cumulative-usage/incremental-cost snapshot instead, or the run
+		// would record cost_usd=0 despite having genuinely spent money.
+		applyUsage(&res, finalCostExceededUsage)
+		return res, finalCostExceeded
+	}
+
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
-		return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("qwen run timed out")}
+		return agent.Result{Status: "failed", CostWarned: finalCostWarned}, &agent.ErrTransient{Cause: fmt.Errorf("qwen run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited: %v", err), At: time.Now()}
@@ -249,18 +331,12 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		tr := transient
 		mu.Unlock()
 		if rl {
-			return agent.Result{Status: "failed"}, &agent.ErrRateLimit{Message: "qwen CLI 429: Request rejected by API rate limit"}
+			return agent.Result{Status: "failed", CostWarned: finalCostWarned}, &agent.ErrRateLimit{Message: "qwen CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
-			return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("qwen CLI exited with transient infra error: %w", err)}
+			return agent.Result{Status: "failed", CostWarned: finalCostWarned}, &agent.ErrTransient{Cause: fmt.Errorf("qwen CLI exited with transient infra error: %w", err)}
 		}
 	}
-
-	mu.Lock()
-	finalUsage := usage
-	finalSession := sessionID
-	mth := maxTurnsHit
-	mu.Unlock()
 
 	// qwen may exit 0 on the max-session-turns subtype (mirrors claude's
 	// error_max_turns behavior), so this must be checked regardless of err —
@@ -269,7 +345,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	// effect.
 	if mth {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "qwen hit its configured max-turns limit", At: time.Now()}
-		res := agent.Result{Status: "failed", SessionID: finalSession}
+		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 		applyUsage(&res, finalUsage)
 		configuredMaxTurns := input.AgentConfig.MaxTurns
 		if configuredMaxTurns <= 0 {
@@ -290,11 +366,12 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		// "result" message — so merge it in here.
 		applyUsage(&res, finalUsage)
 		res.SessionID = finalSession
+		res.CostWarned = finalCostWarned
 		// Non-zero exit with no signalled outcome means the subprocess crashed
 		// before signal_complete. ReadResult defaults to "completed", which would
 		// mask the failure and re-dispatch forever. Trust the exit code.
 		if err != nil && res.Outcome == "" {
-			failed := agent.Result{Status: "failed", SessionID: finalSession}
+			failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 			applyUsage(&failed, finalUsage)
 			return failed, nil
 		}
@@ -303,11 +380,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 
 	// Non-zero exit with no parsed outcome means the agent failed.
 	if err != nil && outcome == "" {
-		failed := agent.Result{Status: "failed", SessionID: finalSession}
+		failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 		applyUsage(&failed, finalUsage)
 		return failed, nil
 	}
-	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
+	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession, CostWarned: finalCostWarned}
 	applyUsage(&res, finalUsage)
 	return res, nil
 }

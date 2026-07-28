@@ -42,6 +42,11 @@ export default function TaskDetailPage() {
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
   const [duplicating, setDuplicating] = useState(false)
+  // Set once a task.cost_warning event arrives for this task (crossed the
+  // early-warning threshold — see GET/PUT /settings/cost-warning). Cleared
+  // on label change (new lifecycle stage) so a stale warning from a prior
+  // stage/run doesn't linger indefinitely.
+  const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
@@ -115,8 +120,11 @@ export default function TaskDetailPage() {
     const off = wsClient.on((event) => {
       if (event.type === 'task.label_changed' && event.payload.task_id === id) {
         setEditingTask(false)
+        setCostWarning(null)
         refreshTask()
         refreshLabelHistory()
+      } else if (event.type === 'task.cost_warning' && event.payload.task_id === id) {
+        setCostWarning({ spentUsd: event.payload.spent_usd, budgetUsd: event.payload.budget_usd })
       } else if (event.type === 'task.agent_started' && event.payload.task_id === id) {
         refreshRuns()
         refreshTask()
@@ -468,6 +476,15 @@ export default function TaskDetailPage() {
           />
         )}
       </div>
+
+      {/* Cost early-warning banner — crossed the configurable warn_ratio threshold
+          (default 80%) of the effective cost budget, but not yet exhausted. See
+          GET/PUT /settings/cost-warning and docs/agents.md#cost-budgets. */}
+      {costWarning && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-amber-900/40 border border-amber-700 text-amber-300 text-sm">
+          💰 Cost warning: this task has spent ${costWarning.spentUsd.toFixed(2)} of its ${costWarning.budgetUsd.toFixed(2)} budget.
+        </div>
+      )}
 
       {/* Approval panel — shown when agent needs human or task is at a human-gate label */}
       {(needsHuman || isHumanGateLabel) && (

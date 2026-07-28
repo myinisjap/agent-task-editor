@@ -192,6 +192,138 @@ func TestQwenRunner_ErrorMaxTurns(t *testing.T) {
 	}
 }
 
+// TestQwenRunner_CostWatchdogKillsRun mirrors
+// TestClaudeRunner_CostWatchdogKillsRun: verifies qwen's mid-run cost
+// watchdog wiring (see qwen.go, cost_watchdog.go) cancels a subprocess whose
+// projected cost crosses a tiny configured CostBudgetUSD, returning
+// *agent.ErrCostBudgetExceeded rather than a plain failure.
+func TestQwenRunner_CostWatchdogKillsRun(t *testing.T) {
+	runner := &QwenRunner{
+		BinaryPath:    os.Args[0],
+		PriceResolver: fakePriceResolver{inPer1M: 10, outPer1M: 10, known: true},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := qwenHelperInput("cost_watchdog_kill")
+	input.CostBudgetUSD = 1.00
+	input.CostWarnRatio = 0.8
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	for range logCh {
+	}
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Run to return — watchdog likely failed to cancel the subprocess")
+	}
+
+	var ce *agent.ErrCostBudgetExceeded
+	if !errors.As(res.err, &ce) {
+		t.Fatalf("want *agent.ErrCostBudgetExceeded, got err=%v (%T)", res.err, res.err)
+	}
+	if ce.BudgetUSD != 1.00 {
+		t.Errorf("want BudgetUSD=1.00, got %v", ce.BudgetUSD)
+	}
+	if ce.SpentUSD <= ce.BudgetUSD {
+		t.Errorf("want SpentUSD (%v) to exceed BudgetUSD (%v)", ce.SpentUSD, ce.BudgetUSD)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if !res.r.CostWarned {
+		t.Error("want CostWarned=true — crossing the budget also crosses the warn ratio")
+	}
+	if res.r.SessionID != "qwen-cost-watchdog-session" {
+		t.Errorf("want session id preserved from the assistant message, got %q", res.r.SessionID)
+	}
+	// Regression coverage: a killed run never reaches its terminal "result"
+	// event, so the persisted Result must come from the watchdog's own
+	// cumulative-usage snapshot (costExceededUsage in qwen.go's Run), not
+	// from applyUsage(nil) silently leaving everything at zero — otherwise
+	// SumTaskCost (which the pre-dispatch budget guard reads) would
+	// undercount a mid-run-killed run's real spend.
+	if res.r.InputTokens != 1_000_000 {
+		t.Errorf("want InputTokens=1,000,000 (from the assistant-message usage), got %d", res.r.InputTokens)
+	}
+	if res.r.OutputTokens != 1_000_000 {
+		t.Errorf("want OutputTokens=1,000,000 (from the assistant-message usage), got %d", res.r.OutputTokens)
+	}
+	// $10/1M input + $10/1M output * 1M each = $20; CostSpentUSD defaults to
+	// 0 in this test (qwenHelperInput doesn't set it), so this run's own
+	// incremental cost equals the full projection.
+	if res.r.CostUSD != 20.0 {
+		t.Errorf("want CostUSD=20.0 (this run's own incremental cost, not left at 0), got %v", res.r.CostUSD)
+	}
+}
+
+// TestQwenRunner_CostWatchdogKillsRun_SubtractsPriorSpend verifies that when
+// a task already has prior recorded spend (input.CostSpentUSD > 0, e.g. from
+// an earlier run on the same task), the killed run's own persisted CostUSD
+// is only its *own* incremental cost — the watchdog's projected total minus
+// the prior-spend baseline — not the full task-wide projection. Getting this
+// wrong would double-count prior runs' cost every time SumTaskCost sums
+// cost_usd across all of a task's runs.
+func TestQwenRunner_CostWatchdogKillsRun_SubtractsPriorSpend(t *testing.T) {
+	runner := &QwenRunner{
+		BinaryPath:    os.Args[0],
+		PriceResolver: fakePriceResolver{inPer1M: 10, outPer1M: 10, known: true},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := qwenHelperInput("cost_watchdog_kill")
+	// Budget 25, 6 already spent by prior runs on this task -> only $19 of
+	// headroom, well below the $20 this run's own usage will project.
+	input.CostBudgetUSD = 25.00
+	input.CostSpentUSD = 6.00
+	input.CostWarnRatio = 0.8
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	for range logCh {
+	}
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Run to return — watchdog likely failed to cancel the subprocess")
+	}
+
+	var ce *agent.ErrCostBudgetExceeded
+	if !errors.As(res.err, &ce) {
+		t.Fatalf("want *agent.ErrCostBudgetExceeded, got err=%v (%T)", res.err, res.err)
+	}
+	// ce.SpentUSD is the task-wide projection (prior 6 + this run's 20 = 26).
+	if ce.SpentUSD != 26.0 {
+		t.Errorf("want ErrCostBudgetExceeded.SpentUSD=26.0 (prior 6 + this run's 20), got %v", ce.SpentUSD)
+	}
+	// res.r.CostUSD must be only this run's own incremental cost (26 - 6 =
+	// 20), not the task-wide 26 -- SumTaskCost will separately add the prior
+	// runs' own persisted 6.
+	if res.r.CostUSD != 20.0 {
+		t.Errorf("want Result.CostUSD=20.0 (this run's own cost, prior spend subtracted out), got %v", res.r.CostUSD)
+	}
+}
+
 // --- Subprocess lifecycle tests (generalized from claude_test.go's
 // CLAUDE_TEST_HELPER re-exec harness — see TestMain in claude_test.go) ---
 

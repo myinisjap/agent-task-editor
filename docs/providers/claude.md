@@ -194,6 +194,8 @@ Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) 
 
 Token usage and cost are parsed from the CLI's `result` stream-json message (`usage` + `total_cost_usd`) and are **authoritative** — the CLI itself knows whether it's running under a Claude Max subscription (often `$0`) or metered API billing, so no estimation is applied. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
+**Mid-run cost kill switch: supported.** `claude` is one of two providers (with `qwen_code`, when priced) that watches incremental token usage from `assistant` stream-json messages as a run progresses, projects total cost via the pricing table, and cancels the subprocess if it crosses `max_cost_usd`, escalating to `waiting_human`. Because this projection is estimated from the pricing table (the CLI's own `total_cost_usd` above is only known at the end), it can be nonzero — and can still trigger a kill — even under a Claude Max subscription where the real marginal cost is `$0`. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
+
 ## Rate Limit Handling
 
 The runner detects 429 responses in stdout/stderr (looks for `429`, `Request rejected`, `rate limit`, `session limit`, `usage limit`) and returns `ErrRateLimit`. The dispatcher will back off and retry.

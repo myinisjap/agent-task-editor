@@ -45,6 +45,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	backupH := handlers.NewBackupHandler(db)
 	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	logRetentionSettingsH := handlers.NewLogRetentionSettingsHandler(q)
+	costWarningSettingsH := handlers.NewCostWarningSettingsHandler(q)
 	modelPricingH := handlers.NewModelPricingHandler(q, db.SQL())
 	wsTicketH := handlers.NewWSTicketHandler(hub)
 	chatH := handlers.NewChatHandler(q, hub, term, bearerToken, corsOrigins)
@@ -197,6 +198,15 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// the hardcoded map.
 			r.Get("/settings/pricing", modelPricingH.List)
 			r.Put("/settings/pricing", modelPricingH.Update)
+
+			// Global cost-warning early-threshold (see
+			// internal/agent/providers/cost_watchdog.go and
+			// Dispatcher.resolveCostWarnRatio) — the fraction of a task's
+			// effective cost budget at which task.cost_warning fires ahead of
+			// the hard kill/exhaustion at 1.0. Read fresh on every relevant
+			// check, so a change here takes effect without a restart.
+			r.Get("/settings/cost-warning", costWarningSettingsH.Get)
+			r.Put("/settings/cost-warning", costWarningSettingsH.Update)
 
 			// Label history — audit trail of transitions (who/what triggered them)
 			r.Get("/tasks/{id}/label-history", tasksH.ListLabelHistory)

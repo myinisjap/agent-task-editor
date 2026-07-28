@@ -22,6 +22,7 @@ export default function TaskCard({
   task,
   isRunning,
   rateLimitedUntil,
+  costWarned,
   onDelete,
   onDuplicate,
   isEditable,
@@ -32,6 +33,8 @@ export default function TaskCard({
   task: Task
   isRunning?: boolean
   rateLimitedUntil?: string
+  /** True once this task has crossed the cost early-warning threshold (see task.cost_warning WS event) */
+  costWarned?: boolean
   onDelete?: () => void
   /** When set, renders a "Duplicate task" button that opens a pre-filled New Task modal for this task. */
   onDuplicate?: (task: Task) => void
@@ -316,6 +319,14 @@ export default function TaskCard({
               title={`Rate limited by API. Retrying after ${new Date(rateLimitedUntil).toLocaleTimeString()}`}
             >
               ⏸ API limit
+            </span>
+          )}
+          {costWarned && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
+              title="Cumulative cost has crossed the early-warning threshold of its budget. See GET/PUT /settings/cost-warning for the threshold."
+            >
+              💰 Budget warning
             </span>
           )}
           {task.next_retry_at && !isRunning && (

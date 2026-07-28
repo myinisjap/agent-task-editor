@@ -157,6 +157,59 @@ func (p *Pool) handleMaxTurnsExhausted(ctx context.Context, job Job, result Resu
 	log.Warn("pool: agent hit max turns, escalating to waiting_human", "max_turns", mt.MaxTurns)
 }
 
+// handleCostBudgetExceeded marks the run waiting_human when a provider's
+// mid-run cost watchdog cancelled the run because projected cost crossed the
+// task's effective cost budget. Modeled directly on handleMaxTurnsExhausted:
+// this never auto-retries and never touches the transient-retry budget — a
+// budget stop is a policy decision, not an infra blip or a genuine task
+// failure. The task's active-run lock is deliberately left set (no
+// ClearActiveAgentRun) so it stays locked until a human raises the budget,
+// replies, or otherwise re-dispatches — consistent with every other
+// waiting_human escalation (login, exhausted retry budget, exhausted turn
+// budget, exhausted pre-dispatch cost budget, rework loop).
+func (p *Pool) handleCostBudgetExceeded(ctx context.Context, job Job, result Result, ce *ErrCostBudgetExceeded, startedAt time.Time) {
+	bg := context.Background()
+	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
+
+	msg := fmt.Sprintf("mid-run cost budget exceeded: $%.2f of $%.2f", ce.SpentUSD, ce.BudgetUSD)
+
+	costUnknown := int64(0)
+	if result.CostUnknown {
+		costUnknown = 1
+	}
+	if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
+		Status:       "waiting_human",
+		StoredInfo:   result.StoredInfo,
+		Notes:        &msg,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		CostUnknown:  costUnknown,
+		ID:           job.RunID,
+	}); err != nil {
+		log.Warn("pool: cost-budget escalation: set run status", "err", err)
+	}
+
+	metrics.RunClassificationTotal.WithLabelValues(string(ClassCostBudget)).Inc()
+	metrics.RunTerminalTotal.WithLabelValues("waiting_human").Inc()
+	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
+
+	if p.pub != nil {
+		p.pub.Publish("task.needs_human", map[string]any{
+			"task_id": job.Input.Task.ID,
+			"run_id":  job.RunID,
+			"message": msg,
+		})
+		p.pub.Publish("task.agent_done", map[string]any{
+			"task_id": job.Input.Task.ID,
+			"run_id":  job.RunID,
+			"status":  "waiting_human",
+		})
+	}
+
+	log.Warn("pool: mid-run cost budget exceeded, escalating to waiting_human", "spent_usd", ce.SpentUSD, "budget_usd", ce.BudgetUSD)
+}
+
 // handleCancelled records a human-requested stop. It marks the run "cancelled"
 // with a note, resets the transient-retry budget (a cancel is not a failure),
 // pauses the task, and clears the active-run lock. Pausing — rather than only

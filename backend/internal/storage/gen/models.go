@@ -77,6 +77,12 @@ type ChatSession struct {
 	ProviderConfigID  string    `json:"provider_config_id"`
 }
 
+type CostWarningSetting struct {
+	ID        int64     `json:"id"`
+	WarnRatio float64   `json:"warn_ratio"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type LogRetentionSetting struct {
 	ID              int64     `json:"id"`
 	Days            int64     `json:"days"`
@@ -158,6 +164,7 @@ type Task struct {
 	SourceState             string     `json:"source_state"`
 	SourceStateAt           *time.Time `json:"source_state_at"`
 	PrMergeable             string     `json:"pr_mergeable"`
+	CostWarned              int64      `json:"cost_warned"`
 }
 
 type TaskDependency struct {

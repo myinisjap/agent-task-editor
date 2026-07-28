@@ -29,7 +29,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude`, `qwen_code`, `codex_cli`, and `opencode`** — see [Session Resume](#session-resume) below. Default on. |
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
-| `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. See [Cost Budgets](#cost-budgets) below. |
+| `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. On `claude`/`qwen_code`, also enforced mid-run as a kill switch that cancels an in-flight run over budget. See [Cost Budgets](#cost-budgets) below. |
 
 ## Provider Configs
 
@@ -102,6 +102,7 @@ _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capab
 | Command allowlist | ⚠️ Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist instead. | ❌ Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect. Use the denylist instead. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
 | Command denylist | ✅ | ⚠️ Enforced via qwen's --exclude-tools flag (folds into its permissionsDeny policy), which is honored even under yolo mode. Per-pattern Bash(pattern) granularity mirrors --allowed-tools but has not been confirmed live for the deny path; if qwen only accepts bare tool names here, denial may degrade to blanket Bash exclusion. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
 | Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Tokens only, no cost — a cost budget cap will not reliably fire. | ⚠️ Estimated from a pricing table, not authoritative. | ⚠️ Estimated from a pricing table, not authoritative. | ❌ Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire. |
+| Mid-run cost kill switch | ✅ Mid-run kill switch: projects cost from incremental assistant-message token usage via the pricing table and cancels the run if it crosses the effective budget, escalating to waiting_human. The projection is an estimate (not the CLI's own authoritative total_cost_usd, which is only known after the run ends) — under a subscription plan with $0 real marginal cost, this estimate can still be nonzero and trigger a kill. | ⚠️ Same mid-run kill switch mechanism as claude (projects cost from incremental token usage). Only effective when the configured model is in the pricing table — otherwise the watchdog is a silent no-op and only the pre-dispatch budget guard applies. | ❌ Not implemented — codex captures tokens but does not price them (blocked on pricing-table support for this provider, see #245), so mid-run cost can't be projected. Only the pre-dispatch budget guard applies. | ❌ No mid-run kill switch implemented — only the pre-dispatch budget guard applies. | ❌ No mid-run kill switch implemented — only the pre-dispatch budget guard applies. | ❌ Not implemented — opencode records no usage at all, so mid-run cost cannot be projected. Only the pre-dispatch budget guard applies (and will not reliably fire either, since it depends on cost tracking). |
 | Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
 | `max_turns` | ✅ Enforced via --max-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
 | Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
@@ -249,13 +250,14 @@ budget if one is set.
 ## Cost Budgets
 
 `max_cost_usd` can be set on an agent config and/or on an individual task
-to give the dispatcher an advisory spending cap. **This is not a mid-run
-kill switch** — no supported provider (`claude`, `anthropic`, `opencode`,
-`qwen_code`, `codex_cli`, `llm`) exposes a way to abort an in-flight run once it crosses
-a cost threshold, so a single expensive run can still land over budget. The
-guard instead runs **before** each sweep-dispatch: if the task's
-cumulative recorded cost has already met or exceeded its effective budget,
-the dispatcher skips starting a new run.
+to give the dispatcher an advisory spending cap. Enforcement has two layers:
+a **pre-dispatch guard** (all providers) that blocks the *next* dispatch once
+the budget is already exhausted, and, for providers with mid-run priced usage
+(`claude`, and `qwen_code` when its configured model is priced), a **mid-run
+kill switch** that cancels an *in-flight* run once its projected cost crosses
+the budget — see [Mid-run kill switch](#mid-run-kill-switch) below. There's
+also a configurable **early warning** event fired before either guard trips
+— see [Early Warning](#early-warning) below.
 
 - **Effective budget.** If both the task's and its matched agent config's
   `max_cost_usd` are set (nonzero), the **lower** of the two applies. If
@@ -269,16 +271,17 @@ the dispatcher skips starting a new run.
   than the Dashboard's total/per-provider/per-agent-config aggregates,
   which only count terminal-status runs (`completed`/`failed`/`waiting_human`) —
   see [Cost & Usage Tracking](#cost--usage-tracking) above.
-- **Escalation.** When the budget is exhausted, the dispatcher does *not*
-  start a provider run. Instead it creates a "phantom" `agent_runs` row
-  directly in `waiting_human` status (no provider invocation happens), sets
-  it as the task's active/current run (locking the task exactly like a real
-  `waiting_human` run would), and publishes a `task.needs_human` WebSocket
-  event so the Dashboard's intervention queue and the Task Detail page pick
-  it up live — mirroring how `Pool.handleTransientFailure` escalates after
-  a retry budget is exhausted. The task's label is left unchanged;
-  `waiting_human` is a run status, not a workflow label. The run's `notes`
-  field (and the WS event's `message`) carry the exact string:
+- **Pre-dispatch escalation.** When the budget is already exhausted at
+  sweep time, the dispatcher does *not* start a provider run. Instead it
+  creates a "phantom" `agent_runs` row directly in `waiting_human` status
+  (no provider invocation happens), sets it as the task's active/current run
+  (locking the task exactly like a real `waiting_human` run would), and
+  publishes a `task.needs_human` WebSocket event so the Dashboard's
+  intervention queue and the Task Detail page pick it up live — mirroring
+  how `Pool.handleTransientFailure` escalates after a retry budget is
+  exhausted. The task's label is left unchanged; `waiting_human` is a run
+  status, not a workflow label. The run's `notes` field (and the WS event's
+  `message`) carry the exact string:
 
   ```
   budget exhausted: $<spent> of $<budget>
@@ -286,17 +289,104 @@ the dispatcher skips starting a new run.
 
   formatted to two decimal places (e.g. `budget exhausted: $1.50 of $1.00`).
 
-- **Recovery.** The task stays locked on the phantom run until a human
-  acts — either raising the budget (on the task and/or its agent config)
-  or replying via the normal `request_human` reply flow, which starts a
-  fresh run through `DispatchReply`. **`DispatchReply` is intentionally
-  never budget-gated** — a human who is already actively intervening should
-  never be blocked by their own budget check.
-- **Scope.** The guard only runs in the sweep dispatch path
-  (`Dispatcher.dispatch`), not in `DispatchReply`. It only prevents the
-  *next* dispatch once a budget is already exhausted; it cannot stop the
-  run that pushes the task over budget in the first place, since a run's
-  cost is only known once it completes.
+- **Recovery.** The task stays locked on the phantom (or mid-run-killed —
+  see below) run until a human acts — either raising the budget (on the
+  task and/or its agent config) or replying via the normal `request_human`
+  reply flow, which starts a fresh run through `DispatchReply`.
+  **`DispatchReply` is intentionally never budget-gated** — a human who is
+  already actively intervening should never be blocked by their own budget
+  check.
+- **Scope.** The pre-dispatch guard only runs in the sweep dispatch path
+  (`Dispatcher.dispatch`), not in `DispatchReply`.
+
+### Mid-run kill switch
+
+`claude` and `qwen_code` (see the capability matrix above — qwen_code only
+when its configured model is in the pricing table) watch a run's token usage
+as it streams and project total task cost — prior recorded spend plus this
+run's incremental usage — against the effective budget while the run is
+still in flight, using the same pricing table (`providers/pricing.go`) the
+Dashboard's cost estimates use. When the projection crosses the budget, the
+provider cancels its own subprocess immediately rather than waiting for the
+run to finish, and the run is escalated straight to `waiting_human` (not
+retried, not treated as a plain failure — re-dispatching would simply start
+spending against the same already-exhausted budget again). The run's `notes`
+field (and the WS event's `message`) carry:
+
+```
+mid-run cost budget exceeded: $<spent> of $<budget>
+```
+
+A killed run never reaches its terminal `result` stream-json event — the
+only place token usage/cost is normally read from — so the provider
+persists the watchdog's own cumulative-usage snapshot (input/output tokens
+observed so far, and this run's own incremental cost — the projection minus
+whatever prior runs had already spent) onto the run instead of leaving
+`cost_usd`/tokens at `0`. This keeps `SumTaskCost` (the pre-dispatch guard
+above, and the Task Detail cumulative-cost view) accurate across repeated
+kill → raise-budget → resume cycles: a killed run's real spend still counts
+toward the task's total, so it can't be "reset" by killing and resuming it.
+
+**This projection is an estimate, not the provider's own authoritative
+billed cost.** Claude/qwen only report a `total_cost_usd` on the terminal
+`result` event of a stream-json run — by definition too late for a mid-run
+kill switch to act on. The watchdog instead derives cost from incremental
+`input_tokens`/`output_tokens` (folding cache tokens into the input count,
+since the pricing table has no separate cache rate — see
+`extractAssistantUsage` in `parse_streamjson.go`) via the same pricing table.
+Two consequences:
+
+- **Subscription plans.** Under a Claude subscription where the real
+  marginal cost of a run is `$0`, the pricing-table estimate can still be
+  nonzero and can still trigger a mid-run kill. If you rely on a cost budget
+  under a subscription, size `max_cost_usd` generously (or leave it unset)
+  rather than treating it as a precise dollar cap.
+- **Unpriced models.** If the configured model isn't in the pricing table,
+  the watchdog can't project a cost at all and is a silent no-op — the
+  pre-dispatch guard is the only enforcement for that run (and it, too, may
+  under-report if the model's cost was never priced on prior runs).
+
+Providers without mid-run priced usage — `codex_cli`, `opencode`, and the
+deprecated `anthropic`/`llm` providers — do **not** support the mid-run kill
+switch (`codex_cli` captures tokens but doesn't price them, blocked on
+[#245](https://github.com/myinisjap/agent-task-editor/issues/245);
+`opencode` records no usage at all). For these, `max_cost_usd` only ever
+prevents the *next* dispatch once the budget is already exhausted — a single
+expensive run can still land arbitrarily far over budget before anything
+notices. This is intentional and documented, not a silent gap: check the
+capability matrix above (or `providerCapabilities.ts`'s `costWatchdog` entry)
+before relying on `max_cost_usd` as a hard ceiling for a given provider.
+
+### Early Warning
+
+Independent of the hard budget guards above, a `task.cost_warning`
+WebSocket event fires once a task's cumulative spend crosses a configurable
+**warning threshold** — a fraction of the effective budget, default `0.8`
+(80%) — giving earlier visibility than only learning about a budget at 100%.
+It fires from two places:
+
+- The **mid-run watchdog** (`claude`/`qwen_code`, as above), the first time
+  its projected cost crosses the threshold during a run — even if the run
+  ultimately completes under budget.
+- The **dispatcher's pre-dispatch check**, for *any* provider (including
+  those without watchdog support): if a task's recorded spend is already at
+  or past the threshold — but not yet over budget — when a new run is about
+  to be dispatched. This fires **once** per task (gated by the task's
+  `cost_warned` flag) rather than on every sweep, and resets if the task's
+  own `max_cost_usd` is later changed (so raising the budget lets it warn
+  again as spend approaches the new ceiling).
+
+The event payload carries `task_id`, `spent_usd`, `budget_usd`, and
+(mid-run only) `run_id` — see [websocket.md](websocket.md). The board shows
+a "💰 Budget warning" badge on the task card and a banner on Task Detail
+while a warning is outstanding; both clear when the task's label next
+changes (a new lifecycle stage).
+
+The warning threshold itself is a single global setting (not per-task or
+per-agent-config), stored in the `cost_warning_settings` table and readable/
+editable via `GET`/`PUT /api/v1/settings/cost-warning` — see
+[api.md](api.md). Changes take effect on the next dispatch/run check without
+a restart.
 
 ## Task Priority
 

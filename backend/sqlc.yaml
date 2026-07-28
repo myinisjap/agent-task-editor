@@ -52,6 +52,7 @@ sql:
       - "internal/storage/migrations/047_pr_merge_conflict.up.sql"
       - "internal/storage/migrations/048_label_wip_limit.up.sql"
       - "internal/storage/migrations/049_task_read_indexes.up.sql"
+      - "internal/storage/migrations/050_cost_warning.up.sql"
     gen:
       go:
         package: "gen"

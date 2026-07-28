@@ -258,6 +258,28 @@ func effectiveBudget(taskBudget, configBudget float64) float64 {
 	}
 }
 
+// defaultCostWarnRatio is the fallback early-warning threshold (see
+// resolveCostWarnRatio) used if the cost_warning_settings row can't be read
+// (e.g. a DB error) — matches the migration's seeded default.
+const defaultCostWarnRatio = 0.8
+
+// resolveCostWarnRatio reads the global cost-warning threshold (see
+// 050_cost_warning / GetCostWarningSettings), falling back to
+// defaultCostWarnRatio on any error so a transient DB hiccup never disables
+// the watchdog's warning path entirely (it only ever affects when the
+// early-warning event fires, not the hard budget kill switch/exhaustion
+// gate, which are unaffected by this setting).
+func (d *Dispatcher) resolveCostWarnRatio(ctx context.Context) float64 {
+	row, err := d.q.GetCostWarningSettings(ctx)
+	if err != nil {
+		return defaultCostWarnRatio
+	}
+	if row.WarnRatio <= 0 || row.WarnRatio > 1 {
+		return defaultCostWarnRatio
+	}
+	return row.WarnRatio
+}
+
 // checkCostBudget compares a task's cumulative recorded run cost (across
 // every run regardless of status — see SumTaskCost) against its effective
 // cost budget (the min of the task's and its matched agent config's
@@ -270,6 +292,13 @@ func effectiveBudget(taskBudget, configBudget float64) float64 {
 // dispatcher skips it on future sweeps, and publishes task.needs_human so
 // the dashboard/task-detail UI picks it up live, exactly like a real
 // waiting_human escalation. Returns true if dispatch should be skipped.
+//
+// Before the hard-exhaustion check, it also surfaces the early-warning
+// threshold (see resolveCostWarnRatio) for tasks whose provider doesn't
+// support the mid-run watchdog: if spend has already crossed warnRatio*budget
+// but hasn't exhausted it, this publishes a one-shot task.cost_warning (gated
+// on the task's cost_warned flag so it doesn't refire every sweep) and lets
+// dispatch proceed normally.
 func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig) (bool, error) {
 	budget := effectiveBudget(t.MaxCostUsd, matched.MaxCostUsd)
 	if budget <= 0 {
@@ -280,11 +309,26 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	if err != nil {
 		return false, fmt.Errorf("sum task cost: %w", err)
 	}
-	if spent < budget {
-		return false, nil
-	}
 
 	log := slog.With("component", "dispatcher", "task_id", t.ID)
+
+	if spent < budget {
+		warnRatio := d.resolveCostWarnRatio(ctx)
+		if t.CostWarned == 0 && warnRatio > 0 && spent >= warnRatio*budget {
+			log.Warn("dispatcher: cost budget warning threshold crossed", "spent", spent, "budget", budget, "warn_ratio", warnRatio)
+			if err := d.q.SetTaskCostWarned(ctx, t.ID); err != nil {
+				log.Warn("dispatcher: set task cost_warned", "err", err)
+			}
+			if d.Publisher != nil {
+				d.Publisher.Publish("task.cost_warning", map[string]any{
+					"task_id":    t.ID,
+					"spent_usd":  spent,
+					"budget_usd": budget,
+				})
+			}
+		}
+		return false, nil
+	}
 	msg := fmt.Sprintf("budget exhausted: $%.2f of $%.2f", spent, budget)
 	log.Warn("dispatcher: skipping dispatch, cost budget exhausted", "spent", spent, "budget", budget)
 
@@ -550,6 +594,24 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		subtaskConflicts = d.Subtasks.BuildConflictContext(ctx, t.ID)
 	}
 
+	// Cost-budget plumbing for the provider's mid-run kill switch (see
+	// providers/cost_watchdog.go). checkCostBudget already vetoed dispatch
+	// entirely if the budget was already exhausted, so this run always starts
+	// with spent < budget (or budget == 0, meaning no cap — costBudgetUSD
+	// stays 0 either way, since effectiveBudget already returns 0 for that
+	// case). Best-effort: a SumTaskCost error here degrades to "no budget
+	// info for the watchdog" rather than blocking the run entirely, since the
+	// hard pre-dispatch gate above is the authoritative enforcement point.
+	costBudgetUSD := effectiveBudget(t.MaxCostUsd, matched.MaxCostUsd)
+	var costSpentUSD float64
+	if costBudgetUSD > 0 {
+		if spent, serr := d.q.SumTaskCost(ctx, t.ID); serr == nil {
+			costSpentUSD = spent
+		} else {
+			log.Warn("dispatcher: sum task cost for watchdog", "err", serr)
+		}
+	}
+
 	enqueued := d.pool.Submit(Job{
 		RunID:    runID,
 		Provider: provider,
@@ -568,6 +630,9 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			ResumeSessionID:    resumeSessionID,
 			HumanReply:         opts.humanReply,
 			SubtaskConflicts:   subtaskConflicts,
+			CostBudgetUSD:      costBudgetUSD,
+			CostSpentUSD:       costSpentUSD,
+			CostWarnRatio:      d.resolveCostWarnRatio(ctx),
 		},
 	})
 	if !enqueued {

@@ -87,6 +87,8 @@ close the gap. Until then, a cost budget cap will not fire for this provider.
 
 _Verified against `opencode-ai` v1.18.6._ See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
+**Mid-run cost kill switch: not supported.** opencode records no usage at all (above), so there is nothing to project a mid-run cost from. Only the pre-dispatch `max_cost_usd` guard applies, and it too will not reliably fire since `cost_usd` is always `0` for this provider. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
+
 ## Limitations
 
 | Feature | Status |

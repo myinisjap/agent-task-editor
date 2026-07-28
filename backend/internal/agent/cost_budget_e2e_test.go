@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -207,4 +208,203 @@ func TestE2E_CostBudget(t *testing.T) {
 			return tk.Label == "next"
 		}, "task to transition normally when under budget")
 	})
+
+	t.Run("RunInput carries the effective budget, prior spend, and default warn ratio", func(t *testing.T) {
+		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+		h := newE2EHarness(t, fp)
+		wfID := seedE2EWorkflow(t, h.q)
+		// config budget 5.00, task budget 2.00 -> effective is 2.00; prior spend 1.00 (under budget).
+		taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 5.00, 2.00)
+		h.seedRunWithCost(t, taskID, cfgID, 1.00)
+
+		h.pollTask(t, taskID, func(tk gen.Task) bool {
+			return tk.Label == "next"
+		}, "task to dispatch and transition under budget")
+
+		in := fp.input(t, 0)
+		if in.CostBudgetUSD != 2.00 {
+			t.Errorf("expected RunInput.CostBudgetUSD 2.00 (effective budget), got %v", in.CostBudgetUSD)
+		}
+		if in.CostSpentUSD != 1.00 {
+			t.Errorf("expected RunInput.CostSpentUSD 1.00 (prior recorded run cost), got %v", in.CostSpentUSD)
+		}
+		if in.CostWarnRatio != defaultCostWarnRatio {
+			t.Errorf("expected RunInput.CostWarnRatio to default to %v, got %v", defaultCostWarnRatio, in.CostWarnRatio)
+		}
+	})
+
+	t.Run("no budget set: RunInput carries a zero CostBudgetUSD (watchdog inert)", func(t *testing.T) {
+		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+		h := newE2EHarness(t, fp)
+		wfID := seedE2EWorkflow(t, h.q)
+		taskID, _ := h.seedTaskWithBudgets(t, wfID, 0, 0)
+		h.seedReady(t, taskID)
+
+		h.pollTask(t, taskID, func(tk gen.Task) bool {
+			return tk.Label == "next"
+		}, "task to transition on the golden path with no budget set")
+
+		in := fp.input(t, 0)
+		if in.CostBudgetUSD != 0 {
+			t.Errorf("expected RunInput.CostBudgetUSD 0 (no cap), got %v", in.CostBudgetUSD)
+		}
+	})
+
+	// TestE2E_CostBudget's other subtests exercise the *hard* pre-dispatch gate
+	// (spent >= budget). This covers the *early-warning* gate one rung below
+	// it (see checkCostBudget): a task whose prior spend has crossed
+	// warnRatio*budget but not yet the budget itself still dispatches
+	// normally, but the dispatcher publishes a one-shot task.cost_warning and
+	// sets the task's cost_warned flag so it doesn't refire every sweep.
+	t.Run("warning threshold crossed but budget not exhausted: dispatches, warns once", func(t *testing.T) {
+		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+		h := newE2EHarness(t, fp)
+		wfID := seedE2EWorkflow(t, h.q)
+		// effective budget 10.00; prior spend 9.00 = 90% > the 80% default warn ratio.
+		taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 0, 10.00)
+		h.seedRunWithCost(t, taskID, cfgID, 9.00)
+
+		h.pollTask(t, taskID, func(tk gen.Task) bool {
+			return tk.Label == "next"
+		}, "task to transition normally despite crossing the warn threshold")
+
+		if !h.pub.has("task.cost_warning") {
+			t.Error("expected a task.cost_warning event for a task past the warn threshold")
+		}
+		tk, err := h.q.GetTask(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		if tk.CostWarned == 0 {
+			t.Error("expected task.cost_warned to be set after crossing the warn threshold")
+		}
+	})
+
+	t.Run("below warning threshold: dispatches, no warning", func(t *testing.T) {
+		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+		h := newE2EHarness(t, fp)
+		wfID := seedE2EWorkflow(t, h.q)
+		// effective budget 10.00; prior spend 1.00 = 10%, well under the 80% default.
+		taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 0, 10.00)
+		h.seedRunWithCost(t, taskID, cfgID, 1.00)
+
+		h.pollTask(t, taskID, func(tk gen.Task) bool {
+			return tk.Label == "next"
+		}, "task to transition normally under the warn threshold")
+
+		if h.pub.has("task.cost_warning") {
+			t.Error("expected no task.cost_warning event for a task well under the warn threshold")
+		}
+	})
+}
+
+// TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked covers the mid-run
+// kill switch's pool-side escalation path (see providers/cost_watchdog.go and
+// pool.handleCostBudgetExceeded): a provider that cancels its own run and
+// returns agent.ErrCostBudgetExceeded is escalated straight to waiting_human,
+// exactly like max-turns exhaustion — never re-dispatched with a fresh
+// budget. This test exercises the pool's escalation given the typed error;
+// the projection/cancellation logic itself lives in
+// providers/cost_watchdog_test.go and the claude/qwen provider tests.
+//
+// It also covers the regression where a killed run's usage/cost never made
+// it into the persisted agent_runs row: claude.go/qwen.go now populate
+// Result.CostUSD/InputTokens/OutputTokens from the watchdog's own
+// cumulative-usage snapshot (since a killed run never reaches its terminal
+// "result" event for applyUsage to read), so this fake provider's Result
+// mirrors that by setting them explicitly — pool.handleCostBudgetExceeded
+// must persist them onto SetAgentRunCompleted, and SumTaskCost (the guard
+// that a repeated kill/resume cycle relies on to not overspend) must see
+// them.
+func TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{
+		{err: &ErrCostBudgetExceeded{SpentUSD: 12.34, BudgetUSD: 10.00}, result: Result{Status: "failed", SessionID: "sess-1", CostUSD: 12.34, InputTokens: 500_000, OutputTokens: 300_000}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID := h.seedTaskOnReady(t, wfID)
+
+	esc := h.pollTask(t, taskID, func(tk gen.Task) bool {
+		return tk.ActiveAgentRunID != nil && tk.TransientRetryCount == 0
+	}, "run to hit the cost budget and escalate to waiting_human")
+
+	// active_agent_run_id is set synchronously at dispatch time, before the
+	// fake provider even runs — pollTask above only proves the run started,
+	// not that it finished. Poll the run row itself for its terminal status
+	// before asserting on notes/cost/tokens, all of which are written
+	// together by pool.handleCostBudgetExceeded once the run completes.
+	run := h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
+		return r.Status == "waiting_human"
+	}, "run to be persisted as waiting_human after the cost-budget kill")
+	wantMsg := "mid-run cost budget exceeded: $12.34 of $10.00"
+	if run.Notes == nil || *run.Notes != wantMsg {
+		t.Errorf("expected notes %q, got %v", wantMsg, run.Notes)
+	}
+	if esc.Label != "ready" {
+		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
+	}
+	if !h.pub.has("task.needs_human") {
+		t.Error("expected task.needs_human event on mid-run cost budget exceeded")
+	}
+
+	// Regression: the killed run's own cost/tokens must be persisted, not
+	// left at zero — otherwise SumTaskCost (which the pre-dispatch guard and
+	// the task-detail cumulative-cost view both read) would silently
+	// undercount this run's real spend, letting a kill/resume cycle
+	// overspend the same "budget" repeatedly.
+	if run.CostUsd != 12.34 {
+		t.Errorf("expected run.CostUsd 12.34 (persisted from the watchdog's usage snapshot), got %v", run.CostUsd)
+	}
+	if run.InputTokens != 500_000 || run.OutputTokens != 300_000 {
+		t.Errorf("expected run tokens (500000, 300000), got (%d, %d)", run.InputTokens, run.OutputTokens)
+	}
+	spent, err := h.q.SumTaskCost(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("sum task cost: %v", err)
+	}
+	if spent != 12.34 {
+		t.Errorf("expected SumTaskCost to include the killed run's cost (12.34), got %v", spent)
+	}
+
+	// Same regression guard as TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked:
+	// the task must stay locked on this run indefinitely, not get re-picked
+	// with a fresh budget on the next sweep.
+	time.Sleep(200 * time.Millisecond)
+	still, err := h.q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if still.ActiveAgentRunID == nil || *still.ActiveAgentRunID != *esc.ActiveAgentRunID {
+		t.Fatalf("expected task to stay locked on run %q, got %v", *esc.ActiveAgentRunID, still.ActiveAgentRunID)
+	}
+	runs, err := h.q.ListAgentRuns(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Errorf("expected exactly 1 run after cost-budget exhaustion (no re-dispatch), got %d", len(runs))
+	}
+}
+
+// TestE2E_CostWarned_PublishesEventEvenOnSuccessfulCompletion covers
+// pool.run's Result.CostWarned handling: a provider's mid-run watchdog can
+// cross the warning threshold and then still finish the run successfully
+// under budget (e.g. a burst of tool calls early in a long run that tapers
+// off) — the pool must still surface the warning to the board rather than
+// only ever warning on a run that also fails or gets killed.
+func TestE2E_CostWarned_PublishesEventEvenOnSuccessfulCompletion(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{
+		{result: Result{Status: "completed", Outcome: "success", CostWarned: true, CostUSD: 8.50}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID := h.seedTaskOnReady(t, wfID)
+
+	h.pollTask(t, taskID, func(tk gen.Task) bool {
+		return tk.Label == "next"
+	}, "task to complete successfully despite a mid-run cost warning")
+
+	if !h.pub.has("task.cost_warning") {
+		t.Error("expected a task.cost_warning event even though the run ultimately completed successfully")
+	}
 }

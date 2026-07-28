@@ -19,6 +19,7 @@ export type Capability =
   | 'commandAllowlist'
   | 'commandDenylist'
   | 'costTracking'
+  | 'costWatchdog'
   | 'imageAttachments'
   | 'maxTurns'
   | 'sessionResume'
@@ -63,6 +64,10 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     commandDenylist: { support: 'full' },
     costTracking: { support: 'full', note: 'Authoritative cost and token counts.' },
+    costWatchdog: {
+      support: 'full',
+      note: 'Mid-run kill switch: projects cost from incremental assistant-message token usage via the pricing table and cancels the run if it crosses the effective budget, escalating to waiting_human. The projection is an estimate (not the CLI\'s own authoritative total_cost_usd, which is only known after the run ends) — under a subscription plan with $0 real marginal cost, this estimate can still be nonzero and trigger a kill.',
+    },
     imageAttachments: {
       support: 'none',
       note: 'The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool.',
@@ -87,6 +92,10 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'partial',
       note: "Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire.",
     },
+    costWatchdog: {
+      support: 'partial',
+      note: 'Same mid-run kill switch mechanism as claude (projects cost from incremental token usage). Only effective when the configured model is in the pricing table — otherwise the watchdog is a silent no-op and only the pre-dispatch budget guard applies.',
+    },
     imageAttachments: { support: 'none', note: 'No image flag on the qwen CLI.' },
     maxTurns: { support: 'full', note: 'Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
@@ -105,6 +114,10 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       note: 'Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md).',
     },
     costTracking: { support: 'partial', note: 'Tokens only, no cost — a cost budget cap will not reliably fire.' },
+    costWatchdog: {
+      support: 'none',
+      note: 'Not implemented — codex captures tokens but does not price them (blocked on pricing-table support for this provider, see #245), so mid-run cost can\'t be projected. Only the pre-dispatch budget guard applies.',
+    },
     imageAttachments: {
       support: 'none',
       note: 'codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md.',
@@ -123,6 +136,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     commandAllowlist: { support: 'full', note: 'Enforced in Go.' },
     commandDenylist: { support: 'full', note: 'Enforced in Go.' },
     costTracking: { support: 'partial', note: 'Estimated from a pricing table, not authoritative.' },
+    costWatchdog: { support: 'none', note: 'No mid-run kill switch implemented — only the pre-dispatch budget guard applies.' },
     imageAttachments: { support: 'none', note: 'Not yet implemented.' },
     maxTurns: { support: 'full', note: 'Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
@@ -135,6 +149,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     commandAllowlist: { support: 'full', note: 'Enforced in Go.' },
     commandDenylist: { support: 'full', note: 'Enforced in Go.' },
     costTracking: { support: 'partial', note: 'Estimated from a pricing table, not authoritative.' },
+    costWatchdog: { support: 'none', note: 'No mid-run kill switch implemented — only the pre-dispatch budget guard applies.' },
     imageAttachments: { support: 'none', note: 'Not yet implemented (backend-dependent).' },
     maxTurns: { support: 'full', note: 'Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
@@ -155,6 +170,10 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     costTracking: {
       support: 'none',
       note: "Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire.",
+    },
+    costWatchdog: {
+      support: 'none',
+      note: 'Not implemented — opencode records no usage at all, so mid-run cost cannot be projected. Only the pre-dispatch budget guard applies (and will not reliably fire either, since it depends on cost tracking).',
     },
     imageAttachments: { support: 'none', note: 'opencode run has an -f/--file flag, but attachments are not wired through to it.' },
     maxTurns: { support: 'none', note: 'Not enforced — the opencode CLI has no turn-cap flag.' },

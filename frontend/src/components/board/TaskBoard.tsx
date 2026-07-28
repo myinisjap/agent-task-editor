@@ -77,6 +77,7 @@ type Props = {
   tasks: Task[]
   runningTaskIds: Set<string>
   rateLimitedTaskIds?: Map<string, string>
+  costWarnedTaskIds?: Set<string>
   onAddTask?: () => void
   onDuplicate?: (task: Task) => void
   condensed?: boolean
@@ -90,6 +91,7 @@ export default function TaskBoard({
   tasks,
   runningTaskIds,
   rateLimitedTaskIds,
+  costWarnedTaskIds,
   onAddTask,
   onDuplicate,
   condensed = false,
@@ -234,6 +236,7 @@ export default function TaskBoard({
                   tasks={byLabel(currentGroup.label.name)}
                   runningTaskIds={runningTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
+                  costWarnedTaskIds={costWarnedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
                   onDuplicate={onDuplicate}
@@ -248,6 +251,7 @@ export default function TaskBoard({
                   tasks={byLabels(currentGroup.labels.map((l) => l.name))}
                   runningTaskIds={runningTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
+                  costWarnedTaskIds={costWarnedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
                   onDuplicate={onDuplicate}
@@ -273,6 +277,7 @@ export default function TaskBoard({
                   tasks={byLabel(group.label.name)}
                   runningTaskIds={runningTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
+                  costWarnedTaskIds={costWarnedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
                   onDuplicate={onDuplicate}
@@ -292,6 +297,7 @@ export default function TaskBoard({
                   tasks={groupTasks}
                   runningTaskIds={runningTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
+                  costWarnedTaskIds={costWarnedTaskIds}
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
                   onDuplicate={onDuplicate}
@@ -329,6 +335,7 @@ export default function TaskBoard({
               tasks={byLabel(currentLabel.name)}
               runningTaskIds={runningTaskIds}
               rateLimitedTaskIds={rateLimitedTaskIds}
+              costWarnedTaskIds={costWarnedTaskIds}
               selectedIds={selectedIds}
               onToggleSelect={onToggleSelect}
               onDuplicate={onDuplicate}
@@ -354,6 +361,7 @@ export default function TaskBoard({
             tasks={byLabel(label.name)}
             runningTaskIds={runningTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
+            costWarnedTaskIds={costWarnedTaskIds}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
             onDuplicate={onDuplicate}
