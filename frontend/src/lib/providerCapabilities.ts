@@ -41,7 +41,7 @@ export type ProviderCapabilities = Partial<Record<Capability, CapabilityEntry>>
 // deprecated (see DEPRECATED_PROVIDERS below) and no longer selectable for
 // new/updated configs. They're kept here so existing configs on those
 // providers still get their capability rows and warnings rendered.
-export const KNOWN_PROVIDERS = ['claude', 'qwen_code', 'gemini_cli', 'codex_cli', 'anthropic', 'llm', 'opencode'] as const
+export const KNOWN_PROVIDERS = ['claude', 'qwen_code', 'codex_cli', 'anthropic', 'llm', 'opencode'] as const
 
 // Providers disabled for new/updated provider configs (rejected by the
 // backend) and hidden from agentTemplates.ts's PROVIDERS dropdown, but still
@@ -90,27 +90,6 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     imageAttachments: { support: 'none', note: 'No image flag on the qwen CLI.' },
     maxTurns: { support: 'full', note: 'Enforced via --max-session-turns.' },
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
-    subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
-  },
-  gemini_cli: {
-    taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
-    labelTransitions: { support: 'full' },
-    mcpServers: { support: 'none' },
-    commandAllowlist: {
-      support: 'none',
-      note: "Not enforced for the gemini_cli provider — the runner does not pass --allowed-tools, and that flag only skips confirmation (and is deprecated in favor of the Policy Engine) rather than restricting commands.",
-    },
-    commandDenylist: { support: 'none', note: 'Not enforced for the gemini_cli provider — the gemini CLI has no denylist flag.' },
-    costTracking: { support: 'partial', note: 'Tokens only, no cost — a cost budget cap will not reliably fire.' },
-    imageAttachments: { support: 'none', note: 'See docs/providers/gemini_cli.md.' },
-    maxTurns: {
-      support: 'none',
-      note: 'Not enforced — the gemini CLI has no turn-cap flag, so only the run timeout bounds a run.',
-    },
-    sessionResume: {
-      support: 'partial',
-      note: 'Session id is recorded and the CLI supports --resume, but GeminiRunner scopes GEMINI_CLI_HOME to a per-run temp dir that is deleted on cleanup, destroying session storage before it could be resumed. Tracked in #284.',
-    },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   codex_cli: {

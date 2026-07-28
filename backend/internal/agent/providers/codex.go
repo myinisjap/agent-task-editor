@@ -3,6 +3,7 @@ package providers
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -135,9 +136,9 @@ func renderCodexMCPTOML(name string, entry mcpServerEntry) string {
 //     prompts and runs without a sandbox — required for a headless run
 //     (Codex otherwise pauses for interactive approval on every command),
 //     mirroring the "run fully unattended" intent of qwen's --approval-mode
-//     yolo / gemini's --yolo. This is a strictly stronger bypass than either
-//     of those (it also disables the sandbox), which is the tradeoff for
-//     fully non-interactive operation — see docs/providers/codex_cli.md for
+//     yolo. This is a strictly stronger bypass than that (it also disables
+//     the sandbox), which is the tradeoff for fully non-interactive
+//     operation — see docs/providers/codex_cli.md for
 //     the discussion of Codex's native sandbox/approval-mode system and how
 //     command_allowlist/command_denylist map onto it (they don't: neither is
 //     enforced for this provider today, a documented gap).
@@ -361,4 +362,28 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
 	applyUsage(&res, finalUsage)
 	return res, nil
+}
+
+// mcpSidecarEnv builds the env vars the mcp-server sidecar binary expects,
+// identical to what MCPManager.Prepare configures for the claude/qwen
+// --mcp-config entry — factored out here since CodexRunner needs to embed
+// them directly into a config.toml [mcp_servers.*] entry rather than letting
+// MCPManager write them into its own JSON file.
+func mcpSidecarEnv(input agent.RunInput, backendURL, apiToken string) map[string]string {
+	transitionsJSON, _ := json.Marshal(input.Transitions)
+	reviewCommentsJSON, _ := json.Marshal(input.OpenReviewComments)
+	env := map[string]string{
+		"RUN_ID":          input.RunID,
+		"RESULT_FILE":     filepath.Join(os.TempDir(), fmt.Sprintf("ate-result-%s.json", input.RunID)),
+		"TRANSITIONS":     string(transitionsJSON),
+		"REVIEW_COMMENTS": string(reviewCommentsJSON),
+	}
+	if input.AgentConfig.SubtasksEnabled {
+		env["SUBTASKS_ENABLED"] = "1"
+		env["BACKEND_URL"] = backendURL
+		env["TASK_ID"] = input.Task.ID
+		env["API_TOKEN"] = apiToken
+		env["MAX_SUBTASKS"] = fmt.Sprintf("%d", input.AgentConfig.MaxSubtasks)
+	}
+	return env
 }

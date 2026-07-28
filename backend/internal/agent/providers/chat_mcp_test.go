@@ -74,36 +74,6 @@ func TestChatMCPProvisioner_Claude_NoTokenOmitsHeader(t *testing.T) {
 	}
 }
 
-func TestChatMCPProvisioner_Gemini_WritesHomeAndSkipsTrust(t *testing.T) {
-	p := NewChatMCPProvisioner("/app/mcp-board", "http://localhost:8080", "")
-	args, env, cleanup, err := p("gemini_cli", "sess-3")
-	if err != nil {
-		t.Fatalf("provision: %v", err)
-	}
-	defer cleanup()
-
-	if len(args) != 1 || args[0] != "--skip-trust" {
-		t.Errorf("expected [--skip-trust], got %v", args)
-	}
-	var home string
-	for _, e := range env {
-		if strings.HasPrefix(e, "GEMINI_CLI_HOME=") {
-			home = strings.TrimPrefix(e, "GEMINI_CLI_HOME=")
-		}
-	}
-	if home == "" {
-		t.Fatalf("GEMINI_CLI_HOME not set; env %v", env)
-	}
-	settings := filepath.Join(home, ".gemini", "settings.json")
-	if _, serr := os.Stat(settings); serr != nil {
-		t.Fatalf("expected settings.json at %s: %v", settings, serr)
-	}
-	cleanup()
-	if _, statErr := os.Stat(home); !os.IsNotExist(statErr) {
-		t.Errorf("cleanup did not remove gemini home %s", home)
-	}
-}
-
 func TestChatMCPProvisioner_Codex_WritesConfigToml(t *testing.T) {
 	p := NewChatMCPProvisioner("/app/mcp-board", "http://localhost:8080", "tok")
 	args, env, cleanup, err := p("codex_cli", "sess-4")

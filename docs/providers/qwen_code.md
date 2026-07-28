@@ -91,7 +91,7 @@ Like the `claude` provider, if the agent completes without calling `signal_compl
 
 Token usage is parsed from the CLI's `result` stream-json message (`usage`) via the same `classifyStreamJSON` parser as the `claude` provider, and is used as-is (not estimated).
 
-**No total-cost figure is reported by the Qwen Code CLI**, unlike `claude`. The parser also looks for `total_cost_usd` on the same envelope, but qwen's result message doesn't carry that field (verified against v0.21.0: its `buildResultMessage` emits `usage` + `permission_denials` and the string `total_cost_usd` appears nowhere in the package), so `cost_usd` is left at `0` for this provider rather than estimated — the same situation as `gemini_cli`/`codex_cli`. A cost budget cap will not reliably fire here. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+**No total-cost figure is reported by the Qwen Code CLI**, unlike `claude`. The parser also looks for `total_cost_usd` on the same envelope, but qwen's result message doesn't carry that field (verified against v0.21.0: its `buildResultMessage` emits `usage` + `permission_denials` and the string `total_cost_usd` appears nowhere in the package), so `cost_usd` is left at `0` for this provider rather than estimated — the same situation as `codex_cli`. A cost budget cap will not reliably fire here. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
 ## Setup Checklist
 

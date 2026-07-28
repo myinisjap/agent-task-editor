@@ -1,6 +1,6 @@
 // Package agent implements the agent runtime core: the Provider interface,
 // bounded worker pool, and dispatcher. Concrete provider backends
-// (ClaudeRunner, AnthropicRunner, LLMRunner, QwenRunner, GeminiRunner,
+// (ClaudeRunner, AnthropicRunner, LLMRunner, QwenRunner,
 // CodexRunner, OpencodeRunner) live in the sibling providers package.
 package agent
 

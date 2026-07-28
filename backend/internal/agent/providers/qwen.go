@@ -1,5 +1,5 @@
 // Package providers implements the concrete agent backends (ClaudeRunner,
-// AnthropicRunner, LLMRunner, QwenRunner, GeminiRunner, CodexRunner,
+// AnthropicRunner, LLMRunner, QwenRunner, CodexRunner,
 // OpencodeRunner) and the MCP sidecar manager.
 package providers
 

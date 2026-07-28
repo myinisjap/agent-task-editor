@@ -67,7 +67,7 @@ func TestMigration039ProviderConfigsRoundTrip(t *testing.T) {
 	}
 	if _, err := sqlDB.Exec(`
 		INSERT INTO chat_sessions (id, repo_id, provider, model, title)
-		VALUES ('cs1', 'repo1', 'gemini_cli', 'gemini-pro', 'My Chat')
+		VALUES ('cs1', 'repo1', 'codex_cli', 'gpt-5-codex', 'My Chat')
 	`); err != nil {
 		t.Fatalf("seed chat_session: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestMigration039ProviderConfigsRoundTrip(t *testing.T) {
 	if err := sqlDB.QueryRow(`SELECT provider, model, env FROM provider_configs WHERE id = ?`, csPCID).Scan(&csProvider, &csModel, &csEnv); err != nil {
 		t.Fatalf("query provider_configs for cs1: %v", err)
 	}
-	if csProvider != "gemini_cli" || csModel != "gemini-pro" || csEnv != "{}" {
+	if csProvider != "codex_cli" || csModel != "gpt-5-codex" || csEnv != "{}" {
 		t.Fatalf("unexpected backfilled provider_config for cs1: provider=%q model=%q env=%q", csProvider, csModel, csEnv)
 	}
 
@@ -132,7 +132,7 @@ func TestMigration039ProviderConfigsRoundTrip(t *testing.T) {
 	if err := sqlDB.QueryRow(`SELECT provider, model FROM chat_sessions WHERE id = 'cs1'`).Scan(&csProviderRestored, &csModelRestored); err != nil {
 		t.Fatalf("query restored chat_sessions columns: %v", err)
 	}
-	if csProviderRestored != "gemini_cli" || csModelRestored != "gemini-pro" {
+	if csProviderRestored != "codex_cli" || csModelRestored != "gpt-5-codex" {
 		t.Fatalf("chat_sessions values not restored correctly after down migration: provider=%q model=%q", csProviderRestored, csModelRestored)
 	}
 

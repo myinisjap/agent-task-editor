@@ -195,7 +195,7 @@ type GetLatestTaskSessionParams struct {
 // Latest non-empty provider session recorded for this task under this agent
 // config, used to resume the session on the next run. Honored today for
 // claude, qwen_code, codex_cli, and opencode (see
-// agent.providerSupportsResume); gemini_cli is pending #284.
+// agent.providerSupportsResume).
 // Positional params: ?1 task_id, ?2 agent_config_id.
 func (q *Queries) GetLatestTaskSession(ctx context.Context, arg GetLatestTaskSessionParams) (string, error) {
 	row := q.db.QueryRowContext(ctx, getLatestTaskSession, arg.TaskID, arg.AgentConfigID)

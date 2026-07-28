@@ -78,7 +78,7 @@ which references the published images:
 
 Prefer plain Compose? `ATE_VERSION=v0.1.0 docker compose -f docker-compose.release.yml up -d`.
 
-Want the Gemini/Codex/Qwen CLIs preinstalled instead of building them yourself (see below)? Pass `--all-cli` to run the `-all-cli` backend image variant published alongside each release:
+Want the Codex/Qwen CLIs preinstalled instead of building them yourself (see below)? Pass `--all-cli` to run the `-all-cli` backend image variant published alongside each release:
 
 ```bash
 ./run.sh --all-cli
@@ -109,15 +109,15 @@ The `claude` CLI binary itself is baked into the backend image — you don't nee
 
 ### Build args: optional CLI providers, SSL verification
 
-Unlike `claude` (installed unconditionally), the Gemini CLI (`gemini_cli` provider), Codex CLI (`codex_cli` provider), and Qwen CLI (`qwen_code` provider) are **not** installed in the default backend image — they're gated behind build args so the image doesn't grow for users who don't need them:
+Unlike `claude` (installed unconditionally), the Codex CLI (`codex_cli` provider) and Qwen CLI (`qwen_code` provider) are **not** installed in the default backend image — they're gated behind build args so the image doesn't grow for users who don't need them:
 
 ```bash
-INSTALL_GEMINI_CLI=true INSTALL_CODEX_CLI=true INSTALL_QWEN_CLI=true docker compose build
+INSTALL_CODEX_CLI=true INSTALL_QWEN_CLI=true docker compose build
 ```
 
-Running from prebuilt images instead of building locally? Every release also publishes a backend image with all three CLIs preinstalled, tagged with an `-all-cli` suffix (e.g. `ghcr.io/myinisjap/agent-task-editor-backend:latest-all-cli`). Run it with `./run.sh --all-cli`, or set `ATE_CLI_SUFFIX=-all-cli` if you're driving `docker-compose.release.yml` directly.
+Running from prebuilt images instead of building locally? Every release also publishes a backend image with both CLIs preinstalled, tagged with an `-all-cli` suffix (e.g. `ghcr.io/myinisjap/agent-task-editor-backend:latest-all-cli`). Run it with `./run.sh --all-cli`, or set `ATE_CLI_SUFFIX=-all-cli` if you're driving `docker-compose.release.yml` directly.
 
-`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. See [docs/providers/gemini_cli.md](docs/providers/gemini_cli.md), [docs/providers/codex_cli.md](docs/providers/codex_cli.md), and [docs/providers/qwen_code.md](docs/providers/qwen_code.md) for authentication setup once installed.
+`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. See [docs/providers/codex_cli.md](docs/providers/codex_cli.md) and [docs/providers/qwen_code.md](docs/providers/qwen_code.md) for authentication setup once installed.
 
 ### Mount your repositories
 
@@ -156,7 +156,6 @@ Seven providers are available. Choose based on your auth setup, billing preferen
 | **`llm`** | API key (`LLM_API_KEY`) + `LLM_BASE_URL` | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Works with OpenAI, Azure OpenAI, Ollama, LM Studio, and any OpenAI-compatible endpoint. Same tool set as `anthropic`. Output quality varies by model/endpoint. |
 | **`opencode`** | Provider-specific (configured in `opencode` CLI) | ✅ `opencode` binary must be installed | Depends on opencode config | ❌ MCP tools not available | Label transitions require MCP, which opencode does not support. Runs complete without transitioning the task label. |
 | **`qwen_code`** | Qwen auth (configured in `qwen` CLI) | ✅ `qwen` binary must be installed (see `INSTALL_QWEN_CLI` build arg) | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Same MCP setup as the `claude` provider. |
-| **`gemini_cli`** | Google account login or `GEMINI_API_KEY`/`GOOGLE_API_KEY` | ✅ `gemini` CLI must be installed (see `INSTALL_GEMINI_CLI` build arg) | Gemini's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via a per-run isolated `GEMINI_CLI_HOME`, not a CLI flag. No cost figure reported (token counts only). Command allowlist/denylist not enforced. |
 | **`codex_cli`** | ChatGPT account login (`codex login`) or `OPENAI_API_KEY` | ✅ `codex` CLI must be installed (see `INSTALL_CODEX_CLI` build arg) | Codex's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via a per-run isolated `CODEX_HOME`, not a CLI flag. Runs fully unsandboxed/unattended (`--dangerously-bypass-approvals-and-sandbox`); command allowlist/denylist not enforced — Codex's own sandbox/approval system is bypassed instead. No cost figure reported (token counts only). |
 
 ### Key limitations to be aware of

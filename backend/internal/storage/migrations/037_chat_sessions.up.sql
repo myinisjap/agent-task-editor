@@ -8,7 +8,7 @@ CREATE TABLE chat_sessions (
     provider            TEXT NOT NULL,
     model               TEXT NOT NULL DEFAULT '',
     title               TEXT NOT NULL DEFAULT '',
-    -- Provider-side conversation id (claude/qwen/gemini/codex/opencode session).
+    -- Provider-side conversation id (claude/qwen/codex/opencode session).
     -- Empty until the first turn completes; passed back to resume the next turn.
     provider_session_id TEXT NOT NULL DEFAULT '',
     -- Git worktree provisioned on first turn; removed when the session is deleted.

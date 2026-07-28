@@ -103,7 +103,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 
 | Variable | Default | Description |
 |---|---|---|
-| `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, `gemini_cli`, and `codex_cli` providers). |
+| `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, and `codex_cli` providers). |
 | `MCP_BOARD_PATH` | _(empty)_ | Path to the `mcp-board` binary. Enables the board tools (`list_repos`/`list_workflows`/`create_task`) inside Chat-tab sessions, so a chat can create tickets. Set automatically by the Docker images and `./dev.sh dev`. See [board-mcp.md](board-mcp.md). |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API). **Deprecated**: the `llm` provider is disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using it. |
 | `LLM_API_KEY` | _(empty)_ | API key for the `llm` or `anthropic` providers. **Deprecated**: both providers are disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using them. |
@@ -137,7 +137,7 @@ See [backup.md](backup.md) for the full backup/restore guide, including the "Age
 |---|---|---|
 | `GITHUB_SYNC_INTERVAL` | `30s` | How often to poll GitHub for PR status updates. Accepts Go duration strings (e.g. `1m`, `5m`). |
 | `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
-| `AGENT_RAW_LOG_DIR` | _(empty)_ | Dev/debug only. If set, every raw stream-json line from CLI providers (`claude`, `codex`, `gemini_cli`, `qwen_code`, `opencode`) is written verbatim to `<dir>/<run_id>.jsonl` before parsing — useful for reviewing what the CLIs emit vs. what the app extracts. No retention or compression; clean up the directory yourself. Off by default. With `dev.sh`, pass `--raw-log-dir <path>` instead of setting this directly: `dev` mode writes to that host path, while docker `start`/`restart` redirect to `/data/raw-logs` on the `db_data` volume (get files out via `./dev.sh shell`). |
+| `AGENT_RAW_LOG_DIR` | _(empty)_ | Dev/debug only. If set, every raw stream-json line from CLI providers (`claude`, `codex`, `qwen_code`, `opencode`) is written verbatim to `<dir>/<run_id>.jsonl` before parsing — useful for reviewing what the CLIs emit vs. what the app extracts. No retention or compression; clean up the directory yourself. Off by default. With `dev.sh`, pass `--raw-log-dir <path>` instead of setting this directly: `dev` mode writes to that host path, while docker `start`/`restart` redirect to `/data/raw-logs` on the `db_data` volume (get files out via `./dev.sh shell`). |
 | `UPDATE_CHECK_ENABLED` | `false` | If `true`, the Health page's `update_check` row shells out to `gh release view` to compare the running version (`GET /healthz`) against the latest GitHub release and warns when one is available. Disabled by default so the app never phones home without opting in; degrades to a warning (never an error) when offline or `gh` isn't configured. See [api.md](api.md#get-healthproviders). |
 
 ### YAML Config File
@@ -228,10 +228,6 @@ Install the `opencode` binary and configure it. **MCP tools are not available.**
 ### Qwen Code (`qwen_code` provider)
 
 Install the `qwen` binary (`npm i -g @qwen-code/qwen-code`, or build the backend image with `INSTALL_QWEN_CLI=true`). MCP tools are supported (same setup as `claude`). See [providers/qwen_code.md](providers/qwen_code.md).
-
-### Gemini CLI (`gemini_cli` provider)
-
-Install the `gemini` binary (`npm i -g @google/gemini-cli`, or build the backend image with `INSTALL_GEMINI_CLI=true`) and authenticate (Google account login or `GEMINI_API_KEY`). MCP tools are supported via a per-run isolated `GEMINI_CLI_HOME`. See [providers/gemini_cli.md](providers/gemini_cli.md).
 
 ### Codex CLI (`codex_cli` provider)
 
