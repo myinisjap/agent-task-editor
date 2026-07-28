@@ -442,13 +442,12 @@ func TestE2E_TransientRetryThenEscalate(t *testing.T) {
 		return tk.ActiveAgentRunID != nil && tk.TransientRetryCount == 0
 	}, "retry budget to be exhausted and the task escalated to waiting_human")
 
-	run, err := h.q.GetAgentRun(context.Background(), *esc.ActiveAgentRunID)
-	if err != nil {
-		t.Fatalf("get agent run: %v", err)
-	}
-	if run.Status != "waiting_human" {
-		t.Errorf("expected escalated run status 'waiting_human', got %q", run.Status)
-	}
+	// active_agent_run_id is set synchronously at dispatch time, before the
+	// run actually finishes — poll the run row itself for its terminal
+	// status rather than assuming pollTask's return means it already landed.
+	h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
+		return r.Status == "waiting_human"
+	}, "run to be persisted as waiting_human after retry-budget exhaustion")
 	if esc.Label != "ready" {
 		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
 	}
@@ -476,13 +475,12 @@ func TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked(t *testing.T) {
 		return tk.ActiveAgentRunID != nil && tk.TransientRetryCount == 0
 	}, "run to hit max_turns and escalate to waiting_human")
 
-	run, err := h.q.GetAgentRun(context.Background(), *esc.ActiveAgentRunID)
-	if err != nil {
-		t.Fatalf("get agent run: %v", err)
-	}
-	if run.Status != "waiting_human" {
-		t.Errorf("expected escalated run status 'waiting_human', got %q", run.Status)
-	}
+	// active_agent_run_id is set synchronously at dispatch time, before the
+	// run actually finishes — poll the run row itself for its terminal
+	// status rather than assuming pollTask's return means it already landed.
+	h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
+		return r.Status == "waiting_human"
+	}, "run to be persisted as waiting_human after max-turns exhaustion")
 	if esc.Label != "ready" {
 		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
 	}
