@@ -73,7 +73,7 @@ func TestServeWS_TicketAuth_AllowsUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial with valid ticket should succeed: %v (resp=%v)", err, resp)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 }
 
 // TestServeWS_DeprecatedTokenFallback_AllowsUpgrade verifies the deprecated
@@ -89,7 +89,7 @@ func TestServeWS_DeprecatedTokenFallback_AllowsUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial with the deprecated ?token= fallback should succeed: %v (resp=%v)", err, resp)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 }
 
 // TestServeWS_WrongToken_RejectsUpgrade verifies an incorrect ?token= value
@@ -131,7 +131,7 @@ func TestServeWS_TicketIsSingleUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first dial with a fresh ticket should succeed: %v", err)
 	}
-	conn.Close(websocket.StatusNormalClosure, "")
+	_ = conn.Close(websocket.StatusNormalClosure, "")
 
 	_, resp, err := websocket.Dial(ctx, wsURL+"?ticket="+ticket, nil)
 	if err == nil {
@@ -154,7 +154,7 @@ func TestServeWS_OpenAuth_NoTokenRequired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open-auth dial should succeed with no credentials: %v (resp=%v)", err, resp)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 }
 
 // TestServeWS_BadOrigin_RejectsUpgrade verifies a cross-origin WS handshake
@@ -197,7 +197,7 @@ func TestServeWS_GoodOrigin_AllowsUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected the handshake to succeed for an allowed Origin: %v (resp=%v)", err, resp)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 }
 
 // TestServeWS_SubscriptionCap_IgnoresBeyondLimit verifies that once a client
@@ -216,7 +216,7 @@ func TestServeWS_SubscriptionCap_IgnoresBeyondLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	// Fill the subscription map to the cap with distinct task ids, then add
 	// one more beyond it. The last one (over the cap) should never receive
