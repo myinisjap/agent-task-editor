@@ -69,19 +69,12 @@ var classPatterns = []classPattern{
 	// stdout/stderr line).
 	{"session limit", ClassRateLimit},
 	{"usage limit", ClassRateLimit},
-	// Gemini CLI (Google API) rate-limit signal: gRPC-style status code
-	// returned in the JSON error body on quota exhaustion.
-	{"resource_exhausted", ClassRateLimit},
 
 	// Authentication / login. Requires a human to re-authenticate, so it must
 	// win over the generic transient markers below (an auth failure that also
 	// mentions a network hiccup should still escalate, not silently retry).
 	{"not logged in", ClassAuth},
 	{"please run /login", ClassAuth},
-	// Gemini CLI: invalid/missing GEMINI_API_KEY.
-	{"api key not valid", ClassAuth},
-	// Gemini CLI: no auth method configured at all (fresh, unconfigured host).
-	{"please set an auth method", ClassAuth},
 	// Codex CLI: expired/missing ChatGPT OAuth session or OPENAI_API_KEY.
 	{"missing bearer or basic authentication", ClassAuth},
 	{"401 unauthorized", ClassAuth},

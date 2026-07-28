@@ -1,6 +1,6 @@
 # internal/agent/providers
 
-The `providers` package implements the concrete agent backends (claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli) and the MCP sidecar manager. It imports the sibling `agent` package for the shared runtime types (`Provider`, `RunInput`, `Result`, `LogEntry`, `LogEntryType`, `Classification`, `ClassifyLine`, `ErrRateLimit`, `ErrTransient`, `BackoffDuration`, `TransitionHint`, `ReviewComment`, `SourceComment`, `AgentConfig`, `Task`) — the dependency is one-directional: `agent` never imports `providers`. Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `GeminiRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`.
+The `providers` package implements the concrete agent backends (claude, anthropic, llm, opencode, qwen_code, codex_cli) and the MCP sidecar manager. It imports the sibling `agent` package for the shared runtime types (`Provider`, `RunInput`, `Result`, `LogEntry`, `LogEntryType`, `Classification`, `ClassifyLine`, `ErrRateLimit`, `ErrTransient`, `BackoffDuration`, `TransitionHint`, `ReviewComment`, `SourceComment`, `AgentConfig`, `Task`) — the dependency is one-directional: `agent` never imports `providers`. Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`.
 
 ## Files
 
@@ -14,7 +14,6 @@ The `providers` package implements the concrete agent backends (claude, anthropi
 | `anthropic.go` | `AnthropicRunner` — calls the Anthropic Messages API directly. **Deprecated provider** (disabled for new/updated configs; existing configs still dispatch through this runner) — see "Adding a New Provider" below |
 | `llm.go` | `LLMRunner` — calls any OpenAI-compatible API. **Deprecated provider**, same as above; also backs the retired `openai` dropdown alias |
 | `qwen.go` | `QwenRunner` — runs the Qwen Code CLI; reuses `MCPManager` and the claude stream-json envelope via `parse_qwen.go` |
-| `gemini.go` | `GeminiRunner` — runs the Gemini CLI; own event schema, parsed via `parse_gemini.go` |
 | `codex.go` | `CodexRunner` — runs the Codex CLI (`codex exec --json`); own event schema, parsed via `parse_codex.go` |
 | `opencode.go` | `OpencodeRunner` — runs the opencode CLI; own event schema, parsed via `parse_opencode.go`. No MCP support (`ponytail`-marked known gap) |
 | `tools.go` | Shared tool implementations for `anthropic` and `llm` providers (read_file, write_file, run_bash, list_dir, search, str_replace, `CommandPolicy`, `runAccumulators`) |
@@ -26,13 +25,12 @@ The `providers` package implements the concrete agent backends (claude, anthropi
 | `parse_streamjson.go` | Wire-format helpers for the claude-style stream-json format: `classifyStreamJSON`, `classifyResultMessage`, `extractResultUsage`, `assistantHasToolUse`. Classifies each line's `LogType` and passes the **raw line** through as `Content` — display shaping (extracting text, summarizing tool calls) is the frontend's job (`parseAgentLog.ts`). This is a format library owned by **no provider** — nothing provider-specific lives here |
 | `parse_claude.go` | Claude's parse entry point: `isResumeErrorLine` and claude-specific result handling. `claude.go` calls `classifyStreamJSON` directly (stream-json is claude's native format) |
 | `parse_qwen.go` | `classifyQwenJSON` — qwen's parse entry point, a thin delegation to `parse_streamjson.go`'s `classifyStreamJSON` (qwen reuses claude's exact envelope today). `qwen.go` calls this, never `classifyStreamJSON` directly. Intentionally near-trivial — the home for future qwen-specific parsing divergence |
-| `parse_gemini.go` | `classifyGeminiJSON` + its envelope types — gemini's own event schema (`{"type":"init"\|"message"\|"tool_use"\|"tool_result"\|"result",...}`), incompatible with claude/qwen's stream-json |
 | `parse_codex.go` | `classifyCodexJSON`, `classifyCodexItem` + envelope types (`codexItemEnvelope`) — codex's own JSONL event schema (`{"type":"thread.started"\|"turn.started"\|"turn.completed"\|"turn.failed"\|"item.started"\|"item.updated"\|"item.completed"\|"error",...}`) |
 | `parse_opencode.go` | `classifyOpencodeJSON` — opencode's own NDJSON event schema (text/tool_use/tool_result/step_finish/step_start) |
 
 ### One parser file per provider
 
-Each provider's parsing logic lives in exactly one `parse_<name>.go` file — no file may contain parsing logic for more than one provider. `parse_streamjson.go` is the sole exception: it is shared wire-format code owned by no provider, reached only through a provider's own parser (`claude.go` calling `classifyStreamJSON` directly since that *is* claude's format; `parse_qwen.go`'s `classifyQwenJSON` delegating to it since qwen reuses claude's envelope). A runner file (`claude.go`, `qwen.go`, `gemini.go`, `codex.go`, `opencode.go`) calls only its own `parse_<name>.go` entry point — never another provider's parser and never `parse_streamjson.go` directly (except `claude.go`, per above). This layout exists so future per-provider parsing changes land in one file each, without touching siblings.
+Each provider's parsing logic lives in exactly one `parse_<name>.go` file — no file may contain parsing logic for more than one provider. `parse_streamjson.go` is the sole exception: it is shared wire-format code owned by no provider, reached only through a provider's own parser (`claude.go` calling `classifyStreamJSON` directly since that *is* claude's format; `parse_qwen.go`'s `classifyQwenJSON` delegating to it since qwen reuses claude's envelope). A runner file (`claude.go`, `qwen.go`, `codex.go`, `opencode.go`) calls only its own `parse_<name>.go` entry point — never another provider's parser and never `parse_streamjson.go` directly (except `claude.go`, per above). This layout exists so future per-provider parsing changes land in one file each, without touching siblings.
 
 ## Branch-per-task / Worktrees, Run Cancellation, Retry Policy, Session Resume, Review Comments, Rework-Loop, Dispatch Locking, Subtask Coordinator
 

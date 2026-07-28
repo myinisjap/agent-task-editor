@@ -190,6 +190,19 @@ triggers the "Release" workflow the same way.
   runaway agent run can no longer consume unbounded host memory. See
   [docs/getting-started.md](docs/getting-started.md#backend-resilience-restart-policy-readiness-and-memory-limit).
 
+### Removed
+- **The `gemini_cli` provider has been removed.** The Gemini CLI is no longer
+  supported upstream in its previous form; Google's replacement CLI
+  (Antigravity) will be considered as a new provider in a separate future
+  issue, out of scope here. `GeminiRunner`, `classifyGeminiJSON`, the Gemini
+  health check, the `gemini_cli` entries in the provider dropdown/capability
+  matrix/OpenAPI enum, the Docker `INSTALL_GEMINI_CLI` build arg, and every
+  `gemini_cli`/Gemini mention across the docs have been deleted. Provider or
+  agent configs still pointing at `gemini_cli` will no longer dispatch — new
+  runs against them fail immediately with an "unknown provider" error instead
+  of launching the CLI — so switch any such configs to another provider
+  before upgrading.
+
 ### Fixed
 - **Session resume now works for `qwen_code`, `codex_cli`, and `opencode`, not
   just `claude`.** `Dispatcher.resolveAgentConfig` previously gated its prior-

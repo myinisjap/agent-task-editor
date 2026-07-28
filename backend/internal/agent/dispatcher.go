@@ -629,11 +629,7 @@ func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Re
 // providerSupportsResume reports whether the given provider's session-resume
 // path is verified end-to-end: it records a session id, and the runner's
 // resume invocation is correct. claude, qwen_code, codex_cli, and opencode all
-// qualify (see issue #281). gemini_cli is deliberately excluded even though its
-// resume invocation is correct, because GeminiRunner scopes GEMINI_CLI_HOME to a
-// per-run temp dir that is deleted on cleanup, destroying session storage before
-// it could ever be resumed (tracked in #284). Do not add gemini_cli here until
-// that storage-lifetime issue is fixed, or resume will silently no-op.
+// qualify (see issue #281).
 func providerSupportsResume(provider string) bool {
 	switch provider {
 	case "claude", "qwen_code", "codex_cli", "opencode":
@@ -647,7 +643,6 @@ func providerSupportsResume(provider string) bool {
 // the provider session to resume, if any. Resume is honored for claude,
 // qwen_code, codex_cli, and opencode (and only when the config hasn't opted
 // out); the runner falls back to a cold start if the session no longer exists.
-// gemini_cli does not yet support resume — see providerSupportsResume and #284.
 func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig) (AgentConfig, string, error) {
 	pc, err := d.q.GetProviderConfig(ctx, matched.ProviderConfigID)
 	if err != nil {

@@ -80,7 +80,7 @@ Notes:
   in-flow kanban agents that process columns — those agents never get a
   task-creation tool. Only the chat you're talking to does.
 - Provider support matches the task sidecar: `claude` and `qwen_code` (via a
-  per-session `--mcp-config`), and `gemini_cli` / `codex_cli` (via a per-session
+  per-session `--mcp-config`), and `codex_cli` (via a per-session
   home directory). `opencode` has no per-invocation MCP mechanism, so board
   tools aren't injected there.
 - Running locally with `./dev.sh dev` builds `mcp-board` and sets

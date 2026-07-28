@@ -101,7 +101,7 @@ func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentCo
 // deprecatedProviders below and the write-path checks in providers.go).
 var knownProviders = map[string]bool{
 	"claude": true, "anthropic": true, "llm": true, "opencode": true, "qwen_code": true,
-	"gemini_cli": true, "codex_cli": true,
+	"codex_cli": true,
 }
 
 // deprecatedProviders lists providers that are disabled for new or updated
