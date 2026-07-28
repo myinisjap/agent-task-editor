@@ -61,33 +61,78 @@ func countFlagOccurrences(args []string, flag, value string) int {
 	return n
 }
 
-// TestBuildQwenArgs_CommandAllowlist verifies that each CommandAllowlist
-// pattern is appended as a Bash(pattern) entry to --allowed-tools.
-func TestBuildQwenArgs_CommandAllowlist(t *testing.T) {
+// TestBuildQwenArgs_CommandAllowlist_NotWired verifies that CommandAllowlist
+// is intentionally NOT translated into --allowed-tools entries (that flag
+// only bypasses confirmation and is moot under --approval-mode yolo; see
+// qwen.go and docs/providers/qwen_code.md).
+func TestBuildQwenArgs_CommandAllowlist_NotWired(t *testing.T) {
 	args := buildQwenArgs(agent.RunInput{
 		Task: agent.Task{Title: "t"},
 		AgentConfig: agent.AgentConfig{
 			CommandAllowlist: []string{"git *", "npm test"},
 		},
 	}, nil)
-	if countFlagOccurrences(args, "--allowed-tools", "Bash(git *)") != 1 {
-		t.Fatalf("expected one --allowed-tools Bash(git *) entry, got args=%v", args)
-	}
-	if countFlagOccurrences(args, "--allowed-tools", "Bash(npm test)") != 1 {
-		t.Fatalf("expected one --allowed-tools Bash(npm test) entry, got args=%v", args)
+	for i, a := range args {
+		if a == "--allowed-tools" {
+			t.Fatalf("expected no --allowed-tools flags from CommandAllowlist (unwired), found one at index %d in args=%v", i, args)
+		}
 	}
 }
 
-// TestBuildQwenArgs_NoCommandAllowlist_NoExtraFlags verifies that an empty
-// CommandAllowlist adds no extra --allowed-tools entries (backward compatible).
-func TestBuildQwenArgs_NoCommandAllowlist_NoExtraFlags(t *testing.T) {
+// TestBuildQwenArgs_CommandDenylist verifies that each CommandDenylist
+// pattern is appended as a Bash(pattern) entry to --exclude-tools.
+func TestBuildQwenArgs_CommandDenylist(t *testing.T) {
+	args := buildQwenArgs(agent.RunInput{
+		Task: agent.Task{Title: "t"},
+		AgentConfig: agent.AgentConfig{
+			CommandDenylist: []string{"git *", "npm test"},
+		},
+	}, nil)
+	if countFlagOccurrences(args, "--exclude-tools", "Bash(git *)") != 1 {
+		t.Fatalf("expected one --exclude-tools Bash(git *) entry, got args=%v", args)
+	}
+	if countFlagOccurrences(args, "--exclude-tools", "Bash(npm test)") != 1 {
+		t.Fatalf("expected one --exclude-tools Bash(npm test) entry, got args=%v", args)
+	}
+}
+
+// TestBuildQwenArgs_CommandDenylist_BlankPatternSkipped verifies that blank
+// entries in CommandDenylist are skipped (mirrors the allowlist guard).
+func TestBuildQwenArgs_CommandDenylist_BlankPatternSkipped(t *testing.T) {
+	args := buildQwenArgs(agent.RunInput{
+		Task: agent.Task{Title: "t"},
+		AgentConfig: agent.AgentConfig{
+			CommandDenylist: []string{"", "git *", ""},
+		},
+	}, nil)
+	if countFlagOccurrences(args, "--exclude-tools", "Bash()") != 0 {
+		t.Fatalf("expected blank denylist pattern to be skipped, got args=%v", args)
+	}
+	if countFlagOccurrences(args, "--exclude-tools", "Bash(git *)") != 1 {
+		t.Fatalf("expected one --exclude-tools Bash(git *) entry, got args=%v", args)
+	}
+	n := 0
+	for _, a := range args {
+		if a == "--exclude-tools" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("expected exactly one --exclude-tools flag total, got %d in args=%v", n, args)
+	}
+}
+
+// TestBuildQwenArgs_NoCommandFilters_NoExtraFlags verifies that with no
+// allowlist/denylist and no mcpCfg, neither --allowed-tools nor
+// --exclude-tools appear.
+func TestBuildQwenArgs_NoCommandFilters_NoExtraFlags(t *testing.T) {
 	args := buildQwenArgs(agent.RunInput{
 		Task:        agent.Task{Title: "t"},
 		AgentConfig: agent.AgentConfig{},
 	}, nil)
 	for i, a := range args {
-		if a == "--allowed-tools" {
-			t.Fatalf("expected no --allowed-tools flags without mcpCfg/allowlist, found one at index %d in args=%v", i, args)
+		if a == "--allowed-tools" || a == "--exclude-tools" {
+			t.Fatalf("expected no --allowed-tools/--exclude-tools flags without mcpCfg/filters, found %q at index %d in args=%v", a, i, args)
 		}
 	}
 }

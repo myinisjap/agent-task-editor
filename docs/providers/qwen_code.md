@@ -10,7 +10,7 @@ The `qwen_code` provider runs the Qwen Code CLI in headless mode. It has the sam
 
 ## How It Works
 
-Runs: `qwen -p <prompt> --system-prompt <system> --output-format stream-json --approval-mode yolo --max-session-turns <max_turns> [--mcp-config <tempfile>] [--allowed-tools ...]`
+Runs: `qwen -p <prompt> --system-prompt <system> --output-format stream-json --approval-mode yolo --max-session-turns <max_turns> [--mcp-config <tempfile>] [--allowed-tools ...] [--exclude-tools ...]`
 
 `<max_turns>` comes from the agent config's `max_turns` field (defaults to `50` when unset or `0`), mirroring the `claude` provider.
 
@@ -57,21 +57,28 @@ Not yet supported. Reserved for when the `qwen` CLI gains an `--image` flag.
 
 ## Command Allowlist / Denylist
 
-**Neither is enforced for this provider.**
+**`command_allowlist` is not enforced for this provider.** It is intentionally
+not translated to any CLI flag. qwen's `--allowed-tools` documents itself as
+*"Tools to allow, will bypass confirmation"* — an auto-approve list, exactly
+like the `claude` CLI's `--allowedTools` — it does not block non-matching
+commands. On top of that, this runner always passes `--approval-mode yolo`
+(*"auto-approve all tools"*), which auto-approves everything anyway, so an
+allowlist would have no effect even if wired up. Use `command_denylist`
+instead if you need enforced restrictions.
 
-`command_allowlist` patterns are appended as `Bash(pattern)` entries to
-`--allowed-tools`, but that flag does not restrict anything: qwen documents it as
-*"Tools to allow, will bypass confirmation"* — an auto-approve list, exactly like
-the `claude` CLI's `--allowedTools`. On top of that, this runner always passes
-`--approval-mode yolo` (*"auto-approve all tools"*), which auto-approves
-everything anyway, so the allowlist entries are a complete no-op here.
+**`command_denylist` is enforced via `--exclude-tools`.** Each denylist pattern
+is appended as a `Bash(pattern)` entry to `--exclude-tools`, e.g.
+`--exclude-tools Bash(rm -rf *)`. qwen folds `--exclude-tools` into its
+`permissionsDeny` policy, which is honored even under `--approval-mode yolo`.
 
-`command_denylist` is **not currently enforced** either, because the runner never
-passes a deny flag. Note that qwen *does* have one: `--exclude-tools` ("Tools to
-exclude"), which the CLI folds into its `permissionsDeny` policy. Wiring
-`command_denylist` through to `--exclude-tools` would close this gap; until then,
-prefer the `claude` (denylist only), `anthropic`, or `llm` providers if you need
-enforced command restrictions.
+> **Known uncertainty:** the `Bash(pattern)` glob shape is confirmed for
+> `--allowed-tools`, but has not been verified against a live authenticated
+> qwen run for `--exclude-tools` specifically. If qwen's deny path only
+> accepts bare tool names (rather than `Bash(pattern)` sub-matching), a
+> per-pattern denylist entry may silently fail to match anything, and a
+> blanket `--exclude-tools Bash` (denying all Bash calls, no pattern) would be
+> the only reliably available granularity. Treat per-pattern denial as
+> best-effort until confirmed live.
 
 _Verified against `@qwen-code/qwen-code` v0.21.0's registered CLI options._
 

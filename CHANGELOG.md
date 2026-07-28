@@ -225,6 +225,24 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **`qwen_code`'s `command_denylist` is now enforced; the no-op
+  `command_allowlist` mapping was removed.** `buildQwenArgs` previously
+  translated `command_allowlist` patterns into `--allowed-tools
+  Bash(pattern)` entries, which restricted nothing — that flag only bypasses
+  qwen's confirmation prompt, and the runner always passes `--approval-mode
+  yolo` (auto-approve everything) on top, so an operator could set command
+  restrictions on a `qwen_code` agent config and get zero enforcement with no
+  error. `command_denylist` was not wired to the CLI at all, even though qwen
+  v0.21.0 exposes `--exclude-tools`, which folds into its `permissionsDeny`
+  policy and is honored even under `--approval-mode yolo`. The dead allowlist
+  loop has been removed (the capability matrix already records
+  `commandAllowlist` as unsupported for this provider) and `command_denylist`
+  patterns are now appended as `Bash(pattern)` entries to `--exclude-tools`,
+  mirroring the existing `--allowed-tools` convention. The exact glob
+  granularity qwen's deny path accepts for `Bash(pattern)` has not been
+  confirmed against a live run — see `docs/providers/qwen_code.md` for the
+  caveat — so the capability matrix marks it `partial` rather than `full`
+  pending live verification (see #285).
 - **`opencode` runs that crashed with no output were silently reported as
   "completed" instead of "failed".** `OpencodeRunner.Run` fell through to
   the success path whenever the CLI exited non-zero without a recognized

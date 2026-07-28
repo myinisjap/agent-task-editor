@@ -76,19 +76,30 @@ func buildQwenArgs(input agent.RunInput, mcpCfg *MCPRunConfig) []string {
 			"mcp__task-editor__resolve_comment",
 		)
 	}
-	// Command allowlist: qwen reuses the same Bash(pattern) tool-restriction
-	// syntax as the claude CLI's --allowedTools. Append entries to
-	// --allowed-tools so only matching commands are permitted.
+	// Command allowlist: intentionally NOT wired to --allowed-tools. That
+	// flag only bypasses the confirmation prompt for listed tools/patterns —
+	// it does not restrict which commands run — and --approval-mode yolo
+	// (above) auto-approves everything regardless, so an allowlist entry
+	// (or its absence) has no enforcement effect either way. See
+	// docs/providers/qwen_code.md for details. AgentConfig.CommandAllowlist
+	// is therefore left unused here; the capability matrix records it as
+	// unsupported so operators aren't misled.
+
+	// Command denylist: qwen v0.21.0 exposes --exclude-tools, which feeds
+	// its permissionsDeny policy and is honored even under yolo mode.
+	// Mirror the Bash(pattern) convention used for --allowed-tools above
+	// and elsewhere in the codebase (e.g. the claude provider).
 	//
-	// NOTE: there is no confirmed qwen CLI flag for a command *denylist*
-	// (unlike claude's --disallowedTools / permissions.deny in --settings).
-	// AgentConfig.CommandDenylist is therefore NOT enforced for this
-	// provider today — see docs/providers/qwen_code.md for this known gap.
-	for _, pat := range input.AgentConfig.CommandAllowlist {
+	// NOTE: the Bash(pattern) glob shape is confirmed for --allowed-tools
+	// but has not been verified live for --exclude-tools specifically. If
+	// qwen only accepts bare tool names on the deny path, per-pattern
+	// denial may silently degrade to a no-op and a blanket
+	// "--exclude-tools Bash" (no pattern) would be the safer fallback.
+	for _, pat := range input.AgentConfig.CommandDenylist {
 		if pat == "" {
 			continue
 		}
-		args = append(args, "--allowed-tools", "Bash("+pat+")")
+		args = append(args, "--exclude-tools", "Bash("+pat+")")
 	}
 	return args
 }
