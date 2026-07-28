@@ -118,6 +118,24 @@ export default function BoardPage() {
         // batching wouldn't save anything on the frontend.
         fetchTasks(showArchived ? { archived: 'all' } : undefined)
       }
+      if (event.type === 'task.label_changed') {
+        // A label change — whether from a human drag/Approve/Reject or an
+        // agent's own transition — always clears the task's
+        // active_agent_run_id server-side (workflow.Engine.Transition), but
+        // does NOT publish task.agent_done (that only fires when a run
+        // process actually finishes). Without this, dragging a task off its
+        // running label left the pulse dot stuck until an unrelated
+        // agent_done or a WS reconnect happened to clear it. Clear it
+        // directly here rather than waiting on the api.tasks.get() refetch
+        // above, so it's immediate and doesn't depend on that request
+        // succeeding.
+        setRunningTaskIds(prev => {
+          if (!prev.has(event.payload.task_id)) return prev
+          const next = new Set(prev)
+          next.delete(event.payload.task_id)
+          return next
+        })
+      }
       if (event.type === 'task.rate_limited') {
         setRateLimitedTaskIds(prev => {
           const next = new Map(prev)
@@ -169,9 +187,10 @@ export default function BoardPage() {
   // Seed (and re-seed) the running set from the task list itself, so a page
   // refresh — or a task.updated upsert — mid-run still shows the indicator
   // even if the task.agent_started event was missed. This only ADDS ids;
-  // removal is handled by the WS task.agent_done handler above and by the
-  // reconnect-clear effect, to avoid a stale task record racing with (and
-  // wiping out) a just-received task.agent_started.
+  // removal is handled by the WS task.agent_done and task.label_changed
+  // handlers above, and by the reconnect-clear effect, to avoid a stale
+  // task record racing with (and wiping out) a just-received
+  // task.agent_started.
   useEffect(() => {
     setRunningTaskIds(prev => {
       let changed = false

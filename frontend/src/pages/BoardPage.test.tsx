@@ -16,6 +16,7 @@ const bulkMock = vi.fn()
 const costByTaskMock = vi.fn()
 const tasksListMock = vi.fn()
 const workflowsListMock = vi.fn()
+const tasksGetMock = vi.fn()
 
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -24,7 +25,7 @@ vi.mock('../api/client', async () => {
     api: {
       tasks: {
         list: (...args: unknown[]) => tasksListMock(...args),
-        get: vi.fn(),
+        get: (...args: unknown[]) => tasksGetMock(...args),
         bulk: (...args: unknown[]) => bulkMock(...args),
         setPaused: vi.fn(),
         setArchived: vi.fn(),
@@ -272,6 +273,7 @@ describe('BoardPage running indicator (#249)', () => {
     costByTaskMock.mockReset().mockResolvedValue([])
     tasksListMock.mockReset()
     workflowsListMock.mockReset()
+    tasksGetMock.mockReset()
     wsOnHandler = null
     wsStatusHandler = null
   })
@@ -336,6 +338,45 @@ describe('BoardPage running indicator (#249)', () => {
     expect(await screen.findByTitle('Agent running')).toBeInTheDocument()
 
     wsStatusHandler!('closed')
+
+    await waitFor(() => {
+      expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
+    })
+  })
+
+  // Regression guard for the review finding on #249: human-initiated moves
+  // (drag-and-drop, Approve/Reject) go through workflow.Engine.Transition,
+  // which clears active_agent_run_id server-side and publishes
+  // task.label_changed — but never publishes task.agent_done. Without an
+  // explicit handler for task.label_changed, a task dragged off its running
+  // label left the pulse dot stuck.
+  it('clears the running dot on task.label_changed even without an agent_done event', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one' })])
+    // The task.label_changed handler also does an api.tasks.get() refetch —
+    // stub it to resolve the moved task with active_agent_run_id cleared,
+    // matching what the real server does.
+    tasksGetMock.mockResolvedValue(task({ id: 'task-1', label: 'doing', active_agent_run_id: null }))
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(wsOnHandler).not.toBeNull())
+
+    wsOnHandler!({
+      type: 'task.agent_started',
+      payload: { task_id: 'task-1', run_id: 'r1', agent_name: 'a' },
+    })
+    expect(await screen.findByTitle('Agent running')).toBeInTheDocument()
+
+    // Task is dragged/moved to another label while the agent is still
+    // "running" from the frontend's point of view — no agent_done fires.
+    wsOnHandler!({
+      type: 'task.label_changed',
+      payload: { task_id: 'task-1', from: 'todo', to: 'doing', note: '' },
+    })
 
     await waitFor(() => {
       expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()

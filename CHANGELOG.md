@@ -235,7 +235,14 @@ triggers the "Release" workflow the same way.
   `active_agent_run_id` so a mid-run page refresh still shows it, and is
   cleared whenever the WebSocket connection drops so a missed `agent_done`
   can't leave it stuck — it re-seeds correctly once tasks are refetched
-  after reconnect.
+  after reconnect. Also fixed: moving a task off its running label — a
+  drag-and-drop, an Approve/Reject, or any other human-triggered transition
+  — goes through `workflow.Engine.Transition`, which clears
+  `active_agent_run_id` server-side but only publishes `task.label_changed`,
+  never `task.agent_done`; the indicator now has an explicit
+  `task.label_changed` handler so it clears immediately on any label move
+  instead of staying stuck until an unrelated `agent_done` or a WS
+  reconnect happened to clean it up.
 - **`qwen_code`'s `command_denylist` is now enforced; the no-op
   `command_allowlist` mapping was removed.** `buildQwenArgs` previously
   translated `command_allowlist` patterns into `--allowed-tools
