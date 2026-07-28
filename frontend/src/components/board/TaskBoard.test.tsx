@@ -203,3 +203,24 @@ describe('TaskBoard drag-to-move', () => {
     confirmSpy.mockRestore()
   })
 })
+
+// Regression guard for #249 — every other case above passes an empty
+// runningTaskIds set, which is why the dead-state bug went uncaught.
+describe('TaskBoard running indicator (#249)', () => {
+  const labels = [label('todo', 0), label('doing', 1), label('done', 2)]
+
+  beforeEach(() => {
+    moveLabelMock.mockReset()
+    useTasksStore.setState({ tasks: [task()], loading: false, error: null })
+  })
+
+  it('renders the "Agent running" dot for a task id present in runningTaskIds', () => {
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task()]} runningTaskIds={new Set(['task-1'])} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTitle('Agent running')).toBeInTheDocument()
+  })
+})

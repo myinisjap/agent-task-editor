@@ -126,3 +126,32 @@ describe('TaskCard duplicate action', () => {
     expect(onDuplicate).toHaveBeenCalledWith(task)
   })
 })
+
+// Regression guard for #249 — the "Agent running" pulse dot must actually
+// render when a task is flagged as running, and must not render otherwise.
+describe('TaskCard running indicator (#249)', () => {
+  beforeEach(() => {
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+    useReposStore.setState({ repos: [], loading: false, error: null })
+  })
+
+  it('renders the "Agent running" dot when isRunning is true', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask()} isRunning />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTitle('Agent running')).toBeInTheDocument()
+  })
+
+  it('does not render the "Agent running" dot when isRunning is false or omitted', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask()} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
+  })
+})

@@ -20,7 +20,7 @@ export default function BoardPage() {
   const { tasks, loading, fetch: fetchTasks, upsert } = useTasksStore()
   const { workflows, fetch: fetchWorkflows, setSelectedId, active } = useWorkflowStore()
   const { repos, fetch: fetchRepos } = useReposStore()
-  const [runningTaskIds] = useState(() => new Set<string>())
+  const [runningTaskIds, setRunningTaskIds] = useState(() => new Set<string>())
   // Per-task cumulative cost ($), keyed by task id — powers the "Filtered
   // cost" badge below. Fetched once on mount and refreshed on agent-done
   // events (the only time a task's recorded cost can change).
@@ -132,6 +132,24 @@ export default function BoardPage() {
         // batching wouldn't save anything on the frontend.
         fetchTasks(showArchived ? { archived: 'all' } : undefined)
       }
+      if (event.type === 'task.label_changed') {
+        // A label change — whether from a human drag/Approve/Reject or an
+        // agent's own transition — always clears the task's
+        // active_agent_run_id server-side (workflow.Engine.Transition), but
+        // does NOT publish task.agent_done (that only fires when a run
+        // process actually finishes). Without this, dragging a task off its
+        // running label left the pulse dot stuck until an unrelated
+        // agent_done or a WS reconnect happened to clear it. Clear it
+        // directly here rather than waiting on the api.tasks.get() refetch
+        // above, so it's immediate and doesn't depend on that request
+        // succeeding.
+        setRunningTaskIds(prev => {
+          if (!prev.has(event.payload.task_id)) return prev
+          const next = new Set(prev)
+          next.delete(event.payload.task_id)
+          return next
+        })
+      }
       if (event.type === 'task.rate_limited') {
         setRateLimitedTaskIds(prev => {
           const next = new Map(prev)
@@ -146,10 +164,22 @@ export default function BoardPage() {
           next.delete(event.payload.task_id)
           return next
         })
+        // Mark this task as actively running for the board's pulse indicator.
+        setRunningTaskIds(prev => {
+          const next = new Set(prev)
+          next.add(event.payload.task_id)
+          return next
+        })
       }
       if (event.type === 'task.agent_done') {
         // A run just recorded its cost — refresh the per-task cost map.
         refreshCostByTask()
+        // Run finished (success or failure) — clear the running indicator.
+        setRunningTaskIds(prev => {
+          const next = new Set(prev)
+          next.delete(event.payload.task_id)
+          return next
+        })
       }
       if (event.type === 'task.cost_warning') {
         setCostWarnedTaskIds(prev => {
@@ -163,6 +193,39 @@ export default function BoardPage() {
     return off
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upsert, showArchived])
+
+  // Clear the WS-derived "running" set whenever the connection drops so a
+  // missed task.agent_done can't leave a permanently-stuck pulse dot. Once
+  // the connection re-opens and tasks are refetched, the effect below
+  // re-seeds ids from each task's active_agent_run_id.
+  useEffect(() => {
+    return wsClient.onStatusChange((status) => {
+      if (status !== 'open') {
+        setRunningTaskIds(new Set())
+      }
+    })
+  }, [])
+
+  // Seed (and re-seed) the running set from the task list itself, so a page
+  // refresh — or a task.updated upsert — mid-run still shows the indicator
+  // even if the task.agent_started event was missed. This only ADDS ids;
+  // removal is handled by the WS task.agent_done and task.label_changed
+  // handlers above, and by the reconnect-clear effect, to avoid a stale
+  // task record racing with (and wiping out) a just-received
+  // task.agent_started.
+  useEffect(() => {
+    setRunningTaskIds(prev => {
+      let changed = false
+      const next = new Set(prev)
+      for (const t of tasks) {
+        if (t.active_agent_run_id && !next.has(t.id)) {
+          next.add(t.id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [tasks])
 
   const workflow = active()
   const labels = workflow?.labels ?? []
