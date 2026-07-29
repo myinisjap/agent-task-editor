@@ -91,7 +91,7 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, reason strin
 			})
 		}
 	} else {
-		_ = p.q.ClearActiveAgentRun(bg, job.Input.Task.ID)
+		p.releaseLock(bg, job.Input.Task.ID, job.RunID)
 	}
 
 	if p.pub != nil {
@@ -240,9 +240,7 @@ func (p *Pool) handleCancelled(job Job, startedAt time.Time) {
 	if _, err := p.q.SetTaskPaused(bg, gen.SetTaskPausedParams{Paused: 1, ID: job.Input.Task.ID}); err != nil {
 		log.Warn("pool: pause task after cancel", "err", err)
 	}
-	if err := p.q.ClearActiveAgentRun(bg, job.Input.Task.ID); err != nil {
-		log.Warn("pool: clear active run after cancel", "err", err)
-	}
+	p.releaseLock(bg, job.Input.Task.ID, job.RunID)
 
 	if p.pub != nil {
 		p.pub.Publish("task.agent_done", map[string]any{

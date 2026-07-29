@@ -892,6 +892,103 @@ func TestTasks_MoveLabel_InvalidTransition_Returns400(t *testing.T) {
 	}
 }
 
+// TestTasks_MoveLabel_RunningRun_Returns409 guards against issue #244: moving
+// the label while a run is `running` must be refused rather than silently
+// clearing the dispatch lock out from under the live run.
+func TestTasks_MoveLabel_RunningRun_Returns409(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Label Mover",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.SetAgentRunStarted(context.Background(), runID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	body := map[string]string{"to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/label", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 while a run is live, got %d: %s", w.Code, w.Body)
+	}
+
+	// The label (and the lock) must be untouched.
+	unchanged, err := q.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if unchanged.Label != "not_ready" {
+		t.Errorf("expected label to remain 'not_ready', got %q", unchanged.Label)
+	}
+	if unchanged.ActiveAgentRunID == nil || *unchanged.ActiveAgentRunID != runID {
+		t.Errorf("expected active_agent_run_id to remain %q, got %v", runID, unchanged.ActiveAgentRunID)
+	}
+}
+
+// TestTasks_MoveLabel_WaitingHumanRun_Allowed asserts the 409 guard is scoped
+// to `running`: a `waiting_human` run (the normal state while a human decides
+// how to act on an escalation) must not block moving the label.
+func TestTasks_MoveLabel_WaitingHumanRun_Allowed(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Label Mover",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(context.Background(), gen.UpdateAgentRunStatusParams{Status: "waiting_human", ID: runID}); err != nil {
+		t.Fatalf("set run status: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	body := map[string]string{"to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/label", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a waiting_human active run, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Label != "plan" {
+		t.Errorf("expected label 'plan', got %q", updated.Label)
+	}
+}
+
 // ---------- Runs ----------
 
 func TestTasks_ListRuns_Empty(t *testing.T) {

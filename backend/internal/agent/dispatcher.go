@@ -640,7 +640,14 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			Status: "failed",
 			ID:     runID,
 		})
-		_ = d.q.ClearActiveAgentRun(ctx, t.ID)
+		// Owner-scoped: this run just claimed the lock (SetTaskActiveRun above),
+		// so it should still own it here, but scope the clear defensively and
+		// consistently with every other run-owned release (see issue #244).
+		if n, cerr := d.q.ClearActiveAgentRunIfOwner(ctx, gen.ClearActiveAgentRunIfOwnerParams{ID: t.ID, ActiveAgentRunID: &runID}); cerr != nil {
+			log.Warn("dispatcher: release lock after pool-saturated enqueue failure", "err", cerr)
+		} else if n == 0 {
+			log.Warn("dispatcher: skipped clearing dispatch lock owned by another run", "run_id", runID)
+		}
 		return "", ErrPoolSaturated
 	}
 

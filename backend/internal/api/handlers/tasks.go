@@ -504,6 +504,14 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taskID := chi.URLParam(r, "id")
+	task, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
+		return
+	}
 	if err := h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, middleware.ActorFromContext(r.Context()), body.Note); err != nil {
 		handleTransitionError(w, err)
 		return
@@ -514,6 +522,37 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, toTaskResponse(updated))
+}
+
+// rejectTransitionWhileRunLive guards a human-triggered label transition
+// (MoveLabel, Approve, Reject) against racing a live agent run. It writes a
+// 409 response and returns true if the caller must stop processing the
+// request; otherwise it returns false and the caller should proceed.
+//
+// Without this, a human transition clears active_agent_run_id as part of the
+// transition's CAS (see engine.go) while the run is still executing. The next
+// dispatcher sweep then sees the task eligible again and starts a second run,
+// and when the original run eventually finishes it either gets rejected
+// (stale label) or, worse, clears the *new* run's lock — two agents end up
+// sharing one worktree (see issue #244). Only `running` is blocked:
+// `waiting_human` is intentionally parked awaiting exactly this kind of human
+// action (approve/reject/move/reply all legitimately operate on a
+// waiting_human run), and every other status (queued/completed/failed/
+// cancelled) is not live.
+func (h *TasksHandler) rejectTransitionWhileRunLive(ctx context.Context, w http.ResponseWriter, task gen.Task) bool {
+	if task.ActiveAgentRunID == nil {
+		return false
+	}
+	run, err := h.q.GetAgentRun(ctx, *task.ActiveAgentRunID)
+	if err != nil {
+		// No run to check against — fall through and let Transition proceed.
+		return false
+	}
+	if run.Status == "running" {
+		Err(w, http.StatusConflict, "a run is currently active on this task; cancel the run before moving its label")
+		return true
+	}
+	return false
 }
 
 func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
@@ -533,6 +572,9 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	target, err := h.humanPathTarget(r.Context(), task, "success")
 	if err != nil {
 		Err(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
 		return
 	}
 
@@ -590,6 +632,10 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+
+	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
+		return
 	}
 
 	// Persist the rejection note as feedback on the prior run so the next dispatch
