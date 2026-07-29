@@ -894,7 +894,8 @@ func TestTasks_MoveLabel_InvalidTransition_Returns400(t *testing.T) {
 
 // TestTasks_MoveLabel_RunningRun_Returns409 guards against issue #244: moving
 // the label while a run is `running` must be refused rather than silently
-// clearing the dispatch lock out from under the live run.
+// clearing the dispatch lock out from under the live run. See also
+// TestTasks_MoveLabel_PendingRun_Returns409 for the narrower "pending" window.
 func TestTasks_MoveLabel_RunningRun_Returns409(t *testing.T) {
 	r, q, wfID, repoID := setupTaskRouter(t)
 
@@ -944,9 +945,75 @@ func TestTasks_MoveLabel_RunningRun_Returns409(t *testing.T) {
 	}
 }
 
+// TestTasks_MoveLabel_PendingRun_Returns409 guards against the narrower
+// window in issue #244 where a run has claimed the task's active-run lock
+// (SetTaskActiveRun, done at dispatch time) but the pool worker hasn't yet
+// dequeued the job and flipped its status to "running". A human moving the
+// label during that "pending" window is just as unsafe as during "running":
+// the transition's CAS clears the lock, a new run gets dispatched onto the
+// same worktree, and when the pool eventually executes the orphaned pending
+// run it can collide with the new one.
+func TestTasks_MoveLabel_PendingRun_Returns409(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Label Mover",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	// Deliberately do NOT call SetAgentRunStarted — the run stays "pending",
+	// matching the real dispatch sequence where SetTaskActiveRun runs before
+	// the pool worker ever picks the job off the queue.
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.Status != "pending" {
+		t.Fatalf("test setup expected run status 'pending', got %q", run.Status)
+	}
+
+	body := map[string]string{"to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/label", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 while a run is pending (not yet running), got %d: %s", w.Code, w.Body)
+	}
+
+	// The label (and the lock) must be untouched.
+	unchanged, err := q.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if unchanged.Label != "not_ready" {
+		t.Errorf("expected label to remain 'not_ready', got %q", unchanged.Label)
+	}
+	if unchanged.ActiveAgentRunID == nil || *unchanged.ActiveAgentRunID != runID {
+		t.Errorf("expected active_agent_run_id to remain %q, got %v", runID, unchanged.ActiveAgentRunID)
+	}
+}
+
 // TestTasks_MoveLabel_WaitingHumanRun_Allowed asserts the 409 guard is scoped
-// to `running`: a `waiting_human` run (the normal state while a human decides
-// how to act on an escalation) must not block moving the label.
+// to live statuses (running/pending): a `waiting_human` run (the normal state
+// while a human decides how to act on an escalation) must not block moving
+// the label.
 func TestTasks_MoveLabel_WaitingHumanRun_Allowed(t *testing.T) {
 	r, q, wfID, repoID := setupTaskRouter(t)
 

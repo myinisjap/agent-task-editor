@@ -524,21 +524,37 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, toTaskResponse(updated))
 }
 
+// runLiveStatuses are the agent-run statuses during which the task's
+// active-run lock is held by a run that is either executing or about to be
+// (i.e. still eligible to execute) and must not be cleared out from under it
+// by a human transition. This is deliberately broader than just "running":
+// a run is created and claims the lock (SetTaskActiveRun) as soon as it's
+// dispatched, while its status is still "pending" — the pool worker doesn't
+// flip it to "running" until it actually dequeues and starts executing the
+// job. A human transition during that pending window is just as unsafe as
+// one during "running": it clears the lock via the transition's CAS, and the
+// pool later executes the (now-orphaned) pending run in a worktree a new
+// dispatch may since be reusing (see issue #244). "waiting_human" is
+// intentionally excluded: it is the parked state a run sits in specifically
+// awaiting this kind of human action (approve/reject/move/reply all
+// legitimately operate on a waiting_human run).
+var runLiveStatuses = map[string]bool{
+	"pending": true,
+	"running": true,
+}
+
 // rejectTransitionWhileRunLive guards a human-triggered label transition
 // (MoveLabel, Approve, Reject) against racing a live agent run. It writes a
 // 409 response and returns true if the caller must stop processing the
 // request; otherwise it returns false and the caller should proceed.
 //
 // Without this, a human transition clears active_agent_run_id as part of the
-// transition's CAS (see engine.go) while the run is still executing. The next
-// dispatcher sweep then sees the task eligible again and starts a second run,
-// and when the original run eventually finishes it either gets rejected
-// (stale label) or, worse, clears the *new* run's lock — two agents end up
-// sharing one worktree (see issue #244). Only `running` is blocked:
-// `waiting_human` is intentionally parked awaiting exactly this kind of human
-// action (approve/reject/move/reply all legitimately operate on a
-// waiting_human run), and every other status (queued/completed/failed/
-// cancelled) is not live.
+// transition's CAS (see engine.go) while the run is still live (see
+// runLiveStatuses). The next dispatcher sweep then sees the task eligible
+// again and starts a second run, and when the original run eventually
+// executes/finishes it either gets rejected (stale label) or, worse, clears
+// the *new* run's lock — two agents end up sharing one worktree (see issue
+// #244).
 func (h *TasksHandler) rejectTransitionWhileRunLive(ctx context.Context, w http.ResponseWriter, task gen.Task) bool {
 	if task.ActiveAgentRunID == nil {
 		return false
@@ -548,7 +564,7 @@ func (h *TasksHandler) rejectTransitionWhileRunLive(ctx context.Context, w http.
 		// No run to check against — fall through and let Transition proceed.
 		return false
 	}
-	if run.Status == "running" {
+	if runLiveStatuses[run.Status] {
 		Err(w, http.StatusConflict, "a run is currently active on this task; cancel the run before moving its label")
 		return true
 	}

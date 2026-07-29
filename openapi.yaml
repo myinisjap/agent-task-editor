@@ -1210,7 +1210,8 @@ paths:
         "403": { description: Gate required }
         "409":
           description: >
-            An agent run is currently `running` on this task. Cancel the run
+            An agent run on this task is `pending` (claimed but not yet
+            started) or `running`. Cancel the run
             (POST /tasks/{id}/runs/{run_id}/cancel) before moving its label.
 
   /tasks/{id}/archive:
@@ -1397,8 +1398,8 @@ paths:
               schema: { $ref: "#/components/schemas/Task" }
         "409":
           description: >
-            An agent run is currently `running` on this task. Cancel the run
-            before approving.
+            An agent run on this task is `pending` (claimed but not yet
+            started) or `running`. Cancel the run before approving.
 
   /tasks/{id}/reject:
      post:
@@ -1423,8 +1424,8 @@ paths:
                schema: { $ref: "#/components/schemas/Task" }
          "409":
            description: >
-             An agent run is currently `running` on this task. Cancel the run
-             before rejecting.
+             An agent run on this task is `pending` (claimed but not yet
+             started) or `running`. Cancel the run before rejecting.
 
   /tasks/{id}/notes:
     patch:
