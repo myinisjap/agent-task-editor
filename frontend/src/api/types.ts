@@ -310,6 +310,13 @@ export interface paths {
                     };
                     content?: never;
                 };
+                /** @description An agent run on this task is `pending` (claimed but not yet started) or `running`. Cancel the run (POST /tasks/{id}/runs/{run_id}/cancel) before moving its label. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         trace?: never;
@@ -662,6 +669,13 @@ export interface paths {
                         "application/json": components["schemas"]["Task"];
                     };
                 };
+                /** @description An agent run on this task is `pending` (claimed but not yet started) or `running`. Cancel the run before approving. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         delete?: never;
@@ -705,6 +719,13 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["Task"];
                     };
+                };
+                /** @description An agent run on this task is `pending` (claimed but not yet started) or `running`. Cancel the run before rejecting. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
