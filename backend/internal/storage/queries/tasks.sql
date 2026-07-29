@@ -126,9 +126,25 @@ SET worktree_path = '', updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
 -- name: ClearActiveAgentRun :exec
+-- Unconditional clear, keyed only on task id. Reserved for Rerun (an explicit
+-- human "force re-run" that must clear the lock even if it belongs to a
+-- stale/foreign run). Every other caller that acts on behalf of a specific
+-- run must use the owner-scoped ClearActiveAgentRunIfOwner below instead --
+-- otherwise a finished run can wipe a lock a concurrent (re-)dispatch has
+-- since taken, letting two agents share one worktree (see issue #244).
 UPDATE tasks
 SET active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
+
+-- name: ClearActiveAgentRunIfOwner :execrows
+-- Owner-scoped release of the dispatch lock: only clears active_agent_run_id
+-- when it still points at the run that is releasing it. A finished run must
+-- never wipe a lock a concurrent (re-)dispatch has since taken -- otherwise two
+-- agents can share one worktree (see issue #244). Returns rows affected so the
+-- caller can log a no-op release.
+UPDATE tasks
+SET active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND active_agent_run_id = ?;
 
 -- name: DeleteTask :exec
 DELETE FROM tasks WHERE id = ?;

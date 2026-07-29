@@ -199,6 +199,17 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	// generated UpdateTaskLabel, plus the `AND label = ?` guard and always
 	// clearing active_agent_run_id) because sqlc's SQLite analyzer miscompiles
 	// this particular query — see the byte-offset note on SearchTasksPage.
+	//
+	// active_agent_run_id is intentionally cleared unconditionally here (not
+	// scoped to a specific run id): this transition is the authoritative label
+	// move for the task, and releasing the lock is part of moving the task off
+	// whatever run currently holds it, whoever that is. The ownership guarantee
+	// against a *finished* run wiping a *newer* run's lock lives instead in
+	// ClearActiveAgentRunIfOwner (used by every run-owned cleanup path) plus the
+	// MoveLabel handler refusing a human transition while a run is `running`
+	// (see issue #244) — scoping the CAS clear itself to a run id would either
+	// be a no-op (human transitions carry no run id) or wrongly reject the
+	// agent's own transition.
 	res, err := tx.ExecContext(ctx,
 		`UPDATE tasks SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND label = ?`,
 		toLabel, task.CurrentAgentRunID, taskID, fromLabel)

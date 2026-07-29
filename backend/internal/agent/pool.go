@@ -149,6 +149,25 @@ func (p *Pool) Submit(job Job) bool {
 	}
 }
 
+// releaseLock clears the task's active-run lock, but only if it still points
+// at runID. A finished/aborted run must never wipe a lock a concurrent
+// (re-)dispatch has since taken -- that's how two agents end up sharing one
+// worktree (see issue #244). If the lock has already moved on to another
+// run, this logs and does nothing.
+func (p *Pool) releaseLock(ctx context.Context, taskID, runID string) {
+	n, err := p.q.ClearActiveAgentRunIfOwner(ctx, gen.ClearActiveAgentRunIfOwnerParams{
+		ID:               taskID,
+		ActiveAgentRunID: &runID,
+	})
+	if err != nil {
+		slog.Warn("pool: release lock", "component", "pool", "task_id", taskID, "run_id", runID, "err", err)
+		return
+	}
+	if n == 0 {
+		slog.Warn("pool: skipped clearing dispatch lock owned by another run", "component", "pool", "task_id", taskID, "run_id", runID)
+	}
+}
+
 func (p *Pool) worker(ctx context.Context) {
 	defer p.wg.Done()
 	for {
@@ -170,7 +189,7 @@ func (p *Pool) runGuarded(ctx context.Context, job Job) {
 		if r := recover(); r != nil {
 			log.Error("pool: agent run panicked", "panic", r, "stack", string(debug.Stack()))
 			_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{Status: "failed", ID: job.RunID})
-			_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
+			p.releaseLock(context.Background(), job.Input.Task.ID, job.RunID)
 			metrics.RunTerminalTotal.WithLabelValues("failed").Inc()
 			metrics.RunClassificationTotal.WithLabelValues(string(ClassGenuine)).Inc()
 		}
@@ -283,7 +302,7 @@ func (p *Pool) startRun(ctx context.Context, job Job, log *slog.Logger, startedA
 			Status: "failed",
 			ID:     job.RunID,
 		})
-		_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
+		p.releaseLock(context.Background(), job.Input.Task.ID, job.RunID)
 		metrics.RunTerminalTotal.WithLabelValues("failed").Inc()
 		metrics.RunClassificationTotal.WithLabelValues(string(ClassGenuine)).Inc()
 		metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
@@ -558,7 +577,10 @@ func (p *Pool) safetyNetCommit(ctx context.Context, job Job, finalStatus string,
 // between the clear and the transition landing (a real double-dispatch race).
 // Instead, each branch below clears the lock exactly when it owns that
 // responsibility; a successful transition (and the waiting_human escalation,
-// which intentionally stays locked) leaves it to the branch.
+// which intentionally stays locked) leaves it to the branch. Every clear here
+// goes through releaseLock, which is scoped to this run's id: if a concurrent
+// human transition (or a newer dispatch) has already moved the lock to
+// another run, this run's cleanup must not clobber it (see issue #244).
 func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Result, finalStatus, resolvedLabel string, log *slog.Logger) {
 	switch finalStatus {
 	case "completed":
@@ -601,11 +623,11 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 				// so it did not clear the lock — clear it here so the finished run
 				// doesn't leave the task stuck locked.
 				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
-				_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
+				p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 			}
 		} else {
 			// No resolved label — unlock and block re-dispatch until a human acts.
-			_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
+			p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 			if p.pub != nil {
 				p.pub.Publish("task.needs_human", map[string]any{
 					"task_id": job.Input.Task.ID,
@@ -619,7 +641,7 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 		// Genuine failure — the task stays on its current label; unlock it so the
 		// next sweep re-picks it (transient failures never reach here; they are
 		// handled by handleTransientFailure, which owns their lock/backoff).
-		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
+		p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 
 	case "waiting_human":
 		msg := ""

@@ -172,6 +172,111 @@ func TestTransition_ConcurrentSameLabel_OnlyOneSucceeds(t *testing.T) {
 	}
 }
 
+// TestTransition_HumanMoveWhileRunLive_DoesNotOrphanLock reproduces the issue
+// #244 sequence directly against the engine + DB:
+//  1. Run R1 is set as the task's active run while the task sits on "work".
+//  2. A human moves the label (engine.Transition with TriggerHuman). Per
+//     current engine behaviour this clears the lock as part of its CAS.
+//  3. A new dispatch picks the task up and sets R2 as the active run.
+//  4. R1's (now-stale) cleanup calls the owner-scoped
+//     ClearActiveAgentRunIfOwner with its own run id. Because the lock no
+//     longer points at R1, this must be a no-op: RowsAffected must be 0, and
+//     the task's active_agent_run_id must still be R2 afterwards.
+//
+// Before the fix (plain ClearActiveAgentRun keyed only on task id), R1's
+// cleanup would have wiped R2's lock, orphaning it and enabling a concurrent
+// third dispatch. This test only exercises the new scoped clear (Change 1);
+// the human-transition-vs-live-run 409 guard itself (Change 6) is exercised
+// in the handlers package where MoveLabel lives.
+func TestTransition_HumanMoveWhileRunLive_DoesNotOrphanLock(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	task := createTestTask(t, db, "work", wfID)
+
+	// Step 1: R1 is dispatched and becomes the task's active run.
+	run1, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID:     uuid.NewString(),
+		TaskID: task.ID,
+	})
+	if err != nil {
+		t.Fatalf("create run1: %v", err)
+	}
+	if _, err := q.SetAgentRunStarted(ctx, run1.ID); err != nil {
+		t.Fatalf("start run1: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &run1.ID,
+		ActiveAgentRunID:  &run1.ID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run1: %v", err)
+	}
+
+	// Step 2: a human moves the label while R1 is still "running". This
+	// clears the lock as part of the transition's CAS (current behaviour;
+	// see the comment in engine.go on why the CAS clear stays unconditional).
+	if err := engine.Transition(ctx, task.ID, "testing", workflow.TriggerHuman, "human-actor", ""); err != nil {
+		t.Fatalf("human transition: %v", err)
+	}
+
+	// Step 3: a new dispatch (R2) picks the task up on its new label and
+	// claims the lock.
+	run2, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID:     uuid.NewString(),
+		TaskID: task.ID,
+	})
+	if err != nil {
+		t.Fatalf("create run2: %v", err)
+	}
+	if _, err := q.SetAgentRunStarted(ctx, run2.ID); err != nil {
+		t.Fatalf("start run2: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &run2.ID,
+		ActiveAgentRunID:  &run2.ID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run2: %v", err)
+	}
+
+	// Step 4: R1's stale cleanup releases its lock via the owner-scoped
+	// clear. It must be a no-op: the lock is R2's, not R1's.
+	rows, err := q.ClearActiveAgentRunIfOwner(ctx, gen.ClearActiveAgentRunIfOwnerParams{
+		ID:               task.ID,
+		ActiveAgentRunID: &run1.ID,
+	})
+	if err != nil {
+		t.Fatalf("clear active run if owner (R1): %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("expected R1's stale release to affect 0 rows, affected %d", rows)
+	}
+
+	updated, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if updated.ActiveAgentRunID == nil || *updated.ActiveAgentRunID != run2.ID {
+		t.Fatalf("expected active_agent_run_id to still be R2 (%s), got %v", run2.ID, updated.ActiveAgentRunID)
+	}
+
+	// Sanity: R2 can release its own lock.
+	rows, err = q.ClearActiveAgentRunIfOwner(ctx, gen.ClearActiveAgentRunIfOwnerParams{
+		ID:               task.ID,
+		ActiveAgentRunID: &run2.ID,
+	})
+	if err != nil {
+		t.Fatalf("clear active run if owner (R2): %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("expected R2's own release to affect 1 row, affected %d", rows)
+	}
+}
+
 func TestTransition_NoTransitionDefined(t *testing.T) {
 	db := setupTestDB(t)
 	wfID := defaultWorkflowID(t, db)
