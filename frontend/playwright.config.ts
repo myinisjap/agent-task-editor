@@ -23,5 +23,14 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      // Runs every spec again under a mobile viewport (touch, ~412px width,
+      // Android UA) so pages that render a different mobile layout (e.g. the
+      // collapsed nav sidebar, ChatPage/AgentConfigPage/ProviderConfigPage's
+      // mobile-only header bars) are exercised too. `npm run e2e` runs both
+      // projects — no separate CI job/invocation needed.
+      name: 'mobile-chrome',
+      use: { ...devices['Pixel 7'] },
+    },
   ],
 })
