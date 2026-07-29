@@ -227,6 +227,12 @@ triggers the "Release" workflow the same way.
   frontend, a few points under the ~58.8%/~59.75% measured when this gate
   was added, to absorb normal `-race` run-to-run jitter) instead of only
   reporting coverage with no gate.
+- **Broader E2E coverage.** The Playwright smoke suite now asserts every
+  app route (dashboard, board, chat, workflow, and all configuration pages)
+  loads correctly, and runs the whole suite twice — once on a desktop
+  viewport and once on a mobile viewport — via a new `mobile-chrome`
+  Playwright project, so mobile-only layouts (collapsed nav, mobile header
+  bars) get smoke coverage too. See `frontend/e2e/README.md`.
 
 ### Removed
 - **The `gemini_cli` provider has been removed.** The Gemini CLI is no longer

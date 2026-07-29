@@ -187,7 +187,7 @@ export default function AgentConfigPage() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden" data-testid="agents-page">
       {/* Mobile-only header bar: shows selected agent + button to open the configs drawer */}
       <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950">
         <div className="flex items-center gap-2 min-w-0">

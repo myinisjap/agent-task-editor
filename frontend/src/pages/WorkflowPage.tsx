@@ -232,7 +232,7 @@ export default function WorkflowPage() {
   const noWorkflows = workflows.length === 0
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="workflow-page">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 flex-shrink-0">
         {/* Workflow Tab Bar */}
