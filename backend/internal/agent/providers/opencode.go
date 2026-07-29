@@ -71,7 +71,12 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		sessionID   string
 		rateLimited bool
 		transient   bool
-		mu          sync.Mutex
+		// usage holds the most recently observed step_finish usage. Per the
+		// cumulative-to-date assumption documented on classifyOpencodeJSON,
+		// each step_finish's cost/tokens are taken as-is (assign, not sum)
+		// rather than accumulated across steps.
+		usage *runUsage
+		mu    sync.Mutex
 	)
 	wg.Add(2)
 
@@ -87,7 +92,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 				continue
 			}
 			rawDump.WriteLine(line)
-			entry, parsed, sid := classifyOpencodeJSON(line)
+			entry, parsed, u, sid := classifyOpencodeJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
@@ -97,6 +102,11 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 			if sid != "" {
 				mu.Lock()
 				sessionID = sid
+				mu.Unlock()
+			}
+			if u != nil {
+				mu.Lock()
+				usage = u
 				mu.Unlock()
 			}
 			if is429Line(line) {
@@ -134,11 +144,14 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 
 	mu.Lock()
 	finalSession := sessionID
+	finalUsage := usage
 	mu.Unlock()
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
-		return agent.Result{Status: "failed", SessionID: finalSession}, &agent.ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode exited: %v", err), At: time.Now()}
@@ -147,10 +160,14 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		tr := transient
 		mu.Unlock()
 		if rl {
-			return agent.Result{Status: "failed", SessionID: finalSession}, &agent.ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsage(&res, finalUsage)
+			return res, &agent.ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
-			return agent.Result{Status: "failed", SessionID: finalSession}, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsage(&res, finalUsage)
+			return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
 		}
 		// Bug fix (see TestOpencodeRunner_Run_Exit1NoOutputIsFailed): a non-zero
 		// exit with no rate-limit/transient classification and no parsed OUTCOME
@@ -162,9 +179,16 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		// (codex/gemini/qwen) already has this same `err != nil && outcome == ""`
 		// fallback; opencode was the one provider missing it.
 		if outcome == "" {
-			return agent.Result{Status: "failed", SessionID: finalSession}, nil
+			// Usage/cost must still be persisted here even though the run
+			// failed — money may have been spent before the crash (mirrors
+			// qwen.go's equivalent failure path).
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsage(&res, finalUsage)
+			return res, nil
 		}
 	}
 
-	return agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}, nil
+	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
+	applyUsage(&res, finalUsage)
+	return res, nil
 }

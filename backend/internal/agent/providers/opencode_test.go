@@ -58,6 +58,37 @@ func TestOpencodeRunner_Run_Exit0Success(t *testing.T) {
 	}
 }
 
+// TestOpencodeRunner_Run_UsageTakesLastStepFinish verifies the
+// cumulative-to-date accumulation decision: when multiple step_finish
+// events are emitted (one per step), the final Result's usage/cost must
+// reflect only the *last* step_finish's values (assign, not sum) — see the
+// cumulative-vs-per-step assumption documented on classifyOpencodeJSON.
+func TestOpencodeRunner_Run_UsageTakesLastStepFinish(t *testing.T) {
+	runner := &OpencodeRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), opencodeHelperInput("exit0_success_with_usage"), logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("Status = %q, want completed", result.Status)
+	}
+	if result.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100 (last step_finish only, not summed)", result.InputTokens)
+	}
+	if result.OutputTokens != 200 {
+		t.Errorf("OutputTokens = %d, want 200 (last step_finish only, not summed)", result.OutputTokens)
+	}
+	if result.CostUSD != 0.05 {
+		t.Errorf("CostUSD = %v, want 0.05 (last step_finish only, not summed)", result.CostUSD)
+	}
+}
+
 func TestOpencodeRunner_Run_Exit1NoOutputIsFailed(t *testing.T) {
 	runner := &OpencodeRunner{BinaryPath: os.Args[0]}
 	logCh := make(chan agent.LogEntry, 256)

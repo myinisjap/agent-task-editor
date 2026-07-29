@@ -106,9 +106,15 @@ Three layers:
   running against the real, built docker-compose stack
   (`http://localhost:5173/tasks/`) — not `npm run dev`, and nothing mocked.
   Covers board load, task creation, task-detail navigation, and the Logs
-  tab's WS log pane mount. Kept to one linear flow per the scope note that
-  originally deferred this layer (see #155/#182) — fast and non-flaky, not a
-  full E2E suite. Requires the stack to already be running
+  tab's WS log pane mount (`board.spec.ts`), plus a data-driven check that
+  every static app route loads (`pages-load.spec.ts`) — a page-specific
+  heading or `data-testid` anchor becomes visible, without asserting on
+  list/empty-state content or (for `HealthPage`) provider-check results.
+  Every spec runs under two Playwright projects, `chromium` (desktop) and
+  `mobile-chrome` (a Pixel 7 viewport/UA exercising the app's mobile
+  layout — collapsed nav sidebar, mobile header bars, etc.); `npm run e2e`
+  runs both. Kept fast and non-flaky, not a full E2E suite — see
+  `e2e/README.md`. Requires the stack to already be running
   (`./dev.sh start` or `docker compose up -d --build --wait`) and a
   registered repo; `e2e/global-setup.ts` seeds one automatically via the
   backend API (mirroring `scripts/seed-demo.sh`), but the repo *directory*
