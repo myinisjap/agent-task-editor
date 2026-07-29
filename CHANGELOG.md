@@ -336,6 +336,23 @@ triggers the "Release" workflow the same way.
   tracked separately in #284. See
   [docs/agents.md § Session Resume](docs/agents.md#session-resume) and the
   updated `qwen_code`/`codex_cli`/`opencode`/`gemini_cli` provider docs.
+- **`opencode` runs now record token usage and cost, so cost budget caps
+  fire and the Dashboard's cost aggregation is accurate for this provider**
+  (#287). `classifyOpencodeJSON` previously only read `part.reason` off the
+  `step_finish` NDJSON event, leaving `input_tokens`/`output_tokens`/
+  `cost_usd` at `0` for every opencode run despite the CLI (`opencode-ai`
+  v1.18.6) actually emitting both a `cost` number and a `tokens.
+  {input,output,...}` object on that event. `cost` is authoritative (reported
+  directly by the CLI, like `claude`/`qwen_code`), not estimated. Since
+  `step_finish` fires once per step rather than once per run, and opencode's
+  own SQLite `session` table stores a single cumulative cost/token row per
+  session, the runner takes the *last* `step_finish`'s values rather than
+  summing across steps. Usage/cost is now persisted on every run outcome,
+  including failed and timed-out runs, since money may already have been
+  spent. `costTracking` is now `full` in the provider capability matrix; no
+  mid-run cost watchdog is wired up for this provider yet (usage is only
+  known at end-of-run), so `costWatchdog` remains `none`. See
+  [docs/providers/opencode.md § Cost & Usage Reporting](docs/providers/opencode.md#cost--usage-reporting).
 - **The provider capability matrix now matches what the providers actually do.**
   An audit against the installed CLIs (`claude` v2.1.220, `@qwen-code/qwen-code`
   v0.21.0, `@google/gemini-cli` v0.52.0, `@openai/codex` v0.145.0, `opencode-ai`
