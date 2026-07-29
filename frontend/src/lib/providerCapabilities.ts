@@ -168,12 +168,12 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     commandAllowlist: { support: 'none', note: 'Not enforced for the opencode provider.' },
     commandDenylist: { support: 'none', note: 'Not enforced for the opencode provider.' },
     costTracking: {
-      support: 'none',
-      note: "Not recorded — opencode's step_finish event does carry cost and token counts, but this provider's parser does not read them, so a cost budget cap will not fire.",
+      support: 'full',
+      note: "Authoritative cost and token counts, read directly from the CLI's step_finish event (cost + tokens.input/output) — not estimated via a pricing table.",
     },
     costWatchdog: {
       support: 'none',
-      note: 'Not implemented — opencode records no usage at all, so mid-run cost cannot be projected. Only the pre-dispatch budget guard applies (and will not reliably fire either, since it depends on cost tracking).',
+      note: 'Usage is now recorded at end-of-run (see costTracking), but no mid-run kill switch is wired up for this provider yet — step_finish only carries a cumulative-to-date snapshot, not the per-turn incremental usage a watchdog needs to project a running total. Only the pre-dispatch budget guard applies.',
     },
     imageAttachments: { support: 'none', note: 'opencode run has an -f/--file flag, but attachments are not wired through to it.' },
     maxTurns: { support: 'none', note: 'Not enforced — the opencode CLI has no turn-cap flag.' },

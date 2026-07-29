@@ -73,21 +73,36 @@ Every event on `opencode run --format json`'s NDJSON output carries a top-level 
 
 ## Cost & Usage Reporting
 
-**Not recorded — but this is a parser gap, not a CLI gap.** `input_tokens`,
-`output_tokens`, and `cost_usd` are all left at `0` (not estimated) for this
-provider because `classifyOpencodeJSON` only reads `type`, `part.type`,
-`part.text`, and `part.reason` off each NDJSON line.
+**Recorded.** `input_tokens`, `output_tokens`, and `cost_usd` are read directly
+from the CLI's `step_finish` event: opencode's `step-finish` part carries both
+a `cost` number and a `tokens` object (`{input, output, reasoning, cache:
+{read, write}}`). `classifyOpencodeJSON` reads `cost` and `tokens.input`/
+`tokens.output` off that event (reasoning/cache fields are not currently
+tracked). Cost is authoritative — reported directly by the CLI, not estimated
+via a pricing table, the same as `claude`/`qwen_code`.
 
-The CLI does emit the data: opencode's `step-finish` part carries both a `cost`
-number and a `tokens` object (`{input, output, reasoning, cache: {read, write}}`),
-and `run --format json` surfaces that part as the `step_finish` event this parser
-already handles. Reading those two fields into `runUsage` — the same way
-`parse_streamjson.go` does for the `claude`/`qwen_code` `result` message — would
-close the gap. Until then, a cost budget cap will not fire for this provider.
+`step_finish` fires once per *step*, not once per run, so a single run may
+emit several of these events. opencode's own SQLite `session` table stores a
+single cumulative `cost`/`tokens_input`/`tokens_output` row per session (not a
+running delta per step), which strongly suggests the values on each
+`step_finish` event are themselves cumulative-to-date. Based on that
+evidence, the runner **takes the last `step_finish`'s usage** rather than
+summing across steps. This assumption has not been independently verified
+against a real multi-step authenticated run — if it's ever confirmed to be
+per-step deltas instead, the runner should sum them instead of assigning.
+
+Usage is persisted on every run outcome, including failed/timed-out runs —
+money may have been spent on a run before it crashed.
 
 _Verified against `opencode-ai` v1.18.6._ See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
-**Mid-run cost kill switch: not supported.** opencode records no usage at all (above), so there is nothing to project a mid-run cost from. Only the pre-dispatch `max_cost_usd` guard applies, and it too will not reliably fire since `cost_usd` is always `0` for this provider. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
+**Mid-run cost kill switch: not supported.** No mid-run watchdog is wired
+into this provider (unlike `claude`/`qwen_code`'s incremental token-usage
+watchdog) — `step_finish`'s cumulative-to-date snapshot is not the per-turn
+incremental usage a watchdog needs to project a running total mid-run. Usage
+is only known at end-of-run. Only the pre-dispatch `max_cost_usd` guard
+applies, which is now effective since `cost_usd` is recorded. See
+[agents.md § Cost Budgets](../agents.md#cost-budgets).
 
 ## Limitations
 
@@ -100,7 +115,7 @@ _Verified against `opencode-ai` v1.18.6._ See [agents.md § Cost & Usage Trackin
 | Image attachments | ❌ Not wired up — `opencode run` has an `-f`/`--file` flag, but attachments are not passed to it |
 | Outcome signalling | ⚠️ Text-based only (`OUTCOME: success/failure`) |
 | Rate limit detection | ✅ Implemented — stdout/stderr are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit` |
-| Cost & usage reporting | ❌ Not recorded (parser gap, not a CLI gap — see above) |
+| Cost & usage reporting | ✅ Recorded from the CLI's `step_finish` event (cost + tokens), authoritative — see above |
 | Command allowlist/denylist | ❌ Not enforced |
 | Session resume | ✅ `sessionID` + `--session` (see above) |
 

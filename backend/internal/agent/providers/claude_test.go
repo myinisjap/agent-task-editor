@@ -141,6 +141,17 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "exit1":
 		os.Exit(1)
+	case "exit0_success_with_usage":
+		// Simulate: opencode emits two step_finish events (one per step),
+		// each carrying cumulative-to-date cost/tokens (see classifyOpencodeJSON's
+		// doc comment on the cumulative-vs-per-step assumption). The runner
+		// must take the *last* one's values, not sum across steps — so the
+		// final Result should reflect only the second step_finish's numbers.
+		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"working"}}`)
+		fmt.Println(`{"type":"step_finish","sessionID":"oc-1","part":{"reason":"tool_calls","cost":0.01,"tokens":{"input":10,"output":20}}}`)
+		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"OUTCOME: success"}}`)
+		fmt.Println(`{"type":"step_finish","sessionID":"oc-1","part":{"reason":"stop","cost":0.05,"tokens":{"input":100,"output":200}}}`)
+		os.Exit(0)
 	}
 
 	if secs := os.Getenv("HANG_TEST_HELPER"); secs != "" {
