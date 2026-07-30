@@ -473,3 +473,50 @@ func TestCodexRunner_Run_TimeoutKillsProcess(t *testing.T) {
 		t.Errorf("Status = %q, want failed", result.Status)
 	}
 }
+
+// TestCodexRunner_Run_OversizedLineTruncation mirrors
+// TestClaude_OversizedLine_Truncation in claude_test.go — proves the shared
+// scanLines helper (scan.go) fixes the silent-truncation bug for codex too:
+// a stdout line exceeding the scan buffer cap must surface a visible
+// LogSystem warning and end the run with a non-"completed" status, promptly
+// (not wedged until the outer timeout).
+func TestCodexRunner_Run_OversizedLineTruncation(t *testing.T) {
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), codexHelperInput("oversized_line"), logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	logs := drainLogs(logCh)
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(8 * time.Second):
+		t.Fatal("timed out waiting for Run to return — oversized line likely wedged the run instead of failing promptly")
+	}
+
+	if res.r.Status == "completed" {
+		t.Errorf("want Status != completed (output was truncated), got %q", res.r.Status)
+	}
+	if res.err == nil {
+		t.Error("want a non-nil error signalling the truncated run, got nil")
+	}
+
+	var sawTruncationLog bool
+	for _, e := range logs {
+		if e.Type == agent.LogSystem && (contains(e.Content, "truncated") || contains(e.Content, "scan limit")) {
+			sawTruncationLog = true
+		}
+	}
+	if !sawTruncationLog {
+		t.Errorf("expected a LogSystem entry warning about the truncated output stream, got logs: %v", logs)
+	}
+}

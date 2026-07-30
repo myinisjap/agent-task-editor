@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -257,6 +256,8 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		usage           *runUsage
 		cumInputTokens  int64
 		cumOutputTokens int64
+		stdoutTruncated bool
+		stderrTruncated bool
 		mu              sync.Mutex
 	)
 	wg.Add(2)
@@ -276,12 +277,9 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		// <dir>/<runID>.jsonl. Off by default; no DB, no product surface.
 		rawDump := openRawDump(input.RunID)
 		defer rawDump.Close()
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stdout, func(line string) {
 			if line == "" {
-				continue
+				return
 			}
 			rawDump.WriteLine(line)
 			ev := classifyStreamJSON(line)
@@ -359,15 +357,18 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 				maxTurnsHit = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stdoutTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	// Stream stderr
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
 			if isResumeErrorLine(line) {
 				mu.Lock()
@@ -384,6 +385,11 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 				transient = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stderrTruncated = true
+			mu.Unlock()
 		}
 	}()
 
@@ -394,6 +400,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	mu.Lock()
 	finalUsage := usage
 	finalSession := sessionID
+	truncated := stdoutTruncated || stderrTruncated
 	mu.Unlock()
 
 	if info.costExceeded != nil {
@@ -410,6 +417,17 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		// attemptInfo.costExceededUsage).
 		applyUsage(&res, info.costExceededUsage)
 		return res, info, info.costExceeded
+	}
+
+	if truncated {
+		// A single line exceeded the scan buffer limit — the rest of that
+		// stream was dropped from the point the cap was hit. Surface it as a
+		// visible warning rather than letting the run silently report
+		// "completed" with missing output (see scan.go for detail).
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("claude output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, info, &agent.ErrTransient{Cause: fmt.Errorf("claude output truncated at scan buffer limit")}
 	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {

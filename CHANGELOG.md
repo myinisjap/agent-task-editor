@@ -442,6 +442,20 @@ triggers the "Release" workflow the same way.
   [getting-started.md](docs/getting-started.md#backup). Dispatching tasks
   concurrently (rather than serially) was considered but deferred as a
   separate, larger change.
+- **CLI agent output streams no longer silently truncate at 1 MB (or 64 KB on
+  stderr) and wedge the run until its timeout.** Every CLI provider
+  (claude/codex/opencode/qwen) scanned its subprocess's stdout with a capped
+  `bufio.Scanner` and never checked `scanner.Err()`; a single line over the
+  cap — routine when an assistant message quotes a large file a tool
+  Read/Wrote — made the scanning goroutine exit silently, dropping the rest
+  of that stream with no log entry and leaving nothing draining the pipe, so
+  a still-writing child could block and the run wouldn't end until the outer
+  timeout (default 600s) fired. Stderr had no explicit buffer at all, so it
+  hit the default 64 KB cap even sooner. A shared `scanLines` helper now
+  raises the buffer to 8 MB for both streams, keeps draining the pipe after
+  an oversized line so the child can never block on it, and surfaces a
+  visible warning in the run log plus a failed (not `completed`) result when
+  the cap is hit.
 
 ### Changed
 - **A run that exhausts `max_turns` now escalates to `waiting_human` instead

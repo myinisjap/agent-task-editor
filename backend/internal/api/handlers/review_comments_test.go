@@ -94,11 +94,11 @@ func TestReviewComments_Create_Validation(t *testing.T) {
 	r, _, taskID := setupReviewCommentRouter(t)
 
 	cases := []map[string]any{
-		{"side": "new", "start_line": 1, "end_line": 1, "body": "x"},                          // missing file_path
-		{"file_path": "a.go", "side": "new", "start_line": 1, "end_line": 1},                  // missing body
+		{"side": "new", "start_line": 1, "end_line": 1, "body": "x"},                           // missing file_path
+		{"file_path": "a.go", "side": "new", "start_line": 1, "end_line": 1},                   // missing body
 		{"file_path": "a.go", "side": "sideways", "start_line": 1, "end_line": 1, "body": "x"}, // bad side
-		{"file_path": "a.go", "side": "new", "start_line": 0, "end_line": 1, "body": "x"},     // bad start_line
-		{"file_path": "a.go", "side": "new", "start_line": 5, "end_line": 2, "body": "x"},     // end < start
+		{"file_path": "a.go", "side": "new", "start_line": 0, "end_line": 1, "body": "x"},      // bad start_line
+		{"file_path": "a.go", "side": "new", "start_line": 5, "end_line": 2, "body": "x"},      // end < start
 	}
 	for i, body := range cases {
 		req := httptest.NewRequest("POST", "/tasks/"+taskID+"/review-comments", jsonBody(t, body))

@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -233,13 +232,15 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started codex pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg          sync.WaitGroup
-		outcome     string
-		sessionID   string
-		rateLimited bool
-		transient   bool
-		usage       *runUsage
-		mu          sync.Mutex
+		wg              sync.WaitGroup
+		outcome         string
+		sessionID       string
+		rateLimited     bool
+		transient       bool
+		usage           *runUsage
+		stdoutTruncated bool
+		stderrTruncated bool
+		mu              sync.Mutex
 	)
 	wg.Add(2)
 
@@ -252,12 +253,9 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		defer wg.Done()
 		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in cli.go
 		defer rawDump.Close()
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stdout, func(line string) {
 			if line == "" {
-				continue
+				return
 			}
 			rawDump.WriteLine(line)
 			entry, parsed, u, class, sid := classifyCodexJSON(line)
@@ -290,14 +288,17 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 				usage = u
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stdoutTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
 			if is429Line(line) {
 				mu.Lock()
@@ -308,11 +309,35 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 				transient = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stderrTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	wg.Wait()
 	err = cmd.Wait()
+
+	mu.Lock()
+	truncated := stdoutTruncated || stderrTruncated
+	mu.Unlock()
+
+	if truncated {
+		// A single line exceeded the scan buffer limit — the rest of that
+		// stream was dropped from the point the cap was hit. Surface it as a
+		// visible warning rather than letting the run silently report
+		// "completed" with missing output (see scan.go for detail).
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
+		mu.Lock()
+		finalUsage := usage
+		finalSession := sessionID
+		mu.Unlock()
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("codex output truncated at scan buffer limit")}
+	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}

@@ -16,7 +16,7 @@ import (
 
 // ExternalTask is a candidate task fetched from an external source.
 type ExternalTask struct {
-	Ref    string   // unique within the source, e.g. "owner/repo#123"
+	Ref    string // unique within the source, e.g. "owner/repo#123"
 	Title  string
 	Body   string
 	URL    string   // web link back to the external item

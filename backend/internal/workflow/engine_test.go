@@ -7,10 +7,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
-	"github.com/google/uuid"
 )
 
 // noopPublisher satisfies the Publisher interface without doing anything.

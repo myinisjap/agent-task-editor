@@ -78,10 +78,10 @@ const (
 )
 
 var (
-	ErrNoTransition  = errors.New("no transition defined between these labels")
-	ErrGateRequired  = errors.New("transition requires human approval")
-	ErrAgentIgnored  = errors.New("label is marked agent_ignore; agents cannot move tasks here")
-	ErrTaskNotFound  = errors.New("task not found")
+	ErrNoTransition = errors.New("no transition defined between these labels")
+	ErrGateRequired = errors.New("transition requires human approval")
+	ErrAgentIgnored = errors.New("label is marked agent_ignore; agents cannot move tasks here")
+	ErrTaskNotFound = errors.New("task not found")
 	// ErrStale means the task's label changed out from under this transition
 	// between validation and the compare-and-swap write — a concurrent transition
 	// won the race. Callers should refresh and retry.

@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
@@ -75,8 +74,10 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		// cumulative-to-date assumption documented on classifyOpencodeJSON,
 		// each step_finish's cost/tokens are taken as-is (assign, not sum)
 		// rather than accumulated across steps.
-		usage *runUsage
-		mu    sync.Mutex
+		usage           *runUsage
+		stdoutTruncated bool
+		stderrTruncated bool
+		mu              sync.Mutex
 	)
 	wg.Add(2)
 
@@ -84,12 +85,9 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		defer wg.Done()
 		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in cli.go
 		defer rawDump.Close()
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stdout, func(line string) {
 			if line == "" {
-				continue
+				return
 			}
 			rawDump.WriteLine(line)
 			entry, parsed, u, sid := classifyOpencodeJSON(line)
@@ -118,14 +116,17 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 				transient = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stdoutTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
 			if is429Line(line) {
 				mu.Lock()
@@ -136,6 +137,11 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 				transient = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stderrTruncated = true
+			mu.Unlock()
 		}
 	}()
 
@@ -145,7 +151,19 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	mu.Lock()
 	finalSession := sessionID
 	finalUsage := usage
+	truncated := stdoutTruncated || stderrTruncated
 	mu.Unlock()
+
+	if truncated {
+		// A single line exceeded the scan buffer limit — the rest of that
+		// stream was dropped from the point the cap was hit. Surface it as a
+		// visible warning rather than letting the run silently report
+		// "completed" with missing output (see scan.go for detail).
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode output truncated at scan buffer limit")}
+	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
