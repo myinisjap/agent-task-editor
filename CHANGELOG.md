@@ -573,6 +573,17 @@ triggers the "Release" workflow the same way.
   enforced floor moves from 55.0% to 76.0% against that filtered metric. See
   `backend/AGENTS.md` § Testing for how to reproduce CI's number locally.
 
+### Dependencies
+- **Dependabot now groups patch-only bumps into a single PR per ecosystem**
+  (`.github/dependabot.yml`) for `gomod`, `npm`, `github-actions`, and
+  `docker`, instead of opening one PR per patch release.
+- Bumped `github.com/mattn/go-sqlite3` 1.14.48 → 1.14.49 and
+  `github.com/prometheus/client_golang` 1.24.0 → 1.24.1 (backend); `oxlint`
+  1.75.0 → 1.76.0, `@tailwindcss/vite` 4.3.2 → 4.3.3, `@playwright/test`
+  1.61.1 → 1.62.0, `@vitejs/plugin-react` 6.0.3 → 6.0.4, and
+  `react-router-dom` 7.18.1 → 7.18.2 (frontend). Routine dependency
+  patch/minor bumps, consolidated from separate Dependabot PRs.
+
 ### Deprecated
 - **The `anthropic` and `llm` providers are disabled for new/updated provider
   configs and may be removed in a future release.** Both run on a
