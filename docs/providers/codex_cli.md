@@ -78,9 +78,11 @@ If the agent completes without calling `signal_complete`, the runner scans the f
 
 ## Cost & Usage Reporting
 
-The `turn.completed` event reports `usage.input_tokens` / `usage.output_tokens` (also `cached_input_tokens` and `reasoning_output_tokens`, not currently surfaced), which are used as-is. **No total-cost figure is reported by the Codex CLI's JSON output** — `cost_usd` is left at `0` for this provider rather than estimated. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+The `turn.completed` event reports `usage.input_tokens` / `usage.output_tokens` (also `cached_input_tokens` and `reasoning_output_tokens`, not currently surfaced). **No total-cost figure is reported by the Codex CLI's JSON output**, so these tokens are priced by `CodexRunner.Run` against the same pricing table the `anthropic`/`llm`/`qwen_code` providers use (`applyUsageWithCost`, DB-backed via Configuration → Pricing, with a hardcoded fallback table — see `providers/pricing.go`). This produces an *estimated*, not authoritative, `cost_usd`. When the configured model isn't in the pricing table, `cost_usd` stays `0` but the run is flagged `cost_unknown` so the UI shows "cost unknown" instead of a misleading `$0`. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
-**Mid-run cost kill switch: not supported.** Codex captures tokens (above) but they are never priced against a pricing table for this provider (tracked as [#245](https://github.com/myinisjap/agent-task-editor/issues/245)), so a mid-run cost projection isn't possible. Only the pre-dispatch `max_cost_usd` guard applies, and it too will not reliably fire since `cost_usd` is always `0` for this provider. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
+**Pre-dispatch `max_cost_usd` guard: supported**, for models in the pricing table — the task's accumulated estimated spend across `codex_cli` runs now blocks the next dispatch once the budget is exhausted, the same as `anthropic`/`llm`/`qwen_code`. If any run's cost is unknown (unpriced model), the accumulated spend can't be trusted; see [agents.md § Cost Budgets](../agents.md#cost-budgets) for how that's handled.
+
+**Mid-run cost kill switch: not supported.** Codex's usage is only known once a full `turn.completed` event arrives at the end of a run, not incrementally, so a mid-run cost projection isn't possible for this provider. Only the pre-dispatch guard above applies.
 
 ## Setup Checklist
 

@@ -34,6 +34,34 @@ func (q *Queries) CountAgentLogsTotal(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countTaskCostUnknownRuns = `-- name: CountTaskCostUnknownRuns :one
+SELECT CAST(COUNT(*) AS INTEGER) AS unknown_count
+FROM agent_runs WHERE task_id = ? AND cost_unknown != 0
+`
+
+// Count of a task's agent_runs rows (across ALL statuses, same "every run
+// counts" rationale as SumTaskCost above) flagged cost_unknown = 1, i.e.
+// at least one token was consumed but no price could be resolved for the
+// configured model (see agent.Result.CostUnknown / providers.PriceResolver).
+// Used by the dispatcher's pre-dispatch budget guard to detect when
+// SumTaskCost's total can't be trusted as "true accumulated spend": a task
+// could sit well under a nonzero budget purely because one or more of its
+// runs recorded cost_usd = 0 for an unpriced model rather than a genuinely
+// free run.
+//
+// NOTE: this comment must stay ASCII-only (no em dashes/smart quotes) --
+// sqlc v1.31.1's sqlite tokenizer mis-locates the query's final token when
+// a non-ASCII byte appears in a preceding "--" comment, silently truncating
+// the generated query string (confirmed by bisection while adding this
+// query; every other .sql file in this directory is ASCII-only for the
+// same likely reason).
+func (q *Queries) CountTaskCostUnknownRuns(ctx context.Context, taskID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTaskCostUnknownRuns, taskID)
+	var unknown_count int64
+	err := row.Scan(&unknown_count)
+	return unknown_count, err
+}
+
 const createAgentLog = `-- name: CreateAgentLog :exec
 INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
 VALUES (?, ?, ?, ?, ?)

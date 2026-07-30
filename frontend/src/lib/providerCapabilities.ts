@@ -113,10 +113,13 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'none',
       note: 'Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md).',
     },
-    costTracking: { support: 'partial', note: 'Tokens only, no cost — a cost budget cap will not reliably fire.' },
+    costTracking: {
+      support: 'partial',
+      note: 'Tokens captured from turn.completed are priced via the pricing table (DB-backed, with a hardcoded fallback) — estimated, not authoritative like claude/opencode. The pre-dispatch max_cost_usd guard now works. Runs on an unpriced model are flagged "cost unknown" instead of $0.',
+    },
     costWatchdog: {
       support: 'none',
-      note: 'Not implemented — codex captures tokens but does not price them (blocked on pricing-table support for this provider, see #245), so mid-run cost can\'t be projected. Only the pre-dispatch budget guard applies.',
+      note: 'Not implemented — usage is only known at end-of-run for this provider, so mid-run cost can\'t be projected. Only the pre-dispatch budget guard applies.',
     },
     imageAttachments: {
       support: 'none',

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,6 +98,29 @@ func (h *e2eHarness) seedRunWithCost(t *testing.T, taskID, agentConfigID string,
 		Status: "completed", CostUsd: cost, ID: runID,
 	}); err != nil {
 		t.Fatalf("complete prior run: %v", err)
+	}
+	h.seedReady(t, taskID)
+}
+
+// seedRunWithUnknownCost inserts a completed agent_runs row for taskID under
+// agentConfigID with cost_usd=0 and cost_unknown=1 — standing in for a run
+// on a model with no resolvable price (see providers.PriceResolver /
+// applyUsageWithCost), where tokens were consumed but no cost figure could
+// be estimated. Moves the task onto "ready" as the final seeding step, same
+// as seedRunWithCost.
+func (h *e2eHarness) seedRunWithUnknownCost(t *testing.T, taskID, agentConfigID string) {
+	t.Helper()
+	ctx := context.Background()
+	runID := uuid.NewString()
+	if _, err := h.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+		ID: runID, TaskID: taskID, AgentConfigID: &agentConfigID,
+	}); err != nil {
+		t.Fatalf("create prior run: %v", err)
+	}
+	if _, err := h.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status: "completed", CostUsd: 0, CostUnknown: 1, ID: runID,
+	}); err != nil {
+		t.Fatalf("complete prior cost-unknown run: %v", err)
 	}
 	h.seedReady(t, taskID)
 }
@@ -294,6 +318,85 @@ func TestE2E_CostBudget(t *testing.T) {
 
 		if h.pub.has("task.cost_warning") {
 			t.Error("expected no task.cost_warning event for a task well under the warn threshold")
+		}
+	})
+
+	// Regression test for the codex_cli bug (issue #245): before the fix,
+	// codex (and any other provider) never priced its captured tokens, so a
+	// run against an unpriced model recorded cost_usd=0 and cost_unknown=0
+	// — indistinguishable from a genuinely free run. That meant a task
+	// pinned to such a provider/model could sit forever under an "active"
+	// budget without the guard ever having complete information, since
+	// SumTaskCost's total silently excluded the unpriced run's real spend.
+	// Now that codex prices tokens via applyUsageWithCost and sets
+	// cost_unknown for unpriced models (see providers/parse.go,
+	// providers/codex.go), checkCostBudget treats a cost-unknown run under
+	// an active budget as "budget cannot be enforced" and escalates to
+	// waiting_human rather than silently dispatching again — the same
+	// phantom-run mechanism as a literally-exhausted budget, just with a
+	// distinct message.
+	t.Run("cost-unknown run under an active budget: escalates without dispatching", func(t *testing.T) {
+		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+		h := newE2EHarness(t, fp)
+		wfID := seedE2EWorkflow(t, h.q)
+		// effective budget 10.00; recorded spend is $0 (well under budget on
+		// paper), but the one run that ran is flagged cost_unknown — the
+		// dispatcher must not treat that $0 as "genuinely free".
+		taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 0, 10.00)
+		h.seedRunWithUnknownCost(t, taskID, cfgID)
+
+		esc := h.pollTask(t, taskID, func(tk gen.Task) bool {
+			return tk.ActiveAgentRunID != nil
+		}, "task to be locked on a cost-unknown phantom run")
+
+		run, err := h.q.GetAgentRun(context.Background(), *esc.ActiveAgentRunID)
+		if err != nil {
+			t.Fatalf("get agent run: %v", err)
+		}
+		if run.Status != "waiting_human" {
+			t.Fatalf("expected phantom run status 'waiting_human', got %q", run.Status)
+		}
+		if run.Notes == nil {
+			t.Fatal("expected phantom run to carry an explanatory notes message")
+		}
+		wantSubstr := "cost budget cannot be enforced"
+		if !strings.Contains(*run.Notes, wantSubstr) {
+			t.Errorf("expected notes to contain %q, got %q", wantSubstr, *run.Notes)
+		}
+		if esc.Label != "ready" {
+			t.Errorf("expected task to stay on 'ready', got %q", esc.Label)
+		}
+		if !h.pub.has("task.needs_human") {
+			t.Error("expected task.needs_human event when a cost-unknown run blocks an active budget")
+		}
+		if len(fp.inputs) != 0 {
+			t.Errorf("expected the provider to never be invoked, got %d invocations", len(fp.inputs))
+		}
+	})
+
+	// A cost-unknown run that also happens to already exceed the budget on
+	// its own recorded (possibly incomplete) spend must still surface the
+	// ordinary "budget exhausted" message, not the cost-unknown one — the
+	// cost-unknown check only fires while spent < budget (see
+	// checkCostBudget's doc comment), so it never masks an
+	// independently-exhausted budget.
+	t.Run("cost-unknown run that also exceeds budget: ordinary budget-exhausted message wins", func(t *testing.T) {
+		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+		h := newE2EHarness(t, fp)
+		wfID := seedE2EWorkflow(t, h.q)
+		taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 0, 1.00)
+		h.seedRunWithCost(t, taskID, cfgID, 1.50)
+
+		esc := h.pollTask(t, taskID, func(tk gen.Task) bool {
+			return tk.ActiveAgentRunID != nil
+		}, "task to be locked on a budget-exhausted phantom run")
+		run, err := h.q.GetAgentRun(context.Background(), *esc.ActiveAgentRunID)
+		if err != nil {
+			t.Fatalf("get agent run: %v", err)
+		}
+		wantMsg := "budget exhausted: $1.50 of $1.00"
+		if run.Notes == nil || *run.Notes != wantMsg {
+			t.Errorf("expected the ordinary exhaustion message %q, got %v", wantMsg, run.Notes)
 		}
 	})
 }

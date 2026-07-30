@@ -100,6 +100,15 @@ func TestMain(m *testing.M) {
 	case "exit1":
 		fmt.Println(`{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}`)
 		os.Exit(1)
+	case "exit1_with_usage":
+		// Like "exit1", but the turn reports usage before failing — a run
+		// that spent tokens/money and then crashed must still have that
+		// usage priced and persisted (see
+		// TestCodexRunner_Run_FailurePathPersistsPricedCost; regression for
+		// issue #245's fix not covering failure paths).
+		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}`)
+		fmt.Println(`{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}`)
+		os.Exit(1)
 	case "oversized_line":
 		// Mirrors claude's "oversized_line" case above — proves the shared
 		// scanLines helper (scan.go) fixes the same bug across every CLI
