@@ -109,3 +109,29 @@ func TestRawMCPServerConfigsFrom_SkipsTaskEditorAndMissing(t *testing.T) {
 		t.Fatalf("want command context7-mcp, got %q", entry.Command)
 	}
 }
+
+// TestListInstalledClaudePlugins_UsesRealHome exercises the thin
+// os.UserHomeDir()-driven wrapper (not just the *From core already covered
+// above), against whatever the real environment provides. It should never
+// error and should return a (possibly empty) slice.
+func TestListInstalledClaudePlugins_UsesRealHome(t *testing.T) {
+	got, err := ListInstalledClaudePlugins()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("want non-nil slice (even if empty)")
+	}
+}
+
+// TestListAvailableClaudeMCPServers_UsesRealHome exercises the thin
+// os.UserHomeDir()-driven wrapper against the real environment.
+func TestListAvailableClaudeMCPServers_UsesRealHome(t *testing.T) {
+	got, err := ListAvailableClaudeMCPServers()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("want non-nil slice (even if empty)")
+	}
+}

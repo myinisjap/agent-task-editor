@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 )
@@ -267,4 +268,65 @@ func TestLLMRunner_GetTaskTransitions(t *testing.T) {
 	if len(got) != 1 || got[0].ToLabel != "review" {
 		t.Fatalf("unexpected transitions: %+v", got)
 	}
+}
+
+func TestParseLLMRateLimitReset(t *testing.T) {
+	now := time.Now()
+
+	t.Run("rfc3339 requests header", func(t *testing.T) {
+		h := http.Header{}
+		reset := now.Add(90 * time.Second).UTC().Truncate(time.Second)
+		h.Set("x-ratelimit-reset-requests", reset.Format(time.RFC3339))
+		got := parseLLMRateLimitReset(h)
+		if !got.Equal(reset) {
+			t.Fatalf("got %v, want %v", got, reset)
+		}
+	})
+
+	t.Run("rfc3339 tokens header", func(t *testing.T) {
+		h := http.Header{}
+		reset := now.Add(45 * time.Second).UTC().Truncate(time.Second)
+		h.Set("x-ratelimit-reset-tokens", reset.Format(time.RFC3339))
+		got := parseLLMRateLimitReset(h)
+		if !got.Equal(reset) {
+			t.Fatalf("got %v, want %v", got, reset)
+		}
+	})
+
+	t.Run("retry-after seconds", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("retry-after", "30")
+		before := time.Now()
+		got := parseLLMRateLimitReset(h)
+		if got.Before(before.Add(29*time.Second)) || got.After(before.Add(31*time.Second)) {
+			t.Fatalf("got %v, want ~30s from now (%v)", got, before)
+		}
+	})
+
+	t.Run("retry-after http date", func(t *testing.T) {
+		h := http.Header{}
+		reset := now.Add(2 * time.Minute).UTC().Truncate(time.Second)
+		h.Set("retry-after", reset.Format(http.TimeFormat))
+		got := parseLLMRateLimitReset(h)
+		if !got.Equal(reset) {
+			t.Fatalf("got %v, want %v", got, reset)
+		}
+	})
+
+	t.Run("no usable headers", func(t *testing.T) {
+		h := http.Header{}
+		got := parseLLMRateLimitReset(h)
+		if !got.IsZero() {
+			t.Fatalf("want zero time, got %v", got)
+		}
+	})
+
+	t.Run("unparseable retry-after falls through to zero", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("retry-after", "not-a-duration-or-date")
+		got := parseLLMRateLimitReset(h)
+		if !got.IsZero() {
+			t.Fatalf("want zero time, got %v", got)
+		}
+	})
 }
