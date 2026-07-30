@@ -386,3 +386,45 @@ func TestTaskTypeFromLabels(t *testing.T) {
 		}
 	}
 }
+
+// TestImporterRun_TicksAndSweeps verifies Run's ticker loop actually invokes
+// Sweep on each tick (observed via a task being imported) and returns
+// promptly once its context is cancelled.
+func TestImporterRun_TicksAndSweeps(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	seedRepo(t, q, 1, true)
+
+	src := fakeSource{items: []ExternalTask{{Ref: "acme/widgets#1", Title: "from run loop"}}}
+	im := New(db.SQL(), &recordingPub{}, 10*time.Millisecond, src)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		im.Run(ctx)
+		close(done)
+	}()
+
+	// Wait for the ticker to fire at least once and import the task.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		tasks, err := q.ListTasks(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tasks) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Run did not sweep/import within the deadline")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return promptly after context cancellation")
+	}
+}

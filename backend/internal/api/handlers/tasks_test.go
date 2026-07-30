@@ -123,6 +123,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Delete("/tasks/{id}", h.Delete)
 	r.Patch("/tasks/{id}/label", h.MoveLabel)
 	r.Get("/tasks/{id}/runs", h.ListRuns)
+	r.Get("/tasks/{id}/runs/{run_id}", h.GetRun)
 	r.Get("/tasks/{id}/runs/{run_id}/logs", h.GetRunLogs)
 	r.Post("/tasks/{id}/runs/{run_id}/cancel", h.CancelRun)
 	r.Patch("/tasks/{id}/pause", h.SetPaused)
@@ -131,6 +132,11 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Patch("/tasks/{id}/git-state", h.UpdateGitState)
 	r.Get("/tasks/{id}/label-history", h.ListLabelHistory)
 	r.Get("/tasks/{id}/source-comments", h.ListSourceComments)
+	r.Post("/tasks/{id}/approve", h.Approve)
+	r.Post("/tasks/{id}/reject", h.Reject)
+	r.Patch("/tasks/{id}/notes", h.UpdateNotes)
+	r.Post("/tasks/{id}/rerun", h.Rerun)
+	r.Get("/tasks/{id}/diff", h.Diff)
 
 	return r, q, wfID, repoID
 }
@@ -2473,5 +2479,489 @@ func TestUpdateGitState_NonMergedState_NoWriteback(t *testing.T) {
 	}
 	if len(fwb.closeCalls) != 0 {
 		t.Fatalf("expected no close-with-comment calls for a non-merged state, got %v", fwb.closeCalls)
+	}
+}
+
+// ---------- Approve / Reject / UpdateNotes / Rerun / ListLabelHistory ----------
+
+func TestTasks_Approve_OK(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve", jsonBody(t, map[string]string{"note": "lgtm"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Label != "done" {
+		t.Errorf("expected label 'done', got %q", got.Label)
+	}
+}
+
+func TestTasks_Approve_UnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+uuid.NewString()+"/approve", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_Approve_NoHumanTransition(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	// "work" has no human transition defined from it in the default workflow.
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Working", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestTasks_Approve_RunningRunBlocks(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: taskID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(context.Background(), gen.UpdateAgentRunStatusParams{Status: "running", ID: runID}); err != nil {
+		t.Fatalf("set run status: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ID: taskID, CurrentAgentRunID: &runID, ActiveAgentRunID: &runID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestTasks_Reject_OK(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/reject", jsonBody(t, map[string]string{"note": "needs work"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Label != "work" {
+		t.Errorf("expected label 'work', got %q", got.Label)
+	}
+}
+
+func TestTasks_Reject_ToLabelOverride(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review-plan",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/reject", jsonBody(t, map[string]string{"to_label": "plan"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Label != "plan" {
+		t.Errorf("expected label 'plan', got %q", got.Label)
+	}
+}
+
+func TestTasks_Reject_NotePersistedAsFeedback(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: taskID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(context.Background(), gen.UpdateAgentRunStatusParams{Status: "completed", ID: runID}); err != nil {
+		t.Fatalf("set run status: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ID: taskID, CurrentAgentRunID: &runID, ActiveAgentRunID: nil,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/reject", jsonBody(t, map[string]string{"note": "please fix X"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.Feedback == nil || *run.Feedback != "please fix X" {
+		t.Errorf("expected feedback to be persisted, got %v", run.Feedback)
+	}
+}
+
+func TestTasks_Reject_InvalidBody(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/reject", strings.NewReader("{not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestTasks_Reject_UnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+uuid.NewString()+"/reject", jsonBody(t, map[string]string{}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_UpdateNotes_Replace(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", jsonBody(t, map[string]any{"notes": "first note"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", jsonBody(t, map[string]any{"notes": "second note"}))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.AgentNotes != "second note" {
+		t.Errorf("expected notes replaced, got %q", got.AgentNotes)
+	}
+}
+
+func TestTasks_UpdateNotes_Append(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", jsonBody(t, map[string]any{"notes": "first note"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", jsonBody(t, map[string]any{"notes": "second note", "append": true}))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := "first note\n\nsecond note"
+	if got.AgentNotes != want {
+		t.Errorf("expected notes %q, got %q", want, got.AgentNotes)
+	}
+}
+
+func TestTasks_UpdateNotes_AppendUnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+uuid.NewString()+"/notes", jsonBody(t, map[string]any{"notes": "x", "append": true}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_UpdateNotes_InvalidBody(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestTasks_Rerun_ClearsActiveRun(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID, runID := seedRunningRun(t, q, wfID, repoID, "running")
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ID: taskID, CurrentAgentRunID: &runID, ActiveAgentRunID: &runID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/rerun", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body)
+	}
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Errorf("expected active run cleared, got %v", *task.ActiveAgentRunID)
+	}
+}
+
+func TestTasks_Rerun_UnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+uuid.NewString()+"/rerun", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_ListLabelHistory_OrderedOldestFirst(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "not_ready",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	moveTo := func(label string) {
+		req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/label", jsonBody(t, map[string]string{"to_label": label}))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("move to %s: expected 200, got %d: %s", label, w.Code, w.Body)
+		}
+	}
+	moveTo("plan")
+	moveTo("review-plan")
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/label-history", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var history []struct {
+		FromLabel string `json:"from_label"`
+		ToLabel   string `json:"to_label"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(history) < 2 {
+		t.Fatalf("expected at least 2 history entries, got %d", len(history))
+	}
+	if history[0].ToLabel != "plan" {
+		t.Errorf("expected first entry to be the move to 'plan', got %q", history[0].ToLabel)
+	}
+	if history[len(history)-1].ToLabel != "review-plan" {
+		t.Errorf("expected last entry to be the move to 'review-plan', got %q", history[len(history)-1].ToLabel)
+	}
+}
+
+// TestTasks_Create_DefaultsWorkflowWhenOmitted exercises
+// resolveDefaultWorkflowID's happy path: creating a task without a
+// workflow_id resolves to the seeded "Default" workflow rather than
+// erroring or requiring the caller to already know its id.
+func TestTasks_Create_DefaultsWorkflowWhenOmitted(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	body := map[string]string{
+		"title":   "No explicit workflow",
+		"repo_id": repoID,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.WorkflowID != wfID {
+		t.Errorf("expected task to default to the seeded workflow %s, got %s", wfID, task.WorkflowID)
+	}
+}
+
+// TestTasks_Create_DefaultsToAlphabeticallyFirstWorkflow_WhenNoneNamedDefault
+// exercises resolveDefaultWorkflowID's fallback branch: when the "Default"
+// workflow has been renamed (or never existed), task creation without an
+// explicit workflow_id falls back to the alphabetically-first workflow by
+// name rather than erroring.
+func TestTasks_Create_DefaultsToAlphabeticallyFirstWorkflow_WhenNoneNamedDefault(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), noopPub{})
+
+	wfs, err := q.ListWorkflows(context.Background())
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("expected a seeded workflow, err=%v wfs=%v", err, wfs)
+	}
+	// Rename the seeded "Default" workflow away, and add a second workflow
+	// that alphabetically precedes it, so the fallback path is unambiguous.
+	if _, err := q.UpdateWorkflow(context.Background(), gen.UpdateWorkflowParams{
+		ID: wfs[0].ID, Name: "Zulu", Description: wfs[0].Description,
+	}); err != nil {
+		t.Fatalf("rename workflow: %v", err)
+	}
+	alpha, err := q.CreateWorkflow(context.Background(), gen.CreateWorkflowParams{
+		ID: uuid.NewString(), Name: "Alpha", Description: "",
+	})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	if _, err := q.CreateWorkflowLabel(context.Background(), gen.CreateWorkflowLabelParams{
+		ID: uuid.NewString(), WorkflowID: alpha.ID, Name: "not_ready", Color: "#888", SortOrder: 0, AgentIgnore: 1,
+	}); err != nil {
+		t.Fatalf("create label: %v", err)
+	}
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID: repoID, Name: "test-repo", Path: t.TempDir(), WorkflowID: &wfs[0].ID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+	r := chi.NewRouter()
+	r.Post("/tasks", h.Create)
+
+	body := map[string]string{"title": "No explicit workflow", "repo_id": repoID}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.WorkflowID != alpha.ID {
+		t.Errorf("expected task to default to the alphabetically-first workflow %s (Alpha), got %s", alpha.ID, task.WorkflowID)
 	}
 }

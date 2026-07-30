@@ -553,3 +553,80 @@ func TestSyncTask_Writeback_DisabledRepo_NoOp(t *testing.T) {
 		t.Fatalf("expected no writeback calls when repo has writeback disabled, got %v", fwb.commentCalls)
 	}
 }
+
+// TestNew_WiresRealGHClient verifies New returns a fully-wired Syncer (as
+// opposed to the newTestSyncer* helpers above, which construct one manually
+// with fakes) — the real construction path used by main.
+func TestNew_WiresRealGHClient(t *testing.T) {
+	f, err := os.CreateTemp("", "ghsync-new-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+
+	db, err := storage.Open(f.Name())
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	hub := &fakeHub{}
+	s := New(db.SQL(), hub, 5*time.Minute, nil)
+	if s == nil {
+		t.Fatal("expected New to return a non-nil Syncer")
+	}
+	if s.interval != 5*time.Minute {
+		t.Errorf("expected interval 5m, got %v", s.interval)
+	}
+	if s.q == nil || s.hub == nil || s.wb == nil {
+		t.Error("expected New to wire queries, hub, and writeback")
+	}
+	if s.getPR == nil || s.getPRHead == nil || s.getReviews == nil || s.getReviewComments == nil || s.getFailedChecks == nil {
+		t.Error("expected New to wire all real ghclient functions")
+	}
+}
+
+// TestRun_SweepsOnTickerAndStopsOnCancel verifies Run invokes sweep on each
+// tick (observed here via a fake getPR that signals on a channel) and returns
+// promptly once its context is cancelled.
+func TestRun_SweepsOnTickerAndStopsOnCancel(t *testing.T) {
+	repoPath := initRepo(t)
+	branch := "feature-branch"
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	gitWorktreeAdd(t, repoPath, branch, wtPath)
+
+	swept := make(chan struct{}, 1)
+	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+		select {
+		case swept <- struct{}{}:
+		default:
+		}
+		return "", "", 0, nil
+	}
+	s, q, _ := newTestSyncer(t, getPR)
+	s.interval = 10 * time.Millisecond
+	wfID, label := newTestWorkflow(t, q)
+	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
+	newTestTask(t, q, repoID, wfID, label, branch, wtPath, "", "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-swept:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Run to sweep at least once")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Run to return after cancel")
+	}
+}

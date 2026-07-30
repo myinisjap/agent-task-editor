@@ -38,6 +38,7 @@ func setupAgentsRouter(t *testing.T) (http.Handler, *gen.Queries) {
 	r.Get("/agents/{id}", h.Get)
 	r.Put("/agents/{id}", h.Update)
 	r.Delete("/agents/{id}", h.Delete)
+	r.Get("/agent-models", h.GetModels)
 	return r, q
 }
 
@@ -509,5 +510,234 @@ func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {
 	}
 	if preserved.RetryBackoffSecs != 15 {
 		t.Errorf("expected retry_backoff_secs to stay 15, got %d", preserved.RetryBackoffSecs)
+	}
+}
+
+// ---------- Get / Delete / labelConflict ----------
+
+func TestAgentsGet_OK(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{"name": "cfg-a", "provider_config_id": pcID})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/agents/"+created.ID, nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if got.ID != created.ID || got.Name != "cfg-a" {
+		t.Errorf("expected config cfg-a with id %s, got %+v", created.ID, got)
+	}
+}
+
+func TestAgentsGet_Unknown(t *testing.T) {
+	router, _ := setupAgentsRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/agents/"+uuid.NewString(), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestAgentsDelete_OK(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{"name": "cfg-a", "provider_config_id": pcID})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/agents/"+created.ID, nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/agents/"+created.ID, nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected deleted config to 404 on Get, got %d", w.Code)
+	}
+}
+
+func TestAgentsDelete_Unknown(t *testing.T) {
+	router, _ := setupAgentsRouter(t)
+
+	// Deleting an unknown id is a no-op DELETE (0 rows affected), not an error.
+	req := httptest.NewRequest(http.MethodDelete, "/agents/"+uuid.NewString(), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentsCreate_LabelConflict_DisablesNewConfig exercises labelConflict's
+// conflict branch: creating a second enabled config that shares a label with
+// an already-enabled config should succeed but come back disabled, with the
+// conflicting config's name surfaced in X-Label-Conflict.
+func TestAgentsCreate_LabelConflict_DisablesNewConfig(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name": "first", "provider_config_id": pcID, "labels": `["work"]`,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create first: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var first agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&first); err != nil {
+		t.Fatalf("decode first: %v", err)
+	}
+	if !first.Enabled {
+		t.Fatalf("expected first config to be enabled, got %+v", first)
+	}
+
+	w = postJSON(t, router, "/agents", map[string]any{
+		"name": "second", "provider_config_id": pcID, "labels": `["work"]`,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create second: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if conflict := w.Header().Get("X-Label-Conflict"); conflict != "first" {
+		t.Errorf("expected X-Label-Conflict 'first', got %q", conflict)
+	}
+	var second agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&second); err != nil {
+		t.Fatalf("decode second: %v", err)
+	}
+	if second.Enabled {
+		t.Errorf("expected second config to start disabled due to label conflict, got enabled")
+	}
+}
+
+// TestAgentsCreate_NoLabelConflict_WhenLabelsDiffer verifies the non-conflict
+// path of labelConflict: distinct labels never trigger a disable.
+func TestAgentsCreate_NoLabelConflict_WhenLabelsDiffer(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name": "first", "provider_config_id": pcID, "labels": `["work"]`,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create first: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = postJSON(t, router, "/agents", map[string]any{
+		"name": "second", "provider_config_id": pcID, "labels": `["testing"]`,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create second: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if conflict := w.Header().Get("X-Label-Conflict"); conflict != "" {
+		t.Errorf("expected no X-Label-Conflict header, got %q", conflict)
+	}
+	var second agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&second); err != nil {
+		t.Fatalf("decode second: %v", err)
+	}
+	if !second.Enabled {
+		t.Errorf("expected second config to be enabled (no conflict), got disabled")
+	}
+}
+
+// TestAgentsGetModels_MissingProvider verifies the required-query-param
+// validation (400) when ?provider is omitted.
+func TestAgentsGetModels_MissingProvider(t *testing.T) {
+	router, _ := setupAgentsRouter(t)
+	w := httptest.NewRequest(http.MethodGet, "/agent-models", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, w)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAgentsGetModels_KnownFixedListProvider verifies a provider with a
+// hardcoded model list (claude) returns that list and a sensible default.
+func TestAgentsGetModels_KnownFixedListProvider(t *testing.T) {
+	router, _ := setupAgentsRouter(t)
+	w := httptest.NewRequest(http.MethodGet, "/agent-models?provider=claude", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, w)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Provider     string   `json:"provider"`
+		DefaultModel string   `json:"default_model"`
+		Models       []string `json:"models"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Provider != "claude" {
+		t.Errorf("provider = %q, want claude", resp.Provider)
+	}
+	if resp.DefaultModel != "sonnet" {
+		t.Errorf("default_model = %q, want sonnet", resp.DefaultModel)
+	}
+	if len(resp.Models) == 0 {
+		t.Errorf("expected non-empty models list")
+	}
+}
+
+// TestAgentsGetModels_KnownProviderNoFixedList verifies a known provider
+// without a hardcoded model list (e.g. qwen_code) returns 200 with an empty
+// models array rather than a 404, so the UI can fall back to free-text entry.
+func TestAgentsGetModels_KnownProviderNoFixedList(t *testing.T) {
+	router, _ := setupAgentsRouter(t)
+	w := httptest.NewRequest(http.MethodGet, "/agent-models?provider=qwen_code", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, w)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Models) != 0 {
+		t.Errorf("expected empty models list, got %v", resp.Models)
+	}
+}
+
+// TestAgentsGetModels_UnknownProvider verifies an unrecognized provider
+// string returns 404.
+func TestAgentsGetModels_UnknownProvider(t *testing.T) {
+	router, _ := setupAgentsRouter(t)
+	w := httptest.NewRequest(http.MethodGet, "/agent-models?provider=nonexistent", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, w)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

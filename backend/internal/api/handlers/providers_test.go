@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -370,5 +371,42 @@ func TestProviderConfigsDelete_BlockedWhenReferenced(t *testing.T) {
 	router.ServeHTTP(w2, req)
 	if w2.Code != http.StatusConflict {
 		t.Fatalf("expected 409 when provider config is referenced, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+// TestProviderConfigsDelete_BlockedWhenReferencedByChatSession covers the
+// second (chat-session) branch of the referenced-config guard, distinct from
+// the agent-config branch above.
+func TestProviderConfigsDelete_BlockedWhenReferencedByChatSession(t *testing.T) {
+	router, q := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{"name": "in-use-by-chat", "provider": "claude"})
+	var pc gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&pc); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID:   repoID,
+		Name: "chat-repo",
+		Path: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	if _, err := q.CreateChatSession(context.Background(), gen.CreateChatSessionParams{
+		ID:               uuid.NewString(),
+		RepoID:           repoID,
+		ProviderConfigID: pc.ID,
+		Title:            "chat using it",
+	}); err != nil {
+		t.Fatalf("seed chat session: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/provider-configs/"+pc.ID, nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when provider config is referenced by a chat session, got %d: %s", w2.Code, w2.Body.String())
 	}
 }

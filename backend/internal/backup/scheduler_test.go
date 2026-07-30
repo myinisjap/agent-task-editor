@@ -191,3 +191,37 @@ func TestRunOnce_KeepZeroOrNegative_DisablesPruning(t *testing.T) {
 		t.Fatalf("expected no pruning with keep<=0, got %d entries", len(entries))
 	}
 }
+
+// TestScheduler_Run_ReturnsOnContextCancel verifies Run's ctx.Done() branch:
+// with the context already cancelled, Run must return promptly without
+// blocking on the (10-minute-floored) timer, and without writing a
+// snapshot.
+func TestScheduler_Run_ReturnsOnContextCancel(t *testing.T) {
+	db := openTestDB(t)
+	dir := t.TempDir()
+
+	s := backup.New(db, dir, time.Hour, 7)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return promptly after context cancellation")
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no snapshot written before any tick, got %d files", len(entries))
+	}
+}

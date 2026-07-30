@@ -529,6 +529,18 @@ triggers the "Release" workflow the same way.
     `frontend/AGENTS.md`, previously inaccurately described as full `strict`
     mode) and fixed the errors it surfaced, including a task-card priority
     `<select>` that could cast an invalid value straight into `Task['priority']`.
+- **Backend test coverage raised from ~59% to ~78%** with new behavioral
+  tests for previously-untested handlers and helpers (task approve/reject,
+  chat session CRUD, agent config get/delete, task run lookup, dashboard cost
+  aggregation, `internal/storage.SeedDefaultWorkflow`, and several
+  provider/workflow/template edit-conflict branches, among others). CI's
+  coverage metric (`.github/workflows/ci.yml`, backend job) now excludes
+  `internal/storage/gen/` (sqlc-generated, never hand-written) and
+  `cmd/server` (pure process wiring — config/DB/HTTP setup and graceful
+  shutdown, not meaningfully unit-testable) so generated/wiring code no
+  longer drags the number away from reflecting real test coverage; the
+  enforced floor moves from 55.0% to 76.0% against that filtered metric. See
+  `backend/AGENTS.md` § Testing for how to reproduce CI's number locally.
 
 ### Deprecated
 - **The `anthropic` and `llm` providers are disabled for new/updated provider
