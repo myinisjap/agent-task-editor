@@ -163,6 +163,44 @@ func TestReviewComments_ResolveAndReopen(t *testing.T) {
 	}
 }
 
+func TestReviewComments_List_UnknownTask(t *testing.T) {
+	r, _, _ := setupReviewCommentRouter(t)
+
+	req := httptest.NewRequest("GET", "/tasks/"+uuid.NewString()+"/review-comments", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("unknown task: expected 404, got %d", w.Code)
+	}
+}
+
+func TestReviewComments_Update_InvalidStatus(t *testing.T) {
+	r, _, taskID := setupReviewCommentRouter(t)
+	c := createComment(t, r, taskID, map[string]any{
+		"file_path": "main.go", "start_line": 1, "end_line": 1, "body": "x",
+	})
+
+	req := httptest.NewRequest("PATCH", "/tasks/"+taskID+"/review-comments/"+c.ID,
+		jsonBody(t, map[string]any{"status": "bogus"}))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid status: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestReviewComments_Update_UnknownComment(t *testing.T) {
+	r, _, taskID := setupReviewCommentRouter(t)
+
+	req := httptest.NewRequest("PATCH", "/tasks/"+taskID+"/review-comments/"+uuid.NewString(),
+		jsonBody(t, map[string]any{"status": "open"}))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("unknown comment reopen: expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestReviewComments_Delete(t *testing.T) {
 	r, _, taskID := setupReviewCommentRouter(t)
 	c := createComment(t, r, taskID, map[string]any{

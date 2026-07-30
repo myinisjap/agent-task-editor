@@ -467,3 +467,62 @@ func contains(haystack, needle string) bool {
 			return false
 		}())
 }
+
+// TestNew_WiresRealGHClient verifies New returns a non-nil Writeback wired to
+// the real ghclient functions (as opposed to NewWithClient's test seam),
+// which every construction path other than tests goes through.
+func TestNew_WiresRealGHClient(t *testing.T) {
+	q := openTestDB(t)
+	wb := New(q)
+	if wb == nil {
+		t.Fatal("expected New to return a non-nil Writeback")
+	}
+	if wb.q == nil {
+		t.Error("expected New to wire the given queries")
+	}
+	if wb.addLabel == nil || wb.commentOnIssue == nil || wb.closeWithComment == nil {
+		t.Error("expected New to wire all three gh-calling functions")
+	}
+}
+
+// TestNewWithClient_WiresGivenFunctions verifies NewWithClient (the seam
+// other packages' tests use to fake out `gh` calls) wires exactly the given
+// functions rather than falling back to the real ghclient ones.
+func TestNewWithClient_WiresGivenFunctions(t *testing.T) {
+	q := openTestDB(t)
+
+	var addLabelCalled, commentCalled, closeCalled bool
+	wb := NewWithClient(q,
+		func(ctx context.Context, repoName string, issueNumber int, label string) error {
+			addLabelCalled = true
+			return nil
+		},
+		func(ctx context.Context, repoName string, issueNumber int, body string) error {
+			commentCalled = true
+			return nil
+		},
+		func(ctx context.Context, repoName string, issueNumber int, body string) error {
+			closeCalled = true
+			return nil
+		},
+	)
+	if wb == nil {
+		t.Fatal("expected NewWithClient to return a non-nil Writeback")
+	}
+	if wb.q == nil {
+		t.Error("expected NewWithClient to wire the given queries")
+	}
+
+	if err := wb.addLabel(context.Background(), "o/r", 1, "l"); err != nil {
+		t.Fatalf("addLabel: %v", err)
+	}
+	if err := wb.commentOnIssue(context.Background(), "o/r", 1, "body"); err != nil {
+		t.Fatalf("commentOnIssue: %v", err)
+	}
+	if err := wb.closeWithComment(context.Background(), "o/r", 1, "body"); err != nil {
+		t.Fatalf("closeWithComment: %v", err)
+	}
+	if !addLabelCalled || !commentCalled || !closeCalled {
+		t.Errorf("expected all three given functions to be wired and callable, got addLabel=%v comment=%v close=%v", addLabelCalled, commentCalled, closeCalled)
+	}
+}

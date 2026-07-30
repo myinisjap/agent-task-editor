@@ -100,6 +100,61 @@ func TestTemplates_Create_DuplicateName_Returns409(t *testing.T) {
 	}
 }
 
+func TestTemplates_Get_OK(t *testing.T) {
+	r := setupTemplatesRouter(t)
+	tpl := createTemplate(t, r, map[string]string{"name": "gettable"})
+
+	req := httptest.NewRequest(http.MethodGet, "/templates/"+tpl.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTemplate
+	_ = json.NewDecoder(w.Body).Decode(&got)
+	if got.ID != tpl.ID {
+		t.Errorf("expected template %s, got %+v", tpl.ID, got)
+	}
+}
+
+func TestTemplates_Get_NotFound(t *testing.T) {
+	r := setupTemplatesRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/templates/nope", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTemplates_Update_ConflictOnDuplicateName(t *testing.T) {
+	r := setupTemplatesRouter(t)
+	createTemplate(t, r, map[string]string{"name": "taken"})
+	tpl := createTemplate(t, r, map[string]string{"name": "other"})
+
+	req := httptest.NewRequest(http.MethodPut, "/templates/"+tpl.ID, jsonBody(t, map[string]string{"name": "taken"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestTemplates_Update_MissingName_Returns400(t *testing.T) {
+	r := setupTemplatesRouter(t)
+	tpl := createTemplate(t, r, map[string]string{"name": "has-a-name"})
+
+	req := httptest.NewRequest(http.MethodPut, "/templates/"+tpl.ID, jsonBody(t, map[string]string{"title": "no name"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
 func TestTemplates_Update_OK(t *testing.T) {
 	r := setupTemplatesRouter(t)
 	tpl := createTemplate(t, r, map[string]string{"name": "flaky test", "type": "bug"})

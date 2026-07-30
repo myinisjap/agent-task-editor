@@ -152,6 +152,57 @@ func TestWorkflows_Create_MissingName_Returns400(t *testing.T) {
 	}
 }
 
+func TestWorkflows_Create_DuplicateName_Returns400(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+
+	body := map[string]string{"name": "Dupe Workflow"}
+	req := httptest.NewRequest(http.MethodPost, "/workflows", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("first create: expected 201, got %d: %s", w.Code, w.Body)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/workflows", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("duplicate create: expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestWorkflows_Update_DuplicateNameRejected(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows", jsonBody(t, map[string]string{"name": "Existing Name"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seed workflow: expected 201, got %d: %s", w.Code, w.Body)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/workflows", jsonBody(t, map[string]string{"name": "To Rename"}))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var toRename gen.Workflow
+	if err := json.NewDecoder(w.Body).Decode(&toRename); err != nil {
+		t.Fatalf("decode seed workflow: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/workflows/"+toRename.ID,
+		jsonBody(t, map[string]any{"name": "Existing Name"}))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("rename to existing name: expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
 func TestWorkflows_Get_Found(t *testing.T) {
 	r, q := setupWorkflowRouter(t)
 
@@ -337,5 +388,136 @@ labels:
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for wip_limit: 0, got %d: %s", w.Code, w.Body)
+	}
+}
+
+// ---------- UpdateWorkflowYAML ----------
+
+func TestWorkflows_UpdateYAML_ReplacesLabelsAndTransitions(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+
+	wf, err := q.CreateWorkflow(context.Background(), gen.CreateWorkflowParams{
+		ID: "wf-yaml-update", Name: "original-name", Description: "orig",
+	})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	yamlBody := `
+name: updated-name
+description: updated description
+labels:
+  - name: alpha
+    color: "#111"
+    sort_order: 0
+  - name: beta
+    color: "#222"
+    sort_order: 1
+    is_terminal: true
+transitions:
+  - from: alpha
+    to: beta
+    trigger: agent
+`
+	req := httptest.NewRequest(http.MethodPut, "/workflows/"+wf.ID+"/yaml", strings.NewReader(yamlBody))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	var updated struct {
+		gen.Workflow
+		Labels      []gen.WorkflowLabel      `json:"labels"`
+		Transitions []gen.WorkflowTransition `json:"transitions"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.Name != "updated-name" || updated.Description != "updated description" {
+		t.Errorf("expected updated name/description, got %+v", updated.Workflow)
+	}
+	if len(updated.Labels) != 2 {
+		t.Fatalf("expected 2 labels after update, got %d: %+v", len(updated.Labels), updated.Labels)
+	}
+	if len(updated.Transitions) != 1 {
+		t.Fatalf("expected 1 transition after update, got %d: %+v", len(updated.Transitions), updated.Transitions)
+	}
+
+	labels, err := q.ListWorkflowLabels(context.Background(), wf.ID)
+	if err != nil {
+		t.Fatalf("list labels: %v", err)
+	}
+	if len(labels) != 2 {
+		t.Errorf("expected DB to have exactly 2 labels after replace, got %d", len(labels))
+	}
+}
+
+func TestWorkflows_UpdateYAML_InvalidYAML(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	wf, err := q.CreateWorkflow(context.Background(), gen.CreateWorkflowParams{ID: "wf-bad-yaml", Name: "wf"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/workflows/"+wf.ID+"/yaml", strings.NewReader("not: [valid"))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestWorkflows_UpdateYAML_MissingName(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	wf, err := q.CreateWorkflow(context.Background(), gen.CreateWorkflowParams{ID: "wf-no-name", Name: "wf"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/workflows/"+wf.ID+"/yaml", strings.NewReader("labels: []\n"))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestWorkflows_UpdateYAML_DuplicateNameRejected(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	if _, err := q.CreateWorkflow(context.Background(), gen.CreateWorkflowParams{ID: "wf-existing", Name: "taken-name"}); err != nil {
+		t.Fatalf("create workflow 1: %v", err)
+	}
+	wf2, err := q.CreateWorkflow(context.Background(), gen.CreateWorkflowParams{ID: "wf-other", Name: "other-name"})
+	if err != nil {
+		t.Fatalf("create workflow 2: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/workflows/"+wf2.ID+"/yaml", strings.NewReader("name: taken-name\nlabels: []\n"))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestWorkflows_UpdateYAML_UnknownWorkflow(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/workflows/does-not-exist/yaml", strings.NewReader("name: whatever\nlabels: []\n"))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body)
 	}
 }

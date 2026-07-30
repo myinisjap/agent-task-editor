@@ -188,3 +188,154 @@ func TestListRepos_SendsBearerToken(t *testing.T) {
 		t.Errorf("expected repo name in output, got %v", res["text"])
 	}
 }
+
+func TestListWorkflows_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/workflows" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"id": "wf-1", "name": "Default", "labels": []map[string]any{{"name": "work"}, {"name": "review"}}},
+		})
+	}))
+	defer srv.Close()
+
+	res := call(t, newBackend(srv.URL, ""), "list_workflows", map[string]any{})
+	if res["isError"].(bool) {
+		t.Fatalf("unexpected error: %v", res["text"])
+	}
+	text := res["text"].(string)
+	if !strings.Contains(text, "Default") || !strings.Contains(text, "work") || !strings.Contains(text, "review") {
+		t.Errorf("expected workflow name/labels in output, got %v", text)
+	}
+}
+
+func TestListWorkflows_BackendError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"db down"}`))
+	}))
+	defer srv.Close()
+
+	res := call(t, newBackend(srv.URL, ""), "list_workflows", map[string]any{})
+	if !res["isError"].(bool) {
+		t.Fatalf("expected error result")
+	}
+	if !strings.Contains(res["text"].(string), "failed to list workflows") {
+		t.Errorf("unexpected text: %v", res["text"])
+	}
+}
+
+func TestListRepos_BackendError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"db down"}`))
+	}))
+	defer srv.Close()
+
+	res := call(t, newBackend(srv.URL, ""), "list_repos", map[string]any{})
+	if !res["isError"].(bool) {
+		t.Fatalf("expected error result")
+	}
+	if !strings.Contains(res["text"].(string), "failed to list repos") {
+		t.Errorf("unexpected text: %v", res["text"])
+	}
+}
+
+func TestCallTool_UnknownTool(t *testing.T) {
+	be := newBackend("http://example.invalid", "")
+	res := call(t, be, "not_a_real_tool", map[string]any{})
+	if !res["isError"].(bool) {
+		t.Fatalf("expected error result for unknown tool")
+	}
+	if !strings.Contains(res["text"].(string), "unknown tool: not_a_real_tool") {
+		t.Errorf("unexpected text: %v", res["text"])
+	}
+}
+
+func TestServe_Initialize(t *testing.T) {
+	reqLine, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+	var out bytes.Buffer
+	serve(bytes.NewReader(append(reqLine, '\n')), &out, newBackend("http://example.invalid", ""))
+
+	var resp struct {
+		Result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+			ServerInfo      struct {
+				Name string `json:"name"`
+			} `json:"serverInfo"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (raw %q)", err, out.String())
+	}
+	if resp.Result.ServerInfo.Name != "task-editor-board" {
+		t.Errorf("unexpected server info: %+v", resp.Result)
+	}
+}
+
+func TestServe_UnknownMethod(t *testing.T) {
+	reqLine, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "nonexistent/method"})
+	var out bytes.Buffer
+	serve(bytes.NewReader(append(reqLine, '\n')), &out, newBackend("http://example.invalid", ""))
+
+	var resp struct {
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (raw %q)", err, out.String())
+	}
+	if resp.Error == nil || resp.Error.Code != -32601 {
+		t.Fatalf("expected method-not-found error, got %+v", resp.Error)
+	}
+}
+
+func TestServe_ToolsCall_InvalidParams(t *testing.T) {
+	reqLine, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": "not an object"})
+	var out bytes.Buffer
+	serve(bytes.NewReader(append(reqLine, '\n')), &out, newBackend("http://example.invalid", ""))
+
+	var resp struct {
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (raw %q)", err, out.String())
+	}
+	if resp.Error == nil || resp.Error.Code != -32602 {
+		t.Fatalf("expected invalid-params error, got %+v", resp.Error)
+	}
+}
+
+func TestServe_NotificationWithoutID_ProducesNoResponse(t *testing.T) {
+	reqLine, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "initialize"})
+	var out bytes.Buffer
+	serve(bytes.NewReader(append(reqLine, '\n')), &out, newBackend("http://example.invalid", ""))
+	if out.Len() != 0 {
+		t.Errorf("expected no response for a notification (no id), got %q", out.String())
+	}
+}
+
+func TestServe_SkipsBlankLinesAndMalformedJSON(t *testing.T) {
+	in := "\n{not json}\n" + `{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n"
+	var out bytes.Buffer
+	serve(strings.NewReader(in), &out, newBackend("http://example.invalid", ""))
+
+	var resp struct {
+		Result struct {
+			ServerInfo struct {
+				Name string `json:"name"`
+			} `json:"serverInfo"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (raw %q)", err, out.String())
+	}
+	if resp.Result.ServerInfo.Name != "task-editor-board" {
+		t.Errorf("expected the valid line to still be processed, got %+v", resp.Result)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -253,4 +254,60 @@ func containsTask(tasks []gen.Task, id string) bool {
 		}
 	}
 	return false
+}
+
+// TestDependencies_Add_UnknownTask_404 verifies Add 404s when the dependent
+// task itself doesn't exist.
+func TestDependencies_Add_UnknownTask_404(t *testing.T) {
+	r, _, q, wfID, repoID := setupDepRouter(t)
+	blocker := mkTask(t, q, wfID, repoID, "Blocker", "work")
+
+	w := addDep(t, r, uuid.NewString(), blocker.ID)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown dependent task, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestDependencies_Add_UnknownBlocker_400 verifies Add 400s when
+// depends_on_task_id doesn't reference a real task.
+func TestDependencies_Add_UnknownBlocker_400(t *testing.T) {
+	r, _, q, wfID, repoID := setupDepRouter(t)
+	a := mkTask(t, q, wfID, repoID, "A", "work")
+
+	w := addDep(t, r, a.ID, uuid.NewString())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown blocker task, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestDependencies_Add_BlockerWorkflowWithoutTerminalLabel_400 verifies Add
+// rejects an edge onto a blocker whose workflow has no terminal label (the
+// dependency could never be satisfied).
+func TestDependencies_Add_BlockerWorkflowWithoutTerminalLabel_400(t *testing.T) {
+	r, _, q, _, repoID := setupDepRouter(t)
+	ctx := context.Background()
+
+	// A workflow with a label but no terminal label at all. Both tasks live in
+	// this workflow so the cross-workflow check (checked first) doesn't also
+	// fire, isolating the no-terminal-label branch.
+	wf2 := uuid.NewString()
+	if _, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{ID: wf2, Name: "NoTerminal", Description: ""}); err != nil {
+		t.Fatalf("create wf2: %v", err)
+	}
+	if _, err := q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
+		ID: uuid.NewString(), WorkflowID: wf2, Name: "work", Color: "#000", SortOrder: 0,
+	}); err != nil {
+		t.Fatalf("create wf2 label: %v", err)
+	}
+
+	a := mkTask(t, q, wf2, repoID, "A", "work")
+	blocker := mkTask(t, q, wf2, repoID, "Blocker", "work")
+
+	w := addDep(t, r, a.ID, blocker.ID)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for blocker workflow without a terminal label, got %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "no terminal label") {
+		t.Errorf("expected 'no terminal label' error, got %s", w.Body.String())
+	}
 }

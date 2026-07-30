@@ -79,3 +79,39 @@ func TestWithinBaseDir_NonexistentPathFallsBackToLexicalClean(t *testing.T) {
 		t.Errorf("withinBaseDir(%q, %q) = true, want false", outside, base)
 	}
 }
+
+// TestIsValidGitRef table-tests the git ref allowlist used by the Tree
+// handler before shelling out to `git ls-tree`, covering the accepted forms
+// (HEAD, HEAD~N/HEAD^N, hex SHAs, branch/tag names) and rejected forms
+// (flag-injection-looking refs, path traversal via "..", empty string).
+func TestIsValidGitRef(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  string
+		want bool
+	}{
+		{"HEAD", "HEAD", true},
+		{"HEAD tilde N", "HEAD~3", true},
+		{"HEAD caret N", "HEAD^2", true},
+		{"40-char hex sha", "abcdef0123456789abcdef0123456789abcdef01", true},
+		{"64-char hex sha", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd", true},
+		{"simple branch name", "main", true},
+		{"branch with slash", "feature/foo-bar", true},
+		{"branch with dots and dashes", "release-1.2.3", true},
+		{"empty string", "", false},
+		{"leading dash looks like a flag", "--no-index", false},
+		{"leading dot", ".hidden", false},
+		{"leading slash", "/etc/passwd", false},
+		{"contains double dot traversal", "foo..bar", false},
+		{"contains double dot at start", "..", false},
+		{"contains space", "foo bar", false},
+		{"contains shell metacharacter", "foo;rm -rf", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isValidGitRef(tc.ref); got != tc.want {
+				t.Errorf("isValidGitRef(%q) = %v, want %v", tc.ref, got, tc.want)
+			}
+		})
+	}
+}

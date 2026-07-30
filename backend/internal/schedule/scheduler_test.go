@@ -310,3 +310,84 @@ func TestSweepSkipsRepoWithoutWorkflow(t *testing.T) {
 		t.Fatalf("expected 0 tasks for repo without workflow, got %d", len(tasks))
 	}
 }
+
+// TestRun_SweepsOnTickerAndStopsOnCancel verifies Run fires Sweep on each
+// tick (observed via a task being created from a due schedule) and returns
+// promptly once its context is cancelled.
+func TestRun_SweepsOnTickerAndStopsOnCancel(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	wf := seedWorkflow(t, q)
+	repo := seedRepo(t, q, &wf.ID)
+	tmpl := seedTemplate(t, q)
+	seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "not_ready", true)
+
+	s := New(db.SQL(), &recordingPub{}, 10*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.Run(ctx)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		tasks, err := q.ListTasks(context.Background())
+		if err != nil {
+			t.Fatalf("list tasks: %v", err)
+		}
+		if len(tasks) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	tasks, err := q.ListTasks(context.Background())
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("timed out waiting for Run to fire the due schedule at least once")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Run to return after cancel")
+	}
+}
+
+// TestSweepSkipsInvalidCronExpression verifies fireIfDue's cron-parse-error
+// branch: a schedule with a malformed cron expression is skipped (no task
+// created, no panic), rather than blocking the rest of the sweep.
+func TestSweepSkipsInvalidCronExpression(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	wf := seedWorkflow(t, q)
+	repo := seedRepo(t, q, &wf.ID)
+	tmpl := seedTemplate(t, q)
+	// CreateTaskSchedule doesn't validate cron syntax itself (only the HTTP
+	// handler does), so this seeds a schedule the handler would have rejected.
+	seedSchedule(t, q, tmpl.ID, repo.ID, "not a cron expression", "not_ready", true)
+
+	s := New(db.SQL(), &recordingPub{}, time.Minute)
+	s.Sweep(context.Background())
+
+	tasks, err := q.ListTasks(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected 0 tasks for an invalid cron schedule, got %d", len(tasks))
+	}
+}
+
+// Note: fireIfDue's repo-lookup and template-lookup error branches (GetRepo/
+// GetTaskTemplate returning sql.ErrNoRows) are not covered by a dedicated
+// test — task_schedules.template_id/repo_id are both `REFERENCES ... ON
+// DELETE CASCADE`, so a schedule can never legitimately reference a missing
+// template or repo through normal DB operations (deleting either cascades
+// and removes the schedule too). Forcing an orphaned row would require
+// bypassing FK enforcement mid-test, which isn't worth the fragility for
+// what's ultimately unreachable-in-practice defensive code.

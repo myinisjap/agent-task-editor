@@ -140,3 +140,13 @@ func TestRateLimitRegistry_BlockedUntil(t *testing.T) {
 		t.Error("expected non-zero blocked-until time")
 	}
 }
+
+func TestErrRateLimit_ErrorAndTransient(t *testing.T) {
+	err := &ErrRateLimit{Message: "too many requests", ResetAt: time.Now().Add(time.Minute)}
+	if got, want := err.Error(), "rate limited: too many requests"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if !err.Transient() {
+		t.Errorf("Transient() = false, want true")
+	}
+}

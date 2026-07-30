@@ -403,3 +403,14 @@ func TestDispatcher_LastSweep_AdvancesOnTick(t *testing.T) {
 	}
 	t.Fatal("expected LastSweep to advance after ticks, it did not")
 }
+
+func TestDispatcher_SetUploadDir(t *testing.T) {
+	d := NewDispatcher(nil, &Pool{maxWorkers: 1}, nil, nil)
+	if d.uploadDir != "" {
+		t.Fatalf("expected empty uploadDir by default, got %q", d.uploadDir)
+	}
+	d.SetUploadDir("/tmp/uploads")
+	if d.uploadDir != "/tmp/uploads" {
+		t.Errorf("SetUploadDir did not take effect: got %q", d.uploadDir)
+	}
+}
