@@ -42,11 +42,14 @@ Budgets" section for the full picture): only `claude.go` and `qwen.go` wire
 `cost_watchdog.go` into their stdout scan loop, since only they get
 per-message token usage from a claude-style stream-json envelope
 (`parse_streamjson.go`'s `extractAssistantUsage`) that can be priced via
-`pricing.go`. `codex.go`/`opencode.go` intentionally do not — `codex` tokens
-are never priced (blocked on #245), and `opencode`'s `step_finish` event only
-carries a cumulative-to-date cost/tokens snapshot (see `parse_opencode.go`),
-not the per-turn incremental usage a watchdog needs to project a running
-total; it's read at end-of-run only (see #287), with no mid-run watchdog
+`pricing.go`. `codex.go`/`opencode.go` intentionally do not — `codex` prices
+its tokens via `applyUsageWithCost` (see `parse.go`), but only once the full
+`turn.completed` event arrives at the end of a run, not incrementally (fixed
+in #245; there is nothing to project against mid-run), and `opencode`'s
+`step_finish` event only carries a cumulative-to-date cost/tokens snapshot
+(see `parse_opencode.go`), not the per-turn incremental usage a watchdog
+needs to project a running total; it's read at end-of-run only (see #287),
+with no mid-run watchdog
 wired up. Do not add watchdog wiring to a provider without first confirming
 it has *priced, incremental* usage available before the run's terminal event
 — otherwise it either can't project a cost (no-op) or would have to guess.
