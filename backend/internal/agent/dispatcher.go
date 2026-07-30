@@ -299,6 +299,19 @@ func (d *Dispatcher) resolveCostWarnRatio(ctx context.Context) float64 {
 // but hasn't exhausted it, this publishes a one-shot task.cost_warning (gated
 // on the task's cost_warned flag so it doesn't refire every sweep) and lets
 // dispatch proceed normally.
+//
+// If the task is otherwise under budget but has at least one run flagged
+// cost_unknown (see CountTaskCostUnknownRuns) -- i.e. tokens were consumed
+// on a model with no resolvable price (see providers.PriceResolver) -- the
+// accumulated spend can't be trusted as complete, since that run's real
+// cost was recorded as $0 rather than estimated. Rather than silently
+// letting the task run unbounded against a budget that no longer means
+// anything, this escalates the same way an exhausted budget does, with a
+// distinct message pointing at Configuration -> Pricing. This only fires
+// while spent < budget: once the budget is independently exhausted on its
+// own (possibly incomplete) recorded spend, the ordinary "budget exhausted"
+// escalation below already covers it, so unknown-cost runs are never used
+// to mask an otherwise-exhausted budget.
 func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig) (bool, error) {
 	budget := effectiveBudget(t.MaxCostUsd, matched.MaxCostUsd)
 	if budget <= 0 {
@@ -313,6 +326,16 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	log := slog.With("component", "dispatcher", "task_id", t.ID)
 
 	if spent < budget {
+		unknownRuns, err := d.q.CountTaskCostUnknownRuns(ctx, t.ID)
+		if err != nil {
+			return false, fmt.Errorf("count task cost-unknown runs: %w", err)
+		}
+		if unknownRuns > 0 {
+			msg := fmt.Sprintf("cost budget cannot be enforced: %d run(s) have unknown cost - add pricing for the model at Configuration -> Pricing", unknownRuns)
+			log.Warn("dispatcher: skipping dispatch, task has cost-unknown runs under an active budget", "spent", spent, "budget", budget, "unknown_runs", unknownRuns)
+			return d.escalateCostBudget(ctx, t, matched, msg, "cost-unknown")
+		}
+
 		warnRatio := d.resolveCostWarnRatio(ctx)
 		if t.CostWarned == 0 && warnRatio > 0 && spent >= warnRatio*budget {
 			log.Warn("dispatcher: cost budget warning threshold crossed", "spent", spent, "budget", budget, "warn_ratio", warnRatio)
@@ -331,21 +354,33 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	}
 	msg := fmt.Sprintf("budget exhausted: $%.2f of $%.2f", spent, budget)
 	log.Warn("dispatcher: skipping dispatch, cost budget exhausted", "spent", spent, "budget", budget)
+	return d.escalateCostBudget(ctx, t, matched, msg, "budget-exhausted")
+}
 
+// escalateCostBudget creates a "phantom" agent_runs row directly in
+// waiting_human status (no provider invocation happens), locks it as the
+// task's active run, and publishes task.needs_human -- the shared mechanism
+// behind both of checkCostBudget's escalation paths (budget exhausted, and
+// budget unenforceable due to cost-unknown runs). reason labels the wrapped
+// error messages for each step (e.g. "budget-exhausted", "cost-unknown").
+// Returns true (skip dispatch) alongside any error, matching
+// checkCostBudget's contract that a failure here should still prevent
+// dispatch this sweep.
+func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, msg, reason string) (bool, error) {
 	runID := uuid.NewString()
 	if _, err := d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:            runID,
 		TaskID:        t.ID,
 		AgentConfigID: &matched.ID,
 	}); err != nil {
-		return true, fmt.Errorf("create budget-exhausted run: %w", err)
+		return true, fmt.Errorf("create %s run: %w", reason, err)
 	}
 	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 		Status: "waiting_human",
 		Notes:  &msg,
 		ID:     runID,
 	}); err != nil {
-		return true, fmt.Errorf("set budget-exhausted run status: %w", err)
+		return true, fmt.Errorf("set %s run status: %w", reason, err)
 	}
 	// Lock the task on this run, same as a real waiting_human escalation —
 	// stays locked until a human acts (raises the budget, or replies via
@@ -355,7 +390,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 		ActiveAgentRunID:  &runID,
 		ID:                t.ID,
 	}); err != nil {
-		return true, fmt.Errorf("lock task on budget-exhausted run: %w", err)
+		return true, fmt.Errorf("lock task on %s run: %w", reason, err)
 	}
 
 	if d.Publisher != nil {

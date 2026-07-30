@@ -3424,7 +3424,7 @@ export interface paths {
         };
         /**
          * List user-editable model pricing rows
-         * @description Returns every row of the user-editable USD-per-1M-token pricing table used to estimate anthropic/llm run costs, ordered by model. Models with no row here fall back to an internal, approximate hardcoded table. See ModelPricing and AgentRun.cost_unknown.
+         * @description Returns every row of the user-editable USD-per-1M-token pricing table used to estimate anthropic/llm/codex_cli run costs, ordered by model. Models with no row here fall back to an internal, approximate hardcoded table. See ModelPricing and AgentRun.cost_unknown.
          */
         get: {
             parameters: {
@@ -3971,7 +3971,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        /** @description One user-editable USD-per-1M-token pricing row (see 042_model_pricing and internal/agent/providers/pricing.go's DBPriceResolver), used to estimate anthropic/llm run costs. A model with no row here falls back to an internal, approximate hardcoded table; a model matching neither has its cost flagged unknown (AgentRun.cost_unknown) instead of being silently reported as free. Read fresh on every run completion, so an edit here takes effect on the very next run without a restart. */
+        /** @description One user-editable USD-per-1M-token pricing row (see 042_model_pricing and internal/agent/providers/pricing.go's DBPriceResolver), used to estimate anthropic/llm/codex_cli run costs. A model with no row here falls back to an internal, approximate hardcoded table; a model matching neither has its cost flagged unknown (AgentRun.cost_unknown) instead of being silently reported as free. Read fresh on every run completion, so an edit here takes effect on the very next run without a restart. */
         ModelPricing: {
             /** @description Model ID, matched exactly first, then by longest-prefix (e.g. a row for "claude-sonnet-4-5" also prices "claude-sonnet-4-5-20260101"). */
             model: string;
@@ -4192,16 +4192,16 @@ export interface components {
             completed_at?: string | null;
             /** Format: date-time */
             created_at: string;
-            /** @description Total input/prompt tokens consumed across the run (summed across all turns of a multi-turn agentic loop). 0 if the provider does not report usage (e.g. opencode currently). */
+            /** @description Total input/prompt tokens consumed across the run (summed across all turns of a multi-turn agentic loop). */
             input_tokens?: number;
             /** @description Total output/completion tokens consumed across the run. */
             output_tokens?: number;
             /**
              * Format: double
-             * @description Estimated USD cost of the run. For the `claude` CLI provider this is the CLI's own authoritative total_cost_usd figure (which may legitimately be 0 under a Claude Max subscription); for anthropic/llm providers it is computed from input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported.
+             * @description USD cost of the run. For the `claude`/`qwen_code`/`opencode` providers this is the CLI's own authoritative reported cost (which may legitimately be 0, e.g. under a Claude Max subscription); for anthropic/llm/codex_cli providers it is *estimated* by computing input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported — see cost_unknown to distinguish that from a genuinely free run.
              */
             cost_usd?: number;
-            /** @description 1 if tokens were consumed but no price entry (user-edited or hardcoded fallback) matched the model, so cost_usd was left at 0 as a placeholder rather than a computed figure — add a row for this model at /settings/pricing to get a real estimate. 0 otherwise, including for claude/qwen_code (which never set this; their cost_usd, including a legitimate 0 under a Claude Max subscription, is always authoritative). */
+            /** @description 1 if tokens were consumed but no price entry (user-edited or hardcoded fallback) matched the model, so cost_usd was left at 0 as a placeholder rather than a computed figure — add a row for this model at /settings/pricing to get a real estimate. Only applies to the anthropic/llm/codex_cli estimation path described under cost_usd. 0 otherwise, including for claude/qwen_code/opencode (which never set this; their cost_usd, including a legitimate 0 under a Claude Max subscription, is always authoritative). */
             cost_unknown?: number;
             /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */
             session_id?: string;

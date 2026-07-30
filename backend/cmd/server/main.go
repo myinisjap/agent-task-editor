@@ -232,7 +232,7 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
 		case "llm", "openai":
 			// Deprecated: disabled for new/updated provider configs (see
 			// deprecatedProviders in handlers/providers.go), retained here so

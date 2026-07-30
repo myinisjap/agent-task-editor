@@ -45,6 +45,13 @@ type CodexRunner struct {
 	// the backend REST API (same container). Set from server config.
 	BackendURL string
 	APIToken   string
+	// PriceResolver resolves model to USD-per-1M pricing so the tokens
+	// captured from "turn.completed" events (see classifyCodexJSON) can be
+	// priced into a Result.CostUSD — codex's own JSON output reports no
+	// total-cost figure, unlike claude/qwen's terminal total_cost_usd. nil
+	// falls back to the hardcoded pricing table (defaultPriceResolver). See
+	// applyUsageWithCost and docs/providers/codex_cli.md.
+	PriceResolver PriceResolver
 }
 
 func (r *CodexRunner) binary() string {
@@ -335,25 +342,37 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		finalSession := sessionID
 		mu.Unlock()
 		res := agent.Result{Status: "failed", SessionID: finalSession}
-		applyUsage(&res, finalUsage)
+		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 		return res, &agent.ErrTransient{Cause: fmt.Errorf("codex output truncated at scan buffer limit")}
 	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
-		return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("codex run timed out")}
+		mu.Lock()
+		finalUsage := usage
+		finalSession := sessionID
+		mu.Unlock()
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("codex run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex exited: %v", err), At: time.Now()}
 		mu.Lock()
 		rl := rateLimited
 		tr := transient
+		finalUsage := usage
+		finalSession := sessionID
 		mu.Unlock()
 		if rl {
-			return agent.Result{Status: "failed"}, &agent.ErrRateLimit{Message: "codex CLI 429: Request rejected by API rate limit"}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
+			return res, &agent.ErrRateLimit{Message: "codex CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
-			return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("codex CLI exited with transient infra error: %w", err)}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
+			return res, &agent.ErrTransient{Cause: fmt.Errorf("codex CLI exited with transient infra error: %w", err)}
 		}
 	}
 
@@ -369,11 +388,11 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		if res.Outcome == "" && outcome != "" {
 			res.Outcome = outcome
 		}
-		applyUsage(&res, finalUsage)
+		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 		res.SessionID = finalSession
 		if err != nil && res.Outcome == "" {
 			failed := agent.Result{Status: "failed", SessionID: finalSession}
-			applyUsage(&failed, finalUsage)
+			applyUsageWithCost(ctx, &failed, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 			return failed, nil
 		}
 		return res, nil
@@ -381,11 +400,11 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 
 	if err != nil && outcome == "" {
 		failed := agent.Result{Status: "failed", SessionID: finalSession}
-		applyUsage(&failed, finalUsage)
+		applyUsageWithCost(ctx, &failed, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 		return failed, nil
 	}
 	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
-	applyUsage(&res, finalUsage)
+	applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 	return res, nil
 }
 

@@ -311,6 +311,115 @@ func TestCodexRunner_Run_Exit0Success(t *testing.T) {
 	}
 }
 
+// TestCodexRunner_Run_PricesTokensAgainstResolver is the regression test for
+// issue #245 (codex_cli cost budgets never trip, because codex never priced
+// its captured tokens — see classifyCodexJSON/applyUsage before this fix).
+// With a PriceResolver that recognizes the configured model, Run must price
+// the "turn.completed" event's 10/20 input/output tokens (see
+// codexHelperInput("exit0_success") above) into a non-zero CostUSD and
+// leave CostUnknown false — the same estimation path qwen/anthropic/llm use
+// (applyUsageWithCost, providers/pricing.go).
+func TestCodexRunner_Run_PricesTokensAgainstResolver(t *testing.T) {
+	runner := &CodexRunner{
+		BinaryPath:    os.Args[0],
+		PriceResolver: fakePriceResolver{inPer1M: 10, outPer1M: 20, known: true},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := codexHelperInput("exit0_success")
+	input.AgentConfig.Model = "priced-model"
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	// 10 input tokens * $10/1M + 20 output tokens * $20/1M = 0.0001 + 0.0004 = 0.0005
+	wantCost := (float64(10)/1_000_000)*10 + (float64(20)/1_000_000)*20
+	if result.CostUSD != wantCost {
+		t.Errorf("CostUSD = %v, want %v (priced from 10/20 tokens)", result.CostUSD, wantCost)
+	}
+	if result.CostUSD <= 0 {
+		t.Error("expected a non-zero CostUSD for a run against a priced model")
+	}
+	if result.CostUnknown {
+		t.Error("expected CostUnknown=false when the model is in the pricing table")
+	}
+}
+
+// TestCodexRunner_Run_UnpricedModelFlagsCostUnknown covers the other half of
+// #245's acceptance criteria: a run whose cost cannot be determined must be
+// flagged, not silently reported as $0. With a PriceResolver that doesn't
+// recognize the configured model (known=false), Run must leave CostUSD at 0
+// but set CostUnknown=true, since tokens were genuinely consumed.
+func TestCodexRunner_Run_UnpricedModelFlagsCostUnknown(t *testing.T) {
+	runner := &CodexRunner{
+		BinaryPath:    os.Args[0],
+		PriceResolver: fakePriceResolver{known: false},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := codexHelperInput("exit0_success")
+	input.AgentConfig.Model = "some-unpriced-model"
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.CostUSD != 0 {
+		t.Errorf("CostUSD = %v, want 0 for an unpriced model", result.CostUSD)
+	}
+	if !result.CostUnknown {
+		t.Error("expected CostUnknown=true for a run with consumed tokens against an unpriced model")
+	}
+	if result.InputTokens != 10 || result.OutputTokens != 20 {
+		t.Errorf("usage = %d/%d, want 10/20 (tokens still recorded even when unpriced)", result.InputTokens, result.OutputTokens)
+	}
+}
+
+// TestCodexRunner_Run_FailurePathPersistsPricedCost verifies that a run
+// whose turn reports usage before ultimately failing (exit1 with
+// turn.completed usage followed by turn.failed, resolving Outcome=failure —
+// see TestCodexRunner_Run_Exit1WithTurnFailed) still prices whatever usage
+// was captured, mirroring qwen's equivalent failure-path coverage. Before
+// the #245 fix, codex captured tokens but never priced them on any path,
+// including this one; a run that failed after spending money still needs an
+// accurate CostUSD/CostUnknown so the pre-dispatch budget guard sees the
+// real accumulated spend.
+func TestCodexRunner_Run_FailurePathPersistsPricedCost(t *testing.T) {
+	runner := &CodexRunner{
+		BinaryPath:    os.Args[0],
+		PriceResolver: fakePriceResolver{inPer1M: 10, outPer1M: 20, known: true},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := codexHelperInput("exit1_with_usage")
+	input.AgentConfig.Model = "priced-model"
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.Outcome != "failure" {
+		t.Errorf("Outcome = %q, want failure", result.Outcome)
+	}
+	if result.InputTokens != 10 || result.OutputTokens != 20 {
+		t.Errorf("usage = %d/%d, want 10/20", result.InputTokens, result.OutputTokens)
+	}
+	wantCost := (float64(10)/1_000_000)*10 + (float64(20)/1_000_000)*20
+	if result.CostUSD != wantCost {
+		t.Errorf("CostUSD = %v, want %v (priced even on a failed run)", result.CostUSD, wantCost)
+	}
+}
+
 // TestCodexRunner_Run_WithMCP_PreparesAndCleansUpCodexHome verifies the MCP
 // sidecar wiring path: when r.MCP is configured with a ServerBinary, Run
 // must call prepareCodexHome to write a per-run $CODEX_HOME/config.toml

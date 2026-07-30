@@ -248,6 +248,37 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **`codex_cli` runs now estimate cost from token usage, so `max_cost_usd`
+  budgets are actually enforced for codex tasks** (#245). `classifyCodexJSON`
+  captured `usage.input_tokens`/`usage.output_tokens` off the `turn.completed`
+  event, but `CodexRunner.Run` never priced them — every codex run persisted
+  `cost_usd = 0`, so the dispatcher's pre-dispatch cost-budget guard
+  (`checkCostBudget`/`SumTaskCost`) saw permanent zero spend and `max_cost_usd`
+  never tripped for a codex-provider task, no matter how much was actually
+  spent. Codex now prices its captured tokens through the same estimation
+  path as `anthropic`/`llm`/`qwen_code` (`applyUsageWithCost`, the DB-backed
+  `model_pricing` table with a hardcoded fallback), on every path that
+  persists usage — including the truncated, timed-out, rate-limited,
+  transient-error, and failed-with-no-outcome returns, not just the golden
+  path, since a run can spend money before crashing. A run against a model
+  with no resolvable price now sets `cost_unknown = true` (mirroring
+  anthropic/llm) instead of silently recording `$0`, so the UI shows "cost
+  unknown" rather than implying a genuinely free run. Additionally, the
+  dispatcher's pre-dispatch budget guard now treats an under-budget task with
+  at least one cost-unknown run as unable to trust its own accumulated
+  spend: it escalates to `waiting_human` with a
+  `cost budget cannot be enforced: N run(s) have unknown cost` message
+  pointing at Configuration → Pricing, rather than letting an unpriced
+  model's runs quietly count as free and let the task dispatch unbounded
+  against a budget that no longer means anything (this only fires while the
+  task is otherwise under budget — an independently-exhausted budget still
+  reports the ordinary "budget exhausted" message). Note: the upstream issue
+  also named `gemini`/`opencode` — this repo has no `gemini` provider, and
+  `opencode` already records authoritative cost/tokens directly from the CLI
+  (fixed separately in #287/#304), so this fix is `codex_cli`-specific. See
+  [docs/providers/codex_cli.md § Cost & Usage
+  Reporting](docs/providers/codex_cli.md#cost--usage-reporting) and
+  [docs/agents.md § Cost Budgets](docs/agents.md#cost-budgets).
 - **Board "agent running" indicator now works.** The pulsing dot on a task
   card never rendered for any task: `BoardPage`'s `runningTaskIds` state had
   no setter and was never populated, even though the `task.agent_started` /

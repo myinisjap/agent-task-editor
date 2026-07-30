@@ -28,10 +28,13 @@ import (
 // JSON has no separate free-text summary field, so the terminal
 // agent_message item.completed is scanned the same way claude/qwen scan
 // their "result" message text), token usage (non-nil only for
-// "turn.completed", which carries a cost-free token count — no total-cost
-// figure is reported by Codex's JSON output, so CostUSD is left at zero, not
-// estimated), a failure Classification derived from "turn.failed"/"error"
-// events, and the session/thread_id carried on "thread.started".
+// "turn.completed", which carries input/output token counts but no
+// total-cost figure — CodexRunner.Run prices these tokens via
+// applyUsageWithCost against the pricing table (DB-backed with a hardcoded
+// fallback, see providers/pricing.go), setting CostUSD to an estimate and
+// CostUnknown when the configured model isn't in the table), a failure
+// Classification derived from "turn.failed"/"error" events, and the
+// session/thread_id carried on "thread.started".
 func classifyCodexJSON(line string) (agent.LogEntry, string, *runUsage, agent.Classification, string) {
 	var envelope struct {
 		Type     string `json:"type"`
