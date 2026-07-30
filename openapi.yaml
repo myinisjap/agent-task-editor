@@ -775,10 +775,10 @@ components:
             as a placeholder rather than a computed figure — add a row for
             this model at /settings/pricing to get a real estimate. Only
             applies to the anthropic/llm/codex_cli estimation path described
-            under cost_usd. 0 otherwise, including for claude/qwen_code/
-            opencode (which never set this; their cost_usd, including a
-            legitimate 0 under a Claude Max subscription, is always
-            authoritative).
+            under cost_usd. 0 otherwise, including for
+            claude/qwen_code/opencode (which never set this; their cost_usd,
+            including a legitimate 0 under a Claude Max subscription, is
+            always authoritative).
         session_id:
           type: string
           description: >-
