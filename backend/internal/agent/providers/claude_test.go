@@ -79,6 +79,17 @@ func TestMain(m *testing.M) {
 		// Only reached if the watchdog failed to cancel the run in time.
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":1000000,"output_tokens":1000000},"total_cost_usd":100}`)
 		os.Exit(0)
+	case "oversized_line":
+		// Simulate: a single stdout line (e.g. an assistant message quoting a
+		// large file a tool Read/Wrote) exceeding the scan buffer limit
+		// (see scan.go's maxScanLineBytes). Emitted well over that cap so the
+		// scanner hits bufio.ErrTooLong regardless of the exact configured
+		// limit. Followed by more output that must NOT be observed by the
+		// runner — proving the truncation, rather than a parse error on this
+		// specific line, is what's detected.
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","content":"` + strings.Repeat("A", 9*1024*1024) + `"}}`)
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
+		os.Exit(0)
 	}
 	switch os.Getenv("CODEX_TEST_HELPER") {
 	case "exit0_success":
@@ -89,6 +100,13 @@ func TestMain(m *testing.M) {
 	case "exit1":
 		fmt.Println(`{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}`)
 		os.Exit(1)
+	case "oversized_line":
+		// Mirrors claude's "oversized_line" case above — proves the shared
+		// scanLines helper (scan.go) fixes the same bug across every CLI
+		// provider, not just claude.
+		fmt.Println(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"` + strings.Repeat("A", 9*1024*1024) + `"}}`)
+		fmt.Println(`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"OUTCOME: success"}}`)
+		os.Exit(0)
 	}
 
 	switch os.Getenv("GEMINI_TEST_HELPER") {
@@ -132,6 +150,12 @@ func TestMain(m *testing.M) {
 		// Only reached if the watchdog failed to cancel the run in time.
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":1000000,"output_tokens":1000000},"total_cost_usd":100}`)
 		os.Exit(0)
+	case "oversized_line":
+		// Mirrors claude's "oversized_line" case above (same stream-json
+		// envelope/parser as claude — see parse_qwen.go).
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","content":"` + strings.Repeat("A", 9*1024*1024) + `"}}`)
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
+		os.Exit(0)
 	}
 
 	switch os.Getenv("OPENCODE_TEST_HELPER") {
@@ -141,6 +165,13 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "exit1":
 		os.Exit(1)
+	case "oversized_line":
+		// Mirrors claude's "oversized_line" case above — proves the shared
+		// scanLines helper (scan.go) fixes the same bug for opencode too.
+		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"` + strings.Repeat("A", 9*1024*1024) + `"}}`)
+		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"OUTCOME: success"}}`)
+		fmt.Println(`{"type":"step_finish","sessionID":"oc-1","part":{"reason":"stop"}}`)
+		os.Exit(0)
 	case "exit0_success_with_usage":
 		// Simulate: opencode emits two step_finish events (one per step),
 		// each carrying cumulative-to-date cost/tokens (see classifyOpencodeJSON's
@@ -543,6 +574,61 @@ func TestClaudeRunner_CostWatchdogKillsRun_SubtractsPriorSpend(t *testing.T) {
 	// runs' own persisted 6.
 	if res.r.CostUSD != 20.0 {
 		t.Errorf("want Result.CostUSD=20.0 (this run's own cost, prior spend subtracted out), got %v", res.r.CostUSD)
+	}
+}
+
+// TestClaude_OversizedLine_Truncation is a regression test for the bug where
+// a single stdout/stderr line exceeding the scanner's buffer cap made the
+// scanning goroutine exit silently (bufio.ErrTooLong from Scan()), dropping
+// the rest of that stream with no log entry and leaving nothing draining the
+// pipe — so a still-writing child could block on a full pipe and the run
+// would only end at the outer timeout. Verifies the fix: the run surfaces a
+// visible LogSystem warning, ends promptly (well under the test's 10s
+// TimeoutSecs), and is NOT reported as "completed" despite the fake CLI
+// itself exiting 0 with what looks like a normal success result line.
+//
+// runWithHelper can't be reused here because it t.Fatalf's on any non-nil
+// error, and the truncation path intentionally returns a non-nil
+// *agent.ErrTransient so the run counts against the bounded retry budget
+// instead of silently reporting completed.
+func TestClaude_OversizedLine_Truncation(t *testing.T) {
+	runner := helperRunner("oversized_line")
+	logCh := make(chan agent.LogEntry, 256)
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), makeInput("oversized_line"), logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	logs := drainLogs(logCh)
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(8 * time.Second):
+		t.Fatal("timed out waiting for Run to return — oversized line likely wedged the run instead of failing promptly")
+	}
+
+	if res.r.Status == "completed" {
+		t.Errorf("want Status != completed (output was truncated), got %q", res.r.Status)
+	}
+	if res.err == nil {
+		t.Error("want a non-nil error signalling the truncated run, got nil")
+	}
+
+	var sawTruncationLog bool
+	for _, e := range logs {
+		if e.Type == agent.LogSystem && (contains(e.Content, "truncated") || contains(e.Content, "scan limit")) {
+			sawTruncationLog = true
+		}
+	}
+	if !sawTruncationLog {
+		t.Errorf("expected a LogSystem entry warning about the truncated output stream, got logs: %v", logContents(logs))
 	}
 }
 
