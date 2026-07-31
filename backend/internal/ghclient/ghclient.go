@@ -216,10 +216,11 @@ func CreatePR(ctx context.Context, repoName, branch, base, title, body string) (
 	return "pr_open", url, nil
 }
 
-// Mergeability, MergeableUnknown/MergeableClean/MergeableConflicting are
-// aliased from the forge package so existing ghclient callers keep working
-// unchanged while the canonical definitions (and cross-forge contract) live
-// in one place. See forge.Mergeability for the full doc comment.
+// Mergeability is aliased from the forge package so existing ghclient callers
+// keep working unchanged while the canonical definitions (and cross-forge
+// contract) live in one place. MergeableUnknown, MergeableClean, and
+// MergeableConflicting are also aliased. See forge.Mergeability for the full
+// doc comment.
 type Mergeability = forge.Mergeability
 
 const (
