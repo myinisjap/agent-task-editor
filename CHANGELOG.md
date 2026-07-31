@@ -248,6 +248,15 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Subtask creation from planning runs no longer silently fails on permission.**
+  When an agent config had `subtasks_enabled`, the sidecar registered the
+  `create_subtask` MCP tool, but the Claude and Qwen runners never added it to
+  their explicit tool allow-lists (`--allowedTools` / `--allowed-tools`). The CLI
+  offered the tool, the agent called it, and the call was rejected with "Claude
+  requested permissions to use mcp__task-editor__create_subtask, but you haven't
+  granted it yet" — so planned subtasks were dropped and the agent could only
+  note the failure. Both runners now allow-list `create_subtask` whenever the
+  config opts in. (Gemini/Codex were unaffected — they blanket-approve tools.)
 - **`codex_cli` runs now estimate cost from token usage, so `max_cost_usd`
   budgets are actually enforced for codex tasks** (#245). `classifyCodexJSON`
   captured `usage.input_tokens`/`usage.output_tokens` off the `turn.completed`
