@@ -52,7 +52,11 @@ triggers the "Release" workflow the same way.
   unchanged for anyone not configuring `GITEA_HOST`. The `Forge` interface
   itself is deliberately provider-agnostic, so adding a further self-hosted
   forge (e.g. GitLab) in the future is an additional implementation, not a
-  change to `tasksource`/`ghsync`/`writeback`.
+  change to `tasksource`/`ghsync`/`writeback`. In addition to the
+  httptest-server-backed unit tests, `internal/forge/gitea` also ships an
+  opt-in smoke test (`GITEA_SMOKE=1`) that exercises the read-only surface
+  against a real, self-hosted Gitea instance — see
+  [docs/task-sources.md](docs/task-sources.md).
 - **Mid-run cost kill switch + budget early warning.** `max_cost_usd`
   budgets previously only gated the *next* dispatch, so a single runaway run
   could blow arbitrarily far past its cap before anything noticed. Providers
