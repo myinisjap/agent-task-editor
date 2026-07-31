@@ -166,6 +166,14 @@ var (
 		Help: "Total number of `gh` CLI invocations, labeled by logical command.",
 	}, []string{"command"})
 
+	// GiteaCallsTotal counts Gitea REST API calls (internal/forge/gitea),
+	// labeled by logical command name — the Gitea-forge equivalent of
+	// GhCallsTotal, serving the same early-warning-for-rate-limiting purpose.
+	GiteaCallsTotal = factory.NewCounterVec(prometheus.CounterOpts{
+		Name: "ate_gitea_calls_total",
+		Help: "Total number of Gitea REST API calls, labeled by logical command.",
+	}, []string{"command"})
+
 	// ScheduleSweepDurationSeconds observes the wall-clock duration of each
 	// task-schedule sweep (recurring task creation from templates).
 	ScheduleSweepDurationSeconds = factory.NewHistogram(prometheus.HistogramOpts{

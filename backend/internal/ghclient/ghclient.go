@@ -1,5 +1,6 @@
 // Package ghclient provides shared GitHub CLI helpers used by both the HTTP
-// handlers and the background GitHub-sync goroutine.
+// handlers and the background GitHub-sync goroutine. It is the GitHub
+// implementation of the internal/forge.Forge interface — see GitHub below.
 package ghclient
 
 import (
@@ -11,8 +12,84 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 )
+
+// GitHub is the GitHub implementation of forge.Forge. It has no state of its
+// own — every method delegates to the package-level functions below, which
+// shell out to the gh CLI (see runGH). Registered with the forge package's
+// selection registry in init() below so forge.ForRemote can pick it for any
+// github.com remote.
+type GitHub struct{}
+
+var _ forge.Forge = GitHub{}
+
+func init() {
+	forge.Register(GitHub{})
+}
+
+// Name implements forge.Forge. Matches tasksource.GitHubIssues.Name().
+func (GitHub) Name() string { return "github" }
+
+func (GitHub) ParseRepoName(remoteURL string) (string, bool) { return ParseGitHubName(remoteURL) }
+
+func (GitHub) PRForBranch(ctx context.Context, repoName, branch string) (state, prURL string, prNumber int, err error) {
+	return GetPRForBranch(ctx, repoName, branch)
+}
+
+func (GitHub) CreatePR(ctx context.Context, repoName, branch, base, title, body string) (state, prURL string, err error) {
+	return CreatePR(ctx, repoName, branch, base, title, body)
+}
+
+func (GitHub) PRHead(ctx context.Context, repoName, branch string) (forge.PRHead, error) {
+	return GetPRHead(ctx, repoName, branch)
+}
+
+func (GitHub) PRReviews(ctx context.Context, repoName string, prNumber int) ([]forge.Review, error) {
+	return GetPRReviews(ctx, repoName, prNumber)
+}
+
+func (GitHub) PRReviewComments(ctx context.Context, repoName string, prNumber int) ([]forge.PRReviewComment, error) {
+	return GetPRReviewComments(ctx, repoName, prNumber)
+}
+
+func (GitHub) FailedChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return GetFailedChecks(ctx, repoName, prNumber)
+}
+
+func (GitHub) ListOpenIssues(ctx context.Context, repoName, label string) ([]forge.Issue, error) {
+	return ListOpenIssues(ctx, repoName, label)
+}
+
+func (GitHub) GetIssueComments(ctx context.Context, repoName string, issueNumber int) ([]forge.IssueComment, error) {
+	return GetIssueComments(ctx, repoName, issueNumber)
+}
+
+func (GitHub) AddIssueLabel(ctx context.Context, repoName string, issueNumber int, label string) error {
+	return AddIssueLabel(ctx, repoName, issueNumber, label)
+}
+
+func (GitHub) CommentOnIssue(ctx context.Context, repoName string, issueNumber int, body string) error {
+	return CommentOnIssue(ctx, repoName, issueNumber, body)
+}
+
+func (GitHub) CloseIssueWithComment(ctx context.Context, repoName string, issueNumber int, body string) error {
+	return CloseIssueWithComment(ctx, repoName, issueNumber, body)
+}
+
+func (GitHub) AuthStatus() (authed bool, note string) { return GHAuthStatus() }
+
+// CompareURL builds a GitHub compare URL for the given repo/base/branch with
+// a pre-filled PR title and body, so a human can open a properly-described PR
+// in one click without needing GitHub auth or the gh CLI.
+func (GitHub) CompareURL(repoName, base, branch, title, body string) string {
+	q := url.Values{}
+	q.Set("expand", "1")
+	q.Set("title", title)
+	q.Set("body", body)
+	return fmt.Sprintf("https://github.com/%s/compare/%s...%s?%s", repoName, base, branch, q.Encode())
+}
 
 // ghRunner is the subset of *exec.Cmd used by the gh-calling functions below.
 // Abstracted out so tests can substitute a fake without shelling out to a
@@ -142,16 +219,17 @@ func CreatePR(ctx context.Context, repoName, branch, base, title, body string) (
 	return "pr_open", url, nil
 }
 
-// Mergeability is GitHub's verdict on whether a PR can be merged into its
-// base branch without conflicts. GitHub computes this asynchronously after
-// each push to either branch, so MergeableUnknown is a normal transient answer
-// rather than an error — the next sweep usually has a definite one.
-type Mergeability string
+// Mergeability is aliased from the forge package so existing ghclient callers
+// keep working unchanged while the canonical definitions (and cross-forge
+// contract) live in one place. MergeableUnknown, MergeableClean, and
+// MergeableConflicting are also aliased. See forge.Mergeability for the full
+// doc comment.
+type Mergeability = forge.Mergeability
 
 const (
-	MergeableUnknown     Mergeability = "unknown"     // GitHub hasn't computed the test merge yet
-	MergeableClean       Mergeability = "mergeable"   // merges cleanly into the base branch
-	MergeableConflicting Mergeability = "conflicting" // conflicts with the base branch
+	MergeableUnknown     = forge.MergeableUnknown
+	MergeableClean       = forge.MergeableClean
+	MergeableConflicting = forge.MergeableConflicting
 )
 
 // normalizeMergeable maps gh's GraphQL mergeable enum (MERGEABLE /
@@ -169,15 +247,11 @@ func normalizeMergeable(raw string) Mergeability {
 	}
 }
 
-// PRHead holds a PR's number, current head commit SHA, base branch, and
-// mergeability, used by ghsync to detect when the agent has pushed a new
-// commit and whether the PR currently conflicts with its base (see GetPRHead).
-type PRHead struct {
-	Number    int
-	HeadSHA   string
-	BaseRef   string
-	Mergeable Mergeability
-}
+// PRHead is aliased from forge.PRHead — see its doc comment there. Holds a
+// PR's number, current head commit SHA, base branch, and mergeability, used
+// by ghsync to detect when the agent has pushed a new commit and whether the
+// PR currently conflicts with its base (see GetPRHead).
+type PRHead = forge.PRHead
 
 // GetPRHead returns the PR number, head commit SHA, base branch, and
 // mergeability for the given branch, or a zero PRHead if no PR exists yet for
@@ -217,16 +291,11 @@ func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 	}, nil
 }
 
-// Review is a single review left on a PR (a "changes requested"/"approved"/
-// "commented" submission with a body, as opposed to an inline review
-// comment — see PRReviewComment).
-type Review struct {
-	ID          string
-	State       string // "APPROVED", "CHANGES_REQUESTED", "COMMENTED", etc (uppercase, as returned by gh)
-	Body        string
-	Author      string
-	SubmittedAt string // RFC3339 timestamp string, compared lexically for cursor purposes
-}
+// Review is aliased from forge.Review — see its doc comment there. A single
+// review left on a PR (a "changes requested"/"approved"/"commented"
+// submission with a body, as opposed to an inline review comment — see
+// PRReviewComment).
+type Review = forge.Review
 
 // GetPRReviews returns all reviews submitted on the given PR, in the order
 // GitHub returns them (oldest first).
@@ -267,21 +336,11 @@ func GetPRReviews(ctx context.Context, repoName string, prNumber int) ([]Review,
 	return reviews, nil
 }
 
-// PRReviewComment is a single inline (file/line-anchored) review comment left
-// on a PR's diff. Named distinctly from agent.ReviewComment (the local
+// PRReviewComment is aliased from forge.PRReviewComment — see its doc
+// comment there. A single inline (file/line-anchored) review comment left on
+// a PR's diff. Named distinctly from agent.ReviewComment (the local
 // human-left-in-app equivalent) to avoid an import cycle / naming collision.
-type PRReviewComment struct {
-	ID        string
-	Path      string
-	Line      int    // the line the comment is anchored to; 0 if the comment is on an outdated/removed diff position
-	StartLine int    // for multi-line comments; equals Line when the comment spans a single line
-	Side      string // "LEFT" or "RIGHT" (maps to our "old"/"new")
-	Body      string
-	DiffHunk  string
-	CommitID  string
-	Author    string
-	CreatedAt string
-}
+type PRReviewComment = forge.PRReviewComment
 
 // GetPRReviewComments returns all inline review comments left on the given
 // PR's diff, across all reviews. Paginates through the full result set.
@@ -344,13 +403,9 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 	return comments, nil
 }
 
-// Check is a single GitHub Actions / status check result on a PR.
-type Check struct {
-	Name string
-	Link string
-	// Bucket is gh's coarse classification: "pass", "fail", "pending", "skipping", "cancel".
-	Bucket string
-}
+// Check is aliased from forge.Check — see its doc comment there. A single
+// GitHub Actions / status check result on a PR.
+type Check = forge.Check
 
 // GetFailedChecks returns the checks on the given PR whose bucket is "fail"
 // or "cancel" (build/test failures and cancelled runs — both indicate the
@@ -391,14 +446,9 @@ func GetFailedChecks(ctx context.Context, repoName string, prNumber int) ([]Chec
 	return checks, nil
 }
 
-// Issue is a GitHub issue as returned by `gh issue list`.
-type Issue struct {
-	Number int
-	Title  string
-	Body   string
-	URL    string
-	Labels []string // label names only
-}
+// Issue is aliased from forge.Issue — see its doc comment there. A GitHub
+// issue as returned by `gh issue list`.
+type Issue = forge.Issue
 
 // ListOpenIssues returns every open issue for the given repo (org/repo
 // format), optionally filtered to issues carrying the given label (empty =
@@ -469,15 +519,10 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 	return issues, nil
 }
 
-// IssueComment is a single comment on a GitHub issue (not a PR review
-// comment — see PRReviewComment).
-type IssueComment struct {
-	ID                string // GitHub comment id, stringified
-	Author            string // user.login
-	AuthorAssociation string // OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR | NONE ...
-	Body              string
-	CreatedAt         string // RFC3339, as returned by GitHub
-}
+// IssueComment is aliased from forge.IssueComment — see its doc comment
+// there. A single comment on a GitHub issue (not a PR review comment — see
+// PRReviewComment).
+type IssueComment = forge.IssueComment
 
 // GetIssueComments returns every comment on the given issue, in the order
 // GitHub returns them (oldest first). Paginates through the full result set.

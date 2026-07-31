@@ -3836,7 +3836,7 @@ export interface components {
              * @description If set, the task is in a backed-off auto-retry state and will not be picked up by the dispatcher again until this time.
              */
             next_retry_at?: string | null;
-            /** @description Where the task was imported from ("github" for the GitHub Issues importer). Empty for manually created tasks. */
+            /** @description Where the task was imported from ("github" for the GitHub Issues importer, "gitea" for the Gitea Issues importer against a self-hosted instance). Empty for manually created tasks. */
             source?: string;
             /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
             source_ref?: string;
@@ -4150,13 +4150,13 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
-            /** @description GitHub review-comment id when source is 'github' (used to dedup re-sweeps); null for locally-created comments. */
+            /** @description The originating forge's review-comment id when source is not 'local' (used to dedup re-sweeps); null for locally-created comments. */
             external_id?: string | null;
             /**
-             * @description 'local' for comments left in-app; 'github' for comments ingested from a GitHub PR review (see internal/ghsync). Both flow through the same OPEN REVIEW COMMENTS prompt section and resolve loop.
+             * @description 'local' for comments left in-app; 'github'/'gitea' for comments ingested from a PR/MR review on that forge (see internal/ghsync, internal/forge). All flow through the same OPEN REVIEW COMMENTS prompt section and resolve loop.
              * @enum {string}
              */
-            source?: "local" | "github";
+            source?: "local" | "github" | "gitea";
         };
         /** @description One comment ingested from the comment thread of the external item (e.g. GitHub issue) a task was imported from. Append-only and deduped by (task_id, external_id). Only ingested from authors with write access to the repo (OWNER/MEMBER/COLLABORATOR), with this system's own write-back comments filtered out; passed to the agent prompt as explicitly delimited untrusted content. See docs/task-sources.md. */
         TaskSourceComment: {

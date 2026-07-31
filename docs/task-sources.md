@@ -1,11 +1,38 @@
-# Task Sources — GitHub Issues Import
+# Task Sources — Issue Import (GitHub / Gitea)
 
 Tasks are normally created by hand on the board, but they can also be
-**imported from an external tracker**. v1 ships one source: **GitHub
-Issues**. A background poller (`internal/tasksource`) sweeps every repo that
-has issue sync enabled, creates a board task for each matching open issue, and
-keeps existing tasks in step with their issue afterwards — see
+**imported from an external tracker**. Two sources ship today: **GitHub
+Issues** and **Gitea Issues** (against a self-hosted Gitea instance). A
+background poller (`internal/tasksource`) sweeps every repo that has issue
+sync enabled, creates a board task for each matching open issue, and keeps
+existing tasks in step with their issue afterwards — see
 [Keeping imported tasks in sync](#keeping-imported-tasks-in-sync).
+
+Internally, issue import, PR-state sync (`internal/ghsync`), and PR
+creation/write-back all go through a `Forge` interface
+(`internal/forge`) rather than talking to a specific provider directly.
+GitHub (via the `gh` CLI, `internal/ghclient`) and Gitea (via its REST API,
+`internal/forge/gitea`) are the two implementations shipped today — every
+prerequisite below that's phrased in terms of GitHub applies equally to
+Gitea unless noted otherwise. The seam exists so an additional self-hosted
+forge (e.g. GitLab) can be added as another `forge.Forge` implementation
+without changing `tasksource`/`ghsync`/write-back themselves. Tasks imported
+from a given forge carry that forge's name in `tasks.source` (`"github"` or
+`"gitea"`); `Importer.resolveSource` picks the right `Source` for each repo
+per sweep based on which forge recognises its remote URL, so a single
+importer handles repos on either forge side by side.
+
+Gitea support is configured via environment variables rather than per-repo
+UI fields, since which Gitea instance(s) exist is host-level configuration,
+not something that varies per repo the way `issue_sync_label` does:
+
+| Env var | Meaning |
+|---|---|
+| `GITEA_HOST` | Required to enable Gitea support at all. Comma-separated host(s) this instance should recognise (e.g. `git.example.com` or `git.example.com,gitea.internal:3000`). With this unset, `GiteaIssues`/the Gitea `forge.Forge` are inert — no remotes match, and this is a safe no-op for anyone not running Gitea. |
+| `GITEA_TOKEN` | A personal access token with repo read/write scope. |
+| `GITEA_BASE_URL` | Optional override for the API base URL (defaults to `https://<first GITEA_HOST>`) — set this if the instance's API is reached at a different scheme/host/port than what appears in git remote URLs. |
+
+See `internal/forge/gitea`'s package doc for the full detail on these.
 
 ## Enabling it
 
@@ -19,8 +46,11 @@ API):
 
 Two prerequisites are enforced when enabling:
 
-1. **`remote_url`** must be set and point at GitHub — issues are fetched with
-   the `gh` CLI (same auth as PR sync: `gh auth login` or `GITHUB_TOKEN`).
+1. **`remote_url`** must be set and point at a recognised forge — GitHub
+   (issues fetched with the `gh` CLI; same auth as PR sync: `gh auth login`
+   or `GITHUB_TOKEN`), or a self-hosted Gitea instance whose host is listed
+   in `GITEA_HOST` (see above; issues fetched via Gitea's REST API using
+   `GITEA_TOKEN`).
 2. **A workflow** must be assigned to the repo — imported issues become tasks
    in that workflow.
 

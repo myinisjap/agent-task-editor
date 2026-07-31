@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
@@ -18,7 +18,7 @@ import (
 // map to TrustedAuthor, and any comment containing this system's own
 // write-back marker is dropped outright, regardless of author.
 func TestMapIssueCommentsFiltersMarkerAndUntrusted(t *testing.T) {
-	in := []ghclient.IssueComment{
+	in := []forge.IssueComment{
 		{ID: "1", Author: "owner-user", AuthorAssociation: "OWNER", Body: "ok", CreatedAt: "2026-01-01T00:00:00Z"},
 		{ID: "2", Author: "member-user", AuthorAssociation: "MEMBER", Body: "ok", CreatedAt: "2026-01-01T00:01:00Z"},
 		{ID: "3", Author: "collab-user", AuthorAssociation: "COLLABORATOR", Body: "ok", CreatedAt: "2026-01-01T00:02:00Z"},

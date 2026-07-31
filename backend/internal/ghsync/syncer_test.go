@@ -85,7 +85,7 @@ type fakeWriteback struct {
 	closeCalls   []string
 }
 
-func newTestSyncer(t *testing.T, getPR func(ctx context.Context, repoName, branch string) (string, string, int, error)) (*Syncer, *gen.Queries, *fakeHub) {
+func newTestSyncer(t *testing.T, getPR func(ctx context.Context, repo repoInfo, branch string) (string, string, int, error)) (*Syncer, *gen.Queries, *fakeHub) {
 	t.Helper()
 	s, q, hub, _ := newTestSyncerWithWriteback(t, getPR)
 	return s, q, hub
@@ -94,7 +94,7 @@ func newTestSyncer(t *testing.T, getPR func(ctx context.Context, repoName, branc
 // newTestSyncerWithWriteback is like newTestSyncer but also wires a
 // writeback.Writeback backed by fake gh-calling functions, and returns the
 // fake so tests can assert on what write-back actions fired.
-func newTestSyncerWithWriteback(t *testing.T, getPR func(ctx context.Context, repoName, branch string) (string, string, int, error)) (*Syncer, *gen.Queries, *fakeHub, *fakeWriteback) {
+func newTestSyncerWithWriteback(t *testing.T, getPR func(ctx context.Context, repo repoInfo, branch string) (string, string, int, error)) (*Syncer, *gen.Queries, *fakeHub, *fakeWriteback) {
 	t.Helper()
 	f, err := os.CreateTemp("", "ghsync-*.db")
 	if err != nil {
@@ -285,7 +285,7 @@ func TestSyncTask_MergedTriggersCleanup(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_merged", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
 	s, q, hub := newTestSyncer(t, getPR)
@@ -331,7 +331,7 @@ func TestSyncTask_ClosedWithoutMerge_NoCleanup(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_closed", "https://github.com/acme/widgets/pull/2", 2, nil
 	}
 	s, q, hub := newTestSyncer(t, getPR)
@@ -367,7 +367,7 @@ func TestSyncTask_NoStateChange_NoOp(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/3", 3, nil
 	}
 	s, q, hub := newTestSyncer(t, getPR)
@@ -395,7 +395,7 @@ func TestSyncTask_PreservesExistingPRURLOnRegression(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pushed", "", 0, nil
 	}
 	s, q, _ := newTestSyncer(t, getPR)
@@ -448,7 +448,7 @@ func TestSweep_SkipsNonGitHubRepo(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		t.Fatalf("getPR should not be called for a non-GitHub repo")
 		return "", "", 0, nil
 	}
@@ -472,7 +472,7 @@ func TestSyncTask_Writeback_PROpened(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/9", 9, nil
 	}
 	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
@@ -502,7 +502,7 @@ func TestSyncTask_Writeback_PRMerged(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_merged", "https://github.com/acme/widgets/pull/9", 9, nil
 	}
 	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
@@ -537,7 +537,7 @@ func TestSyncTask_Writeback_DisabledRepo_NoOp(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/9", 9, nil
 	}
 	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
@@ -597,7 +597,7 @@ func TestRun_SweepsOnTickerAndStopsOnCancel(t *testing.T) {
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
 	swept := make(chan struct{}, 1)
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		select {
 		case swept <- struct{}{}:
 		default:

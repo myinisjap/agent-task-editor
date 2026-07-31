@@ -1,14 +1,16 @@
 // Package writeback implements per-repo opt-in status write-back to the
-// GitHub issue an imported task originated from: a label applied when the
-// task first leaves "not_ready", a comment posted when its PR opens, and the
-// issue closed (with a comment) once that PR merges.
+// source issue (GitHub or Gitea — see knownSources) an imported task
+// originated from: a label applied when the task first leaves "not_ready",
+// a comment posted when its PR opens, and the issue closed (with a comment)
+// once that PR merges.
 //
 // Idempotency is tracked on the task row itself (the writeback_* columns),
-// not by scraping issue comments — cheaper, and unaffected by a human editing
-// or deleting the marker comment on GitHub. Every entry point is best-effort:
-// a failed `gh` call is logged and swallowed, never propagated to the caller,
-// so a GitHub hiccup can't fail a sweep, a workflow transition, or an API
-// request. See docs/task-sources.md for the full behavior writeup.
+// not by scraping issue comments — cheaper, and unaffected by a human
+// editing or deleting the marker comment on the forge. Every entry point is
+// best-effort: a failed forge call is logged and swallowed, never propagated
+// to the caller, so a forge hiccup can't fail a sweep, a workflow
+// transition, or an API request. See docs/task-sources.md for the full
+// behavior writeup.
 package writeback
 
 import (
@@ -18,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -45,33 +48,49 @@ type querier interface {
 	SetTaskWritebackClosed(ctx context.Context, id string) error
 }
 
-// Writeback owns the three GitHub write-back actions. Constructed once and
-// shared across the workflow engine's OnLeaveNotReady hook, ghsync's sweep,
-// and the CreatePR/GitHubStatus/UpdateGitState HTTP handlers.
+// Writeback owns the three write-back actions (add-label, comment, close)
+// against a task's source issue. Constructed once and shared across the
+// workflow engine's OnLeaveNotReady hook, ghsync's sweep, and the
+// CreatePR/GitHubStatus/UpdateGitState HTTP handlers.
 type Writeback struct {
 	q querier
 
-	// addLabel, commentOnIssue, closeWithComment wrap the corresponding
-	// ghclient functions. Overridable in tests.
+	// addLabel, commentOnIssue, closeWithComment are this Writeback's default
+	// forge functions, used for any task whose source's forge can't be
+	// resolved from the repo's remote URL (in practice: GitHub tasks, plus
+	// any test that constructs a Writeback via NewWithClient without a real
+	// repo row to resolve against). Overridable in tests.
+	//
+	// Tasks from a Source with its own forge.Forge (e.g. GiteaIssues) are
+	// instead routed through resolveForgeForTask, which resolves the actual
+	// forge per-repo via forge.ForRemote — see eligible/actionsFor.
 	addLabel         func(ctx context.Context, repoName string, issueNumber int, label string) error
 	commentOnIssue   func(ctx context.Context, repoName string, issueNumber int, body string) error
 	closeWithComment func(ctx context.Context, repoName string, issueNumber int, body string) error
 }
 
-// New creates a Writeback backed by the given queries and the real gh CLI.
+// New creates a Writeback backed by the given queries and the real GitHub
+// forge.Forge implementation (internal/ghclient) as its default forge.
+// Tasks from a non-GitHub source (e.g. Gitea) are still handled correctly:
+// see resolveForgeForTask.
 func New(q *gen.Queries) *Writeback {
+	f := ghclient.GitHub{}
 	return &Writeback{
 		q:                q,
-		addLabel:         ghclient.AddIssueLabel,
-		commentOnIssue:   ghclient.CommentOnIssue,
-		closeWithComment: ghclient.CloseIssueWithComment,
+		addLabel:         f.AddIssueLabel,
+		commentOnIssue:   f.CommentOnIssue,
+		closeWithComment: f.CloseIssueWithComment,
 	}
 }
 
 // NewWithClient creates a Writeback backed by the given queries and the given
-// gh-calling functions. Exported for use by other packages' tests (e.g.
-// ghsync, api/handlers) that need to fake out the actual `gh` calls without
-// depending on writeback's unexported struct fields.
+// gh-calling functions as its default forge. Exported for use by other
+// packages' tests (e.g. ghsync, api/handlers) that need to fake out the
+// actual `gh` calls without depending on writeback's unexported struct
+// fields. Since these tests exercise GitHub-sourced tasks against a repo
+// whose remote URL forge.ForRemote won't otherwise resolve (a fake test
+// remote), the default functions given here are what actually get called —
+// see resolveForgeForTask.
 func NewWithClient(
 	q *gen.Queries,
 	addLabel func(ctx context.Context, repoName string, issueNumber int, label string) error,
@@ -86,11 +105,44 @@ func NewWithClient(
 	}
 }
 
+// actions is the set of write-back operations needed against one task's
+// source issue, resolved once per call by resolveForgeForTask.
+type actions struct {
+	addLabel         func(ctx context.Context, repoName string, issueNumber int, label string) error
+	commentOnIssue   func(ctx context.Context, repoName string, issueNumber int, body string) error
+	closeWithComment func(ctx context.Context, repoName string, issueNumber int, body string) error
+}
+
+// resolveForgeForTask picks which forge.Forge's methods to call for a given
+// task+repo: for a GitHub-sourced task (task.Source == "github"), always
+// this Writeback's own default functions (preserving exact prior behavior,
+// including in tests that construct a Writeback via NewWithClient against a
+// repo with no real/resolvable remote URL). For any other source (e.g.
+// "gitea"), resolves the forge from the repo's remote URL via
+// forge.ForRemote, so write-back works against whichever forge the task was
+// actually imported from rather than being hardcoded to GitHub.
+func (wb *Writeback) resolveForgeForTask(task gen.Task, repo gen.Repo) actions {
+	if task.Source == "github" {
+		return actions{addLabel: wb.addLabel, commentOnIssue: wb.commentOnIssue, closeWithComment: wb.closeWithComment}
+	}
+	if repo.RemoteUrl != nil {
+		if f, _, ok := forge.ForRemote(*repo.RemoteUrl); ok {
+			return actions{addLabel: f.AddIssueLabel, commentOnIssue: f.CommentOnIssue, closeWithComment: f.CloseIssueWithComment}
+		}
+	}
+	// No registered forge recognises this repo's remote — fall back to the
+	// Writeback's own default functions rather than a nil actions value, so
+	// behavior degrades to "attempt it against the default forge and let it
+	// fail/log" instead of silently no-op-ing.
+	return actions{addLabel: wb.addLabel, commentOnIssue: wb.commentOnIssue, closeWithComment: wb.closeWithComment}
+}
+
 // ParseSourceRef parses a tasks.source_ref value of the form "owner/repo#123"
-// into its GitHub repo name ("owner/repo") and issue number. ok is false if
-// ref doesn't match that shape (missing "/", missing "#", or a non-numeric
+// into its repo name ("owner/repo") and issue number. This shape is shared
+// across every forge write-back currently supports (GitHub, Gitea); ok is
+// false if ref doesn't match it (missing "/", missing "#", or a non-numeric
 // issue number).
-func ParseSourceRef(ref string) (ghName string, issueNumber int, ok bool) {
+func ParseSourceRef(ref string) (repoName string, issueNumber int, ok bool) {
 	hashIdx := strings.LastIndex(ref, "#")
 	if hashIdx < 0 || hashIdx == len(ref)-1 {
 		return "", 0, false
@@ -111,11 +163,21 @@ func ParseSourceRef(ref string) (ghName string, issueNumber int, ok bool) {
 	return name, num, true
 }
 
+// knownSources lists every tasks.source value write-back is eligible to act
+// on. Every tasksource.Source's Name() that supports write-back-style issue
+// actions (label/comment/close) should appear here — currently "github" and
+// "gitea" (see tasksource.GitHubIssues/GiteaIssues). A task from an
+// unrecognised source is never eligible, regardless of repo settings.
+var knownSources = map[string]bool{
+	"github": true,
+	"gitea":  true,
+}
+
 // eligible reports whether a task is a candidate for any write-back action at
-// all: it must have come from the GitHub Issues source (source == "github"),
+// all: it must have come from a known issue-import source (see knownSources),
 // carry a parseable source_ref, and belong to a repo with write-back enabled.
-func eligible(task gen.Task, repo gen.Repo) (ghName string, issueNumber int, ok bool) {
-	if task.Source != "github" || task.SourceRef == "" {
+func eligible(task gen.Task, repo gen.Repo) (repoName string, issueNumber int, ok bool) {
+	if !knownSources[task.Source] || task.SourceRef == "" {
 		return "", 0, false
 	}
 	if repo.IssueWritebackEnabled == 0 {
@@ -136,7 +198,7 @@ func (wb *Writeback) OnLeaveNotReady(ctx context.Context, task gen.Task, repo ge
 	if task.WritebackInProgressSent != 0 {
 		return
 	}
-	ghName, issueNumber, ok := eligible(task, repo)
+	repoName, issueNumber, ok := eligible(task, repo)
 	if !ok {
 		return
 	}
@@ -144,7 +206,8 @@ func (wb *Writeback) OnLeaveNotReady(ctx context.Context, task gen.Task, repo ge
 	if label == "" {
 		label = InProgressLabel
 	}
-	if err := wb.addLabel(ctx, ghName, issueNumber, label); err != nil {
+	act := wb.resolveForgeForTask(task, repo)
+	if err := act.addLabel(ctx, repoName, issueNumber, label); err != nil {
 		log.Warn("writeback: add in-progress label failed", "ref", task.SourceRef, "label", label, "err", err)
 	}
 	if err := wb.q.SetTaskWritebackInProgress(ctx, task.ID); err != nil {
@@ -162,12 +225,13 @@ func (wb *Writeback) OnPROpened(ctx context.Context, task gen.Task, repo gen.Rep
 	if task.PrUrl == "" || task.WritebackPrCommented != 0 {
 		return
 	}
-	ghName, issueNumber, ok := eligible(task, repo)
+	repoName, issueNumber, ok := eligible(task, repo)
 	if !ok {
 		return
 	}
 	body := fmt.Sprintf("%s\nA pull request has been opened for this issue: %s", MarkerComment, task.PrUrl)
-	if err := wb.commentOnIssue(ctx, ghName, issueNumber, body); err != nil {
+	act := wb.resolveForgeForTask(task, repo)
+	if err := act.commentOnIssue(ctx, repoName, issueNumber, body); err != nil {
 		log.Warn("writeback: PR-opened comment failed", "ref", task.SourceRef, "err", err)
 		return
 	}
@@ -185,12 +249,13 @@ func (wb *Writeback) OnPRMerged(ctx context.Context, task gen.Task, repo gen.Rep
 	if task.GitState != "pr_merged" || task.WritebackClosed != 0 {
 		return
 	}
-	ghName, issueNumber, ok := eligible(task, repo)
+	repoName, issueNumber, ok := eligible(task, repo)
 	if !ok {
 		return
 	}
 	body := fmt.Sprintf("%s\nClosing — the pull request for this issue has merged: %s", MarkerComment, task.PrUrl)
-	if err := wb.closeWithComment(ctx, ghName, issueNumber, body); err != nil {
+	act := wb.resolveForgeForTask(task, repo)
+	if err := act.closeWithComment(ctx, repoName, issueNumber, body); err != nil {
 		log.Warn("writeback: PR-merged close failed", "ref", task.SourceRef, "err", err)
 		return
 	}

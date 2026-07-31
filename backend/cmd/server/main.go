@@ -318,15 +318,24 @@ func main() {
 	ghSyncer := ghsync.New(db.SQL(), hub, cfg.GitHubSyncInterval, engine)
 	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 
-	// GitHub Issues import: polls repos with issue sync enabled, creates tasks
-	// from matching open issues (deduped by tasks.source/source_ref), keeps
+	// Issue import: polls repos with issue sync enabled, creates tasks from
+	// matching open issues (deduped by tasks.source/source_ref), keeps
 	// existing tasks in sync with title/body/label drift, ingests the issue's
 	// comment thread when opted in, and reconciles issues that close or drop
 	// out of the filter. engine is passed through so a repo can opt into the
 	// "move" gone-action (issue_sync_gone_action) transitioning the task to a
 	// designated label; nil-safe if omitted.
-	issueImporter := tasksource.NewWithEngine(db.SQL(), hub, cfg.IssueSyncInterval, tasksource.GitHubIssues{}, engine)
-	slog.Info("github issue import enabled", "interval", cfg.IssueSyncInterval)
+	//
+	// Both GitHubIssues and GiteaIssues are always configured here (via
+	// NewWithEngineMulti): Importer.resolveSource picks whichever Source's
+	// AppliesTo matches a given repo's remote URL per sweep, so this single
+	// importer handles both without needing separate pollers. GiteaIssues is
+	// inert (AppliesTo never matches) unless GITEA_HOST is configured — see
+	// internal/forge/gitea's package doc — so this is a no-op behavior change
+	// for anyone not running a self-hosted Gitea.
+	issueImporter := tasksource.NewWithEngineMulti(db.SQL(), hub, cfg.IssueSyncInterval,
+		[]tasksource.Source{tasksource.GitHubIssues{}, tasksource.GiteaIssues{}}, engine)
+	slog.Info("issue import enabled", "interval", cfg.IssueSyncInterval)
 
 	// Recurring task schedules: fires task_templates on a cron expression
 	// against a repo, deduped by an open task from a prior firing.

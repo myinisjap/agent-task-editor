@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -17,11 +17,11 @@ import (
 // ingestion function fields and (optionally) a workflow engine, for tests
 // exercising ingestPRFeedback.
 func newTestSyncerFull(t *testing.T,
-	getPR func(ctx context.Context, repoName, branch string) (string, string, int, error),
-	getPRHead func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error),
-	getReviews func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error),
-	getReviewComments func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error),
-	getFailedChecks func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error),
+	getPR func(ctx context.Context, repo repoInfo, branch string) (string, string, int, error),
+	getPRHead func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error),
+	getReviews func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error),
+	getReviewComments func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error),
+	getFailedChecks func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error),
 	withEngine bool,
 ) (*Syncer, *gen.Queries, *fakeHub) {
 	t.Helper()
@@ -104,22 +104,22 @@ func seedRunForTask(t *testing.T, q *gen.Queries, taskID string) gen.Task {
 func TestIngestPRFeedback_ChangesRequestedReview_AppendsFeedback(t *testing.T) {
 	ctx := context.Background()
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
-	getPRHead := func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error) {
-		return ghclient.PRHead{Number: 1, HeadSHA: "sha1"}, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return forge.PRHead{Number: 1, HeadSHA: "sha1"}, nil
 	}
-	getReviews := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error) {
-		return []ghclient.Review{
+	getReviews := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error) {
+		return []forge.Review{
 			{ID: "r1", State: "CHANGES_REQUESTED", Body: "please fix the bug", Author: "alice", SubmittedAt: "2024-01-01T00:00:00Z"},
 			{ID: "r2", State: "APPROVED", Body: "lgtm elsewhere", Author: "bob", SubmittedAt: "2024-01-01T00:01:00Z"},
 		}, nil
 	}
-	noComments := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error) {
+	noComments := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error) {
 		return nil, nil
 	}
-	noChecks := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error) { return nil, nil }
+	noChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) { return nil, nil }
 
 	s, q, _ := newTestSyncerFull(t, getPR, getPRHead, getReviews, noComments, noChecks, false)
 	wfID, label := mustCreateSimpleWorkflow(t, q)
@@ -155,18 +155,18 @@ func TestIngestPRFeedback_ChangesRequestedReview_AppendsFeedback(t *testing.T) {
 func TestIngestPRFeedback_FailedChecks_AppendsFeedback(t *testing.T) {
 	ctx := context.Background()
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
-	getPRHead := func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error) {
-		return ghclient.PRHead{Number: 1, HeadSHA: "sha1"}, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return forge.PRHead{Number: 1, HeadSHA: "sha1"}, nil
 	}
-	noReviews := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error) { return nil, nil }
-	noComments := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error) {
+	noReviews := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error) { return nil, nil }
+	noComments := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error) {
 		return nil, nil
 	}
-	getChecks := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error) {
-		return []ghclient.Check{{Name: "build", Link: "https://ci/1", Bucket: "fail"}}, nil
+	getChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) {
+		return []forge.Check{{Name: "build", Link: "https://ci/1", Bucket: "fail"}}, nil
 	}
 
 	s, q, _ := newTestSyncerFull(t, getPR, getPRHead, noReviews, noComments, getChecks, false)
@@ -200,16 +200,16 @@ func TestIngestPRFeedback_FailedChecks_AppendsFeedback(t *testing.T) {
 func TestIngestPRFeedback_InlineComments_DedupedAcrossSweeps(t *testing.T) {
 	ctx := context.Background()
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
-	getPRHead := func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error) {
-		return ghclient.PRHead{Number: 1, HeadSHA: "sha1"}, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return forge.PRHead{Number: 1, HeadSHA: "sha1"}, nil
 	}
-	noReviews := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error) { return nil, nil }
-	noChecks := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error) { return nil, nil }
-	getComments := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error) {
-		return []ghclient.PRReviewComment{
+	noReviews := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error) { return nil, nil }
+	noChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) { return nil, nil }
+	getComments := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error) {
+		return []forge.PRReviewComment{
 			{ID: "c1", Path: "main.go", Line: 42, StartLine: 42, Side: "RIGHT", Body: "use a constant here", DiffHunk: "@@ -40,3 +40,3 @@"},
 		}, nil
 	}
@@ -251,11 +251,11 @@ func TestIngestPRFeedback_HeadSHAChange_ResetsReviewCursor(t *testing.T) {
 	ctx := context.Background()
 	headSHA := "sha1"
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
-	getPRHead := func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error) {
-		return ghclient.PRHead{Number: 1, HeadSHA: headSHA}, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return forge.PRHead{Number: 1, HeadSHA: headSHA}, nil
 	}
 	// Same single review both sweeps (submitted before any push); the reset
 	// on head-SHA change should let it be treated as "new" again since the
@@ -265,22 +265,22 @@ func TestIngestPRFeedback_HeadSHAChange_ResetsReviewCursor(t *testing.T) {
 	// *state* head_sha updates and a second distinct review after a push is
 	// still surfaced.
 	call := 0
-	getReviews := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error) {
+	getReviews := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error) {
 		call++
 		if call == 1 {
-			return []ghclient.Review{
+			return []forge.Review{
 				{ID: "r1", State: "CHANGES_REQUESTED", Body: "fix A", Author: "alice", SubmittedAt: "2024-01-01T00:00:00Z"},
 			}, nil
 		}
-		return []ghclient.Review{
+		return []forge.Review{
 			{ID: "r1", State: "CHANGES_REQUESTED", Body: "fix A", Author: "alice", SubmittedAt: "2024-01-01T00:00:00Z"},
 			{ID: "r2", State: "CHANGES_REQUESTED", Body: "fix B", Author: "alice", SubmittedAt: "2024-01-01T00:00:00Z"},
 		}, nil
 	}
-	noComments := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error) {
+	noComments := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error) {
 		return nil, nil
 	}
-	noChecks := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error) { return nil, nil }
+	noChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) { return nil, nil }
 
 	s, q, _ := newTestSyncerFull(t, getPR, getPRHead, getReviews, noComments, noChecks, false)
 	wfID, label := mustCreateSimpleWorkflow(t, q)
@@ -317,21 +317,21 @@ func TestIngestPRFeedback_HeadSHAChange_ResetsReviewCursor(t *testing.T) {
 func TestIngestPRFeedback_AutoTransition_EnabledOnRepo(t *testing.T) {
 	ctx := context.Background()
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
-	getPRHead := func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error) {
-		return ghclient.PRHead{Number: 1, HeadSHA: "sha1"}, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return forge.PRHead{Number: 1, HeadSHA: "sha1"}, nil
 	}
-	getReviews := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error) {
-		return []ghclient.Review{
+	getReviews := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error) {
+		return []forge.Review{
 			{ID: "r1", State: "CHANGES_REQUESTED", Body: "please fix", Author: "alice", SubmittedAt: "2024-01-01T00:00:00Z"},
 		}, nil
 	}
-	noComments := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error) {
+	noComments := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error) {
 		return nil, nil
 	}
-	noChecks := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error) { return nil, nil }
+	noChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) { return nil, nil }
 
 	s, q, _ := newTestSyncerFull(t, getPR, getPRHead, getReviews, noComments, noChecks, true)
 	wfID, fromLabel, toLabel := newFeedbackTestWorkflow(t, q)
@@ -360,21 +360,21 @@ func TestIngestPRFeedback_AutoTransition_EnabledOnRepo(t *testing.T) {
 func TestIngestPRFeedback_AutoTransition_DisabledOnRepo_NoOp(t *testing.T) {
 	ctx := context.Background()
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
-	getPRHead := func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error) {
-		return ghclient.PRHead{Number: 1, HeadSHA: "sha1"}, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return forge.PRHead{Number: 1, HeadSHA: "sha1"}, nil
 	}
-	getReviews := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error) {
-		return []ghclient.Review{
+	getReviews := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error) {
+		return []forge.Review{
 			{ID: "r1", State: "CHANGES_REQUESTED", Body: "please fix", Author: "alice", SubmittedAt: "2024-01-01T00:00:00Z"},
 		}, nil
 	}
-	noComments := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error) {
+	noComments := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error) {
 		return nil, nil
 	}
-	noChecks := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error) { return nil, nil }
+	noChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) { return nil, nil }
 
 	s, q, _ := newTestSyncerFull(t, getPR, getPRHead, getReviews, noComments, noChecks, true)
 	wfID, fromLabel, _ := newFeedbackTestWorkflow(t, q)

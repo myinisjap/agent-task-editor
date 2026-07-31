@@ -5,14 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
-	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
+	_ "github.com/myinisjap/agent-task-editor/backend/internal/ghclient" // registers the GitHub forge.Forge implementation
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
@@ -68,9 +68,9 @@ func dirExists(p string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// PRURL builds a GitHub compare URL for the task's branch with a pre-filled PR
+// PRURL builds a forge compare URL for the task's branch with a pre-filled PR
 // title and body, so a human can open a properly-described PR in one click
-// without us needing GitHub auth or the gh CLI.
+// without us needing forge auth or a CLI.
 func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 	task, err := h.q.GetTask(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
@@ -90,13 +90,13 @@ func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "repo has no remote_url")
 		return
 	}
-	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
+	f, repoName, ok := forge.ForRemote(*repo.RemoteUrl)
 	if !ok {
-		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
+		Err(w, http.StatusBadRequest, "repo remote is not a supported forge URL")
 		return
 	}
 
-	// GitHub compare wants branch names, not remote-tracking refs.
+	// Compare views want branch names, not remote-tracking refs.
 	base := strings.TrimPrefix(task.BaseRef, "origin/")
 
 	// Collect commit subjects on the branch (best-effort; empty if it fails).
@@ -107,11 +107,7 @@ func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 	commits := collectBranchCommits(r.Context(), gitDir, task.BaseRef, task.Branch)
 
 	body := buildPRBody(task, commits)
-	q := url.Values{}
-	q.Set("expand", "1")
-	q.Set("title", task.Title)
-	q.Set("body", body)
-	prURL := fmt.Sprintf("https://github.com/%s/compare/%s...%s?%s", ghName, base, task.Branch, q.Encode())
+	prURL := f.CompareURL(repoName, base, task.Branch, task.Title, body)
 
 	JSON(w, http.StatusOK, map[string]any{"url": prURL})
 }
@@ -185,11 +181,11 @@ func prCreateStatus(err error) int {
 }
 
 // CreatePRForTask pushes the task's branch to origin and opens (or reuses) a
-// GitHub pull request, persists the resulting PR URL + git state on the task,
-// and runs the issue write-back. Shared by the HTTP CreatePR handler and the
-// workflow engine's OnCreatePR hook so both produce an identical PR. It is
-// idempotent: an existing PR for the branch is returned rather than erroring.
-// wb may be nil to skip write-back.
+// pull request on the repo's forge, persists the resulting PR URL + git state
+// on the task, and runs the issue write-back. Shared by the HTTP CreatePR
+// handler and the workflow engine's OnCreatePR hook so both produce an
+// identical PR. It is idempotent: an existing PR for the branch is returned
+// rather than erroring. wb may be nil to skip write-back.
 func CreatePRForTask(ctx context.Context, q *gen.Queries, wb *writeback.Writeback, task gen.Task, repo gen.Repo) (updated gen.Task, prURL string, err error) {
 	if task.Branch == "" {
 		return gen.Task{}, "", fmt.Errorf("%w: task has no branch yet", errPRBadRequest)
@@ -197,9 +193,9 @@ func CreatePRForTask(ctx context.Context, q *gen.Queries, wb *writeback.Writebac
 	if repo.RemoteUrl == nil {
 		return gen.Task{}, "", fmt.Errorf("%w: repo has no remote_url", errPRBadRequest)
 	}
-	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
+	f, ghName, ok := forge.ForRemote(*repo.RemoteUrl)
 	if !ok {
-		return gen.Task{}, "", fmt.Errorf("%w: repo remote is not a GitHub URL", errPRBadRequest)
+		return gen.Task{}, "", fmt.Errorf("%w: repo remote is not a supported forge URL", errPRBadRequest)
 	}
 
 	// Push the branch first. Push from the worktree if it still exists,
@@ -213,11 +209,11 @@ func CreatePRForTask(ctx context.Context, q *gen.Queries, wb *writeback.Writebac
 		return gen.Task{}, "", fmt.Errorf("failed to push branch: %w", err)
 	}
 
-	// gh compare/PR base wants a branch name, not a remote-tracking ref.
+	// The compare/PR base wants a branch name, not a remote-tracking ref.
 	base := strings.TrimPrefix(task.BaseRef, "origin/")
 	body := buildPRBody(task, collectBranchCommits(ctx, gitDir, task.BaseRef, task.Branch))
 
-	state, prURL, err := ghclient.CreatePR(ctx, ghName, task.Branch, base, task.Title, body)
+	state, prURL, err := f.CreatePR(ctx, ghName, task.Branch, base, task.Title, body)
 	if err != nil {
 		return gen.Task{}, "", fmt.Errorf("%w: %s", errPRBadGateway, err.Error())
 	}
@@ -289,13 +285,13 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "repo has no remote_url")
 		return
 	}
-	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
+	f, ghName, ok := forge.ForRemote(*repo.RemoteUrl)
 	if !ok {
-		Err(w, http.StatusBadRequest, "repo remote is not a GitHub URL")
+		Err(w, http.StatusBadRequest, "repo remote is not a supported forge URL")
 		return
 	}
 
-	state, prURL, prNumber, ghErr := ghclient.GetPRForBranch(r.Context(), ghName, task.Branch)
+	state, prURL, prNumber, ghErr := f.PRForBranch(r.Context(), ghName, task.Branch)
 	if ghErr != nil {
 		// Don't fail hard — return what we have stored plus the error detail
 		JSON(w, http.StatusOK, map[string]any{
@@ -323,12 +319,12 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refresh GitHub's merge-conflict verdict alongside the PR state, so a
+	// Refresh the forge's merge-conflict verdict alongside the PR state, so a
 	// manual refresh surfaces a conflict without waiting for the next ghsync
-	// sweep. Best-effort: an unreachable/erroring gh here just leaves the
-	// stored value in place rather than failing the whole refresh.
+	// sweep. Best-effort: an unreachable/erroring forge call here just leaves
+	// the stored value in place rather than failing the whole refresh.
 	if prNumber != 0 {
-		updated = refreshPRMergeable(r.Context(), h.q, updated, ghName)
+		updated = refreshPRMergeable(r.Context(), h.q, updated, f, ghName)
 	}
 
 	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
@@ -345,12 +341,12 @@ func (h *TasksHandler) GitHubStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// refreshPRMergeable re-reads GitHub's mergeability verdict for the task's PR
-// and persists it if it changed, returning the (possibly updated) task. Any
-// failure leaves the task untouched: this is a nice-to-have alongside the PR
-// state, never a reason to fail the caller.
-func refreshPRMergeable(ctx context.Context, q *gen.Queries, task gen.Task, ghName string) gen.Task {
-	head, err := ghclient.GetPRHead(ctx, ghName, task.Branch)
+// refreshPRMergeable re-reads the forge's mergeability verdict for the task's
+// PR and persists it if it changed, returning the (possibly updated) task.
+// Any failure leaves the task untouched: this is a nice-to-have alongside the
+// PR state, never a reason to fail the caller.
+func refreshPRMergeable(ctx context.Context, q *gen.Queries, task gen.Task, f forge.Forge, ghName string) gen.Task {
+	head, err := f.PRHead(ctx, ghName, task.Branch)
 	if err != nil || head.Mergeable == "" {
 		return task
 	}

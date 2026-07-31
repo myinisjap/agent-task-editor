@@ -3,13 +3,13 @@ INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
--- name: CreateGitHubTaskReviewComment :one
--- Like CreateTaskReviewComment but for a comment ingested from a GitHub PR
--- review (source='github'), tagged with the GitHub comment id (external_id)
--- so re-sweeps can dedup via GetTaskReviewCommentByExternalID before
--- inserting.
+-- name: CreateForgeTaskReviewComment :one
+-- Like CreateTaskReviewComment but for a comment ingested from a PR/MR review
+-- on some forge (source = e.g. 'github' or 'gitea' -- see internal/forge),
+-- tagged with the forge's comment id (external_id) so re-sweeps can dedup via
+-- GetTaskReviewCommentByExternalID before inserting.
 INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_line, quoted_text, body, external_id, source)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'github')
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetTaskReviewCommentByExternalID :one

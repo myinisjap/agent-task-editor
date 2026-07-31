@@ -20,6 +20,39 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Abstracted the git-forge layer behind a `Forge` interface, and shipped a
+  second forge (Gitea) against it** (`internal/forge`). PR-state sync
+  (`internal/ghsync`), issue import (`internal/tasksource`), issue
+  write-back (`internal/writeback`), and one-click PR creation all talk to a
+  `forge.Forge` interface rather than directly to GitHub-specific code.
+  `internal/ghclient` is the GitHub implementation of that interface
+  (`ghclient.GitHub`); `internal/forge/gitea` is a new implementation talking
+  directly to a self-hosted Gitea instance's REST API. Both are registered
+  with a small selection registry (`forge.ForRemote`) keyed off the repo's
+  remote URL host, so a repo's forge is picked automatically from its
+  `remote_url` with no other per-repo configuration. For self-hosters running
+  Gitea (configured via `GITEA_HOST`/`GITEA_TOKEN`/`GITEA_BASE_URL` — see
+  [docs/task-sources.md](docs/task-sources.md)), this means:
+  - **PR-state sync** (`ghsync`) — open/merged/closed PR detection, review
+    and inline-review-comment ingestion, failed-check ingestion, and
+    merge-conflict detection all work the same way they do for GitHub.
+  - **One-click PR creation** (`POST /tasks/{id}/pr`) and the pre-filled
+    compare-URL flow both work against Gitea.
+  - **Issue import** (`tasksource.GiteaIssues`) — the same create/update/
+    reconcile sweep GitHub Issues gets, including comment ingestion
+    (trust-classified via a Gitea collaborator-status check) and field-update/
+    reconciliation behavior, complete (never-truncated) issue/comment
+    pagination, and issue write-back (label/comment/close) on the source
+    issue as a task progresses.
+
+  Tasks imported from a given forge carry that forge's name in
+  `tasks.source` (`"github"` or `"gitea"`); `Importer.resolveSource` picks
+  the right `Source` for a repo per sweep, so a single importer instance
+  handles GitHub and Gitea repos side by side. GitHub-only behavior is
+  unchanged for anyone not configuring `GITEA_HOST`. The `Forge` interface
+  itself is deliberately provider-agnostic, so adding a further self-hosted
+  forge (e.g. GitLab) in the future is an additional implementation, not a
+  change to `tasksource`/`ghsync`/`writeback`.
 - **Mid-run cost kill switch + budget early warning.** `max_cost_usd`
   budgets previously only gated the *next* dispatch, so a single runaway run
   could blow arbitrarily far past its cap before anything noticed. Providers

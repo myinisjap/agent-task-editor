@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -49,10 +49,10 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 		state = gen.TaskPrReviewState{TaskID: task.ID}
 	}
 
-	var head ghclient.PRHead
+	var head forge.PRHead
 	if s.getPRHead != nil {
 		var err error
-		head, err = s.getPRHead(ctx, repo.ghName, task.Branch)
+		head, err = s.getPRHead(ctx, repo, task.Branch)
 		if err != nil {
 			log.Warn("ghsync: get PR head", "err", err)
 		}
@@ -118,7 +118,7 @@ func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo
 	if s.getReviews == nil {
 		return nil
 	}
-	reviews, err := s.getReviews(ctx, repo.ghName, prNumber)
+	reviews, err := s.getReviews(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get PR reviews", "err", err)
 		return nil
@@ -154,17 +154,21 @@ func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo
 }
 
 // ingestReviewComments fetches inline PR review comments and inserts any not
-// already ingested (deduped by external_id) into task_review_comments with
-// source='github'. Returns true if at least one new comment was inserted.
+// already ingested (deduped by external_id) into task_review_comments,
+// tagged with the source forge's name (see reviewCommentSourceName —
+// "github", "gitea", ...). Returns true if at least one new comment was
+// inserted.
 func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, log *slog.Logger) bool {
 	if s.getReviewComments == nil {
 		return false
 	}
-	comments, err := s.getReviewComments(ctx, repo.ghName, prNumber)
+	comments, err := s.getReviewComments(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get PR review comments", "err", err)
 		return false
 	}
+
+	sourceName := reviewCommentSourceName(repo)
 
 	inserted := false
 	for _, c := range comments {
@@ -195,7 +199,7 @@ func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo r
 			startLine = line
 		}
 
-		created, err := s.q.CreateGitHubTaskReviewComment(ctx, gen.CreateGitHubTaskReviewCommentParams{
+		created, err := s.q.CreateForgeTaskReviewComment(ctx, gen.CreateForgeTaskReviewCommentParams{
 			ID:         uuid.NewString(),
 			TaskID:     task.ID,
 			FilePath:   c.Path,
@@ -205,19 +209,33 @@ func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo r
 			QuotedText: c.DiffHunk,
 			Body:       c.Body,
 			ExternalID: &c.ID,
+			Source:     sourceName,
 		})
 		if err != nil {
-			log.Warn("ghsync: create github review comment", "external_id", c.ID, "err", err)
+			log.Warn("ghsync: create forge review comment", "external_id", c.ID, "source", sourceName, "err", err)
 			continue
 		}
 		inserted = true
 		s.hub.Publish("task.review_comment_added", map[string]any{
 			"task_id":    task.ID,
 			"comment_id": created.ID,
-			"source":     "github",
+			"source":     sourceName,
 		})
 	}
 	return inserted
+}
+
+// reviewCommentSourceName returns the tasks_review_comments.source value to
+// tag an ingested inline review comment with: the resolved forge's own Name()
+// when known, defaulting to "github" when repo.forge is nil (e.g. in tests
+// that construct a repoInfo by hand without wiring a real forge.Forge — the
+// overwhelming common case in production, prior to Gitea support, was and
+// remains GitHub).
+func reviewCommentSourceName(repo repoInfo) string {
+	if repo.forge != nil {
+		return repo.forge.Name()
+	}
+	return "github"
 }
 
 // ingestFailedChecks fetches failed/cancelled GHA checks for the PR and
@@ -229,7 +247,7 @@ func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo rep
 	if s.getFailedChecks == nil {
 		return nil
 	}
-	checks, err := s.getFailedChecks(ctx, repo.ghName, prNumber)
+	checks, err := s.getFailedChecks(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get failed checks", "err", err)
 		return nil
@@ -280,19 +298,19 @@ func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo rep
 //   - unknown: GitHub has not finished the test merge. Report nothing and
 //     leave the cursor alone - clearing it here would make a conflict flap
 //     back into fresh feedback every time the verdict briefly goes UNKNOWN.
-func (s *Syncer) ingestMergeConflict(ctx context.Context, task gen.Task, head ghclient.PRHead, prState string, state *gen.TaskPrReviewState, log *slog.Logger) []string {
+func (s *Syncer) ingestMergeConflict(ctx context.Context, task gen.Task, head forge.PRHead, prState string, state *gen.TaskPrReviewState, log *slog.Logger) []string {
 	if head.Mergeable == "" {
 		return nil // getPRHead is unwired or failed - nothing was observed
 	}
 	s.setPRMergeable(ctx, task, string(head.Mergeable), log)
 
-	if head.Mergeable == ghclient.MergeableClean {
+	if head.Mergeable == forge.MergeableClean {
 		state.LastConflictSha = nil
 		return nil
 	}
 	// Only an open PR can be usefully un-conflicted; a merged/closed one is
 	// nobody's problem, and GitHub's verdict on it is meaningless.
-	if head.Mergeable != ghclient.MergeableConflicting || prState != "pr_open" {
+	if head.Mergeable != forge.MergeableConflicting || prState != "pr_open" {
 		return nil
 	}
 
