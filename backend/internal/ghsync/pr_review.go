@@ -52,7 +52,7 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 	var head forge.PRHead
 	if s.getPRHead != nil {
 		var err error
-		head, err = s.getPRHead(ctx, repo.ghName, task.Branch)
+		head, err = s.getPRHead(ctx, repo, task.Branch)
 		if err != nil {
 			log.Warn("ghsync: get PR head", "err", err)
 		}
@@ -118,7 +118,7 @@ func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo
 	if s.getReviews == nil {
 		return nil
 	}
-	reviews, err := s.getReviews(ctx, repo.ghName, prNumber)
+	reviews, err := s.getReviews(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get PR reviews", "err", err)
 		return nil
@@ -154,17 +154,21 @@ func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo
 }
 
 // ingestReviewComments fetches inline PR review comments and inserts any not
-// already ingested (deduped by external_id) into task_review_comments with
-// source='github'. Returns true if at least one new comment was inserted.
+// already ingested (deduped by external_id) into task_review_comments,
+// tagged with the source forge's name (see reviewCommentSourceName —
+// "github", "gitea", ...). Returns true if at least one new comment was
+// inserted.
 func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, log *slog.Logger) bool {
 	if s.getReviewComments == nil {
 		return false
 	}
-	comments, err := s.getReviewComments(ctx, repo.ghName, prNumber)
+	comments, err := s.getReviewComments(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get PR review comments", "err", err)
 		return false
 	}
+
+	sourceName := reviewCommentSourceName(repo)
 
 	inserted := false
 	for _, c := range comments {
@@ -195,7 +199,7 @@ func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo r
 			startLine = line
 		}
 
-		created, err := s.q.CreateGitHubTaskReviewComment(ctx, gen.CreateGitHubTaskReviewCommentParams{
+		created, err := s.q.CreateForgeTaskReviewComment(ctx, gen.CreateForgeTaskReviewCommentParams{
 			ID:         uuid.NewString(),
 			TaskID:     task.ID,
 			FilePath:   c.Path,
@@ -205,19 +209,33 @@ func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo r
 			QuotedText: c.DiffHunk,
 			Body:       c.Body,
 			ExternalID: &c.ID,
+			Source:     sourceName,
 		})
 		if err != nil {
-			log.Warn("ghsync: create github review comment", "external_id", c.ID, "err", err)
+			log.Warn("ghsync: create forge review comment", "external_id", c.ID, "source", sourceName, "err", err)
 			continue
 		}
 		inserted = true
 		s.hub.Publish("task.review_comment_added", map[string]any{
 			"task_id":    task.ID,
 			"comment_id": created.ID,
-			"source":     "github",
+			"source":     sourceName,
 		})
 	}
 	return inserted
+}
+
+// reviewCommentSourceName returns the tasks_review_comments.source value to
+// tag an ingested inline review comment with: the resolved forge's own Name()
+// when known, defaulting to "github" when repo.forge is nil (e.g. in tests
+// that construct a repoInfo by hand without wiring a real forge.Forge — the
+// overwhelming common case in production, prior to Gitea support, was and
+// remains GitHub).
+func reviewCommentSourceName(repo repoInfo) string {
+	if repo.forge != nil {
+		return repo.forge.Name()
+	}
+	return "github"
 }
 
 // ingestFailedChecks fetches failed/cancelled GHA checks for the PR and
@@ -229,7 +247,7 @@ func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo rep
 	if s.getFailedChecks == nil {
 		return nil
 	}
-	checks, err := s.getFailedChecks(ctx, repo.ghName, prNumber)
+	checks, err := s.getFailedChecks(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get failed checks", "err", err)
 		return nil

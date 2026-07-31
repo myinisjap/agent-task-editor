@@ -64,6 +64,17 @@ type GitHubIssues struct{}
 
 func (GitHubIssues) Name() string { return "github" }
 
+// AppliesTo reports whether repo's remote URL is a GitHub remote, letting
+// Importer.resolveSource pick this Source out of several configured ones
+// (see GiteaIssues) without making any network call.
+func (GitHubIssues) AppliesTo(repo gen.Repo) bool {
+	if repo.RemoteUrl == nil {
+		return false
+	}
+	_, ok := githubForge.ParseRepoName(*repo.RemoteUrl)
+	return ok
+}
+
 func (GitHubIssues) Fetch(ctx context.Context, repo gen.Repo) ([]ExternalTask, error) {
 	if repo.RemoteUrl == nil || *repo.RemoteUrl == "" {
 		return nil, fmt.Errorf("repo %s has no remote URL", repo.Name)

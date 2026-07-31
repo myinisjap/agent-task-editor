@@ -15,6 +15,8 @@ type fakeForge struct {
 	host string
 }
 
+func (fakeForge) Name() string { return "fake" }
+
 func (f fakeForge) ParseRepoName(remoteURL string) (string, bool) {
 	prefix := "https://" + f.host + "/"
 	if len(remoteURL) > len(prefix) && remoteURL[:len(prefix)] == prefix {

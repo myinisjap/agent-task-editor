@@ -29,6 +29,9 @@ func init() {
 	forge.Register(GitHub{})
 }
 
+// Name implements forge.Forge. Matches tasksource.GitHubIssues.Name().
+func (GitHub) Name() string { return "github" }
+
 func (GitHub) ParseRepoName(remoteURL string) (string, bool) { return ParseGitHubName(remoteURL) }
 
 func (GitHub) PRForBranch(ctx context.Context, repoName, branch string) (state, prURL string, prNumber int, err error) {

@@ -29,17 +29,17 @@ func newConflictFixture(t *testing.T, autoTransition bool) *conflictFixture {
 	ctx := context.Background()
 	head := &forge.PRHead{Number: 1, HeadSHA: "sha1", BaseRef: "main", Mergeable: forge.MergeableClean}
 
-	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
+	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
-	getPRHead := func(ctx context.Context, repoName, branch string) (forge.PRHead, error) {
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
 		return *head, nil
 	}
-	noReviews := func(ctx context.Context, repoName string, prNumber int) ([]forge.Review, error) { return nil, nil }
-	noComments := func(ctx context.Context, repoName string, prNumber int) ([]forge.PRReviewComment, error) {
+	noReviews := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error) { return nil, nil }
+	noComments := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error) {
 		return nil, nil
 	}
-	noChecks := func(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) { return nil, nil }
+	noChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) { return nil, nil }
 
 	s, q, hub := newTestSyncerFull(t, getPR, getPRHead, noReviews, noComments, noChecks, autoTransition)
 

@@ -111,6 +111,14 @@ type IssueComment struct {
 //     disappeared issues and comment-cursor ingestion both depend on a
 //     complete fetch.
 type Forge interface {
+	// Name identifies this forge implementation (e.g. "github", "gitea"),
+	// matching the corresponding tasksource.Source's Name() for the same
+	// forge. Used to tag data ingested independently of tasksource's own
+	// import sweep — e.g. ghsync's inline PR-review-comment ingestion
+	// (task_review_comments.source) — with which forge it actually came
+	// from, rather than assuming GitHub.
+	Name() string
+
 	// ParseRepoName extracts this forge's canonical repo name (e.g.
 	// "org/repo") from a git remote URL, and reports whether remoteURL
 	// belongs to this forge at all.

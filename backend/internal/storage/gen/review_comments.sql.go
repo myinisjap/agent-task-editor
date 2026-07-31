@@ -9,13 +9,13 @@ import (
 	"context"
 )
 
-const createGitHubTaskReviewComment = `-- name: CreateGitHubTaskReviewComment :one
+const createForgeTaskReviewComment = `-- name: CreateForgeTaskReviewComment :one
 INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_line, quoted_text, body, external_id, source)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'github')
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
 `
 
-type CreateGitHubTaskReviewCommentParams struct {
+type CreateForgeTaskReviewCommentParams struct {
 	ID         string  `json:"id"`
 	TaskID     string  `json:"task_id"`
 	FilePath   string  `json:"file_path"`
@@ -25,14 +25,15 @@ type CreateGitHubTaskReviewCommentParams struct {
 	QuotedText string  `json:"quoted_text"`
 	Body       string  `json:"body"`
 	ExternalID *string `json:"external_id"`
+	Source     string  `json:"source"`
 }
 
-// Like CreateTaskReviewComment but for a comment ingested from a GitHub PR
-// review (source='github'), tagged with the GitHub comment id (external_id)
-// so re-sweeps can dedup via GetTaskReviewCommentByExternalID before
-// inserting.
-func (q *Queries) CreateGitHubTaskReviewComment(ctx context.Context, arg CreateGitHubTaskReviewCommentParams) (TaskReviewComment, error) {
-	row := q.db.QueryRowContext(ctx, createGitHubTaskReviewComment,
+// Like CreateTaskReviewComment but for a comment ingested from a PR/MR review
+// on some forge (source = e.g. 'github' or 'gitea' -- see internal/forge),
+// tagged with the forge's comment id (external_id) so re-sweeps can dedup via
+// GetTaskReviewCommentByExternalID before inserting.
+func (q *Queries) CreateForgeTaskReviewComment(ctx context.Context, arg CreateForgeTaskReviewCommentParams) (TaskReviewComment, error) {
+	row := q.db.QueryRowContext(ctx, createForgeTaskReviewComment,
 		arg.ID,
 		arg.TaskID,
 		arg.FilePath,
@@ -42,6 +43,7 @@ func (q *Queries) CreateGitHubTaskReviewComment(ctx context.Context, arg CreateG
 		arg.QuotedText,
 		arg.Body,
 		arg.ExternalID,
+		arg.Source,
 	)
 	var i TaskReviewComment
 	err := row.Scan(

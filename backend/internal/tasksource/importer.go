@@ -45,7 +45,13 @@ type Importer struct {
 	q        *gen.Queries
 	hub      Publisher
 	interval time.Duration
-	source   Source
+	// sources holds every configured Source, tried in order for each repo
+	// (see resolveSource). Almost always populated with exactly one element
+	// (via New/NewWithEngine); NewMulti/NewWithEngineMulti populate more than
+	// one so a single Importer can sync repos hosted on different forges
+	// (e.g. GitHubIssues for github.com remotes, GiteaIssues for a
+	// self-hosted Gitea) without running a whole separate poller per forge.
+	sources []Source
 	// engine, if non-nil, is used to execute the "move" gone-action. Nil-safe:
 	// a nil engine (or an empty issue_sync_gone_label, or a rejected
 	// transition) falls back to flag-only behavior.
@@ -57,12 +63,20 @@ type Importer struct {
 // with issue_sync_gone_action = "move" falls back to flag-only for that repo
 // (see NewWithEngine).
 func New(db *sql.DB, hub Publisher, interval time.Duration, source Source) *Importer {
+	return NewMulti(db, hub, interval, []Source{source})
+}
+
+// NewMulti creates an Importer that tries each of the given sources, in
+// order, for every repo it sweeps — see resolveSource. Use this (rather than
+// New) when more than one external-tracker Source is configured (e.g.
+// GitHub Issues and Gitea Issues side by side).
+func NewMulti(db *sql.DB, hub Publisher, interval time.Duration, sources []Source) *Importer {
 	return &Importer{
 		db:       db,
 		q:        gen.New(db),
 		hub:      hub,
 		interval: interval,
-		source:   source,
+		sources:  sources,
 	}
 }
 
@@ -72,6 +86,14 @@ func New(db *sql.DB, hub Publisher, interval time.Duration, source Source) *Impo
 // Importer without an engine keep compiling unchanged.
 func NewWithEngine(db *sql.DB, hub Publisher, interval time.Duration, source Source, engine *workflow.Engine) *Importer {
 	im := New(db, hub, interval, source)
+	im.engine = engine
+	return im
+}
+
+// NewWithEngineMulti is NewMulti plus a workflow engine — see NewWithEngine
+// and NewMulti.
+func NewWithEngineMulti(db *sql.DB, hub Publisher, interval time.Duration, sources []Source, engine *workflow.Engine) *Importer {
+	im := NewMulti(db, hub, interval, sources)
 	im.engine = engine
 	return im
 }
@@ -140,11 +162,46 @@ func (im *Importer) Sweep(ctx context.Context) {
 	)
 }
 
+// resolveSource picks the Source able to handle repo out of im.sources: the
+// first one whose Fetch call doesn't immediately fail for lacking a usable
+// remote URL. Sources are expected to validate the remote (e.g. via
+// forge.ForRemote) before making any network call, so trying each in order
+// here costs nothing beyond a cheap string comparison per candidate — no
+// wasted API calls against the wrong forge.
+//
+// Returns ok=false if repo has no remote URL a configured source recognises
+// (e.g. a Gitea remote when only GitHubIssues is configured, or vice versa).
+func (im *Importer) resolveSource(repo gen.Repo) (Source, bool) {
+	if repo.RemoteUrl == nil || *repo.RemoteUrl == "" {
+		return nil, false
+	}
+	for _, s := range im.sources {
+		if r, ok := s.(interface{ AppliesTo(gen.Repo) bool }); ok {
+			if r.AppliesTo(repo) {
+				return s, true
+			}
+			continue
+		}
+		// A Source without an AppliesTo capability is assumed to always
+		// apply (kept for any hypothetical future Source that isn't
+		// per-remote-forge-scoped); with exactly one such Source configured
+		// (the common case), this is exactly today's single-source behavior.
+		return s, true
+	}
+	return nil, false
+}
+
 // sweepRepo syncs tasks for one repo: fetch -> per-item create-or-update ->
 // reconcile disappeared items.
 func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 	log := slog.With("component", "tasksource", "repo", repo.Name)
 	var stats sweepStats
+
+	source, ok := im.resolveSource(repo)
+	if !ok {
+		log.Warn("issue import: no configured source recognises this repo's remote; skipping")
+		return stats
+	}
 
 	// Tasks require a workflow; a repo without one can't receive imports.
 	if repo.WorkflowID == nil || *repo.WorkflowID == "" {
@@ -173,13 +230,13 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 		return stats
 	}
 
-	items, err := im.source.Fetch(ctx, repo)
+	items, err := source.Fetch(ctx, repo)
 	if err != nil {
 		log.Warn("issue import: fetch failed", "err", err)
 		return stats
 	}
 
-	commenter, canComment := im.source.(CommentSource)
+	commenter, canComment := source.(CommentSource)
 
 	// New items are created in a single DB transaction for the whole repo,
 	// rather than one implicit commit per row: SQLite is single-writer, and a
@@ -193,7 +250,7 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 		seen[item.Ref] = true
 
 		task, err := im.q.GetTaskBySource(ctx, gen.GetTaskBySourceParams{
-			Source:    im.source.Name(),
+			Source:    source.Name(),
 			SourceRef: item.Ref,
 		})
 		if errors.Is(err, sql.ErrNoRows) {
@@ -229,9 +286,9 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 		}
 	}
 
-	stats.created += im.createNewTasks(ctx, repo, startLabel, toCreate, log)
+	stats.created += im.createNewTasks(ctx, repo, source.Name(), startLabel, toCreate, log)
 
-	stats.flagged += im.reconcile(ctx, repo, seen, log)
+	stats.flagged += im.reconcile(ctx, repo, source.Name(), seen, log)
 	return stats
 }
 
@@ -241,7 +298,7 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 // task.created_bulk event instead of one task.created per item. The event is
 // only published after the transaction commits successfully, so it always
 // reflects DB truth.
-func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, startLabel string, items []ExternalTask, log *slog.Logger) int {
+func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, sourceName, startLabel string, items []ExternalTask, log *slog.Logger) int {
 	if len(items) == 0 {
 		return 0
 	}
@@ -266,7 +323,7 @@ func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, startLabe
 			RepoID:      repo.ID,
 			WorkflowID:  *repo.WorkflowID,
 			Attachments: "[]",
-			Source:      im.source.Name(),
+			Source:      sourceName,
 			SourceRef:   item.Ref,
 		})
 		if err != nil {
@@ -302,7 +359,7 @@ func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, startLabe
 	}
 	im.hub.Publish("task.created_bulk", map[string]any{
 		"repo_id": repo.ID,
-		"source":  im.source.Name(),
+		"source":  sourceName,
 		"count":   len(created),
 		"ids":     ids,
 	})
@@ -423,9 +480,9 @@ func (im *Importer) ingestComments(ctx context.Context, source CommentSource, re
 // gone-action. Tasks already flagged gone are left untouched (idempotent).
 // Never deletes a task or un-imports it — only sets state and optionally
 // archives/moves.
-func (im *Importer) reconcile(ctx context.Context, repo gen.Repo, seen map[string]bool, log *slog.Logger) int {
+func (im *Importer) reconcile(ctx context.Context, repo gen.Repo, sourceName string, seen map[string]bool, log *slog.Logger) int {
 	existing, err := im.q.ListTasksBySourceRepo(ctx, gen.ListTasksBySourceRepoParams{
-		Source: im.source.Name(),
+		Source: sourceName,
 		RepoID: repo.ID,
 	})
 	if err != nil {
