@@ -1,7 +1,7 @@
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import type { ModelList, ProviderConfig } from '../../api/client'
 import { PROVIDERS } from '../../lib/agentTemplates'
-import { PROVIDER_CAPABILITIES, type Capability } from '../../lib/providerCapabilities'
+import { DEPRECATED_PROVIDERS, PROVIDER_CAPABILITIES, type Capability } from '../../lib/providerCapabilities'
 import Field from '../agents/Field'
 import ModelSelector from '../agents/ModelSelector'
 
@@ -49,6 +49,16 @@ export default function ProviderConfigForm({
     ? GAP_SUMMARY_CAPS.filter(({ key }) => (caps[key]?.support ?? 'none') !== 'full').map(({ label }) => label)
     : []
 
+  // An existing config may carry a provider that's been removed from the
+  // dropdown (anthropic/llm/openai, deprecated) or that's otherwise unknown.
+  // If we only ever render <option>s from PROVIDERS, the <select>'s value
+  // matches none of them, the browser blanks it or snaps to the first entry,
+  // and saving any unrelated field silently rewrites provider to whatever
+  // that first entry is. Render an extra, disabled option for the current
+  // value so it round-trips instead.
+  const isKnownDropdownProvider = PROVIDERS.includes(form.provider)
+  const isDeprecated = DEPRECATED_PROVIDERS.has(form.provider)
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-6">
@@ -76,10 +86,21 @@ export default function ProviderConfigForm({
             onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value as FormState['provider'] }))}
             className="input"
           >
+            {!isKnownDropdownProvider && form.provider && (
+              <option key={form.provider} value={form.provider} disabled>
+                {form.provider} (deprecated)
+              </option>
+            )}
             {PROVIDERS.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
+          {isDeprecated && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ The <code>{form.provider}</code> provider is deprecated, disabled for new configs, and may be removed
+              in a future release. This config will keep running, but should be migrated to a supported provider.
+            </p>
+          )}
           {gaps.length > 0 && (
             <p className="mt-1 text-xs text-amber-400">
               ⚠️ Not fully supported: {gaps.join(', ')}. See{' '}

@@ -230,6 +230,75 @@ func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error
 	return items, nil
 }
 
+const listAllAgentConfigsPage = `-- name: ListAllAgentConfigsPage :many
+SELECT a.id, a.name, a.system_prompt, a.labels, a.max_tokens, a.timeout_secs, a.created_at, a.updated_at, a.enabled, a.enabled_plugins, a.enabled_mcp_servers, a.max_turns, a.command_allowlist, a.command_denylist, a.max_retries, a.retry_backoff_secs, a.resume_sessions, a.subtasks_enabled, a.max_subtasks, a.max_cost_usd, a.priority, a.provider_config_id FROM agent_configs a
+WHERE (
+    ?1 = ''
+    OR a.created_at < (SELECT created_at FROM agent_configs WHERE id = ?1)
+    OR (a.created_at = (SELECT created_at FROM agent_configs WHERE id = ?1) AND a.id < ?1)
+  )
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT ?2
+`
+
+type ListAllAgentConfigsPageParams struct {
+	Column1 interface{} `json:"column_1"`
+	Limit   int64       `json:"limit"`
+}
+
+// Cursor-paginated agent-config listing (all, enabled or not), newest first.
+// Positional params (?1 after cursor = created_at then id of last row, ?2
+// limit) sidestep the sqlc SQLite byte-offset bug; keep this comment
+// ASCII-only. Ordering is (created_at, id) descending so the cursor is a
+// stable total order, matching SearchTasksPage/ListAgentLogsPage. Used only
+// by the HTTP List handler; ListAgentConfigs (the internal enabled-only
+// lookup) is deliberately left unpaginated.
+func (q *Queries) ListAllAgentConfigsPage(ctx context.Context, arg ListAllAgentConfigsPageParams) ([]AgentConfig, error) {
+	rows, err := q.db.QueryContext(ctx, listAllAgentConfigsPage, arg.Column1, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentConfig
+	for rows.Next() {
+		var i AgentConfig
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.SystemPrompt,
+			&i.Labels,
+			&i.MaxTokens,
+			&i.TimeoutSecs,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Enabled,
+			&i.EnabledPlugins,
+			&i.EnabledMcpServers,
+			&i.MaxTurns,
+			&i.CommandAllowlist,
+			&i.CommandDenylist,
+			&i.MaxRetries,
+			&i.RetryBackoffSecs,
+			&i.ResumeSessions,
+			&i.SubtasksEnabled,
+			&i.MaxSubtasks,
+			&i.MaxCostUsd,
+			&i.Priority,
+			&i.ProviderConfigID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateAgentConfig = `-- name: UpdateAgentConfig :one
 UPDATE agent_configs
 SET name = ?, provider_config_id = ?, system_prompt = ?, labels = ?,

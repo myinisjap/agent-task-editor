@@ -499,3 +499,126 @@ func TestDashboardGet_RepoConcurrency(t *testing.T) {
 		t.Errorf("expected idle repo (no in-flight runs) to be excluded from repo_concurrency")
 	}
 }
+
+// TestDashboardCostByTask_GroupsByTask seeds two runs on one task and one run
+// on another, then verifies CostByTask returns a per-task rollup summing
+// tokens/cost across all of a task's runs (see SumUsageByTask).
+func TestDashboardCostByTask_GroupsByTask(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "repo", Path: t.TempDir(), WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	taskA, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "task A", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task A: %v", err)
+	}
+	taskB, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "task B", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task B: %v", err)
+	}
+
+	mkRun := func(taskID string, inTok, outTok int64, cost float64) {
+		run, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: taskID})
+		if err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if _, err := q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status: "completed", InputTokens: inTok, OutputTokens: outTok, CostUsd: cost, ID: run.ID,
+		}); err != nil {
+			t.Fatalf("finalize run: %v", err)
+		}
+	}
+	mkRun(taskA.ID, 100, 50, 0.01)
+	mkRun(taskA.ID, 200, 75, 0.02)
+	mkRun(taskB.ID, 10, 5, 0.001)
+
+	h := handlers.NewDashboardHandler(q, 5)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/cost-by-task", nil)
+	w := httptest.NewRecorder()
+	h.CostByTask(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var rows []struct {
+		TaskID       string  `json:"task_id"`
+		InputTokens  int64   `json:"input_tokens"`
+		OutputTokens int64   `json:"output_tokens"`
+		CostUSD      float64 `json:"cost_usd"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 task cost rows, got %d: %+v", len(rows), rows)
+	}
+	byID := make(map[string]struct {
+		InputTokens  int64
+		OutputTokens int64
+		CostUSD      float64
+	}, len(rows))
+	for _, row := range rows {
+		byID[row.TaskID] = struct {
+			InputTokens  int64
+			OutputTokens int64
+			CostUSD      float64
+		}{row.InputTokens, row.OutputTokens, row.CostUSD}
+	}
+	a, ok := byID[taskA.ID]
+	if !ok {
+		t.Fatalf("expected task A in response, got %+v", rows)
+	}
+	if a.InputTokens != 300 || a.OutputTokens != 125 {
+		t.Errorf("task A: expected input=300 output=125, got input=%d output=%d", a.InputTokens, a.OutputTokens)
+	}
+	if a.CostUSD < 0.029 || a.CostUSD > 0.031 {
+		t.Errorf("task A: expected cost_usd ~0.03, got %v", a.CostUSD)
+	}
+	b, ok := byID[taskB.ID]
+	if !ok {
+		t.Fatalf("expected task B in response, got %+v", rows)
+	}
+	if b.InputTokens != 10 || b.OutputTokens != 5 {
+		t.Errorf("task B: expected input=10 output=5, got input=%d output=%d", b.InputTokens, b.OutputTokens)
+	}
+}
+
+// TestDashboardCostByTask_EmptyWhenNoRuns verifies the endpoint returns an
+// empty (not null) array when there are no agent runs at all.
+func TestDashboardCostByTask_EmptyWhenNoRuns(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewDashboardHandler(q, 5)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/cost-by-task", nil)
+	w := httptest.NewRecorder()
+	h.CostByTask(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("expected empty cost-by-task result, got %+v", rows)
+	}
+}

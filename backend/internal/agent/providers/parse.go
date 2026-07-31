@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"strings"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -22,6 +23,35 @@ func applyUsage(res *agent.Result, u *runUsage) {
 	res.InputTokens = u.InputTokens
 	res.OutputTokens = u.OutputTokens
 	res.CostUSD = u.CostUSD
+}
+
+// applyUsageWithCost copies token usage from u onto res (like applyUsage)
+// and additionally prices it: if u already carries an authoritative
+// provider-reported cost (u.CostUSD > 0 — e.g. opencode's step_finish
+// "cost" field), that value is kept as-is and res.CostUnknown is left
+// false. Otherwise the tokens are priced via resolver/model using
+// estimateCostUSDWithResolver (the same DB-backed pricing table the
+// anthropic/llm path uses — see runAccumulators.attach in tools.go), and
+// res.CostUnknown is set when tokens were actually consumed but no price
+// was found, so the UI can render "cost unknown" instead of a misleading
+// $0 (see providers.PriceResolver).
+//
+// Callers should pass the run's parent context (not a possibly-cancelled/
+// timed-out per-run context) so the pricing DB lookup isn't starved on a
+// run that already hit its deadline.
+func applyUsageWithCost(ctx context.Context, res *agent.Result, u *runUsage, resolver PriceResolver, model string) {
+	if u == nil {
+		return
+	}
+	res.InputTokens = u.InputTokens
+	res.OutputTokens = u.OutputTokens
+	if u.CostUSD > 0 {
+		res.CostUSD = u.CostUSD
+		return
+	}
+	cost, known := estimateCostUSDWithResolver(ctx, resolver, model, u.InputTokens, u.OutputTokens)
+	res.CostUSD = cost
+	res.CostUnknown = (u.InputTokens > 0 || u.OutputTokens > 0) && !known
 }
 
 // extractOutcome looks for "OUTCOME: success|failure" anywhere in the text.

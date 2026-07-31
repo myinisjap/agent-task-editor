@@ -2,16 +2,20 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -29,6 +33,7 @@ func setupReposRouter(t *testing.T, repoBaseDir string) (http.Handler, *gen.Quer
 	r.Get("/repos", h.List)
 	r.Get("/repos/{id}", h.Get)
 	r.Delete("/repos/{id}", h.Delete)
+	r.Get("/repos/{id}/tree", h.Tree)
 	return r, q
 }
 
@@ -803,6 +808,64 @@ func TestReposList_Empty(t *testing.T) {
 	}
 }
 
+// TestReposList_Pagination verifies limit/after cursor pagination walks the
+// full repo list without dupes or gaps.
+func TestReposList_Pagination(t *testing.T) {
+	router, q := setupReposRouter(t, "")
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+			ID:   uuid.NewString(),
+			Name: "repo",
+			Path: t.TempDir(),
+		}); err != nil {
+			t.Fatalf("create repo: %v", err)
+		}
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		qs := "?limit=2"
+		if cursor != "" {
+			qs += "&after=" + cursor
+		}
+		req := httptest.NewRequest(http.MethodGet, "/repos"+qs, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET repos%s: expected 200, got %d: %s", qs, w.Code, w.Body)
+		}
+		var page []gen.Repo
+		if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d repos, expected <= 2", len(page))
+		}
+		for _, repo := range page {
+			if seen[repo.ID] {
+				t.Fatalf("repo %s returned on more than one page", repo.ID)
+			}
+			seen[repo.ID] = true
+		}
+		next := w.Header().Get("X-Next-Cursor")
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 repos, saw %d", len(seen))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Issue sync update policy / gone action / gone label / comment sync
 // (issue #264 phase 4) — see the CRITICAL hazard note in
@@ -1181,5 +1244,223 @@ func TestReposUpdate_MaxConcurrentRunsOmittedVsNullVsSet(t *testing.T) {
 	w = patchJSON(t, router, "/repos/"+id, map[string]any{"max_concurrent_runs": -2})
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("negative on update: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------- Get / Delete / Tree ----------
+
+func TestReposGet_OK(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myorg/myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	id, _ := created["id"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+id, nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if got["id"] != id || got["name"] != "myorg/myrepo" {
+		t.Errorf("expected repo myorg/myrepo with id %s, got %+v", id, got)
+	}
+}
+
+func TestReposGet_Unknown(t *testing.T) {
+	router, _ := setupReposRouter(t, t.TempDir())
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+uuid.NewString(), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestReposDelete_OK(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myorg/myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	id, _ := created["id"].(string)
+
+	req := httptest.NewRequest(http.MethodDelete, "/repos/"+id, nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/repos/"+id, nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected deleted repo to 404 on Get, got %d", w.Code)
+	}
+}
+
+func TestReposTree_OK(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+	if out, err := exec.Command("git", "-C", repoDir, "config", "user.email", "t@example.com").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.email: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "config", "user.name", "test").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.name: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hi\n"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "add", "-A").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", "add readme").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myorg/myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	id, _ := created["id"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+id+"/tree", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Ref   string   `json:"ref"`
+		Files []string `json:"files"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode tree response: %v", err)
+	}
+	if got.Ref != "HEAD" {
+		t.Errorf("expected default ref HEAD, got %q", got.Ref)
+	}
+	found := false
+	for _, f := range got.Files {
+		if f == "README.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected README.md in tree files, got %v", got.Files)
+	}
+}
+
+func TestReposTree_Unknown(t *testing.T) {
+	router, _ := setupReposRouter(t, t.TempDir())
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+uuid.NewString()+"/tree", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestReposTree_InvalidRef(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myorg/myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	id, _ := created["id"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+id+"/tree?ref="+url.QueryEscape("--no-index"), nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReposCreate_AsyncCloneFailure_MarksRepoError drives startAsyncClone's
+// full lifecycle by omitting `path` and pointing `remote_url` at an
+// unreachable local address (127.0.0.1 on a closed port), so `git clone`
+// fails fast without any real network access. The handler must return 201
+// immediately (clone runs in the background) with clone_status "cloning",
+// then the background goroutine marks it "error" with a message once the
+// clone fails.
+func TestReposCreate_AsyncCloneFailure_MarksRepoError(t *testing.T) {
+	base := t.TempDir()
+	router, q := setupReposRouter(t, base)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":       "acme/unreachable",
+		"remote_url": "https://127.0.0.1:1/acme/unreachable.git",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if got := created["clone_status"]; got != "cloning" {
+		t.Fatalf("expected clone_status 'cloning' immediately after create, got %v", got)
+	}
+	id, _ := created["id"].(string)
+
+	deadline := time.Now().Add(20 * time.Second)
+	var repo gen.Repo
+	for {
+		var err error
+		repo, err = q.GetRepo(context.Background(), id)
+		if err != nil {
+			t.Fatalf("get repo: %v", err)
+		}
+		if repo.CloneStatus == "error" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for clone_status to become 'error', last status: %q", repo.CloneStatus)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if repo.CloneError == "" {
+		t.Errorf("expected a non-empty clone_error message")
 	}
 }

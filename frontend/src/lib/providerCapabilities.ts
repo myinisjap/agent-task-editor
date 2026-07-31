@@ -19,6 +19,7 @@ export type Capability =
   | 'commandAllowlist'
   | 'commandDenylist'
   | 'costTracking'
+  | 'costWatchdog'
   | 'imageAttachments'
   | 'maxTurns'
   | 'sessionResume'
@@ -36,14 +37,25 @@ export type ProviderCapabilities = Partial<Record<Capability, CapabilityEntry>>
 
 // Ordered list of known providers, matching docs/agents.md's Capability
 // Matrix column order. `agentTemplates.ts`'s PROVIDERS list is the
-// UI-selectable dropdown (which also includes `openai`, an alias with no
-// dedicated capability row — it's treated as the OpenAI-compatible `llm`
-// path by the backend).
-export const KNOWN_PROVIDERS = ['claude', 'qwen_code', 'gemini_cli', 'codex_cli', 'anthropic', 'llm', 'opencode'] as const
+// UI-selectable dropdown; it no longer includes `anthropic`, `llm`, or the
+// `openai` alias for the same OpenAI-compatible path — all three are
+// deprecated (see DEPRECATED_PROVIDERS below) and no longer selectable for
+// new/updated configs. They're kept here so existing configs on those
+// providers still get their capability rows and warnings rendered.
+export const KNOWN_PROVIDERS = ['claude', 'qwen_code', 'codex_cli', 'anthropic', 'llm', 'opencode'] as const
+
+// Providers disabled for new/updated provider configs (rejected by the
+// backend) and hidden from agentTemplates.ts's PROVIDERS dropdown, but still
+// present in PROVIDER_CAPABILITIES above so existing configs on these
+// providers keep rendering accurate capability warnings and model lists.
+// "openai" was a dead dropdown alias for the same deprecated `llm` path and
+// never had its own capability row. See docs/providers/anthropic.md and
+// docs/providers/llm.md for the deprecation notice.
+export const DEPRECATED_PROVIDERS = new Set(['anthropic', 'llm', 'openai'])
 
 export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
   claude: {
-    taskEditorTools: { support: 'full', note: 'All 5 task-editor tools via the MCP sidecar.' },
+    taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
     labelTransitions: { support: 'full' },
     mcpServers: { support: 'full', note: 'Supports Claude plugins and user-level MCP servers.' },
     commandAllowlist: {
@@ -52,37 +64,45 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     commandDenylist: { support: 'full' },
     costTracking: { support: 'full', note: 'Authoritative cost and token counts.' },
-    imageAttachments: { support: 'full', note: 'Supported via --image.' },
-    maxTurns: { support: 'full' },
+    costWatchdog: {
+      support: 'full',
+      note: 'Mid-run kill switch: projects cost from incremental assistant-message token usage via the pricing table and cancels the run if it crosses the effective budget, escalating to waiting_human. The projection is an estimate (not the CLI\'s own authoritative total_cost_usd, which is only known after the run ends) — under a subscription plan with $0 real marginal cost, this estimate can still be nonzero and trigger a kill.',
+    },
+    imageAttachments: {
+      support: 'none',
+      note: 'The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool.',
+    },
+    maxTurns: { support: 'full', note: 'Enforced via --max-turns. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   qwen_code: {
-    taskEditorTools: { support: 'full', note: 'All 5 task-editor tools via the MCP sidecar.' },
+    taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
     labelTransitions: { support: 'full' },
     mcpServers: { support: 'none' },
-    commandAllowlist: { support: 'full' },
-    commandDenylist: { support: 'none', note: 'Not enforced for the qwen_code provider (no confirmed CLI denylist flag).' },
-    costTracking: { support: 'full', note: 'Authoritative cost and token counts.' },
-    imageAttachments: { support: 'none', note: 'CLI gap.' },
-    maxTurns: { support: 'full' },
-    sessionResume: { support: 'partial', note: 'Session recorded, not resumed (no verified CLI flag).' },
-    subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
-  },
-  gemini_cli: {
-    taskEditorTools: { support: 'full', note: 'All 5 task-editor tools via the MCP sidecar.' },
-    labelTransitions: { support: 'full' },
-    mcpServers: { support: 'none' },
-    commandAllowlist: { support: 'none', note: 'Not enforced for the gemini_cli provider (no confirmed CLI allowlist flag).' },
-    commandDenylist: { support: 'none', note: 'Not enforced for the gemini_cli provider (no confirmed CLI denylist flag).' },
-    costTracking: { support: 'partial', note: 'Tokens only, no cost — a cost budget cap will not reliably fire.' },
-    imageAttachments: { support: 'none', note: 'See docs/providers/gemini_cli.md.' },
-    maxTurns: { support: 'full' },
-    sessionResume: { support: 'partial', note: 'Thread id recorded, not resumed.' },
+    commandAllowlist: {
+      support: 'none',
+      note: "Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect. Use the denylist instead.",
+    },
+    commandDenylist: {
+      support: 'partial',
+      note: "Enforced via qwen's --exclude-tools flag (folds into its permissionsDeny policy), which is honored even under yolo mode. Per-pattern Bash(pattern) granularity mirrors --allowed-tools but has not been confirmed live for the deny path; if qwen only accepts bare tool names here, denial may degrade to blanket Bash exclusion.",
+    },
+    costTracking: {
+      support: 'partial',
+      note: "Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire.",
+    },
+    costWatchdog: {
+      support: 'partial',
+      note: 'Same mid-run kill switch mechanism as claude (projects cost from incremental token usage). Only effective when the configured model is in the pricing table — otherwise the watchdog is a silent no-op and only the pre-dispatch budget guard applies.',
+    },
+    imageAttachments: { support: 'none', note: 'No image flag on the qwen CLI.' },
+    maxTurns: { support: 'full', note: 'Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying.' },
+    sessionResume: { support: 'full', note: 'session_id + --resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   codex_cli: {
-    taskEditorTools: { support: 'full', note: 'All 5 task-editor tools via the MCP sidecar.' },
+    taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
     labelTransitions: { support: 'full' },
     mcpServers: { support: 'none' },
     commandAllowlist: {
@@ -93,33 +113,48 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'none',
       note: 'Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md).',
     },
-    costTracking: { support: 'partial', note: 'Tokens only, no cost — a cost budget cap will not reliably fire.' },
-    imageAttachments: { support: 'none', note: 'See docs/providers/codex_cli.md.' },
-    maxTurns: { support: 'full' },
-    sessionResume: { support: 'partial', note: 'Thread id recorded, not resumed.' },
+    costTracking: {
+      support: 'partial',
+      note: 'Tokens captured from turn.completed are priced via the pricing table (DB-backed, with a hardcoded fallback) — estimated, not authoritative like claude/opencode. The pre-dispatch max_cost_usd guard now works. Runs on an unpriced model are flagged "cost unknown" instead of $0.',
+    },
+    costWatchdog: {
+      support: 'none',
+      note: 'Not implemented — usage is only known at end-of-run for this provider, so mid-run cost can\'t be projected. Only the pre-dispatch budget guard applies.',
+    },
+    imageAttachments: {
+      support: 'none',
+      note: 'codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md.',
+    },
+    maxTurns: {
+      support: 'none',
+      note: 'Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run.',
+    },
+    sessionResume: { support: 'full', note: 'thread_id + codex exec resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
   },
   anthropic: {
-    taskEditorTools: { support: 'partial', note: '4 of 5 native task-editor tools (no resolve_comment/create_subtask).' },
+    taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
     labelTransitions: { support: 'full', note: 'signal_complete implemented natively.' },
     mcpServers: { support: 'none' },
     commandAllowlist: { support: 'full', note: 'Enforced in Go.' },
     commandDenylist: { support: 'full', note: 'Enforced in Go.' },
     costTracking: { support: 'partial', note: 'Estimated from a pricing table, not authoritative.' },
+    costWatchdog: { support: 'none', note: 'No mid-run kill switch implemented — only the pre-dispatch budget guard applies.' },
     imageAttachments: { support: 'none', note: 'Not yet implemented.' },
-    maxTurns: { support: 'full', note: 'Enforced via the tool-use loop.' },
+    maxTurns: { support: 'full', note: 'Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
   },
   llm: {
-    taskEditorTools: { support: 'partial', note: '4 of 5 native task-editor tools (no resolve_comment/create_subtask).' },
+    taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
     labelTransitions: { support: 'full', note: 'signal_complete implemented natively.' },
     mcpServers: { support: 'none' },
     commandAllowlist: { support: 'full', note: 'Enforced in Go.' },
     commandDenylist: { support: 'full', note: 'Enforced in Go.' },
     costTracking: { support: 'partial', note: 'Estimated from a pricing table, not authoritative.' },
+    costWatchdog: { support: 'none', note: 'No mid-run kill switch implemented — only the pre-dispatch budget guard applies.' },
     imageAttachments: { support: 'none', note: 'Not yet implemented (backend-dependent).' },
-    maxTurns: { support: 'full', note: 'Enforced via the tool-use loop.' },
+    maxTurns: { support: 'full', note: 'Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
   },
@@ -136,12 +171,16 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     commandAllowlist: { support: 'none', note: 'Not enforced for the opencode provider.' },
     commandDenylist: { support: 'none', note: 'Not enforced for the opencode provider.' },
     costTracking: {
-      support: 'none',
-      note: 'Cost is not exposed by the CLI — a cost budget cap will not fire for this provider.',
+      support: 'full',
+      note: "Authoritative cost and token counts, read directly from the CLI's step_finish event (cost + tokens.input/output) — not estimated via a pricing table.",
     },
-    imageAttachments: { support: 'none' },
-    maxTurns: { support: 'none', note: 'Not enforced.' },
-    sessionResume: { support: 'none', note: 'Unverified.' },
+    costWatchdog: {
+      support: 'none',
+      note: 'Usage is now recorded at end-of-run (see costTracking), but no mid-run kill switch is wired up for this provider yet — step_finish only carries a cumulative-to-date snapshot, not the per-turn incremental usage a watchdog needs to project a running total. Only the pre-dispatch budget guard applies.',
+    },
+    imageAttachments: { support: 'none', note: 'opencode run has an -f/--file flag, but attachments are not wired through to it.' },
+    maxTurns: { support: 'none', note: 'Not enforced — the opencode CLI has no turn-cap flag.' },
+    sessionResume: { support: 'full', note: 'sessionID + --session.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
   },
 }

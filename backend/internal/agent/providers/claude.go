@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,12 +19,19 @@ type ClaudeRunner struct {
 	BinaryPath string
 	MCP        *MCPManager
 	// UploadDir is the server-side directory where task attachments are stored.
-	// Used to resolve absolute paths when passing --image flags to the claude CLI.
+	// Reserved for future use.
 	UploadDir string
 	// BackendURL / APIToken let the create_subtask MCP tool post children live to
 	// the backend REST API (same container). Set from server config.
 	BackendURL string
 	APIToken   string
+	// PriceResolver resolves model to USD-per-1M pricing for the mid-run cost
+	// watchdog (see cost_watchdog.go). Unlike anthropic/llm, claude's own
+	// terminal total_cost_usd is authoritative and always used for the final
+	// persisted Result.CostUSD — this resolver is only consulted to *project*
+	// cost from incremental token usage while the run is still in flight.
+	// nil falls back to the hardcoded pricing table (defaultPriceResolver).
+	PriceResolver PriceResolver
 }
 
 func (r *ClaudeRunner) binary() string {
@@ -104,10 +110,6 @@ func buildClaudeArgs(input agent.RunInput, sidecarEnabled bool, mcpCfg *MCPRunCo
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
 	}
-	// Pass attachment images as --image flags so Claude can see them visually.
-	for _, absPath := range input.AttachmentAbsPaths {
-		args = append(args, "--image", absPath)
-	}
 	return args, nil
 }
 
@@ -151,14 +153,22 @@ func (r *ClaudeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan
 	}
 
 	res, info, err := r.runAttempt(ctx, input, sidecarEnabled, mcpCfg, logCh)
+	if info.costExceeded != nil {
+		// The cost watchdog killed this attempt — never retry as a cold
+		// start (that would just start spending against the same
+		// already-exhausted budget again).
+		res.CostWarned = info.costWarned
+		return res, err
+	}
 	if input.ResumeSessionID != "" && shouldFallBackToColdStart(info) {
 		// The --resume target most likely no longer exists (session expired,
 		// CLI updated, state moved). Non-fatal: retry once from a cold start
 		// with the full prompt.
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("could not resume session %s — starting a fresh session", input.ResumeSessionID), At: time.Now()}
 		input.ResumeSessionID = ""
-		res, _, err = r.runAttempt(ctx, input, sidecarEnabled, mcpCfg, logCh)
+		res, info, err = r.runAttempt(ctx, input, sidecarEnabled, mcpCfg, logCh)
 	}
+	res.CostWarned = info.costWarned
 	return res, err
 }
 
@@ -173,6 +183,24 @@ type attemptInfo struct {
 	resumeError bool
 	// exitedWithError is true when the subprocess exited non-zero (for any reason).
 	exitedWithError bool
+	// costWarned is true if the mid-run cost watchdog crossed the warning
+	// threshold at any point during this attempt.
+	costWarned bool
+	// costExceeded is set when the watchdog cancelled the subprocess because
+	// projected cost crossed the effective budget. Run() must not retry a
+	// resume/cold-start fallback when this is set.
+	costExceeded *agent.ErrCostBudgetExceeded
+	// costExceededUsage carries the run's own cumulative token usage (and
+	// this run's own incremental cost, i.e. costExceeded.SpentUSD minus the
+	// watchdog's prior-spend baseline — NOT the full task-wide projection) at
+	// the moment the watchdog cancelled the subprocess. The killed run never
+	// reaches its terminal "result" event, so this is the only usage/cost
+	// data available to persist — without it, the run's agent_runs row would
+	// record cost_usd=0 despite having genuinely spent money, and
+	// SumTaskCost (which the pre-dispatch budget guard and dashboards read)
+	// would silently undercount, letting a kill/resume/re-kill cycle
+	// repeatedly overspend the same "budget".
+	costExceededUsage *runUsage
 }
 
 // shouldFallBackToColdStart reports whether a resumed attempt failed in a way
@@ -224,16 +252,28 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started claude pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg           sync.WaitGroup
-		outcome      string
-		sessionID    string
-		rateLimited  bool
-		rateLimitMsg string
-		transient    bool
-		usage        *runUsage
-		mu           sync.Mutex
+		wg              sync.WaitGroup
+		outcome         string
+		sessionID       string
+		rateLimited     bool
+		rateLimitMsg    string
+		transient       bool
+		maxTurnsHit     bool
+		usage           *runUsage
+		cumInputTokens  int64
+		cumOutputTokens int64
+		stdoutTruncated bool
+		stderrTruncated bool
+		mu              sync.Mutex
 	)
 	wg.Add(2)
+
+	// Mid-run cost watchdog: projects total task cost (prior spend + this
+	// run's cumulative token usage) as assistant-message usage events arrive,
+	// and cancels the subprocess if the projection crosses the effective
+	// budget. Inert (Price lookups skipped entirely) when input.CostBudgetUSD
+	// is 0 (no cap configured). See cost_watchdog.go.
+	watchdog := newCostWatchdog(input.CostBudgetUSD, input.CostSpentUSD, input.CostWarnRatio, r.PriceResolver, input.AgentConfig.Model)
 
 	// Stream stdout (stream-json lines)
 	go func() {
@@ -243,12 +283,9 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		// <dir>/<runID>.jsonl. Off by default; no DB, no product surface.
 		rawDump := openRawDump(input.RunID)
 		defer rawDump.Close()
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stdout, func(line string) {
 			if line == "" {
-				continue
+				return
 			}
 			rawDump.WriteLine(line)
 			ev := classifyStreamJSON(line)
@@ -258,7 +295,41 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 				outcome = ev.Outcome
 			}
 			if ev.Usage != nil {
-				usage = ev.Usage
+				if ev.IsResult {
+					// Authoritative final total — replaces any running
+					// projection built from assistant-message deltas.
+					usage = ev.Usage
+				} else {
+					// Assistant-message usage is per-turn, not cumulative —
+					// sum it to build the running total the watchdog projects
+					// against. total_cost_usd is never set on these, so the
+					// watchdog derives cost from tokens via the pricing table.
+					cumInputTokens += ev.Usage.InputTokens
+					cumOutputTokens += ev.Usage.OutputTokens
+					if watchdog.active() {
+						if projected, warn, exceeded := watchdog.observe(context.Background(), cumInputTokens, cumOutputTokens); warn || exceeded {
+							if warn {
+								info.costWarned = true
+								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the warning threshold (budget $%.2f)", projected, input.CostBudgetUSD), At: time.Now()}
+							}
+							if exceeded {
+								info.costExceeded = &agent.ErrCostBudgetExceeded{SpentUSD: projected, BudgetUSD: input.CostBudgetUSD}
+								// This run's own incremental cost is the
+								// projection minus the watchdog's prior-spend
+								// baseline (input.CostSpentUSD) — projected
+								// includes cost already recorded by earlier
+								// runs, which must not be double-counted here.
+								info.costExceededUsage = &runUsage{
+									InputTokens:  cumInputTokens,
+									OutputTokens: cumOutputTokens,
+									CostUSD:      projected - input.CostSpentUSD,
+								}
+								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the budget ($%.2f) — cancelling run", projected, input.CostBudgetUSD), At: time.Now()}
+								cancel()
+							}
+						}
+					}
+				}
 			}
 			if ev.SessionID != "" {
 				sessionID = ev.SessionID
@@ -287,16 +358,23 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 				mu.Lock()
 				transient = true
 				mu.Unlock()
+			case agent.ClassMaxTurns:
+				mu.Lock()
+				maxTurnsHit = true
+				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stdoutTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	// Stream stderr
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
 			if isResumeErrorLine(line) {
 				mu.Lock()
@@ -313,6 +391,11 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 				transient = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stderrTruncated = true
+			mu.Unlock()
 		}
 	}()
 
@@ -323,7 +406,35 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	mu.Lock()
 	finalUsage := usage
 	finalSession := sessionID
+	truncated := stdoutTruncated || stderrTruncated
 	mu.Unlock()
+
+	if info.costExceeded != nil {
+		// The watchdog already cancelled the subprocess (via cancel() in the
+		// scan loop above); err here is just the resulting context-cancelled
+		// exit, which we deliberately don't classify as transient/rate-limit —
+		// a budget stop must escalate to waiting_human, not retry.
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "claude run stopped: mid-run cost budget exceeded", At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		// A killed run never reaches its terminal "result" event, so
+		// finalUsage is always nil here — persist the watchdog's own
+		// cumulative-usage/incremental-cost snapshot instead, or the run
+		// would record cost_usd=0 despite having genuinely spent money (see
+		// attemptInfo.costExceededUsage).
+		applyUsage(&res, info.costExceededUsage)
+		return res, info, info.costExceeded
+	}
+
+	if truncated {
+		// A single line exceeded the scan buffer limit — the rest of that
+		// stream was dropped from the point the cap was hit. Surface it as a
+		// visible warning rather than letting the run silently report
+		// "completed" with missing output (see scan.go for detail).
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("claude output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, info, &agent.ErrTransient{Cause: fmt.Errorf("claude output truncated at scan buffer limit")}
+	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
@@ -355,6 +466,24 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		if tr {
 			return agent.Result{Status: "failed", SessionID: finalSession}, info, &agent.ErrTransient{Cause: fmt.Errorf("claude CLI exited with transient infra error: %w", err)}
 		}
+	}
+
+	// claude exits 0 on error_max_turns (unlike auth errors/crashes, which
+	// exit non-zero), so this must be checked regardless of err — otherwise
+	// the MCP/outcome fallthrough below would report the run as a normal
+	// "completed" result and the turn cap would silently have no effect.
+	mu.Lock()
+	mth := maxTurnsHit
+	mu.Unlock()
+	if mth {
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "claude hit its configured max-turns limit", At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		configuredMaxTurns := input.AgentConfig.MaxTurns
+		if configuredMaxTurns <= 0 {
+			configuredMaxTurns = 50
+		}
+		return res, info, &agent.ErrMaxTurns{MaxTurns: int(configuredMaxTurns)}
 	}
 
 	// MCP result takes priority; fall back to OUTCOME text parsing if the

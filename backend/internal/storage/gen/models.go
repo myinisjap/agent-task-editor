@@ -77,6 +77,12 @@ type ChatSession struct {
 	ProviderConfigID  string    `json:"provider_config_id"`
 }
 
+type CostWarningSetting struct {
+	ID        int64     `json:"id"`
+	WarnRatio float64   `json:"warn_ratio"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type LogRetentionSetting struct {
 	ID              int64     `json:"id"`
 	Days            int64     `json:"days"`
@@ -158,6 +164,7 @@ type Task struct {
 	SourceState             string     `json:"source_state"`
 	SourceStateAt           *time.Time `json:"source_state_at"`
 	PrMergeable             string     `json:"pr_mergeable"`
+	CostWarned              int64      `json:"cost_warned"`
 }
 
 type TaskDependency struct {
@@ -245,14 +252,16 @@ type Workflow struct {
 }
 
 type WorkflowLabel struct {
-	ID          string `json:"id"`
-	WorkflowID  string `json:"workflow_id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	SortOrder   int64  `json:"sort_order"`
-	AgentIgnore int64  `json:"agent_ignore"`
-	IsTerminal  int64  `json:"is_terminal"`
-	CreatePr    int64  `json:"create_pr"`
+	ID           string `json:"id"`
+	WorkflowID   string `json:"workflow_id"`
+	Name         string `json:"name"`
+	Color        string `json:"color"`
+	SortOrder    int64  `json:"sort_order"`
+	AgentIgnore  int64  `json:"agent_ignore"`
+	IsTerminal   int64  `json:"is_terminal"`
+	CreatePr     int64  `json:"create_pr"`
+	WipLimit     *int64 `json:"wip_limit"`
+	WipLimitHard int64  `json:"wip_limit_hard"`
 }
 
 type WorkflowTransition struct {

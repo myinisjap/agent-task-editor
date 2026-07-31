@@ -33,11 +33,32 @@ type ReplyDispatcher interface {
 	DispatchReply(ctx context.Context, taskID, message string) (string, error)
 }
 
+// ListRuns returns a page of a task's agent runs, newest first. Query
+// parameters:
+//   - limit: page size (default 100, capped at 500)
+//   - after: cursor (the id of the last run from the previous page)
+//
+// The body is a plain JSON array. When more runs remain, the id to pass as
+// the next ?after= cursor is returned in the X-Next-Cursor header. The
+// task's lifetime cumulative cost is NOT derivable from a single page and is
+// exposed separately on the task response (cumulative_cost_usd), computed
+// from SumTaskCost across every run regardless of status.
 func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
-	runs, err := h.q.ListAgentRuns(r.Context(), chi.URLParam(r, "id"))
+	taskID := chi.URLParam(r, "id")
+	limit := parsePageLimit(r.URL.Query().Get("limit"), defaultRunPageLimit, maxRunPageLimit)
+
+	runs, err := h.q.ListAgentRunsPage(r.Context(), gen.ListAgentRunsPageParams{
+		TaskID:  taskID,
+		Column2: r.URL.Query().Get("after"),
+		Limit:   int64(limit) + 1,
+	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if len(runs) > limit {
+		runs = runs[:limit]
+		w.Header().Set("X-Next-Cursor", runs[len(runs)-1].ID)
 	}
 	JSON(w, http.StatusOK, runs)
 }
@@ -125,6 +146,8 @@ func (h *TasksHandler) ReplyRun(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusConflict, err.Error())
 	case errors.Is(err, agent.ErrPoolSaturated):
 		Err(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, agent.ErrProviderUnavailable):
+		Err(w, http.StatusConflict, err.Error())
 	case errors.Is(err, sql.ErrNoRows):
 		Err(w, http.StatusNotFound, "task not found")
 	default:

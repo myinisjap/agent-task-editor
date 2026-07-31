@@ -53,7 +53,7 @@ export default function ChatPage() {
   const active = sessions.find((s) => s.id === activeId)
 
   return (
-    <div className="h-full min-h-0 flex">
+    <div className="h-full min-h-0 flex" data-testid="chat-page">
       {/* Left: session list + new-session form.
           Mobile: full width, hidden once a chat is open. Desktop: fixed rail. */}
       <div className={`${active ? 'hidden md:flex' : 'flex'} w-full md:w-64 shrink-0 border-r border-slate-800 flex-col min-h-0 bg-slate-900`}>

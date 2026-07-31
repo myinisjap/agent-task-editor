@@ -47,10 +47,14 @@ func validPriority(p int) bool {
 // max) and ?after=/?before= cursors; the response carries the next cursor in a
 // header so the body shape stays a plain array.
 const (
-	defaultTaskPageLimit = 200
-	maxTaskPageLimit     = 500
-	defaultLogPageLimit  = 200
-	maxLogPageLimit      = 1000
+	defaultTaskPageLimit   = 200
+	maxTaskPageLimit       = 500
+	defaultLogPageLimit    = 200
+	maxLogPageLimit        = 1000
+	defaultRunPageLimit    = 100
+	maxRunPageLimit        = 500
+	defaultConfigPageLimit = 200
+	maxConfigPageLimit     = 500
 )
 
 // parsePageLimit parses a ?limit= value, falling back to def when empty or
@@ -121,8 +125,9 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusInternalServerError, cerr.Error())
 			return
 		}
-		counts := h.dependencyCountMap(r.Context())
-		rollups := h.subtaskRollupMap(r.Context())
+		ids := taskIDs(children)
+		counts := h.dependencyCountMap(r.Context(), ids)
+		rollups := h.subtaskRollupMap(r.Context(), ids)
 		positions := h.queuePositionMap(r.Context())
 		resp := toTaskResponses(children)
 		for i := range resp {
@@ -152,14 +157,26 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		tasks = tasks[:limit]
 		w.Header().Set("X-Next-Cursor", tasks[len(tasks)-1].ID)
 	}
-	counts := h.dependencyCountMap(r.Context())
-	rollups := h.subtaskRollupMap(r.Context())
+	ids := taskIDs(tasks)
+	counts := h.dependencyCountMap(r.Context(), ids)
+	rollups := h.subtaskRollupMap(r.Context(), ids)
 	positions := h.queuePositionMap(r.Context())
 	resp := toTaskResponses(tasks)
 	for i := range resp {
 		resp[i] = applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions)
 	}
 	JSON(w, http.StatusOK, resp)
+}
+
+// taskIDs extracts the ids from a slice of tasks, for scoping the derived
+// dependency-count / subtask-rollup queries to exactly the tasks being
+// returned instead of the whole table.
+func taskIDs(tasks []gen.Task) []string {
+	ids := make([]string, len(tasks))
+	for i, t := range tasks {
+		ids[i] = t.ID
+	}
+	return ids
 }
 
 func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -366,9 +383,13 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "task not found")
 		return
 	}
-	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context()))
-	resp = applyRollup(resp, h.subtaskRollupMap(r.Context()))
+	ids := []string{task.ID}
+	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context(), ids))
+	resp = applyRollup(resp, h.subtaskRollupMap(r.Context(), ids))
 	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
+	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
+		resp.CumulativeCostUsd = cost
+	}
 	JSON(w, http.StatusOK, resp)
 }
 
@@ -483,6 +504,14 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taskID := chi.URLParam(r, "id")
+	task, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
+		return
+	}
 	if err := h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, middleware.ActorFromContext(r.Context()), body.Note); err != nil {
 		handleTransitionError(w, err)
 		return
@@ -493,6 +522,53 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, toTaskResponse(updated))
+}
+
+// runLiveStatuses are the agent-run statuses during which the task's
+// active-run lock is held by a run that is either executing or about to be
+// (i.e. still eligible to execute) and must not be cleared out from under it
+// by a human transition. This is deliberately broader than just "running":
+// a run is created and claims the lock (SetTaskActiveRun) as soon as it's
+// dispatched, while its status is still "pending" — the pool worker doesn't
+// flip it to "running" until it actually dequeues and starts executing the
+// job. A human transition during that pending window is just as unsafe as
+// one during "running": it clears the lock via the transition's CAS, and the
+// pool later executes the (now-orphaned) pending run in a worktree a new
+// dispatch may since be reusing (see issue #244). "waiting_human" is
+// intentionally excluded: it is the parked state a run sits in specifically
+// awaiting this kind of human action (approve/reject/move/reply all
+// legitimately operate on a waiting_human run).
+var runLiveStatuses = map[string]bool{
+	"pending": true,
+	"running": true,
+}
+
+// rejectTransitionWhileRunLive guards a human-triggered label transition
+// (MoveLabel, Approve, Reject) against racing a live agent run. It writes a
+// 409 response and returns true if the caller must stop processing the
+// request; otherwise it returns false and the caller should proceed.
+//
+// Without this, a human transition clears active_agent_run_id as part of the
+// transition's CAS (see engine.go) while the run is still live (see
+// runLiveStatuses). The next dispatcher sweep then sees the task eligible
+// again and starts a second run, and when the original run eventually
+// executes/finishes it either gets rejected (stale label) or, worse, clears
+// the *new* run's lock — two agents end up sharing one worktree (see issue
+// #244).
+func (h *TasksHandler) rejectTransitionWhileRunLive(ctx context.Context, w http.ResponseWriter, task gen.Task) bool {
+	if task.ActiveAgentRunID == nil {
+		return false
+	}
+	run, err := h.q.GetAgentRun(ctx, *task.ActiveAgentRunID)
+	if err != nil {
+		// No run to check against — fall through and let Transition proceed.
+		return false
+	}
+	if runLiveStatuses[run.Status] {
+		Err(w, http.StatusConflict, "a run is currently active on this task; cancel the run before moving its label")
+		return true
+	}
+	return false
 }
 
 func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
@@ -512,6 +588,9 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	target, err := h.humanPathTarget(r.Context(), task, "success")
 	if err != nil {
 		Err(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
 		return
 	}
 
@@ -569,6 +648,10 @@ func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+
+	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
+		return
 	}
 
 	// Persist the rejection note as feedback on the prior run so the next dispatch

@@ -5,7 +5,7 @@ import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
 import OnboardingChecklist from '../components/board/OnboardingChecklist'
-import { api, type BulkAction, type TaskCost } from '../api/client'
+import { api, type BulkAction, type Task, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
@@ -20,14 +20,22 @@ export default function BoardPage() {
   const { tasks, loading, fetch: fetchTasks, upsert } = useTasksStore()
   const { workflows, fetch: fetchWorkflows, setSelectedId, active } = useWorkflowStore()
   const { repos, fetch: fetchRepos } = useReposStore()
-  const [runningTaskIds] = useState(() => new Set<string>())
+  const [runningTaskIds, setRunningTaskIds] = useState(() => new Set<string>())
   // Per-task cumulative cost ($), keyed by task id — powers the "Filtered
   // cost" badge below. Fetched once on mount and refreshed on agent-done
   // events (the only time a task's recorded cost can change).
   const [costByTask, setCostByTask] = useState<Record<string, number>>({})
   // Map of taskId → ISO unblocked_at string for tasks blocked by API rate limits
   const [rateLimitedTaskIds, setRateLimitedTaskIds] = useState(() => new Map<string, string>())
+  // Set of taskIds that have crossed the cost early-warning threshold (see
+  // task.cost_warning WS event) — cleared when a task's label changes (a new
+  // run/lifecycle stage) or on task.updated (in case cost_warned resets server-side).
+  const [costWarnedTaskIds, setCostWarnedTaskIds] = useState(() => new Set<string>())
   const [showNewTask, setShowNewTask] = useState(false)
+  // Source task for the "Duplicate" flow — when set, the New Task modal opens
+  // pre-filled from this task instead of blank. Mutually exclusive with
+  // showNewTask so only one modal instance is ever mounted at a time.
+  const [duplicateSource, setDuplicateSource] = useState<Task | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [condensed, setCondensed] = useState<boolean>(() => {
     try {
@@ -92,11 +100,30 @@ export default function BoardPage() {
 
   useEffect(() => {
     const off = wsClient.on((event) => {
-      if (event.type === 'task.label_changed' || event.type === 'task.updated' || event.type === 'task.created' || event.type === 'task.git_state_changed' || event.type === 'task.pr_mergeable_changed') {
-        // Refresh the task from API to get latest data
-        const taskId = event.type === 'task.created' ? event.payload.id :
-                       event.type === 'task.updated' ? event.payload.id : event.payload.task_id
+      if (event.type === 'task.updated') {
+        // Payload is already a full Task — apply it directly instead of an
+        // extra REST round-trip (and the lag that round-trip introduces).
+        upsert(event.payload)
+      } else if (
+        event.type === 'task.label_changed' ||
+        event.type === 'task.created' ||
+        event.type === 'task.git_state_changed' ||
+        event.type === 'task.pr_mergeable_changed'
+      ) {
+        // These payloads carry only partial fields (or, for task.created, a
+        // subset the sender says to refetch) — get the full task from the API.
+        const taskId = event.type === 'task.created' ? event.payload.id : event.payload.task_id
         api.tasks.get(taskId).then(upsert).catch(() => {})
+      }
+      if (event.type === 'task.label_changed') {
+        // A label change moves the task to a new lifecycle stage — clear any
+        // stale budget-warning badge from a prior stage/run.
+        setCostWarnedTaskIds(prev => {
+          if (!prev.has(event.payload.task_id)) return prev
+          const next = new Set(prev)
+          next.delete(event.payload.task_id)
+          return next
+        })
       }
       if (event.type === 'task.created_bulk') {
         // The importer batches an entire sweep's new tasks into one event
@@ -104,6 +131,24 @@ export default function BoardPage() {
         // refresh instead of fetching event.payload.ids one by one, or the
         // batching wouldn't save anything on the frontend.
         fetchTasks(showArchived ? { archived: 'all' } : undefined)
+      }
+      if (event.type === 'task.label_changed') {
+        // A label change — whether from a human drag/Approve/Reject or an
+        // agent's own transition — always clears the task's
+        // active_agent_run_id server-side (workflow.Engine.Transition), but
+        // does NOT publish task.agent_done (that only fires when a run
+        // process actually finishes). Without this, dragging a task off its
+        // running label left the pulse dot stuck until an unrelated
+        // agent_done or a WS reconnect happened to clear it. Clear it
+        // directly here rather than waiting on the api.tasks.get() refetch
+        // above, so it's immediate and doesn't depend on that request
+        // succeeding.
+        setRunningTaskIds(prev => {
+          if (!prev.has(event.payload.task_id)) return prev
+          const next = new Set(prev)
+          next.delete(event.payload.task_id)
+          return next
+        })
       }
       if (event.type === 'task.rate_limited') {
         setRateLimitedTaskIds(prev => {
@@ -119,15 +164,68 @@ export default function BoardPage() {
           next.delete(event.payload.task_id)
           return next
         })
+        // Mark this task as actively running for the board's pulse indicator.
+        setRunningTaskIds(prev => {
+          const next = new Set(prev)
+          next.add(event.payload.task_id)
+          return next
+        })
       }
       if (event.type === 'task.agent_done') {
         // A run just recorded its cost — refresh the per-task cost map.
         refreshCostByTask()
+        // Run finished (success or failure) — clear the running indicator.
+        setRunningTaskIds(prev => {
+          const next = new Set(prev)
+          next.delete(event.payload.task_id)
+          return next
+        })
+      }
+      if (event.type === 'task.cost_warning') {
+        setCostWarnedTaskIds(prev => {
+          if (prev.has(event.payload.task_id)) return prev
+          const next = new Set(prev)
+          next.add(event.payload.task_id)
+          return next
+        })
       }
     })
     return off
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upsert, showArchived])
+
+  // Clear the WS-derived "running" set whenever the connection drops so a
+  // missed task.agent_done can't leave a permanently-stuck pulse dot. Once
+  // the connection re-opens and tasks are refetched, the effect below
+  // re-seeds ids from each task's active_agent_run_id.
+  useEffect(() => {
+    return wsClient.onStatusChange((status) => {
+      if (status !== 'open') {
+        setRunningTaskIds(new Set())
+      }
+    })
+  }, [])
+
+  // Seed (and re-seed) the running set from the task list itself, so a page
+  // refresh — or a task.updated upsert — mid-run still shows the indicator
+  // even if the task.agent_started event was missed. This only ADDS ids;
+  // removal is handled by the WS task.agent_done and task.label_changed
+  // handlers above, and by the reconnect-clear effect, to avoid a stale
+  // task record racing with (and wiping out) a just-received
+  // task.agent_started.
+  useEffect(() => {
+    setRunningTaskIds(prev => {
+      let changed = false
+      const next = new Set(prev)
+      for (const t of tasks) {
+        if (t.active_agent_run_id && !next.has(t.id)) {
+          next.add(t.id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [tasks])
 
   const workflow = active()
   const labels = workflow?.labels ?? []
@@ -347,6 +445,14 @@ export default function BoardPage() {
         <NewTaskModal workflow={workflow} onClose={() => setShowNewTask(false)} />
       )}
 
+      {duplicateSource && (
+        <NewTaskModal
+          workflow={workflow}
+          source={duplicateSource}
+          onClose={() => setDuplicateSource(null)}
+        />
+      )}
+
       {loading ? (
         <div className="text-slate-400 text-sm">Loading…</div>
       ) : labels.length === 0 ? (
@@ -360,7 +466,9 @@ export default function BoardPage() {
             tasks={filteredTasks}
             runningTaskIds={runningTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
+            costWarnedTaskIds={costWarnedTaskIds}
             onAddTask={() => setShowNewTask(true)}
+            onDuplicate={(task) => setDuplicateSource(task)}
             condensed={condensed}
             transitions={transitions}
             selectedIds={selectedIds}

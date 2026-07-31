@@ -10,10 +10,9 @@ services:
         # and git clone / npm / claude CLI at runtime).
         INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
         # Set to true (or pass --all-cli to dev.sh) to also install the
-        # Gemini, Codex, and Qwen CLIs in the locally-built backend image —
-        # off by default so a plain `docker compose up --build` stays small
-        # and only ships the Claude CLI.
-        INSTALL_GEMINI_CLI: ${INSTALL_GEMINI_CLI:-false}
+        # Codex and Qwen CLIs in the locally-built backend image — off by
+        # default so a plain `docker compose up --build` stays small and
+        # only ships the Claude CLI.
         INSTALL_CODEX_CLI: ${INSTALL_CODEX_CLI:-false}
         INSTALL_QWEN_CLI: ${INSTALL_QWEN_CLI:-false}
     ports:
@@ -22,12 +21,22 @@ services:
     # local-model container). Use host.docker.internal as the hostname.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      # /readyz (not /healthz) so Docker actually detects a wedged backend —
+      # it checks DB connectivity and dispatch-loop liveness, not just that
+      # the HTTP server is up. See docs/api.md.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/readyz"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    # Default memory ceiling for the backend service — see docs/getting-started.md.
+    # Raise this if you run many concurrent agent runs.
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     environment:
       - PORT=8080
       - DB_PATH=/data/agent-task-editor.db

@@ -34,6 +34,14 @@ type taskResponse struct {
 	// pickup-eligible (e.g. blocked, paused, archived, already running, or on
 	// a non-agent-triggerable label).
 	QueuePosition *int `json:"queue_position"`
+	// CumulativeCostUsd is the task's lifetime recorded cost across every run
+	// regardless of status (SumTaskCost), matching how the dispatcher's
+	// cost-budget guard counts spend. Only populated on the single-task GET
+	// (Get), since GET /tasks/{id}/runs is now paginated and a client-side sum
+	// over one page of runs would silently undercount once a task has more
+	// runs than fit on a page (see TaskHeader's cost badge). Omitted (zero
+	// value) on list responses to avoid an extra query per row.
+	CumulativeCostUsd float64 `json:"cumulative_cost_usd"`
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the
@@ -67,11 +75,15 @@ type depCounts struct {
 	blocking  int64
 }
 
-// dependencyCountMap fetches derived dependency counts for every task that
-// participates in at least one edge, keyed by task id. Tasks absent from the
-// map have zero of both. One query serves a whole page so the board avoids N+1.
-func (h *TasksHandler) dependencyCountMap(ctx context.Context) map[string]depCounts {
-	rows, err := h.q.ListTaskDependencyCounts(ctx)
+// dependencyCountMap fetches derived dependency counts for the given task
+// ids, keyed by task id. Tasks absent from the map have zero of both. One
+// query serves the whole set of ids (a page, or a single task) so the board
+// avoids N+1 without scanning tasks outside the current response.
+func (h *TasksHandler) dependencyCountMap(ctx context.Context, ids []string) map[string]depCounts {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListTaskDependencyCountsForTasks(ctx, ids)
 	if err != nil {
 		return nil
 	}
@@ -98,10 +110,15 @@ type subtaskRollup struct {
 	conflicts int64
 }
 
-// subtaskRollupMap fetches per-parent child rollups keyed by parent id. Parents
-// absent from the map have no children. One query serves a whole page.
-func (h *TasksHandler) subtaskRollupMap(ctx context.Context) map[string]subtaskRollup {
-	rows, err := h.q.ListSubtaskRollups(ctx)
+// subtaskRollupMap fetches per-parent child rollups keyed by parent id, for
+// the given set of (potential parent) task ids. Parents absent from the map
+// have no children. One query serves the whole set of ids (a page, or a
+// single task) instead of self-joining the entire tasks table.
+func (h *TasksHandler) subtaskRollupMap(ctx context.Context, ids []string) map[string]subtaskRollup {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListSubtaskRollupsForParents(ctx, ids)
 	if err != nil {
 		return nil
 	}
@@ -139,6 +156,16 @@ func applyRollup(resp taskResponse, rollups map[string]subtaskRollup) taskRespon
 // task's 0-based rank in it, keyed by task id. Tasks not currently eligible
 // for dispatch (blocked, paused, archived, already running, etc.) are absent
 // from the map. One query serves a whole page, mirroring dependencyCountMap.
+//
+// Unlike dependencyCountMap/subtaskRollupMap, this is intentionally NOT
+// scoped to the requested page's ids: a task's queue position is its rank
+// among *all* currently pickup-eligible tasks, so computing it requires the
+// full ordered candidate set regardless of which page is being rendered.
+// This keeps ListAgentPickupTasks unfiltered by design; the indexes added in
+// migration 048 (plus the existing task_dependencies/workflow_labels/
+// workflow_transitions indexes) keep that query's per-candidate subqueries
+// cheap. Narrowing this is a separate, larger change (e.g. capping/paginating
+// the queue itself) and is out of scope here.
 //
 // The map is only populated when the worker pool has no free slot (i.e. the
 // task would actually have to wait its turn). When the pool has idle

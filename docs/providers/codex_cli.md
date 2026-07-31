@@ -1,6 +1,6 @@
 # Provider: `codex_cli`
 
-The `codex_cli` provider runs OpenAI's Codex CLI (`codex exec`) in non-interactive mode. Like `qwen_code`/`gemini_cli`, it supports the task-editor MCP sidecar, but Codex has its own JSON event schema and a fundamentally different, arguably stronger, command-execution safety model (a native sandbox + approval-mode system) rather than a simple allow/deny command-glob list — see below.
+The `codex_cli` provider runs OpenAI's Codex CLI (`codex exec`) in non-interactive mode. Like `qwen_code`, it supports the task-editor MCP sidecar, but Codex has its own JSON event schema and a fundamentally different, arguably stronger, command-execution safety model (a native sandbox + approval-mode system) rather than a simple allow/deny command-glob list — see below.
 
 Everything in this document was verified against a live install of `@openai/codex` (npm, version `0.142.5`) — its `--help`/`codex exec --help` output, `codex mcp add`'s generated config, the upstream JSONL event schema (`codex-rs/exec/src/exec_events.rs`), and a real (unauthenticated) invocation — at the time this provider was added.
 
@@ -23,7 +23,7 @@ codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandb
 - `--skip-git-repo-check` allows running inside a git worktree the CLI might not otherwise recognize as a "real" repo.
 - `--dangerously-bypass-approvals-and-sandbox` skips **all** confirmation prompts and disables Codex's sandbox for the run. This is required for a headless run — without it, Codex pauses for interactive approval on every shell command the model wants to run. See "Command Allowlist / Denylist" below for the tradeoffs of this flag.
 - There is no confirmed `--max-turns`-equivalent flag for `codex exec`, so no turn cap is passed.
-- There is no separate `--system-prompt` flag; the system prompt is appended to the same trailing prompt argument as the task prompt (same treatment as `gemini_cli`).
+- There is no separate `--system-prompt` flag; the system prompt is appended to the same trailing prompt argument as the task prompt.
 
 ## Credentials
 
@@ -31,7 +31,7 @@ The `codex` binary authenticates via **"Sign in with ChatGPT"** (`codex login`, 
 
 ## MCP Tools
 
-**All 5 MCP tools are supported** when `MCP_SERVER_PATH` is set, via a different wiring mechanism than `claude`/`qwen_code`:
+**All 6 MCP tools are supported** (7 with `create_subtask`, which is exposed only when the agent config enables subtasks) when `MCP_SERVER_PATH` is set, via a different wiring mechanism than `claude`/`qwen_code`:
 
 | Tool | Description |
 |---|---|
@@ -40,6 +40,8 @@ The `codex` binary authenticates via **"Sign in with ChatGPT"** (`codex login`, 
 | `mcp__task-editor__request_human` | Pauses the run for human input |
 | `mcp__task-editor__update_task_notes` | Writes persistent notes for subsequent agents |
 | `mcp__task-editor__store_info` | Stores a summary visible in the task UI |
+| `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
+| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
 
 Codex configures MCP servers via `[mcp_servers.<name>]` TOML sections in `$CODEX_HOME/config.toml` (there is also a `codex mcp add` CLI subcommand that writes the same format — used here only to confirm the exact shape, not invoked at runtime). Because that's a persistent config file rather than a per-invocation flag, this provider:
 
@@ -60,7 +62,11 @@ Not yet supported by this provider, even though `codex exec` itself has a docume
 
 **Neither `command_allowlist` nor `command_denylist` maps onto anything in this provider — both are unenforced.**
 
-Codex has its own, arguably stronger, native safety system instead of a glob allow/deny list: a sandbox policy (`--sandbox read-only|workspace-write|danger-full-access`) and an approval policy (`--ask-for-approval untrusted|on-request|never`, plus the all-or-nothing `--dangerously-bypass-approvals-and-sandbox` this provider uses for headless operation). Because this provider must run fully unattended, it always passes `--dangerously-bypass-approvals-and-sandbox`, which **disables both the sandbox and the approval prompts** — Codex will execute any command the model proposes, unsandboxed, exactly like `qwen_code`'s `--approval-mode yolo` or `gemini_cli`'s `--yolo` do for their respective CLIs. If you need enforced command restrictions, prefer `claude` (denylist only), `anthropic`, or `llm`; there is currently no way to combine Codex's finer-grained sandbox/approval system with this codebase's per-run non-interactive requirement.
+Codex has its own, arguably stronger, native safety system instead of a glob allow/deny list: a sandbox policy (`--sandbox read-only|workspace-write|danger-full-access`) and an approval policy (`--ask-for-approval untrusted|on-request|never`, plus the all-or-nothing `--dangerously-bypass-approvals-and-sandbox` this provider uses for headless operation). Because this provider must run fully unattended, it always passes `--dangerously-bypass-approvals-and-sandbox`, which **disables both the sandbox and the approval prompts** — Codex will execute any command the model proposes, unsandboxed, exactly like `qwen_code`'s `--approval-mode yolo` does for its CLI. If you need enforced command restrictions, prefer `claude` (denylist only), `anthropic`, or `llm`; there is currently no way to combine Codex's finer-grained sandbox/approval system with this codebase's per-run non-interactive requirement.
+
+## Session Resume
+
+The `thread.started` event carries a `thread_id`, which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes `codex exec ... resume <thread_id> "<prompt>"` (Codex 0.145.0's `codex exec resume` subcommand), so prior context carries forward instead of starting cold. The runner's flag-before-subcommand argument order (flags, then `resume <id>`, then the prompt) parses correctly against a live CLI — confirmed by observing it reach the resume lookup and fail only on a nonexistent thread id, not on argument parsing.
 
 ## Model Selection
 
@@ -72,7 +78,11 @@ If the agent completes without calling `signal_complete`, the runner scans the f
 
 ## Cost & Usage Reporting
 
-The `turn.completed` event reports `usage.input_tokens` / `usage.output_tokens` (also `cached_input_tokens` and `reasoning_output_tokens`, not currently surfaced), which are used as-is. **No total-cost figure is reported by the Codex CLI's JSON output** — `cost_usd` is left at `0` for this provider rather than estimated. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+The `turn.completed` event reports `usage.input_tokens` / `usage.output_tokens` (also `cached_input_tokens` and `reasoning_output_tokens`, not currently surfaced). **No total-cost figure is reported by the Codex CLI's JSON output**, so these tokens are priced by `CodexRunner.Run` against the same pricing table the `anthropic`/`llm`/`qwen_code` providers use (`applyUsageWithCost`, DB-backed via Configuration → Pricing, with a hardcoded fallback table — see `providers/pricing.go`). This produces an *estimated*, not authoritative, `cost_usd`. When the configured model isn't in the pricing table, `cost_usd` stays `0` but the run is flagged `cost_unknown` so the UI shows "cost unknown" instead of a misleading `$0`. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
+**Pre-dispatch `max_cost_usd` guard: supported**, for models in the pricing table — the task's accumulated estimated spend across `codex_cli` runs now blocks the next dispatch once the budget is exhausted, the same as `anthropic`/`llm`/`qwen_code`. If any run's cost is unknown (unpriced model), the accumulated spend can't be trusted; see [agents.md § Cost Budgets](../agents.md#cost-budgets) for how that's handled.
+
+**Mid-run cost kill switch: not supported.** Codex's usage is only known once a full `turn.completed` event arrives at the end of a run, not incrementally, so a mid-run cost projection isn't possible for this provider. Only the pre-dispatch guard above applies.
 
 ## Setup Checklist
 

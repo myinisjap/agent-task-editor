@@ -9,6 +9,16 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
+// DispatcherLiveness reports when the dispatch loop last began a sweep tick,
+// for the /readyz readiness probe (see HealthHandler.Readyz). Defined as a
+// narrow interface — rather than importing internal/agent's *Dispatcher
+// directly — to avoid a handlers→agent import (mirrors the RunCanceller /
+// ReplyDispatcher pattern used by TasksHandler). *agent.Dispatcher satisfies
+// this via its LastSweep method.
+type DispatcherLiveness interface {
+	LastSweep() time.Time
+}
+
 // HealthHandler serves provider/onboarding readiness checks.
 type HealthHandler struct {
 	q               *gen.Queries
@@ -22,16 +32,20 @@ type HealthHandler struct {
 	backupKeep      int
 	version         string
 	checkForUpdates bool
+	dispatcher      DispatcherLiveness
 }
 
 // NewHealthHandler constructs a HealthHandler from the relevant server config.
-// db is used only to read the on-disk database file size for the dbSizeCheck
-// (informational; see internal/health.dbSizeCheck). version is the running
-// build's version string (see cmd/server's ldflags-stamped Version var);
-// checkForUpdates opts into the best-effort "update available" check (see
-// internal/health.updateCheck), gated by UPDATE_CHECK_ENABLED so the health
-// endpoint never phones home by default.
-func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int, version string, checkForUpdates bool) *HealthHandler {
+// db is used both to read the on-disk database file size for the dbSizeCheck
+// (informational; see internal/health.dbSizeCheck) and, via Readyz, to ping
+// the DB for readiness. version is the running build's version string (see
+// cmd/server's ldflags-stamped Version var); checkForUpdates opts into the
+// best-effort "update available" check (see internal/health.updateCheck),
+// gated by UPDATE_CHECK_ENABLED so the health endpoint never phones home by
+// default. dispatcher supplies the dispatch loop's heartbeat for Readyz; it
+// may be nil (e.g. in tests), in which case Readyz skips the dispatcher
+// check.
+func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int, version string, checkForUpdates bool, dispatcher DispatcherLiveness) *HealthHandler {
 	return &HealthHandler{
 		q:               q,
 		db:              db,
@@ -44,6 +58,7 @@ func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, ll
 		backupKeep:      backupKeep,
 		version:         version,
 		checkForUpdates: checkForUpdates,
+		dispatcher:      dispatcher,
 	}
 }
 

@@ -36,11 +36,28 @@ func (h *WorkflowsHandler) buildResponse(r *http.Request, wf gen.Workflow) (work
 	return workflowResponse{Workflow: wf, Labels: labels, Transitions: transitions}, nil
 }
 
+// List returns a page of workflows, newest first, each with its labels and
+// transitions. Query parameters:
+//   - limit: page size (default 200, capped at 500)
+//   - after: cursor (the id of the last workflow from the previous page)
+//
+// The body is a plain JSON array. When more workflows remain, the id to pass
+// as the next ?after= cursor is returned in the X-Next-Cursor header. The
+// workflow rows are paged first, then buildResponse's per-row label/
+// transition fan-out only runs over the trimmed page.
 func (h *WorkflowsHandler) List(w http.ResponseWriter, r *http.Request) {
-	wfs, err := h.q.ListWorkflows(r.Context())
+	limit := parsePageLimit(r.URL.Query().Get("limit"), defaultConfigPageLimit, maxConfigPageLimit)
+	wfs, err := h.q.ListWorkflowsPage(r.Context(), gen.ListWorkflowsPageParams{
+		Column1: r.URL.Query().Get("after"),
+		Limit:   int64(limit) + 1,
+	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if len(wfs) > limit {
+		wfs = wfs[:limit]
+		w.Header().Set("X-Next-Cursor", wfs[len(wfs)-1].ID)
 	}
 	var out []workflowResponse
 	for _, wf := range wfs {
@@ -106,11 +123,13 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Labels      []struct {
-			Name        string `json:"name"`
-			Color       string `json:"color"`
-			SortOrder   int64  `json:"sort_order"`
-			AgentIgnore bool   `json:"agent_ignore"`
-			IsTerminal  bool   `json:"is_terminal"`
+			Name         string `json:"name"`
+			Color        string `json:"color"`
+			SortOrder    int64  `json:"sort_order"`
+			AgentIgnore  bool   `json:"agent_ignore"`
+			IsTerminal   bool   `json:"is_terminal"`
+			WipLimit     *int64 `json:"wip_limit"`
+			WipLimitHard bool   `json:"wip_limit_hard"`
 		} `json:"labels"`
 		Transitions []struct {
 			FromLabel     string  `json:"from_label"`
@@ -167,14 +186,20 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if l.IsTerminal {
 			isTerminal = 1
 		}
+		wipLimitHard := int64(0)
+		if l.WipLimitHard {
+			wipLimitHard = 1
+		}
 		if _, err := tq.CreateWorkflowLabel(r.Context(), gen.CreateWorkflowLabelParams{
-			ID:          uuid.NewString(),
-			WorkflowID:  wfID,
-			Name:        l.Name,
-			Color:       l.Color,
-			SortOrder:   l.SortOrder,
-			AgentIgnore: agentIgnore,
-			IsTerminal:  isTerminal,
+			ID:           uuid.NewString(),
+			WorkflowID:   wfID,
+			Name:         l.Name,
+			Color:        l.Color,
+			SortOrder:    l.SortOrder,
+			AgentIgnore:  agentIgnore,
+			IsTerminal:   isTerminal,
+			WipLimit:     l.WipLimit,
+			WipLimitHard: wipLimitHard,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return

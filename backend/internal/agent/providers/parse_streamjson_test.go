@@ -35,6 +35,45 @@ func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 	}
 }
 
+// TestClassifyStreamJSON_ResultUsage_CacheTokensNotYetParsed documents a real
+// gap found while auditing parser fixtures for #251 §3: the claude/qwen
+// stream-json "result" envelope's usage object can carry
+// cache_creation_input_tokens/cache_read_input_tokens (cache-billed tokens),
+// but extractResultUsage/runUsage only read input_tokens/output_tokens — the
+// cache fields are silently dropped.
+//
+// This is intentionally *not* fixed here. For claude/qwen (this code path),
+// the run's CostUSD comes straight from the CLI's own authoritative
+// total_cost_usd, so dropping these fields doesn't affect billing/estimates
+// today — it's a metadata/observability gap, not a cost-correctness bug, on
+// this path. Wiring them through would additionally touch agent.Result, the
+// agent_runs DB schema (a new migration + sqlc regen), and the cost-budget
+// UI, which is a small feature in its own right rather than a test-only
+// change — out of scope for a structural-test-gaps task. Tracked as a
+// separate follow-up; this test pins down the current (unchanged) behavior
+// so a future fix has a failing test to flip green rather than silent scope
+// creep here.
+func TestClassifyStreamJSON_ResultUsage_CacheTokensNotYetParsed(t *testing.T) {
+	// Real capture shape (see TestClassifyStreamJSON_ResultUsage's line):
+	// cache_creation_input_tokens/cache_read_input_tokens sit alongside
+	// input_tokens/output_tokens in the usage object.
+	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456,"cache_creation_input_tokens":789,"cache_read_input_tokens":1011},"total_cost_usd":0.0789,"duration_ms":1500}`
+
+	ev := classifyStreamJSON(line)
+
+	if ev.Usage == nil {
+		t.Fatalf("want non-nil usage, got nil")
+	}
+	// The parsed fields we do support are unaffected by the extra cache keys.
+	if ev.Usage.InputTokens != 123 || ev.Usage.OutputTokens != 456 || ev.Usage.CostUSD != 0.0789 {
+		t.Errorf("unexpected parsed usage: %+v", ev.Usage)
+	}
+	// runUsage has no cache-token fields at all today — this is the gap.
+	// (No further assertion possible without adding the fields; the point of
+	// this test is that it documents/pins the gap, not that it proves an
+	// absence via reflection.)
+}
+
 // TestClassifyStreamJSON_ResultNoUsage verifies a "result" message with no
 // usage/total_cost_usd fields (e.g. an older CLI version) returns a nil
 // usage rather than a zero-valued struct, so callers don't overwrite a
@@ -53,7 +92,9 @@ func TestClassifyStreamJSON_ResultNoUsage(t *testing.T) {
 }
 
 // TestClassifyStreamJSON_NonResultMessagesReturnNilUsage verifies that
-// non-"result" message types never populate usage.
+// message types other than "result"/"assistant" never populate usage, and
+// that an "assistant" message with no usage block also stays nil (see
+// TestClassifyStreamJSON_AssistantUsage for the case where it does carry one).
 func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 	for _, line := range []string{
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
@@ -65,6 +106,48 @@ func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 		if ev.Usage != nil {
 			t.Errorf("line %q: want nil usage, got %+v", line, ev.Usage)
 		}
+	}
+}
+
+// TestClassifyStreamJSON_AssistantUsage verifies an "assistant" message
+// carrying a usage block is parsed into a per-turn (not cumulative) runUsage,
+// with cache tokens folded into InputTokens (see extractAssistantUsage) and
+// IsResult left false so callers know to sum rather than replace their
+// running total. Unlike a "result" message, CostUSD is always zero here — the
+// CLI never reports cost per-message.
+func TestClassifyStreamJSON_AssistantUsage(t *testing.T) {
+	line := `{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":20,"cache_read_input_tokens":30},"content":[{"type":"text","text":"working"}]}}`
+
+	ev := classifyStreamJSON(line)
+
+	if ev.Usage == nil {
+		t.Fatalf("want non-nil usage, got nil")
+	}
+	if ev.IsResult {
+		t.Error("want IsResult=false for an assistant message")
+	}
+	// 100 input + 20 cache_creation + 30 cache_read = 150 (folded into InputTokens).
+	if ev.Usage.InputTokens != 150 {
+		t.Errorf("want InputTokens=150 (100+20+30 cache folded in), got %d", ev.Usage.InputTokens)
+	}
+	if ev.Usage.OutputTokens != 50 {
+		t.Errorf("want OutputTokens=50, got %d", ev.Usage.OutputTokens)
+	}
+	if ev.Usage.CostUSD != 0 {
+		t.Errorf("want CostUSD=0 (assistant messages never carry cost), got %v", ev.Usage.CostUSD)
+	}
+}
+
+// TestClassifyStreamJSON_ResultUsage_IsResultTrue verifies IsResult is set
+// for "result" messages, distinguishing the authoritative-final-total meaning
+// of Usage from an assistant message's per-turn-incremental meaning.
+func TestClassifyStreamJSON_ResultUsage_IsResultTrue(t *testing.T) {
+	line := `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456},"total_cost_usd":0.05}`
+
+	ev := classifyStreamJSON(line)
+
+	if !ev.IsResult {
+		t.Error("want IsResult=true for a result message")
 	}
 }
 
@@ -159,9 +242,18 @@ func TestClassifyResultMessage(t *testing.T) {
 			want: agent.ClassNone,
 		},
 		{
-			name: "error_max_turns is genuine (no infra signal)",
+			name: "error_max_turns escalates to waiting_human, not a genuine failure",
 			line: `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns"}`,
-			want: agent.ClassNone,
+			want: agent.ClassMaxTurns,
+		},
+		{
+			// A result that hit the turn cap but ALSO carries a 429 must still
+			// classify as rate limit — back off and retry against the retry
+			// budget, don't escalate. The api_error_status check must be
+			// evaluated before the error_max_turns subtype check.
+			name: "error_max_turns with api_error_status 429 is still rate limit",
+			line: `{"type":"result","subtype":"error_max_turns","is_error":true,"api_error_status":429,"result":"reached max turns"}`,
+			want: agent.ClassRateLimit,
 		},
 		{
 			name: "error with rate-limit text",
@@ -195,6 +287,23 @@ func TestClassifyResultMessage(t *testing.T) {
 				t.Errorf("classifyStreamJSON(%q) classification = %q, want %q", tc.line, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestClassifyStreamJSON_ErrorMaxTurnsOutcome verifies that error_max_turns
+// no longer maps to outcome:"failure". That mapping used to make a max-turns
+// result look like a normal completed+failure run (firing the workflow's
+// failure edge and getting re-dispatched with a fresh turn budget) — it must
+// now be signalled purely via Class (ClassMaxTurns) so the pool can escalate
+// to waiting_human instead.
+func TestClassifyStreamJSON_ErrorMaxTurnsOutcome(t *testing.T) {
+	line := `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns"}`
+	ev := classifyStreamJSON(line)
+	if ev.Outcome != "" {
+		t.Errorf("want empty outcome for error_max_turns, got %q", ev.Outcome)
+	}
+	if ev.Class != agent.ClassMaxTurns {
+		t.Errorf("want Class=ClassMaxTurns, got %q", ev.Class)
 	}
 }
 

@@ -8,7 +8,7 @@
 #   ./run.sh                       # pull + start :latest
 #   ATE_VERSION=v1.2.3 ./run.sh    # pin a specific release
 #   ./run.sh --repo-dir ~/code start
-#   ./run.sh --all-cli             # run the backend image with Gemini/Codex/Qwen CLIs preinstalled
+#   ./run.sh --all-cli             # run the backend image with Codex/Qwen CLIs preinstalled
 
 # Load .env if present (without overriding existing shell vars)
 if [[ -f "$(dirname "$0")/.env" ]]; then
@@ -32,9 +32,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --all-cli selects the backend image variant with the Gemini, Codex, and
-# Qwen CLIs preinstalled (see backend/Dockerfile's INSTALL_*_CLI build args)
-# instead of the default image, which only ships the Claude CLI.
+# --all-cli selects the backend image variant with the Codex and Qwen CLIs
+# preinstalled (see backend/Dockerfile's INSTALL_*_CLI build args) instead
+# of the default image, which only ships the Claude CLI.
 if [[ "$ALL_CLI" == "true" ]]; then
   export ATE_CLI_SUFFIX="-all-cli"
 else

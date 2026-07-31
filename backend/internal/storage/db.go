@@ -14,6 +14,13 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// maxPoolConns bounds the shared connection pool. SQLite WAL mode allows
+// many concurrent readers alongside a single writer, so this no longer needs
+// to be 1 (see the rationale on SetMaxOpenConns below) — but it is still
+// capped at a small constant rather than left unbounded, since each
+// connection is a real OS file handle/WAL reader snapshot.
+const maxPoolConns = 8
+
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
@@ -25,16 +32,33 @@ type DB struct {
 
 // Open opens (or creates) the SQLite database at path and runs all pending migrations.
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite3", path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000")
+	sqlDB, err := sql.Open("sqlite3", path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
-	// Serialise writes at the Go layer — SQLite only supports one concurrent writer.
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
+	// A single shared *sql.DB is used for both reads and writes (see SQL()).
+	// WAL mode (enabled above) lets any number of readers proceed
+	// concurrently with a single in-progress writer, so capping the pool at
+	// one connection — as a prior version of this code did — defeated WAL
+	// entirely: every read serialized behind every write (and behind every
+	// other read) through that one connection.
+	//
+	// _txlock=immediate makes every BeginTx-started transaction acquire
+	// SQLite's write lock (via "BEGIN IMMEDIATE") up front rather than
+	// lazily on its first write statement. Without this, two connections
+	// could each start a transaction as a reader and then both try to
+	// upgrade to a writer mid-transaction, which SQLite cannot resolve
+	// without erroring one of them out (SQLITE_BUSY) — BEGIN IMMEDIATE
+	// avoids that by failing/blocking (up to _busy_timeout) at the start of
+	// the transaction instead. Combined with _busy_timeout=5000, a writer
+	// that can't immediately acquire the lock waits rather than erroring,
+	// which is what lets multiple connections safely share write paths
+	// (BeginTx) alongside concurrent plain reads.
+	sqlDB.SetMaxOpenConns(maxPoolConns)
+	sqlDB.SetMaxIdleConns(maxPoolConns)
 
 	if err := runMigrations(sqlDB); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)

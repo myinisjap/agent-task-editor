@@ -6,6 +6,25 @@ Authentication: `Authorization: Bearer <API_TOKEN>` on all requests (if `API_TOK
 
 Request bodies are JSON unless noted. Responses are JSON. Request bodies are limited to 1 MB (task creation allows 50 MB for image uploads).
 
+**Errors:** every `/api/v1/*` error response is JSON with a single consistent
+shape, `{ "error": "message" }`, regardless of status code (400/401/404/409/
+5xx/...). The one exception is a genuine WebSocket protocol-level upgrade
+failure (a rejection that happens *inside* the upgrade handshake itself,
+after auth has already passed) — those are logged server-side and the
+connection is simply not established, with no HTTP body to parse. Pre-upgrade
+rejections (bad/missing auth token or ticket) are JSON like everything else.
+
+**List pagination:** `GET /tasks`, `GET /tasks/{id}/runs`, `GET
+/provider-configs`, `GET /agents`, `GET /repos`, and `GET /workflows` are all
+cursor-paginated on `(created_at, id)`, newest first. Each accepts
+`?limit=` (clamped to an endpoint-specific max) and `?after=` (the id of the
+last item from the previous page); when more items remain, the response
+carries an `X-Next-Cursor` response header with the id to pass as the next
+`after` — absent on the final page. The response body stays a plain JSON
+array in every case. `GET /tasks/{id}/runs/{run_id}/logs` uses the same
+cursor mechanics but with `before`/`X-Prev-Cursor`/`X-Has-More` since it pages
+backwards from the most recent entry (see that endpoint below).
+
 ---
 
 ## Tasks
@@ -37,6 +56,7 @@ Key fields returned by task endpoints:
 | `current_agent_run_id` | UUID? | ID of the most recent agent run |
 | `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
 | `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
+| `cumulative_cost_usd` | number | Task's lifetime recorded cost across every run regardless of status (matching the dispatcher's cost-budget guard). Only populated on `GET /tasks/{id}`, since `GET /tasks/{id}/runs` is paginated — omitted (`0`) on list responses |
 
 ---
 
@@ -458,7 +478,22 @@ Delete a schedule. Returns `204`.
 | `session_id` | string | Provider-side conversation session for this run (claude/qwen stream-json `session_id`); used to resume the session on a later run (see [agents.md § Session Resume](agents.md#session-resume)). Empty when the provider has no session |
 
 ### `GET /tasks/{id}/runs`
-List all agent runs for a task (newest first).
+List a page of agent runs for a task (newest first) — cursor-paginated on
+`(created_at, id)`, the same convention as `GET /tasks`.
+
+Query params:
+
+| Param | Meaning |
+|---|---|
+| `limit` | Page size (default 100, clamped to 500) |
+| `after` | Cursor for the next page — the id of the last run from the previous page |
+
+When more runs remain, the response includes an `X-Next-Cursor` header whose
+value is the id to pass as `after` on the next request. The header is absent on
+the final page. A long-lived task with retries/reruns can accumulate runs
+without bound, so **do not** sum `cost_usd` over a single page to get a task's
+total spend — use `Task.cumulative_cost_usd` (from `GET /tasks/{id}`) instead,
+which is computed server-side across every run.
 
 ### `GET /tasks/{id}/runs/{run_id}`
 Get a single run record.
@@ -534,7 +569,8 @@ Serve a task attachment image. Not auth-gated by default (images are referenced 
 ## Workflows
 
 ### `GET /workflows`
-List all workflows.
+List a page of workflows, newest first (cursor-paginated on `(created_at,
+id)`; `limit` default 200, max 500 — see Pagination note above).
 
 ### `POST /workflows`
 Create a workflow.
@@ -566,7 +602,9 @@ Import a workflow from YAML. Body is `application/yaml` or `text/yaml`.
 ## Agent Configs
 
 ### `GET /agents`
-List all agent configs.
+List a page of agent configs (enabled or not), newest first (cursor-paginated
+on `(created_at, id)`; `limit` default 200, max 500 — see Pagination note
+above).
 
 ### `POST /agents`
 Create an agent config.
@@ -644,7 +682,9 @@ providers have no equivalent.
 ## Repositories
 
 ### `GET /repos`
-List registered repositories.
+List a page of registered repositories, newest first (cursor-paginated on
+`(created_at, id)`; `limit` default 200, max 500 — see Pagination note
+above).
 
 ### `POST /repos`
 Register a repository.
@@ -818,12 +858,35 @@ Liveness probe. Returns `200 OK` with `{"status":"ok","version":"<version>"}`.
 `version` is the running build's version: `"dev"` for local/unstamped builds,
 or the release tag (e.g. `"v1.4.0"`) for GHCR images, stamped at build time
 via `-ldflags "-X main.Version=<tag>"` (see `backend/Dockerfile`'s `VERSION`
-build-arg and `.github/workflows/release.yml`). (Served at the server root,
-**not** under `/api/v1`, and mounted **outside** `API_TOKEN`/`API_TOKENS`
-bearer auth — like `/metrics`, it's intentionally unauthenticated so
-container/orchestrator healthchecks (see `docker-compose.yml`) work without
-needing to inject the token. It returns only a static status/version and
-leaks no sensitive data.)
+build-arg and `.github/workflows/release.yml`). Deliberately a static stub —
+it never touches the DB or the dispatcher, so it can't detect a wedged
+backend (see `/readyz` below for that). (Served at the server root, **not**
+under `/api/v1`, and mounted **outside** `API_TOKEN`/`API_TOKENS` bearer
+auth — like `/metrics`, it's intentionally unauthenticated so
+container/orchestrator healthchecks work without needing to inject the
+token. It returns only a static status/version and leaks no sensitive data.)
+
+### `GET /readyz`
+Readiness probe. Unlike `/healthz`, this actually verifies the backend can do
+useful work: it pings the database and checks that the dispatch loop (the
+sweeper that picks up agent-triggerable tasks) has ticked recently.
+
+- `200 OK` with `{"status":"ok","version":"<version>"}` when the DB responds
+  to a ping and the dispatch loop's last sweep began less than ~30s ago (a
+  comfortable multiple of the dispatcher's 5s sweep interval, chosen so a
+  single slow-but-healthy sweep doesn't flap the probe).
+- `503 Service Unavailable` with `{"status":"unhealthy","db":"error","detail":"..."}`
+  if the DB ping fails (e.g. a locked/corrupted SQLite file).
+- `503 Service Unavailable` with `{"status":"unhealthy","dispatcher":"stale"}`
+  if the dispatch loop hasn't ticked recently (e.g. it's wedged on a hung git
+  operation inside a sweep).
+
+This is the endpoint the Docker Compose healthcheck now targets (see
+`docker-compose.yml` / `docker-compose.release.yml`), so a backend with a
+locked DB or a wedged dispatch loop is reported unhealthy and restarted
+instead of appearing healthy forever. Like `/healthz`, it's served at the
+server root and mounted **outside** bearer auth so orchestrators can probe
+without `API_TOKEN`.
 
 ### `GET /health/providers`
 Provider / onboarding readiness checks. Surfaces first-run misconfiguration at a
@@ -975,6 +1038,28 @@ curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/
 
 The frontend's **Configuration → Pricing** page provides an editable table
 UI (add/remove rows, Save) for this endpoint.
+
+### `GET /settings/cost-warning` / `PUT /settings/cost-warning`
+Reads/replaces the single global **cost early-warning threshold**: the
+fraction of a task's effective `max_cost_usd` budget at which a
+`task.cost_warning` WebSocket event fires, ahead of the hard budget
+guard/mid-run kill switch at 100% (see [agents.md § Cost
+Budgets](agents.md#cost-budgets)). `GET` returns the current setting. `PUT`
+validates `warn_ratio` is `> 0` and `<= 1`, rejecting otherwise with `400`.
+Takes effect on the very next dispatch/run check without a restart — both
+the dispatcher's pre-dispatch check and the provider-side mid-run watchdog
+read it fresh.
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/settings/cost-warning
+curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"warn_ratio": 0.8}' \
+  http://localhost:8080/api/v1/settings/cost-warning
+```
+
+```json
+{ "warn_ratio": 0.8, "updated_at": "2026-07-28T12:00:00Z" }
+```
 
 ---
 

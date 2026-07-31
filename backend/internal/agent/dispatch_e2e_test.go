@@ -319,6 +319,30 @@ func (h *e2eHarness) pollTask(t *testing.T, taskID string, cond func(gen.Task) b
 	return gen.Task{}
 }
 
+// pollAgentRun waits until cond(run) holds or the deadline elapses. Needed
+// because pollTask's conditions are typically satisfied by task-row fields
+// (e.g. active_agent_run_id) that are written synchronously at dispatch time
+// — before pool.run() has even invoked the provider, let alone persisted the
+// run's terminal status/cost/tokens via SetAgentRunCompleted. Asserting on
+// run fields immediately after a pollTask race is therefore inherently
+// flaky (especially under -race on a loaded CI runner); callers that need
+// the run's terminal state should poll for it explicitly via this helper
+// instead of assuming pollTask's return already implies it landed.
+func (h *e2eHarness) pollAgentRun(t *testing.T, runID string, cond func(gen.AgentRun) bool, msg string) gen.AgentRun {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		run, err := h.q.GetAgentRun(context.Background(), runID)
+		if err == nil && cond(run) {
+			return run
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	run, _ := h.q.GetAgentRun(context.Background(), runID)
+	t.Fatalf("timed out waiting for run %s: %s (status=%q cost_usd=%v)", runID, msg, run.Status, run.CostUsd)
+	return gen.AgentRun{}
+}
+
 // TestE2E_GoldenPath covers issue #58 scenarios 1 & 2: a task on an agent label
 // is picked up (run created, active_agent_run_id set while running), the fake
 // provider completes with outcome success, and the task transitions, clears its
@@ -418,18 +442,70 @@ func TestE2E_TransientRetryThenEscalate(t *testing.T) {
 		return tk.ActiveAgentRunID != nil && tk.TransientRetryCount == 0
 	}, "retry budget to be exhausted and the task escalated to waiting_human")
 
-	run, err := h.q.GetAgentRun(context.Background(), *esc.ActiveAgentRunID)
-	if err != nil {
-		t.Fatalf("get agent run: %v", err)
-	}
-	if run.Status != "waiting_human" {
-		t.Errorf("expected escalated run status 'waiting_human', got %q", run.Status)
-	}
+	// active_agent_run_id is set synchronously at dispatch time, before the
+	// run actually finishes — poll the run row itself for its terminal
+	// status rather than assuming pollTask's return means it already landed.
+	h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
+		return r.Status == "waiting_human"
+	}, "run to be persisted as waiting_human after retry-budget exhaustion")
 	if esc.Label != "ready" {
 		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
 	}
 	if !h.pub.has("task.needs_human") {
 		t.Error("expected task.needs_human event on retry-budget exhaustion")
+	}
+}
+
+// TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked is the core regression
+// guard for the issue: a run that exhausts its configured max_turns must NOT
+// be re-dispatched with a fresh turn budget. It escalates straight to
+// waiting_human, the task stays locked (active_agent_run_id set), and a
+// second sweep produces no second run — unlike a plain "failed"/genuine
+// result (compare TestE2E_GoldenPath's failure path), which the dispatcher
+// would immediately re-pick once the lock cleared.
+func TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{
+		{err: &ErrMaxTurns{MaxTurns: 5}, result: Result{Status: "failed", SessionID: "sess-1"}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID := h.seedTaskOnReady(t, wfID)
+
+	esc := h.pollTask(t, taskID, func(tk gen.Task) bool {
+		return tk.ActiveAgentRunID != nil && tk.TransientRetryCount == 0
+	}, "run to hit max_turns and escalate to waiting_human")
+
+	// active_agent_run_id is set synchronously at dispatch time, before the
+	// run actually finishes — poll the run row itself for its terminal
+	// status rather than assuming pollTask's return means it already landed.
+	h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
+		return r.Status == "waiting_human"
+	}, "run to be persisted as waiting_human after max-turns exhaustion")
+	if esc.Label != "ready" {
+		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
+	}
+	if !h.pub.has("task.needs_human") {
+		t.Error("expected task.needs_human event on max-turns exhaustion")
+	}
+
+	// Give the dispatcher room to sweep several times and confirm it never
+	// starts a second run — this is the regression: with the old ClassGenuine
+	// "failed" behavior, clearing the lock let the very next sweep re-pick the
+	// task and hand a fresh provider a fresh --max-turns budget, forever.
+	time.Sleep(200 * time.Millisecond)
+	still, err := h.q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if still.ActiveAgentRunID == nil || *still.ActiveAgentRunID != *esc.ActiveAgentRunID {
+		t.Fatalf("expected task to stay locked on run %q, got %v", *esc.ActiveAgentRunID, still.ActiveAgentRunID)
+	}
+	runs, err := h.q.ListAgentRuns(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Errorf("expected exactly 1 run after max-turns exhaustion (no re-dispatch), got %d", len(runs))
 	}
 }
 
@@ -852,4 +928,80 @@ func TestE2E_RepoConcurrencyLimit_UnsetFallsBackToPool(t *testing.T) {
 	}
 	close(step1.release)
 	close(step2.release)
+}
+
+// TestE2E_NilProviderFailsRunCleanly covers the deprecated-provider landmine
+// fix: if ProviderFactory returns nil (e.g. the agent config's provider is
+// disabled/unrecognized), startRun must fail the run without enqueuing a job
+// with a nil Provider (which would panic the pool worker goroutine), AND must
+// keep the task's active-run lock set (escalated to waiting_human) rather
+// than clearing it.
+//
+// Clearing the lock was the first cut of this fix and is deliberately wrong:
+// this failure happens before any real provider work runs, unlike a normal
+// "failed" terminal run whose retry cadence is naturally throttled by however
+// long the real attempt took. Clearing the lock here left the task
+// immediately re-pickup-eligible (ListAgentPickupTasks gates only on
+// active_agent_run_id being NULL), so the 15ms-interval sweep in this test
+// harness re-dispatched the same task every tick — a real hot-loop bug in
+// production too, not just a test artifact — creating a new failed run every
+// 15ms until a human intervened. Escalating to waiting_human (mirroring
+// checkCostBudget's exhausted-budget escalation) keeps the task locked on
+// this one run, so exactly one run is ever created for it here.
+// See internal/api/handlers/agents.go's deprecatedProviders and
+// cmd/server/main.go's providerFactory default case.
+func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+	h := newE2EHarness(t, fp)
+	// Override the harness's always-succeed factory with one that mimics a
+	// disabled/unrecognized provider by returning nil.
+	h.disp.ProviderFactory = func(AgentConfig) Provider { return nil }
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID := h.seedTaskOnReady(t, wfID)
+
+	// persistRunRow creates the run row (and sets the task's active-run
+	// pointer) *before* the nil-provider guard runs, so there's a real,
+	// expected window where ListAgentRuns already returns the row while it's
+	// still "pending". Poll until the run reaches its terminal
+	// "waiting_human" state before asserting anything about it, instead of
+	// failing on that intermediate "pending" state.
+	deadline := time.Now().Add(5 * time.Second)
+	var runs []gen.AgentRun
+	for time.Now().Before(deadline) {
+		var err error
+		runs, err = h.q.ListAgentRuns(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("list runs: %v", err)
+		}
+		if len(runs) > 0 && runs[0].Status == "waiting_human" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(runs) == 0 || runs[0].Status != "waiting_human" {
+		t.Fatalf("timed out waiting for a run to be created and escalated for the nil-provider task")
+	}
+
+	// Give the sweep several more ticks (it runs every 15ms in this harness)
+	// to prove the lock actually prevents re-dispatch, instead of just
+	// happening to win a single race.
+	time.Sleep(150 * time.Millisecond)
+
+	task, err := h.q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.ActiveAgentRunID == nil {
+		t.Fatalf("expected task to remain locked on the escalated run, but its active-run lock was cleared")
+	}
+	runs, err = h.q.ListAgentRuns(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected exactly one run (the lock should have prevented re-dispatch), got %d", len(runs))
+	}
+	if runs[0].Status != "waiting_human" {
+		t.Fatalf("expected the run to stay waiting_human, got %q", runs[0].Status)
+	}
 }

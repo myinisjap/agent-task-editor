@@ -73,23 +73,55 @@ type Config struct {
 	// opting in (and already having gh/network configured). See
 	// internal/health.updateCheck.
 	UpdateCheckEnabled bool `yaml:"update_check_enabled"`
+
+	// WorktreeSweepInterval is how often the orphan-worktree sweeper (see
+	// internal/worktreesweep) reconciles each repo's .ate-worktrees/<id>
+	// directories against live (non-archived) task/chat-session ids,
+	// reclaiming anything else — worktrees left behind by archiving a task on
+	// a non-terminal label, or orphaned by a crash. Always enabled (unlike
+	// backup, gated by BackupDir); this only controls how often it runs.
+	WorktreeSweepInterval time.Duration `yaml:"worktree_sweep_interval"`
+
+	// ChatMaxSessions caps the number of concurrent interactive chat terminal
+	// sessions (agent.TerminalManager) kept alive at once. Each holds a live
+	// PTY subprocess plus a scrollback buffer indefinitely otherwise. 0 (the
+	// default) means unlimited, matching pre-existing behavior.
+	ChatMaxSessions int `yaml:"chat_max_sessions"`
+	// ChatIdleTimeout, if > 0, is how long a chat terminal session may go
+	// without an attached WebSocket connection before it's reaped (subprocess
+	// killed, scrollback released). 0 (the default) disables idle reaping.
+	ChatIdleTimeout time.Duration `yaml:"chat_idle_timeout"`
+
+	// GitTimeout bounds each individual shell-out to `git` performed by the
+	// agent package (worktree provisioning, fetch, commit, push, merge,
+	// branch cleanup). Without a bound, a stalled remote or an interactive
+	// credential prompt can hang a `git` call indefinitely, which in turn
+	// blocks the whole dispatch sweep loop since tasks are dispatched
+	// serially. With this bound, a stuck git call fails that one task within
+	// GitTimeout and dispatch keeps working on the next task/sweep instead of
+	// stalling system-wide.
+	GitTimeout time.Duration `yaml:"git_timeout"`
 }
 
 // Defaults returns a Config populated with safe defaults.
 func Defaults() Config {
 	return Config{
-		DBPath:               "agent-task-editor.db",
-		Port:                 "8080",
-		CORSOrigins:          "http://localhost:5173,http://localhost:8080",
-		LLMBaseURL:           "https://api.openai.com/v1",
-		MaxWorkers:           5,
-		GitHubSyncInterval:   30 * time.Second,
-		IssueSyncInterval:    60 * time.Second,
-		ScheduleInterval:     30 * time.Second,
-		BackupInterval:       24 * time.Hour,
-		BackupKeep:           7,
-		LogRetentionDays:     0,
-		LogRetentionInterval: 1 * time.Hour,
+		DBPath:                "agent-task-editor.db",
+		Port:                  "8080",
+		CORSOrigins:           "http://localhost:5173,http://localhost:8080",
+		LLMBaseURL:            "https://api.openai.com/v1",
+		MaxWorkers:            5,
+		GitHubSyncInterval:    30 * time.Second,
+		IssueSyncInterval:     60 * time.Second,
+		ScheduleInterval:      30 * time.Second,
+		BackupInterval:        24 * time.Hour,
+		BackupKeep:            7,
+		LogRetentionDays:      0,
+		LogRetentionInterval:  1 * time.Hour,
+		WorktreeSweepInterval: 10 * time.Minute,
+		ChatMaxSessions:       0,
+		ChatIdleTimeout:       0,
+		GitTimeout:            120 * time.Second,
 	}
 }
 
@@ -229,6 +261,36 @@ func Load(path string) (Config, error) {
 			cfg.UpdateCheckEnabled = b
 		} else {
 			slog.Warn("invalid UPDATE_CHECK_ENABLED; using default", "value", v, "default", cfg.UpdateCheckEnabled)
+		}
+	}
+	if v := os.Getenv("WORKTREE_SWEEP_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.WorktreeSweepInterval = d
+		} else {
+			slog.Warn("invalid WORKTREE_SWEEP_INTERVAL; using default", "value", v, "default", cfg.WorktreeSweepInterval)
+		}
+	}
+	if v := os.Getenv("CHAT_MAX_SESSIONS"); v != "" {
+		// n >= 0: 0 is the valid "unlimited" sentinel and must be settable via
+		// env explicitly, not just left at the zero-value default.
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.ChatMaxSessions = n
+		} else {
+			slog.Warn("invalid CHAT_MAX_SESSIONS; using default", "value", v, "default", cfg.ChatMaxSessions)
+		}
+	}
+	if v := os.Getenv("CHAT_IDLE_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.ChatIdleTimeout = d
+		} else {
+			slog.Warn("invalid CHAT_IDLE_TIMEOUT; using default", "value", v, "default", cfg.ChatIdleTimeout)
+		}
+	}
+	if v := os.Getenv("GIT_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.GitTimeout = d
+		} else {
+			slog.Warn("invalid GIT_TIMEOUT; using default", "value", v, "default", cfg.GitTimeout)
 		}
 	}
 

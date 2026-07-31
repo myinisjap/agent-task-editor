@@ -28,12 +28,13 @@ const SUPPORT_ICON = { full: '✅', partial: '⚠️', none: '❌' }
 
 // Rows to render, in table order: [Capability key, display label].
 const ROWS = [
-  ['taskEditorTools', 'Task-editor tools (5: transitions, complete, request-human, notes, store-info)'],
+  ['taskEditorTools', 'Task-editor tools (6: transitions, complete, request-human, notes, store-info, resolve-comment)'],
   ['labelTransitions', 'Label / workflow transitions'],
   ['mcpServers', 'Plugins + user MCP servers'],
   ['commandAllowlist', 'Command allowlist'],
   ['commandDenylist', 'Command denylist'],
   ['costTracking', 'Cost & tokens'],
+  ['costWatchdog', 'Mid-run cost kill switch'],
   ['imageAttachments', 'Image attachments'],
   ['maxTurns', '`max_turns`'],
   ['sessionResume', 'Session resume'],
@@ -47,9 +48,10 @@ function cell(entry) {
 }
 
 async function main() {
-  const { PROVIDER_CAPABILITIES, KNOWN_PROVIDERS } = await import(capabilitiesPath)
+  const { PROVIDER_CAPABILITIES, KNOWN_PROVIDERS, DEPRECATED_PROVIDERS } = await import(capabilitiesPath)
 
-  const header = `| Capability | ${KNOWN_PROVIDERS.map((p) => `\`${p}\``).join(' | ')} |`
+  const columnLabel = (p) => (DEPRECATED_PROVIDERS?.has(p) ? `\`${p}\` (deprecated)` : `\`${p}\``)
+  const header = `| Capability | ${KNOWN_PROVIDERS.map(columnLabel).join(' | ')} |`
   const divider = `|---|${KNOWN_PROVIDERS.map(() => '---').join('|')}|`
   const rows = ROWS.map(([key, label]) => {
     const cells = KNOWN_PROVIDERS.map((p) => cell(PROVIDER_CAPABILITIES[p]?.[key]))

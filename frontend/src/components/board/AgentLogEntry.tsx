@@ -1,11 +1,9 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import type { AgentLog } from '../../api/client'
-import { parseLogContent } from '../../lib/parseAgentLog'
+import { resultView, type LogRow } from '../../lib/groupAgentLog'
 
 interface Props {
-  log: AgentLog
-  debug?: boolean
+  row: LogRow
 }
 
 const TOOL_ICONS: Record<string, string> = {
@@ -28,21 +26,33 @@ function toolIcon(name: string): string {
   return TOOL_ICONS[name] ?? '🔧'
 }
 
-function Timestamp({ ts }: { ts: string | null }) {
+function formatTs(ts: string | null | undefined): string | null {
   if (!ts) return null
-  return <span className="text-slate-600 text-xs shrink-0">{ts}</span>
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-export default function AgentLogEntry({ log, debug = false }: Props) {
-  const parsed = parseLogContent(log.type, log.content, debug)
-  // Auto-expand errors so failures are visible without a click
-  const [expanded, setExpanded] = useState(() =>
-    parsed.kind === 'tool_result' && parsed.isError
-  )
+function Timestamp({ ts }: { ts: string | null }) {
+  if (!ts) return null
+  return <span className="text-slate-600 text-xs shrink-0 tabular-nums">{ts}</span>
+}
 
-  const ts = log.timestamp
-    ? new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : null
+// Output revealed by a row's disclosure. Rendered once — the collapsed row never
+// carries a slice of this text.
+function OutputBlock({ text }: { text: string }) {
+  return (
+    <div className="ml-6 mt-1 p-2 rounded bg-slate-900 border border-slate-700 text-xs text-slate-300 font-mono whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
+      {text}
+    </div>
+  )
+}
+
+export default function AgentLogEntry({ row }: Props) {
+  const { log, parsed } = row
+  const result = row.result?.parsed
+  // Auto-expand failures so they're visible without a click.
+  const [expanded, setExpanded] = useState(() => result?.isError === true)
+
+  const ts = formatTs(log.timestamp)
 
   if (parsed.kind === 'hidden') return null
 
@@ -89,61 +99,106 @@ export default function AgentLogEntry({ log, debug = false }: Props) {
         </div>
       )
 
+    // One row per tool call: the call is the row, its output lives behind the
+    // disclosure. The chip states the outcome without quoting the output.
     case 'tool_call': {
+      const view = result ? resultView(result) : null
+      const body = view?.body
+      const canExpand = !!body
+      const isErr = view?.isError === true
+
+      const rail = isErr
+        ? 'border-l-red-500'
+        : row.pending
+          ? 'border-l-yellow-500'
+          : view
+            ? 'border-l-teal-500'
+            : 'border-l-slate-700'
+
       return (
-        <div className="flex gap-2 py-1.5 px-3 rounded-lg bg-cyan-950/30 border border-cyan-800/20 my-0.5 items-start">
-          <span className="text-cyan-500 shrink-0 text-sm mt-px">{toolIcon(parsed.toolName)}</span>
-          <div className="flex-1 min-w-0">
-            <span className="text-cyan-300 font-semibold text-xs">{parsed.toolName}</span>
-            {parsed.summary && (
-              <span className="text-slate-400 text-xs ml-2 font-mono break-all" title={parsed.summary}>
-                {parsed.summary}
-              </span>
-            )}
-          </div>
-          <Timestamp ts={ts} />
+        <div className="my-0.5" data-testid="tool-row">
+          <button
+            type="button"
+            aria-expanded={canExpand ? expanded : undefined}
+            disabled={!canExpand}
+            className={`w-full flex gap-2 py-1.5 pr-3 pl-2.5 rounded-lg text-left items-start border border-l-2 transition-colors ${rail} ${
+              isErr
+                ? 'bg-red-950/30 border-red-800/30 hover:bg-red-950/50'
+                : 'bg-cyan-950/30 border-cyan-800/20 enabled:hover:bg-cyan-950/50'
+            }`}
+            onClick={() => canExpand && setExpanded(!expanded)}
+          >
+            <span className="text-cyan-500 shrink-0 text-sm mt-px">{toolIcon(parsed.toolName)}</span>
+            {/* Clamped on the wrapper, not the args span, so the tool name and a
+                short command share a line instead of stacking. */}
+            <div className={`flex-1 min-w-0 ${expanded ? '' : 'line-clamp-2'}`}>
+              <span className="text-cyan-300 font-semibold text-xs">{parsed.toolName}</span>
+              {parsed.summary && (
+                <span className="text-slate-400 text-xs ml-2 font-mono break-words" title={parsed.summary}>
+                  {parsed.summary}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {row.pending ? (
+                <span className="text-yellow-300/90 bg-yellow-500/10 border border-yellow-500/30 rounded-full px-1.5 text-[10px] animate-pulse">
+                  running
+                </span>
+              ) : view ? (
+                <span
+                  className={`rounded-full px-1.5 text-[10px] border max-w-[9rem] truncate ${
+                    isErr
+                      ? 'text-red-300 bg-red-500/10 border-red-500/30'
+                      : 'text-teal-300 bg-teal-500/10 border-teal-500/25'
+                  }`}
+                  title={view.chip}
+                >
+                  {view.chip}
+                </span>
+              ) : null}
+              <Timestamp ts={ts} />
+              {canExpand && <span className="text-slate-600 text-xs">{expanded ? '▲' : '▼'}</span>}
+            </div>
+          </button>
+          {expanded && body && <OutputBlock text={body} />}
         </div>
       )
     }
 
+    // A result whose call isn't in view (paged off the top, or never logged).
     case 'tool_result': {
-      const isErr = parsed.isError
-      const canExpand = !!parsed.detail
+      const view = resultView(parsed)
+      const canExpand = !!view.body
       return (
-        <div className="my-0.5 ml-5">
+        <div className="my-0.5 ml-5" data-testid="orphan-result">
           <button
+            type="button"
+            aria-expanded={canExpand ? expanded : undefined}
+            disabled={!canExpand}
             className={`w-full flex gap-2 py-1 px-3 rounded-lg text-left transition-colors ${
-              isErr
-                ? 'bg-red-950/30 border border-red-800/30 hover:bg-red-950/50'
-                : expanded
-                  ? 'bg-emerald-950/50 border border-emerald-700/30'
-                  : 'bg-emerald-950/20 border border-emerald-800/20 hover:bg-emerald-950/40'
+              view.isError
+                ? 'bg-red-950/30 border border-red-800/30 enabled:hover:bg-red-950/50'
+                : 'bg-emerald-950/20 border border-emerald-800/20 enabled:hover:bg-emerald-950/40'
             }`}
             onClick={() => canExpand && setExpanded(!expanded)}
           >
-            <span className={`shrink-0 text-xs mt-px ${isErr ? 'text-red-400' : 'text-emerald-600'}`}>
-              {isErr ? '✗' : '↳'}
+            <span className={`shrink-0 text-xs mt-px ${view.isError ? 'text-red-400' : 'text-emerald-600'}`}>
+              {view.isError ? '✗' : '↳'}
             </span>
             <div className="flex-1 min-w-0">
               {parsed.toolName && (
                 <span className="text-emerald-700 font-semibold text-xs mr-1.5">{parsed.toolName}</span>
               )}
-              <span className={`text-xs break-words ${isErr ? 'text-red-400' : 'text-slate-400'}`}>
-                {parsed.summary || '(empty result)'}
+              <span className={`text-xs break-words ${view.isError ? 'text-red-400' : 'text-slate-400'}`}>
+                {view.chip}
               </span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <Timestamp ts={ts} />
-              {canExpand && (
-                <span className="text-slate-600 text-xs">{expanded ? '▲' : '▼'}</span>
-              )}
+              {canExpand && <span className="text-slate-600 text-xs">{expanded ? '▲' : '▼'}</span>}
             </div>
           </button>
-          {expanded && parsed.detail && (
-            <div className="ml-4 mt-1 p-2 rounded bg-slate-900 border border-slate-700 text-xs text-slate-300 font-mono whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
-              {parsed.detail}
-            </div>
-          )}
+          {expanded && view.body && <OutputBlock text={view.body} />}
         </div>
       )
     }

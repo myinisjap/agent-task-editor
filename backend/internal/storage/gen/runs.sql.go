@@ -34,6 +34,34 @@ func (q *Queries) CountAgentLogsTotal(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countTaskCostUnknownRuns = `-- name: CountTaskCostUnknownRuns :one
+SELECT CAST(COUNT(*) AS INTEGER) AS unknown_count
+FROM agent_runs WHERE task_id = ? AND cost_unknown != 0
+`
+
+// Count of a task's agent_runs rows (across ALL statuses, same "every run
+// counts" rationale as SumTaskCost above) flagged cost_unknown = 1, i.e.
+// at least one token was consumed but no price could be resolved for the
+// configured model (see agent.Result.CostUnknown / providers.PriceResolver).
+// Used by the dispatcher's pre-dispatch budget guard to detect when
+// SumTaskCost's total can't be trusted as "true accumulated spend": a task
+// could sit well under a nonzero budget purely because one or more of its
+// runs recorded cost_usd = 0 for an unpriced model rather than a genuinely
+// free run.
+//
+// NOTE: this comment must stay ASCII-only (no em dashes/smart quotes) --
+// sqlc v1.31.1's sqlite tokenizer mis-locates the query's final token when
+// a non-ASCII byte appears in a preceding "--" comment, silently truncating
+// the generated query string (confirmed by bisection while adding this
+// query; every other .sql file in this directory is ASCII-only for the
+// same likely reason).
+func (q *Queries) CountTaskCostUnknownRuns(ctx context.Context, taskID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTaskCostUnknownRuns, taskID)
+	var unknown_count int64
+	err := row.Scan(&unknown_count)
+	return unknown_count, err
+}
+
 const createAgentLog = `-- name: CreateAgentLog :exec
 INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
 VALUES (?, ?, ?, ?, ?)
@@ -193,7 +221,9 @@ type GetLatestTaskSessionParams struct {
 }
 
 // Latest non-empty provider session recorded for this task under this agent
-// config, used to resume the session on the next run (claude provider).
+// config, used to resume the session on the next run. Honored today for
+// claude, qwen_code, codex_cli, and opencode (see
+// agent.providerSupportsResume).
 // Positional params: ?1 task_id, ?2 agent_config_id.
 func (q *Queries) GetLatestTaskSession(ctx context.Context, arg GetLatestTaskSessionParams) (string, error) {
 	row := q.db.QueryRowContext(ctx, getLatestTaskSession, arg.TaskID, arg.AgentConfigID)
@@ -375,6 +405,68 @@ SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, 
 
 func (q *Queries) ListAgentRuns(ctx context.Context, taskID string) ([]AgentRun, error) {
 	rows, err := q.db.QueryContext(ctx, listAgentRuns, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentRun
+	for rows.Next() {
+		var i AgentRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.AgentConfigID,
+			&i.Status,
+			&i.Feedback,
+			&i.StoredInfo,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.Notes,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
+			&i.SessionID,
+			&i.CostUnknown,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentRunsPage = `-- name: ListAgentRunsPage :many
+SELECT r.id, r.task_id, r.agent_config_id, r.status, r.feedback, r.stored_info, r.started_at, r.completed_at, r.created_at, r.notes, r.input_tokens, r.output_tokens, r.cost_usd, r.session_id, r.cost_unknown FROM agent_runs r
+WHERE r.task_id = ?1
+  AND (
+    ?2 = ''
+    OR r.created_at < (SELECT created_at FROM agent_runs WHERE id = ?2)
+    OR (r.created_at = (SELECT created_at FROM agent_runs WHERE id = ?2) AND r.id < ?2)
+  )
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT ?3
+`
+
+type ListAgentRunsPageParams struct {
+	TaskID  string      `json:"task_id"`
+	Column2 interface{} `json:"column_2"`
+	Limit   int64       `json:"limit"`
+}
+
+// Cursor-paginated agent-run listing for a task, newest first. Positional
+// params (?1 task_id, ?2 after cursor = created_at then id of last row, ?3
+// limit) sidestep the sqlc SQLite byte-offset bug; keep this comment
+// ASCII-only. Ordering is (created_at, id) descending so the cursor is a
+// stable total order, matching SearchTasksPage/ListAgentLogsPage.
+func (q *Queries) ListAgentRunsPage(ctx context.Context, arg ListAgentRunsPageParams) ([]AgentRun, error) {
+	rows, err := q.db.QueryContext(ctx, listAgentRunsPage, arg.TaskID, arg.Column2, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

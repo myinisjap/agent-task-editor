@@ -1,5 +1,10 @@
 # Provider: `anthropic`
 
+> **Deprecated — disabled for now and may be removed in a future release.** `POST`/`PATCH` of a provider config
+> with `provider: "anthropic"` is rejected; it's no longer offered in the UI's provider dropdown. Existing
+> provider/agent configs already using it continue to dispatch and run as described below — this page remains for
+> anyone maintaining one of those configs.
+
 The `anthropic` provider calls the Anthropic Messages API directly — no CLI binary required. It uses a native Go tool-use loop instead of the MCP sidecar.
 
 ## Provider String
@@ -83,6 +88,8 @@ Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) 
 ## Cost & Usage Reporting
 
 Token usage (`input_tokens`/`output_tokens`) is summed from the Messages API's `usage` field across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens against the user-editable pricing table (`GET`/`PUT /api/v1/settings/pricing`, Configuration → Pricing in the UI), falling back to a small hardcoded map (`internal/agent/providers/pricing.go`) for any model with no matching row. A model matching neither has that run's `cost_unknown` flag set instead of silently showing `$0`. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
+**Mid-run cost kill switch: not supported.** No watchdog wiring for this (deprecated) provider — `max_cost_usd` only prevents the *next* dispatch once already exhausted. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
 
 ## When to Use
 

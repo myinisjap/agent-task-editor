@@ -46,7 +46,9 @@ export default function AgentConfigForm({
   const subtasksCap = getCapability(providerStr, 'subtasks')
   const sessionResumeCap = getCapability(providerStr, 'sessionResume')
   const costTrackingCap = getCapability(providerStr, 'costTracking')
+  const costWatchdogCap = getCapability(providerStr, 'costWatchdog')
   const labelTransitionsCap = getCapability(providerStr, 'labelTransitions')
+  const maxTurnsCap = getCapability(providerStr, 'maxTurns')
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -146,6 +148,11 @@ export default function AgentConfigForm({
             min={1}
             max={200}
           />
+          {form.max_turns > 0 && providerStr && maxTurnsCap.support !== 'full' && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ {maxTurnsCap.note ?? `Max turns is not enforced for the ${providerStr} provider.`}
+            </p>
+          )}
         </Field>
 
         <Field label="Max retries" hint="Auto-retries for transient errors (rate limits, network blips). 0 disables auto-retry.">
@@ -179,7 +186,7 @@ export default function AgentConfigForm({
           />
         </Field>
 
-        <Field label="Max cost per run (USD)" hint="Advisory per-task budget cap in USD, checked by the dispatcher before each dispatch against the task's cumulative run cost so far. 0 disables the cap (unlimited). Not a mid-run kill switch — costs are only known after a run completes.">
+        <Field label="Max cost per run (USD)" hint="Advisory per-task budget cap in USD, checked by the dispatcher before each dispatch against the task's cumulative run cost so far. 0 disables the cap (unlimited). On claude/qwen_code, a mid-run watchdog also projects cost from incremental token usage and cancels an in-flight run that crosses this cap (escalating to waiting_human) — an estimate, not the provider's own authoritative billed cost. Other providers only enforce the cap before the next dispatch.">
           <input
             type="number"
             step="0.01"
@@ -191,6 +198,11 @@ export default function AgentConfigForm({
           {form.max_cost_usd > 0 && providerStr && costTrackingCap.support !== 'full' && (
             <p className="mt-1 text-xs text-amber-400">
               ⚠️ {costTrackingCap.note ?? `Cost is not reliably tracked for the ${providerStr} provider — this budget cap may not fire.`}
+            </p>
+          )}
+          {form.max_cost_usd > 0 && providerStr && costTrackingCap.support === 'full' && costWatchdogCap.support !== 'full' && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ {costWatchdogCap.note ?? `No mid-run cost kill switch for the ${providerStr} provider — this budget cap only prevents the next dispatch, not an in-flight run.`}
             </p>
           )}
         </Field>
@@ -213,7 +225,7 @@ export default function AgentConfigForm({
           )}
         </Field>
 
-        <Field label="Subtasks" hint="claude/qwen_code/gemini_cli/codex_cli only: expose the create_subtask tool so this agent (typically the planner) can decompose its task into child tasks. Children branch off the parent's branch and merge back automatically. Off by default.">
+        <Field label="Subtasks" hint="claude/qwen_code/codex_cli only: expose the create_subtask tool so this agent (typically the planner) can decompose its task into child tasks. Children branch off the parent's branch and merge back automatically. Off by default.">
           <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
             <input
               type="checkbox"

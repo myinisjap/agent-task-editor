@@ -33,6 +33,13 @@ export type WSEvent =
   | { type: 'task.agent_done'; payload: { task_id: string; run_id: string; status: AgentRun['status'] } }
   | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string } }
   | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
+  // Emitted when a task's cumulative recorded cost crosses the configurable
+  // early-warning threshold (see GET/PUT /settings/cost-warning, default
+  // 80%) of its effective cost budget — either from a provider's mid-run
+  // cost watchdog (claude, qwen_code — before the hard kill at 100%) or from
+  // the dispatcher's pre-dispatch check (any provider). run_id is omitted for
+  // the dispatcher's pre-dispatch variant (no run is in flight yet).
+  | { type: 'task.cost_warning'; payload: { task_id: string; run_id?: string; spent_usd: number; budget_usd: number } }
   | { type: 'agent.log'; payload: { task_id: string; run_id: string; entry: AgentLog } }
   // Sent once on subscribe: the tail of the run's persisted log as a single
   // batched message (capped server-side). has_more signals that earlier entries
@@ -62,11 +69,31 @@ export type WSEvent =
 
 type Handler = (event: WSEvent) => void
 
+export type WSStatus = 'connecting' | 'open' | 'closed'
+type StatusHandler = (status: WSStatus) => void
+
+// Base reconnect delay and cap for the exponential-backoff-with-jitter
+// schedule below (see onclose). Exported for tests.
+export const RECONNECT_BASE_MS = 1000
+export const RECONNECT_MAX_MS = 30000
+
 class WSClient {
   private ws: WebSocket | null = null
   private handlers: Handler[] = []
   private subscriptions = new Set<string>()
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectAttempts = 0
+  private statusHandlers: StatusHandler[] = []
+  private status: WSStatus = 'closed'
+
+  private setStatus(status: WSStatus) {
+    this.status = status
+    this.statusHandlers.forEach((h) => h(status))
+  }
+
+  getStatus(): WSStatus {
+    return this.status
+  }
 
   async connect() {
     // Already connected or connecting — don't double-connect
@@ -77,6 +104,8 @@ class WSClient {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+
+    this.setStatus('connecting')
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const base = import.meta.env.BASE_URL.replace(/\/$/, '')
@@ -95,11 +124,19 @@ class WSClient {
     }
 
     this.ws.onclose = () => {
-      this.reconnectTimer = setTimeout(() => this.connect(), 3000)
+      this.setStatus('closed')
+      // Capped exponential backoff with full jitter: avoids every open tab
+      // hammering /ws-ticket + /ws in lockstep every 3s on a server restart.
+      const capped = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.reconnectAttempts)
+      const delay = capped / 2 + Math.random() * (capped / 2)
+      this.reconnectAttempts++
+      this.reconnectTimer = setTimeout(() => this.connect(), delay)
     }
 
     this.ws.onopen = () => {
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+      this.reconnectAttempts = 0
+      this.setStatus('open')
       // Re-subscribe on reconnect
       this.subscriptions.forEach((id) => this.subscribeTask(id))
     }
@@ -109,6 +146,13 @@ class WSClient {
     this.handlers.push(handler)
     return () => {
       this.handlers = this.handlers.filter((h) => h !== handler)
+    }
+  }
+
+  onStatusChange(handler: StatusHandler) {
+    this.statusHandlers.push(handler)
+    return () => {
+      this.statusHandlers = this.statusHandlers.filter((h) => h !== handler)
     }
   }
 

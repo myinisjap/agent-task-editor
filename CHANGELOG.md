@@ -20,6 +20,34 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Mid-run cost kill switch + budget early warning.** `max_cost_usd`
+  budgets previously only gated the *next* dispatch, so a single runaway run
+  could blow arbitrarily far past its cap before anything noticed. Providers
+  with mid-run priced usage (`claude`, and `qwen_code` when its configured
+  model is priced) now watch incremental token usage as a run streams,
+  project total cost via the pricing table, and cancel the in-flight
+  subprocess the moment projected cost crosses the effective budget,
+  escalating to `waiting_human` instead of a plain failure (`codex_cli`,
+  `opencode` remain unsupported and are documented as such — see the
+  provider capability matrix). A killed run's own token usage/cost is
+  persisted from the watchdog's cumulative-usage snapshot (never left at
+  `$0`), so the task's recorded spend stays accurate across repeated
+  kill/resume cycles. There's also a new configurable early-warning
+  threshold (default 80%, `GET`/`PUT /api/v1/settings/cost-warning`) that
+  fires a `task.cost_warning` WebSocket event ahead of the hard cap, shown as
+  a badge on the board and a banner on Task Detail. See [docs/agents.md §
+  Cost Budgets](docs/agents.md#cost-budgets).
+- **Per-label WIP limits.** Labels can now carry an optional `wip_limit`
+  (nullable — `null`/unset means unlimited, unchanged from before this
+  feature). The board column header shows `count / limit` and flags the
+  column visually once its count reaches or exceeds the limit. Enforcement is soft by default
+  (visual only); an opt-in `wip_limit_hard` flag makes the dispatcher apply
+  backpressure instead — it skips picking up a task whose agent "success"
+  transition targets a label already at or over its limit, so work queues
+  upstream on its current label rather than erroring mid-run or piling into
+  an already-full column. Configurable via the workflow YAML (`wip_limit`,
+  `wip_limit_hard` on a label) or the JSON workflow API. See
+  `docs/workflows.md`.
 - **Merge-conflict detection on open PRs.** The GitHub PR status sweep now
   also asks GitHub whether each task's open PR still merges cleanly into its
   base branch, so a PR that goes stale because someone else merged first is
@@ -81,6 +109,45 @@ triggers the "Release" workflow the same way.
   Comments this system posted itself are filtered out, so an agent never reads
   its own "PR opened" notice back as human input.
 - `GET /tasks/{id}/source-comments` returns a task's ingested issue thread.
+- **Duplicate an existing task.** A "⧉ Duplicate" action on the task detail
+  page and on each board card opens the New Task modal pre-filled with the
+  source task's title (suffixed `(copy)`), description, type, priority, repo,
+  and workflow — editable before creation, same as any new task. The clone
+  starts clean: no run history, label history, diff comments, PR link,
+  worktree/git state, subtasks, or attachments carry over, and it lands on the
+  workflow's starting label like any other new task. The source task is never
+  modified. No new endpoint was needed — the existing `POST /tasks` create
+  path already covers every field involved.
+- **Archiving a task now reclaims its worktree, and a new sweeper catches
+  everything else.** Archiving is the documented way to retire a dead or
+  abandoned task, and such a task is typically on a non-terminal label — none
+  of the existing teardown paths (reaching a terminal label, task delete,
+  ghsync's post-merge cleanup) ever fired for it, and archived tasks are
+  excluded from every sweep that might otherwise revisit them, so its
+  `.ate-worktrees/<id>` directory persisted forever. `PATCH /tasks/{id}/archive`
+  and the bulk `archive` action now tear down the worktree immediately,
+  best-effort (branch kept for review, same as every other teardown path). A
+  new always-on sweeper (`WORKTREE_SWEEP_INTERVAL`, default `10m`) also
+  periodically reconciles every repo's `.ate-worktrees/*` against live
+  (non-archived) task/chat-session ids and reclaims anything else, so disk
+  usage under `.ate-worktrees/` is bounded by live tasks rather than by every
+  task ever created — this also catches a worktree orphaned by a crash.
+  Archiving also clears the task's `worktree_path`, and `ensureWorktree` now
+  verifies its recorded worktree still exists before reusing it — otherwise
+  unarchiving a task (or a run reprovisioned after the sweeper reclaimed its
+  worktree) would hand the next agent run a cwd that no longer exists rather
+  than reprovisioning a fresh one. See
+  [docs/backup.md#orphaned-worktree-sweeper](docs/backup.md#orphaned-worktree-sweeper).
+- **Chat terminal sessions can now be capped and idle-reaped.** Each Chat-tab
+  session keeps a live CLI subprocess (plus a scrollback buffer) running
+  indefinitely across WebSocket disconnects, with nothing previously bounding
+  how many accumulate or how long an unattached one stays alive. New opt-in
+  settings `CHAT_MAX_SESSIONS` (refuses starting *new* sessions past the cap;
+  reattaching to an existing session is never blocked) and
+  `CHAT_IDLE_TIMEOUT` (reaps a session's subprocess after it's gone unattached
+  for this long) — both default to off/unlimited, so behavior is unchanged
+  unless explicitly configured. See
+  [docs/getting-started.md#chat-terminal-sessions](docs/getting-started.md#chat-terminal-sessions).
 - **Per-repo configurable issue write-back label.** The label applied to a
   task's source GitHub issue when it first leaves the workflow's human-gate
   label was previously a fixed `agent-in-progress`. It's now configurable via
@@ -96,6 +163,89 @@ triggers the "Release" workflow the same way.
   capability data lives in `frontend/src/lib/providerCapabilities.ts`, the
   single source of truth also used to keep `docs/agents.md`'s capability
   matrix in sync.
+- **`GET /tasks/{id}/runs` and the config list endpoints are now cursor-
+  paginated**, extending the pattern already used by `GET /tasks` and run
+  logs. `GET /tasks/{id}/runs` (default limit 100, cap 500) is the one that
+  matters most — a long-lived task with retries/reruns can accumulate runs
+  indefinitely, and every task-detail load used to fetch every one of them.
+  `GET /provider-configs`, `GET /agents`, `GET /repos`, and `GET /workflows`
+  (all default limit 200, cap 500) get the same treatment for consistency.
+  Each accepts `?limit=`/`?after=` and returns the next-page cursor in an
+  `X-Next-Cursor` header, mirroring `GET /tasks`. Since a task's lifetime
+  cost is no longer derivable by summing a single page of runs, `GET
+  /tasks/{id}` now also returns `cumulative_cost_usd` (computed server-side
+  across every run, any status) and the task-detail cost badge reads it from
+  there instead of summing the fetched runs client-side. The frontend's
+  `api.workflows.list()`/`api.agents.list()`/`api.providerConfigs.list()`/
+  `api.repos.list()` still resolve to a plain array — the client transparently
+  pages through `X-Next-Cursor` and concatenates — so no dropdown/store
+  callers needed to change.
+- **Every `/api/v1/*` error response is now JSON with a consistent shape.**
+  A handful of paths — the chat/terminal WebSocket upgrade's pre-upgrade
+  checks (`internal/api/handlers/chat.go`), the bearer-auth 401
+  (`middleware/auth.go`), and the main WebSocket endpoint's pre-upgrade auth
+  rejection (`internal/ws/client.go`) — previously returned plain-text
+  `http.Error` bodies, forcing clients to special-case exactly the paths
+  where clean error handling matters most (a misconfigured token). They now
+  all emit `{"error": "..."}` like every other handler. A genuine WebSocket
+  protocol-level upgrade failure (inside `websocket.Accept` itself, after
+  auth has already passed) is unchanged — there's no HTTP response left to
+  shape at that point, so it's just logged.
+- **`GET /readyz` readiness probe.** Unlike `/healthz` (a static liveness
+  stub), `/readyz` pings the database and checks that the dispatch loop has
+  ticked recently, returning `503` if either check fails. The Docker Compose
+  healthcheck for the `backend` service now targets `/readyz` instead of
+  `/healthz`, so a backend with a locked SQLite file or a wedged dispatch
+  loop is reported unhealthy instead of appearing healthy forever. See
+  [docs/api.md](docs/api.md#get-readyz).
+- **Backend restart policy and default memory ceiling.** The `backend`
+  service in `docker-compose.yml` / `docker-compose.release.yml` now has
+  `restart: unless-stopped` (previously only `frontend` restarted
+  automatically) and a default 2 GB memory limit via
+  `deploy.resources.limits.memory`, so a crashed or OOM-killed backend comes
+  back on its own instead of staying down until an operator notices, and a
+  runaway agent run can no longer consume unbounded host memory. See
+  [docs/getting-started.md](docs/getting-started.md#backend-resilience-restart-policy-readiness-and-memory-limit).
+- **Closed structural test gaps across the WS layer, provider subprocess
+  lifecycle, and CI coverage gating** (#251). Previously, every "WS event →
+  UI state" path in the frontend was unverified because tests mocked
+  `wsClient.on` as a permanent no-op — exactly how #249's dead running-
+  indicator regression survived; `TaskDetailPage.test.tsx` and a new
+  `api/ws.test.ts` now capture the real handler(s) and drive it with
+  simulated events (reconnect backoff, ticket-refresh-on-401,
+  resubscribe-on-reopen, malformed-message handling). On the backend, the
+  `claude_test.go` fake-binary re-exec harness (previously claude-only) is
+  now generalized to `codex`/`gemini`/`qwen`/`opencode`, adding real `Run`/
+  `binary`/`prepareXHome`/`Cleanup` lifecycle coverage plus a shared
+  context-cancel/timeout-kill test per provider — the prerequisite for the
+  #243 regression test. Also added: `internal/ws.ServeWS` end-to-end tests
+  (ticket vs. deprecated `?token=` auth, origin CORS, the 100-subscription
+  cap), `providers.mergeEnv`'s `dangerousEnvKeys` blocklist,
+  `extractOutcome`, `dispatcher.copyAttachmentsToWorktree`, `Terminal` WS
+  upgrade auth, and upload MIME-sniffing/path-safety checks. CI now fails a
+  PR if total statement coverage drops below a floor (55% backend and
+  frontend, a few points under the ~58.8%/~59.75% measured when this gate
+  was added, to absorb normal `-race` run-to-run jitter) instead of only
+  reporting coverage with no gate.
+- **Broader E2E coverage.** The Playwright smoke suite now asserts every
+  app route (dashboard, board, chat, workflow, and all configuration pages)
+  loads correctly, and runs the whole suite twice — once on a desktop
+  viewport and once on a mobile viewport — via a new `mobile-chrome`
+  Playwright project, so mobile-only layouts (collapsed nav, mobile header
+  bars) get smoke coverage too. See `frontend/e2e/README.md`.
+
+### Removed
+- **The `gemini_cli` provider has been removed.** The Gemini CLI is no longer
+  supported upstream in its previous form; Google's replacement CLI
+  (Antigravity) will be considered as a new provider in a separate future
+  issue, out of scope here. `GeminiRunner`, `classifyGeminiJSON`, the Gemini
+  health check, the `gemini_cli` entries in the provider dropdown/capability
+  matrix/OpenAPI enum, the Docker `INSTALL_GEMINI_CLI` build arg, and every
+  `gemini_cli`/Gemini mention across the docs have been deleted. Provider or
+  agent configs still pointing at `gemini_cli` will no longer dispatch — new
+  runs against them fail immediately with an "unknown provider" error instead
+  of launching the CLI — so switch any such configs to another provider
+  before upgrading.
 
 ### Fixed
 - **Subtask creation from planning runs no longer silently fails on permission.**
@@ -107,6 +257,203 @@ triggers the "Release" workflow the same way.
   granted it yet" — so planned subtasks were dropped and the agent could only
   note the failure. Both runners now allow-list `create_subtask` whenever the
   config opts in. (Gemini/Codex were unaffected — they blanket-approve tools.)
+- **`codex_cli` runs now estimate cost from token usage, so `max_cost_usd`
+  budgets are actually enforced for codex tasks** (#245). `classifyCodexJSON`
+  captured `usage.input_tokens`/`usage.output_tokens` off the `turn.completed`
+  event, but `CodexRunner.Run` never priced them — every codex run persisted
+  `cost_usd = 0`, so the dispatcher's pre-dispatch cost-budget guard
+  (`checkCostBudget`/`SumTaskCost`) saw permanent zero spend and `max_cost_usd`
+  never tripped for a codex-provider task, no matter how much was actually
+  spent. Codex now prices its captured tokens through the same estimation
+  path as `anthropic`/`llm`/`qwen_code` (`applyUsageWithCost`, the DB-backed
+  `model_pricing` table with a hardcoded fallback), on every path that
+  persists usage — including the truncated, timed-out, rate-limited,
+  transient-error, and failed-with-no-outcome returns, not just the golden
+  path, since a run can spend money before crashing. A run against a model
+  with no resolvable price now sets `cost_unknown = true` (mirroring
+  anthropic/llm) instead of silently recording `$0`, so the UI shows "cost
+  unknown" rather than implying a genuinely free run. Additionally, the
+  dispatcher's pre-dispatch budget guard now treats an under-budget task with
+  at least one cost-unknown run as unable to trust its own accumulated
+  spend: it escalates to `waiting_human` with a
+  `cost budget cannot be enforced: N run(s) have unknown cost` message
+  pointing at Configuration → Pricing, rather than letting an unpriced
+  model's runs quietly count as free and let the task dispatch unbounded
+  against a budget that no longer means anything (this only fires while the
+  task is otherwise under budget — an independently-exhausted budget still
+  reports the ordinary "budget exhausted" message). Note: the upstream issue
+  also named `gemini`/`opencode` — this repo has no `gemini` provider, and
+  `opencode` already records authoritative cost/tokens directly from the CLI
+  (fixed separately in #287/#304), so this fix is `codex_cli`-specific. See
+  [docs/providers/codex_cli.md § Cost & Usage
+  Reporting](docs/providers/codex_cli.md#cost--usage-reporting) and
+  [docs/agents.md § Cost Budgets](docs/agents.md#cost-budgets).
+- **Board "agent running" indicator now works.** The pulsing dot on a task
+  card never rendered for any task: `BoardPage`'s `runningTaskIds` state had
+  no setter and was never populated, even though the `task.agent_started` /
+  `task.agent_done` WS events it needed were already being handled in the
+  same effect for other purposes. The dot now activates on
+  `task.agent_started`, clears on `task.agent_done` (success or failure), is
+  seeded on load (and on every task upsert) from a task's
+  `active_agent_run_id` so a mid-run page refresh still shows it, and is
+  cleared whenever the WebSocket connection drops so a missed `agent_done`
+  can't leave it stuck — it re-seeds correctly once tasks are refetched
+  after reconnect. Also fixed: moving a task off its running label — a
+  drag-and-drop, an Approve/Reject, or any other human-triggered transition
+  — goes through `workflow.Engine.Transition`, which clears
+  `active_agent_run_id` server-side but only publishes `task.label_changed`,
+  never `task.agent_done`; the indicator now has an explicit
+  `task.label_changed` handler so it clears immediately on any label move
+  instead of staying stuck until an unrelated `agent_done` or a WS
+  reconnect happened to clean it up.
+- **The agent config form now warns when `max_turns` is set on a provider
+  that doesn't enforce it.** `codex_cli` and `opencode` have no turn-cap
+  flag, so a run on those providers is only bounded by `timeout_secs`
+  regardless of `max_turns`; the form previously accepted and saved the
+  field on those providers with no indication it does nothing. The form now
+  reads the existing `maxTurns` provider capability (already correct in
+  `providerCapabilities.ts`) and shows an inline warning under the field
+  when a cap is set (`max_turns > 0`) on a provider whose support is not
+  `full`, mirroring the existing cost-tracking/subtasks/session-resume
+  capability warnings (#286).
+- **`qwen_code`'s `command_denylist` is now enforced; the no-op
+  `command_allowlist` mapping was removed.** `buildQwenArgs` previously
+  translated `command_allowlist` patterns into `--allowed-tools
+  Bash(pattern)` entries, which restricted nothing — that flag only bypasses
+  qwen's confirmation prompt, and the runner always passes `--approval-mode
+  yolo` (auto-approve everything) on top, so an operator could set command
+  restrictions on a `qwen_code` agent config and get zero enforcement with no
+  error. `command_denylist` was not wired to the CLI at all, even though qwen
+  v0.21.0 exposes `--exclude-tools`, which folds into its `permissionsDeny`
+  policy and is honored even under `--approval-mode yolo`. The dead allowlist
+  loop has been removed (the capability matrix already records
+  `commandAllowlist` as unsupported for this provider) and `command_denylist`
+  patterns are now appended as `Bash(pattern)` entries to `--exclude-tools`,
+  mirroring the existing `--allowed-tools` convention. The exact glob
+  granularity qwen's deny path accepts for `Bash(pattern)` has not been
+  confirmed against a live run — see `docs/providers/qwen_code.md` for the
+  caveat — so the capability matrix marks it `partial` rather than `full`
+  pending live verification (see #285).
+- **`opencode` runs that crashed with no output were silently reported as
+  "completed" instead of "failed".** `OpencodeRunner.Run` fell through to
+  the success path whenever the CLI exited non-zero without a recognized
+  rate-limit/transient error *and* without a parsed `OUTCOME` marker, unlike
+  every other CLI provider (`codex`/`gemini`/`qwen`), which already treat
+  `err != nil && outcome == ""` as a failure. Found while generalizing the
+  provider lifecycle test harness (#251) — a task whose `opencode` run
+  crashed silently stuck as "completed" with an empty outcome, so it was
+  never marked failed or retried.
+- **`ws.ServeWS`'s origin-based CORS check silently rejected every
+  legitimately configured `CORS_ORIGINS` value.** `CORS_ORIGINS` entries are
+  full origins (scheme + host, e.g. `http://localhost:5173`), matching the
+  exact-string comparison the `CORS` HTTP middleware does — but they were
+  passed straight through as `nhooyr.io/websocket`'s `OriginPatterns`, which
+  matches only the request Origin header's *host* (no scheme). A configured
+  non-wildcard `CORS_ORIGINS` therefore never matched, and every WS upgrade
+  from an allowed browser origin was rejected as "not authorized". Found by
+  the new `ServeWS` origin tests (#251); `ServeWS` now strips the scheme
+  before building the pattern list, matching the middleware's semantics.
+- **Migration `008_agent_runs_fk_set_null`'s down migration was broken and
+  would fail if ever actually rolled back.** Its down script recreated
+  `agent_runs` with 8 columns, omitting `stored_info` (added by an earlier
+  migration, 006), so rolling 008 back after 006 had already run failed with
+  a SQLite column-count mismatch (`INSERT INTO agent_runs_old SELECT * FROM
+  agent_runs` — 9 source columns into an 8-column table). All 49 down
+  migrations existed but none had ever actually been executed end-to-end in
+  CI; a new up→down→up round-trip test (`TestMigrationsUpDownUpRoundTrip`,
+  #251) now runs every down migration in the chain against a scratch SQLite
+  file on every PR, and caught this on its first run. Fixed by including
+  `stored_info` in both the recreated table and the `INSERT`'s column list.
+- **Session resume now works for `qwen_code`, `codex_cli`, and `opencode`, not
+  just `claude`.** `Dispatcher.resolveAgentConfig` previously gated its prior-
+  session lookup to `provider == "claude"`, so `ResumeSessionID` was always
+  empty for every other provider and their already-correct `--resume`/`resume
+  <id>`/`--session` invocations were dead code (see #281). The gate is now a
+  `providerSupportsResume` check covering `claude`, `qwen_code`, `codex_cli`,
+  and `opencode`. `opencode` additionally needed its own fix (#283):
+  `classifyOpencodeJSON` was discarding the `sessionID` field the CLI stamps
+  on every NDJSON event, so the runner never had an id to persist in the first
+  place — it's now parsed and threaded onto both completed and failed
+  `agent.Result`s. `gemini_cli` is intentionally **not** included yet: its
+  runner also records a session id and its `--resume` invocation is correct,
+  but `GeminiRunner` scopes `GEMINI_CLI_HOME` to a per-run temp directory that
+  is deleted when the run ends, destroying the CLI's own session storage
+  before a later run could resume it. That storage-lifetime problem is
+  tracked separately in #284. See
+  [docs/agents.md § Session Resume](docs/agents.md#session-resume) and the
+  updated `qwen_code`/`codex_cli`/`opencode`/`gemini_cli` provider docs.
+- **`opencode` runs now record token usage and cost, so cost budget caps
+  fire and the Dashboard's cost aggregation is accurate for this provider**
+  (#287). `classifyOpencodeJSON` previously only read `part.reason` off the
+  `step_finish` NDJSON event, leaving `input_tokens`/`output_tokens`/
+  `cost_usd` at `0` for every opencode run despite the CLI (`opencode-ai`
+  v1.18.6) actually emitting both a `cost` number and a `tokens.
+  {input,output,...}` object on that event. `cost` is authoritative (reported
+  directly by the CLI, like `claude`/`qwen_code`), not estimated. Since
+  `step_finish` fires once per step rather than once per run, and opencode's
+  own SQLite `session` table stores a single cumulative cost/token row per
+  session, the runner takes the *last* `step_finish`'s values rather than
+  summing across steps. Usage/cost is now persisted on every run outcome,
+  including failed and timed-out runs, since money may already have been
+  spent. `costTracking` is now `full` in the provider capability matrix; no
+  mid-run cost watchdog is wired up for this provider yet (usage is only
+  known at end-of-run), so `costWatchdog` remains `none`. See
+  [docs/providers/opencode.md § Cost & Usage Reporting](docs/providers/opencode.md#cost--usage-reporting).
+- **The provider capability matrix now matches what the providers actually do.**
+  An audit against the installed CLIs (`claude` v2.1.220, `@qwen-code/qwen-code`
+  v0.21.0, `@google/gemini-cli` v0.52.0, `@openai/codex` v0.145.0, `opencode-ai`
+  v1.18.6) and this codebase's own runners found eight rows that over- or
+  under-stated support. `frontend/src/lib/providerCapabilities.ts` — read by the
+  agent/provider config forms to warn about gaps at config time, and the source
+  of `docs/agents.md`'s generated table — has been corrected, along with the
+  affected per-provider docs:
+  - `claude` **image attachments** were listed as supported "via `--image`". The
+    `claude` CLI has no `--image` flag, so a task with attachments currently
+    fails at launch — now marked unsupported and flagged as a known bug.
+  - `gemini_cli` and `codex_cli` **`max_turns`** were listed as enforced. Neither
+    CLI has a turn-cap flag and neither runner passes one; both are now ❌, and
+    the note explains that only the run timeout bounds those runs.
+  - `qwen_code` **cost tracking** claimed authoritative cost. Qwen's stream-json
+    `result` carries token usage but no `total_cost_usd`, so it is tokens-only
+    like `gemini_cli`/`codex_cli` — a cost budget cap will not reliably fire.
+  - `qwen_code` **command allowlist** was listed as enforced. Qwen's
+    `--allowed-tools` only bypasses confirmation, and the runner always passes
+    `--approval-mode yolo`, so allowlist entries are a no-op.
+  - `anthropic`/`llm` **task-editor tools** said "4 of 5"; the sidecar exposes
+    six tools (seven with `create_subtask`) and these providers implement five
+    natively, so it is now "5 of 7". The MCP-backed providers' "All 5" notes and
+    the generated row label were stale for the same reason.
+  - **Session resume** notes blamed missing CLI flags. The real reason
+    `qwen_code`/`gemini_cli`/`codex_cli` never resume is that
+    `Dispatcher.resolveAgentConfig` gates resume to the `claude` provider;
+    `opencode` differs again in never recording a session id at all.
+  - **`opencode` cost tracking** blamed the CLI. Opencode's `step_finish` part
+    does carry `cost` and `tokens`; the gap is that `classifyOpencodeJSON`
+    doesn't read them. Its docs also wrongly listed rate-limit detection as
+    unimplemented (it is implemented) and image attachments as impossible
+    (`opencode run` has `-f`/`--file`, just unwired).
+- **The `claude` provider no longer passes an unsupported `--image` flag.**
+  `buildClaudeArgs` used to append one `--image <abs-path>` flag per task
+  attachment, but the `claude` CLI has no `--image` flag and rejected it at
+  argument parsing — so every `claude`-provider run against a task with at
+  least one attachment failed instantly, before any model call. The flags are
+  no longer sent; attachments are still made available to the agent as files
+  under `.task_attachments/` in the run's worktree (listed in the prompt), so
+  no capability is lost. See `docs/providers/claude.md` § Image Attachments.
+- **Task read paths no longer scale with total task count.** `GET /tasks` and
+  `GET /tasks/{id}` computed their derived dependency-count and subtask-rollup
+  badges by self-joining/scanning the *entire* `tasks` table on every
+  request, regardless of page size — so a single-task fetch cost the same as
+  listing every task in the system. Those queries are now scoped to just the
+  ids being returned (`ListTaskDependencyCountsForTasks` /
+  `ListSubtaskRollupsForParents`, new migration `049_task_read_indexes` adds
+  the `tasks(created_at DESC, id DESC)` index backing cursor pagination).
+  Separately, the SQLite connection pool was capped at a single connection,
+  which serialized every read behind every write (and behind every other
+  read) and defeated WAL mode entirely; the pool now allows several
+  concurrent connections, with `_txlock=immediate` added to the DSN so
+  write transactions take SQLite's write lock up front instead of risking a
+  `SQLITE_BUSY` upgrade race between connections.
 - **Two-column forms no longer collapse into overlapping, unreadable fields on
   mobile.** The Agent config, Provider config, Templates, and schedule forms use
   a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded
@@ -119,8 +466,68 @@ triggers the "Release" workflow the same way.
   paginates the full result set. Beyond dropping issues outright on busy repos,
   the cap would have made the new reconciliation mistake a truncated page for a
   closed issue.
+- **A hung `git` call on one repo could halt agent dispatch system-wide.**
+  Every `git` shell-out the agent package makes (worktree `fetch`/`add`,
+  safety-net `commit`, `push`, subtask `merge`, branch cleanup) is now bounded
+  by a configurable `GIT_TIMEOUT` (default `120s`); a stalled remote or a
+  stuck interactive credential prompt previously hung that `git` call
+  indefinitely, which blocked the dispatcher's serial sweep loop and stalled
+  agent dispatch for every task on every repo until the process was
+  restarted. A timed-out `git` call now fails just that one task within
+  `GIT_TIMEOUT`, is classified as a transient failure (eligible for the
+  existing retry policy) instead of a silent stall, and logs the repo,
+  command, and elapsed time so the culprit is obvious. Interactive credential
+  prompts are also suppressed (`GIT_TERMINAL_PROMPT=0` and related env vars)
+  so an auth prompt fails fast rather than blocking on stdin. See
+  [getting-started.md](docs/getting-started.md#backup). Dispatching tasks
+  concurrently (rather than serially) was considered but deferred as a
+  separate, larger change.
+- **CLI agent output streams no longer silently truncate at 1 MB (or 64 KB on
+  stderr) and wedge the run until its timeout.** Every CLI provider
+  (claude/codex/opencode/qwen) scanned its subprocess's stdout with a capped
+  `bufio.Scanner` and never checked `scanner.Err()`; a single line over the
+  cap — routine when an assistant message quotes a large file a tool
+  Read/Wrote — made the scanning goroutine exit silently, dropping the rest
+  of that stream with no log entry and leaving nothing draining the pipe, so
+  a still-writing child could block and the run wouldn't end until the outer
+  timeout (default 600s) fired. Stderr had no explicit buffer at all, so it
+  hit the default 64 KB cap even sooner. A shared `scanLines` helper now
+  raises the buffer to 8 MB for both streams, keeps draining the pipe after
+  an oversized line so the child can never block on it, and surfaces a
+  visible warning in the run log plus a failed (not `completed`) result when
+  the cap is hit.
 
 ### Changed
+- **A run that exhausts `max_turns` now escalates to `waiting_human` instead
+  of silently re-dispatching with a fresh turn budget.** Previously, hitting
+  the configured turn cap ended the run as a plain `failed`/genuine failure
+  (or, for `claude`/`qwen_code`, a `completed`+`failure` outcome) — either
+  way the task's dispatch lock cleared and the very next sweep re-picked it
+  up with a brand-new `--max-turns`/tool-use-loop budget, so `max_turns`
+  bounded a single run but nothing at all bounded the task: it could loop
+  indefinitely, burning tokens against the cost budget, with no human ever
+  notified. Turn exhaustion now gets its own classification
+  (`RunClassificationTotal{max_turns}`, distinct from `genuine`) and escalates
+  the run straight to `waiting_human` with an explanatory note ("Agent hit
+  its turn limit (N turns) without completing…"), a `task.needs_human` event,
+  and the task's active-run lock left in place — the same shape as the
+  existing auth-failure, exhausted-retry-budget, exhausted-cost-budget, and
+  rework-loop escalations. It does not consume the transient-retry budget.
+  Applies to every provider that actually enforces the cap: `claude`,
+  `qwen_code`, `anthropic`, `llm` (`codex_cli`/`opencode` don't enforce
+  `max_turns` at all — tracked separately). To continue past the cap, raise
+  `max_turns` on the agent config or reply to / re-dispatch the run. See
+  [docs/agents.md § Retry Policy](docs/agents.md#retry-policy).
+- **The Logs tab now shows one row per tool call instead of three blocks.** A
+  tool result is folded into the call that produced it, so the row carries the
+  tool name, its command/arguments, and an outcome chip (`ok`, `40 lines`,
+  `error`, `running`); the disclosure arrow reveals the full output. Previously
+  the separate result row showed a reflowed 120-character preview of the output
+  and expanding it repeated that same text in full — the preview is gone, so
+  the output is shown exactly once, untruncated. Failures still auto-expand, a
+  result short enough to fit on the row is shown inline with no arrow, a call
+  still awaiting its result is marked `running` while the run is live, and a
+  result whose call isn't loaded still renders on its own row.
 - The Repos help modal described issue import as create-only, which is no
   longer accurate; it now covers ongoing sync, the update policy, what happens
   when an issue closes, and comment sync.
@@ -133,6 +540,73 @@ triggers the "Release" workflow the same way.
   writers and flood connected clients. See
   [task-sources.md](docs/task-sources.md) and
   [websocket.md](docs/websocket.md).
+- **Frontend hardening pass** (#253):
+  - Routes are now code-split with `React.lazy`/`Suspense`, so the two
+    heaviest per-route dependencies — `@xterm/xterm` (Chat) and
+    `@xyflow/react` + `dagre` (Workflow) — no longer ship in the initial
+    bundle for users who only ever open e.g. the Board.
+  - The WebSocket client's reconnect now uses capped exponential backoff with
+    full jitter instead of a flat 3s retry, so a server restart doesn't have
+    every open tab hammering `/ws-ticket` + `/ws` in lockstep. A new
+    connection-status indicator ("Live" / "Reconnecting…" / "Offline") is
+    shown in the sidebar on every route.
+  - The Board's `task.updated` WebSocket handler now applies the event's
+    payload (already a full task) directly instead of triggering an extra
+    `GET /tasks/{id}` round-trip.
+  - Board task cards are keyboard-focusable and describe themselves via
+    `aria-label`; Enter opens a focused task and a new `KeyboardSensor`
+    (Space to pick up/drop, arrow keys to move) makes drag-and-drop between
+    columns reachable without a mouse.
+  - The page-level error boundary now resets when navigating to a different
+    route, instead of a render crash on one page sticking across every
+    subsequent navigation until a full reload.
+  - `GitStateBadge`'s git/PR-state detail is now exposed via `aria-label`
+    and `role="img"`, and the badge is a keyboard focus stop, instead of
+    being reachable only through a native `title` tooltip.
+  - Very large diff files in the PR review viewer now render collapsed by
+    default instead of every line of every file being expanded up front.
+  - Enabled `strictNullChecks` in the frontend TypeScript config (see
+    `frontend/AGENTS.md`, previously inaccurately described as full `strict`
+    mode) and fixed the errors it surfaced, including a task-card priority
+    `<select>` that could cast an invalid value straight into `Task['priority']`.
+- **Backend test coverage raised from ~59% to ~78%** with new behavioral
+  tests for previously-untested handlers and helpers (task approve/reject,
+  chat session CRUD, agent config get/delete, task run lookup, dashboard cost
+  aggregation, `internal/storage.SeedDefaultWorkflow`, and several
+  provider/workflow/template edit-conflict branches, among others). CI's
+  coverage metric (`.github/workflows/ci.yml`, backend job) now excludes
+  `internal/storage/gen/` (sqlc-generated, never hand-written) and
+  `cmd/server` (pure process wiring — config/DB/HTTP setup and graceful
+  shutdown, not meaningfully unit-testable) so generated/wiring code no
+  longer drags the number away from reflecting real test coverage; the
+  enforced floor moves from 55.0% to 76.0% against that filtered metric. See
+  `backend/AGENTS.md` § Testing for how to reproduce CI's number locally.
+
+### Dependencies
+- **Dependabot now groups patch-only bumps into a single PR per ecosystem**
+  (`.github/dependabot.yml`) for `gomod`, `npm`, `github-actions`, and
+  `docker`, instead of opening one PR per patch release.
+- Bumped `github.com/mattn/go-sqlite3` 1.14.48 → 1.14.49 and
+  `github.com/prometheus/client_golang` 1.24.0 → 1.24.1 (backend); `oxlint`
+  1.75.0 → 1.76.0, `@tailwindcss/vite` 4.3.2 → 4.3.3, `@playwright/test`
+  1.61.1 → 1.62.0, `@vitejs/plugin-react` 6.0.3 → 6.0.4, and
+  `react-router-dom` 7.18.1 → 7.18.2 (frontend). Routine dependency
+  patch/minor bumps, consolidated from separate Dependabot PRs.
+
+### Deprecated
+- **The `anthropic` and `llm` providers are disabled for new/updated provider
+  configs and may be removed in a future release.** Both run on a
+  hand-maintained Go tool-use loop (rather than a vendor CLI) with permanent
+  parity gaps — no `resolve_comment`/`create_subtask`, no MCP servers, no
+  session resume, no image attachments, and cost estimated from a pricing
+  table instead of reported. Neither is offered in the provider dropdown
+  anymore, and `POST`/`PATCH` of a provider config using either now returns
+  `400`. Existing provider/agent configs already on `anthropic` or `llm`
+  keep dispatching and running exactly as before — nothing changes for them.
+  The `openai` dropdown option (a dead alias for the same `llm` code path
+  that always failed validation) is also removed. See
+  [docs/providers/anthropic.md](docs/providers/anthropic.md) and
+  [docs/providers/llm.md](docs/providers/llm.md).
 
 ## [0.14.0] - 2026-07-26
 

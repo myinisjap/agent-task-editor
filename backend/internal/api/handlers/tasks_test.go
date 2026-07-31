@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -27,19 +28,20 @@ import (
 // The Attachments field is []string because the handler serialises the stored
 // JSON string as a proper JSON array, not a raw string.
 type apiTask struct {
-	ID            string   `json:"id"`
-	Title         string   `json:"title"`
-	Description   string   `json:"description"`
-	Type          string   `json:"type"`
-	Label         string   `json:"label"`
-	RepoID        string   `json:"repo_id"`
-	WorkflowID    string   `json:"workflow_id"`
-	AgentNotes    string   `json:"agent_notes"`
-	Attachments   []string `json:"attachments"`
-	Paused        bool     `json:"paused"`
-	Archived      bool     `json:"archived"`
-	Priority      int      `json:"priority"`
-	QueuePosition *int     `json:"queue_position"`
+	ID                string   `json:"id"`
+	Title             string   `json:"title"`
+	Description       string   `json:"description"`
+	Type              string   `json:"type"`
+	Label             string   `json:"label"`
+	RepoID            string   `json:"repo_id"`
+	WorkflowID        string   `json:"workflow_id"`
+	AgentNotes        string   `json:"agent_notes"`
+	Attachments       []string `json:"attachments"`
+	Paused            bool     `json:"paused"`
+	Archived          bool     `json:"archived"`
+	Priority          int      `json:"priority"`
+	QueuePosition     *int     `json:"queue_position"`
+	CumulativeCostUsd float64  `json:"cumulative_cost_usd"`
 }
 
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
@@ -121,6 +123,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Delete("/tasks/{id}", h.Delete)
 	r.Patch("/tasks/{id}/label", h.MoveLabel)
 	r.Get("/tasks/{id}/runs", h.ListRuns)
+	r.Get("/tasks/{id}/runs/{run_id}", h.GetRun)
 	r.Get("/tasks/{id}/runs/{run_id}/logs", h.GetRunLogs)
 	r.Post("/tasks/{id}/runs/{run_id}/cancel", h.CancelRun)
 	r.Patch("/tasks/{id}/pause", h.SetPaused)
@@ -129,6 +132,11 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Patch("/tasks/{id}/git-state", h.UpdateGitState)
 	r.Get("/tasks/{id}/label-history", h.ListLabelHistory)
 	r.Get("/tasks/{id}/source-comments", h.ListSourceComments)
+	r.Post("/tasks/{id}/approve", h.Approve)
+	r.Post("/tasks/{id}/reject", h.Reject)
+	r.Patch("/tasks/{id}/notes", h.UpdateNotes)
+	r.Post("/tasks/{id}/rerun", h.Rerun)
+	r.Get("/tasks/{id}/diff", h.Diff)
 
 	return r, q, wfID, repoID
 }
@@ -636,6 +644,54 @@ func TestTasks_Get_Found(t *testing.T) {
 	}
 }
 
+// TestTasks_Get_CumulativeCostUsd verifies GET /tasks/{id} surfaces the
+// task's lifetime recorded cost across every run (SumTaskCost), not just what
+// the first page of GET /tasks/{id}/runs would sum to.
+func TestTasks_Get_CumulativeCostUsd(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Costed task",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	for _, cost := range []float64{1.25, 2.50} {
+		run, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: task.ID})
+		if err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if _, err := q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status:  "completed",
+			CostUsd: cost,
+			ID:      run.ID,
+		}); err != nil {
+			t.Fatalf("complete run: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var got apiTask
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.CumulativeCostUsd != 3.75 {
+		t.Errorf("expected cumulative_cost_usd 3.75, got %v", got.CumulativeCostUsd)
+	}
+}
+
 // ---------- Update ----------
 
 func TestTasks_Update_OK(t *testing.T) {
@@ -842,6 +898,170 @@ func TestTasks_MoveLabel_InvalidTransition_Returns400(t *testing.T) {
 	}
 }
 
+// TestTasks_MoveLabel_RunningRun_Returns409 guards against issue #244: moving
+// the label while a run is `running` must be refused rather than silently
+// clearing the dispatch lock out from under the live run. See also
+// TestTasks_MoveLabel_PendingRun_Returns409 for the narrower "pending" window.
+func TestTasks_MoveLabel_RunningRun_Returns409(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Label Mover",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.SetAgentRunStarted(context.Background(), runID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	body := map[string]string{"to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/label", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 while a run is live, got %d: %s", w.Code, w.Body)
+	}
+
+	// The label (and the lock) must be untouched.
+	unchanged, err := q.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if unchanged.Label != "not_ready" {
+		t.Errorf("expected label to remain 'not_ready', got %q", unchanged.Label)
+	}
+	if unchanged.ActiveAgentRunID == nil || *unchanged.ActiveAgentRunID != runID {
+		t.Errorf("expected active_agent_run_id to remain %q, got %v", runID, unchanged.ActiveAgentRunID)
+	}
+}
+
+// TestTasks_MoveLabel_PendingRun_Returns409 guards against the narrower
+// window in issue #244 where a run has claimed the task's active-run lock
+// (SetTaskActiveRun, done at dispatch time) but the pool worker hasn't yet
+// dequeued the job and flipped its status to "running". A human moving the
+// label during that "pending" window is just as unsafe as during "running":
+// the transition's CAS clears the lock, a new run gets dispatched onto the
+// same worktree, and when the pool eventually executes the orphaned pending
+// run it can collide with the new one.
+func TestTasks_MoveLabel_PendingRun_Returns409(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Label Mover",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	// Deliberately do NOT call SetAgentRunStarted — the run stays "pending",
+	// matching the real dispatch sequence where SetTaskActiveRun runs before
+	// the pool worker ever picks the job off the queue.
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.Status != "pending" {
+		t.Fatalf("test setup expected run status 'pending', got %q", run.Status)
+	}
+
+	body := map[string]string{"to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/label", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 while a run is pending (not yet running), got %d: %s", w.Code, w.Body)
+	}
+
+	// The label (and the lock) must be untouched.
+	unchanged, err := q.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if unchanged.Label != "not_ready" {
+		t.Errorf("expected label to remain 'not_ready', got %q", unchanged.Label)
+	}
+	if unchanged.ActiveAgentRunID == nil || *unchanged.ActiveAgentRunID != runID {
+		t.Errorf("expected active_agent_run_id to remain %q, got %v", runID, unchanged.ActiveAgentRunID)
+	}
+}
+
+// TestTasks_MoveLabel_WaitingHumanRun_Allowed asserts the 409 guard is scoped
+// to live statuses (running/pending): a `waiting_human` run (the normal state
+// while a human decides how to act on an escalation) must not block moving
+// the label.
+func TestTasks_MoveLabel_WaitingHumanRun_Allowed(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Label Mover",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(context.Background(), gen.UpdateAgentRunStatusParams{Status: "waiting_human", ID: runID}); err != nil {
+		t.Fatalf("set run status: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	body := map[string]string{"to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/label", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a waiting_human active run, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Label != "plan" {
+		t.Errorf("expected label 'plan', got %q", updated.Label)
+	}
+}
+
 // ---------- Runs ----------
 
 func TestTasks_ListRuns_Empty(t *testing.T) {
@@ -861,6 +1081,105 @@ func TestTasks_ListRuns_Empty(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// listRunsPage GETs /tasks/{id}/runs with the given query and returns the
+// decoded runs plus the X-Next-Cursor header.
+func listRunsPage(t *testing.T, r http.Handler, taskID, query string) ([]gen.AgentRun, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/runs"+query, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET runs%s: expected 200, got %d: %s", query, w.Code, w.Body)
+	}
+	var runs []gen.AgentRun
+	if err := json.NewDecoder(w.Body).Decode(&runs); err != nil {
+		t.Fatal(err)
+	}
+	return runs, w.Header().Get("X-Next-Cursor")
+}
+
+func TestTasks_ListRuns_Pagination(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Task with many runs",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	// Create 5 runs; created_at is assigned by CURRENT_TIMESTAMP so several may
+	// share a second — the (created_at, id) cursor must still not skip or repeat.
+	for i := 0; i < 5; i++ {
+		if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+			ID:     uuid.NewString(),
+			TaskID: task.ID,
+		}); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		q := "?limit=2"
+		if cursor != "" {
+			q += "&after=" + cursor
+		}
+		page, next := listRunsPage(t, r, task.ID, q)
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d runs, expected <= 2", len(page))
+		}
+		for _, run := range page {
+			if seen[run.ID] {
+				t.Fatalf("run %s returned on more than one page", run.ID)
+			}
+			seen[run.ID] = true
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 runs, saw %d", len(seen))
+	}
+	if _, next := listRunsPage(t, r, task.ID, "?limit=5"); next != "" {
+		t.Errorf("a full-size page covering every run should have no next cursor, got %q", next)
+	}
+}
+
+func TestTasks_ListRuns_LimitCapped(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// An over-max limit must be clamped rather than rejected.
+	page, _ := listRunsPage(t, r, task.ID, "?limit=100000")
+	if len(page) != 1 {
+		t.Fatalf("expected the single run back, got %d", len(page))
 	}
 }
 
@@ -1086,6 +1405,174 @@ func TestTasks_SetArchived_NotFound(t *testing.T) {
 	}
 }
 
+// initGitRepo creates a minimal one-commit git repo at dir, so a real
+// `git worktree add`/`remove` can be exercised against it.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "test")
+	if err := os.WriteFile(dir+"/README.md", []byte("hi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-m", "init")
+}
+
+// TestTasks_SetArchived_ReclaimsWorktree verifies that archiving a task with
+// a provisioned worktree removes the worktree directory (best-effort
+// teardown mirroring engine.OnTerminal/Delete's), while its branch — and the
+// task's own worktree_path DB field, matching every other teardown path —
+// are left alone.
+func TestTasks_SetArchived_ReclaimsWorktree(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Non-terminal but archived", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	wtPath, branch, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: branch, WorktreePath: wtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("expected worktree dir to exist before archiving: %v", err)
+	}
+
+	body := map[string]bool{"archived": true}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree dir to be removed after archiving, stat err=%v", err)
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "branch", "--list", branch).CombinedOutput(); err != nil {
+		t.Fatalf("git branch --list: %v: %s", err, out)
+	} else if strings.TrimSpace(string(out)) == "" {
+		t.Error("expected the task's branch to survive archiving (kept for review)")
+	}
+
+	// worktree_path must be cleared, both in the DB and in the response body
+	// returned from this same request — otherwise a later unarchive +
+	// re-dispatch would try to reuse a directory that no longer exists (see
+	// Dispatcher.ensureWorktree's defense-in-depth check for the belt-and-
+	// suspenders half of this fix).
+	var respBody struct {
+		WorktreePath string `json:"worktree_path"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &respBody); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if respBody.WorktreePath != "" {
+		t.Errorf("expected worktree_path cleared in the response body, got %q", respBody.WorktreePath)
+	}
+	reloaded, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if reloaded.WorktreePath != "" {
+		t.Errorf("expected worktree_path cleared in the DB, got %q", reloaded.WorktreePath)
+	}
+	if reloaded.Branch != branch {
+		t.Errorf("expected branch to remain unchanged, got %q want %q", reloaded.Branch, branch)
+	}
+}
+
+// TestTasks_SetArchived_ThenUnarchive_LeavesWorktreePathEmpty is the
+// handler-level half of the stale-worktree_path regression test: archiving
+// clears worktree_path (see TestTasks_SetArchived_ReclaimsWorktree), and
+// unarchiving must not resurrect or otherwise repopulate it — it stays empty
+// until the next real dispatch reprovisions a worktree. The dispatcher-level
+// half (that ensureWorktree reprovisions rather than reusing a stale,
+// deleted path) is covered directly in internal/agent's dispatcher tests,
+// since that's where Dispatcher.ensureWorktree lives.
+func TestTasks_SetArchived_ThenUnarchive_LeavesWorktreePathEmpty(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Archive then unarchive", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	staleWtPath, _, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: "some-branch", WorktreePath: staleWtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	// Archive: reclaims (removes) the worktree dir and must clear worktree_path.
+	archiveBody := map[string]bool{"archived": true}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, archiveBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("archive: expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	// Unarchive: flips the flag back; must not resurrect the stale path.
+	unarchiveBody := map[string]bool{"archived": false}
+	req = httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, unarchiveBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unarchive: expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	unarchived, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if unarchived.WorktreePath != "" {
+		t.Fatalf("worktree_path should still be empty after unarchiving (nothing re-provisions it until dispatch), got %q", unarchived.WorktreePath)
+	}
+}
+
 // TestTasks_Archived_ExcludedFromAgentPickup confirms the dispatcher's
 // ListAgentPickupTasks query never returns an archived task, even when its
 // label is otherwise eligible for agent pickup.
@@ -1161,6 +1648,52 @@ func TestTasks_Bulk_Archive(t *testing.T) {
 		if task.Archived == 0 {
 			t.Errorf("task %s: expected archived", id)
 		}
+	}
+}
+
+// TestTasks_Bulk_Archive_ReclaimsWorktree verifies the bulk "archive" action
+// tears down each archived task's worktree the same way the single-task
+// SetArchived endpoint does.
+func TestTasks_Bulk_Archive_ReclaimsWorktree(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Bulk archived", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	wtPath, branch, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: branch, WorktreePath: wtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	body := map[string]any{"ids": []string{task.ID}, "action": "archive"}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree dir to be removed after bulk archive, stat err=%v", err)
 	}
 }
 
@@ -1946,5 +2479,489 @@ func TestUpdateGitState_NonMergedState_NoWriteback(t *testing.T) {
 	}
 	if len(fwb.closeCalls) != 0 {
 		t.Fatalf("expected no close-with-comment calls for a non-merged state, got %v", fwb.closeCalls)
+	}
+}
+
+// ---------- Approve / Reject / UpdateNotes / Rerun / ListLabelHistory ----------
+
+func TestTasks_Approve_OK(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve", jsonBody(t, map[string]string{"note": "lgtm"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Label != "done" {
+		t.Errorf("expected label 'done', got %q", got.Label)
+	}
+}
+
+func TestTasks_Approve_UnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+uuid.NewString()+"/approve", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_Approve_NoHumanTransition(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	// "work" has no human transition defined from it in the default workflow.
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Working", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestTasks_Approve_RunningRunBlocks(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: taskID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(context.Background(), gen.UpdateAgentRunStatusParams{Status: "running", ID: runID}); err != nil {
+		t.Fatalf("set run status: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ID: taskID, CurrentAgentRunID: &runID, ActiveAgentRunID: &runID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestTasks_Reject_OK(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/reject", jsonBody(t, map[string]string{"note": "needs work"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Label != "work" {
+		t.Errorf("expected label 'work', got %q", got.Label)
+	}
+}
+
+func TestTasks_Reject_ToLabelOverride(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review-plan",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/reject", jsonBody(t, map[string]string{"to_label": "plan"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Label != "plan" {
+		t.Errorf("expected label 'plan', got %q", got.Label)
+	}
+}
+
+func TestTasks_Reject_NotePersistedAsFeedback(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: taskID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(context.Background(), gen.UpdateAgentRunStatusParams{Status: "completed", ID: runID}); err != nil {
+		t.Fatalf("set run status: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ID: taskID, CurrentAgentRunID: &runID, ActiveAgentRunID: nil,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/reject", jsonBody(t, map[string]string{"note": "please fix X"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.Feedback == nil || *run.Feedback != "please fix X" {
+		t.Errorf("expected feedback to be persisted, got %v", run.Feedback)
+	}
+}
+
+func TestTasks_Reject_InvalidBody(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Review me", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/reject", strings.NewReader("{not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestTasks_Reject_UnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+uuid.NewString()+"/reject", jsonBody(t, map[string]string{}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_UpdateNotes_Replace(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", jsonBody(t, map[string]any{"notes": "first note"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", jsonBody(t, map[string]any{"notes": "second note"}))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.AgentNotes != "second note" {
+		t.Errorf("expected notes replaced, got %q", got.AgentNotes)
+	}
+}
+
+func TestTasks_UpdateNotes_Append(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", jsonBody(t, map[string]any{"notes": "first note"}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", jsonBody(t, map[string]any{"notes": "second note", "append": true}))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := "first note\n\nsecond note"
+	if got.AgentNotes != want {
+		t.Errorf("expected notes %q, got %q", want, got.AgentNotes)
+	}
+}
+
+func TestTasks_UpdateNotes_AppendUnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+uuid.NewString()+"/notes", jsonBody(t, map[string]any{"notes": "x", "append": true}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_UpdateNotes_InvalidBody(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/notes", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestTasks_Rerun_ClearsActiveRun(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID, runID := seedRunningRun(t, q, wfID, repoID, "running")
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ID: taskID, CurrentAgentRunID: &runID, ActiveAgentRunID: &runID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/rerun", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body)
+	}
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Errorf("expected active run cleared, got %v", *task.ActiveAgentRunID)
+	}
+}
+
+func TestTasks_Rerun_UnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+uuid.NewString()+"/rerun", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestTasks_ListLabelHistory_OrderedOldestFirst(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	taskID := uuid.NewString()
+	if _, err := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: taskID, Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "not_ready",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	moveTo := func(label string) {
+		req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/label", jsonBody(t, map[string]string{"to_label": label}))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("move to %s: expected 200, got %d: %s", label, w.Code, w.Body)
+		}
+	}
+	moveTo("plan")
+	moveTo("review-plan")
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/label-history", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var history []struct {
+		FromLabel string `json:"from_label"`
+		ToLabel   string `json:"to_label"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(history) < 2 {
+		t.Fatalf("expected at least 2 history entries, got %d", len(history))
+	}
+	if history[0].ToLabel != "plan" {
+		t.Errorf("expected first entry to be the move to 'plan', got %q", history[0].ToLabel)
+	}
+	if history[len(history)-1].ToLabel != "review-plan" {
+		t.Errorf("expected last entry to be the move to 'review-plan', got %q", history[len(history)-1].ToLabel)
+	}
+}
+
+// TestTasks_Create_DefaultsWorkflowWhenOmitted exercises
+// resolveDefaultWorkflowID's happy path: creating a task without a
+// workflow_id resolves to the seeded "Default" workflow rather than
+// erroring or requiring the caller to already know its id.
+func TestTasks_Create_DefaultsWorkflowWhenOmitted(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	body := map[string]string{
+		"title":   "No explicit workflow",
+		"repo_id": repoID,
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.WorkflowID != wfID {
+		t.Errorf("expected task to default to the seeded workflow %s, got %s", wfID, task.WorkflowID)
+	}
+}
+
+// TestTasks_Create_DefaultsToAlphabeticallyFirstWorkflow_WhenNoneNamedDefault
+// exercises resolveDefaultWorkflowID's fallback branch: when the "Default"
+// workflow has been renamed (or never existed), task creation without an
+// explicit workflow_id falls back to the alphabetically-first workflow by
+// name rather than erroring.
+func TestTasks_Create_DefaultsToAlphabeticallyFirstWorkflow_WhenNoneNamedDefault(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), noopPub{})
+
+	wfs, err := q.ListWorkflows(context.Background())
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("expected a seeded workflow, err=%v wfs=%v", err, wfs)
+	}
+	// Rename the seeded "Default" workflow away, and add a second workflow
+	// that alphabetically precedes it, so the fallback path is unambiguous.
+	if _, err := q.UpdateWorkflow(context.Background(), gen.UpdateWorkflowParams{
+		ID: wfs[0].ID, Name: "Zulu", Description: wfs[0].Description,
+	}); err != nil {
+		t.Fatalf("rename workflow: %v", err)
+	}
+	alpha, err := q.CreateWorkflow(context.Background(), gen.CreateWorkflowParams{
+		ID: uuid.NewString(), Name: "Alpha", Description: "",
+	})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	if _, err := q.CreateWorkflowLabel(context.Background(), gen.CreateWorkflowLabelParams{
+		ID: uuid.NewString(), WorkflowID: alpha.ID, Name: "not_ready", Color: "#888", SortOrder: 0, AgentIgnore: 1,
+	}); err != nil {
+		t.Fatalf("create label: %v", err)
+	}
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID: repoID, Name: "test-repo", Path: t.TempDir(), WorkflowID: &wfs[0].ID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+	r := chi.NewRouter()
+	r.Post("/tasks", h.Create)
+
+	body := map[string]string{"title": "No explicit workflow", "repo_id": repoID}
+	req := httptest.NewRequest(http.MethodPost, "/tasks", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task.WorkflowID != alpha.ID {
+		t.Errorf("expected task to default to the alphabetically-first workflow %s (Alpha), got %s", alpha.ID, task.WorkflowID)
 	}
 }

@@ -4,23 +4,38 @@ updates:
     directory: "/backend"
     schedule:
       interval: "weekly"
+    groups:
+      patch-updates:
+        update-types: ["patch"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
+    groups:
+      patch-updates:
+        update-types: ["patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      patch-updates:
+        update-types: ["patch"]
 
   - package-ecosystem: "docker"
     directory: "/backend"
     schedule:
       interval: "weekly"
+    groups:
+      patch-updates:
+        update-types: ["patch"]
 
   - package-ecosystem: "docker"
     directory: "/frontend"
     schedule:
       interval: "weekly"
+    groups:
+      patch-updates:
+        update-types: ["patch"]

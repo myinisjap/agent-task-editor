@@ -25,6 +25,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/tasksource"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/worktreesweep"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
@@ -49,6 +50,7 @@ func main() {
 		slog.Error("failed to load config", "err", err)
 		os.Exit(1)
 	}
+	agent.SetGitTimeout(cfg.GitTimeout)
 
 	slog.Info("agent-task-editor starting", "version", Version)
 	if cfg.APIToken != "" {
@@ -209,10 +211,13 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
 		case "anthropic":
-			// Calls the Anthropic Messages API directly — no CLI binary needed.
-			// Requires LLM_API_KEY to be set. Billed per-token (not Claude Max).
+			// Deprecated: disabled for new/updated provider configs (see
+			// deprecatedProviders in handlers/providers.go), retained here so
+			// existing configs keep dispatching. Calls the Anthropic Messages
+			// API directly — no CLI binary needed. Requires LLM_API_KEY to be
+			// set. Billed per-token (not Claude Max).
 			return &providers.AnthropicRunner{APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
 		case "opencode":
 			return &providers.OpencodeRunner{}
@@ -221,21 +226,23 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
-		case "gemini_cli":
-			var mcp *providers.MCPManager
-			if cfg.MCPBinary != "" {
-				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
-			}
-			return &providers.GeminiRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
+			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
 		case "codex_cli":
 			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken}
-		default:
+			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
+		case "llm", "openai":
+			// Deprecated: disabled for new/updated provider configs (see
+			// deprecatedProviders in handlers/providers.go), retained here so
+			// existing configs keep dispatching. "openai" is the historical
+			// dead dropdown alias for this same OpenAI-compatible path.
 			return &providers.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
+		default:
+			// Unrecognized provider string: fail explicitly instead of
+			// silently falling back to an OpenAI-compatible call.
+			return nil
 		}
 	}
 
@@ -275,8 +282,20 @@ func main() {
 		terminal.ChatMCP = providers.NewChatMCPProvisioner(cfg.MCPBoardBinary, backendURL, cfg.APIToken)
 		slog.Info("board MCP enabled for chat sessions", "binary", cfg.MCPBoardBinary)
 	}
+	// CHAT_MAX_SESSIONS/CHAT_IDLE_TIMEOUT bound the otherwise-unbounded growth
+	// of concurrent PTY subprocesses + scrollback buffers a long-lived chat
+	// tab can accumulate. Both default to 0 (unlimited/disabled), so this is a
+	// no-op unless explicitly configured.
+	terminal.MaxSessions = cfg.ChatMaxSessions
+	terminal.IdleTimeout = cfg.ChatIdleTimeout
+	if cfg.ChatMaxSessions > 0 {
+		slog.Info("chat terminal session cap enabled", "max_sessions", cfg.ChatMaxSessions)
+	}
+	if cfg.ChatIdleTimeout > 0 {
+		slog.Info("chat terminal idle reaper enabled", "idle_timeout", cfg.ChatIdleTimeout)
+	}
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
@@ -364,6 +383,15 @@ func main() {
 	})
 	slog.Info("agent log retention pruner starting; effective settings are DB-backed and editable via PUT /api/v1/log-retention/settings (see docs/backup.md#agent-log-retention)", "seed_default_days", cfg.LogRetentionDays)
 
+	// Orphaned-worktree sweeper: reconciles every repo's .ate-worktrees/<id>
+	// directories against live (non-archived) task/chat-session ids on an
+	// interval, reclaiming anything else. Always on — this is what bounds
+	// .ate-worktrees/ disk usage by live tasks rather than by all tasks ever
+	// created, catching both archive-time teardown misses and crash orphans.
+	// See internal/worktreesweep and docs/backup.md.
+	worktreeSweeper := worktreesweep.New(termQ, cfg.WorktreeSweepInterval)
+	slog.Info("worktree sweeper starting", "interval", cfg.WorktreeSweepInterval)
+
 	go pool.Start(ctx)
 	go dispatcher.Run(ctx)
 	go ghSyncer.Run(ctx)
@@ -373,6 +401,10 @@ func main() {
 		go backupScheduler.Run(ctx)
 	}
 	go logPruner.Run(ctx)
+	go worktreeSweeper.Run(ctx)
+	if cfg.ChatIdleTimeout > 0 {
+		go terminal.ReapLoop(ctx)
+	}
 
 	go func() {
 		slog.Info("server starting", "port", cfg.Port)

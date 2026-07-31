@@ -1,12 +1,15 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -53,6 +56,44 @@ func TestProviderConfigsCreate_RejectsUnknownProvider(t *testing.T) {
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unknown provider, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestProviderConfigsCreate_RejectsDeprecatedProvider verifies anthropic and
+// llm are rejected for new provider configs with a message distinguishing
+// "deprecated" from "unknown" (they remain in knownProviders so existing
+// configs keep working, but new writes are blocked).
+func TestProviderConfigsCreate_RejectsDeprecatedProvider(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	for _, p := range []string{"anthropic", "llm"} {
+		w := postJSON(t, router, "/provider-configs", map[string]any{
+			"name": "deprecated-" + p, "provider": p,
+		})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("provider %q: expected 400, got %d: %s", p, w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "deprecated") || !strings.Contains(body, p) {
+			t.Errorf("provider %q: expected deprecation message mentioning provider, got %q", p, body)
+		}
+	}
+}
+
+// TestProviderConfigsCreate_RejectsOpenAIAlias verifies "openai" — the dead
+// dropdown option that aliased to the deprecated llm/OpenAI-compatible path
+// — is rejected too. It was never in knownProviders, so it surfaces as an
+// "unknown provider" 400 rather than the "deprecated" message; either way,
+// the fix here is that it can no longer be selected in the UI (see
+// agentTemplates.ts) so this 400 should never be user-visible in practice.
+func TestProviderConfigsCreate_RejectsOpenAIAlias(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{
+		"name": "openai-alias", "provider": "openai",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for openai, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -127,6 +168,63 @@ func TestProviderConfigsList(t *testing.T) {
 	}
 }
 
+// TestProviderConfigsList_Pagination verifies limit/after cursor pagination
+// walks the full list without dupes or gaps, and that a full-size page
+// advertises no further cursor.
+func TestProviderConfigsList_Pagination(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	for i := 0; i < 5; i++ {
+		w := postJSON(t, router, "/provider-configs", map[string]any{
+			"name": "cfg", "provider": "claude",
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create provider config: %d %s", w.Code, w.Body.String())
+		}
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	pages := 0
+	for {
+		q := "?limit=2"
+		if cursor != "" {
+			q += "&after=" + cursor
+		}
+		req := httptest.NewRequest(http.MethodGet, "/provider-configs"+q, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET provider-configs%s: expected 200, got %d: %s", q, w.Code, w.Body)
+		}
+		var page []gen.ProviderConfig
+		if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		if len(page) > 2 {
+			t.Fatalf("page returned %d configs, expected <= 2", len(page))
+		}
+		for _, c := range page {
+			if seen[c.ID] {
+				t.Fatalf("config %s returned on more than one page", c.ID)
+			}
+			seen[c.ID] = true
+		}
+		next := w.Header().Get("X-Next-Cursor")
+		if next == "" {
+			break
+		}
+		cursor = next
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("expected to page through all 5 configs, saw %d", len(seen))
+	}
+}
+
 func TestProviderConfigsUpdate_RoundTrip(t *testing.T) {
 	router, _ := setupProvidersRouter(t)
 
@@ -150,6 +248,69 @@ func TestProviderConfigsUpdate_RoundTrip(t *testing.T) {
 	}
 	if updated.Name != "renamed" || updated.Provider != "opencode" || updated.Model != "gpt-4" {
 		t.Errorf("unexpected updated config: %+v", updated)
+	}
+}
+
+// TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider verifies a
+// config on a non-deprecated provider cannot be switched to anthropic/llm.
+func TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{"name": "x", "provider": "claude"})
+	var created gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/provider-configs/"+created.ID, map[string]any{"provider": "anthropic"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 changing to deprecated provider, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "deprecated") {
+		t.Errorf("expected deprecation message, got %q", w.Body.String())
+	}
+}
+
+// TestProviderConfigsUpdate_ExistingDeprecatedProviderKeepsWorking verifies
+// that a config already on a deprecated provider (e.g. seeded before the
+// deprecation, or migrated data) can still be edited as long as the
+// provider itself isn't changing — the whole point of deprecating rather
+// than deleting these providers is that existing configs keep working.
+func TestProviderConfigsUpdate_ExistingDeprecatedProviderKeepsWorking(t *testing.T) {
+	router, q := setupProvidersRouter(t)
+
+	seeded, err := q.CreateProviderConfig(context.Background(), gen.CreateProviderConfigParams{
+		ID:       "seed-anthropic",
+		Name:     "legacy-anthropic",
+		Provider: "anthropic",
+		Model:    "claude-3-opus",
+		Env:      "{}",
+	})
+	if err != nil {
+		t.Fatalf("seed provider config: %v", err)
+	}
+
+	// Sending the same (unchanged) provider back must succeed.
+	w := putJSON(t, router, "/provider-configs/"+seeded.ID, map[string]any{
+		"name": "legacy-anthropic-renamed", "provider": "anthropic",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating unrelated fields on existing deprecated config, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Omitting provider entirely (meaning "unchanged") must also succeed.
+	w = putJSON(t, router, "/provider-configs/"+seeded.ID, map[string]any{
+		"model": "claude-3-sonnet",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating model on existing deprecated config with provider omitted, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.Provider != "anthropic" {
+		t.Errorf("expected provider to remain 'anthropic', got %q", updated.Provider)
 	}
 }
 
@@ -210,5 +371,42 @@ func TestProviderConfigsDelete_BlockedWhenReferenced(t *testing.T) {
 	router.ServeHTTP(w2, req)
 	if w2.Code != http.StatusConflict {
 		t.Fatalf("expected 409 when provider config is referenced, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+// TestProviderConfigsDelete_BlockedWhenReferencedByChatSession covers the
+// second (chat-session) branch of the referenced-config guard, distinct from
+// the agent-config branch above.
+func TestProviderConfigsDelete_BlockedWhenReferencedByChatSession(t *testing.T) {
+	router, q := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{"name": "in-use-by-chat", "provider": "claude"})
+	var pc gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&pc); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID:   repoID,
+		Name: "chat-repo",
+		Path: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	if _, err := q.CreateChatSession(context.Background(), gen.CreateChatSessionParams{
+		ID:               uuid.NewString(),
+		RepoID:           repoID,
+		ProviderConfigID: pc.ID,
+		Title:            "chat using it",
+	}); err != nil {
+		t.Fatalf("seed chat session: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/provider-configs/"+pc.ID, nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when provider config is referenced by a chat session, got %d: %s", w2.Code, w2.Body.String())
 	}
 }

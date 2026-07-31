@@ -46,20 +46,22 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 }
 
 const createWorkflowLabel = `-- name: CreateWorkflowLabel :one
-INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr
+INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard
 `
 
 type CreateWorkflowLabelParams struct {
-	ID          string `json:"id"`
-	WorkflowID  string `json:"workflow_id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	SortOrder   int64  `json:"sort_order"`
-	AgentIgnore int64  `json:"agent_ignore"`
-	IsTerminal  int64  `json:"is_terminal"`
-	CreatePr    int64  `json:"create_pr"`
+	ID           string `json:"id"`
+	WorkflowID   string `json:"workflow_id"`
+	Name         string `json:"name"`
+	Color        string `json:"color"`
+	SortOrder    int64  `json:"sort_order"`
+	AgentIgnore  int64  `json:"agent_ignore"`
+	IsTerminal   int64  `json:"is_terminal"`
+	CreatePr     int64  `json:"create_pr"`
+	WipLimit     *int64 `json:"wip_limit"`
+	WipLimitHard int64  `json:"wip_limit_hard"`
 }
 
 func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLabelParams) (WorkflowLabel, error) {
@@ -72,6 +74,8 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		arg.AgentIgnore,
 		arg.IsTerminal,
 		arg.CreatePr,
+		arg.WipLimit,
+		arg.WipLimitHard,
 	)
 	var i WorkflowLabel
 	err := row.Scan(
@@ -83,6 +87,8 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		&i.AgentIgnore,
 		&i.IsTerminal,
 		&i.CreatePr,
+		&i.WipLimit,
+		&i.WipLimitHard,
 	)
 	return i, err
 }
@@ -214,7 +220,7 @@ func (q *Queries) GetWorkflowTransition(ctx context.Context, arg GetWorkflowTran
 }
 
 const listWorkflowLabels = `-- name: ListWorkflowLabels :many
-SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
 `
 
 func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]WorkflowLabel, error) {
@@ -235,6 +241,8 @@ func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]
 			&i.AgentIgnore,
 			&i.IsTerminal,
 			&i.CreatePr,
+			&i.WipLimit,
+			&i.WipLimitHard,
 		); err != nil {
 			return nil, err
 		}
@@ -290,6 +298,56 @@ SELECT id, name, description, created_at, updated_at FROM workflows ORDER BY cre
 
 func (q *Queries) ListWorkflows(ctx context.Context) ([]Workflow, error) {
 	rows, err := q.db.QueryContext(ctx, listWorkflows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workflow
+	for rows.Next() {
+		var i Workflow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflowsPage = `-- name: ListWorkflowsPage :many
+SELECT w.id, w.name, w.description, w.created_at, w.updated_at FROM workflows w
+WHERE (
+    ?1 = ''
+    OR w.created_at < (SELECT created_at FROM workflows WHERE id = ?1)
+    OR (w.created_at = (SELECT created_at FROM workflows WHERE id = ?1) AND w.id < ?1)
+  )
+ORDER BY w.created_at DESC, w.id DESC
+LIMIT ?2
+`
+
+type ListWorkflowsPageParams struct {
+	Column1 interface{} `json:"column_1"`
+	Limit   int64       `json:"limit"`
+}
+
+// Cursor-paginated workflow listing, newest first. Positional params (?1
+// after cursor = created_at then id of last row, ?2 limit) sidestep the
+// sqlc SQLite byte-offset bug; keep this comment ASCII-only. Ordering is
+// (created_at, id) descending so the cursor is a stable total order,
+// matching SearchTasksPage/ListAgentLogsPage.
+func (q *Queries) ListWorkflowsPage(ctx context.Context, arg ListWorkflowsPageParams) ([]Workflow, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkflowsPage, arg.Column1, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

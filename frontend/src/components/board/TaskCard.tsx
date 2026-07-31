@@ -7,7 +7,7 @@ import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { useReposStore } from '../../stores/repos'
 import GitStateBadge from './GitStateBadge'
-import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
+import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
 
 const TYPE_COLORS: Record<string, string> = {
   feature: 'bg-blue-900 text-blue-300',
@@ -22,7 +22,9 @@ export default function TaskCard({
   task,
   isRunning,
   rateLimitedUntil,
+  costWarned,
   onDelete,
+  onDuplicate,
   isEditable,
   showColumnLabel,
   selected,
@@ -31,7 +33,11 @@ export default function TaskCard({
   task: Task
   isRunning?: boolean
   rateLimitedUntil?: string
+  /** True once this task has crossed the cost early-warning threshold (see task.cost_warning WS event) */
+  costWarned?: boolean
   onDelete?: () => void
+  /** When set, renders a "Duplicate task" button that opens a pre-filled New Task modal for this task. */
+  onDuplicate?: (task: Task) => void
   isEditable?: boolean
   /** When set, renders a muted column-name badge on the card (used in condensed view) */
   showColumnLabel?: string
@@ -52,7 +58,7 @@ export default function TaskCard({
   const [editTitle, setEditTitle] = useState(task.title)
   const [editDesc, setEditDesc] = useState(task.description ?? '')
   const [editType, setEditType] = useState(task.type)
-  const [editPriority, setEditPriority] = useState(task.priority ?? 0)
+  const [editPriority, setEditPriority] = useState<PriorityValue>(task.priority ?? 0)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
 
@@ -145,7 +151,7 @@ export default function TaskCard({
           </select>
           <select
             value={editPriority}
-            onChange={(e) => setEditPriority(Number(e.target.value) as Task['priority'])}
+            onChange={(e) => setEditPriority(toPriority(e.target.value))}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
             className="w-full text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-slate-100 focus:outline-none focus:border-indigo-400"
@@ -188,9 +194,19 @@ export default function TaskCard({
       style={style}
       {...listeners}
       {...attributes}
+      aria-label={`${task.title} — ${task.label}`}
       onClick={(e) => {
         if (!isDragging) navigate(`/tasks/${task.id}`)
         e.stopPropagation()
+      }}
+      onKeyDown={(e) => {
+        // Enter opens the task; Space is reserved for dnd-kit's
+        // pick-up/drop (see TaskBoard's KeyboardSensor keyboardCodes, which
+        // restricts drag start/end to Space so the two keys don't collide).
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          navigate(`/tasks/${task.id}`)
+        }
       }}
       className={`group bg-slate-800 border rounded-lg p-3 hover:border-slate-500 transition-colors select-none ${
         selected ? 'border-indigo-500' : blocked ? 'border-amber-700/60' : 'border-slate-700'
@@ -305,6 +321,14 @@ export default function TaskCard({
               ⏸ API limit
             </span>
           )}
+          {costWarned && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
+              title="Cumulative cost has crossed the early-warning threshold of its budget. See GET/PUT /settings/cost-warning for the threshold."
+            >
+              💰 Budget warning
+            </span>
+          )}
           {task.next_retry_at && !isRunning && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
@@ -353,6 +377,19 @@ export default function TaskCard({
               title="Edit task"
             >
               ✎
+            </button>
+          )}
+          {onDuplicate && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onDuplicate(task)
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
+              title="Duplicate task"
+            >
+              ⧉
             </button>
           )}
           {onDelete && (

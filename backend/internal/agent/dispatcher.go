@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +41,12 @@ type Dispatcher struct {
 	// when a sweep-dispatch is skipped for budget-exhaustion, mirroring how
 	// Pool.handleTransientFailure publishes the same event on escalation.
 	Publisher Publisher
+	// lastSweep records (as UnixNano) the time the dispatch loop last began
+	// a sweep tick. Read via LastSweep by the /readyz readiness probe to
+	// detect a wedged dispatch loop (e.g. a hung git op inside a sweep).
+	// Stored atomically since Run's ticker goroutine writes it while an
+	// HTTP handler goroutine reads it concurrently.
+	lastSweep atomic.Int64
 }
 
 // NewDispatcher creates a Dispatcher with a 5-second sweep interval.
@@ -61,6 +68,11 @@ func (d *Dispatcher) SetUploadDir(dir string) {
 
 // Run sweeps on interval until ctx is cancelled.
 func (d *Dispatcher) Run(ctx context.Context) {
+	// Record an initial heartbeat before the loop starts so /readyz doesn't
+	// report "never swept" during the up-to-interval window before the first
+	// tick (e.g. right after the backend starts).
+	d.lastSweep.Store(time.Now().UnixNano())
+
 	ticker := time.NewTicker(d.interval)
 	defer ticker.Stop()
 	for {
@@ -68,9 +80,26 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Record the heartbeat at the start of the tick, before sweep
+			// runs, so a sweep that hangs mid-execution causes the
+			// heartbeat to go stale — that's the "wedged loop" /readyz is
+			// meant to detect. Recording after sweep() returns would hide
+			// a hang for as long as it lasts.
+			d.lastSweep.Store(time.Now().UnixNano())
 			d.sweep(ctx)
 		}
 	}
+}
+
+// LastSweep returns the time the dispatch loop last began a sweep tick.
+// Used by the /readyz readiness probe to detect a wedged dispatch loop.
+// Returns the zero Time if Run has never been started.
+func (d *Dispatcher) LastSweep() time.Time {
+	ns := d.lastSweep.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 func (d *Dispatcher) sweep(ctx context.Context) {
@@ -188,8 +217,20 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		return
 	}
 
+	// WIP backpressure: only gates the sweep path, same as the cost-budget
+	// guard above. A hard-limited label that is already full simply isn't
+	// dispatched into this sweep — the task stays on its current label and is
+	// re-evaluated next sweep. This never blocks a run that is already in
+	// flight from completing into a full column (that stays soft/visual).
+	if blocked, err := d.checkWIPLimit(ctx, t); err != nil {
+		log.Error("dispatcher: wip limit check", "err", err)
+	} else if blocked {
+		return
+	}
+
 	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
-		log.Error("dispatcher: start run", "err", err)
+		var transientErr transientErr
+		log.Error("dispatcher: start run", "err", err, "transient", errors.As(err, &transientErr))
 		return
 	}
 	// Reflect this dispatch in the sweep-scoped in-use map immediately so a
@@ -217,6 +258,28 @@ func effectiveBudget(taskBudget, configBudget float64) float64 {
 	}
 }
 
+// defaultCostWarnRatio is the fallback early-warning threshold (see
+// resolveCostWarnRatio) used if the cost_warning_settings row can't be read
+// (e.g. a DB error) — matches the migration's seeded default.
+const defaultCostWarnRatio = 0.8
+
+// resolveCostWarnRatio reads the global cost-warning threshold (see
+// 050_cost_warning / GetCostWarningSettings), falling back to
+// defaultCostWarnRatio on any error so a transient DB hiccup never disables
+// the watchdog's warning path entirely (it only ever affects when the
+// early-warning event fires, not the hard budget kill switch/exhaustion
+// gate, which are unaffected by this setting).
+func (d *Dispatcher) resolveCostWarnRatio(ctx context.Context) float64 {
+	row, err := d.q.GetCostWarningSettings(ctx)
+	if err != nil {
+		return defaultCostWarnRatio
+	}
+	if row.WarnRatio <= 0 || row.WarnRatio > 1 {
+		return defaultCostWarnRatio
+	}
+	return row.WarnRatio
+}
+
 // checkCostBudget compares a task's cumulative recorded run cost (across
 // every run regardless of status — see SumTaskCost) against its effective
 // cost budget (the min of the task's and its matched agent config's
@@ -229,6 +292,26 @@ func effectiveBudget(taskBudget, configBudget float64) float64 {
 // dispatcher skips it on future sweeps, and publishes task.needs_human so
 // the dashboard/task-detail UI picks it up live, exactly like a real
 // waiting_human escalation. Returns true if dispatch should be skipped.
+//
+// Before the hard-exhaustion check, it also surfaces the early-warning
+// threshold (see resolveCostWarnRatio) for tasks whose provider doesn't
+// support the mid-run watchdog: if spend has already crossed warnRatio*budget
+// but hasn't exhausted it, this publishes a one-shot task.cost_warning (gated
+// on the task's cost_warned flag so it doesn't refire every sweep) and lets
+// dispatch proceed normally.
+//
+// If the task is otherwise under budget but has at least one run flagged
+// cost_unknown (see CountTaskCostUnknownRuns) -- i.e. tokens were consumed
+// on a model with no resolvable price (see providers.PriceResolver) -- the
+// accumulated spend can't be trusted as complete, since that run's real
+// cost was recorded as $0 rather than estimated. Rather than silently
+// letting the task run unbounded against a budget that no longer means
+// anything, this escalates the same way an exhausted budget does, with a
+// distinct message pointing at Configuration -> Pricing. This only fires
+// while spent < budget: once the budget is independently exhausted on its
+// own (possibly incomplete) recorded spend, the ordinary "budget exhausted"
+// escalation below already covers it, so unknown-cost runs are never used
+// to mask an otherwise-exhausted budget.
 func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig) (bool, error) {
 	budget := effectiveBudget(t.MaxCostUsd, matched.MaxCostUsd)
 	if budget <= 0 {
@@ -239,28 +322,65 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	if err != nil {
 		return false, fmt.Errorf("sum task cost: %w", err)
 	}
-	if spent < budget {
-		return false, nil
-	}
 
 	log := slog.With("component", "dispatcher", "task_id", t.ID)
+
+	if spent < budget {
+		unknownRuns, err := d.q.CountTaskCostUnknownRuns(ctx, t.ID)
+		if err != nil {
+			return false, fmt.Errorf("count task cost-unknown runs: %w", err)
+		}
+		if unknownRuns > 0 {
+			msg := fmt.Sprintf("cost budget cannot be enforced: %d run(s) have unknown cost - add pricing for the model at Configuration -> Pricing", unknownRuns)
+			log.Warn("dispatcher: skipping dispatch, task has cost-unknown runs under an active budget", "spent", spent, "budget", budget, "unknown_runs", unknownRuns)
+			return d.escalateCostBudget(ctx, t, matched, msg, "cost-unknown")
+		}
+
+		warnRatio := d.resolveCostWarnRatio(ctx)
+		if t.CostWarned == 0 && warnRatio > 0 && spent >= warnRatio*budget {
+			log.Warn("dispatcher: cost budget warning threshold crossed", "spent", spent, "budget", budget, "warn_ratio", warnRatio)
+			if err := d.q.SetTaskCostWarned(ctx, t.ID); err != nil {
+				log.Warn("dispatcher: set task cost_warned", "err", err)
+			}
+			if d.Publisher != nil {
+				d.Publisher.Publish("task.cost_warning", map[string]any{
+					"task_id":    t.ID,
+					"spent_usd":  spent,
+					"budget_usd": budget,
+				})
+			}
+		}
+		return false, nil
+	}
 	msg := fmt.Sprintf("budget exhausted: $%.2f of $%.2f", spent, budget)
 	log.Warn("dispatcher: skipping dispatch, cost budget exhausted", "spent", spent, "budget", budget)
+	return d.escalateCostBudget(ctx, t, matched, msg, "budget-exhausted")
+}
 
+// escalateCostBudget creates a "phantom" agent_runs row directly in
+// waiting_human status (no provider invocation happens), locks it as the
+// task's active run, and publishes task.needs_human -- the shared mechanism
+// behind both of checkCostBudget's escalation paths (budget exhausted, and
+// budget unenforceable due to cost-unknown runs). reason labels the wrapped
+// error messages for each step (e.g. "budget-exhausted", "cost-unknown").
+// Returns true (skip dispatch) alongside any error, matching
+// checkCostBudget's contract that a failure here should still prevent
+// dispatch this sweep.
+func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, msg, reason string) (bool, error) {
 	runID := uuid.NewString()
 	if _, err := d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:            runID,
 		TaskID:        t.ID,
 		AgentConfigID: &matched.ID,
 	}); err != nil {
-		return true, fmt.Errorf("create budget-exhausted run: %w", err)
+		return true, fmt.Errorf("create %s run: %w", reason, err)
 	}
 	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 		Status: "waiting_human",
 		Notes:  &msg,
 		ID:     runID,
 	}); err != nil {
-		return true, fmt.Errorf("set budget-exhausted run status: %w", err)
+		return true, fmt.Errorf("set %s run status: %w", reason, err)
 	}
 	// Lock the task on this run, same as a real waiting_human escalation —
 	// stays locked until a human acts (raises the budget, or replies via
@@ -270,7 +390,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 		ActiveAgentRunID:  &runID,
 		ID:                t.ID,
 	}); err != nil {
-		return true, fmt.Errorf("lock task on budget-exhausted run: %w", err)
+		return true, fmt.Errorf("lock task on %s run: %w", reason, err)
 	}
 
 	if d.Publisher != nil {
@@ -284,6 +404,63 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	return true, nil
 }
 
+// checkWIPLimit resolves the task's agent-triggerable "success" transition
+// target and, if that target label opted into hard WIP enforcement
+// (wip_limit_hard) and is already at or over its wip_limit, returns true so
+// the dispatcher skips this sweep's dispatch — pure backpressure, no error,
+// no run created. The task simply stays put and is re-evaluated next sweep.
+//
+// An ambiguous or missing success target (e.g. no unambiguous agent
+// transition out of the current label) is treated as "unknown" and never
+// blocks dispatch — we never guess our way into starving a task.
+func (d *Dispatcher) checkWIPLimit(ctx context.Context, t gen.Task) (bool, error) {
+	transitions, err := d.q.ListWorkflowTransitions(ctx, t.WorkflowID)
+	if err != nil {
+		return false, fmt.Errorf("list workflow transitions: %w", err)
+	}
+	target, ok := workflow.SuccessTarget(transitions, t.Label)
+	if !ok || target == "" {
+		return false, nil
+	}
+
+	labels, err := d.q.ListWorkflowLabels(ctx, t.WorkflowID)
+	if err != nil {
+		return false, fmt.Errorf("list workflow labels: %w", err)
+	}
+	var targetLabel *gen.WorkflowLabel
+	for i := range labels {
+		if labels[i].Name == target {
+			targetLabel = &labels[i]
+			break
+		}
+	}
+	if targetLabel == nil || targetLabel.WipLimitHard == 0 || targetLabel.WipLimit == nil {
+		return false, nil
+	}
+	limit := *targetLabel.WipLimit
+	if limit <= 0 {
+		return false, nil // treat non-positive limits as unlimited
+	}
+
+	count, err := d.q.CountTasksByLabel(ctx, gen.CountTasksByLabelParams{
+		WorkflowID: t.WorkflowID,
+		Label:      target,
+	})
+	if err != nil {
+		return false, fmt.Errorf("count tasks by label: %w", err)
+	}
+
+	if count < limit {
+		return false, nil
+	}
+
+	slog.With("component", "dispatcher", "task_id", t.ID).Info(
+		"dispatcher: WIP limit reached, applying backpressure",
+		"target_label", target, "count", count, "limit", limit,
+	)
+	return true, nil
+}
+
 // Sentinel errors for DispatchReply, mapped to HTTP statuses by the handler.
 var (
 	// ErrRunNotWaiting means the task has no active run in waiting_human state.
@@ -292,6 +469,10 @@ var (
 	ErrNoMatchingConfig = errors.New("no enabled agent config available for this task")
 	// ErrPoolSaturated means the worker pool queue was full and the run was dropped.
 	ErrPoolSaturated = errors.New("agent worker pool is full")
+	// ErrProviderUnavailable means the agent config's provider is disabled or
+	// unrecognized, so ProviderFactory returned nil and the run could not be
+	// dispatched.
+	ErrProviderUnavailable = errors.New("agent config's provider is disabled or unknown")
 )
 
 // DispatchReply starts a new run for a task whose active run is waiting_human,
@@ -405,12 +586,65 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 
 	transitions := d.buildTransitionHints(ctx, t.ID, t.WorkflowID, t.Label)
 	provider := d.ProviderFactory(agentCfg)
+	if provider == nil {
+		// The provider is disabled (deprecated write-path rejection doesn't
+		// apply retroactively to rows already in the DB, but the factory
+		// still has no runner for it) or the provider string is otherwise
+		// unrecognized. This is a permanent, config-level problem, not a
+		// transient one, so it must NOT clear the task's active-run lock:
+		// ListAgentPickupTasks only re-selects a task once active_agent_run_id
+		// is NULL, and this failure happens before any real provider work runs
+		// (unlike a normal "failed" terminal run, which is naturally
+		// rate-limited by however long the real attempt took). Clearing the
+		// lock here let the 15ms-interval sweep immediately re-dispatch the
+		// same task, hot-looping runs every tick until a human intervened —
+		// caught by TestE2E_NilProviderFailsRunCleanly flaking under -race as
+		// multiple same-second-resolution created_at rows raced for "first".
+		// Instead, escalate straight to waiting_human (same shape as
+		// checkCostBudget's exhausted-budget escalation) so the task stays
+		// locked on this run until a human fixes the config and replies.
+		msg := fmt.Sprintf("agent config's provider is disabled or unknown: %q", agentCfg.Provider)
+		log.Error("dispatcher: no runner for provider", "provider", agentCfg.Provider)
+		if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status: "waiting_human",
+			Notes:  &msg,
+			ID:     runID,
+		}); err != nil {
+			log.Warn("dispatcher: mark nil-provider run waiting_human", "err", err)
+		}
+		if d.Publisher != nil {
+			d.Publisher.Publish("task.needs_human", map[string]any{
+				"task_id": t.ID,
+				"run_id":  runID,
+				"message": msg,
+			})
+		}
+		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
+	}
 
 	// If this is a parent with subtasks that conflicted on merge-back, hand the
 	// work agent the conflict context so it resolves the merges on this branch.
 	var subtaskConflicts *string
 	if d.Subtasks != nil {
 		subtaskConflicts = d.Subtasks.BuildConflictContext(ctx, t.ID)
+	}
+
+	// Cost-budget plumbing for the provider's mid-run kill switch (see
+	// providers/cost_watchdog.go). checkCostBudget already vetoed dispatch
+	// entirely if the budget was already exhausted, so this run always starts
+	// with spent < budget (or budget == 0, meaning no cap — costBudgetUSD
+	// stays 0 either way, since effectiveBudget already returns 0 for that
+	// case). Best-effort: a SumTaskCost error here degrades to "no budget
+	// info for the watchdog" rather than blocking the run entirely, since the
+	// hard pre-dispatch gate above is the authoritative enforcement point.
+	costBudgetUSD := effectiveBudget(t.MaxCostUsd, matched.MaxCostUsd)
+	var costSpentUSD float64
+	if costBudgetUSD > 0 {
+		if spent, serr := d.q.SumTaskCost(ctx, t.ID); serr == nil {
+			costSpentUSD = spent
+		} else {
+			log.Warn("dispatcher: sum task cost for watchdog", "err", serr)
+		}
 	}
 
 	enqueued := d.pool.Submit(Job{
@@ -431,6 +665,9 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			ResumeSessionID:    resumeSessionID,
 			HumanReply:         opts.humanReply,
 			SubtaskConflicts:   subtaskConflicts,
+			CostBudgetUSD:      costBudgetUSD,
+			CostSpentUSD:       costSpentUSD,
+			CostWarnRatio:      d.resolveCostWarnRatio(ctx),
 		},
 	})
 	if !enqueued {
@@ -438,7 +675,14 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			Status: "failed",
 			ID:     runID,
 		})
-		_ = d.q.ClearActiveAgentRun(ctx, t.ID)
+		// Owner-scoped: this run just claimed the lock (SetTaskActiveRun above),
+		// so it should still own it here, but scope the clear defensively and
+		// consistently with every other run-owned release (see issue #244).
+		if n, cerr := d.q.ClearActiveAgentRunIfOwner(ctx, gen.ClearActiveAgentRunIfOwnerParams{ID: t.ID, ActiveAgentRunID: &runID}); cerr != nil {
+			log.Warn("dispatcher: release lock after pool-saturated enqueue failure", "err", cerr)
+		} else if n == 0 {
+			log.Warn("dispatcher: skipped clearing dispatch lock owned by another run", "run_id", runID)
+		}
 		return "", ErrPoolSaturated
 	}
 
@@ -452,36 +696,60 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 // its own worktree on its own branch so concurrent agents on the same repo don't
 // conflict. A subtask's branch is cut from its parent's branch (not the repo
 // base) so its work merges back cleanly.
+//
+// t.WorktreePath can be stale — pointing at a directory that no longer exists
+// — for a task that was archived (worktree reclaimed; see
+// api/handlers.reclaimWorktreeOnArchive) and later unarchived, or one whose
+// worktree the periodic sweeper reclaimed out from under it (see
+// internal/worktreesweep, which never touches the DB row). Treating a
+// missing directory the same as an empty WorktreePath reprovisions it here
+// rather than handing the agent a nonexistent cwd.
 func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Repo) (string, error) {
-	workDir := t.WorktreePath
-	if workDir == "" {
-		var wtPath, branch, baseRef string
-		var perr error
-		if base := d.parentBranchBase(ctx, t); base != "" {
-			wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
-		} else {
-			wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+	if workDir := t.WorktreePath; workDir != "" {
+		if fi, statErr := os.Stat(workDir); statErr == nil && fi.IsDir() {
+			return workDir, nil
 		}
-		if perr != nil {
-			return "", fmt.Errorf("provision worktree: %w", perr)
-		}
-		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
-			Branch:       branch,
-			WorktreePath: wtPath,
-			BaseRef:      baseRef,
-			ID:           t.ID,
-		}); err != nil {
-			return "", fmt.Errorf("persist worktree: %w", err)
-		}
-		workDir = wtPath
+		slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
 	}
-	return workDir, nil
+
+	var wtPath, branch, baseRef string
+	var perr error
+	if base := d.parentBranchBase(ctx, t); base != "" {
+		wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
+	} else {
+		wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
+	}
+	if perr != nil {
+		return "", fmt.Errorf("provision worktree: %w", perr)
+	}
+	if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch:       branch,
+		WorktreePath: wtPath,
+		BaseRef:      baseRef,
+		ID:           t.ID,
+	}); err != nil {
+		return "", fmt.Errorf("persist worktree: %w", err)
+	}
+	return wtPath, nil
+}
+
+// providerSupportsResume reports whether the given provider's session-resume
+// path is verified end-to-end: it records a session id, and the runner's
+// resume invocation is correct. claude, qwen_code, codex_cli, and opencode all
+// qualify (see issue #281).
+func providerSupportsResume(provider string) bool {
+	switch provider {
+	case "claude", "qwen_code", "codex_cli", "opencode":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveAgentConfig builds the effective agent config for the run and resolves
-// the provider session to resume, if any. Only the claude provider honors resume
-// today (and only when the config hasn't opted out); the runner falls back to a
-// cold start if the session no longer exists.
+// the provider session to resume, if any. Resume is honored for claude,
+// qwen_code, codex_cli, and opencode (and only when the config hasn't opted
+// out); the runner falls back to a cold start if the session no longer exists.
 func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig) (AgentConfig, string, error) {
 	pc, err := d.q.GetProviderConfig(ctx, matched.ProviderConfigID)
 	if err != nil {
@@ -490,7 +758,7 @@ func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched
 	agentCfg := toAgentConfig(matched, pc)
 
 	var resumeSessionID string
-	if agentCfg.Provider == "claude" && agentCfg.ResumeSessions {
+	if agentCfg.ResumeSessions && providerSupportsResume(agentCfg.Provider) {
 		if sid, serr := d.q.GetLatestTaskSession(ctx, gen.GetLatestTaskSessionParams{
 			TaskID:        t.ID,
 			AgentConfigID: &matched.ID,

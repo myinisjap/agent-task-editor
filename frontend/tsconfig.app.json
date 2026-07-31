@@ -16,6 +16,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Type safety — incremental toward full strict. strictNullChecks first
+       (see frontend/AGENTS.md); full `strict` tracked separately given the
+       number of existing `any` sites. */
+    "strictNullChecks": true,
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

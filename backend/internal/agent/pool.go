@@ -149,6 +149,25 @@ func (p *Pool) Submit(job Job) bool {
 	}
 }
 
+// releaseLock clears the task's active-run lock, but only if it still points
+// at runID. A finished/aborted run must never wipe a lock a concurrent
+// (re-)dispatch has since taken -- that's how two agents end up sharing one
+// worktree (see issue #244). If the lock has already moved on to another
+// run, this logs and does nothing.
+func (p *Pool) releaseLock(ctx context.Context, taskID, runID string) {
+	n, err := p.q.ClearActiveAgentRunIfOwner(ctx, gen.ClearActiveAgentRunIfOwnerParams{
+		ID:               taskID,
+		ActiveAgentRunID: &runID,
+	})
+	if err != nil {
+		slog.Warn("pool: release lock", "component", "pool", "task_id", taskID, "run_id", runID, "err", err)
+		return
+	}
+	if n == 0 {
+		slog.Warn("pool: skipped clearing dispatch lock owned by another run", "component", "pool", "task_id", taskID, "run_id", runID)
+	}
+}
+
 func (p *Pool) worker(ctx context.Context) {
 	defer p.wg.Done()
 	for {
@@ -170,7 +189,7 @@ func (p *Pool) runGuarded(ctx context.Context, job Job) {
 		if r := recover(); r != nil {
 			log.Error("pool: agent run panicked", "panic", r, "stack", string(debug.Stack()))
 			_, _ = p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{Status: "failed", ID: job.RunID})
-			_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
+			p.releaseLock(context.Background(), job.Input.Task.ID, job.RunID)
 			metrics.RunTerminalTotal.WithLabelValues("failed").Inc()
 			metrics.RunClassificationTotal.WithLabelValues(string(ClassGenuine)).Inc()
 		}
@@ -213,11 +232,25 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 	p.persistRunSession(job, result, log)
 
+	// Surface the early-warning threshold regardless of how the run
+	// ultimately ends (including a hard cost-budget kill below, so the board
+	// still gets the warning even on a run that also gets the terminal
+	// needs_human escalation) — the watchdog observed projected cost cross
+	// CostWarnRatio*budget at some point during the run.
+	if result.CostWarned && p.pub != nil {
+		p.pub.Publish("task.cost_warning", map[string]any{
+			"task_id":    job.Input.Task.ID,
+			"run_id":     job.RunID,
+			"spent_usd":  job.Input.CostSpentUSD + result.CostUSD,
+			"budget_usd": job.Input.CostBudgetUSD,
+		})
+	}
+
 	// Classify a provider error. A transient/rate-limit error is handled here and
 	// short-circuits the rest of the run; a genuine error falls through as a plain
 	// failed result.
 	if err != nil {
-		if p.handleProviderError(ctx, job, err, startedAt, log) {
+		if p.handleProviderError(ctx, job, err, result, startedAt, log) {
 			return
 		}
 		result = Result{Status: "failed"}
@@ -269,7 +302,7 @@ func (p *Pool) startRun(ctx context.Context, job Job, log *slog.Logger, startedA
 			Status: "failed",
 			ID:     job.RunID,
 		})
-		_ = p.q.ClearActiveAgentRun(context.Background(), job.Input.Task.ID)
+		p.releaseLock(context.Background(), job.Input.Task.ID, job.RunID)
 		metrics.RunTerminalTotal.WithLabelValues("failed").Inc()
 		metrics.RunClassificationTotal.WithLabelValues(string(ClassGenuine)).Inc()
 		metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
@@ -327,12 +360,35 @@ func (p *Pool) persistRunSession(job Job, result Result, log *slog.Logger) {
 	}
 }
 
-// handleProviderError classifies a non-nil provider error. A rate-limit or
-// transient error is fully handled here (recording the failure and scheduling
-// retry/escalation) and returns true so run() short-circuits. A genuine error
-// is logged and returns false, letting run() fall through as a plain failed
-// result.
-func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, startedAt time.Time, log *slog.Logger) bool {
+// handleProviderError classifies a non-nil provider error. A rate-limit,
+// transient, or max-turns error is fully handled here (recording the failure
+// and scheduling retry/escalation) and returns true so run() short-circuits.
+// A genuine error is logged and returns false, letting run() fall through as
+// a plain failed result. result carries any usage the provider accumulated
+// before returning the error, so it can be preserved on the persisted run row.
+func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, result Result, startedAt time.Time, log *slog.Logger) bool {
+	// Checked before the transientErr interface check below (belt-and-
+	// suspenders): ErrMaxTurns deliberately does NOT implement Transient(),
+	// but ordering this first guarantees a turn-limit run can never be
+	// mistaken for a transient one even if that changes.
+	var mt *ErrMaxTurns
+	if errors.As(err, &mt) {
+		log.Warn("pool: agent run hit max turns", "classification", string(ClassMaxTurns), "max_turns", mt.MaxTurns)
+		p.handleMaxTurnsExhausted(ctx, job, result, mt, startedAt)
+		return true
+	}
+
+	// Checked before the transientErr interface check below for the same
+	// reason as ErrMaxTurns above: ErrCostBudgetExceeded deliberately does
+	// NOT implement Transient(), but ordering this first guarantees a
+	// budget-killed run can never be mistaken for a transient one.
+	var ce *ErrCostBudgetExceeded
+	if errors.As(err, &ce) {
+		log.Warn("pool: agent run hit cost budget", "classification", string(ClassCostBudget), "spent_usd", ce.SpentUSD, "budget_usd", ce.BudgetUSD)
+		p.handleCostBudgetExceeded(ctx, job, result, ce, startedAt)
+		return true
+	}
+
 	var rl *ErrRateLimit
 	if errors.As(err, &rl) {
 		log.Warn("pool: agent run rate limited", "classification", string(ClassRateLimit), "reset_at", rl.ResetAt, "msg", rl.Message)
@@ -521,7 +577,10 @@ func (p *Pool) safetyNetCommit(ctx context.Context, job Job, finalStatus string,
 // between the clear and the transition landing (a real double-dispatch race).
 // Instead, each branch below clears the lock exactly when it owns that
 // responsibility; a successful transition (and the waiting_human escalation,
-// which intentionally stays locked) leaves it to the branch.
+// which intentionally stays locked) leaves it to the branch. Every clear here
+// goes through releaseLock, which is scoped to this run's id: if a concurrent
+// human transition (or a newer dispatch) has already moved the lock to
+// another run, this run's cleanup must not clobber it (see issue #244).
 func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Result, finalStatus, resolvedLabel string, log *slog.Logger) {
 	switch finalStatus {
 	case "completed":
@@ -564,11 +623,11 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 				// so it did not clear the lock — clear it here so the finished run
 				// doesn't leave the task stuck locked.
 				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
-				_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
+				p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 			}
 		} else {
 			// No resolved label — unlock and block re-dispatch until a human acts.
-			_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
+			p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 			if p.pub != nil {
 				p.pub.Publish("task.needs_human", map[string]any{
 					"task_id": job.Input.Task.ID,
@@ -582,7 +641,7 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 		// Genuine failure — the task stays on its current label; unlock it so the
 		// next sweep re-picks it (transient failures never reach here; they are
 		// handled by handleTransientFailure, which owns their lock/backoff).
-		_ = p.q.ClearActiveAgentRun(ctx, job.Input.Task.ID)
+		p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 
 	case "waiting_human":
 		msg := ""

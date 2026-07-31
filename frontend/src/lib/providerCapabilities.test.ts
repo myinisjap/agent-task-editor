@@ -8,10 +8,13 @@ describe('providerCapabilities', () => {
     }
   })
 
-  it('opencode lacks label transitions and MCP support', () => {
+  it('opencode lacks label transitions and MCP support, but has full cost tracking', () => {
     expect(getCapability('opencode', 'labelTransitions').support).toBe('none')
     expect(getCapability('opencode', 'mcpServers').support).toBe('none')
-    expect(getCapability('opencode', 'costTracking').support).toBe('none')
+    // opencode's step_finish event reports authoritative cost/tokens
+    // directly from the CLI (see parse_opencode.go / #287), so this is
+    // 'full', unlike the label/MCP gaps above.
+    expect(getCapability('opencode', 'costTracking').support).toBe('full')
   })
 
   it('claude has full support for MCP-backed capabilities', () => {

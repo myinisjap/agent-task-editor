@@ -13,6 +13,7 @@ import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
+import NewTaskModal from '../components/board/NewTaskModal'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -40,6 +41,12 @@ export default function TaskDetailPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
+  const [duplicating, setDuplicating] = useState(false)
+  // Set once a task.cost_warning event arrives for this task (crossed the
+  // early-warning threshold — see GET/PUT /settings/cost-warning). Cleared
+  // on label change (new lifecycle stage) so a stale warning from a prior
+  // stage/run doesn't linger indefinitely.
+  const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
@@ -50,7 +57,7 @@ export default function TaskDetailPage() {
 
   const refreshRuns = useCallback(() => {
     if (!id) return
-    api.tasks.runs(id).then((r) => {
+    api.tasks.runs(id).then(({ items: r }) => {
       setRuns(r ?? [])
       if (r && r.length > 0) {
         setSelectedRun((prev) => prev ?? r[0].id)
@@ -81,14 +88,19 @@ export default function TaskDetailPage() {
   // Initial load
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     Promise.all([api.tasks.get(id), api.tasks.runs(id), api.tasks.listLabelHistory(id), api.tasks.sourceComments(id)])
-      .then(([t, r, h, c]) => {
+      .then(([t, runsPage, h, c]) => {
+        if (cancelled) return
+        const r = runsPage.items
         setTask(t)
         setRuns(r ?? [])
         setLabelHistory(h ?? [])
         setSourceComments(c ?? [])
         if (r && r.length > 0) setSelectedRun(r[0].id)
       })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [id])
 
   // Load workflow when task is available
@@ -108,8 +120,11 @@ export default function TaskDetailPage() {
     const off = wsClient.on((event) => {
       if (event.type === 'task.label_changed' && event.payload.task_id === id) {
         setEditingTask(false)
+        setCostWarning(null)
         refreshTask()
         refreshLabelHistory()
+      } else if (event.type === 'task.cost_warning' && event.payload.task_id === id) {
+        setCostWarning({ spentUsd: event.payload.spent_usd, budgetUsd: event.payload.budget_usd })
       } else if (event.type === 'task.agent_started' && event.payload.task_id === id) {
         refreshRuns()
         refreshTask()
@@ -392,7 +407,6 @@ export default function TaskDetailPage() {
               setEditMaxCostUsd={setEditMaxCostUsd}
               editPriority={editPriority}
               setEditPriority={setEditPriority}
-              runs={runs}
               taskSaving={taskSaving}
               taskSaveError={taskSaveError}
               onStartEdit={handleStartEdit}
@@ -407,7 +421,12 @@ export default function TaskDetailPage() {
               onBack={() => navigate('/board')}
               labels={workflow?.labels ?? []}
               onMoveLabel={handleMoveLabel}
+              onDuplicate={() => setDuplicating(true)}
             />
+
+            {duplicating && task && (
+              <NewTaskModal source={task} onClose={() => setDuplicating(false)} />
+            )}
 
             <SubtasksPanel
               task={task}
@@ -457,6 +476,15 @@ export default function TaskDetailPage() {
           />
         )}
       </div>
+
+      {/* Cost early-warning banner — crossed the configurable warn_ratio threshold
+          (default 80%) of the effective cost budget, but not yet exhausted. See
+          GET/PUT /settings/cost-warning and docs/agents.md#cost-budgets. */}
+      {costWarning && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-amber-900/40 border border-amber-700 text-amber-300 text-sm">
+          💰 Cost warning: this task has spent ${costWarning.spentUsd.toFixed(2)} of its ${costWarning.budgetUsd.toFixed(2)} budget.
+        </div>
+      )}
 
       {/* Approval panel — shown when agent needs human or task is at a human-gate label */}
       {(needsHuman || isHumanGateLabel) && (

@@ -10,7 +10,7 @@ The `qwen_code` provider runs the Qwen Code CLI in headless mode. It has the sam
 
 ## How It Works
 
-Runs: `qwen -p <prompt> --system-prompt <system> --output-format stream-json --approval-mode yolo --max-session-turns <max_turns> [--mcp-config <tempfile>] [--allowed-tools ...]`
+Runs: `qwen -p <prompt> --system-prompt <system> --output-format stream-json --approval-mode yolo --max-session-turns <max_turns> [--mcp-config <tempfile>] [--allowed-tools ...] [--exclude-tools ...]`
 
 `<max_turns>` comes from the agent config's `max_turns` field (defaults to `50` when unset or `0`), mirroring the `claude` provider.
 
@@ -26,7 +26,7 @@ The `qwen` CLI is not installed in the backend image by default — build with `
 
 ## MCP Tools
 
-**All 5 MCP tools are supported** when `MCP_SERVER_PATH` is set — identical to the `claude` provider.
+**All 6 MCP tools are supported** (7 with `create_subtask`, which is exposed only when the agent config enables subtasks) when `MCP_SERVER_PATH` is set — identical to the `claude` provider.
 
 | Tool | Description |
 |---|---|
@@ -35,6 +35,8 @@ The `qwen` CLI is not installed in the backend image by default — build with `
 | `mcp__task-editor__request_human` | Pauses the run for human input |
 | `mcp__task-editor__update_task_notes` | Writes persistent notes for subsequent agents |
 | `mcp__task-editor__store_info` | Stores a summary visible in the task UI |
+| `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
+| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
 
 Qwen uses `--allowed-tools` (space-separated, multiple flags) rather than a comma-separated string like Claude:
 
@@ -44,6 +46,7 @@ Qwen uses `--allowed-tools` (space-separated, multiple flags) rather than a comm
 --allowed-tools mcp__task-editor__request_human
 --allowed-tools mcp__task-editor__update_task_notes
 --allowed-tools mcp__task-editor__store_info
+--allowed-tools mcp__task-editor__resolve_comment
 ```
 
 See [mcp-tools.md](../mcp-tools.md) for full tool reference.
@@ -54,14 +57,34 @@ Not yet supported. Reserved for when the `qwen` CLI gains an `--image` flag.
 
 ## Command Allowlist / Denylist
 
-`command_allowlist` patterns are enforced natively by the `qwen` CLI: each pattern is
-appended as a `Bash(pattern)` entry to `--allowed-tools`, the same tool-restriction
-syntax the `claude` CLI's `--allowedTools` accepts.
+**`command_allowlist` is not enforced for this provider.** It is intentionally
+not translated to any CLI flag. qwen's `--allowed-tools` documents itself as
+*"Tools to allow, will bypass confirmation"* — an auto-approve list, exactly
+like the `claude` CLI's `--allowedTools` — it does not block non-matching
+commands. On top of that, this runner always passes `--approval-mode yolo`
+(*"auto-approve all tools"*), which auto-approves everything anyway, so an
+allowlist would have no effect even if wired up. Use `command_denylist`
+instead if you need enforced restrictions.
 
-`command_denylist` is **not currently enforced** for this provider — there is no
-confirmed `qwen` CLI flag equivalent to claude's `--disallowedTools` /
-`permissions.deny` settings key. If you need denylist enforcement, prefer the
-`claude`, `anthropic`, or `llm` providers, or rely solely on `command_allowlist` here.
+**`command_denylist` is enforced via `--exclude-tools`.** Each denylist pattern
+is appended as a `Bash(pattern)` entry to `--exclude-tools`, e.g.
+`--exclude-tools Bash(rm -rf *)`. qwen folds `--exclude-tools` into its
+`permissionsDeny` policy, which is honored even under `--approval-mode yolo`.
+
+> **Known uncertainty:** the `Bash(pattern)` glob shape is confirmed for
+> `--allowed-tools`, but has not been verified against a live authenticated
+> qwen run for `--exclude-tools` specifically. If qwen's deny path only
+> accepts bare tool names (rather than `Bash(pattern)` sub-matching), a
+> per-pattern denylist entry may silently fail to match anything, and a
+> blanket `--exclude-tools Bash` (denying all Bash calls, no pattern) would be
+> the only reliably available granularity. Treat per-pattern denial as
+> best-effort until confirmed live.
+
+_Verified against `@qwen-code/qwen-code` v0.21.0's registered CLI options._
+
+## Session Resume
+
+The CLI's stream-json result message carries a `session_id`, which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes the CLI with `--resume <session_id>` (qwen 0.21.0 registers `-r, --resume <string>`, *"Resume a specific session by its ID"*), so prior context (transcript, task-editor tool history, rejection feedback, open review comments) carries forward instead of starting cold.
 
 ## Model Selection
 
@@ -73,7 +96,11 @@ Like the `claude` provider, if the agent completes without calling `signal_compl
 
 ## Cost & Usage Reporting
 
-Like the `claude` provider, token usage and cost are parsed from the CLI's `result` stream-json message (`usage` + `total_cost_usd`) via the same `classifyStreamJSON` parser, and are used as-is (not estimated) — assuming the `qwen` CLI's stream-json output stays compatible with `claude`'s. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+Token usage is parsed from the CLI's `result` stream-json message (`usage`) via the same `classifyStreamJSON` parser as the `claude` provider, and is used as-is (not estimated).
+
+**No total-cost figure is reported by the Qwen Code CLI**, unlike `claude`. The parser also looks for `total_cost_usd` on the same envelope, but qwen's result message doesn't carry that field (verified against v0.21.0: its `buildResultMessage` emits `usage` + `permission_denials` and the string `total_cost_usd` appears nowhere in the package), so `cost_usd` is left at `0` for this provider rather than estimated — the same situation as `codex_cli`. A cost budget cap will not reliably fire here. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
+**Mid-run cost kill switch: supported only when the configured model is priced.** `qwen_code` shares the same watchdog mechanism as `claude` (incremental token usage from `assistant` stream-json messages, projected via the pricing table), since — as above — it never gets an authoritative `total_cost_usd` to use instead, mid-run or otherwise. If the configured model isn't in the pricing table the watchdog can't project a cost and is a silent no-op; only the pre-dispatch budget guard applies (and it too under-reports, since `cost_usd` is always `0` for this provider). See [agents.md § Cost Budgets](../agents.md#cost-budgets).
 
 ## Setup Checklist
 

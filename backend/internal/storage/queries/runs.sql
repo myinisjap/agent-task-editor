@@ -1,6 +1,22 @@
 -- name: ListAgentRuns :many
 SELECT * FROM agent_runs WHERE task_id = ? ORDER BY created_at DESC;
 
+-- name: ListAgentRunsPage :many
+-- Cursor-paginated agent-run listing for a task, newest first. Positional
+-- params (?1 task_id, ?2 after cursor = created_at then id of last row, ?3
+-- limit) sidestep the sqlc SQLite byte-offset bug; keep this comment
+-- ASCII-only. Ordering is (created_at, id) descending so the cursor is a
+-- stable total order, matching SearchTasksPage/ListAgentLogsPage.
+SELECT r.* FROM agent_runs r
+WHERE r.task_id = ?1
+  AND (
+    ?2 = ''
+    OR r.created_at < (SELECT created_at FROM agent_runs WHERE id = ?2)
+    OR (r.created_at = (SELECT created_at FROM agent_runs WHERE id = ?2) AND r.id < ?2)
+  )
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT ?3;
+
 -- name: GetAgentRun :one
 SELECT * FROM agent_runs WHERE id = ?;
 
@@ -29,7 +45,9 @@ UPDATE agent_runs SET session_id = ? WHERE id = ?;
 
 -- name: GetLatestTaskSession :one
 -- Latest non-empty provider session recorded for this task under this agent
--- config, used to resume the session on the next run (claude provider).
+-- config, used to resume the session on the next run. Honored today for
+-- claude, qwen_code, codex_cli, and opencode (see
+-- agent.providerSupportsResume).
 -- Positional params: ?1 task_id, ?2 agent_config_id.
 SELECT session_id FROM agent_runs
 WHERE task_id = ?1 AND agent_config_id = ?2 AND session_id != ''
@@ -259,3 +277,23 @@ SELECT t.id AS task_id,
 FROM tasks t
 JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label
 WHERE wl.is_terminal != 0;
+
+-- name: CountTaskCostUnknownRuns :one
+-- Count of a task's agent_runs rows (across ALL statuses, same "every run
+-- counts" rationale as SumTaskCost above) flagged cost_unknown = 1, i.e.
+-- at least one token was consumed but no price could be resolved for the
+-- configured model (see agent.Result.CostUnknown / providers.PriceResolver).
+-- Used by the dispatcher's pre-dispatch budget guard to detect when
+-- SumTaskCost's total can't be trusted as "true accumulated spend": a task
+-- could sit well under a nonzero budget purely because one or more of its
+-- runs recorded cost_usd = 0 for an unpriced model rather than a genuinely
+-- free run.
+--
+-- NOTE: this comment must stay ASCII-only (no em dashes/smart quotes) --
+-- sqlc v1.31.1's sqlite tokenizer mis-locates the query's final token when
+-- a non-ASCII byte appears in a preceding "--" comment, silently truncating
+-- the generated query string (confirmed by bisection while adding this
+-- query; every other .sql file in this directory is ASCII-only for the
+-- same likely reason).
+SELECT CAST(COUNT(*) AS INTEGER) AS unknown_count
+FROM agent_runs WHERE task_id = ? AND cost_unknown != 0;

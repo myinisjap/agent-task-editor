@@ -296,7 +296,9 @@ func (r *AnthropicRunner) Run(ctx context.Context, input agent.RunInput, logCh c
 		messages = append(messages, anthropicMessage{Role: "user", Content: resultBlocks})
 	}
 
-	return agent.Result{Status: "failed"}, fmt.Errorf("exceeded max turns (%d)", maxTurns)
+	res := agent.Result{Status: "failed"}
+	acc.attach(ctx, &res)
+	return res, &agent.ErrMaxTurns{MaxTurns: maxTurns}
 }
 
 // parseAnthropicRateLimitReset tries to read a reset time from Anthropic rate-limit headers.

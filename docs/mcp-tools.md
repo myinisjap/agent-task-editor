@@ -10,17 +10,16 @@ The MCP (Model Context Protocol) sidecar is a small process (`mcp-server`) that 
 |---|---|
 | `claude` | ✅ Yes (when `MCP_SERVER_PATH` is set) |
 | `qwen_code` | ✅ Yes (when `MCP_SERVER_PATH` is set) |
-| `gemini_cli` | ✅ Yes (when `MCP_SERVER_PATH` is set) — via a per-run `GEMINI_CLI_HOME` settings.json, not a CLI flag |
 | `codex_cli` | ✅ Yes (when `MCP_SERVER_PATH` is set) — via a per-run `CODEX_HOME` config.toml, not a CLI flag |
-| `anthropic` | ❌ No — uses native Go tool loop (`get_task_transitions`, `signal_complete`, `request_human`, `update_task_notes`, `store_info` are implemented natively with the same call shape; `resolve_comment`/`create_subtask` are not available). See [providers/anthropic.md](providers/anthropic.md). |
+| `anthropic` **(deprecated)** | ❌ No — uses native Go tool loop (`get_task_transitions`, `signal_complete`, `request_human`, `update_task_notes`, `store_info` are implemented natively with the same call shape; `resolve_comment`/`create_subtask` are not available). Disabled for new/updated provider configs — see [providers/anthropic.md](providers/anthropic.md). |
 | `opencode` | ❌ No — opencode has no `--mcp-config` flag |
-| `llm` | ❌ No — uses native Go tool loop (same native equivalents as `anthropic`). See [providers/llm.md](providers/llm.md). |
+| `llm` **(deprecated)** | ❌ No — uses native Go tool loop (same native equivalents as `anthropic`). Disabled for new/updated provider configs — see [providers/llm.md](providers/llm.md). |
 
 ## How It Works
 
-1. The runner (ClaudeRunner / QwenRunner / GeminiRunner / CodexRunner) calls `MCPManager.Prepare()` before starting the agent subprocess.
+1. The runner (ClaudeRunner / QwenRunner / CodexRunner) calls `MCPManager.Prepare()` before starting the agent subprocess.
 2. `Prepare()` writes a JSON config file that registers the `mcp-server` binary as an MCP server under the name `task-editor`.
-3. For `claude`/`qwen_code`, the CLI receives `--mcp-config <tempfile>`, causing it to launch `mcp-server` as a child process. For `gemini_cli`/`codex_cli`, which have no per-invocation MCP flag, the runner instead writes the same server entry into a fresh, per-run isolated home directory (`GEMINI_CLI_HOME`'s `.gemini/settings.json`, or `CODEX_HOME`'s `config.toml`) and points the subprocess's environment at it, so the CLI picks it up as if it were configured globally — without touching any shared host config or clobbering concurrent runs.
+3. For `claude`/`qwen_code`, the CLI receives `--mcp-config <tempfile>`, causing it to launch `mcp-server` as a child process. For `codex_cli`, which has no per-invocation MCP flag, the runner instead writes the same server entry into a fresh, per-run isolated home directory (`CODEX_HOME`'s `config.toml`) and points the subprocess's environment at it, so the CLI picks it up as if it were configured globally — without touching any shared host config or clobbering concurrent runs.
 4. The sidecar communicates over stdio using the MCP JSON-RPC protocol.
 5. The sidecar reads `RUN_ID`, `RESULT_FILE`, and `TRANSITIONS` from its environment (set by `MCPManager.Prepare()`).
 6. When `signal_complete` or `request_human` is called, the sidecar writes a result JSON file that the runner reads after the agent exits.

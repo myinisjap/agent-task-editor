@@ -18,5 +18,12 @@ export default defineConfig(({ command }) => ({
     setupFiles: ['./src/test/setup.ts'],
     css: true,
     exclude: ['**/node_modules/**', 'e2e/**'],
+    coverage: {
+      // 'json-summary' emits coverage/coverage-summary.json with a
+      // machine-readable "total" block (statements/branches/functions/lines
+      // pct), which CI parses to gate the coverage floor. 'text' keeps the
+      // existing console table, 'html'/'json' keep the existing artifacts.
+      reporter: ['text', 'html', 'json', 'json-summary'],
+    },
   },
 }))

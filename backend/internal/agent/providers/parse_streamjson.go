@@ -17,9 +17,18 @@ type streamEvent struct {
 	// Outcome is "success"/"failure" parsed from an OUTCOME marker or the
 	// result subtype (only set for "result" messages).
 	Outcome string
-	// Usage is the token usage / cost reported by the CLI (non-nil for
-	// "result" messages only).
+	// Usage is the token usage / cost reported by the CLI. For "result"
+	// messages this is the *authoritative final total* for the whole run
+	// (including CostUSD, from total_cost_usd). For "assistant" messages this
+	// is that single message's *own turn* usage only (CostUSD always zero —
+	// the CLI never reports cost per-message) — callers that want a running
+	// total across the run must sum these themselves (see IsResult).
+	// Nil for every other message type.
 	Usage *runUsage
+	// IsResult is true when this event came from a terminal "result" message,
+	// distinguishing Usage's authoritative-final-total meaning from an
+	// "assistant" message's per-turn-incremental meaning above.
+	IsResult bool
 	// Class is the failure Classification derived from the *structured*
 	// terminal "result" event (ClassNone for every non-result message and
 	// for a clean success). Lets the CLI providers prefer the typed error
@@ -69,7 +78,16 @@ func classifyStreamJSON(line string) streamEvent {
 		if assistantHasToolUse(raw) {
 			logType = agent.LogToolCall
 		}
-		return streamEvent{Entry: agent.LogEntry{Type: logType, Content: line, At: time.Now()}, SessionID: sessionID}
+		return streamEvent{
+			Entry:     agent.LogEntry{Type: logType, Content: line, At: time.Now()},
+			SessionID: sessionID,
+			// Per-message usage (no total_cost_usd — that only appears on the
+			// terminal "result" event). Used by the cost watchdog (see
+			// providers/cost_watchdog.go) to project mid-run cost; the caller
+			// is responsible for summing across assistant messages since each
+			// one reports only its own turn's usage, not a running total.
+			Usage: extractAssistantUsage(raw),
+		}
 	case "tool_use":
 		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, SessionID: sessionID}
 	case "tool_result":
@@ -89,8 +107,15 @@ func classifyStreamJSON(line string) streamEvent {
 			switch subtype {
 			case "success":
 				outcome = "success"
-			case "error_max_turns", "error":
+			case "error":
 				outcome = "failure"
+				// error_max_turns is intentionally NOT mapped to a "failure"
+				// outcome here: it is signalled structurally via Class
+				// (ClassMaxTurns, from classifyResultMessage below) / the
+				// provider-level agent.ErrMaxTurns instead, so pool.go can
+				// escalate to waiting_human rather than resolving a normal
+				// completed+failure outcome that fires the workflow's failure
+				// edge and re-dispatches with a fresh turn budget.
 			}
 		}
 		var apiErrorStatus int
@@ -102,6 +127,7 @@ func classifyStreamJSON(line string) streamEvent {
 			Entry:          agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()},
 			Outcome:        outcome,
 			Usage:          usage,
+			IsResult:       true,
 			Class:          classifyResultMessage(raw),
 			SessionID:      sessionID,
 			ResultText:     resultText,
@@ -116,7 +142,7 @@ func classifyStreamJSON(line string) streamEvent {
 // stream-json "result" envelope — a *typed* terminal event — so the providers
 // can prefer it over sniffing arbitrary log lines. Returns ClassNone for a
 // successful result, or for an error whose text carries no recognizable
-// infra/auth/rate-limit signal (a genuine failure such as error_max_turns).
+// infra/auth/rate-limit/max-turns signal.
 func classifyResultMessage(raw map[string]json.RawMessage) agent.Classification {
 	subtype := strings.Trim(string(raw["subtype"]), `"`)
 	isErr := false
@@ -130,12 +156,22 @@ func classifyResultMessage(raw map[string]json.RawMessage) agent.Classification 
 	// The structured api_error_status is authoritative when present — more
 	// robust than sniffing the human-readable result text, which can change
 	// wording across CLI releases (e.g. Claude's session-limit message
-	// carries no "429"/"rate limit" substring at all).
+	// carries no "429"/"rate limit" substring at all). Checked ahead of the
+	// max-turns subtype below so a result that carries BOTH a 429 and
+	// error_max_turns still classifies as a rate limit (back off, don't
+	// escalate).
 	if v, ok := raw["api_error_status"]; ok {
 		var status int
 		if err := json.Unmarshal(v, &status); err == nil && status == 429 {
 			return agent.ClassRateLimit
 		}
+	}
+	// error_max_turns is a structural signal (the subtype itself), not text
+	// to sniff: the agent hit its configured turn cap. Escalate rather than
+	// treat as a genuine task failure — re-dispatching would silently hand
+	// the next run a fresh turn budget.
+	if subtype == "error_max_turns" {
+		return agent.ClassMaxTurns
 	}
 	// Classify the structured error text, if any.
 	if v, ok := raw["result"]; ok {
@@ -177,6 +213,46 @@ func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 		u.CostUSD = *parsed.TotalCostUSD
 	}
 	return u
+}
+
+// extractAssistantUsage parses the per-message usage block from a claude/qwen
+// CLI stream-json "assistant" message:
+//
+//	{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":N,"output_tokens":N,"cache_creation_input_tokens":N,"cache_read_input_tokens":N},...}}
+//
+// This is *per-turn* usage (each assistant message reports only its own
+// turn), not a running total — the caller (claude.go/qwen.go's cost watchdog
+// wiring) must sum across every assistant message in the run to get
+// cumulative token counts. There is no total_cost_usd on this event; that
+// only appears on the terminal "result" message (see extractResultUsage) once
+// it's too late for a mid-run kill switch to act on it, which is why the
+// watchdog derives cost from tokens via the pricing table instead.
+//
+// Cache tokens (cache_creation_input_tokens/cache_read_input_tokens) are
+// folded into InputTokens for cost-projection purposes: the pricing table
+// (pricing.go) has no separate cache read/write rate today, so this is an
+// approximation — cache reads in particular are typically priced well below
+// full input-token rate, so a watchdog projection that includes them at full
+// input price is conservative (overestimates cost, never under-warns).
+//
+// Returns nil if the message carries no usage block at all (e.g. a
+// tool_use-only continuation in some CLI versions).
+func extractAssistantUsage(raw map[string]json.RawMessage) *runUsage {
+	var msg struct {
+		Usage *struct {
+			InputTokens              int64 `json:"input_tokens"`
+			OutputTokens             int64 `json:"output_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw["message"], &msg); err != nil || msg.Usage == nil {
+		return nil
+	}
+	return &runUsage{
+		InputTokens:  msg.Usage.InputTokens + msg.Usage.CacheCreationInputTokens + msg.Usage.CacheReadInputTokens,
+		OutputTokens: msg.Usage.OutputTokens,
+	}
 }
 
 // assistantHasToolUse reports whether an assistant stream-json message carries

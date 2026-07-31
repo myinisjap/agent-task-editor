@@ -83,7 +83,6 @@ Browser ──── REST + WebSocket ──── Backend (Go)
                                           │ AnthropicRunner   │ (Messages API)
                                           │ OpencodeRunner    │ (opencode CLI)
                                           │ QwenRunner        │ (qwen CLI + MCP)
-                                          │ GeminiRunner      │ (gemini CLI + MCP)
                                           │ CodexRunner       │ (codex CLI + MCP)
                                           │ LLMRunner         │ (OpenAI-compat)
                                           └──────────────────┘
@@ -94,6 +93,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 ## Features at a Glance
 
 - **Kanban board** with drag-and-drop between columns
+- **Per-label WIP limits** — optional `count / limit` cap per column with an over-limit visual flag; opt-in hard mode makes the dispatcher hold new work back from a full column instead of piling up silently (see `docs/workflows.md`)
 - **Live log streaming** — agent stdout, tool calls, and tool results streamed in real time
 - **Log replay** — reconnecting clients receive all prior logs for the current run
 - **Per-task git worktrees** — concurrent agents on the same repo don't conflict
@@ -112,7 +112,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   it out of, all driven client-side off the existing WebSocket stream — see
   [websocket.md](websocket.md#client-side-behaviour)
 - **Inline diff review comments** — leave file/line-anchored comments on the diff; open comments are injected into every agent run's prompt until the agent resolves them via the `resolve_comment` MCP tool (resolutions show up threaded in the diff viewer)
-- **File upload attachments** — attach images to tasks; passed to the `claude` provider via `--image`
+- **File upload attachments** — attach files to tasks; copied into the agent's worktree under `.task_attachments/` and listed in the prompt so the agent can read them (see `docs/providers/claude.md` § Image Attachments for why this is file-based rather than a visual `--image` flag)
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once
   a PR is detected as merged, the task's local branch (and any leftover
   worktree) are automatically cleaned up (remote branches are left untouched)
@@ -125,7 +125,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   merges — see [task-sources.md](task-sources.md)
 - **Task templates & recurring schedules** — reusable pre-filled title/description/type snippets for recurring shapes of work; a schedule fires a template as a new task on a repo on a cron expression (hourly/daily/weekly presets or raw cron), skipping a firing while an open task from a prior firing of the same schedule still exists — see [task-templates.md](task-templates.md)
 - **Dashboard** — split across three pages: an Overview (label counts, active agents, and the human intervention queue) at `/`, a Cost & Usage page at `/dashboard/usage` (Claude rate-limit usage, plus cost/token tracking by provider, day, and task), and an Agent Performance page at `/dashboard/performance` (per-agent-config success rate, duration, retries)
-- **Provider health page** — readiness checks for the Claude/Qwen/Gemini/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
+- **Provider health page** — readiness checks for the Claude/Qwen/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
 - **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions (approve/reject/move label) record *who* performed them in the `task_label_history` audit trail (`GET /tasks/{id}/label-history`); WebSocket auth via `?token=` query param
 - **Docker Compose deployment** — single `docker compose up` to run everything
 

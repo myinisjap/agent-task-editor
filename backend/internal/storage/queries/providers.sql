@@ -1,6 +1,21 @@
 -- name: ListProviderConfigs :many
 SELECT * FROM provider_configs ORDER BY created_at DESC;
 
+-- name: ListProviderConfigsPage :many
+-- Cursor-paginated provider-config listing, newest first. Positional params
+-- (?1 after cursor = created_at then id of last row, ?2 limit) sidestep the
+-- sqlc SQLite byte-offset bug; keep this comment ASCII-only. Ordering is
+-- (created_at, id) descending so the cursor is a stable total order,
+-- matching SearchTasksPage/ListAgentLogsPage.
+SELECT p.* FROM provider_configs p
+WHERE (
+    ?1 = ''
+    OR p.created_at < (SELECT created_at FROM provider_configs WHERE id = ?1)
+    OR (p.created_at = (SELECT created_at FROM provider_configs WHERE id = ?1) AND p.id < ?1)
+  )
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT ?2;
+
 -- name: GetProviderConfig :one
 SELECT * FROM provider_configs WHERE id = ?;
 

@@ -2,7 +2,7 @@
 
 The `opencode` provider runs the [opencode](https://opencode.ai) CLI. **MCP tools are not supported** — opencode has no `--mcp-config` flag. Agents must signal completion by printing `OUTCOME: success` or `OUTCOME: failure` in their text output.
 
-**Status: chat-grade / experimental** relative to `claude`/`qwen_code`/`gemini_cli`/`codex_cli`/`anthropic`/`llm` — see the [capability matrix in agents.md](../agents.md#capability-matrix). Whether opencode's project-scoped config (`opencode.json`) can be used to inject the same `mcp-server` sidecar used by the other CLI providers (closing the MCP-tools and command-policy gaps below) is an open question that has not yet been investigated; until it is, treat this provider as second-class for task-editor integration purposes even though its own repo-editing toolset is otherwise capable.
+**Status: chat-grade / experimental** relative to `claude`/`qwen_code`/`codex_cli`/`anthropic`/`llm` — see the [capability matrix in agents.md](../agents.md#capability-matrix). Whether opencode's project-scoped config (`opencode.json`) can be used to inject the same `mcp-server` sidecar used by the other CLI providers (closing the MCP-tools and command-policy gaps below) is an open question that has not yet been investigated; until it is, treat this provider as second-class for task-editor integration purposes even though its own repo-editing toolset is otherwise capable.
 
 ## Provider String
 
@@ -52,7 +52,8 @@ To see available models: `opencode models` (the UI calls `GET /api/v1/agents/mod
 
 ## Image Attachments
 
-Not supported.
+**Not wired up.** `opencode run` has an `-f`/`--file` flag for attaching files to the
+message (verified against v1.18.6), but task attachments are not passed to it.
 
 ## Max Turns
 
@@ -66,6 +67,43 @@ manages its own tool permissions via its own global config, outside task-editor'
 control). If you need to restrict shell command execution for an agent config, use
 the `claude`, `qwen_code`, `anthropic`, or `llm` providers instead.
 
+## Session Resume
+
+Every event on `opencode run --format json`'s NDJSON output carries a top-level `sessionID` field (verified against opencode-ai v1.18.6), which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes the CLI with `--session <sessionID>`, so prior context carries forward instead of starting cold.
+
+## Cost & Usage Reporting
+
+**Recorded.** `input_tokens`, `output_tokens`, and `cost_usd` are read directly
+from the CLI's `step_finish` event: opencode's `step-finish` part carries both
+a `cost` number and a `tokens` object (`{input, output, reasoning, cache:
+{read, write}}`). `classifyOpencodeJSON` reads `cost` and `tokens.input`/
+`tokens.output` off that event (reasoning/cache fields are not currently
+tracked). Cost is authoritative — reported directly by the CLI, not estimated
+via a pricing table, the same as `claude`/`qwen_code`.
+
+`step_finish` fires once per *step*, not once per run, so a single run may
+emit several of these events. opencode's own SQLite `session` table stores a
+single cumulative `cost`/`tokens_input`/`tokens_output` row per session (not a
+running delta per step), which strongly suggests the values on each
+`step_finish` event are themselves cumulative-to-date. Based on that
+evidence, the runner **takes the last `step_finish`'s usage** rather than
+summing across steps. This assumption has not been independently verified
+against a real multi-step authenticated run — if it's ever confirmed to be
+per-step deltas instead, the runner should sum them instead of assigning.
+
+Usage is persisted on every run outcome, including failed/timed-out runs —
+money may have been spent on a run before it crashed.
+
+_Verified against `opencode-ai` v1.18.6._ See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
+**Mid-run cost kill switch: not supported.** No mid-run watchdog is wired
+into this provider (unlike `claude`/`qwen_code`'s incremental token-usage
+watchdog) — `step_finish`'s cumulative-to-date snapshot is not the per-turn
+incremental usage a watchdog needs to project a running total mid-run. Usage
+is only known at end-of-run. Only the pre-dispatch `max_cost_usd` guard
+applies, which is now effective since `cost_usd` is recorded. See
+[agents.md § Cost Budgets](../agents.md#cost-budgets).
+
 ## Limitations
 
 | Feature | Status |
@@ -74,11 +112,12 @@ the `claude`, `qwen_code`, `anthropic`, or `llm` providers instead.
 | `update_task_notes` | ❌ Not available |
 | `store_info` | ❌ Not available |
 | `request_human` | ❌ Not available |
-| Image attachments | ❌ Not supported |
+| Image attachments | ❌ Not wired up — `opencode run` has an `-f`/`--file` flag, but attachments are not passed to it |
 | Outcome signalling | ⚠️ Text-based only (`OUTCOME: success/failure`) |
-| Rate limit detection | ❌ Not implemented |
-| Cost & usage reporting | ❌ Not available — `opencode run --format json` does not currently expose a token/usage field in any observed message shape, so `input_tokens`/`output_tokens`/`cost_usd` are left at `0` (not estimated) for this provider. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking). |
+| Rate limit detection | ✅ Implemented — stdout/stderr are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit` |
+| Cost & usage reporting | ✅ Recorded from the CLI's `step_finish` event (cost + tokens), authoritative — see above |
 | Command allowlist/denylist | ❌ Not enforced |
+| Session resume | ✅ `sessionID` + `--session` (see above) |
 
 ## Setup Checklist
 

@@ -33,6 +33,34 @@ func GateLabel(labels []gen.WorkflowLabel) (gate, first string) {
 	return "", first
 }
 
+// SuccessTarget returns the unambiguous to_label an agent-triggerable
+// transition from fromLabel would land on for the "success" outcome. A
+// transition qualifies if its trigger is not "human" and its Path is nil,
+// "success", or "either". If zero or more than one transition qualifies, ok
+// is false — callers should treat an ambiguous or missing target as "don't
+// know" rather than guessing (e.g. skip a WIP-limit check rather than block
+// on an uncertain target).
+func SuccessTarget(transitions []gen.WorkflowTransition, fromLabel string) (target string, ok bool) {
+	found := false
+	for _, t := range transitions {
+		if t.FromLabel != fromLabel {
+			continue
+		}
+		if t.TriggerType == "human" {
+			continue
+		}
+		if t.Path != nil && *t.Path != "success" && *t.Path != "either" {
+			continue
+		}
+		if found {
+			return "", false
+		}
+		target = t.ToLabel
+		found = true
+	}
+	return target, found
+}
+
 // TransitionTrigger identifies who initiated a label change.
 type TransitionTrigger string
 
@@ -50,10 +78,10 @@ const (
 )
 
 var (
-	ErrNoTransition  = errors.New("no transition defined between these labels")
-	ErrGateRequired  = errors.New("transition requires human approval")
-	ErrAgentIgnored  = errors.New("label is marked agent_ignore; agents cannot move tasks here")
-	ErrTaskNotFound  = errors.New("task not found")
+	ErrNoTransition = errors.New("no transition defined between these labels")
+	ErrGateRequired = errors.New("transition requires human approval")
+	ErrAgentIgnored = errors.New("label is marked agent_ignore; agents cannot move tasks here")
+	ErrTaskNotFound = errors.New("task not found")
 	// ErrStale means the task's label changed out from under this transition
 	// between validation and the compare-and-swap write — a concurrent transition
 	// won the race. Callers should refresh and retry.
@@ -171,6 +199,17 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	// generated UpdateTaskLabel, plus the `AND label = ?` guard and always
 	// clearing active_agent_run_id) because sqlc's SQLite analyzer miscompiles
 	// this particular query — see the byte-offset note on SearchTasksPage.
+	//
+	// active_agent_run_id is intentionally cleared unconditionally here (not
+	// scoped to a specific run id): this transition is the authoritative label
+	// move for the task, and releasing the lock is part of moving the task off
+	// whatever run currently holds it, whoever that is. The ownership guarantee
+	// against a *finished* run wiping a *newer* run's lock lives instead in
+	// ClearActiveAgentRunIfOwner (used by every run-owned cleanup path) plus the
+	// MoveLabel handler refusing a human transition while a run is `running`
+	// (see issue #244) — scoping the CAS clear itself to a run id would either
+	// be a no-op (human transitions carry no run id) or wrongly reject the
+	// agent's own transition.
 	res, err := tx.ExecContext(ctx,
 		`UPDATE tasks SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND label = ?`,
 		toLabel, task.CurrentAgentRunID, taskID, fromLabel)

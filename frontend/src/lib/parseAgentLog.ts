@@ -7,8 +7,19 @@
 
 export type ParsedLog =
   | { kind: 'text'; text: string }
-  | { kind: 'tool_call'; toolName: string; input: Record<string, unknown>; summary: string }
-  | { kind: 'tool_result'; toolName?: string; summary: string; isError: boolean; detail?: string; lineCount?: number }
+  | { kind: 'tool_call'; toolName: string; input: Record<string, unknown>; summary: string; toolUseId?: string }
+  | {
+      kind: 'tool_result'
+      toolName?: string
+      summary: string
+      isError: boolean
+      detail?: string
+      lineCount?: number
+      /** Full, untruncated result text. Rendered behind the disclosure on a merged row. */
+      text?: string
+      /** Links the result back to the tool_call that produced it (see groupAgentLog). */
+      toolUseId?: string
+    }
   | { kind: 'assistant_text'; text: string }
   | { kind: 'system_event'; event: string; detail?: string }
   | { kind: 'hidden' }  // ponytail: debug noise (thinking_tokens etc), show when debug flag added
@@ -171,6 +182,7 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
     if (toolBlock) {
       const toolName = (toolBlock.name ?? '') as string
       const input = (toolBlock.input ?? {}) as Record<string, unknown>
+      const toolUseId = typeof toolBlock.id === 'string' ? toolBlock.id : undefined
       let summary = summariseInput(toolName, input)
       // Fold any assistant prose that preceded the call into the summary so it
       // isn't lost (rare — mixed text+tool_use messages).
@@ -178,7 +190,7 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
         const prose = truncate(texts.join(' '), 80)
         summary = summary ? `${prose} — ${summary}` : prose
       }
-      return { kind: 'tool_call', toolName, input, summary }
+      return { kind: 'tool_call', toolName, input, summary, toolUseId }
     }
     if (texts.length > 0) {
       return { kind: 'assistant_text', text: texts.join('\n') }
@@ -194,6 +206,7 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
 
       const c = b.content
       const isError = b.is_error === true
+      const toolUseId = typeof b.tool_use_id === 'string' ? b.tool_use_id : undefined
       let text = ''
       if (typeof c === 'string') {
         text = c
@@ -222,18 +235,22 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
       if (tur?.type === 'text') {
         const file = tur.file as Record<string, unknown> | undefined
         if (file?.filePath) {
+          const numLines = typeof file.numLines === 'number' ? file.numLines : undefined
           return {
             kind: 'tool_result',
             toolName,
             summary: `${shortPath(file.filePath as string)} (${file.numLines ?? '?'} lines)`,
             isError: false,
             detail: text || undefined,
+            text,
+            lineCount: numLines,
+            toolUseId,
           }
         }
       }
 
       const { summary, detail } = summariseResult(toolName, text)
-      return { kind: 'tool_result', toolName, summary, isError, detail }
+      return { kind: 'tool_result', toolName, summary, isError, detail, text, toolUseId }
     }
 
     // No tool_result block — a plain user turn (initial prompt or interleaved
@@ -267,7 +284,8 @@ function parseToolUse(obj: Record<string, unknown>): ParsedLog | null {
   const toolName = (toolUse.name ?? toolUse.tool_name ?? '') as string
   const input = (toolUse.input ?? {}) as Record<string, unknown>
   const summary = summariseInput(toolName, input)
-  return { kind: 'tool_call', toolName, input, summary }
+  const toolUseId = typeof toolUse.id === 'string' ? toolUse.id : undefined
+  return { kind: 'tool_call', toolName, input, summary, toolUseId }
 }
 
 /** Parse a system/init event into a human-readable summary */
@@ -406,7 +424,8 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
     const toolName = obj.name
     const input = obj.input as Record<string, unknown>
     const summary = summariseInput(toolName, input)
-    return { kind: 'tool_call', toolName, input, summary }
+    const toolUseId = typeof obj.id === 'string' ? obj.id : undefined
+    return { kind: 'tool_call', toolName, input, summary, toolUseId }
   }
 
   // Fallback: show content but truncated

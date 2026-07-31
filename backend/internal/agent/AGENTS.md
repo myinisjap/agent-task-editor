@@ -1,6 +1,6 @@
 # internal/agent
 
-The agent package owns the agent runtime core: the provider abstraction, the bounded worker pool, and the dispatcher. Concrete provider backends (claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli) live in the sibling `providers` package (see `providers/AGENTS.md`) — this package defines only the `Provider` interface and the shared types/errors providers are built against; it does **not** import `providers` (providers imports `agent`, never the reverse).
+The agent package owns the agent runtime core: the provider abstraction, the bounded worker pool, and the dispatcher. Concrete provider backends (claude, anthropic, llm, opencode, qwen_code, codex_cli) live in the sibling `providers` package (see `providers/AGENTS.md`) — this package defines only the `Provider` interface and the shared types/errors providers are built against; it does **not** import `providers` (providers imports `agent`, never the reverse).
 
 ## Files
 
@@ -12,11 +12,11 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 | `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown; `RepoGitLock` (per-repo git serialization) |
 | `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (Mechanism 2, issue #82) |
 | `terminal.go` | `TerminalManager`/`NewTerminalManager` — interactive chat session CLI process management |
-| `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure |
-| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `providers.is429Line`/`providers.isTransientLine` (in the `providers` package) are thin wrappers over this; `providers.classifyResultMessage` prefers the claude/qwen stream-json typed `result` event's `api_error_status` field / text over raw line sniffing |
+| `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure; `ErrMaxTurns` and `ErrCostBudgetExceeded` — typed, non-transient escalation signals (turn cap / mid-run cost-budget kill) that `pool.go#handleProviderError` detects via `errors.As` and routes to `waiting_human` instead of retrying |
+| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`, plus the structurally-detected `max_turns`/`cost_budget`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `providers.is429Line`/`providers.isTransientLine` (in the `providers` package) are thin wrappers over this; `providers.classifyResultMessage` prefers the claude/qwen stream-json typed `result` event's `api_error_status` field / text over raw line sniffing |
 | `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers |
 
-Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `GeminiRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
+Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
 
 ## Branch-per-task / Worktrees
 
@@ -106,16 +106,16 @@ govern automatic retries for **transient** provider errors only:
   treated as transient. HTTP providers (`providers/anthropic.go`, `providers/llm.go`) wrap
   network-level `Do()` errors and `5xx` responses as `ErrTransient`; `429` stays
   `ErrRateLimit`. CLI providers (`providers/claude.go`, `providers/qwen.go`, `providers/opencode.go`,
-  `providers/gemini.go`, `providers/codex.go`) classify stdout/stderr via the **single** pattern
+  `providers/codex.go`) classify stdout/stderr via the **single** pattern
   table in `errclass.go` (`ClassifyLine`) — connection resets, `502/503/504`,
   "timeout", `429`/rate limit, and "Not logged in"/"Please run /login" all live
   in that one table with per-pattern unit tests, so a CLI-wording change is a
   one-line edit. For the claude/qwen providers, the typed stream-json `result`
   event (`providers/parse_streamjson.go`'s `classifyResultMessage`) is preferred over raw line sniffing where
-  present; `providers/parse_gemini.go`/`providers/parse_codex.go` have their own dedicated
-  `classifyGeminiJSON`/`classifyCodexJSON` parsers instead, since neither CLI's
-  JSON event schema is compatible with claude/qwen's stream-json envelope, but
-  both still prefer their own typed terminal event's classification over raw
+  present; `providers/parse_codex.go` has its own dedicated
+  `classifyCodexJSON` parser instead, since Codex's
+  JSON event schema is not compatible with claude/qwen's stream-json envelope, but
+  it still prefers its own typed terminal event's classification over raw
   line sniffing the same way.
   An ambiguous run-timeout (context deadline exceeded) is also treated as
   transient without needing a log signal. A plain non-zero CLI exit with no such
@@ -137,13 +137,61 @@ govern automatic retries for **transient** provider errors only:
   transient-retry budget — the two mechanisms operate independently on
   different scopes (config-wide throttle vs per-task retry cap).
 
+## Cost Budgets (Pre-Dispatch Guard + Mid-Run Kill Switch)
+
+`AgentConfig.MaxCostUSD` / task `max_cost_usd` (`effectiveBudget`,
+`dispatcher.go`, picks the lower nonzero of the two) is enforced two ways —
+see `docs/agents.md#cost-budgets` for the user-facing writeup:
+
+- **Pre-dispatch guard** (`Dispatcher.checkCostBudget`, all providers): sums
+  `SumTaskCost` across every run for the task (any status) before each
+  sweep-dispatch; if `spent >= budget`, creates a phantom `waiting_human` run
+  (no provider invocation), locks the task, and publishes `task.needs_human`
+  (`budget exhausted: $<spent> of $<budget>`). Never touches an in-flight run
+  — this is the *only* enforcement for providers without watchdog support.
+- **Mid-run kill switch** (providers with mid-run priced usage only —
+  currently `claude` and `qwen_code` when its model is priced; see
+  `providers/cost_watchdog.go` and `providers/AGENTS.md`): the provider
+  itself watches incremental token usage as the run streams, projects total
+  cost via the pricing table, and cancels its own subprocess plus returns
+  `&ErrCostBudgetExceeded{SpentUSD, BudgetUSD}` once the projection crosses
+  `RunInput.CostBudgetUSD`. `pool.go#handleProviderError` detects this via
+  `errors.As` (checked before the transient-error branch, same as
+  `ErrMaxTurns`) and calls `pool_failure.go#handleCostBudgetExceeded`, which
+  is modeled directly on `handleMaxTurnsExhausted`: marks the run
+  `waiting_human` with notes `mid-run cost budget exceeded: $<spent> of
+  $<budget>`, leaves the task locked, publishes `task.needs_human` +
+  `task.agent_done`. Never retried — re-dispatching would just spend against
+  the same already-exhausted budget again. A killed run never reaches its
+  terminal `result` event, so `applyUsage` (which normally reads token/cost
+  usage from that event) has nothing to read — `claude.go`/`qwen.go` instead
+  populate `Result.InputTokens`/`OutputTokens`/`CostUSD` from the watchdog's
+  own cumulative-usage snapshot at the moment it cancelled (this run's own
+  incremental cost = projected total minus `RunInput.CostSpentUSD`, so prior
+  runs' cost isn't double-counted). `handleCostBudgetExceeded` persists these
+  onto the run row exactly like every other terminal path, so `SumTaskCost`
+  doesn't undercount a killed run and a kill→raise-budget→resume cycle can't
+  silently reset the task's cost ledger.
+- **Early warning**: independent of both guards above, a `task.cost_warning`
+  WS event fires once cumulative/projected spend crosses a global, DB-backed
+  `warn_ratio` threshold (default 0.8; `Dispatcher.resolveCostWarnRatio`,
+  `GET`/`PUT /api/v1/settings/cost-warning`) — from the mid-run watchdog
+  (`Result.CostWarned`, surfaced by `pool.go#run`) or, for any provider, from
+  `checkCostBudget` itself when a task is already past the threshold at
+  dispatch time (gated by the task's one-shot `cost_warned` column so it
+  doesn't refire every sweep; reset when the task's own `max_cost_usd`
+  changes via `UpdateTask`).
+- **`RunInput.CostBudgetUSD`/`CostSpentUSD`/`CostWarnRatio`** are populated
+  in `Dispatcher.startRun` and are the only channel through which a provider
+  learns about the budget — providers never query storage directly.
+
 ## Session Resume & Reply-to-Agent
 
 Each `claude`/`qwen_code` run's stream-json envelope carries a `session_id`;
 `classifyStreamJSON` extracts it, the Result carries it, and the pool persists
-it (`SetAgentRunSession`) on any outcome. `gemini_cli`/`codex_cli` runs record
-a session/thread id the same way (from their own `classifyGeminiJSON`/
-`classifyCodexJSON` parsers), but no provider actually resumes it except
+it (`SetAgentRunSession`) on any outcome. `codex_cli` runs record
+a thread id the same way (from its own
+`classifyCodexJSON` parser), but no provider actually resumes it except
 `claude`. `Dispatcher.startRun` looks up the
 latest session for (task, agent config) via `GetLatestTaskSession` — gated on
 `provider == "claude" && resume_sessions` — and sets `RunInput.ResumeSessionID`;
@@ -170,7 +218,7 @@ dispatcher loads the task's **open** comments into
 `RunInput.OpenReviewComments`; `buildPrompt` renders them (with `comment_id`s)
 under `"OPEN REVIEW COMMENTS"`, so every provider sees them on every run until
 resolved. CLI providers with the MCP sidecar (`claude`, `qwen_code`,
-`gemini_cli`, `codex_cli`) expose a
+`codex_cli`) expose a
 `resolve_comment(comment_id, note)` tool; the sidecar accumulates resolutions
 in the result file and the pool applies them to the DB **only when the run
 completes successfully** (a failed run's claimed fixes never reached the
@@ -295,7 +343,7 @@ parent's run prompt via `BuildConflictContext`.
 
 ## Adding a New Provider
 
-1. Implement `Provider` in a new file in `providers/` (e.g. `providers/gemini.go`)
+1. Implement `Provider` in a new file in `providers/` (e.g. `providers/newprovider.go`)
 2. Add a new case to `providerFactory` in `cmd/server/main.go`
 3. Add the provider string to `knownProviders` in `internal/api/handlers/agents.go` (validated on both agent-config and provider-config create/update — see `internal/api/handlers/providers.go`)
 

@@ -1,8 +1,8 @@
 package providers
 
 import (
-	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -45,6 +45,13 @@ type CodexRunner struct {
 	// the backend REST API (same container). Set from server config.
 	BackendURL string
 	APIToken   string
+	// PriceResolver resolves model to USD-per-1M pricing so the tokens
+	// captured from "turn.completed" events (see classifyCodexJSON) can be
+	// priced into a Result.CostUSD — codex's own JSON output reports no
+	// total-cost figure, unlike claude/qwen's terminal total_cost_usd. nil
+	// falls back to the hardcoded pricing table (defaultPriceResolver). See
+	// applyUsageWithCost and docs/providers/codex_cli.md.
+	PriceResolver PriceResolver
 }
 
 func (r *CodexRunner) binary() string {
@@ -135,9 +142,9 @@ func renderCodexMCPTOML(name string, entry mcpServerEntry) string {
 //     prompts and runs without a sandbox — required for a headless run
 //     (Codex otherwise pauses for interactive approval on every command),
 //     mirroring the "run fully unattended" intent of qwen's --approval-mode
-//     yolo / gemini's --yolo. This is a strictly stronger bypass than either
-//     of those (it also disables the sandbox), which is the tradeoff for
-//     fully non-interactive operation — see docs/providers/codex_cli.md for
+//     yolo. This is a strictly stronger bypass than that (it also disables
+//     the sandbox), which is the tradeoff for fully non-interactive
+//     operation — see docs/providers/codex_cli.md for
 //     the discussion of Codex's native sandbox/approval-mode system and how
 //     command_allowlist/command_denylist map onto it (they don't: neither is
 //     enforced for this provider today, a documented gap).
@@ -232,13 +239,15 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started codex pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg          sync.WaitGroup
-		outcome     string
-		sessionID   string
-		rateLimited bool
-		transient   bool
-		usage       *runUsage
-		mu          sync.Mutex
+		wg              sync.WaitGroup
+		outcome         string
+		sessionID       string
+		rateLimited     bool
+		transient       bool
+		usage           *runUsage
+		stdoutTruncated bool
+		stderrTruncated bool
+		mu              sync.Mutex
 	)
 	wg.Add(2)
 
@@ -251,12 +260,9 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		defer wg.Done()
 		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in cli.go
 		defer rawDump.Close()
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stdout, func(line string) {
 			if line == "" {
-				continue
+				return
 			}
 			rawDump.WriteLine(line)
 			entry, parsed, u, class, sid := classifyCodexJSON(line)
@@ -289,14 +295,17 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 				usage = u
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stdoutTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
 			if is429Line(line) {
 				mu.Lock()
@@ -307,27 +316,63 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 				transient = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stderrTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	wg.Wait()
 	err = cmd.Wait()
 
+	mu.Lock()
+	truncated := stdoutTruncated || stderrTruncated
+	mu.Unlock()
+
+	if truncated {
+		// A single line exceeded the scan buffer limit — the rest of that
+		// stream was dropped from the point the cap was hit. Surface it as a
+		// visible warning rather than letting the run silently report
+		// "completed" with missing output (see scan.go for detail).
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
+		mu.Lock()
+		finalUsage := usage
+		finalSession := sessionID
+		mu.Unlock()
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("codex output truncated at scan buffer limit")}
+	}
+
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
-		return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("codex run timed out")}
+		mu.Lock()
+		finalUsage := usage
+		finalSession := sessionID
+		mu.Unlock()
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("codex run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex exited: %v", err), At: time.Now()}
 		mu.Lock()
 		rl := rateLimited
 		tr := transient
+		finalUsage := usage
+		finalSession := sessionID
 		mu.Unlock()
 		if rl {
-			return agent.Result{Status: "failed"}, &agent.ErrRateLimit{Message: "codex CLI 429: Request rejected by API rate limit"}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
+			return res, &agent.ErrRateLimit{Message: "codex CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
-			return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("codex CLI exited with transient infra error: %w", err)}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
+			return res, &agent.ErrTransient{Cause: fmt.Errorf("codex CLI exited with transient infra error: %w", err)}
 		}
 	}
 
@@ -343,11 +388,11 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		if res.Outcome == "" && outcome != "" {
 			res.Outcome = outcome
 		}
-		applyUsage(&res, finalUsage)
+		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 		res.SessionID = finalSession
 		if err != nil && res.Outcome == "" {
 			failed := agent.Result{Status: "failed", SessionID: finalSession}
-			applyUsage(&failed, finalUsage)
+			applyUsageWithCost(ctx, &failed, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 			return failed, nil
 		}
 		return res, nil
@@ -355,10 +400,34 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 
 	if err != nil && outcome == "" {
 		failed := agent.Result{Status: "failed", SessionID: finalSession}
-		applyUsage(&failed, finalUsage)
+		applyUsageWithCost(ctx, &failed, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 		return failed, nil
 	}
 	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
-	applyUsage(&res, finalUsage)
+	applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 	return res, nil
+}
+
+// mcpSidecarEnv builds the env vars the mcp-server sidecar binary expects,
+// identical to what MCPManager.Prepare configures for the claude/qwen
+// --mcp-config entry — factored out here since CodexRunner needs to embed
+// them directly into a config.toml [mcp_servers.*] entry rather than letting
+// MCPManager write them into its own JSON file.
+func mcpSidecarEnv(input agent.RunInput, backendURL, apiToken string) map[string]string {
+	transitionsJSON, _ := json.Marshal(input.Transitions)
+	reviewCommentsJSON, _ := json.Marshal(input.OpenReviewComments)
+	env := map[string]string{
+		"RUN_ID":          input.RunID,
+		"RESULT_FILE":     filepath.Join(os.TempDir(), fmt.Sprintf("ate-result-%s.json", input.RunID)),
+		"TRANSITIONS":     string(transitionsJSON),
+		"REVIEW_COMMENTS": string(reviewCommentsJSON),
+	}
+	if input.AgentConfig.SubtasksEnabled {
+		env["SUBTASKS_ENABLED"] = "1"
+		env["BACKEND_URL"] = backendURL
+		env["TASK_ID"] = input.Task.ID
+		env["API_TOKEN"] = apiToken
+		env["MAX_SUBTASKS"] = fmt.Sprintf("%d", input.AgentConfig.MaxSubtasks)
+	}
+	return env
 }

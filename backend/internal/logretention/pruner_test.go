@@ -220,3 +220,28 @@ func TestRunOnce_WithSettingsFunc_UsesLatestDays(t *testing.T) {
 		t.Errorf("expected pruning after settingsFn days changed to 30, got %d remaining", n)
 	}
 }
+
+// TestPruner_Run_ReturnsOnContextCancel verifies Run's ctx.Done() branch:
+// with the context already cancelled, Run must return promptly without
+// blocking on the (1-minute-floored) timer.
+func TestPruner_Run_ReturnsOnContextCancel(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+
+	p := logretention.New(q, 30, time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		p.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return promptly after context cancellation")
+	}
+}

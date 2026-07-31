@@ -1,6 +1,6 @@
 // Package agent implements the agent runtime core: the Provider interface,
 // bounded worker pool, and dispatcher. Concrete provider backends
-// (ClaudeRunner, AnthropicRunner, LLMRunner, QwenRunner, GeminiRunner,
+// (ClaudeRunner, AnthropicRunner, LLMRunner, QwenRunner,
 // CodexRunner, OpencodeRunner) live in the sibling providers package.
 package agent
 
@@ -68,6 +68,13 @@ type Result struct {
 	// so a later run on the same task can resume the session with full prior
 	// context. Empty for providers/runs without a session.
 	SessionID string
+	// CostWarned is true when the provider's mid-run cost watchdog (see
+	// providers/cost_watchdog.go) observed projected cost cross the warning
+	// threshold (RunInput.CostWarnRatio) at some point during this run, even
+	// if the run ultimately completed under budget. The pool publishes
+	// task.cost_warning when this is set. Always false for providers that
+	// don't implement the watchdog.
+	CostWarned bool
 }
 
 // RunInput carries everything an agent needs to start work.
@@ -105,6 +112,25 @@ type RunInput struct {
 	// that failed to merge back into this (parent) task's branch. It is injected
 	// into the prompt so the parent's work agent resolves the conflicts.
 	SubtaskConflicts *string
+	// CostBudgetUSD is the task's effective cost budget in USD (see
+	// dispatcher.effectiveBudget — the lower nonzero of the task's and its
+	// matched agent config's max_cost_usd). 0 means no cap. Providers that
+	// implement a mid-run cost watchdog (claude, qwen — see
+	// providers/cost_watchdog.go) use this, together with CostSpentUSD, to
+	// decide when to cancel an in-flight run. Providers that don't support
+	// the watchdog simply ignore it — the dispatcher's pre-dispatch
+	// checkCostBudget guard is unaffected either way.
+	CostBudgetUSD float64
+	// CostSpentUSD is the task's cumulative recorded cost from every prior
+	// run (see storage.SumTaskCost), passed in so the watchdog can project
+	// *total* task cost (prior spend + this run's incremental usage) against
+	// CostBudgetUSD rather than just this run's own cost in isolation.
+	CostSpentUSD float64
+	// CostWarnRatio is the fraction (0..1) of CostBudgetUSD at which the
+	// watchdog should surface an early warning (Result.CostWarned) before the
+	// hard kill at 1.0. 0 or CostBudgetUSD<=0 disables the warning. Defaults
+	// to 0.8 (see dispatcher.defaultCostWarnRatio).
+	CostWarnRatio float64
 }
 
 // TransitionHint describes an available transition for the MCP sidecar.
@@ -212,10 +238,19 @@ type AgentConfig struct {
 	// MaxCostUSD is an advisory per-task cost budget cap in USD, checked by
 	// the dispatcher before each sweep-dispatch against the task's
 	// cumulative recorded run cost so far (see Dispatcher.dispatch). 0
-	// disables the cap (unlimited). This is NOT a mid-run kill switch — no
-	// provider supports killing an in-flight run at a cost threshold, so a
-	// single very expensive run can still exceed the budget; the guard only
-	// prevents the *next* dispatch once the budget is already exhausted.
+	// disables the cap (unlimited).
+	//
+	// Providers with mid-run priced usage (claude, qwen — see
+	// providers/cost_watchdog.go) additionally enforce this as a mid-run kill
+	// switch: they project cost from incremental token usage as the run
+	// progresses and cancel the in-flight subprocess once the projection
+	// crosses the budget, escalating to waiting_human instead of letting a
+	// single runaway run blow arbitrarily far past the cap. Providers without
+	// mid-run priced usage (codex, gemini, opencode) do not support this —
+	// the guard only prevents the *next* dispatch for them, same as before.
+	// See docs/agents.md's "Cost Budgets" section for the full picture,
+	// including why the mid-run figure is an *estimate* (derived from the
+	// pricing table), not the provider's own authoritative billed cost.
 	MaxCostUSD float64
 }
 

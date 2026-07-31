@@ -65,6 +65,14 @@ The app is served at `https://your.domain.com/tasks`. TLS is handled by Traefik 
 
 > **Note:** The frontend nginx is the only container exposed to Traefik. It proxies `/tasks/api/` and `/tasks/ws` to the backend internally, so the backend container has no public port.
 
+## Backend Resilience: Restart Policy, Readiness, and Memory Limit
+
+The `backend` service in `docker-compose.yml` / `docker-compose.release.yml` is configured with:
+
+- `restart: unless-stopped` — the container is restarted automatically after a crash or OOM kill (and on daemon restart), unless you've explicitly stopped it.
+- A healthcheck against `GET /readyz` (not `/healthz`) — this actually checks DB connectivity and that the dispatch loop is still ticking, so Docker detects a wedged backend (e.g. a locked SQLite file or a hung sweep) instead of it appearing healthy forever. See [`docs/api.md`](api.md#get-readyz).
+- A default memory ceiling of **2 GB** via `deploy.resources.limits.memory` — a modest cap that leaves headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to. If you run many concurrent agent runs and hit this ceiling (the container gets OOM-killed and auto-restarts), raise `memory:` under the backend service's `deploy.resources.limits` in your compose file.
+
 ## Environment Variables
 
 All variables can also be set via a YAML config file pointed to by `CONFIG_FILE` (env vars always take precedence over file values).
@@ -95,10 +103,19 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 
 | Variable | Default | Description |
 |---|---|---|
-| `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, `gemini_cli`, and `codex_cli` providers). |
+| `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, and `codex_cli` providers). |
 | `MCP_BOARD_PATH` | _(empty)_ | Path to the `mcp-board` binary. Enables the board tools (`list_repos`/`list_workflows`/`create_task`) inside Chat-tab sessions, so a chat can create tickets. Set automatically by the Docker images and `./dev.sh dev`. See [board-mcp.md](board-mcp.md). |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API) |
-| `LLM_API_KEY` | _(empty)_ | API key for `llm` or `anthropic` provider |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API). **Deprecated**: the `llm` provider is disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using it. |
+| `LLM_API_KEY` | _(empty)_ | API key for the `llm` or `anthropic` providers. **Deprecated**: both providers are disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using them. |
+
+### Chat Terminal Sessions
+
+Each Chat-tab session keeps a live interactive CLI subprocess (plus a scrollback buffer) running across WebSocket disconnects so a browser refresh reattaches to the same session. By default nothing bounds how many of these accumulate or how long an unattached one stays alive; the following opt-in settings cap that growth.
+
+| Variable | Default | Description |
+|---|---|---|
+| `CHAT_MAX_SESSIONS` | `0` (unlimited) | Maximum number of concurrent chat terminal subprocesses. Only refuses *new* sessions once at the cap (`ErrTooManySessions`, surfaced as the WebSocket closing with an error) — reattaching to an already-running session is never blocked by the cap. |
+| `CHAT_IDLE_TIMEOUT` | `0` (disabled) | If set, how long a chat terminal session may go without an attached WebSocket connection before it's reaped (subprocess killed, scrollback released). Accepts Go duration strings (e.g. `2h`, `30m`). |
 
 ### Backup
 
@@ -109,8 +126,10 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `BACKUP_KEEP` | `7` | **Initial** value only — seeds the DB-backed setting on first migration. Number of most-recent snapshots to retain in `BACKUP_DIR` before pruning older ones. Editable afterwards without a restart via `PUT /api/v1/backup/settings` or the Health page. |
 | `LOG_RETENTION_DAYS` | `0` | If set to a positive number, enables a built-in pruner that deletes `agent_logs` rows for terminal-status runs (`completed`/`failed`/`waiting_human`) older than this many days. `0` = keep forever (disabled, the default). |
 | `LOG_RETENTION_INTERVAL` | `1h` | How often the log pruner runs. Accepts Go duration strings. Only meaningful when `LOG_RETENTION_DAYS` is set. |
+| `WORKTREE_SWEEP_INTERVAL` | `10m` | How often the built-in orphan-worktree sweeper reconciles each repo's `.ate-worktrees/<id>` directories against live (non-archived) task/chat-session ids, reclaiming anything else — worktrees left behind by archiving a task on a non-terminal label, or orphaned by a crash. Always on (unlike `BACKUP_DIR`, there's no disable switch); this only controls the interval. Accepts Go duration strings (1-minute minimum). |
+| `GIT_TIMEOUT` | `120s` | Bounds every individual `git` shell-out made by the agent package (worktree `fetch`/`add`, safety-net `commit`, `push`, subtask `merge`, branch cleanup). Without this bound a stalled remote or an interactive credential prompt could hang a `git` call indefinitely, blocking the whole dispatch sweep loop (tasks dispatch serially) since nothing else could run. With it, a stuck git call fails just that one task within `GIT_TIMEOUT`, is classified as a transient failure eligible for retry, and dispatch keeps working on the rest of the board. Interactive credential prompts are also suppressed (`GIT_TERMINAL_PROMPT=0` and related env vars) so an auth prompt fails fast rather than hanging on stdin. Accepts Go duration strings. |
 
-See [backup.md](backup.md) for the full backup/restore guide, including the "Agent log retention" section.
+See [backup.md](backup.md) for the full backup/restore guide, including the "Agent log retention" and "Orphaned worktree sweeper" sections.
 
 ### Other
 
@@ -118,7 +137,7 @@ See [backup.md](backup.md) for the full backup/restore guide, including the "Age
 |---|---|---|
 | `GITHUB_SYNC_INTERVAL` | `30s` | How often to poll GitHub for PR status updates. Accepts Go duration strings (e.g. `1m`, `5m`). |
 | `LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
-| `AGENT_RAW_LOG_DIR` | _(empty)_ | Dev/debug only. If set, every raw stream-json line from CLI providers (`claude`, `codex`, `gemini_cli`, `qwen_code`, `opencode`) is written verbatim to `<dir>/<run_id>.jsonl` before parsing — useful for reviewing what the CLIs emit vs. what the app extracts. No retention or compression; clean up the directory yourself. Off by default. With `dev.sh`, pass `--raw-log-dir <path>` instead of setting this directly: `dev` mode writes to that host path, while docker `start`/`restart` redirect to `/data/raw-logs` on the `db_data` volume (get files out via `./dev.sh shell`). |
+| `AGENT_RAW_LOG_DIR` | _(empty)_ | Dev/debug only. If set, every raw stream-json line from CLI providers (`claude`, `codex`, `qwen_code`, `opencode`) is written verbatim to `<dir>/<run_id>.jsonl` before parsing — useful for reviewing what the CLIs emit vs. what the app extracts. No retention or compression; clean up the directory yourself. Off by default. With `dev.sh`, pass `--raw-log-dir <path>` instead of setting this directly: `dev` mode writes to that host path, while docker `start`/`restart` redirect to `/data/raw-logs` on the `db_data` volume (get files out via `./dev.sh shell`). |
 | `UPDATE_CHECK_ENABLED` | `false` | If `true`, the Health page's `update_check` row shells out to `gh release view` to compare the running version (`GET /healthz`) against the latest GitHub release and warns when one is available. Disabled by default so the app never phones home without opting in; degrades to a warning (never an error) when offline or `gh` isn't configured. See [api.md](api.md#get-healthproviders). |
 
 ### YAML Config File
@@ -190,13 +209,17 @@ volumes:
 
 Run `./dev.sh login` to authenticate the CLI inside the container.
 
-### Anthropic API (`anthropic` provider)
+### Anthropic API (`anthropic` provider) — deprecated
 
-Set `LLM_API_KEY` to your Anthropic API key. No binary needed. See [providers/anthropic.md](providers/anthropic.md).
+**Disabled for new/updated provider configs and may be removed in a future release.** Not offered in the UI's
+provider dropdown; existing configs continue to run. Set `LLM_API_KEY` to your Anthropic API key. No binary
+needed. See [providers/anthropic.md](providers/anthropic.md).
 
-### OpenAI / LLM (`llm` provider)
+### OpenAI / LLM (`llm` provider) — deprecated
 
-Set `LLM_BASE_URL` and `LLM_API_KEY`. Works with any OpenAI-compatible API. See [providers/llm.md](providers/llm.md).
+**Disabled for new/updated provider configs and may be removed in a future release.** Not offered in the UI's
+provider dropdown; existing configs continue to run. Set `LLM_BASE_URL` and `LLM_API_KEY`. Works with any
+OpenAI-compatible API. See [providers/llm.md](providers/llm.md).
 
 ### Opencode (`opencode` provider)
 
@@ -205,10 +228,6 @@ Install the `opencode` binary and configure it. **MCP tools are not available.**
 ### Qwen Code (`qwen_code` provider)
 
 Install the `qwen` binary (`npm i -g @qwen-code/qwen-code`, or build the backend image with `INSTALL_QWEN_CLI=true`). MCP tools are supported (same setup as `claude`). See [providers/qwen_code.md](providers/qwen_code.md).
-
-### Gemini CLI (`gemini_cli` provider)
-
-Install the `gemini` binary (`npm i -g @google/gemini-cli`, or build the backend image with `INSTALL_GEMINI_CLI=true`) and authenticate (Google account login or `GEMINI_API_KEY`). MCP tools are supported via a per-run isolated `GEMINI_CLI_HOME`. See [providers/gemini_cli.md](providers/gemini_cli.md).
 
 ### Codex CLI (`codex_cli` provider)
 
@@ -308,11 +327,14 @@ npm run dev   # starts Vite dev server on :5173
 Run the unit/component test suite with `npm run test:coverage` (Vitest +
 Testing Library). A small Playwright E2E smoke suite also exists
 (`frontend/e2e/`), covering board load, task creation, task-detail
-navigation, and the Logs tab's WS log pane mount — it runs against the
-built docker-compose stack rather than `npm run dev`, so start the stack
-first (`./dev.sh start` or `docker compose up -d --build --wait`), then run
-`npm run e2e` from `frontend/` (see `frontend/e2e/README.md` for the
-one-time demo-repo setup it needs).
+navigation, and the Logs tab's WS log pane mount, plus a check that every
+static app route (dashboard, board, chat, workflow, and all configuration
+pages) loads correctly — each spec runs on both a desktop and a mobile
+viewport (Playwright's `chromium` and `mobile-chrome` projects). It runs
+against the built docker-compose stack rather than `npm run dev`, so start
+the stack first (`./dev.sh start` or `docker compose up -d --build --wait`),
+then run `npm run e2e` from `frontend/` (see `frontend/e2e/README.md` for
+the one-time demo-repo setup it needs).
 
 ### Building the MCP Sidecar
 
@@ -329,7 +351,7 @@ Set `MCP_SERVER_PATH=/path/to/mcp-server` in the backend environment. `./dev.sh 
 
 1. **Register a repository** — go to Settings → Repos → Add Repo. Enter the local filesystem path of the repository agents should work in.
 2. **Create an agent config** — go to Settings → Agents → New Agent. Select a provider, enter a model name, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
-3. **Create a task** — go to the Board, click New Task. Select the repo and fill in the title/description.
+3. **Create a task** — go to the Board, click New Task. Select the repo and fill in the title/description. To create a variant of an existing task instead, use the "⧉ Duplicate" action (task detail header or a board card's hover controls) to open the same form pre-filled from that task.
 4. **Move it to `plan`** — drag it or use the label selector. The dispatcher will pick it up within 5 seconds and start an agent run.
 5. **Watch the logs** — click on the task to open the detail view; live logs stream in real time.
 

@@ -3,10 +3,11 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 )
@@ -53,8 +54,12 @@ func TestAnthropicRunner_ExceedsConfiguredMaxTurns(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error from exceeding max turns, got nil")
 	}
-	if !strings.Contains(err.Error(), "exceeded max turns (1)") {
-		t.Fatalf("expected 'exceeded max turns (1)' error, got: %v", err)
+	var mt *agent.ErrMaxTurns
+	if !errors.As(err, &mt) {
+		t.Fatalf("expected *agent.ErrMaxTurns, got: %v (%T)", err, err)
+	}
+	if mt.MaxTurns != 1 {
+		t.Fatalf("expected MaxTurns=1, got %d", mt.MaxTurns)
 	}
 }
 
@@ -232,4 +237,65 @@ func TestAnthropicRunner_GetTaskTransitions(t *testing.T) {
 	if len(got) != 1 || got[0].ToLabel != "review" {
 		t.Fatalf("unexpected transitions: %+v", got)
 	}
+}
+
+func TestParseAnthropicRateLimitReset(t *testing.T) {
+	now := time.Now()
+
+	t.Run("rfc3339 requests header", func(t *testing.T) {
+		h := http.Header{}
+		reset := now.Add(90 * time.Second).UTC().Truncate(time.Second)
+		h.Set("anthropic-ratelimit-requests-reset", reset.Format(time.RFC3339))
+		got := parseAnthropicRateLimitReset(h)
+		if !got.Equal(reset) {
+			t.Fatalf("got %v, want %v", got, reset)
+		}
+	})
+
+	t.Run("rfc3339 tokens header", func(t *testing.T) {
+		h := http.Header{}
+		reset := now.Add(45 * time.Second).UTC().Truncate(time.Second)
+		h.Set("anthropic-ratelimit-tokens-reset", reset.Format(time.RFC3339))
+		got := parseAnthropicRateLimitReset(h)
+		if !got.Equal(reset) {
+			t.Fatalf("got %v, want %v", got, reset)
+		}
+	})
+
+	t.Run("retry-after seconds", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("retry-after", "15")
+		before := time.Now()
+		got := parseAnthropicRateLimitReset(h)
+		if got.Before(before.Add(14*time.Second)) || got.After(before.Add(16*time.Second)) {
+			t.Fatalf("got %v, want ~15s from now (%v)", got, before)
+		}
+	})
+
+	t.Run("retry-after http date", func(t *testing.T) {
+		h := http.Header{}
+		reset := now.Add(2 * time.Minute).UTC().Truncate(time.Second)
+		h.Set("retry-after", reset.Format(http.TimeFormat))
+		got := parseAnthropicRateLimitReset(h)
+		if !got.Equal(reset) {
+			t.Fatalf("got %v, want %v", got, reset)
+		}
+	})
+
+	t.Run("no usable headers", func(t *testing.T) {
+		h := http.Header{}
+		got := parseAnthropicRateLimitReset(h)
+		if !got.IsZero() {
+			t.Fatalf("want zero time, got %v", got)
+		}
+	})
+
+	t.Run("unparseable retry-after falls through to zero", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("retry-after", "garbage")
+		got := parseAnthropicRateLimitReset(h)
+		if !got.IsZero() {
+			t.Fatalf("want zero time, got %v", got)
+		}
+	})
 }

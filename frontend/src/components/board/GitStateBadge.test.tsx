@@ -13,6 +13,13 @@ describe('GitStateBadge', () => {
     expect(screen.getByTitle('PR open (ate-fix-thing)')).toBeInTheDocument()
   })
 
+  it('exposes the same detail to keyboard/screen-reader users, not just the title', () => {
+    render(<GitStateBadge branch="ate-fix-thing" gitState="pr_open" />)
+    const icon = screen.getByLabelText('PR open (ate-fix-thing)')
+    expect(icon).toHaveAttribute('role', 'img')
+    expect(icon).toHaveAttribute('tabIndex', '0')
+  })
+
   it('flags an open PR that conflicts with its base branch', () => {
     render(<GitStateBadge branch="ate-fix-thing" gitState="pr_open" prMergeable="conflicting" />)
     expect(screen.getByLabelText('merge conflict')).toBeInTheDocument()

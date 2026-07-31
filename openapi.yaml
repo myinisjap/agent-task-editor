@@ -20,7 +20,13 @@ components:
           type: string
         provider:
           type: string
-          enum: [claude, anthropic, llm, opencode, qwen_code, gemini_cli, codex_cli]
+          enum: [claude, anthropic, llm, opencode, qwen_code, codex_cli]
+          description: >
+            `anthropic` and `llm` are deprecated: disabled for new/updated provider
+            configs (POST/PATCH using either returns 400) and may be removed in a
+            future release. Both remain valid enum values here only because existing
+            provider configs already using them are still returned by GET/list
+            endpoints and continue to dispatch and run.
         model:
           type: string
         env:
@@ -186,8 +192,10 @@ components:
             cumulative recorded run cost (across every run, any status).
             0 disables the cap (unlimited). If the matched agent config also
             has a nonzero max_cost_usd, the effective budget is the lower of
-            the two. Not a mid-run kill switch — see AgentConfig.max_cost_usd
-            and docs/agents.md#cost-budgets.
+            the two. On providers with a mid-run cost watchdog (claude,
+            qwen_code — see AgentConfig.max_cost_usd), this cap is also
+            enforced as a kill switch against an in-flight run, not just the
+            next dispatch. See docs/agents.md#cost-budgets.
         priority:
           type: integer
           enum: [-1, 0, 1, 2]
@@ -207,6 +215,16 @@ components:
             currently pickup-eligible (e.g. blocked, paused, archived, or not
             on an agent-triggerable label) or when the pool has idle
             capacity and the task would be dispatched immediately.
+        cumulative_cost_usd:
+          type: number
+          format: double
+          description: >
+            Task's lifetime recorded cost across every run regardless of
+            status (matching how the dispatcher's cost-budget guard counts
+            spend). Only populated on GET /tasks/{id}; omitted (0) on list
+            responses. Needed because GET /tasks/{id}/runs is paginated, so a
+            client-side sum over a single page of runs would undercount once
+            a task has more runs than fit on one page.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
       required: [id, title, description, type, label, repo_id, workflow_id, created_at, updated_at]
@@ -311,16 +329,34 @@ components:
         updated_at:       { type: string, format: date-time }
       required: [days, interval_seconds, updated_at]
 
+    CostWarningSettings:
+      type: object
+      description: >
+        DB-backed global threshold for the mid-run cost early-warning event
+        (see docs/agents.md#cost-budgets, internal/agent/providers/
+        cost_watchdog.go, and migration 050_cost_warning). warn_ratio is the
+        fraction of a task's effective cost budget (max_cost_usd) at which a
+        task.cost_warning WebSocket event fires — both from the provider-side
+        mid-run watchdog (claude, qwen_code) and from the dispatcher's
+        pre-dispatch check (all providers) — ahead of the hard kill/exhaustion
+        at 1.0. Read fresh on every relevant check, so a change here takes
+        effect on the very next dispatch/run without a restart.
+      properties:
+        warn_ratio: { type: number, format: double, description: "Fraction of the effective cost budget at which to warn. Must be greater than 0 and at most 1. Default 0.8 (80%)." }
+        updated_at: { type: string, format: date-time }
+      required: [warn_ratio, updated_at]
+
     ModelPricing:
       type: object
       description: >
         One user-editable USD-per-1M-token pricing row (see 042_model_pricing
         and internal/agent/providers/pricing.go's DBPriceResolver), used to
-        estimate anthropic/llm run costs. A model with no row here falls back
-        to an internal, approximate hardcoded table; a model matching neither
-        has its cost flagged unknown (AgentRun.cost_unknown) instead of being
-        silently reported as free. Read fresh on every run completion, so an
-        edit here takes effect on the very next run without a restart.
+        estimate anthropic/llm/codex_cli run costs. A model with no row here
+        falls back to an internal, approximate hardcoded table; a model
+        matching neither has its cost flagged unknown (AgentRun.cost_unknown)
+        instead of being silently reported as free. Read fresh on every run
+        completion, so an edit here takes effect on the very next run without
+        a restart.
       properties:
         model:         { type: string, description: "Model ID, matched exactly first, then by longest-prefix (e.g. a row for \"claude-sonnet-4-5\" also prices \"claude-sonnet-4-5-20260101\")." }
         input_per_1m:  { type: number, format: double, description: "USD price per 1M input/prompt tokens. Must be >= 0." }
@@ -339,7 +375,9 @@ components:
         agent_ignore: { type: integer }
         is_terminal:  { type: integer }
         create_pr:    { type: integer, description: "When non-zero, a task entering this label auto-opens a GitHub PR (pushes the branch first)." }
-      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr]
+        wip_limit:      { type: integer, nullable: true, description: "Max tasks allowed in this label column; null = unlimited (soft/visual by default)." }
+        wip_limit_hard: { type: integer, description: "When non-zero, the dispatcher stops picking up tasks whose success target is this label once it is at its wip_limit (backpressure)." }
+      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit_hard]
 
     WorkflowTransition:
       type: object
@@ -475,10 +513,15 @@ components:
             run cost so far (across every run for the task, any status). 0
             disables the cap (unlimited). Default 0. If the task itself also
             has a nonzero max_cost_usd, the effective budget is the lower of
-            the two. NOT a mid-run kill switch — no provider supports killing
-            an in-flight run at a cost threshold; the guard only blocks the
-            *next* dispatch once the budget is already exhausted. See
-            docs/agents.md#cost-budgets.
+            the two. Providers with a mid-run cost watchdog (claude, always;
+            qwen_code, when the configured model is priced) additionally
+            enforce this as a kill switch: they project cost from incremental
+            token usage as the run progresses and cancel an in-flight run that
+            crosses the cap, escalating to waiting_human — this projection is
+            an *estimate* via the pricing table, not the provider's own
+            authoritative billed cost. Other providers (codex_cli, opencode,
+            anthropic, llm) only block the *next* dispatch once the budget is
+            already exhausted. See docs/agents.md#cost-budgets.
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
       required:
@@ -707,8 +750,7 @@ components:
           type: integer
           description: >-
             Total input/prompt tokens consumed across the run (summed across
-            all turns of a multi-turn agentic loop). 0 if the provider does
-            not report usage (e.g. opencode currently).
+            all turns of a multi-turn agentic loop).
         output_tokens:
           type: integer
           description: Total output/completion tokens consumed across the run.
@@ -716,24 +758,27 @@ components:
           type: number
           format: double
           description: >-
-            Estimated USD cost of the run. For the `claude` CLI provider this
-            is the CLI's own authoritative total_cost_usd figure (which may
-            legitimately be 0 under a Claude Max subscription); for
-            anthropic/llm providers it is computed from input/output tokens
-            against the user-editable pricing table (see GET/PUT
-            /settings/pricing), falling back to an internal, approximate
-            pricing table for models with no matching row. 0 if
-            unknown/unreported.
+            USD cost of the run. For the `claude`/`qwen_code`/`opencode`
+            providers this is the CLI's own authoritative reported cost
+            (which may legitimately be 0, e.g. under a Claude Max
+            subscription); for anthropic/llm/codex_cli providers it is
+            *estimated* by computing input/output tokens against the
+            user-editable pricing table (see GET/PUT /settings/pricing),
+            falling back to an internal, approximate pricing table for
+            models with no matching row. 0 if unknown/unreported — see
+            cost_unknown to distinguish that from a genuinely free run.
         cost_unknown:
           type: integer
           description: >-
             1 if tokens were consumed but no price entry (user-edited or
             hardcoded fallback) matched the model, so cost_usd was left at 0
             as a placeholder rather than a computed figure — add a row for
-            this model at /settings/pricing to get a real estimate. 0
-            otherwise, including for claude/qwen_code (which never set this;
-            their cost_usd, including a legitimate 0 under a Claude Max
-            subscription, is always authoritative).
+            this model at /settings/pricing to get a real estimate. Only
+            applies to the anthropic/llm/codex_cli estimation path described
+            under cost_usd. 0 otherwise, including for
+            claude/qwen_code/opencode (which never set this; their cost_usd,
+            including a legitimate 0 under a Claude Max subscription, is
+            always authoritative).
         session_id:
           type: string
           description: >-
@@ -1166,6 +1211,11 @@ paths:
               schema: { $ref: "#/components/schemas/Task" }
         "400": { description: Invalid transition }
         "403": { description: Gate required }
+        "409":
+          description: >
+            An agent run on this task is `pending` (claimed but not yet
+            started) or `running`. Cancel the run
+            (POST /tasks/{id}/runs/{run_id}/cancel) before moving its label.
 
   /tasks/{id}/archive:
     patch:
@@ -1349,6 +1399,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
+        "409":
+          description: >
+            An agent run on this task is `pending` (claimed but not yet
+            started) or `running`. Cancel the run before approving.
 
   /tasks/{id}/reject:
      post:
@@ -1371,6 +1425,10 @@ paths:
            content:
              application/json:
                schema: { $ref: "#/components/schemas/Task" }
+         "409":
+           description: >
+             An agent run on this task is `pending` (claimed but not yet
+             started) or `running`. Cancel the run before rejecting.
 
   /tasks/{id}/notes:
     patch:
@@ -1667,8 +1725,29 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: limit
+          in: query
+          description: Page size. Defaults to 100; values above 500 are clamped to 500.
+          schema: { type: integer, default: 100, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last run from the previous
+            page (returned in that response's X-Next-Cursor header). Omit for
+            the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of the task's agent runs, newest first. When more runs
+            remain, the id to pass as the next `after` cursor is returned in
+            the X-Next-Cursor header (absent on the final page). The task's
+            lifetime cumulative cost is not derivable from a single page; see
+            Task.cumulative_cost_usd on GET /tasks/{id}.
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more runs remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentRun" } }
@@ -1958,8 +2037,28 @@ paths:
   /workflows:
     get:
       summary: List workflows
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last workflow from the
+            previous page (returned in that response's X-Next-Cursor header).
+            Omit for the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of workflows, newest first. When more workflows remain,
+            the id to pass as the next `after` cursor is returned in the
+            X-Next-Cursor header (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more workflows remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/Workflow" } }
@@ -2065,8 +2164,28 @@ paths:
   /agents:
     get:
       summary: List agent configs
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last agent config from
+            the previous page (returned in that response's X-Next-Cursor
+            header). Omit for the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of agent configs (enabled or not), newest first. When more
+            configs remain, the id to pass as the next `after` cursor is
+            returned in the X-Next-Cursor header (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more configs remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentConfig" } }
@@ -2139,8 +2258,28 @@ paths:
   /provider-configs:
     get:
       summary: List provider configs
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last provider config from
+            the previous page (returned in that response's X-Next-Cursor
+            header). Omit for the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of provider configs, newest first. When more configs
+            remain, the id to pass as the next `after` cursor is returned in
+            the X-Next-Cursor header (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more configs remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/ProviderConfig" } }
@@ -2188,8 +2327,28 @@ paths:
   /repos:
     get:
       summary: List repos
+      parameters:
+        - name: limit
+          in: query
+          description: Page size. Defaults to 200; values above 500 are clamped to 500.
+          schema: { type: integer, default: 200, maximum: 500 }
+        - name: after
+          in: query
+          description: >
+            Cursor for the next page: the id of the last repo from the
+            previous page (returned in that response's X-Next-Cursor header).
+            Omit for the first page.
+          schema: { type: string }
       responses:
         "200":
+          description: >
+            A page of repos, newest first. When more repos remain, the id to
+            pass as the next `after` cursor is returned in the X-Next-Cursor
+            header (absent on the final page).
+          headers:
+            X-Next-Cursor:
+              description: Cursor for the next page; absent when no more repos remain.
+              schema: { type: string }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/Repo" } }
@@ -2494,14 +2653,49 @@ paths:
               schema: { $ref: "#/components/schemas/LogRetentionSettings" }
         "400": { description: "days below 0, or interval_seconds below 60" }
 
+  /settings/cost-warning:
+    get:
+      summary: Get the global mid-run cost early-warning threshold
+      description: >
+        Returns the current warn_ratio (fraction of a task's effective cost
+        budget at which task.cost_warning fires). See CostWarningSettings and
+        docs/agents.md#cost-budgets.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostWarningSettings" }
+    put:
+      summary: Update the global mid-run cost early-warning threshold
+      description: >
+        Persists a new warn_ratio. Takes effect on the very next
+        dispatch/run without a process restart — both the dispatcher's
+        pre-dispatch warning check and the provider-side mid-run cost
+        watchdog read it fresh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [warn_ratio]
+              properties:
+                warn_ratio: { type: number, format: double, description: "Must be greater than 0 and at most 1." }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostWarningSettings" }
+        "400": { description: "warn_ratio not in (0, 1]" }
+
   /settings/pricing:
     get:
       summary: List user-editable model pricing rows
       description: >
         Returns every row of the user-editable USD-per-1M-token pricing table
-        used to estimate anthropic/llm run costs, ordered by model. Models
-        with no row here fall back to an internal, approximate hardcoded
-        table. See ModelPricing and AgentRun.cost_unknown.
+        used to estimate anthropic/llm/codex_cli run costs, ordered by model.
+        Models with no row here fall back to an internal, approximate
+        hardcoded table. See ModelPricing and AgentRun.cost_unknown.
       responses:
         "200":
           content:

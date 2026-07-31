@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
@@ -68,9 +67,17 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	var (
 		wg          sync.WaitGroup
 		outcome     string
+		sessionID   string
 		rateLimited bool
 		transient   bool
-		mu          sync.Mutex
+		// usage holds the most recently observed step_finish usage. Per the
+		// cumulative-to-date assumption documented on classifyOpencodeJSON,
+		// each step_finish's cost/tokens are taken as-is (assign, not sum)
+		// rather than accumulated across steps.
+		usage           *runUsage
+		stdoutTruncated bool
+		stderrTruncated bool
+		mu              sync.Mutex
 	)
 	wg.Add(2)
 
@@ -78,19 +85,26 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		defer wg.Done()
 		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in cli.go
 		defer rawDump.Close()
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stdout, func(line string) {
 			if line == "" {
-				continue
+				return
 			}
 			rawDump.WriteLine(line)
-			entry, parsed := classifyOpencodeJSON(line)
+			entry, parsed, u, sid := classifyOpencodeJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
 				outcome = parsed
+				mu.Unlock()
+			}
+			if sid != "" {
+				mu.Lock()
+				sessionID = sid
+				mu.Unlock()
+			}
+			if u != nil {
+				mu.Lock()
+				usage = u
 				mu.Unlock()
 			}
 			if is429Line(line) {
@@ -102,14 +116,17 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 				transient = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stdoutTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
+		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
 			if is429Line(line) {
 				mu.Lock()
@@ -120,15 +137,39 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 				transient = true
 				mu.Unlock()
 			}
+		})
+		if scanErr != nil {
+			mu.Lock()
+			stderrTruncated = true
+			mu.Unlock()
 		}
 	}()
 
 	wg.Wait()
 	err = cmd.Wait()
 
+	mu.Lock()
+	finalSession := sessionID
+	finalUsage := usage
+	truncated := stdoutTruncated || stderrTruncated
+	mu.Unlock()
+
+	if truncated {
+		// A single line exceeded the scan buffer limit — the rest of that
+		// stream was dropped from the point the cap was hit. Surface it as a
+		// visible warning rather than letting the run silently report
+		// "completed" with missing output (see scan.go for detail).
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode output truncated at scan buffer limit")}
+	}
+
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
-		return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode exited: %v", err), At: time.Now()}
@@ -137,12 +178,35 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		tr := transient
 		mu.Unlock()
 		if rl {
-			return agent.Result{Status: "failed"}, &agent.ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsage(&res, finalUsage)
+			return res, &agent.ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
-			return agent.Result{Status: "failed"}, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsage(&res, finalUsage)
+			return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
+		}
+		// Bug fix (see TestOpencodeRunner_Run_Exit1NoOutputIsFailed): a non-zero
+		// exit with no rate-limit/transient classification and no parsed OUTCOME
+		// marker used to fall through to the "completed" return below with an
+		// empty Outcome. The pool only resolves a workflow transition when
+		// Status=="completed" && Outcome!="" (see pool.go), so a crash with no
+		// output silently left the task stuck as "completed" with no outcome —
+		// never marked failed, never retried. Every other CLI provider
+		// (codex/gemini/qwen) already has this same `err != nil && outcome == ""`
+		// fallback; opencode was the one provider missing it.
+		if outcome == "" {
+			// Usage/cost must still be persisted here even though the run
+			// failed — money may have been spent before the crash (mirrors
+			// qwen.go's equivalent failure path).
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsage(&res, finalUsage)
+			return res, nil
 		}
 	}
 
-	return agent.Result{Status: "completed", Outcome: outcome}, nil
+	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
+	applyUsage(&res, finalUsage)
+	return res, nil
 }
