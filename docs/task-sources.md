@@ -34,6 +34,31 @@ not something that varies per repo the way `issue_sync_label` does:
 
 See `internal/forge/gitea`'s package doc for the full detail on these.
 
+### Running the Gitea smoke test against a real instance
+
+`internal/forge/gitea` is covered by ordinary httptest-server-backed unit
+tests, which run as part of `go test ./...` with no external dependencies.
+There is also an **opt-in** smoke test (`TestSmokeLiveInstance` in
+`smoke_test.go`) that exercises the read-only surface (`AuthStatus`,
+`ParseRepoName`, `ListOpenIssues`, `GetIssueComments`, `PRForBranch`,
+`PRHead`) against a real, self-hosted Gitea instance. It never runs by
+default — it's skipped unless explicitly opted into, so CI and local
+`go test ./...` runs never require (or accidentally touch) a live Gitea
+instance:
+
+```bash
+GITEA_SMOKE=1 \
+GITEA_HOST=git.example.com \
+GITEA_TOKEN=<token> \
+GITEA_SMOKE_REPO=owner/repo \
+go test ./internal/forge/gitea/... -run TestSmokeLiveInstance -v
+```
+
+Optionally set `GITEA_SMOKE_BRANCH` (defaults to `main`) to point
+`PRForBranch`/`PRHead` at a specific branch. The test only performs
+read-only calls — it never creates PRs, labels, or comments on the target
+instance.
+
 ## Enabling it
 
 Issue sync is configured **per repo** (Repos page in the UI, or the REST
