@@ -182,6 +182,64 @@ describe('TaskHeader agent notes modal', () => {
   })
 })
 
+describe('TaskHeader description (mobile modal)', () => {
+  const longDescription = 'A very long task description that would otherwise force a lot of scrolling on mobile.'
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function stubMatchMedia(matches: boolean) {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+  }
+
+  it('renders the description inline (not clickable) on desktop', () => {
+    stubMatchMedia(false)
+    renderHeader(TaskHeader, baseTask({ description: longDescription }))
+
+    expect(screen.getByText(longDescription)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('renders a tappable preview that opens a modal with the full description on mobile, and closes it', async () => {
+    stubMatchMedia(true)
+    const user = userEvent.setup()
+    renderHeader(TaskHeader, baseTask({ description: longDescription }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    const preview = screen.getByTitle('Click to expand')
+    expect(preview).toBeInTheDocument()
+
+    await user.click(preview)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Description' })
+    expect(dialog).toBeInTheDocument()
+    expect(screen.getAllByText(longDescription).length).toBeGreaterThan(0)
+
+    await user.click(screen.getByTitle('Close'))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('does not render a description preview/modal on mobile when there is no description', () => {
+    stubMatchMedia(true)
+    renderHeader(TaskHeader, baseTask({ description: '' }))
+
+    expect(screen.queryByTitle('Click to expand')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
 describe('TaskHeader duplicate action', () => {
   it('does not render a Duplicate button when onDuplicate is not provided', () => {
     renderHeader(TaskHeader, baseTask())
