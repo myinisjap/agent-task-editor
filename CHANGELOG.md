@@ -234,6 +234,13 @@ triggers the "Release" workflow the same way.
   Playwright project, so mobile-only layouts (collapsed nav, mobile header
   bars) get smoke coverage too. See `frontend/e2e/README.md`.
 
+### Changed
+- **Mobile Task Detail overview: long task descriptions no longer force a
+  wall of scrolling.** On mobile viewports the description now renders as a
+  small clamped, tappable preview box that opens a full-screen modal on tap
+  — the same box/modal pattern already used for Agent Notes. Desktop is
+  unchanged (still renders inline).
+
 ### Removed
 - **The `gemini_cli` provider has been removed.** The Gemini CLI is no longer
   supported upstream in its previous form; Google's replacement CLI

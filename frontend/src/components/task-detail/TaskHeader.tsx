@@ -4,6 +4,7 @@ import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
 import AgentNotesModal from './AgentNotesModal'
+import { useIsMobile } from '../../lib/useIsMobile'
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -100,6 +101,8 @@ export default function TaskHeader({
   const attachments = task.attachments
 
   const [notesModalOpen, setNotesModalOpen] = useState(false)
+  const [descModalOpen, setDescModalOpen] = useState(false)
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     // Revoke any previously-created blob URLs before fetching the new set.
@@ -290,7 +293,25 @@ export default function TaskHeader({
             </span>
           )}
           {task.description && (
-            <p className="text-sm text-slate-400 mt-2">{task.description}</p>
+            isMobile ? (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => setDescModalOpen(true)}
+                  className="text-left w-full cursor-pointer hover:bg-slate-700/50 transition-colors rounded"
+                  title="Click to expand"
+                >
+                  <p className="text-sm text-slate-400 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-24 overflow-hidden">
+                    {task.description}
+                  </p>
+                </button>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400 mt-2">{task.description}</p>
+            )
+          )}
+          {descModalOpen && task.description && (
+            <AgentNotesModal title="Description" notes={task.description} onClose={() => setDescModalOpen(false)} />
           )}
           {task.attachments && task.attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-3" data-blob-url-version={blobUrlVersion}>
