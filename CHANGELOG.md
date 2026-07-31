@@ -98,6 +98,15 @@ triggers the "Release" workflow the same way.
   matrix in sync.
 
 ### Fixed
+- **Subtask creation from planning runs no longer silently fails on permission.**
+  When an agent config had `subtasks_enabled`, the sidecar registered the
+  `create_subtask` MCP tool, but the Claude and Qwen runners never added it to
+  their explicit tool allow-lists (`--allowedTools` / `--allowed-tools`). The CLI
+  offered the tool, the agent called it, and the call was rejected with "Claude
+  requested permissions to use mcp__task-editor__create_subtask, but you haven't
+  granted it yet" — so planned subtasks were dropped and the agent could only
+  note the failure. Both runners now allow-list `create_subtask` whenever the
+  config opts in. (Gemini/Codex were unaffected — they blanket-approve tools.)
 - **Two-column forms no longer collapse into overlapping, unreadable fields on
   mobile.** The Agent config, Provider config, Templates, and schedule forms use
   a `grid-cols-1 sm:grid-cols-2` layout, but their full-width rows hardcoded

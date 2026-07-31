@@ -75,6 +75,9 @@ func buildQwenArgs(input agent.RunInput, mcpCfg *MCPRunConfig) []string {
 			"mcp__task-editor__store_info",
 			"mcp__task-editor__resolve_comment",
 		)
+		if input.AgentConfig.SubtasksEnabled {
+			args = append(args, "--allowed-tools", "mcp__task-editor__create_subtask")
+		}
 	}
 	// Command allowlist: qwen reuses the same Bash(pattern) tool-restriction
 	// syntax as the claude CLI's --allowedTools. Append entries to

@@ -52,6 +52,12 @@ func buildClaudeArgs(input agent.RunInput, sidecarEnabled bool, mcpCfg *MCPRunCo
 	allowedTools := "Edit,Write,Read,Bash,Glob,Grep"
 	if sidecarEnabled {
 		allowedTools += ",mcp__task-editor__get_task_transitions,mcp__task-editor__signal_complete,mcp__task-editor__request_human,mcp__task-editor__update_task_notes,mcp__task-editor__store_info,mcp__task-editor__resolve_comment"
+		// create_subtask is only registered by the sidecar when this config
+		// opted in; allow-list it in the same case, otherwise the CLI blocks
+		// the call with "haven't granted it yet" even though the tool exists.
+		if input.AgentConfig.SubtasksEnabled {
+			allowedTools += ",mcp__task-editor__create_subtask"
+		}
 	}
 	// Allow tools from each selected MCP server. Claude Code supports
 	// server-level wildcarding via the bare "mcp__<server>" entry; this has
