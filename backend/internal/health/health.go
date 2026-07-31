@@ -115,7 +115,7 @@ func DefaultDeps() Deps {
 		},
 		Getenv:              os.Getenv,
 		HomeDir:             os.UserHomeDir,
-		GHAuthStatus:        ghclient.GHAuthStatus,
+		GHAuthStatus:        (ghclient.GitHub{}).AuthStatus,
 		LatestGitHubRelease: latestGitHubReleaseViaGH,
 	}
 }

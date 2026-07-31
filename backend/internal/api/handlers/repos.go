@@ -17,7 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
-	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -119,7 +119,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-derive name from remote URL if not provided.
 	if body.Name == "" && remoteURL != "" {
-		if derived, ok := ghclient.ParseGitHubName(remoteURL); ok {
+		if _, derived, ok := forge.ForRemote(remoteURL); ok {
 			body.Name = derived
 		}
 	}

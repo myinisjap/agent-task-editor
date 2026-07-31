@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
@@ -50,7 +51,14 @@ type CommentSource interface {
 	FetchComments(ctx context.Context, repo gen.Repo, ref string) ([]ExternalComment, error)
 }
 
-// GitHubIssues imports open GitHub issues via the `gh` CLI, honouring the
+// githubForge is the forge.Forge this Source talks to. A package-level var
+// (rather than a literal at each call site) so a future generalisation of
+// GitHubIssues into a per-remote-resolved Source (see forge.ForRemote) is a
+// small, localised change.
+var githubForge forge.Forge = ghclient.GitHub{}
+
+// GitHubIssues imports open GitHub issues via the `gh` CLI (through the
+// GitHub forge.Forge implementation in internal/ghclient), honouring the
 // repo's issue_sync_label filter (empty = all open issues).
 type GitHubIssues struct{}
 
@@ -60,12 +68,12 @@ func (GitHubIssues) Fetch(ctx context.Context, repo gen.Repo) ([]ExternalTask, e
 	if repo.RemoteUrl == nil || *repo.RemoteUrl == "" {
 		return nil, fmt.Errorf("repo %s has no remote URL", repo.Name)
 	}
-	ghName, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
+	ghName, ok := githubForge.ParseRepoName(*repo.RemoteUrl)
 	if !ok {
 		return nil, fmt.Errorf("repo %s remote is not a GitHub URL", repo.Name)
 	}
 
-	issues, err := ghclient.ListOpenIssues(ctx, ghName, repo.IssueSyncLabel)
+	issues, err := githubForge.ListOpenIssues(ctx, ghName, repo.IssueSyncLabel)
 	if err != nil {
 		return nil, fmt.Errorf("list issues for %s: %w", ghName, err)
 	}
@@ -96,19 +104,18 @@ func (GitHubIssues) FetchComments(ctx context.Context, repo gen.Repo, ref string
 		return nil, fmt.Errorf("source ref %q is not a github issue ref", ref)
 	}
 
-	comments, err := ghclient.GetIssueComments(ctx, ghName, issueNumber)
+	comments, err := githubForge.GetIssueComments(ctx, ghName, issueNumber)
 	if err != nil {
 		return nil, fmt.Errorf("get issue comments for %s: %w", ref, err)
 	}
 	return mapIssueComments(comments), nil
 }
 
-// mapIssueComments converts ghclient.IssueComment values into
-// ExternalComment, applying the write-access-only trust classification and
-// dropping this system's own write-back marker comments. Split out from
-// FetchComments so the classification logic is unit-testable without
-// shelling out to `gh`.
-func mapIssueComments(comments []ghclient.IssueComment) []ExternalComment {
+// mapIssueComments converts forge.IssueComment values into ExternalComment,
+// applying the write-access-only trust classification and dropping this
+// system's own write-back marker comments. Split out from FetchComments so
+// the classification logic is unit-testable without shelling out to `gh`.
+func mapIssueComments(comments []forge.IssueComment) []ExternalComment {
 	out := make([]ExternalComment, 0, len(comments))
 	for _, c := range comments {
 		if strings.Contains(c.Body, writeback.MarkerComment) {

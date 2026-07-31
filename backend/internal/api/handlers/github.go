@@ -9,7 +9,7 @@ import (
 // GitHubAuthStatus reports whether gh CLI auth is available.
 // The frontend calls this on load to show a warning if credentials are missing.
 func GitHubAuthStatus(w http.ResponseWriter, r *http.Request) {
-	authed, note := ghclient.GHAuthStatus()
+	authed, note := (ghclient.GitHub{}).AuthStatus()
 	JSON(w, http.StatusOK, map[string]any{
 		"authed": authed,
 		"note":   note,

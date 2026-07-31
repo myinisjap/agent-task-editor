@@ -29,11 +29,12 @@ agent-task-editor/
 │       ├── agent/            # Provider system, pool, dispatcher
 │       ├── api/              # Chi router, handlers, middleware
 │       ├── config/           # YAML + env var config
-│       ├── ghclient/         # Thin `gh` CLI wrapper (PR lookup/create, issue listing, repo name parsing)
-│       ├── ghsync/           # Background poller: refreshes task GitHub PR state (incl. merge conflicts) via `gh` CLI
+│       ├── forge/            # Forge interface + forge-neutral types (git-hosting-provider seam); leaf package, no impl yet beyond ghclient
+│       ├── ghclient/         # GitHub `forge.Forge` impl: thin `gh` CLI wrapper (PR lookup/create, issue listing, repo name parsing)
+│       ├── ghsync/           # Background poller: refreshes task PR state (incl. merge conflicts) via the repo's `forge.Forge`
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
-│       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues)
+│       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues today, via `forge.Forge`)
 │       ├── workflow/         # State machine engine
 │       └── ws/               # WebSocket hub and client management
 └── frontend/                 # React + TypeScript + Vite + Tailwind

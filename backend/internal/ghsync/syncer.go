@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -37,17 +38,17 @@ type Syncer struct {
 	// how wb being nil disables write-back.
 	engine *workflow.Engine
 
-	// getPR resolves the PR state for a branch. Defaults to
-	// ghclient.GetPRForBranch; overridable in tests.
+	// getPR resolves the PR state for a branch. Defaults to the injected
+	// forge's PRForBranch method; overridable in tests.
 	getPR func(ctx context.Context, repoName, branch string) (state, prURL string, prNumber int, err error)
 
 	// getPRHead, getReviews, getReviewComments, getFailedChecks back the PR
 	// review/GHA-status feedback ingestion (see pr_review.go). Default to the
-	// corresponding ghclient functions; overridable in tests.
-	getPRHead         func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error)
-	getReviews        func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error)
-	getReviewComments func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error)
-	getFailedChecks   func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error)
+	// corresponding methods on the injected forge; overridable in tests.
+	getPRHead         func(ctx context.Context, repoName, branch string) (forge.PRHead, error)
+	getReviews        func(ctx context.Context, repoName string, prNumber int) ([]forge.Review, error)
+	getReviewComments func(ctx context.Context, repoName string, prNumber int) ([]forge.PRReviewComment, error)
+	getFailedChecks   func(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error)
 }
 
 // New creates a Syncer that polls on the given interval. engine may be nil,
@@ -55,17 +56,18 @@ type Syncer struct {
 // repo opt-in via pr_review_auto_transition_enabled) while still ingesting
 // and surfacing PR review/GHA feedback.
 func New(db *sql.DB, hub Publisher, interval time.Duration, engine *workflow.Engine) *Syncer {
+	f := ghclient.GitHub{}
 	return &Syncer{
 		q:                 gen.New(db),
 		hub:               hub,
 		interval:          interval,
 		wb:                writeback.New(gen.New(db)),
 		engine:            engine,
-		getPR:             ghclient.GetPRForBranch,
-		getPRHead:         ghclient.GetPRHead,
-		getReviews:        ghclient.GetPRReviews,
-		getReviewComments: ghclient.GetPRReviewComments,
-		getFailedChecks:   ghclient.GetFailedChecks,
+		getPR:             f.PRForBranch,
+		getPRHead:         f.PRHead,
+		getReviews:        f.PRReviews,
+		getReviewComments: f.PRReviewComments,
+		getFailedChecks:   f.FailedChecks,
 	}
 }
 
@@ -124,14 +126,14 @@ func (s *Syncer) sweep(ctx context.Context) {
 
 // repoInfo holds the resolved details for a task's repo needed during a sweep.
 type repoInfo struct {
-	ghName string   // "org/repo"; empty means not a GitHub repo
+	ghName string   // "org/repo"-style name; empty means no supported forge recognised the remote
 	path   string   // local filesystem path to the repo's main clone
 	repo   gen.Repo // full repo row, needed by the writeback hooks (e.g. IssueWritebackEnabled)
 }
 
-// resolveRepoInfo fetches the repo from DB and extracts the "org/repo" name
-// plus local path. ghName is "" if the repo has no remote URL or is not a
-// GitHub URL.
+// resolveRepoInfo fetches the repo from DB and extracts its forge-name
+// (via forge.ForRemote) plus local path. ghName is "" if the repo has no
+// remote URL or no registered forge recognises it.
 func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 	log := slog.With("component", "ghsync", "repo_id", repoID)
 	repo, err := s.q.GetRepo(ctx, repoID)
@@ -142,7 +144,7 @@ func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 	if repo.RemoteUrl == nil || *repo.RemoteUrl == "" {
 		return repoInfo{}
 	}
-	name, ok := ghclient.ParseGitHubName(*repo.RemoteUrl)
+	_, name, ok := forge.ForRemote(*repo.RemoteUrl)
 	if !ok {
 		return repoInfo{}
 	}

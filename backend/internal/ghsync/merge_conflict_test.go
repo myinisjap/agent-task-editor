@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -21,25 +21,25 @@ type conflictFixture struct {
 	task gen.Task
 	// head is what getPRHead returns; tests mutate it between sweeps to
 	// simulate a push, a retarget, or GitHub changing its verdict.
-	head *ghclient.PRHead
+	head *forge.PRHead
 }
 
 func newConflictFixture(t *testing.T, autoTransition bool) *conflictFixture {
 	t.Helper()
 	ctx := context.Background()
-	head := &ghclient.PRHead{Number: 1, HeadSHA: "sha1", BaseRef: "main", Mergeable: ghclient.MergeableClean}
+	head := &forge.PRHead{Number: 1, HeadSHA: "sha1", BaseRef: "main", Mergeable: forge.MergeableClean}
 
 	getPR := func(ctx context.Context, repoName, br string) (string, string, int, error) {
 		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
 	}
-	getPRHead := func(ctx context.Context, repoName, branch string) (ghclient.PRHead, error) {
+	getPRHead := func(ctx context.Context, repoName, branch string) (forge.PRHead, error) {
 		return *head, nil
 	}
-	noReviews := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Review, error) { return nil, nil }
-	noComments := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.PRReviewComment, error) {
+	noReviews := func(ctx context.Context, repoName string, prNumber int) ([]forge.Review, error) { return nil, nil }
+	noComments := func(ctx context.Context, repoName string, prNumber int) ([]forge.PRReviewComment, error) {
 		return nil, nil
 	}
-	noChecks := func(ctx context.Context, repoName string, prNumber int) ([]ghclient.Check, error) { return nil, nil }
+	noChecks := func(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) { return nil, nil }
 
 	s, q, hub := newTestSyncerFull(t, getPR, getPRHead, noReviews, noComments, noChecks, autoTransition)
 
@@ -120,7 +120,7 @@ func countEvents(hub *fakeHub, eventType string) int {
 func TestIngestMergeConflict_SurfacesOncePerHeadCommit(t *testing.T) {
 	f := newConflictFixture(t, false)
 
-	f.head.Mergeable = ghclient.MergeableConflicting
+	f.head.Mergeable = forge.MergeableConflicting
 	f.sweep(t, "pr_open")
 
 	fb := f.feedback(t)
@@ -150,7 +150,7 @@ func TestIngestMergeConflict_SurfacesOncePerHeadCommit(t *testing.T) {
 func TestIngestMergeConflict_ResurfacesAfterPush(t *testing.T) {
 	f := newConflictFixture(t, false)
 
-	f.head.Mergeable = ghclient.MergeableConflicting
+	f.head.Mergeable = forge.MergeableConflicting
 	f.sweep(t, "pr_open")
 	first := f.feedback(t)
 
@@ -171,11 +171,11 @@ func TestIngestMergeConflict_ResurfacesAfterPush(t *testing.T) {
 func TestIngestMergeConflict_MergeableClearsCursor(t *testing.T) {
 	f := newConflictFixture(t, false)
 
-	f.head.Mergeable = ghclient.MergeableConflicting
+	f.head.Mergeable = forge.MergeableConflicting
 	f.sweep(t, "pr_open")
 
 	// Resolved (base branch reverted, say) without the task's head moving.
-	f.head.Mergeable = ghclient.MergeableClean
+	f.head.Mergeable = forge.MergeableClean
 	f.sweep(t, "pr_open")
 	if got := f.storedMergeable(t); got != "mergeable" {
 		t.Fatalf("pr_mergeable = %q, want mergeable", got)
@@ -183,7 +183,7 @@ func TestIngestMergeConflict_MergeableClearsCursor(t *testing.T) {
 
 	// Base moves again and reintroduces the conflict at the same head commit:
 	// worth telling the agent about a second time.
-	f.head.Mergeable = ghclient.MergeableConflicting
+	f.head.Mergeable = forge.MergeableConflicting
 	f.sweep(t, "pr_open")
 	if got := strings.Count(f.feedback(t), "merge conflict"); got != 2 {
 		t.Errorf("merge-conflict feedback appears %d times, want 2", got)
@@ -194,7 +194,7 @@ func TestIngestMergeConflict_UnknownIsRecordedButQuiet(t *testing.T) {
 	f := newConflictFixture(t, false)
 
 	// GitHub has not finished computing the test merge yet.
-	f.head.Mergeable = ghclient.MergeableUnknown
+	f.head.Mergeable = forge.MergeableUnknown
 	f.sweep(t, "pr_open")
 
 	if got := f.storedMergeable(t); got != "unknown" {
@@ -206,11 +206,11 @@ func TestIngestMergeConflict_UnknownIsRecordedButQuiet(t *testing.T) {
 
 	// A conflict verdict that arrives later, then flaps back to unknown, must
 	// not re-surface once the real verdict returns unchanged.
-	f.head.Mergeable = ghclient.MergeableConflicting
+	f.head.Mergeable = forge.MergeableConflicting
 	f.sweep(t, "pr_open")
-	f.head.Mergeable = ghclient.MergeableUnknown
+	f.head.Mergeable = forge.MergeableUnknown
 	f.sweep(t, "pr_open")
-	f.head.Mergeable = ghclient.MergeableConflicting
+	f.head.Mergeable = forge.MergeableConflicting
 	f.sweep(t, "pr_open")
 
 	if got := strings.Count(f.feedback(t), "merge conflict"); got != 1 {
@@ -221,7 +221,7 @@ func TestIngestMergeConflict_UnknownIsRecordedButQuiet(t *testing.T) {
 func TestIngestMergeConflict_IgnoredWhenPRNotOpen(t *testing.T) {
 	f := newConflictFixture(t, false)
 
-	f.head.Mergeable = ghclient.MergeableConflicting
+	f.head.Mergeable = forge.MergeableConflicting
 	f.sweep(t, "pr_merged")
 
 	if got := f.feedback(t); got != "" {
@@ -236,7 +236,7 @@ func TestIngestMergeConflict_AutoTransitionsWhenRepoOptedIn(t *testing.T) {
 	f := newConflictFixture(t, true)
 	before := f.task.Label
 
-	f.head.Mergeable = ghclient.MergeableConflicting
+	f.head.Mergeable = forge.MergeableConflicting
 	f.sweep(t, "pr_open")
 
 	updated, err := f.q.GetTask(context.Background(), f.task.ID)

@@ -7,6 +7,16 @@ has issue sync enabled, creates a board task for each matching open issue, and
 keeps existing tasks in step with their issue afterwards — see
 [Keeping imported tasks in sync](#keeping-imported-tasks-in-sync).
 
+Internally, issue import, PR-state sync (`internal/ghsync`), and PR
+creation/write-back all go through a `Forge` interface
+(`internal/forge`) rather than talking to a specific provider directly.
+GitHub (via the `gh` CLI, `internal/ghclient`) is the only implementation
+today, which is why every prerequisite below is phrased in terms of GitHub —
+but the seam exists so a self-hosted forge (e.g. Gitea/GitLab) can be added
+as an additional `forge.Forge` implementation without changing
+`tasksource`/`ghsync`/write-back themselves. Tasks imported from a given
+forge carry that forge's name in `tasks.source` (`"github"` today).
+
 ## Enabling it
 
 Issue sync is configured **per repo** (Repos page in the UI, or the REST

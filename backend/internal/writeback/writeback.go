@@ -58,13 +58,15 @@ type Writeback struct {
 	closeWithComment func(ctx context.Context, repoName string, issueNumber int, body string) error
 }
 
-// New creates a Writeback backed by the given queries and the real gh CLI.
+// New creates a Writeback backed by the given queries and the real GitHub
+// forge.Forge implementation (internal/ghclient).
 func New(q *gen.Queries) *Writeback {
+	f := ghclient.GitHub{}
 	return &Writeback{
 		q:                q,
-		addLabel:         ghclient.AddIssueLabel,
-		commentOnIssue:   ghclient.CommentOnIssue,
-		closeWithComment: ghclient.CloseIssueWithComment,
+		addLabel:         f.AddIssueLabel,
+		commentOnIssue:   f.CommentOnIssue,
+		closeWithComment: f.CloseIssueWithComment,
 	}
 }
 
@@ -114,6 +116,12 @@ func ParseSourceRef(ref string) (ghName string, issueNumber int, ok bool) {
 // eligible reports whether a task is a candidate for any write-back action at
 // all: it must have come from the GitHub Issues source (source == "github"),
 // carry a parseable source_ref, and belong to a repo with write-back enabled.
+//
+// NOTE for a future additional forge (e.g. Gitea): tasks imported from it
+// will carry a different tasks.source value, so this gate — and the
+// addLabel/commentOnIssue/closeWithComment functions' forge — will need to
+// be selected per-task rather than hardcoded to the GitHub forge as they are
+// today.
 func eligible(task gen.Task, repo gen.Repo) (ghName string, issueNumber int, ok bool) {
 	if task.Source != "github" || task.SourceRef == "" {
 		return "", 0, false

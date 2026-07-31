@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/myinisjap/agent-task-editor/backend/internal/ghclient"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -49,7 +49,7 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 		state = gen.TaskPrReviewState{TaskID: task.ID}
 	}
 
-	var head ghclient.PRHead
+	var head forge.PRHead
 	if s.getPRHead != nil {
 		var err error
 		head, err = s.getPRHead(ctx, repo.ghName, task.Branch)
@@ -280,19 +280,19 @@ func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo rep
 //   - unknown: GitHub has not finished the test merge. Report nothing and
 //     leave the cursor alone - clearing it here would make a conflict flap
 //     back into fresh feedback every time the verdict briefly goes UNKNOWN.
-func (s *Syncer) ingestMergeConflict(ctx context.Context, task gen.Task, head ghclient.PRHead, prState string, state *gen.TaskPrReviewState, log *slog.Logger) []string {
+func (s *Syncer) ingestMergeConflict(ctx context.Context, task gen.Task, head forge.PRHead, prState string, state *gen.TaskPrReviewState, log *slog.Logger) []string {
 	if head.Mergeable == "" {
 		return nil // getPRHead is unwired or failed - nothing was observed
 	}
 	s.setPRMergeable(ctx, task, string(head.Mergeable), log)
 
-	if head.Mergeable == ghclient.MergeableClean {
+	if head.Mergeable == forge.MergeableClean {
 		state.LastConflictSha = nil
 		return nil
 	}
 	// Only an open PR can be usefully un-conflicted; a merged/closed one is
 	// nobody's problem, and GitHub's verdict on it is meaningless.
-	if head.Mergeable != ghclient.MergeableConflicting || prState != "pr_open" {
+	if head.Mergeable != forge.MergeableConflicting || prState != "pr_open" {
 		return nil
 	}
 

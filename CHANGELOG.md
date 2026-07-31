@@ -20,6 +20,17 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Abstracted the git-forge layer behind a `Forge` interface** (`internal/forge`).
+  PR-state sync (`internal/ghsync`), issue import (`internal/tasksource`),
+  issue write-back (`internal/writeback`), and one-click PR creation now talk
+  to a `forge.Forge` interface rather than directly to GitHub-specific code.
+  `internal/ghclient` becomes the GitHub implementation of that interface
+  (`ghclient.GitHub`), registered with a small selection registry
+  (`forge.ForRemote`) keyed off the repo's remote URL host — behavior is
+  unchanged (GitHub via the `gh` CLI remains the only supported forge), but
+  this lays the groundwork for a self-hosted forge (e.g. Gitea/GitLab) to be
+  added as an additional implementation without touching the sync/import/
+  write-back packages. See [docs/task-sources.md](docs/task-sources.md).
 - **Mid-run cost kill switch + budget early warning.** `max_cost_usd`
   budgets previously only gated the *next* dispatch, so a single runaway run
   could blow arbitrarily far past its cap before anything noticed. Providers
