@@ -92,7 +92,6 @@ if (typeof window.ResizeObserver === 'undefined') {
     unobserve() {}
     disconnect() {}
   }
-  // @ts-expect-error -- assigning the stub onto the jsdom global
   window.ResizeObserver = ResizeObserverStub
 }
 
