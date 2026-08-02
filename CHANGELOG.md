@@ -20,6 +20,15 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **On-screen key bar for the mobile chat terminal.** Phone keyboards have no
+  Esc, Tab or arrow keys, which left the Chat page's terminal largely unusable
+  on mobile (notably the Claude CLI's Shift+Tab mode switch). A scrollable key
+  row now sits under the terminal on narrow screens with Esc, Tab, Shift+Tab,
+  the four arrows, `^C`/`^D`/`^Z`, Home/End and PgUp/PgDn, plus a sticky
+  **Ctrl** toggle that folds into the next character typed on the device
+  keyboard (so Ctrl+R, Ctrl+A and friends work). Taps don't steal focus from
+  the terminal, so the on-screen keyboard stays up, and the page now offsets
+  itself by the keyboard's height so the bar isn't hidden behind it.
 - **Abstracted the git-forge layer behind a `Forge` interface, and shipped a
   second forge (Gitea) against it** (`internal/forge`). PR-state sync
   (`internal/ghsync`), issue import (`internal/tasksource`), issue

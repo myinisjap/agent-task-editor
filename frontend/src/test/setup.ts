@@ -83,6 +83,18 @@ if (!window.matchMedia) {
   })
 }
 
+// jsdom doesn't implement ResizeObserver. The chat terminal observes its
+// container to refit xterm, so rendering it without this throws on mount.
+// A no-op is enough: nothing in jsdom ever changes size.
+if (typeof window.ResizeObserver === 'undefined') {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  window.ResizeObserver = ResizeObserverStub
+}
+
 // jsdom (as of the version pinned here) does not implement PointerEvent.
 // @dnd-kit's sensors listen for pointer events, so simulating a drag via
 // fireEvent.pointerDown/Move/Up needs a minimal polyfill.

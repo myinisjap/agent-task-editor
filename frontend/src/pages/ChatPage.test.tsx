@@ -1,20 +1,23 @@
-import { render, waitFor } from '@testing-library/react'
+import { render, waitFor, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { test, expect, vi } from 'vitest'
+import { test, expect, vi, beforeEach } from 'vitest'
 import ChatPage from './ChatPage'
 
 // The backend marshals an empty list as JSON null (Go nil slice), so
 // api.chat.list()/api.repos.list() can resolve to null. ChatPage must coerce
-// these to [] — otherwise .find()/.map() throw and blank the page. This test
-// pins that: it feeds null and asserts the page renders instead of crashing.
+// these to [] — otherwise .find()/.map() throw and blank the page. The first
+// test pins that: it feeds null and asserts the page renders instead of crashing.
+let sessions: unknown = null
 vi.mock('../api/client', () => ({
   api: {
-    chat: { list: () => Promise.resolve(null), get: () => Promise.resolve({ session: null }) },
+    chat: { list: () => Promise.resolve(sessions), get: () => Promise.resolve({ session: null }) },
     repos: { list: () => Promise.resolve(null) },
     providerConfigs: { list: () => Promise.resolve(null) },
   },
 }))
 vi.mock('../api/ws', () => ({ wsTicketParam: () => Promise.resolve('') }))
+
+beforeEach(() => { sessions = null })
 
 test('renders without crashing when the API returns null lists', async () => {
   const { container } = render(<MemoryRouter><ChatPage /></MemoryRouter>)
@@ -27,4 +30,15 @@ test('renders without crashing when the API returns null lists', async () => {
   const sidebar = container.querySelector('.md\\:w-64')
   expect(sidebar?.className).toContain('flex')
   expect(sidebar?.className).not.toContain('hidden')
+})
+
+test('opening a session mounts the on-screen key bar with the terminal', async () => {
+  // Phone keyboards have no Esc/Tab/arrows, so the bar ships with every
+  // terminal — this pins that it is actually wired into TerminalView.
+  sessions = [{ id: 's1', repo_id: 'r1', provider_config_id: 'p1', title: 'demo' }]
+  render(<MemoryRouter><ChatPage /></MemoryRouter>)
+  fireEvent.click(await screen.findByText('demo'))
+  const bar = await screen.findByTestId('terminal-key-bar')
+  expect(bar.className).toContain('md:hidden') // mobile only
+  expect(screen.getByRole('button', { name: 'Shift+Tab' })).toBeInTheDocument()
 })
