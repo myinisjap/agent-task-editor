@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -47,7 +46,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	slog.Info("opencode args", "args", args)
 	cmd := exec.CommandContext(runCtx, r.binary(), args...)
 	cmd.Dir = input.RepoPath
-	cmd.Env = mergeEnv(os.Environ(), input.AgentConfig.Env)
+	cmd.Env = mergeEnv(allowlistEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

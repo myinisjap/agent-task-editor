@@ -230,7 +230,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 
 	cmd := exec.CommandContext(runCtx, r.binary(), args...)
 	cmd.Dir = input.RepoPath
-	env := mergeEnv(os.Environ(), input.AgentConfig.Env)
+	env := mergeEnv(allowlistEnv(claudeEnvAllowlist), input.AgentConfig.Env)
 	if tok := ClaudeOAuthAccessToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
 	}

@@ -24,6 +24,15 @@ The `qwen` binary must be installed and configured on the host (or container). R
 
 The `qwen` CLI is not installed in the backend image by default — build with `INSTALL_QWEN_CLI=true` to have the backend `Dockerfile` `npm install -g @qwen-code/qwen-code` for you (see the backend `Dockerfile`'s `INSTALL_QWEN_CLI` build arg), or install it yourself with `npm i -g @qwen-code/qwen-code` and mount it into the container.
 
+**Subprocess environment:** the `qwen` subprocess does not inherit the
+backend's full environment (see [providers/README.md § Subprocess
+environment](README.md#subprocess-environment)). It receives `PATH`/`HOME`
+plus `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `GEMINI_API_KEY`,
+`GOOGLE_API_KEY` if set on the backend (plus the always-injected
+`QWEN_CODE_SUPPRESS_YOLO_WARNING` above), a handful of locale/proxy/TLS
+vars, and this agent config's own `env` field. Any other backend env var
+will not reach the CLI.
+
 ## MCP Tools
 
 **All 6 MCP tools are supported** (7 with `create_subtask`, which is exposed only when the agent config enables subtasks) when `MCP_SERVER_PATH` is set — identical to the `claude` provider.

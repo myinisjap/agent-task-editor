@@ -621,3 +621,25 @@ so humans aren't paged for problems that will resolve themselves:
 The `env` field on a [Provider Config](#provider-configs) (referenced by an agent config's `provider_config_id`, or a chat session's) passes additional env vars to the subprocess. Keys that could hijack process execution are blocked and logged as warnings:
 
 `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`
+
+**Subprocess environment is allowlisted per provider, not inherited wholesale.**
+CLI-based providers (`claude`, `qwen_code`, `codex_cli`, `opencode`) do not receive the
+backend process's full environment. Each one only sees a small, hardcoded
+per-provider allowlist pulled from the backend's own env (`PATH`/`HOME` for
+binary resolution and credential/config lookup, a few locale/proxy/TLS-trust
+vars, and that provider's specific API-key/base-URL vars — see
+[docs/providers/README.md § Subprocess environment](providers/README.md#subprocess-environment)
+and each provider's own doc for the exact list) plus whatever is set via the
+`env` field above. Backend-only secrets like `LLM_API_KEY` (used by the
+deprecated `llm`/`anthropic` providers) or the API's own `API_TOKEN` are
+never visible to an agent subprocess unless explicitly re-exposed via `env`.
+If an agent needs a value that isn't on its provider's allowlist, set it via
+`env` rather than relying on it being present in the backend's process
+environment.
+
+This scoping also covers the **interactive chat terminal** — the
+`/chat/sessions/{id}/terminal` WebSocket that runs a live `claude`/`codex`/
+`qwen`/`opencode` process in a PTY per chat session (`agent.TerminalManager`
+in `backend/internal/agent/terminal.go`). It has the same Bash access as a
+headless run, so it is launched with the same per-provider allowlist rather
+than the backend's full environment.

@@ -20,6 +20,15 @@ Output is parsed as NDJSON. The `--` separator prevents the prompt content from 
 
 Opencode manages its own auth and model configuration. You must have the `opencode` binary installed and configured on the host (or in the container). Refer to [opencode's documentation](https://opencode.ai/docs) for setup.
 
+**Subprocess environment:** the `opencode` subprocess does not inherit the
+backend's full environment (see [providers/README.md § Subprocess
+environment](README.md#subprocess-environment)). It receives `PATH`/`HOME`
+(opencode's own auth store lives under `$HOME`/XDG dirs, which are also
+allowlisted) plus `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+`GOOGLE_API_KEY` if set on the backend, a handful of locale/proxy/TLS vars,
+and this agent config's own `env` field. Any other backend env var will not
+reach the CLI.
+
 ## MCP Tools
 
 **Not supported.** Opencode has no `--mcp-config` flag. The MCP sidecar is not launched for this provider.

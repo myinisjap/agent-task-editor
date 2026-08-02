@@ -6,7 +6,6 @@ package providers
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -145,7 +144,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	cmd := exec.CommandContext(runCtx, r.binary(), args...)
 	cmd.Dir = input.RepoPath
 	// QWEN_CODE_SUPPRESS_YOLO_WARNING keeps the headless yolo warning out of stderr logs.
-	cmd.Env = mergeEnv(os.Environ(), input.AgentConfig.Env)
+	cmd.Env = mergeEnv(allowlistEnv(qwenEnvAllowlist), input.AgentConfig.Env)
 	cmd.Env = append(cmd.Env, "QWEN_CODE_SUPPRESS_YOLO_WARNING=1")
 
 	stdout, err := cmd.StdoutPipe()
