@@ -274,6 +274,13 @@ func main() {
 	// single interactive process). Streamed over the /chat/sessions/{id}/terminal
 	// WebSocket.
 	terminal := agent.NewTerminalManager()
+	// Scope each chat session's CLI subprocess env to that provider's
+	// allowlist instead of the backend's full environment — the interactive
+	// terminal launches the same claude/codex/qwen/opencode binaries (with
+	// the same Bash access) as the headless runners, so it needs the same
+	// #321 protection against leaking backend-only secrets (LLM_API_KEY,
+	// API_TOKEN, DB creds, etc.) to the CLI's shell.
+	terminal.EnvAllowlist = providers.EnvAllowlistFor
 	// Expose the board MCP tools (list_repos/list_workflows/create_task) to chat
 	// sessions when MCP_BOARD_PATH points at the mcp-board binary. This is a
 	// human-driven surface (the chat tab), deliberately separate from the in-flow

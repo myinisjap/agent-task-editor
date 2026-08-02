@@ -53,3 +53,10 @@ an agent subprocess unless it happens to also be on that provider's
 allowlist. If an agent needs a value that isn't on its provider's allowlist,
 set it via that agent config's `env` field rather than relying on it being
 present in the backend's environment.
+
+The same allowlisting applies to the **interactive chat terminal**
+(`TerminalManager`, the `/chat/sessions/{id}/terminal` WebSocket) — it
+launches the same `claude`/`codex`/`qwen`/`opencode` binaries with the same
+Bash access, so it's scoped via the same per-provider allowlist
+(`providers.EnvAllowlistFor`, wired in via `TerminalManager.EnvAllowlist`
+from `cmd/server`) rather than the backend's full environment.

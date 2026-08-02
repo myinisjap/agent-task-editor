@@ -210,6 +210,74 @@ func TestTerminalManager_ChatMCPInjectsEnv(t *testing.T) {
 	}
 }
 
+// TestTerminalManager_EnvAllowlistScopesSubprocessEnv verifies that when
+// EnvAllowlist is configured, the launched CLI's env is exactly what that
+// func returns (plus TERM/COLORTERM/extraEnv) — a backend-only secret
+// present in the test's own environment (standing in for the backend
+// process's os.Environ()) must not reach the PTY, since EnvAllowlist is
+// supposed to replace os.Environ() as the base, not supplement it. This is
+// the interactive-terminal counterpart to the #321 fix already covering the
+// headless CLI runners (see providers/cli_test.go).
+func TestTerminalManager_EnvAllowlistScopesSubprocessEnv(t *testing.T) {
+	t.Setenv("ATE_TERMINAL_TEST_SECRET", "leaked-if-present")
+
+	m := NewTerminalManager()
+	sessionID := "allowlist-sess"
+	defer m.Stop(sessionID)
+
+	var gotProvider string
+	m.EnvAllowlist = func(provider string) []string {
+		gotProvider = provider
+		return []string{"ATE_TERMINAL_TEST_ALLOWED=yes"}
+	}
+
+	orig := buildTerminalCommand
+	buildTerminalCommand = func(_, _ string, _ bool) (string, []string, error) { return "sh", nil, nil }
+	t.Cleanup(func() { buildTerminalCommand = orig })
+
+	repoDir := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, conn)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	// The allowlisted var must reach the PTY.
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("echo ALLOWED=$ATE_TERMINAL_TEST_ALLOWED\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out := readUntil(t, ctx, conn, "ALLOWED=yes")
+	if !strings.Contains(out, "ALLOWED=yes") {
+		t.Errorf("EnvAllowlist's env did not reach the PTY; got:\n%s", out)
+	}
+
+	// The backend-only secret must NOT reach the PTY.
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("echo SECRET=[$ATE_TERMINAL_TEST_SECRET]\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out = readUntil(t, ctx, conn, "SECRET=[]")
+	if strings.Contains(out, "leaked-if-present") {
+		t.Errorf("backend-only secret leaked into terminal subprocess env; got:\n%s", out)
+	}
+
+	if gotProvider != "claude" {
+		t.Errorf("EnvAllowlist called with provider=%q, want claude", gotProvider)
+	}
+}
+
 // TestTerminalManager_MaxSessionsCapsNewSessionsOnly verifies that once
 // MaxSessions live processes are running, starting a *new* session is
 // refused with ErrTooManySessions, while reattaching to an *existing*

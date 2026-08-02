@@ -636,3 +636,10 @@ never visible to an agent subprocess unless explicitly re-exposed via `env`.
 If an agent needs a value that isn't on its provider's allowlist, set it via
 `env` rather than relying on it being present in the backend's process
 environment.
+
+This scoping also covers the **interactive chat terminal** — the
+`/chat/sessions/{id}/terminal` WebSocket that runs a live `claude`/`codex`/
+`qwen`/`opencode` process in a PTY per chat session (`agent.TerminalManager`
+in `backend/internal/agent/terminal.go`). It has the same Bash access as a
+headless run, so it is launched with the same per-provider allowlist rather
+than the backend's full environment.

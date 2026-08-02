@@ -151,6 +151,37 @@ func allowlistEnv(allow map[string]bool) []string {
 	return out
 }
 
+// providerEnvAllowlists maps each CLI provider string to its allowlist, for
+// callers (e.g. the interactive terminal manager, which launches the same
+// CLI binaries as the headless runners) that only have the provider string,
+// not a *Runner. An unrecognized provider gets commonBaseEnvKeys only, which
+// is a safe default (PATH/HOME + locale/proxy/TLS vars, no API keys) rather
+// than falling back to no allowlist (which would either panic or, worse,
+// silently pass everything).
+var providerEnvAllowlists = map[string]map[string]bool{
+	"claude":    claudeEnvAllowlist,
+	"codex_cli": codexEnvAllowlist,
+	"qwen_code": qwenEnvAllowlist,
+	"opencode":  opencodeEnvAllowlist,
+}
+
+// EnvAllowlistFor returns the allowlisted subset of the backend's own
+// environment for the given provider string — the same allowlist the
+// headless CLI runners (ClaudeRunner, CodexRunner, QwenRunner,
+// OpencodeRunner) use, exposed for other callers that launch the same CLI
+// binaries (currently the interactive chat terminal; see
+// agent.TerminalManager.EnvAllowlist in cmd/server's wiring). Never returns
+// the full os.Environ() — an unrecognized provider string falls back to
+// commonBaseEnvKeys only (PATH/HOME/locale/proxy/TLS vars; no provider API
+// keys), never to "no filtering at all".
+func EnvAllowlistFor(provider string) []string {
+	allow, ok := providerEnvAllowlists[provider]
+	if !ok {
+		allow = commonBaseEnvKeys
+	}
+	return allowlistEnv(allow)
+}
+
 // rawDump is a dev-only tee of raw stdout stream-json lines, gated by the
 // AGENT_RAW_LOG_DIR env var. When unset, all methods are no-ops on a nil
 // receiver so the hot path stays clean. Used to review provider output and

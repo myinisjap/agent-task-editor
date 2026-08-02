@@ -180,6 +180,50 @@ func TestComposedSubprocessEnv_ExcludesBackendSecrets(t *testing.T) {
 	}
 }
 
+// TestEnvAllowlistFor_MatchesProviderAllowlist verifies the exported
+// EnvAllowlistFor lookup (used by the interactive terminal manager — see
+// agent.TerminalManager.EnvAllowlist — since that package can't import
+// providers directly) returns the same result as calling allowlistEnv with
+// that provider's allowlist directly, for every known provider string.
+func TestEnvAllowlistFor_MatchesProviderAllowlist(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sentinel-anthropic")
+	t.Setenv("OPENAI_API_KEY", "sentinel-openai")
+	t.Setenv("LLM_API_KEY", "sentinel-secret")
+
+	providerNames := map[string]map[string]bool{
+		"claude":    claudeEnvAllowlist,
+		"codex_cli": codexEnvAllowlist,
+		"qwen_code": qwenEnvAllowlist,
+		"opencode":  opencodeEnvAllowlist,
+	}
+	for name, allow := range providerNames {
+		t.Run(name, func(t *testing.T) {
+			got := EnvAllowlistFor(name)
+			want := allowlistEnv(allow)
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("EnvAllowlistFor(%q) = %v, want %v", name, got, want)
+			}
+			assertNotContainsKey(t, got, "LLM_API_KEY")
+		})
+	}
+}
+
+// TestEnvAllowlistFor_UnknownProviderFallsBackToCommonBase verifies an
+// unrecognized provider string never falls back to the full environment —
+// only commonBaseEnvKeys (PATH/HOME/locale/proxy/TLS vars, no provider API
+// keys) — so a typo'd or future provider string can't accidentally regress
+// to the pre-#321 os.Environ() passthrough.
+func TestEnvAllowlistFor_UnknownProviderFallsBackToCommonBase(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sentinel-anthropic")
+	t.Setenv("LLM_API_KEY", "sentinel-secret")
+	t.Setenv("HOME", "/home/sentinel")
+
+	got := EnvAllowlistFor("some-unknown-provider")
+	assertContains(t, got, "HOME=/home/sentinel")
+	assertNotContainsKey(t, got, "ANTHROPIC_API_KEY")
+	assertNotContainsKey(t, got, "LLM_API_KEY")
+}
+
 func assertContains(t *testing.T, env []string, want string) {
 	t.Helper()
 	for _, kv := range env {

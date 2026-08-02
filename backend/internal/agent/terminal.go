@@ -28,6 +28,16 @@ import (
 // provisioner (the default) leaves chat sessions exactly as before.
 type ChatMCPProvisioner func(provider, sessionID string) (args []string, env []string, cleanup func(), err error)
 
+// EnvAllowlistFunc returns the allowlisted subset of the backend's own
+// environment for the given provider — the base env for that provider's CLI
+// subprocess. Injected from cmd/server with providers.EnvAllowlistFor so
+// this package stays free of provider-specific allowlists, mirroring
+// ChatMCPProvisioner above. A nil func (the zero value) falls back to
+// os.Environ() for backward compatibility with any caller that doesn't wire
+// it up — see the doc comment on TerminalManager.EnvAllowlist for why this
+// should always be set in production.
+type EnvAllowlistFunc func(provider string) []string
+
 // TerminalManager runs interactive CLI sessions in a PTY, one live process per
 // chat session. Unlike the task Pool (headless `-p` runs), the process stays
 // alive across WebSocket disconnects so a browser refresh reattaches to the same
@@ -45,6 +55,16 @@ type TerminalManager struct {
 	// ChatMCP, when set, wires extra MCP tools (the board server) into each
 	// session's CLI. Nil disables the feature (no change to the launched CLI).
 	ChatMCP ChatMCPProvisioner
+
+	// EnvAllowlist, when set, scopes each session's CLI subprocess env to
+	// that provider's allowlist (see providers.EnvAllowlistFor) instead of
+	// the backend's full os.Environ() — closing the same backend-secret-leak
+	// path (LLM_API_KEY, API_TOKEN, DB creds, etc. otherwise visible to
+	// `env`/`printenv` inside the CLI's Bash tool) that the headless runners
+	// were scoped against in #321. Wired from cmd/server with
+	// providers.EnvAllowlistFor; nil (e.g. in tests that don't set it) falls
+	// back to os.Environ() for backward compatibility.
+	EnvAllowlist EnvAllowlistFunc
 
 	// MaxSessions caps the number of concurrent PTY subprocesses this manager
 	// will keep alive at once. Each session holds a live subprocess plus a
@@ -196,12 +216,26 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 
 	cmd := exec.Command(name, args...)
 	cmd.Dir = repoPath // ← run the CLI in the selected repo's worktree
+	// Base env: the provider's allowlisted subset of the backend's own
+	// environment (see EnvAllowlist doc comment / #321), not the full
+	// os.Environ() — a chat session's CLI has the same Bash access as a
+	// headless run, so it must not be able to read backend-only secrets
+	// (LLM_API_KEY, API_TOKEN, DB creds, etc.) via `env`/`printenv`/
+	// /proc/self/environ either. Falls back to os.Environ() only when
+	// EnvAllowlist isn't wired up (e.g. some tests), to avoid silently
+	// breaking callers that haven't set it.
+	var baseEnv []string
+	if m.EnvAllowlist != nil {
+		baseEnv = m.EnvAllowlist(provider)
+	} else {
+		baseEnv = os.Environ()
+	}
 	// Advertise a color-capable terminal. The backend process has no TERM in the
 	// container, so without this the PTY inherits an empty TERM and many CLIs
 	// disable color. xterm.js on the client is a 256-color/truecolor emulator, so
-	// these values are accurate. Set after os.Environ() so they win over any
+	// these values are accurate. Set after the base env so they win over any
 	// inherited value.
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = append(baseEnv, "TERM=xterm-256color", "COLORTERM=truecolor")
 	cmd.Env = append(cmd.Env, extraEnv...)
 
 	tty, err := pty.Start(cmd)
