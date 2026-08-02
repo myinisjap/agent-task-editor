@@ -89,6 +89,117 @@ func TestMergeEnv_EmptyExtra(t *testing.T) {
 	}
 }
 
+// --- allowlistEnv / per-provider allowlists (cli.go, #321) ---
+
+// allProviderAllowlists lists every per-provider allowlist so the shared
+// regression checks below (PATH/HOME present, backend secrets absent) run
+// against all of them without duplicating the test body per provider.
+var allProviderAllowlists = map[string]map[string]bool{
+	"claude":   claudeEnvAllowlist,
+	"codex":    codexEnvAllowlist,
+	"qwen":     qwenEnvAllowlist,
+	"opencode": opencodeEnvAllowlist,
+}
+
+// TestAllowlistEnv_IncludesAllowedExcludesSecrets verifies allowlistEnv pulls
+// through allowlisted keys (using a provider-specific key as a sentinel) but
+// never leaks a backend-only secret that isn't on the allowlist — the core
+// security property of #321.
+func TestAllowlistEnv_IncludesAllowedExcludesSecrets(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "sentinel-secret")
+	t.Setenv("API_TOKEN", "sentinel-token")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-sentinel")
+	t.Setenv("HOME", "/home/sentinel")
+	t.Setenv("PATH", "/usr/bin:/bin")
+
+	out := allowlistEnv(claudeEnvAllowlist)
+
+	assertContains(t, out, "ANTHROPIC_API_KEY=anthropic-sentinel")
+	assertContains(t, out, "HOME=/home/sentinel")
+	assertContains(t, out, "PATH=/usr/bin:/bin")
+	assertNotContainsKey(t, out, "LLM_API_KEY")
+	assertNotContainsKey(t, out, "API_TOKEN")
+}
+
+// TestAllowlistEnv_EveryProviderHasPathAndHome is a regression guard for the
+// binary-resolution/credential-path subtlety noted in #321: every provider's
+// binary() resolves a bare name via PATH, and every CLI reads
+// credentials/config from HOME, so both must always be in every provider
+// allowlist.
+func TestAllowlistEnv_EveryProviderHasPathAndHome(t *testing.T) {
+	for name, allow := range allProviderAllowlists {
+		t.Run(name, func(t *testing.T) {
+			if !allow["PATH"] {
+				t.Errorf("%s allowlist missing PATH (required to resolve the CLI binary)", name)
+			}
+			if !allow["HOME"] {
+				t.Errorf("%s allowlist missing HOME (required for CLI credential/config lookup)", name)
+			}
+		})
+	}
+}
+
+// TestAllowlistEnv_NoProviderLeaksBackendSecrets verifies that none of the
+// backend-only secrets are present in any provider's allowlist output, and
+// that none of the allowlists happen to key on a name that would re-admit
+// one of those secrets.
+func TestAllowlistEnv_NoProviderLeaksBackendSecrets(t *testing.T) {
+	secrets := []string{"LLM_API_KEY", "LLM_BASE_URL", "API_TOKEN", "DATABASE_URL", "DB_PASSWORD"}
+	for _, s := range secrets {
+		t.Setenv(s, "leaked-if-present-"+s)
+	}
+
+	for name, allow := range allProviderAllowlists {
+		t.Run(name, func(t *testing.T) {
+			out := allowlistEnv(allow)
+			for _, s := range secrets {
+				assertNotContainsKey(t, out, s)
+			}
+		})
+	}
+}
+
+// TestComposedSubprocessEnv_ExcludesBackendSecrets covers AC5 directly: the
+// full composed subprocess env (allowlist + operator AgentConfig.Env, via
+// mergeEnv) for every provider must not include a backend-only sentinel set
+// via the test's own environment, while still including the operator-
+// supplied extra var.
+func TestComposedSubprocessEnv_ExcludesBackendSecrets(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "sentinel-secret")
+	t.Setenv("API_TOKEN", "sentinel-token")
+
+	extra := map[string]string{"CUSTOM": "x"}
+
+	for name, allow := range allProviderAllowlists {
+		t.Run(name, func(t *testing.T) {
+			out := mergeEnv(allowlistEnv(allow), extra)
+			assertNotContainsKey(t, out, "LLM_API_KEY")
+			assertNotContainsKey(t, out, "API_TOKEN")
+			assertContains(t, out, "CUSTOM=x")
+		})
+	}
+}
+
+func assertContains(t *testing.T, env []string, want string) {
+	t.Helper()
+	for _, kv := range env {
+		if kv == want {
+			return
+		}
+	}
+	t.Errorf("expected %q in env, got %v", want, env)
+}
+
+func assertNotContainsKey(t *testing.T, env []string, key string) {
+	t.Helper()
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			t.Errorf("expected key %q to be absent from env, but found %q in %v", key, kv, env)
+		}
+	}
+}
+
 // --- openRawDump / rawDump (cli.go) ---
 
 // TestOpenRawDump_NoopWhenEnvUnset verifies openRawDump returns nil (a

@@ -551,6 +551,23 @@ triggers the "Release" workflow the same way.
   finish before rendering anything, so it shows real state on the first
   paint instead of a placeholder that immediately disappears.
 
+### Security
+- **CLI agent subprocesses (`claude`, `codex_cli`, `qwen_code`, `opencode`)
+  no longer inherit the full backend process environment.** Previously each
+  provider ran its CLI with `os.Environ()` as the base env, so any agent with
+  Bash access could run `env`/`printenv`/read `/proc/self/environ` and see
+  every backend secret — `LLM_API_KEY`, `API_TOKEN`, database credentials,
+  cloud creds, etc. — regardless of the task it was working on. Each provider
+  now passes only a small per-provider env-var allowlist (`PATH`/`HOME` for
+  binary resolution and credential lookup, locale/proxy/TLS-trust vars, and
+  that provider's own API-key/base-URL vars) pulled from the backend's
+  environment, merged with the operator-supplied `AgentConfig.Env` (still
+  filtered through the existing `dangerousEnvKeys` block). If you were
+  relying on some other backend env var being visible inside agent runs
+  (e.g. a custom tool token set only on the backend), set it explicitly via
+  that agent config's `env` field instead — it will no longer pass through
+  automatically. (#321)
+
 ### Changed
 - **A run that exhausts `max_turns` now escalates to `waiting_human` instead
   of silently re-dispatching with a fresh turn budget.** Previously, hitting

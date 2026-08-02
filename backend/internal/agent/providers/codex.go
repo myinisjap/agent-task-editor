@@ -217,7 +217,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 
 	cmd := exec.CommandContext(runCtx, r.binary(), args...)
 	cmd.Dir = input.RepoPath
-	env := mergeEnv(os.Environ(), input.AgentConfig.Env)
+	env := mergeEnv(allowlistEnv(codexEnvAllowlist), input.AgentConfig.Env)
 	if codexHome != nil {
 		env = append(env, "CODEX_HOME="+codexHome.HomeDir)
 	}

@@ -29,3 +29,27 @@ Each provider file describes the credentials, MCP support, limitations, and setu
 | `store_info` | ✅ MCP | ✅ native | ❌ | ✅ MCP | ✅ MCP | ✅ native |
 
 "MCP" = via MCP sidecar (requires `MCP_SERVER_PATH`). "native" = built-in Go tool-use loop.
+
+## Subprocess environment
+
+The CLI-based providers (`claude`, `qwen_code`, `codex_cli`, `opencode`) do **not**
+inherit the backend process's full environment. Each provider subprocess only
+receives:
+
+- A small **per-provider allowlist** pulled from the backend's own
+  environment — `PATH`/`HOME` (so the CLI can be found and can read its own
+  credentials/config), a few locale/proxy/TLS-trust vars, and that provider's
+  specific auth vars (e.g. `ANTHROPIC_API_KEY` for `claude`, `OPENAI_API_KEY`
+  for `codex_cli`). See each provider's own "Credentials" section for the
+  exact list, or `backend/internal/agent/providers/cli.go` for the
+  authoritative allowlists.
+- Whatever the agent config's own `env` field sets explicitly (filtered
+  through a small execution-hijack denylist — `PATH`, `LD_PRELOAD`, `HOME`,
+  etc. can't be overridden this way).
+
+This means a backend-only secret (e.g. the deprecated `llm`/`anthropic`
+providers' `LLM_API_KEY`, or the API's own `API_TOKEN`) is never visible to
+an agent subprocess unless it happens to also be on that provider's
+allowlist. If an agent needs a value that isn't on its provider's allowlist,
+set it via that agent config's `env` field rather than relying on it being
+present in the backend's environment.
