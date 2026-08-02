@@ -540,6 +540,16 @@ triggers the "Release" workflow the same way.
   an oversized line so the child can never block on it, and surfaces a
   visible warning in the run log plus a failed (not `completed`) result when
   the cap is hit.
+- **The "Get started" onboarding checklist no longer flashes on every board
+  load/login.** `OnboardingChecklist` derived each step's completion from the
+  repos/provider-configs/agent-configs/tasks stores, all of which start empty
+  until their first fetch resolves — so on a fresh page load (or right after
+  logging in, when every store is reset) the checklist briefly rendered with
+  every step marked incomplete before flipping to its real, often-hidden
+  state once the fetches came back. It now waits for the initial
+  repo/provider-config/agent-config refresh and the initial task fetch to
+  finish before rendering anything, so it shows real state on the first
+  paint instead of a placeholder that immediately disappears.
 
 ### Changed
 - **A run that exhausts `max_turns` now escalates to `waiting_human` instead

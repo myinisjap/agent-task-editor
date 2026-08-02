@@ -40,6 +40,13 @@ export default function OnboardingChecklist() {
   const { configs: agentConfigs, fetch: fetchAgentConfigs } = useAgentsStore()
   const [checks, setChecks] = useState<ProviderCheck[]>([])
   const [dismissed, setDismissed] = useState<boolean>(readDismissed)
+  // All store data starts out empty until the first fetch resolves, which
+  // would otherwise make every step look incomplete for a frame on each
+  // reload/login — showing the checklist in a flash even when onboarding
+  // is already done. Gate rendering on the initial load finishing so we
+  // only ever show real state, never the empty-store placeholder state.
+  const [initialLoadDone, setInitialLoadDone] = useState(false)
+  const [tasksLoadDone, setTasksLoadDone] = useState(false)
   // Guards against overlapping/duplicate refreshes when several `focus`
   // events fire in quick succession (e.g. alt-tabbing repeatedly).
   const refreshing = useRef(false)
@@ -54,6 +61,7 @@ export default function OnboardingChecklist() {
       api.health.providers().then((r) => setChecks(r.checks ?? [])).catch(() => setChecks([])),
     ]).finally(() => {
       refreshing.current = false
+      setInitialLoadDone(true)
     })
   }
 
@@ -74,7 +82,8 @@ export default function OnboardingChecklist() {
     // Tasks are already kept fresh by BoardPage's own fetch + WS
     // subscription; make sure at least one fetch has happened so a
     // checklist rendered before BoardPage's effect runs still has data.
-    if (tasks.length === 0) fetchTasks()
+    if (tasks.length === 0) fetchTasks().finally(() => setTasksLoadDone(true))
+    else setTasksLoadDone(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -126,7 +135,7 @@ export default function OnboardingChecklist() {
 
   const allComplete = steps.every((s) => s.complete)
 
-  if (dismissed || allComplete) return null
+  if (dismissed || !initialLoadDone || !tasksLoadDone || allComplete) return null
 
   const firstIncompleteKey = steps.find((s) => !s.complete)?.key
 
