@@ -220,6 +220,15 @@ export function ChatHelp() {
           keeps its own scrollback and can be resumed later from the session list on the left.
         </p>
       </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">On mobile</h3>
+        <p>
+          A key bar sits under the terminal with the keys a phone keyboard lacks — Esc, Tab,
+          Shift+Tab (mode switching in the Claude CLI), arrows, Home/End and page up/down. Scroll
+          it sideways for more. <strong>Ctrl</strong> is sticky: tap it, then type a letter on your
+          keyboard to send Ctrl+that key (Ctrl+R, Ctrl+A, …); tap it again to cancel.
+        </p>
+      </section>
     </>
   )
 }

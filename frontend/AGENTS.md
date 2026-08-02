@@ -25,6 +25,7 @@ src/
 │   ├── DependenciesPanel.tsx  Task dependency list + add/remove UI
 │   ├── SubtasksPanel.tsx      Subtask checklist + add/remove UI
 │   ├── board/        AgentGroupColumn, AgentLogEntry, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
+│   ├── chat/          TerminalKeyBar (mobile Esc/Tab/arrow/Ctrl row for the chat terminal)
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
 │   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, WorkflowFlowchart
 ├── pages/
@@ -52,6 +53,8 @@ src/
 │   ├── condensedBoard.ts    Groups workflow labels into condensed/agent-group board columns
 │   ├── diffComments.ts      Maps API review-comment wire type to the diff viewer's view model
 │   ├── useIsMobile.ts       Hook for responsive breakpoint detection
+│   ├── useKeyboardInset.ts  Hook: height of the on-screen keyboard overlapping the layout viewport
+│   ├── termKeys.ts          Mobile terminal key-bar sequences + Ctrl-modifier folding
 │   ├── humanGate.ts         isHumanGateLabel() — is a workflow label one only a human can move a task out of
 │   ├── notify.ts            showHumanNeededNotification() — de-duped browser Notification wrapper
 │   └── useHumanNeededNotifications.ts  Hook mounted at the app root: WS-driven "needs human" notifications

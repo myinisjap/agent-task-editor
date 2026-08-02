@@ -8,6 +8,9 @@ import { wsTicketParam } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { ChatHelp } from '../components/shared/pageHelp'
+import TerminalKeyBar from '../components/chat/TerminalKeyBar'
+import { toControlChar } from '../lib/termKeys'
+import { useKeyboardInset } from '../lib/useKeyboardInset'
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([])
@@ -18,6 +21,9 @@ export default function ChatPage() {
   // New-session form
   const [newRepo, setNewRepo] = useState('')
   const [newProviderConfigId, setNewProviderConfigId] = useState('')
+  // Mobile: the on-screen keyboard overlays the bottom of the layout viewport,
+  // so pad the page by its height to keep the terminal key bar above it.
+  const keyboardInset = useKeyboardInset()
 
   // Initial load: sessions + repos (repos needed for the new-session picker)
   // + provider configs (needed to create a session and to resolve each
@@ -53,7 +59,11 @@ export default function ChatPage() {
   const active = sessions.find((s) => s.id === activeId)
 
   return (
-    <div className="h-full min-h-0 flex" data-testid="chat-page">
+    <div
+      className="h-full min-h-0 flex"
+      style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
+      data-testid="chat-page"
+    >
       {/* Left: session list + new-session form.
           Mobile: full width, hidden once a chat is open. Desktop: fixed rail. */}
       <div className={`${active ? 'hidden md:flex' : 'flex'} w-full md:w-64 shrink-0 border-r border-slate-800 flex-col min-h-0 bg-slate-900`}>
@@ -167,6 +177,14 @@ export default function ChatPage() {
 // reattaches to the same live CLI.
 function TerminalView({ sessionId }: { sessionId: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // Set inside the effect; the key bar reaches the live terminal/socket through
+  // these rather than forcing a remount when the connection is replaced.
+  const sendRef = useRef<(data: string) => void>(() => {})
+  const focusRef = useRef<() => void>(() => {})
+  // Sticky Ctrl: the ref is what onData reads (it must see the current value
+  // without re-registering the handler); the state only drives the button style.
+  const ctrlRef = useRef(false)
+  const [ctrlArmed, setCtrlArmed] = useState(false)
 
   useEffect(() => {
     const container = containerRef.current
@@ -253,8 +271,25 @@ function TerminalView({ sessionId }: { sessionId: string }) {
 
     // Keystrokes -> PTY. Registered once; reads the current ws each time so it
     // keeps working across reconnects (don't re-register inside connect()).
-    term.onData((data) => {
+    function send(data: string) {
       if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data))
+    }
+    sendRef.current = send
+    focusRef.current = () => term.focus()
+
+    term.onData((data) => {
+      // An armed Ctrl (from the key bar) folds into the next character typed on
+      // the device keyboard, giving phones a working Ctrl+R / Ctrl+A / etc.
+      if (ctrlRef.current) {
+        ctrlRef.current = false
+        setCtrlArmed(false)
+        const ctrl = toControlChar(data)
+        if (ctrl !== null) {
+          send(ctrl)
+          return
+        }
+      }
+      send(data)
     })
 
     // Refit on container resize (desktop pane drag, orientation change).
@@ -275,6 +310,8 @@ function TerminalView({ sessionId }: { sessionId: string }) {
 
     return () => {
       closedByUs = true
+      sendRef.current = () => {}
+      focusRef.current = () => {}
       if (reconnectTimer) clearTimeout(reconnectTimer)
       if (keepAliveTimer) clearInterval(keepAliveTimer)
       ro.disconnect()
@@ -286,7 +323,25 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     }
   }, [sessionId])
 
+  // Key-bar press: write the sequence, then hand focus back to xterm so the
+  // on-screen keyboard stays up.
+  function pressKey(seq: string) {
+    sendRef.current(seq)
+    focusRef.current()
+  }
+
+  function toggleCtrl() {
+    ctrlRef.current = !ctrlRef.current
+    setCtrlArmed(ctrlRef.current)
+    focusRef.current()
+  }
+
   // touch-manipulation avoids the 300ms tap delay / double-tap-zoom on the
   // terminal; the flex box gives it a real height for FitAddon to measure.
-  return <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-4 touch-manipulation" />
+  return (
+    <>
+      <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-4 touch-manipulation" />
+      <TerminalKeyBar onKey={pressKey} onToggleCtrl={toggleCtrl} ctrlArmed={ctrlArmed} />
+    </>
+  )
 }
