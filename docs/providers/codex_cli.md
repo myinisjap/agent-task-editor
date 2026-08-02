@@ -29,6 +29,14 @@ codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandb
 
 The `codex` binary authenticates via **"Sign in with ChatGPT"** (`codex login`, interactively, once — writes `~/.codex/auth.json`) for Plus/Pro/Business/Edu/Enterprise ChatGPT plans, or the `OPENAI_API_KEY` environment variable for direct API billing. No server-side wiring beyond making sure the binary/credentials are available to the backend process (or container).
 
+**Subprocess environment:** the `codex` subprocess does not inherit the
+backend's full environment (see [providers/README.md § Subprocess
+environment](README.md#subprocess-environment)). It receives `PATH`/`HOME`
+plus `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG`/`OPENAI_ORGANIZATION`,
+`CODEX_HOME` (also set explicitly per-run — see below) if set on the
+backend, plus a handful of locale/proxy/TLS vars, plus this agent config's
+own `env` field. Any other backend env var will not reach the CLI.
+
 ## MCP Tools
 
 **All 6 MCP tools are supported** (7 with `create_subtask`, which is exposed only when the agent config enables subtasks) when `MCP_SERVER_PATH` is set, via a different wiring mechanism than `claude`/`qwen_code`:

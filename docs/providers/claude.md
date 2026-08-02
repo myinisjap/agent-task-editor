@@ -50,6 +50,15 @@ volumes:
 
 The `ANTHROPIC_AUTH_TOKEN` is auto-injected from `~/.claude/.credentials.json` at run time.
 
+**Subprocess environment:** the `claude` subprocess does not inherit the
+backend's full environment (see [providers/README.md § Subprocess
+environment](README.md#subprocess-environment)). It receives `PATH`/`HOME`
+plus `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_MODEL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
+`DISABLE_TELEMETRY`, `DISABLE_AUTOUPDATER` (if set on the backend), plus a
+handful of locale/proxy/TLS vars, plus this agent config's own `env` field.
+Any other backend env var will not reach the CLI.
+
 ### Automatic OAuth token refresh
 
 OAuth access tokens expire after a few hours. Before injecting the token
