@@ -393,10 +393,14 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		applyUsage(&res, finalUsage)
 		res.SessionID = finalSession
 		res.CostWarned = finalCostWarned
-		// Non-zero exit with no signalled outcome means the subprocess crashed
-		// before signal_complete. ReadResult defaults to "completed", which would
-		// mask the failure and re-dispatch forever. Trust the exit code.
-		if err != nil && res.Outcome == "" {
+		// Any non-zero exit from the qwen binary means something went wrong
+		// (e.g. auth error, crash, bad config). Even if a signal_complete outcome
+		// was recorded, a non-zero exit overrides it — the agent may have signalled
+		// before crashing, or the exit code may reflect an internal SDK error.
+		if err != nil {
+			if res.Outcome != "" {
+				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited with error but had outcome %q — treating as failed", res.Outcome), At: time.Now()}
+			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 			applyUsage(&failed, finalUsage)
 			return failed, nil
@@ -404,8 +408,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		return res, nil
 	}
 
-	// Non-zero exit with no parsed outcome means the agent failed.
-	if err != nil && outcome == "" {
+	// Non-zero exit means the agent failed regardless of any parsed outcome.
+	if err != nil {
+		if outcome != "" {
+			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
+		}
 		failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 		applyUsage(&failed, finalUsage)
 		return failed, nil

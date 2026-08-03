@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os/exec"
 	"sync"
 	"time"
@@ -43,7 +42,6 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	slog.Info("opencode args", "args", args)
 	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
 	cmd.Dir = input.RepoPath
 	cmd.Env = mergeEnv(allowlistEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
@@ -186,23 +184,24 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 			applyUsage(&res, finalUsage)
 			return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
 		}
-		// Bug fix (see TestOpencodeRunner_Run_Exit1NoOutputIsFailed): a non-zero
-		// exit with no rate-limit/transient classification and no parsed OUTCOME
-		// marker used to fall through to the "completed" return below with an
-		// empty Outcome. The pool only resolves a workflow transition when
-		// Status=="completed" && Outcome!="" (see pool.go), so a crash with no
-		// output silently left the task stuck as "completed" with no outcome —
-		// never marked failed, never retried. Every other CLI provider
-		// (codex/gemini/qwen) already has this same `err != nil && outcome == ""`
-		// fallback; opencode was the one provider missing it.
-		if outcome == "" {
-			// Usage/cost must still be persisted here even though the run
-			// failed — money may have been spent before the crash (mirrors
-			// qwen.go's equivalent failure path).
-			res := agent.Result{Status: "failed", SessionID: finalSession}
-			applyUsage(&res, finalUsage)
-			return res, nil
+		// Any remaining non-zero exit (not rate-limit/transient) means the
+		// agent failed, regardless of whether an OUTCOME marker was parsed.
+		// Originally this only overrode a "completed" result when no OUTCOME
+		// was found (see TestOpencodeRunner_Run_Exit1NoOutputIsFailed), which
+		// left a crash-after-signal window: if the CLI emitted OUTCOME=success
+		// and then crashed (e.g. mid-teardown panic, auth expiry after the
+		// final turn), the run was persisted as "completed" and the task moved
+		// forward on an unverified result. Every other CLI provider now applies
+		// this same override (claude's stricter rule, adopted for parity).
+		if outcome != "" {
+			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode exited with error but had outcome %q — treating as failed", outcome), At: time.Now()}
 		}
+		// Usage/cost must still be persisted here even though the run
+		// failed — money may have been spent before the crash (mirrors
+		// qwen.go's equivalent failure path).
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, nil
 	}
 
 	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
