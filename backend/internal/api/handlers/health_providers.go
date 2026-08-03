@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -17,6 +18,18 @@ import (
 // this via its LastSweep method.
 type DispatcherLiveness interface {
 	LastSweep() time.Time
+}
+
+// GlobalCostReporter exposes the dispatcher's cached global daily/monthly
+// spend-ceiling snapshot (see agent.Dispatcher.GlobalCostStatus), surfaced
+// on both /readyz and GET /api/v1/health/providers — a tripped cap means the
+// whole system has stopped dispatching new work while otherwise appearing
+// healthy, so it belongs on the health surface, not just in logs. Split from
+// DispatcherLiveness (rather than folded into it) so a caller/test double
+// that only has the liveness half doesn't also need to implement this.
+// *agent.Dispatcher satisfies this via its GlobalCostStatus method.
+type GlobalCostReporter interface {
+	GlobalCostStatus() agent.GlobalCostStatus
 }
 
 // HealthHandler serves provider/onboarding readiness checks.
@@ -33,6 +46,14 @@ type HealthHandler struct {
 	version         string
 	checkForUpdates bool
 	dispatcher      DispatcherLiveness
+	// globalCost supplies the global daily/monthly spend-ceiling snapshot
+	// (see GlobalCostReporter). Populated from the same concrete
+	// *agent.Dispatcher passed as dispatcher above; kept as a separate field
+	// (rather than folding GlobalCostStatus into DispatcherLiveness) so a
+	// dispatcher stand-in that only implements LastSweep (e.g. in tests)
+	// doesn't also need a GlobalCostStatus method. May be nil, in which case
+	// both Readyz and Providers omit the global_cost block entirely.
+	globalCost GlobalCostReporter
 }
 
 // NewHealthHandler constructs a HealthHandler from the relevant server config.
@@ -42,11 +63,12 @@ type HealthHandler struct {
 // cmd/server's ldflags-stamped Version var); checkForUpdates opts into the
 // best-effort "update available" check (see internal/health.updateCheck),
 // gated by UPDATE_CHECK_ENABLED so the health endpoint never phones home by
-// default. dispatcher supplies the dispatch loop's heartbeat for Readyz; it
-// may be nil (e.g. in tests), in which case Readyz skips the dispatcher
-// check.
+// default. dispatcher supplies the dispatch loop's heartbeat for Readyz and,
+// if it also implements GlobalCostReporter (as *agent.Dispatcher does), the
+// global cost-ceiling snapshot surfaced on Readyz/Providers; it may be nil
+// (e.g. in tests), in which case those checks are skipped/omitted.
 func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int, version string, checkForUpdates bool, dispatcher DispatcherLiveness) *HealthHandler {
-	return &HealthHandler{
+	h := &HealthHandler{
 		q:               q,
 		db:              db,
 		mcpBinary:       mcpBinary,
@@ -60,6 +82,10 @@ func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, ll
 		checkForUpdates: checkForUpdates,
 		dispatcher:      dispatcher,
 	}
+	if gc, ok := dispatcher.(GlobalCostReporter); ok {
+		h.globalCost = gc
+	}
+	return h
 }
 
 // Providers reports the readiness of each agent provider and supporting piece
@@ -120,5 +146,14 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		CheckForUpdates: h.checkForUpdates,
 	}, nil)
 
-	JSON(w, http.StatusOK, map[string]any{"checks": checks})
+	resp := map[string]any{"checks": checks}
+	// Surface the global spend-ceiling status loudly here too (not just
+	// Readyz) since this is the page a human actually looks at — a tripped
+	// cap is the one condition where the whole system has stopped
+	// dispatching new work while every other check here can still be green.
+	if h.globalCost != nil {
+		resp["global_cost"] = h.globalCost.GlobalCostStatus()
+	}
+
+	JSON(w, http.StatusOK, resp)
 }

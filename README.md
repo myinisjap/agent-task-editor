@@ -199,6 +199,8 @@ The server binds to all interfaces (`:8080`) by default. In Docker, map it to `1
 | `LLM_API_KEY` | _(empty)_ | API key for the `anthropic` or `llm` provider |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` (OpenAI-compatible) provider |
 | `MAX_WORKERS` | `5` | Maximum number of concurrent agent runs |
+| `MAX_DAILY_COST_USD` | `0` (unlimited) | Global cap on total recorded spend per UTC calendar day, across every task/provider; once reached, the dispatcher stops starting new runs system-wide until the next UTC day — see [docs/agents.md#global-cost-ceiling](docs/agents.md#global-cost-ceiling) |
+| `MAX_MONTHLY_COST_USD` | `0` (unlimited) | Same as above, per UTC calendar month |
 
 See [docs/getting-started.md](docs/getting-started.md) for the full variable reference.
 

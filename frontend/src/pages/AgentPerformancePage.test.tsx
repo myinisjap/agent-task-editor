@@ -59,6 +59,7 @@ const dashboard: Dashboard = {
   ],
   cost_by_day: [],
   cost_by_task: [],
+  cost_by_repo: [],
   claude_usage: { available: false, five_hour_percent: 0, weekly_percent: 0 },
   repo_concurrency: [],
 }

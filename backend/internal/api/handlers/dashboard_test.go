@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -27,7 +28,7 @@ func TestDashboardGet_ClaudeUsageUnavailableWithoutCredentials(t *testing.T) {
 
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewDashboardHandler(q, 5)
+	h := handlers.NewDashboardHandler(q, 5, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	w := httptest.NewRecorder()
@@ -151,7 +152,7 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 		t.Fatalf("finalize failed run: %v", err)
 	}
 
-	h := handlers.NewDashboardHandler(q, 5)
+	h := handlers.NewDashboardHandler(q, 5, nil)
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	w := httptest.NewRecorder()
 	h.Get(w, req)
@@ -331,7 +332,7 @@ func TestDashboardGet_InterventionQueueExcludesSupersededRuns(t *testing.T) {
 		t.Fatalf("set replied task active run: %v", err)
 	}
 
-	h := handlers.NewDashboardHandler(q, 5)
+	h := handlers.NewDashboardHandler(q, 5, nil)
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	w := httptest.NewRecorder()
 	h.Get(w, req)
@@ -440,7 +441,7 @@ func TestDashboardGet_RepoConcurrency(t *testing.T) {
 		t.Fatalf("create idle repo: %v", err)
 	}
 
-	h := handlers.NewDashboardHandler(q, 5)
+	h := handlers.NewDashboardHandler(q, 5, nil)
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	w := httptest.NewRecorder()
 	h.Get(w, req)
@@ -549,7 +550,7 @@ func TestDashboardCostByTask_GroupsByTask(t *testing.T) {
 	mkRun(taskA.ID, 200, 75, 0.02)
 	mkRun(taskB.ID, 10, 5, 0.001)
 
-	h := handlers.NewDashboardHandler(q, 5)
+	h := handlers.NewDashboardHandler(q, 5, nil)
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/cost-by-task", nil)
 	w := httptest.NewRecorder()
 	h.CostByTask(w, req)
@@ -605,7 +606,7 @@ func TestDashboardCostByTask_GroupsByTask(t *testing.T) {
 func TestDashboardCostByTask_EmptyWhenNoRuns(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewDashboardHandler(q, 5)
+	h := handlers.NewDashboardHandler(q, 5, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/cost-by-task", nil)
 	w := httptest.NewRecorder()
@@ -620,5 +621,200 @@ func TestDashboardCostByTask_EmptyWhenNoRuns(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("expected empty cost-by-task result, got %+v", rows)
+	}
+}
+
+// TestDashboardGet_CostByRepo verifies the dashboard's cost_by_repo rollup
+// groups agent_runs cost/tokens by the repo their task belongs to, joined
+// through tasks (agent_runs has no repo_id of its own) -- the companion to
+// cost_by_task for answering "which repo is expensive".
+func TestDashboardGet_CostByRepo(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	repoA, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: uuid.NewString(), Name: "repo-a", Path: t.TempDir(), WorkflowID: &wfID})
+	if err != nil {
+		t.Fatalf("create repo A: %v", err)
+	}
+	repoB, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: uuid.NewString(), Name: "repo-b", Path: t.TempDir(), WorkflowID: &wfID})
+	if err != nil {
+		t.Fatalf("create repo B: %v", err)
+	}
+
+	taskA1, err := q.CreateTask(ctx, gen.CreateTaskParams{ID: uuid.NewString(), Title: "a1", WorkflowID: wfID, RepoID: repoA.ID, Label: "work"})
+	if err != nil {
+		t.Fatalf("create task a1: %v", err)
+	}
+	taskA2, err := q.CreateTask(ctx, gen.CreateTaskParams{ID: uuid.NewString(), Title: "a2", WorkflowID: wfID, RepoID: repoA.ID, Label: "work"})
+	if err != nil {
+		t.Fatalf("create task a2: %v", err)
+	}
+	taskB1, err := q.CreateTask(ctx, gen.CreateTaskParams{ID: uuid.NewString(), Title: "b1", WorkflowID: wfID, RepoID: repoB.ID, Label: "work"})
+	if err != nil {
+		t.Fatalf("create task b1: %v", err)
+	}
+
+	mkRun := func(taskID string, cost float64) {
+		run, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: taskID})
+		if err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if _, err := q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status: "completed", CostUsd: cost, ID: run.ID,
+		}); err != nil {
+			t.Fatalf("finalize run: %v", err)
+		}
+	}
+	mkRun(taskA1.ID, 1.00)
+	mkRun(taskA2.ID, 2.00)
+	mkRun(taskB1.ID, 0.50)
+
+	h := handlers.NewDashboardHandler(q, 5, nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		CostByRepo []struct {
+			RepoID   string  `json:"repo_id"`
+			RepoName string  `json:"repo_name"`
+			CostUSD  float64 `json:"cost_usd"`
+			RunCount int64   `json:"run_count"`
+		} `json:"cost_by_repo"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.CostByRepo) != 2 {
+		t.Fatalf("expected 2 cost-by-repo rows, got %d: %+v", len(body.CostByRepo), body.CostByRepo)
+	}
+	byID := make(map[string]struct {
+		Name  string
+		Cost  float64
+		Count int64
+	}, len(body.CostByRepo))
+	for _, row := range body.CostByRepo {
+		byID[row.RepoID] = struct {
+			Name  string
+			Cost  float64
+			Count int64
+		}{row.RepoName, row.CostUSD, row.RunCount}
+	}
+	a, ok := byID[repoA.ID]
+	if !ok {
+		t.Fatalf("expected repo A in response, got %+v", body.CostByRepo)
+	}
+	if a.Name != "repo-a" || a.Cost != 3.00 || a.Count != 2 {
+		t.Errorf("expected repo A name=repo-a cost=3.00 count=2, got %+v", a)
+	}
+	b, ok := byID[repoB.ID]
+	if !ok {
+		t.Fatalf("expected repo B in response, got %+v", body.CostByRepo)
+	}
+	if b.Name != "repo-b" || b.Cost != 0.50 || b.Count != 1 {
+		t.Errorf("expected repo B name=repo-b cost=0.50 count=1, got %+v", b)
+	}
+}
+
+// TestDashboardGet_GlobalCostBudget_OmittedWithoutCap verifies the
+// global_cost_budget field is entirely absent when the wired dispatcher
+// reports no daily/monthly cap configured -- a forecast against an
+// unlimited budget is meaningless and shouldn't clutter the response.
+func TestDashboardGet_GlobalCostBudget_OmittedWithoutCap(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	disp := fakeDispatcherWithCost{status: agent.GlobalCostStatus{}}
+	h := handlers.NewDashboardHandler(q, 5, disp)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, ok := body["global_cost_budget"]; ok {
+		t.Errorf("expected global_cost_budget to be omitted with no cap configured, got %v", body["global_cost_budget"])
+	}
+}
+
+// TestDashboardGet_GlobalCostBudget_SurfacesStatusAndForecast verifies the
+// dashboard renders the dispatcher's global cap/spend snapshot plus a
+// nonzero forecast once at least one recorded day of cost exists and a cap
+// is configured.
+func TestDashboardGet_GlobalCostBudget_SurfacesStatusAndForecast(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoID, Name: "repo", Path: t.TempDir(), WorkflowID: &wfID}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{ID: uuid.NewString(), Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "work"})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	run, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status: "completed", CostUsd: 3.50, ID: run.ID,
+	}); err != nil {
+		t.Fatalf("finalize run: %v", err)
+	}
+
+	disp := fakeDispatcherWithCost{status: agent.GlobalCostStatus{
+		DailyLimitUSD: 10, DailySpentUSD: 3.50,
+		MonthlyLimitUSD: 100, MonthlySpentUSD: 3.50,
+	}}
+	h := handlers.NewDashboardHandler(q, 5, disp)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		GlobalCostBudget struct {
+			DailyLimitUSD      float64  `json:"daily_limit_usd"`
+			MonthlyLimitUSD    float64  `json:"monthly_limit_usd"`
+			DailyForecastUSD   *float64 `json:"daily_forecast_usd"`
+			MonthlyForecastUSD *float64 `json:"monthly_forecast_usd"`
+		} `json:"global_cost_budget"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.GlobalCostBudget.DailyLimitUSD != 10 || body.GlobalCostBudget.MonthlyLimitUSD != 100 {
+		t.Fatalf("expected the dispatcher's configured limits to pass through, got %+v", body.GlobalCostBudget)
+	}
+	if body.GlobalCostBudget.DailyForecastUSD == nil || *body.GlobalCostBudget.DailyForecastUSD < 3.50 {
+		t.Errorf("expected a daily forecast >= today's already-recorded spend, got %v", body.GlobalCostBudget.DailyForecastUSD)
+	}
+	if body.GlobalCostBudget.MonthlyForecastUSD == nil || *body.GlobalCostBudget.MonthlyForecastUSD < 3.50 {
+		t.Errorf("expected a monthly forecast >= this month's already-recorded spend, got %v", body.GlobalCostBudget.MonthlyForecastUSD)
 	}
 }

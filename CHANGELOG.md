@@ -46,6 +46,27 @@ triggers the "Release" workflow the same way.
   existing `agent_config_stats`/`success_rate_percent` table is unchanged
   and still useful for spotting a flaky or crashing config, but now sits
   below the outcome-quality table rather than being the page's headline.
+- **Global daily/monthly spend ceiling, with a burn-rate forecast.** Cost
+  budgets were previously only per-task (`tasks.max_cost_usd`) and
+  per-agent-config (`agent_configs.max_cost_usd`) — nothing bounded total
+  spend across every task, even though tasks can be created automatically
+  and unattended (cron scheduler, issue import, subtask decomposition). Two
+  new optional config settings, `MAX_DAILY_COST_USD` and
+  `MAX_MONTHLY_COST_USD` (calendar-day/calendar-month in UTC, default unset
+  = unlimited so upgrading never silently halts an existing board), are
+  checked once per dispatch sweep against `SumCostForDay`/`SumCostForMonth`.
+  Tripping a cap doesn't touch or escalate any individual task (avoiding a
+  synthetic `waiting_human` run per task at global scale) — it halts the
+  dispatcher from starting *new* work, publishes a single alert on the
+  transition, and lets already-running work finish. Blocked tasks report the
+  new `cost_budget_global` block reason (checked second, right after
+  `paused`) from the block-reason work above. `/health` and `/healthz` now
+  surface the tripped/untripped `GlobalCostStatus` without failing
+  readiness — the system has stopped *dispatching*, not gone unhealthy. The
+  dashboard's Usage page adds a burn forecast (trailing 7-day mean
+  extrapolated to the end of the day/month) shown next to each configured
+  cap, plus a new cost-by-repo rollup (`cost_by_repo`) to help identify which
+  repo is driving spend before setting per-repo limits.
 - **Surfaced *why* a task isn't dispatching, on the task itself.** GET
   `/tasks` and GET `/tasks/{id}` now carry an optional, structured
   `block_reason` field explaining why a pickup-eligible task isn't currently
@@ -346,26 +367,34 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
-- **Transient, rate-limited, and cancelled agent runs no longer persist at
-  `cost_usd = 0`, defeating budget accounting.** `handleTransientFailure`
-  (hit on rate-limit and other transient provider errors) and
-  `handleCancelled` (hit when a human cancels a run) only wrote
-  `status`/`id`/`notes` to `SetAgentRunCompleted`, which overwrites every
-  usage column unconditionally — so a run that had already spent money
-  before failing or being cancelled was recorded as free, silently
-  understating `SumTaskCost` rollups and letting `max_cost_usd` budgets
-  never trip on a repeatedly rate-limited task. Both handlers now thread the
-  provider's `Result` through and populate `input_tokens`/`output_tokens`/
-  `cost_usd`/`cost_unknown` the same way `handleMaxTurnsExhausted` and
-  `handleCostBudgetExceeded` already did. The `claude` and `qwen` providers
-  had the same bug one layer down: their timeout/rate-limit/transient-exit
-  return paths built a bare `agent.Result{Status, SessionID}` without ever
-  calling `applyUsage`, so even after the pool-layer fix above, a claude or
-  qwen run that spent money before a 429 or infra blip still reported (and
-  therefore persisted) zeroed-out usage — a high-severity gap since claude is
-  the default/primary provider. Both now populate usage from the terminal
-  stream-json `result` event on every one of those paths, matching how
-  codex/opencode already did it.
+- **Transient-failure and cancelled runs now record the cost/tokens they
+  actually consumed instead of `$0`.** #337 taught the max-turns and
+  mid-run-cost-budget-exceeded escalation paths to persist `cost_usd`/token
+  counts on the run row, but `Pool.handleTransientFailure` (rate-limit and
+  other transient provider errors) and `Pool.handleCancelled`
+  (human-cancelled runs) still wrote `cost_usd = 0` even when the provider
+  had already burned real tokens before failing/being killed. Both now
+  receive the run's `Result` and persist `input_tokens`/`output_tokens`/
+  `cost_usd`/`cost_unknown` the same way. That pool-level fix only pays off
+  if the provider itself returns a non-empty `Result` on those paths, though
+  — and `providers/claude.go` and `providers/qwen.go` each had three return
+  sites (timeout, rate-limit, and other-transient-CLI-exit) that built a
+  bare `agent.Result{Status, SessionID}` (qwen: `{Status, CostWarned}`,
+  dropping `SessionID` too) without calling `applyUsage`, silently
+  discarding any usage/cost the provider had already parsed off the CLI's
+  own terminal `"result"` event before the error fired. `codex.go` and
+  `opencode.go` already called `applyUsage`/`applyUsageWithCost` on their
+  equivalent paths — only claude and qwen had the gap. Both files' six
+  return sites now call `applyUsage` before returning, with new regression
+  tests (`TestClaudeRunner_RateLimit_PreservesUsage`,
+  `TestClaudeRunner_TransientError_PreservesUsage`,
+  `TestClaudeRunner_Timeout_PreservesUsage`, and the `TestQwenRunner_*`
+  equivalents) asserting the returned `Result` carries the CLI's usage/cost
+  alongside the `*ErrRateLimit`/`*ErrTransient` classification. With both
+  the pool and provider layers fixed, per-task budgets and any cost
+  aggregate (daily/monthly totals, cost-by-provider, etc.) built on top of
+  `agent_runs` no longer systematically undercount exactly the runs most
+  likely to repeat.
 - **`PATCH /tasks/{id}` no longer blanks `title`/`description`/`type` when
   they're omitted from the request body, and `PUT /provider-configs/{id}`
   no longer blanks `model`** (#334). Both handlers already fell back to the

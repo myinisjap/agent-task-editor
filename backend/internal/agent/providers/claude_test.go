@@ -177,6 +177,25 @@ func TestMain(m *testing.M) {
 		// exits 0 (mirrors claude's error_max_turns behavior).
 		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns","session_id":"qwen-max-turns-session","total_cost_usd":0.02,"usage":{"input_tokens":30,"output_tokens":40}}`)
 		os.Exit(0)
+	case "rate_limit_with_usage":
+		// Mirrors claude's "rate_limit_with_usage" helper mode above —
+		// regression coverage for the same dropped-usage bug on qwen.go's
+		// rate-limit return path.
+		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"result":"429 rate limited","session_id":"qwen-rate-limit-usage-session","total_cost_usd":3.5,"usage":{"input_tokens":700,"output_tokens":350}}`)
+		os.Exit(1)
+	case "transient_with_usage":
+		// Mirrors claude's "transient_with_usage" helper mode above —
+		// regression coverage for the same dropped-usage bug on qwen.go's
+		// transient-exit return path.
+		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"result":"ECONNRESET: connection reset by peer","session_id":"qwen-transient-usage-session","total_cost_usd":1.9,"usage":{"input_tokens":600,"output_tokens":120}}`)
+		os.Exit(1)
+	case "timeout_with_usage":
+		// Mirrors claude's "timeout_with_usage" helper mode above —
+		// regression coverage for the same dropped-usage bug on qwen.go's
+		// timeout return path (runCtx.Err() == context.DeadlineExceeded).
+		fmt.Println(`{"type":"result","subtype":"success","session_id":"qwen-timeout-usage-session","total_cost_usd":1.25,"usage":{"input_tokens":250,"output_tokens":75}}`)
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
 	case "cost_watchdog_kill":
 		// Mirrors claude's "cost_watchdog_kill" helper mode above — qwen
 		// shares the same stream-json envelope/watchdog wiring (see qwen.go).
@@ -407,9 +426,10 @@ func TestClaudeRunner_RateLimitResetAtFromResultText(t *testing.T) {
 // agent.Result{Status, SessionID} without calling applyUsage — so a run that
 // had already spent money before hitting its rate limit was reported with
 // zeroed-out usage, and the pool would persist it as free (cost_usd=0),
-// defeating max_cost_usd budget accounting. Verifies the returned Result
-// carries the terminal "result" event's usage/cost alongside the
-// *ErrRateLimit classification.
+// defeating max_cost_usd budget accounting and the global daily/monthly
+// cost-ceiling aggregates that sum agent_runs.cost_usd across every terminal
+// status. Verifies the returned Result carries the terminal "result" event's
+// usage/cost alongside the *ErrRateLimit classification.
 func TestClaudeRunner_RateLimit_PreservesUsage(t *testing.T) {
 	runner := helperRunner("rate_limit_with_usage")
 	logCh := make(chan agent.LogEntry, 256)

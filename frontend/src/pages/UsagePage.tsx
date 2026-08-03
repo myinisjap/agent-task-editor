@@ -42,6 +42,37 @@ export default function UsagePage() {
         </section>
       )}
 
+      {/* Global daily/monthly spend ceiling, if configured (MAX_DAILY_COST_USD / MAX_MONTHLY_COST_USD) */}
+      {dash && dash.global_cost_budget && (
+        <section className="mb-8">
+          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Global spend ceiling</h2>
+          <div className="bg-slate-900 rounded-lg border border-slate-800 p-4 flex flex-col gap-4">
+            {dash.global_cost_budget.tripped && (
+              <div className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded px-3 py-2">
+                Dispatch is halted: the {dash.global_cost_budget.tripped_reason} spend cap has been reached.
+                Running work will finish, but no new runs will start until spend drops back under the cap.
+              </div>
+            )}
+            {dash.global_cost_budget.daily_limit_usd > 0 && (
+              <CostBudgetBar
+                label="Today"
+                spent={dash.global_cost_budget.daily_spent_usd}
+                limit={dash.global_cost_budget.daily_limit_usd}
+                forecast={dash.global_cost_budget.daily_forecast_usd}
+              />
+            )}
+            {dash.global_cost_budget.monthly_limit_usd > 0 && (
+              <CostBudgetBar
+                label="This month"
+                spent={dash.global_cost_budget.monthly_spent_usd}
+                limit={dash.global_cost_budget.monthly_limit_usd}
+                forecast={dash.global_cost_budget.monthly_forecast_usd}
+              />
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Cost & usage */}
       {dash && dash.cost_total && (dash.cost_total.input_tokens > 0 || dash.cost_total.output_tokens > 0 || (dash.cost_by_provider?.length ?? 0) > 0) && (
         <section className="mb-8">
@@ -143,6 +174,36 @@ export default function UsagePage() {
             </div>
           )}
 
+          {dash.cost_by_repo && dash.cost_by_repo.length > 0 && (
+            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mt-3">
+              <div className="px-4 pt-3 pb-1 text-xs text-slate-500">Cost by repo</div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 border-b border-slate-800">
+                    <th className="text-left px-4 py-2">Repo</th>
+                    <th className="text-right px-4 py-2">Runs</th>
+                    <th className="text-right px-4 py-2">Input tok</th>
+                    <th className="text-right px-4 py-2">Output tok</th>
+                    <th className="text-right px-4 py-2">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dash.cost_by_repo.map((rc) => (
+                    <tr key={rc.repo_id} className="border-b border-slate-800 last:border-0">
+                      <td className="px-4 py-2.5 text-slate-200">{rc.repo_name || rc.repo_id}</td>
+                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{rc.run_count.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{rc.input_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{rc.output_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
+                        {rc.cost_usd > 0 ? `$${rc.cost_usd.toFixed(4)}` : '$0.00'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {dash.cost_by_task && dash.cost_by_task.length > 0 && (
             <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mt-3">
               <div className="px-4 pt-3 pb-1 text-xs text-slate-500">Top tasks by cost</div>
@@ -188,6 +249,48 @@ export default function UsagePage() {
 
       {!dash && (
         <p className="text-sm text-slate-400">Loading…</p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A single daily/monthly global-spend-ceiling row: spend vs. cap as a
+ * progress bar, plus the projected end-of-period total (see
+ * globalCostBudgetView.daily_forecast_usd/monthly_forecast_usd on the
+ * backend — a simple trailing-burn-rate extrapolation, not a prediction).
+ */
+function CostBudgetBar({
+  label,
+  spent,
+  limit,
+  forecast,
+}: {
+  label: string
+  spent: number
+  limit: number
+  forecast?: number | null
+}) {
+  const percent = limit > 0 ? Math.min(100, Math.max(0, (spent / limit) * 100)) : 0
+  const barColor = percent >= 100 ? 'bg-red-500' : percent >= 80 ? 'bg-amber-500' : 'bg-emerald-500'
+  const textColor = percent >= 100 ? 'text-red-400' : percent >= 80 ? 'text-amber-400' : 'text-slate-300'
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-sm text-slate-300">{label}</span>
+        <span className={`text-sm font-semibold ${textColor}`}>
+          ${spent.toFixed(2)} / ${limit.toFixed(2)}
+        </span>
+      </div>
+      <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${percent}%` }} />
+      </div>
+      {typeof forecast === 'number' && (
+        <div className="text-xs text-slate-500 mt-1">
+          Projected at current burn: ${forecast.toFixed(2)}
+          {forecast > limit ? ' (on track to exceed the cap)' : ''}
+        </div>
       )}
     </div>
   )

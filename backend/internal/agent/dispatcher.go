@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,12 +42,25 @@ type Dispatcher struct {
 	// when a sweep-dispatch is skipped for budget-exhaustion, mirroring how
 	// Pool.handleTransientFailure publishes the same event on escalation.
 	Publisher Publisher
+	// MaxDailyCostUSD/MaxMonthlyCostUSD mirror config.Config's global spend
+	// ceiling settings (see checkGlobalCostBudget). 0 means unlimited for
+	// that period; set once at startup from config, never mutated after.
+	MaxDailyCostUSD   float64
+	MaxMonthlyCostUSD float64
 	// lastSweep records (as UnixNano) the time the dispatch loop last began
 	// a sweep tick. Read via LastSweep by the /readyz readiness probe to
 	// detect a wedged dispatch loop (e.g. a hung git op inside a sweep).
 	// Stored atomically since Run's ticker goroutine writes it while an
 	// HTTP handler goroutine reads it concurrently.
 	lastSweep atomic.Int64
+	// globalCostTripped records the current global-spend-ceiling state (see
+	// checkGlobalCostBudget), read by GlobalCostStatus for the health
+	// endpoints and written under globalCostMu each sweep. A separate mutex
+	// (rather than atomics) because the struct carries multiple fields that
+	// must be read/written together as one consistent snapshot.
+	globalCostMu     sync.Mutex
+	globalCostState  GlobalCostStatus
+	globalCostAlerts bool // whether the one-shot trip alert has already fired for the current trip
 }
 
 // NewDispatcher creates a Dispatcher with a 5-second sweep interval.
@@ -103,6 +117,16 @@ func (d *Dispatcher) LastSweep() time.Time {
 }
 
 func (d *Dispatcher) sweep(ctx context.Context) {
+	// Refresh the global spend-ceiling status every sweep, even if there are
+	// no pending tasks — /health and /healthz surface this live, so it must
+	// stay current whether or not there's anything to dispatch right now.
+	// If the cap is tripped, dispatch is halted globally for the rest of
+	// this sweep: running work is left to finish, only *starting* new work
+	// stops (see checkGlobalCostBudget's doc comment for the reasoning).
+	if d.refreshGlobalCostStatus(ctx) {
+		return
+	}
+
 	tasks, err := d.q.ListAgentPickupTasks(ctx)
 	if err != nil {
 		slog.Error("dispatcher sweep failed", "component", "dispatcher", "err", err)
@@ -402,6 +426,150 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 	}
 
 	return true, nil
+}
+
+// GlobalCostStatus is the current state of the global daily/monthly spend
+// ceiling (see checkGlobalCostBudget), read by GET /health and GET /healthz
+// so an operator sees a tripped cap immediately rather than only in logs —
+// this is the one condition where the whole system has stopped dispatching
+// new work while otherwise appearing healthy. Computed at read time from the
+// last sweep's refreshGlobalCostStatus, not per-request, so polling /health
+// doesn't add extra SumCostForDay/SumCostForMonth queries on top of the
+// dispatcher's own once-per-sweep check.
+type GlobalCostStatus struct {
+	// DailyLimitUSD/MonthlyLimitUSD are the configured caps (0 = unlimited).
+	DailyLimitUSD   float64 `json:"daily_limit_usd"`
+	MonthlyLimitUSD float64 `json:"monthly_limit_usd"`
+	// DailySpentUSD/MonthlySpentUSD are cumulative recorded cost (across ALL
+	// runs regardless of status — see SumCostForDay/SumCostForMonth) for the
+	// current UTC calendar day/month.
+	DailySpentUSD   float64 `json:"daily_spent_usd"`
+	MonthlySpentUSD float64 `json:"monthly_spent_usd"`
+	// Tripped is true once either configured (nonzero) limit has been
+	// reached or exceeded. While true, the dispatcher does not start any new
+	// runs (existing in-flight runs are left to finish).
+	Tripped bool `json:"tripped"`
+	// TrippedReason is "daily", "monthly", or "" (not tripped) — whichever
+	// cap tripped first, checked daily-then-monthly in refreshGlobalCostStatus.
+	TrippedReason string `json:"tripped_reason,omitempty"`
+}
+
+// GlobalCostStatus returns the dispatcher's last-computed global
+// spend-ceiling snapshot (see refreshGlobalCostStatus, which runs once per
+// sweep). Safe for concurrent use.
+func (d *Dispatcher) GlobalCostStatus() GlobalCostStatus {
+	d.globalCostMu.Lock()
+	defer d.globalCostMu.Unlock()
+	return d.globalCostState
+}
+
+// refreshGlobalCostStatus recomputes the global daily/monthly spend-ceiling
+// status (see GlobalCostStatus) and returns whether dispatch should be
+// halted globally this sweep. Calendar-aligned to UTC (both "day" and
+// "month" boundaries), not a rolling window — deliberately: the operator's
+// mental model is a monthly bill, CostByDay already buckets by calendar day
+// so this reuses the same alignment, and rolling windows are harder to
+// reason about ("why did it un-trip at 3:47am?"). A configured limit of 0
+// means unlimited for that period and is never itself a trip condition.
+//
+// Unlike checkCostBudget (per-task, escalates every exhausted task
+// individually to waiting_human), tripping the global cap does NOT touch
+// any task: it only stops the sweep from starting new runs. Escalating every
+// pickup-eligible task to waiting_human at global scale would create
+// hundreds of phantom runs (see escalateCostBudget) and, per #344, clobber
+// current_agent_run_id on each — instead this halts dispatch here, fires a
+// one-shot alert publish on the transition into the tripped state (never
+// re-fired every sweep while it stays tripped), and lets GET /tasks report
+// the new cost_budget_global block reason (see blockreason.go) so tasks
+// still explain why they're not moving.
+func (d *Dispatcher) refreshGlobalCostStatus(ctx context.Context) bool {
+	if d.MaxDailyCostUSD <= 0 && d.MaxMonthlyCostUSD <= 0 {
+		// No global cap configured — skip the queries entirely and clear any
+		// stale tripped state (e.g. the cap was just turned off).
+		d.globalCostMu.Lock()
+		d.globalCostState = GlobalCostStatus{}
+		d.globalCostAlerts = false
+		d.globalCostMu.Unlock()
+		return false
+	}
+
+	now := time.Now().UTC()
+	day := now.Format("2006-01-02")
+	month := now.Format("2006-01")
+
+	var dailySpent, monthlySpent float64
+	if d.MaxDailyCostUSD > 0 {
+		var err error
+		dailySpent, err = d.q.SumCostForDay(ctx, day)
+		if err != nil {
+			slog.Error("dispatcher: sum cost for day", "component", "dispatcher", "err", err)
+		}
+	}
+	if d.MaxMonthlyCostUSD > 0 {
+		var err error
+		monthlySpent, err = d.q.SumCostForMonth(ctx, month)
+		if err != nil {
+			slog.Error("dispatcher: sum cost for month", "component", "dispatcher", "err", err)
+		}
+	}
+
+	status := GlobalCostStatus{
+		DailyLimitUSD:   d.MaxDailyCostUSD,
+		MonthlyLimitUSD: d.MaxMonthlyCostUSD,
+		DailySpentUSD:   dailySpent,
+		MonthlySpentUSD: monthlySpent,
+	}
+	switch {
+	case d.MaxDailyCostUSD > 0 && dailySpent >= d.MaxDailyCostUSD:
+		status.Tripped = true
+		status.TrippedReason = "daily"
+	case d.MaxMonthlyCostUSD > 0 && monthlySpent >= d.MaxMonthlyCostUSD:
+		status.Tripped = true
+		status.TrippedReason = "monthly"
+	}
+
+	d.globalCostMu.Lock()
+	wasTripped := d.globalCostAlerts
+	d.globalCostState = status
+	if status.Tripped {
+		d.globalCostAlerts = true
+	} else {
+		d.globalCostAlerts = false
+	}
+	d.globalCostMu.Unlock()
+
+	if status.Tripped && !wasTripped {
+		msg := fmt.Sprintf("global cost budget tripped (%s): $%.2f of $%.2f", status.TrippedReason, dailySpentOrMonthly(status), limitFor(status))
+		slog.Warn("dispatcher: global cost budget tripped, halting all new dispatch", "component", "dispatcher", "reason", status.TrippedReason, "daily_spent", dailySpent, "daily_limit", d.MaxDailyCostUSD, "monthly_spent", monthlySpent, "monthly_limit", d.MaxMonthlyCostUSD)
+		if d.Publisher != nil {
+			d.Publisher.Publish("system.cost_budget_tripped", map[string]any{
+				"reason":            status.TrippedReason,
+				"message":           msg,
+				"daily_spent_usd":   status.DailySpentUSD,
+				"daily_limit_usd":   status.DailyLimitUSD,
+				"monthly_spent_usd": status.MonthlySpentUSD,
+				"monthly_limit_usd": status.MonthlyLimitUSD,
+			})
+		}
+	}
+
+	return status.Tripped
+}
+
+// dailySpentOrMonthly and limitFor pick the spent/limit figure matching
+// whichever cap tripped, for the one-shot alert log/publish message.
+func dailySpentOrMonthly(s GlobalCostStatus) float64 {
+	if s.TrippedReason == "monthly" {
+		return s.MonthlySpentUSD
+	}
+	return s.DailySpentUSD
+}
+
+func limitFor(s GlobalCostStatus) float64 {
+	if s.TrippedReason == "monthly" {
+		return s.MonthlyLimitUSD
+	}
+	return s.DailyLimitUSD
 }
 
 // checkWIPLimit resolves the task's agent-triggerable "success" transition

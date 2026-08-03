@@ -151,6 +151,36 @@ The board shows a "💰 Budget warning" badge on the task card and Task Detail
 shows a banner while a warning is outstanding for a task; both clear on the
 task's next label change.
 
+### `system.cost_budget_tripped`
+The server's global daily or monthly spend ceiling (`MAX_DAILY_COST_USD` /
+`MAX_MONTHLY_COST_USD` — see `docs/agents.md#global-cost-ceiling`) has been
+reached or exceeded and the dispatcher has stopped starting any new run,
+system-wide, until spend for the tripped period drops back under its cap
+(the next UTC day/month). Unlike every other event here, this is **not**
+task-scoped — there is no `task_id`/`run_id` — since it affects every
+dispatch-eligible task at once. Fires **once** on the transition into the
+tripped state, not on every sweep while it stays tripped.
+
+```json
+{
+  "type": "system.cost_budget_tripped",
+  "payload": {
+    "reason": "daily",
+    "message": "global cost budget tripped (daily): $25.10 of $25.00",
+    "daily_spent_usd": 25.10,
+    "daily_limit_usd": 25.00,
+    "monthly_spent_usd": 340.00,
+    "monthly_limit_usd": 0
+  }
+}
+```
+
+`reason` is `"daily"` or `"monthly"` — whichever cap tripped first. While
+tripped, every otherwise-eligible task's read-time `block_reason` reports
+`cost_budget_global` (see `docs/api.md`'s Task fields table), and both
+`GET /readyz` and `GET /api/v1/health/providers` surface the current
+tripped state so it's visible without needing to catch this one-shot event.
+
 ### `task.review_comments_changed`
 Fired after a completed run applies `resolve_comment` resolutions from the
 agent. Only published when at least one comment was actually resolved.

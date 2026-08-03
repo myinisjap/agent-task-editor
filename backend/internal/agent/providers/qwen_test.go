@@ -192,6 +192,139 @@ func TestQwenRunner_ErrorMaxTurns(t *testing.T) {
 	}
 }
 
+// TestQwenRunner_RateLimit_PreservesUsage is a regression test for the bug
+// where qwen.go's rate-limit return path built a bare
+// agent.Result{Status, CostWarned} — dropping SessionID and usage entirely —
+// so a run that had already spent money before hitting its rate limit was
+// persisted as free (cost_usd=0), defeating max_cost_usd budget accounting
+// and the global daily/monthly cost-ceiling aggregates that sum
+// agent_runs.cost_usd across every terminal status. Mirrors
+// TestClaudeRunner_RateLimit_PreservesUsage in claude_test.go.
+func TestQwenRunner_RateLimit_PreservesUsage(t *testing.T) {
+	runner := &QwenRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), qwenHelperInput("rate_limit_with_usage"), logCh)
+	close(logCh)
+
+	var rl *agent.ErrRateLimit
+	if e, ok := err.(*agent.ErrRateLimit); ok {
+		rl = e
+	}
+	if rl == nil {
+		t.Fatalf("want *agent.ErrRateLimit, got err=%v (%T)", err, err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", result.Status)
+	}
+	if result.SessionID != "qwen-rate-limit-usage-session" {
+		t.Errorf("want SessionID preserved, got %q", result.SessionID)
+	}
+	if result.InputTokens != 700 {
+		t.Errorf("want InputTokens=700, got %d", result.InputTokens)
+	}
+	if result.OutputTokens != 350 {
+		t.Errorf("want OutputTokens=350, got %d", result.OutputTokens)
+	}
+	if result.CostUSD != 3.5 {
+		t.Errorf("want CostUSD=3.5, got %v", result.CostUSD)
+	}
+}
+
+// TestQwenRunner_TransientError_PreservesUsage mirrors
+// TestQwenRunner_RateLimit_PreservesUsage above for the transient-exit
+// return path (a non-429 infra error, e.g. ECONNRESET) — same bug, same fix.
+func TestQwenRunner_TransientError_PreservesUsage(t *testing.T) {
+	runner := &QwenRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), qwenHelperInput("transient_with_usage"), logCh)
+	close(logCh)
+
+	var te *agent.ErrTransient
+	if !errors.As(err, &te) {
+		t.Fatalf("want *agent.ErrTransient, got err=%v (%T)", err, err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", result.Status)
+	}
+	if result.SessionID != "qwen-transient-usage-session" {
+		t.Errorf("want SessionID preserved, got %q", result.SessionID)
+	}
+	if result.InputTokens != 600 {
+		t.Errorf("want InputTokens=600, got %d", result.InputTokens)
+	}
+	if result.OutputTokens != 120 {
+		t.Errorf("want OutputTokens=120, got %d", result.OutputTokens)
+	}
+	if result.CostUSD != 1.9 {
+		t.Errorf("want CostUSD=1.9, got %v", result.CostUSD)
+	}
+}
+
+// TestQwenRunner_Timeout_PreservesUsage is a regression test for the bug
+// where qwen.go's timeout return path (runCtx.Err() ==
+// context.DeadlineExceeded) built a bare agent.Result{Status, CostWarned}
+// without calling applyUsage — so a run that had already spent money before
+// wedging and hitting its configured TimeoutSecs was persisted as free
+// (cost_usd=0). The fake CLI here prints a terminal "result" event carrying
+// usage/cost and then hangs well past the configured timeout, so it's still
+// alive (and gets killed via context deadline) when TimeoutSecs elapses.
+func TestQwenRunner_Timeout_PreservesUsage(t *testing.T) {
+	runner := &QwenRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := qwenHelperInput("timeout_with_usage")
+	input.AgentConfig.TimeoutSecs = 1
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for Run to return — configured TimeoutSecs likely failed to cancel the subprocess")
+	}
+
+	var te *agent.ErrTransient
+	if !errors.As(res.err, &te) {
+		t.Fatalf("want *agent.ErrTransient, got err=%v (%T)", res.err, res.err)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if res.r.SessionID != "qwen-timeout-usage-session" {
+		t.Errorf("want SessionID preserved, got %q", res.r.SessionID)
+	}
+	if res.r.InputTokens != 250 {
+		t.Errorf("want InputTokens=250, got %d", res.r.InputTokens)
+	}
+	if res.r.OutputTokens != 75 {
+		t.Errorf("want OutputTokens=75, got %d", res.r.OutputTokens)
+	}
+	if res.r.CostUSD != 1.25 {
+		t.Errorf("want CostUSD=1.25, got %v", res.r.CostUSD)
+	}
+}
+
 // TestQwenRunner_CostWatchdogKillsRun mirrors
 // TestClaudeRunner_CostWatchdogKillsRun: verifies qwen's mid-run cost
 // watchdog wiring (see qwen.go, cost_watchdog.go) cancels a subprocess whose

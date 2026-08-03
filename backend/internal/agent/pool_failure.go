@@ -17,7 +17,12 @@ import (
 // whether the task is quietly retrying or stuck. Always clears the active
 // run slot so the dispatcher can re-pick the task once eligible (either on
 // the next sweep, if no retry budget was consumed, or once next_retry_at
-// elapses).
+// elapses). result carries any usage the provider accumulated before the
+// transient/rate-limit error was raised, so that spend (tokens, cost_usd,
+// cost_unknown) is persisted on the run row rather than recorded as $0 — a
+// transient/rate-limited run has still burned real tokens and must count
+// toward cost aggregates (per-task budgets, and the global daily/monthly
+// spend ceiling) just like a completed or max-turns/cost-budget run does.
 func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Result, reason string, startedAt time.Time) {
 	bg := context.Background()
 
@@ -72,11 +77,11 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Resul
 	}
 	runParams := gen.SetAgentRunCompletedParams{
 		Status:       finalStatus,
-		ID:           job.RunID,
 		InputTokens:  result.InputTokens,
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
 		CostUnknown:  costUnknown,
+		ID:           job.RunID,
 	}
 	if message != nil {
 		runParams.Notes = message
@@ -228,7 +233,10 @@ func (p *Pool) handleCostBudgetExceeded(ctx context.Context, job Job, result Res
 // label would be re-dispatched on the very next sweep, restarting the run the
 // human just killed. Pausing leaves the task on its label for a human to resume
 // when ready. Uses context.Background throughout since the run's own context is
-// already cancelled.
+// already cancelled. result carries any usage the provider accumulated before
+// the cancellation took effect, so that spend is persisted on the run row
+// rather than recorded as $0 — a cancelled run has still burned real tokens
+// and must count toward cost aggregates the same as any other terminal run.
 func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time) {
 	bg := context.Background()
 	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
