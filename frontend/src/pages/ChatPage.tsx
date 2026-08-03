@@ -66,7 +66,10 @@ export default function ChatPage() {
     >
       {/* Left: session list + new-session form.
           Mobile: full width, hidden once a chat is open. Desktop: fixed rail. */}
-      <div className={`${active ? 'hidden md:flex' : 'flex'} w-full md:w-64 shrink-0 border-r border-slate-800 flex-col min-h-0 bg-slate-900`}>
+      <div
+        data-testid="chat-sidebar"
+        className={`${active ? 'hidden md:flex' : 'flex'} w-full md:w-64 shrink-0 border-r border-slate-800 flex-col min-h-0 bg-slate-900`}
+      >
         <div className="p-3 border-b border-slate-800 space-y-2">
           <div className="flex items-center justify-between">
             <div className="text-slate-200 font-semibold text-sm">New terminal</div>

@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,14 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+// pollDeadline bounds the wait helpers below (waitForStatus, waitForLabel,
+// waitForTaskRetryCount). It mirrors the E2E harness's pollTask rationale:
+// CI runs the whole module with -race, whose 10-20x slowdown on a loaded
+// 2-core runner can starve the pool's worker/dispatch goroutines long enough
+// that a tighter window produces a spurious timeout even though the logic
+// under test is correct.
+const pollDeadline = 15 * time.Second
 
 // testPub records published event types.
 type testPub struct {
@@ -166,7 +175,7 @@ func buildJobWithRetry(runID, taskID, agCfgID, wfID, repoPath string, provider a
 // waitForStatus polls until the run has the expected status or times out.
 func waitForStatus(t *testing.T, q *gen.Queries, runID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(pollDeadline)
 	for time.Now().Before(deadline) {
 		run, err := q.GetAgentRun(context.Background(), runID)
 		if err == nil && run.Status == want {
@@ -184,7 +193,7 @@ func waitForStatus(t *testing.T, q *gen.Queries, runID, want string) {
 // than the run status to avoid racing the pool's post-completion work.
 func waitForLabel(t *testing.T, q *gen.Queries, taskID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(pollDeadline)
 	for time.Now().Before(deadline) {
 		task, err := q.GetTask(context.Background(), taskID)
 		if err == nil && task.Label == want {
@@ -228,7 +237,7 @@ func startPool(t *testing.T, pool *agent.Pool) (context.Context, func()) {
 // waitForTaskRetryCount polls until the task's transient_retry_count matches want.
 func waitForTaskRetryCount(t *testing.T, q *gen.Queries, taskID string, want int64) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(pollDeadline)
 	for time.Now().Before(deadline) {
 		task, err := q.GetTask(context.Background(), taskID)
 		if err == nil && task.TransientRetryCount == want {
@@ -1367,6 +1376,7 @@ func TestListAgentPickupTasks_OrdersByPriorityThenCreatedAt(t *testing.T) {
 	// Create tasks in a deliberately mixed order: normal, low, urgent, high,
 	// then a second normal-priority task created after the first normal one
 	// to verify the created_at ASC tiebreak within a priority level.
+	var seq int
 	mkTask := func(title string, priority int64) string {
 		id := uuid.NewString()
 		if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
@@ -1379,9 +1389,13 @@ func TestListAgentPickupTasks_OrdersByPriorityThenCreatedAt(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("create task %s: %v", title, err)
 		}
-		// Ensure distinct created_at ordering across the fixtures below;
-		// SQLite's CURRENT_TIMESTAMP has second granularity.
-		time.Sleep(1100 * time.Millisecond)
+		// Stagger created_at explicitly so ordering is deterministic without
+		// relying on wall-clock delays between inserts.
+		ts := fmt.Sprintf("2020-01-01 00:00:%02d", seq)
+		if _, err := db.SQL().Exec(`UPDATE tasks SET created_at = ? WHERE id = ?`, ts, id); err != nil {
+			t.Fatalf("stagger created_at for %s: %v", title, err)
+		}
+		seq++
 		return id
 	}
 

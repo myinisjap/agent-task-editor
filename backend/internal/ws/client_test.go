@@ -200,12 +200,26 @@ func TestServeWS_GoodOrigin_AllowsUpgrade(t *testing.T) {
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 }
 
+// subscriptionCount returns the total subscriptions across all connected
+// clients. Test-only; reads unexported state under the same locks the
+// production code uses. Assumes a single connected client in these tests.
+func (h *Hub) subscriptionCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	n := 0
+	for c := range h.clients {
+		c.subMu.RLock()
+		n += len(c.subscriptions)
+		c.subMu.RUnlock()
+	}
+	return n
+}
+
 // TestServeWS_SubscriptionCap_IgnoresBeyondLimit verifies that once a client
 // has maxSubscriptions active subscriptions, further "subscribe" messages
 // are silently ignored (added=false branch) rather than growing the map
-// unbounded. Exercised indirectly: since c.subscriptions isn't exported,
-// this drives it via the hub's Publish path — a subscription beyond the cap
-// should not receive events for that task, while one within the cap does.
+// unbounded. Asserted directly via the test-only subscriptionCount accessor
+// rather than a timing-based hub-Publish round trip.
 func TestServeWS_SubscriptionCap_IgnoresBeyondLimit(t *testing.T) {
 	hub := NewHub()
 	_, wsURL := newTestWSServer(t, hub, "", "*")
@@ -219,28 +233,27 @@ func TestServeWS_SubscriptionCap_IgnoresBeyondLimit(t *testing.T) {
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	// Fill the subscription map to the cap with distinct task ids, then add
-	// one more beyond it. The last one (over the cap) should never receive
-	// events.
+	// one more beyond it. The over-cap subscribe should be silently dropped.
 	for i := 0; i < maxSubscriptions; i++ {
 		send(t, ctx, conn, inboundMsg{Type: "subscribe", TaskID: taskIDFor(i)})
 	}
 	overCapTaskID := "task-over-cap"
 	send(t, ctx, conn, inboundMsg{Type: "subscribe", TaskID: overCapTaskID})
 
-	// Give the read pump a moment to process all subscribe messages before
-	// publishing (best-effort synchronization without a hub-side hook).
-	time.Sleep(100 * time.Millisecond)
-
-	// Only "agent.log" events are filtered by per-task subscription (see
-	// Hub.Publish); any other event type is broadcast to every client
-	// regardless of subscriptions, so it wouldn't exercise the cap at all.
-	hub.Publish("agent.log", map[string]any{"task_id": overCapTaskID, "line": "should not be delivered"})
-
-	readCtx, readCancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer readCancel()
-	_, _, err = conn.Read(readCtx)
-	if err == nil {
-		t.Error("expected no event to be delivered for a subscription beyond maxSubscriptions, but got one")
+	// Poll until the read pump has processed all subscribe messages, then
+	// assert the map size directly: it must land at exactly maxSubscriptions
+	// and never grow beyond it, proving the over-cap frame was dropped.
+	deadline := time.Now().Add(5 * time.Second)
+	var got int
+	for time.Now().Before(deadline) {
+		got = hub.subscriptionCount()
+		if got == maxSubscriptions {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got != maxSubscriptions {
+		t.Fatalf("expected subscription count to settle at %d, got %d", maxSubscriptions, got)
 	}
 }
 

@@ -125,17 +125,17 @@ func TestMigrationsUpDownUpRoundTrip(t *testing.T) {
 		t.Fatalf("expected re-up to reach version %d, got %d", topVersion, version)
 	}
 
-	// Smoke-check the schema is actually usable post-round-trip: seed the
-	// default workflow (touches workflows/workflow_labels/workflow_transitions)
-	// and confirm a basic insert on a table with foreign keys works.
+	// Smoke-check the schema is actually usable post-round-trip: seed a
+	// workflow (touches workflows/workflow_labels/workflow_transitions) and
+	// then insert a repo referencing it. Any error here hard-fails the test
+	// — the FK target is guaranteed to exist, so a failure means the
+	// round-trip left the schema unusable end-to-end (missing table/column,
+	// a NOT NULL reintroduced without a default, a broken FK, etc.).
+	if _, err := sqlDB.Exec(`INSERT INTO workflows (id, name) VALUES ('roundtrip-wf', 'roundtrip')`); err != nil {
+		t.Fatalf("seed workflow after round-trip: %v", err)
+	}
 	if _, err := sqlDB.Exec(`INSERT INTO repos (id, name, path, workflow_id)
-		SELECT 'roundtrip-repo', 'roundtrip', '/tmp/roundtrip-repo', id FROM workflows LIMIT 1`); err != nil {
-		// Not fatal on its own if there's no seeded workflow yet — the real
-		// assertion is that this doesn't error for schema reasons (missing
-		// table/column). Only fail if the schema itself looks broken.
-		var repoTableCount int
-		if cerr := sqlDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='repos'`).Scan(&repoTableCount); cerr == nil && repoTableCount == 0 {
-			t.Fatalf("repos table missing after round-trip: %v", err)
-		}
+		VALUES ('roundtrip-repo', 'roundtrip', '/tmp/roundtrip-repo', 'roundtrip-wf')`); err != nil {
+		t.Fatalf("repo insert after round-trip failed (schema regression?): %v", err)
 	}
 }
