@@ -222,7 +222,10 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Update a task's metadata */
+        /**
+         * Update a task's metadata
+         * @description Partial update — omitted fields keep their existing values. An explicitly empty title is rejected with 400 rather than being persisted.
+         */
         patch: {
             parameters: {
                 query?: never;
@@ -251,6 +254,13 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["Task"];
                     };
+                };
+                /** @description Invalid request (e.g. empty title */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -2602,7 +2612,10 @@ export interface paths {
                 };
             };
         };
-        /** Update a provider config */
+        /**
+         * Update a provider config
+         * @description Partial update — omitted fields (including model) keep their existing values.
+         */
         put: {
             parameters: {
                 query?: never;

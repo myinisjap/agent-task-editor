@@ -1235,6 +1235,10 @@ paths:
               schema: { $ref: "#/components/schemas/Task" }
     patch:
       summary: Update a task's metadata
+      description: >
+        Partial update — omitted fields keep their existing values. An
+        explicitly empty title is rejected with 400 rather than being
+        persisted.
       requestBody:
         content:
           application/json:
@@ -1250,6 +1254,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
+        "400": { description: Invalid request (e.g. empty title, bad priority/max_cost_usd) }
     delete:
       summary: Delete a task
       responses:
@@ -2377,6 +2382,9 @@ paths:
         "404": { description: Provider config not found }
     put:
       summary: Update a provider config
+      description: >
+        Partial update — omitted fields (including model) keep their
+        existing values.
       responses:
         "200":
           content:

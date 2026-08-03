@@ -399,15 +399,19 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title       string   `json:"title"`
-		Description string   `json:"description"`
-		Type        string   `json:"type"`
+		Title       *string  `json:"title"`
+		Description *string  `json:"description"`
+		Type        *string  `json:"type"`
 		RepoID      string   `json:"repo_id"`
 		MaxCostUsd  *float64 `json:"max_cost_usd"`
 		Priority    *int     `json:"priority"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Title != nil && *body.Title == "" {
+		Err(w, http.StatusBadRequest, "title cannot be empty")
 		return
 	}
 	if body.MaxCostUsd != nil && *body.MaxCostUsd < 0 {
@@ -449,10 +453,25 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		priority = int64(*body.Priority)
 	}
 
+	title := existing.Title
+	if body.Title != nil {
+		title = *body.Title
+	}
+
+	description := existing.Description
+	if body.Description != nil {
+		description = *body.Description
+	}
+
+	taskType := existing.Type
+	if body.Type != nil && *body.Type != "" {
+		taskType = *body.Type
+	}
+
 	task, err := h.q.UpdateTask(r.Context(), gen.UpdateTaskParams{
-		Title:       body.Title,
-		Description: body.Description,
-		Type:        body.Type,
+		Title:       title,
+		Description: description,
+		Type:        taskType,
 		RepoID:      repoID,
 		MaxCostUsd:  maxCostUsd,
 		Priority:    priority,
