@@ -35,7 +35,7 @@ func setupPRURLRouter(t *testing.T) (http.Handler, *gen.Queries, string, string)
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil, nil)
 	r := chi.NewRouter()
 	r.Get("/tasks/{id}/pr-url", h.PRURL)
 	return r, q, wfID, repoID

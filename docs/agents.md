@@ -128,6 +128,10 @@ The dispatcher runs a background goroutine that sweeps the database every 5 seco
 5. Sets the task's `active_agent_run_id` (and updates `current_agent_run_id`) — this prevents the next sweep from double-dispatching.
 6. Submits a `Job` to the worker pool. If the pool queue is full, marks the run `failed` and clears `active_agent_run_id`.
 
+### Block Reasons
+
+Every step above that declines to dispatch a task (paused, repo at its concurrency limit, no matching config, all matching configs rate-limited, cost budget exhausted, WIP limit full) — plus the SQL-level gates in `ListAgentPickupTasks` itself (unmet dependency, transient-retry backoff, `agent_ignore` label) — is surfaced on the task via the read-time `block_reason` field (see [api.md](api.md)'s Task fields table). `internal/agent/blockreason.go`'s `BlockReasonResolver` re-evaluates the same predicates the dispatcher uses, in the same order, so only the first reason that would actually block dispatch is reported and it can never drift from real dispatch behavior. It's computed fresh on every `GET /tasks`/`GET /tasks/{id}` response (never stored), in one batched pass per request so listing a page of tasks doesn't cost a query per task.
+
 ## Per-Repo Concurrency Limits
 
 Each repo has an optional `max_concurrent_runs` column (nullable, editable on the Repos page). It caps how many agent runs the dispatcher will keep in flight against that repo at once, independent of how many free slots the global worker pool has:

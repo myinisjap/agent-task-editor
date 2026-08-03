@@ -20,6 +20,25 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Surfaced *why* a task isn't dispatching, on the task itself.** GET
+  `/tasks` and GET `/tasks/{id}` now carry an optional, structured
+  `block_reason` field explaining why a pickup-eligible task isn't currently
+  being dispatched — one of `paused`, `agent_ignore`, `dependency`,
+  `retry_backoff`, `no_config`, `repo_concurrency`, `rate_limited`,
+  `cost_budget`, or `wip_limit` (see openapi.yaml's new `BlockReason`
+  schema), plus a human-readable message and, for the transient reasons
+  (`rate_limited`, `retry_backoff`), a `clears_at` timestamp. Only the first
+  reason the dispatcher would actually hit is reported, evaluated in the same
+  order the dispatcher itself checks them (`internal/agent/blockreason.go`'s
+  `BlockReasonResolver`, sharing the dispatcher's own predicates so the two
+  can't drift), computed at read time in one batched, shared-state pass per
+  request — no N+1 `GetRepo`/`SumTaskCost` calls on list responses. Task
+  cards now show a small badge for a blocked task (replacing the queue
+  position badge, which answers a different question), and the task detail
+  page shows the full message plus a countdown for transient reasons; a
+  dependency block points at the Dependencies panel already on the page.
+  Previously this information only existed as `log.Debug`/`log.Info` lines in
+  container logs.
 - **On-screen key bar for the mobile chat terminal.** Phone keyboards have no
   Esc, Tab or arrow keys, which left the Chat page's terminal largely unusable
   on mobile (notably the Claude CLI's Shift+Tab mode switch). A scrollable key

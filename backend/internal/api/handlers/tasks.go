@@ -74,16 +74,17 @@ func parsePageLimit(raw string, def, max int) int {
 }
 
 type TasksHandler struct {
-	q          *gen.Queries
-	engine     *workflow.Engine
-	uploadDir  string
-	canceller  RunCanceller
-	dispatcher ReplyDispatcher
-	wb         *writeback.Writeback
+	q            *gen.Queries
+	engine       *workflow.Engine
+	uploadDir    string
+	canceller    RunCanceller
+	dispatcher   ReplyDispatcher
+	blockReasons BlockReasonResolver
+	wb           *writeback.Writeback
 }
 
-func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher) *TasksHandler {
-	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller, dispatcher: dispatcher, wb: writeback.New(q)}
+func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher, blockReasons BlockReasonResolver) *TasksHandler {
+	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller, dispatcher: dispatcher, blockReasons: blockReasons, wb: writeback.New(q)}
 }
 
 // SetWriteback overrides the handler's writeback instance. Exported only for
@@ -129,9 +130,10 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		counts := h.dependencyCountMap(r.Context(), ids)
 		rollups := h.subtaskRollupMap(r.Context(), ids)
 		positions := h.queuePositionMap(r.Context())
+		blockReasons := h.blockReasonMap(r.Context(), children)
 		resp := toTaskResponses(children)
 		for i := range resp {
-			resp[i] = applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions)
+			resp[i] = applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons)
 		}
 		JSON(w, http.StatusOK, resp)
 		return
@@ -161,9 +163,10 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	counts := h.dependencyCountMap(r.Context(), ids)
 	rollups := h.subtaskRollupMap(r.Context(), ids)
 	positions := h.queuePositionMap(r.Context())
+	blockReasons := h.blockReasonMap(r.Context(), tasks)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
-		resp[i] = applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions)
+		resp[i] = applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons)
 	}
 	JSON(w, http.StatusOK, resp)
 }
@@ -387,6 +390,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context(), ids))
 	resp = applyRollup(resp, h.subtaskRollupMap(r.Context(), ids))
 	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
+	resp = applyBlockReason(resp, h.blockReasonMap(r.Context(), []gen.Task{task}))
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost
 	}

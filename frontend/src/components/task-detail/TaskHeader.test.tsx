@@ -257,3 +257,47 @@ describe('TaskHeader duplicate action', () => {
     expect(onDuplicate).toHaveBeenCalledTimes(1)
   })
 })
+
+// #353 — a fuller "not dispatching" explanation replaces the plain Paused
+// badge once block_reason is present, and links dependency blocks to the
+// DependenciesPanel below rather than duplicating its content here.
+describe('TaskHeader block_reason banner (#353)', () => {
+  it('renders the block reason message and takes precedence over the plain Paused badge', () => {
+    renderHeader(
+      TaskHeader,
+      baseTask({ paused: true, block_reason: { code: 'paused', message: 'task is paused' } }),
+    )
+
+    expect(screen.getByText(/Not dispatching/)).toBeInTheDocument()
+    expect(screen.getByText('task is paused')).toBeInTheDocument()
+    expect(screen.queryByText('⏸ Paused — agents will not pick up this task')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the plain Paused badge when there is no block_reason', () => {
+    renderHeader(TaskHeader, baseTask({ paused: true }))
+
+    expect(screen.queryByText(/Not dispatching/)).not.toBeInTheDocument()
+    expect(screen.getByText('⏸ Paused — agents will not pick up this task')).toBeInTheDocument()
+  })
+
+  it('renders a countdown for a transient reason with clears_at', () => {
+    const clearsAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    renderHeader(
+      TaskHeader,
+      baseTask({
+        block_reason: { code: 'rate_limited', message: 'all matching configs are rate-limited', clears_at: clearsAt },
+      }),
+    )
+
+    expect(screen.getByText(/clears in \d+m/)).toBeInTheDocument()
+  })
+
+  it('points at the Dependencies panel for a dependency block instead of duplicating blocker details', () => {
+    renderHeader(
+      TaskHeader,
+      baseTask({ block_reason: { code: 'dependency', message: 'blocked on 1 unresolved dependency' } }),
+    )
+
+    expect(screen.getByText(/See Dependencies below/)).toBeInTheDocument()
+  })
+})

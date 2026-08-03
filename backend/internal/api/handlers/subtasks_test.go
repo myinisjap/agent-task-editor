@@ -30,7 +30,7 @@ func setupSubtaskRouter(t *testing.T) (http.Handler, *storage.DB, *gen.Queries, 
 		t.Fatalf("create repo: %v", err)
 	}
 
-	tasksH := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+	tasksH := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil, nil)
 	subH := handlers.NewSubtasksHandler(q, db.SQL(), noopPub{})
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), noopPub{})
 

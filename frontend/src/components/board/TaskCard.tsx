@@ -8,6 +8,8 @@ import { useTasksStore } from '../../stores/tasks'
 import { useReposStore } from '../../stores/repos'
 import GitStateBadge from './GitStateBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
+import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
+import { formatRelativeCountdown } from '../../lib/format'
 
 const TYPE_COLORS: Record<string, string> = {
   feature: 'bg-blue-900 text-blue-300',
@@ -286,13 +288,30 @@ export default function TaskCard({
               {priorityLabel(task.priority)}
             </span>
           )}
-          {task.queue_position != null && (
+          {task.block_reason ? (
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-medium"
-              title="Position in the current agent-pickup queue (priority order), waiting for a free worker"
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/60 text-red-300 font-semibold"
+              title={
+                task.block_reason.message +
+                (task.block_reason.clears_at && isTransientBlockReason(task.block_reason)
+                  ? ` — clears ${formatRelativeCountdown(task.block_reason.clears_at)}`
+                  : '')
+              }
             >
-              #{task.queue_position + 1} in queue
+              🚫 {blockReasonLabel(task.block_reason)}
+              {task.block_reason.clears_at && isTransientBlockReason(task.block_reason)
+                ? ` (${formatRelativeCountdown(task.block_reason.clears_at)})`
+                : ''}
             </span>
+          ) : (
+            task.queue_position != null && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-medium"
+                title="Position in the current agent-pickup queue (priority order), waiting for a free worker"
+              >
+                #{task.queue_position + 1} in queue
+              </span>
+            )
           )}
           {task.archived && (
             <span

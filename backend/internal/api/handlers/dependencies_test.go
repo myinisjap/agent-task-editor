@@ -34,7 +34,7 @@ func setupDepRouter(t *testing.T) (http.Handler, *storage.DB, *gen.Queries, stri
 		t.Fatalf("create repo: %v", err)
 	}
 
-	tasksH := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+	tasksH := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil, nil)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), noopPub{})
 
 	r := chi.NewRouter()
