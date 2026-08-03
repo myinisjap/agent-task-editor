@@ -328,9 +328,25 @@ triggers the "Release" workflow the same way.
   (human-cancelled runs) still wrote `cost_usd = 0` even when the provider
   had already burned real tokens before failing/being killed. Both now
   receive the run's `Result` and persist `input_tokens`/`output_tokens`/
-  `cost_usd`/`cost_unknown` the same way, so per-task budgets and any
-  cost aggregate (daily/monthly totals, cost-by-provider, etc.) built on top
-  of `agent_runs` no longer systematically undercount exactly the runs most
+  `cost_usd`/`cost_unknown` the same way. That pool-level fix only pays off
+  if the provider itself returns a non-empty `Result` on those paths, though
+  — and `providers/claude.go` and `providers/qwen.go` each had three return
+  sites (timeout, rate-limit, and other-transient-CLI-exit) that built a
+  bare `agent.Result{Status, SessionID}` (qwen: `{Status, CostWarned}`,
+  dropping `SessionID` too) without calling `applyUsage`, silently
+  discarding any usage/cost the provider had already parsed off the CLI's
+  own terminal `"result"` event before the error fired. `codex.go` and
+  `opencode.go` already called `applyUsage`/`applyUsageWithCost` on their
+  equivalent paths — only claude and qwen had the gap. Both files' six
+  return sites now call `applyUsage` before returning, with new regression
+  tests (`TestClaudeRunner_RateLimit_PreservesUsage`,
+  `TestClaudeRunner_TransientError_PreservesUsage`,
+  `TestClaudeRunner_Timeout_PreservesUsage`, and the `TestQwenRunner_*`
+  equivalents) asserting the returned `Result` carries the CLI's usage/cost
+  alongside the `*ErrRateLimit`/`*ErrTransient` classification. With both
+  the pool and provider layers fixed, per-task budgets and any cost
+  aggregate (daily/monthly totals, cost-by-provider, etc.) built on top of
+  `agent_runs` no longer systematically undercount exactly the runs most
   likely to repeat.
 - **`PATCH /tasks/{id}` no longer blanks `title`/`description`/`type` when
   they're omitted from the request body, and `PUT /provider-configs/{id}`
