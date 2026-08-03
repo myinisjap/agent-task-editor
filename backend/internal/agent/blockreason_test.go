@@ -372,6 +372,73 @@ func TestBlockReasonResolver_CostBudgetExhausted(t *testing.T) {
 	}
 }
 
+// TestBlockReasonResolver_CostBudgetUnenforceable covers the OTHER
+// checkCostBudget branch not exercised by
+// TestBlockReasonResolver_CostBudgetExhausted: spend is still UNDER budget,
+// but at least one run is flagged cost_unknown (a model with no resolvable
+// price), so the accumulated spend can't be trusted — this mirrors
+// Dispatcher.checkCostBudget's own "cost-unknown" escalation path (see its
+// doc comment in dispatcher.go) but as a read-only preview.
+func TestBlockReasonResolver_CostBudgetUnenforceable(t *testing.T) {
+	ctx := context.Background()
+	f := newBlockReasonFixture(t)
+	cfgID := f.createEnabledConfig(t, "ready")
+	task := f.newTask(t, "ready")
+
+	if _, err := f.q.UpdateTask(ctx, gen.UpdateTaskParams{
+		Title: task.Title, Description: task.Description, Type: task.Type, RepoID: task.RepoID,
+		MaxCostUsd: 10.0, ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set task budget: %v", err)
+	}
+
+	runID := uuid.NewString()
+	if _, err := f.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: task.ID, AgentConfigID: &cfgID}); err != nil {
+		t.Fatalf("create prior run: %v", err)
+	}
+	// Well under the $10 budget, but flagged cost_unknown: tokens were spent
+	// on a model with no resolvable price, so cost_usd = 0 understates the
+	// true spend rather than reflecting a genuinely free run.
+	if _, err := f.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status: "completed", CostUsd: 0, CostUnknown: 1, ID: runID,
+	}); err != nil {
+		t.Fatalf("complete prior run: %v", err)
+	}
+
+	task, err := f.q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	r := NewBlockReasonResolver(f.q, nil, nil)
+	reason := resolveOne(t, r, task)
+	if reason == nil || reason.Code != BlockCostBudget {
+		t.Fatalf("expected %q, got %+v", BlockCostBudget, reason)
+	}
+	detail, ok := reason.Detail.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any detail, got %T: %+v", reason.Detail, reason.Detail)
+	}
+	if unknownRuns, ok := detail["unknown_runs"].(int64); !ok || unknownRuns != 1 {
+		t.Fatalf("expected detail.unknown_runs == 1, got %+v", detail["unknown_runs"])
+	}
+
+	// Read-only guarantee, same as the exhausted-budget case above.
+	fresh, err := f.q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get task after resolve: %v", err)
+	}
+	if fresh.ActiveAgentRunID != nil {
+		t.Fatalf("resolver must not write: expected active_agent_run_id to stay nil, got %v", fresh.ActiveAgentRunID)
+	}
+	runs, err := f.q.ListAgentRuns(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("resolver must not write: expected exactly the 1 seeded run, got %d", len(runs))
+	}
+}
+
 func TestBlockReasonResolver_WIPLimit(t *testing.T) {
 	limit := int64(1)
 	f := newBlockReasonFixtureWithOpts(t, blockReasonFixtureOpts{nextWipLimit: &limit, nextWipHard: true})
