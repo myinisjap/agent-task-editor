@@ -55,6 +55,32 @@ func TestMain(m *testing.M) {
 		// from the task, with a non-zero exit (as real 429s from the CLI do).
 		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"duration_ms":844,"duration_api_ms":0,"num_turns":1,"result":"You've hit your session limit ` + "·" + ` resets 6pm (America/Chicago)","stop_reason":"stop_sequence","session_id":"16228fd1-bcd9-4dee-b14d-7537b3bce8ea","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0},"modelUsage":{},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","uuid":"044c12cd-40a6-4e81-8ee8-e7da2e1f9c23"}`)
 		os.Exit(1)
+	case "rate_limit_with_usage":
+		// Like "session_limit_429", but the terminal "result" event carries
+		// non-zero usage/total_cost_usd — a run that spent money before
+		// hitting its rate limit. Regression coverage for the bug where
+		// claude.go's rate-limit return path built a bare
+		// agent.Result{Status, SessionID} without calling applyUsage,
+		// silently dropping this usage and persisting the run as free.
+		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You've hit your session limit ` + "·" + ` resets 6pm (America/Chicago)","session_id":"rate-limit-usage-session","total_cost_usd":4.5,"usage":{"input_tokens":1000,"output_tokens":500}}`)
+		os.Exit(1)
+	case "transient_with_usage":
+		// Simulate: claude hits a transient infra error (e.g. an ECONNRESET)
+		// after already reporting usage on its terminal "result" event, then
+		// exits non-zero. Regression coverage for the same dropped-usage bug
+		// on the transient-exit return path.
+		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"result":"ECONNRESET: connection reset by peer","session_id":"transient-usage-session","total_cost_usd":2.25,"usage":{"input_tokens":800,"output_tokens":150}}`)
+		os.Exit(1)
+	case "timeout_with_usage":
+		// Simulate: claude reports usage on an assistant-message "result"-shaped
+		// event that arrives *before* the run wedges (e.g. hangs waiting on a
+		// tool call that never returns), so the process is still alive — and
+		// gets killed via context deadline — when the configured TimeoutSecs
+		// elapses. Regression coverage for the same dropped-usage bug on the
+		// timeout return path (runCtx.Err() == context.DeadlineExceeded).
+		fmt.Println(`{"type":"result","subtype":"success","session_id":"timeout-usage-session","total_cost_usd":1.75,"usage":{"input_tokens":300,"output_tokens":90}}`)
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
 	case "error_max_turns":
 		// Simulate: claude exhausts its configured --max-turns and exits 0
 		// (unlike auth errors/crashes, which exit non-zero) with a
@@ -373,6 +399,149 @@ func TestClaudeRunner_RateLimitResetAtFromResultText(t *testing.T) {
 	}
 	if res.r.Status != "failed" {
 		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+}
+
+// TestClaudeRunner_RateLimit_PreservesUsage is a regression test for the bug
+// where claude.go's rate-limit return path built a bare
+// agent.Result{Status, SessionID} without calling applyUsage — so a run that
+// had already spent money before hitting its rate limit was reported with
+// zeroed-out usage, and the pool would persist it as free (cost_usd=0),
+// defeating max_cost_usd budget accounting. Verifies the returned Result
+// carries the terminal "result" event's usage/cost alongside the
+// *ErrRateLimit classification.
+func TestClaudeRunner_RateLimit_PreservesUsage(t *testing.T) {
+	runner := helperRunner("rate_limit_with_usage")
+	logCh := make(chan agent.LogEntry, 256)
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), makeInput("rate_limit_with_usage"), logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+	res := <-ch
+
+	var rl *agent.ErrRateLimit
+	if !asErrRateLimit(res.err, &rl) {
+		t.Fatalf("want *ErrRateLimit, got err=%v", res.err)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if res.r.SessionID != "rate-limit-usage-session" {
+		t.Errorf("want SessionID preserved, got %q", res.r.SessionID)
+	}
+	if res.r.InputTokens != 1000 {
+		t.Errorf("want InputTokens=1000, got %d", res.r.InputTokens)
+	}
+	if res.r.OutputTokens != 500 {
+		t.Errorf("want OutputTokens=500, got %d", res.r.OutputTokens)
+	}
+	if res.r.CostUSD != 4.5 {
+		t.Errorf("want CostUSD=4.5, got %v", res.r.CostUSD)
+	}
+}
+
+// TestClaudeRunner_TransientError_PreservesUsage mirrors
+// TestClaudeRunner_RateLimit_PreservesUsage above for the transient-exit
+// return path (a non-429 infra error, e.g. ECONNRESET) — same bug, same fix.
+func TestClaudeRunner_TransientError_PreservesUsage(t *testing.T) {
+	runner := helperRunner("transient_with_usage")
+	logCh := make(chan agent.LogEntry, 256)
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), makeInput("transient_with_usage"), logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+	res := <-ch
+
+	var te *agent.ErrTransient
+	if !errors.As(res.err, &te) {
+		t.Fatalf("want *agent.ErrTransient, got err=%v (%T)", res.err, res.err)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if res.r.SessionID != "transient-usage-session" {
+		t.Errorf("want SessionID preserved, got %q", res.r.SessionID)
+	}
+	if res.r.InputTokens != 800 {
+		t.Errorf("want InputTokens=800, got %d", res.r.InputTokens)
+	}
+	if res.r.OutputTokens != 150 {
+		t.Errorf("want OutputTokens=150, got %d", res.r.OutputTokens)
+	}
+	if res.r.CostUSD != 2.25 {
+		t.Errorf("want CostUSD=2.25, got %v", res.r.CostUSD)
+	}
+}
+
+// TestClaudeRunner_Timeout_PreservesUsage is a regression test for the bug
+// where claude.go's timeout return path (runCtx.Err() ==
+// context.DeadlineExceeded) built a bare agent.Result{Status, SessionID}
+// without calling applyUsage — so a run that had already spent money before
+// wedging and hitting its configured TimeoutSecs was reported with
+// zeroed-out usage, and the pool would persist it as free (cost_usd=0). The
+// fake CLI here prints a terminal "result" event carrying usage/cost and
+// then hangs well past the configured timeout, so it's still alive (and
+// gets killed via context deadline) when TimeoutSecs elapses.
+func TestClaudeRunner_Timeout_PreservesUsage(t *testing.T) {
+	runner := helperRunner("timeout_with_usage")
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := makeInput("timeout_with_usage")
+	input.AgentConfig.TimeoutSecs = 1
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for Run to return — configured TimeoutSecs likely failed to cancel the subprocess")
+	}
+
+	var te *agent.ErrTransient
+	if !errors.As(res.err, &te) {
+		t.Fatalf("want *agent.ErrTransient, got err=%v (%T)", res.err, res.err)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	if res.r.SessionID != "timeout-usage-session" {
+		t.Errorf("want SessionID preserved, got %q", res.r.SessionID)
+	}
+	if res.r.InputTokens != 300 {
+		t.Errorf("want InputTokens=300, got %d", res.r.InputTokens)
+	}
+	if res.r.OutputTokens != 90 {
+		t.Errorf("want OutputTokens=90, got %d", res.r.OutputTokens)
+	}
+	if res.r.CostUSD != 1.75 {
+		t.Errorf("want CostUSD=1.75, got %v", res.r.CostUSD)
 	}
 }
 

@@ -443,7 +443,9 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		// it counts against the task's bounded retry budget instead of
 		// retrying forever unconditionally, but don't require an infra
 		// signal to have been seen in the logs.
-		return agent.Result{Status: "failed", SessionID: finalSession}, info, &agent.ErrTransient{Cause: fmt.Errorf("claude run timed out")}
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		applyUsage(&res, finalUsage)
+		return res, info, &agent.ErrTransient{Cause: fmt.Errorf("claude run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("claude exited: %v", err), At: time.Now()}
@@ -461,10 +463,14 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 			if !resetAt.IsZero() {
 				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("claude rate limit resets at %s (retrying then)", resetAt.Format(time.RFC3339)), At: time.Now()}
 			}
-			return agent.Result{Status: "failed", SessionID: finalSession}, info, &agent.ErrRateLimit{ResetAt: resetAt, Message: message}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsage(&res, finalUsage)
+			return res, info, &agent.ErrRateLimit{ResetAt: resetAt, Message: message}
 		}
 		if tr {
-			return agent.Result{Status: "failed", SessionID: finalSession}, info, &agent.ErrTransient{Cause: fmt.Errorf("claude CLI exited with transient infra error: %w", err)}
+			res := agent.Result{Status: "failed", SessionID: finalSession}
+			applyUsage(&res, finalUsage)
+			return res, info, &agent.ErrTransient{Cause: fmt.Errorf("claude CLI exited with transient infra error: %w", err)}
 		}
 	}
 
