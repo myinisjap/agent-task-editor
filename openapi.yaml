@@ -1143,6 +1143,111 @@ components:
         - claude_usage
         - repo_concurrency
 
+    OutcomeQuality:
+      type: object
+      description: >-
+        Per-agent-config outcome-quality analytics: did the work stick, not
+        just did the run exit cleanly. See
+        [docs/api.md#dashboard](../docs/api.md#dashboard) for full metric
+        definitions, attribution rules, and caveats.
+      properties:
+        configs:
+          type: array
+          items:
+            type: object
+            description: >-
+              One row per agent config still present in the database. Every
+              rate is reported alongside its own sample-size denominator
+              (the *_n / runs_finished fields) and a low_sample_* flag
+              (sample size below 10) so a small sample doesn't masquerade as
+              a confident number. tasks_done (and every rate derived from
+              it) attributes a whole task to the agent config of that
+              task's *last* run - the same last-run attribution convention
+              already used by Dashboard.agent_config_stats -
+              except rework_rate_percent's numerator, which is attributed to
+              whichever run most recently preceded the backward transition
+              (the config that caused the bounce-back), not necessarily the
+              config that finished the task. "Terminal" means the task's
+              current label has workflow_labels.is_terminal set.
+            properties:
+              agent_config_id:            { type: string }
+              agent_name:                 { type: string }
+              provider:                   { type: string }
+              tasks_done:
+                type: integer
+                description: >-
+                  Number of tasks whose last run was under this config and
+                  which reached a terminal label. Shared denominator for
+                  avg_cost_to_done_usd, rework_rate_percent,
+                  human_touch_rate_percent, and avg_review_comments.
+              avg_cost_to_done_usd:
+                type: number
+                format: double
+                description: >-
+                  Average, across tasks_done tasks, of the total recorded
+                  cost_usd across ALL of that task's runs (including failed
+                  and mid-flight ones) until it reached a terminal label -
+                  same "every run counts" rationale as
+                  Dashboard.cost_by_task.
+              rework_rate_percent:
+                type: number
+                format: double
+                description: >-
+                  Percentage of tasks_done tasks that moved back into a
+                  label they had already occupied at least once (a
+                  "rework" event) before reaching a terminal label,
+                  attributed to the config whose run preceded the
+                  bounce-back.
+              rework_n:            { type: integer, description: "Denominator for rework_rate_percent (== tasks_done)." }
+              low_sample_rework:   { type: boolean, description: "true when rework_n is below 10." }
+              human_touch_rate_percent:
+                type: number
+                format: double
+                description: >-
+                  Percentage of tasks_done tasks whose label history
+                  includes at least one human-triggered transition (the
+                  task needed a human to move it along its workflow at
+                  some point, not just approve the final step).
+              human_touch_n:          { type: integer, description: "Denominator for human_touch_rate_percent (== tasks_done)." }
+              low_sample_human_touch: { type: boolean, description: "true when human_touch_n is below 10." }
+              avg_review_comments:
+                type: number
+                format: double
+                description: >-
+                  Average number of task_review_comments (open and
+                  resolved) received per tasks_done task - review burden.
+              runs_finished:
+                type: integer
+                description: >-
+                  Number of this config's runs that reached a terminal run
+                  status (completed or waiting_human) - denominator for
+                  escalation_rate_percent. A run-level, not task-level,
+                  count - independent of tasks_done.
+              escalation_rate_percent:
+                type: number
+                format: double
+                description: >-
+                  Percentage of runs_finished runs that ended waiting_human
+                  rather than completed.
+              low_sample_escalation: { type: boolean, description: "true when runs_finished is below 10." }
+            required:
+              - agent_config_id
+              - agent_name
+              - provider
+              - tasks_done
+              - avg_cost_to_done_usd
+              - rework_rate_percent
+              - rework_n
+              - low_sample_rework
+              - human_touch_rate_percent
+              - human_touch_n
+              - low_sample_human_touch
+              - avg_review_comments
+              - runs_finished
+              - escalation_rate_percent
+              - low_sample_escalation
+      required: [configs]
+
     ProviderCheck:
       type: object
       description: A single provider/onboarding readiness row.
@@ -2618,6 +2723,33 @@ paths:
                     input_tokens:  { type: integer }
                     output_tokens: { type: integer }
                     cost_usd:      { type: number, format: double }
+
+  /dashboard/outcome-quality:
+    get:
+      summary: Per-agent-config outcome-quality analytics (rework, cost-to-done, review burden, human-touch, escalation)
+      description: >
+        Returns the OutcomeQuality analytics table: per-agent-config rework
+        rate, cost-to-done, review burden, human-touch rate, and escalation
+        rate — metrics that answer "did the work stick", which
+        Dashboard.agent_config_stats' success_rate_percent cannot. Computed
+        from a full scan of task_label_history and agent_runs, so results
+        are cached for a short TTL rather than being live — see
+        docs/api.md#dashboard. Optionally scoped to a single repo via
+        ?repo_id=, since aggregate cross-repo numbers can hide a config that
+        is excellent on one codebase and poor on another.
+      parameters:
+        - name: repo_id
+          in: query
+          description: >
+            When set, every metric is recomputed over only the tasks
+            belonging to this repo instead of the cached all-repos
+            snapshot.
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OutcomeQuality" }
 
   /healthz:
     get:

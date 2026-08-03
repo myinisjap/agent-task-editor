@@ -47,6 +47,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 		globalCost = gc
 	}
 	dashH := handlers.NewDashboardHandler(q, maxWorkers, globalCost)
+	outcomeQualityH := handlers.NewOutcomeQualityHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates, dispatcherLiveness)
 	backupH := handlers.NewBackupHandler(db)
@@ -271,6 +272,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Dashboard
 			r.Get("/dashboard", dashH.Get)
 			r.Get("/dashboard/cost-by-task", dashH.CostByTask)
+			r.Get("/dashboard/outcome-quality", outcomeQualityH.Get)
 		})
 	})
 
