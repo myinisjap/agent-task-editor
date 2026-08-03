@@ -20,6 +20,32 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Outcome-quality metrics: rework rate, cost-to-done, review burden,
+  human-touch rate, escalation rate.** `success_rate_percent` on the Agent
+  Performance page only measures whether a run exited cleanly, which is a
+  weak proxy for whether the work actually stuck — a config with a high
+  success rate and a high rework rate (confidently finishes, then gets
+  bounced back) is worse than one with a lower success rate and little
+  rework, and the old page couldn't tell them apart. A new
+  `GET /dashboard/outcome-quality` endpoint (optionally scoped with
+  `?repo_id=`) adds, per agent config: **cost-to-done** (total spend across
+  every run of a task, including failures, until it reached a terminal
+  label); **rework rate** (percentage of finished tasks that moved backward
+  into a label they'd already occupied, attributed to whichever run caused
+  the bounce-back); **human-touch rate** (percentage of finished tasks that
+  needed at least one human-triggered move along the way); **review
+  burden** (average review comments per finished task); and **escalation
+  rate** (percentage of a config's finished runs that ended waiting on a
+  human). Every rate ships with its own sample size and a low-sample flag
+  (n < 10) so a config with 2 tasks at 100% doesn't outrank one with 200
+  tasks at 85% — the Agent Performance page greys out low-sample rates
+  instead of hiding them. Computed from a full scan of
+  `task_label_history`/`agent_runs` and cached server-side with a short TTL
+  rather than being folded into the WS-refetched `GET /dashboard` endpoint
+  (see the `#346` note on that endpoint already lacking debounce). The
+  existing `agent_config_stats`/`success_rate_percent` table is unchanged
+  and still useful for spotting a flaky or crashing config, but now sits
+  below the outcome-quality table rather than being the page's headline.
 - **Surfaced *why* a task isn't dispatching, on the task itself.** GET
   `/tasks` and GET `/tasks/{id}` now carry an optional, structured
   `block_reason` field explaining why a pickup-eligible task isn't currently
