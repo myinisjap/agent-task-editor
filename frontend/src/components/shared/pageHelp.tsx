@@ -149,11 +149,50 @@ export function PerformanceHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Outcome quality</h3>
+        <p>
+          <strong>Success rate measures whether a run exited cleanly — it does not measure whether
+          the work stuck.</strong> A config with a high success rate but a high rework rate finishes
+          confidently and then gets bounced back; that's worse than a config with a lower success
+          rate but little rework. These metrics answer "did the work stick":
+        </p>
+        <ul className="list-disc list-inside space-y-1">
+          <li>
+            <strong>Cost to done</strong> — average total spend across every run of a task
+            (including failed and retried ones), from creation until it reached a terminal label.
+          </li>
+          <li>
+            <strong>Rework rate</strong> — the percentage of finished tasks that moved backward
+            into a label they'd already occupied at least once (bounced back for more work),
+            attributed to whichever run caused the bounce-back.
+          </li>
+          <li>
+            <strong>Human-touch rate</strong> — the percentage of finished tasks that needed at
+            least one human-triggered move along the way, not just a final approval.
+          </li>
+          <li>
+            <strong>Review burden</strong> — average review comments received per finished task.
+          </li>
+          <li>
+            <strong>Escalation rate</strong> — the percentage of a config's finished runs that
+            ended waiting on a human instead of completing.
+          </li>
+        </ul>
+        <p>
+          Every rate is shown with its sample size (n); rates computed from fewer than 10 tasks or
+          runs are flagged as low-sample and should be treated with caution — a config with 2 tasks
+          at 100% is not more reliable than one with 200 tasks at 85%. Use the repo filter to check
+          whether a config's numbers hold up on a specific codebase, since aggregate numbers can
+          hide a config that's excellent on one repo and poor on another.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Agent config performance</h3>
         <p>
           Aggregated stats per agent config: number of runs, success rate, average/P90 run
-          duration, and average turns per task. Use this to spot a flaky or slow agent config and
-          tune its prompt, model, or timeout.
+          duration, and average turns per task. Success rate is still useful for spotting a flaky
+          or crashing config, but it's a weaker signal than the outcome-quality metrics above —
+          use it alongside them, not instead of them.
         </p>
       </section>
     </>

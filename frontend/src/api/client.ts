@@ -36,6 +36,7 @@ export type AgentRun = Schemas['AgentRun']
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
 export type Dashboard = Schemas['Dashboard']
+export type OutcomeQuality = Schemas['OutcomeQuality']
 export type ProviderCheck = Schemas['ProviderCheck']
 
 // Narrowed alias for the ProviderCheck.status enum, kept for callers that
@@ -386,6 +387,12 @@ export const api = {
     // Full per-task cost rollup (no top-N cap), used by the board page to
     // compute the cost of the currently-selected filter.
     costByTask: () => request<TaskCost[]>('/dashboard/cost-by-task'),
+    // Per-agent-config outcome-quality analytics (rework rate, cost-to-done,
+    // review burden, human-touch rate, escalation rate) — see the Agent
+    // Performance page. Cached server-side with a short TTL; optionally
+    // scoped to a single repo.
+    outcomeQuality: (repoId?: string) =>
+      request<OutcomeQuality>(`/dashboard/outcome-quality${repoId ? `?repo_id=${encodeURIComponent(repoId)}` : ''}`),
   },
   github: {
     authStatus: () => request<{ authed: boolean; note: string }>('/github/auth-status'),

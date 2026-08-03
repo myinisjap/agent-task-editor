@@ -40,6 +40,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	templatesH := handlers.NewTemplatesHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
 	dashH := handlers.NewDashboardHandler(q, maxWorkers)
+	outcomeQualityH := handlers.NewOutcomeQualityHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates, dispatcherLiveness)
 	backupH := handlers.NewBackupHandler(db)
@@ -264,6 +265,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Dashboard
 			r.Get("/dashboard", dashH.Get)
 			r.Get("/dashboard/cost-by-task", dashH.CostByTask)
+			r.Get("/dashboard/outcome-quality", outcomeQualityH.Get)
 		})
 	})
 

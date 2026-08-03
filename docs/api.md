@@ -850,6 +850,79 @@ flat array: `[{ "task_id": "...", "input_tokens": 0, "output_tokens": 0,
 above. Backs the Board page's "Filtered cost" badge, which needs a cost
 figure for every currently-visible task rather than just the top 20.
 
+### `GET /dashboard/outcome-quality`
+Per-agent-config **outcome-quality** analytics: whether the work actually
+stuck, not just whether a run exited cleanly (which is all
+`agent_config_stats.success_rate_percent` tells you). Optional `?repo_id=`
+scopes every metric to a single repo instead of the cached all-repos
+snapshot — aggregate cross-repo numbers can hide a config that's excellent
+on one codebase and poor on another.
+
+```json
+{
+  "configs": [
+    {
+      "agent_config_id": "...",
+      "agent_name": "opus-on-review",
+      "provider": "claude",
+      "tasks_done": 42,
+      "avg_cost_to_done_usd": 0.87,
+      "rework_rate_percent": 14.3,
+      "rework_n": 42,
+      "low_sample_rework": false,
+      "human_touch_rate_percent": 9.5,
+      "human_touch_n": 42,
+      "low_sample_human_touch": false,
+      "avg_review_comments": 1.2,
+      "runs_finished": 45,
+      "escalation_rate_percent": 4.4,
+      "low_sample_escalation": false
+    }
+  ]
+}
+```
+
+One row per agent config still present in the database:
+- `tasks_done` — number of tasks whose **last** run was under this config
+  and which reached a terminal label (`workflow_labels.is_terminal`). This
+  is the shared denominator for `avg_cost_to_done_usd`,
+  `rework_rate_percent`, `human_touch_rate_percent`, and
+  `avg_review_comments` — same last-run attribution convention as
+  `agent_config_stats.avg_turns_to_done`.
+- `avg_cost_to_done_usd` — average, across those tasks, of the **total**
+  `cost_usd` recorded across every run of that task (including failed and
+  mid-flight runs), from creation until it reached a terminal label. Same
+  "every run counts" rationale as `cost_by_task`/`SumTaskCost`.
+- `rework_rate_percent` — percentage of `tasks_done` tasks that moved
+  **backward** into a label they had already occupied at least once before
+  reaching a terminal label ("rework": the task got bounced back for more
+  work). The numerator is attributed to whichever run most recently
+  preceded the backward transition — the config that caused the
+  bounce-back — which can differ from the task's last-run config; the
+  denominator (`rework_n`) is still `tasks_done`.
+- `human_touch_rate_percent` — percentage of `tasks_done` tasks whose label
+  history includes at least one human-triggered transition (the task
+  needed a human to move it along its workflow at some point, not just a
+  final approval step).
+- `avg_review_comments` — average number of `task_review_comments` (open
+  and resolved) received per `tasks_done` task — review burden.
+- `runs_finished` / `escalation_rate_percent` — of this config's runs that
+  reached a terminal **run** status (`completed` or `waiting_human`), the
+  percentage that ended `waiting_human` rather than `completed`. This is a
+  run-level count, independent of `tasks_done`.
+- `low_sample_rework` / `low_sample_human_touch` / `low_sample_escalation`
+  — `true` when that rate's sample size (`rework_n` / `human_touch_n` /
+  `runs_finished`) is below 10. Small samples make a percentage extremely
+  noisy (2 tasks at 100% is not more reliable than 200 tasks at 85%); the
+  frontend greys these out rather than hiding them, since the raw number
+  and its `n` are still informative together.
+
+Computed from a full scan of `task_label_history` and `agent_runs` — both
+grow without bound (log retention prunes `agent_logs`, not these) — so
+results are cached server-side for a short TTL rather than being live; a
+repo-filtered request recomputes on the spot instead of waiting out a
+separate cache slot for that repo.
+
 ---
 
 ## Health
