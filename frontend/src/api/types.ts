@@ -3899,10 +3899,29 @@ export interface components {
              * @description Task's lifetime recorded cost across every run regardless of status (matching how the dispatcher's cost-budget guard counts spend). Only populated on GET /tasks/{id}; omitted (0) on list responses. Needed because GET /tasks/{id}/runs is paginated, so a client-side sum over a single page of runs would undercount once a task has more runs than fit on one page.
              */
             cumulative_cost_usd?: number;
+            /** @description Derived, read-time explanation of why this task isn't currently being dispatched (see BlockReason). Computed on every GET /tasks and GET /tasks/{id} response by re-evaluating the same predicates the dispatcher itself uses, in the same order, so it never drifts from actual dispatch behavior and never goes stale. Only the FIRST reason the dispatcher would hit is reported — clearing it may simply expose the next one, so this is not an exhaustive list. Absent/null when the task isn't currently a dispatch candidate at all (e.g. archived, already running, or not on an agent-triggerable label), or when it IS a candidate but has no active block (i.e. it's simply next in line — see queue_position, a separate, unrelated concern). */
+            block_reason?: components["schemas"]["BlockReason"] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description Explains why a pickup-eligible task is not currently being dispatched. Mirrors the nine non-dispatch paths in the agent dispatcher (see docs/agents.md#dispatch): a task paused, its repo at its concurrency limit, no enabled agent config matching its label, every matching config rate-limited, its cost budget exhausted, the target label's WIP limit full, an unmet dependency, transient-retry backoff, or its label excluded via agent_ignore. */
+        BlockReason: {
+            /**
+             * @description Stable machine-readable reason code. See the "code" list above; evaluated in this exact order, so an earlier code always takes precedence over a later one when several apply simultaneously.
+             * @enum {string}
+             */
+            code: "paused" | "agent_ignore" | "dependency" | "retry_backoff" | "no_config" | "repo_concurrency" | "rate_limited" | "cost_budget" | "wip_limit";
+            /** @description Human-readable, already-formatted explanation. */
+            message: string;
+            /**
+             * Format: date-time
+             * @description When this reason is expected to clear on its own (rate-limit reset, next_retry_at). Null for reasons with no natural expiry (e.g. paused, cost_budget, wip_limit) — those require a human/config action to clear.
+             */
+            clears_at?: string | null;
+            /** @description Reason-specific structured context (e.g. blocking task ids/ titles for "dependency"; limit vs. current count for "repo_concurrency"/"wip_limit"; spent vs. budget for "cost_budget"). Shape varies by code; treat as opaque/optional in generic UI and only key off it for known codes. */
+            detail?: unknown;
         };
         /** @description One end of a task dependency edge (a blocker or a dependent). */
         DependencyEdge: {

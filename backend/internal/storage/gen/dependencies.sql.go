@@ -296,6 +296,76 @@ func (q *Queries) ListTaskDependents(ctx context.Context, dependsOnTaskID string
 	return items, nil
 }
 
+const listUnsatisfiedBlockersForTasks = `-- name: ListUnsatisfiedBlockersForTasks :many
+SELECT
+    d.task_id AS task_id,
+    d.depends_on_task_id AS blocker_task_id,
+    dt.title AS blocker_title,
+    dt.label AS blocker_label
+FROM task_dependencies d
+JOIN tasks dt ON dt.id = d.depends_on_task_id
+WHERE d.task_id IN (/*SLICE:task_ids*/?)
+  AND dt.archived = 0
+  AND NOT EXISTS (
+      SELECT 1 FROM workflow_labels wl
+      WHERE wl.workflow_id = dt.workflow_id
+        AND wl.name = dt.label
+        AND wl.is_terminal != 0
+  )
+ORDER BY d.task_id, dt.created_at ASC
+`
+
+type ListUnsatisfiedBlockersForTasksRow struct {
+	TaskID        string `json:"task_id"`
+	BlockerTaskID string `json:"blocker_task_id"`
+	BlockerTitle  string `json:"blocker_title"`
+	BlockerLabel  string `json:"blocker_label"`
+}
+
+// Batched mirror of the NOT EXISTS dependency gate in ListAgentPickupTasks:
+// for every task in task_ids, returns one row per still-unsatisfied blocker
+// (a depended-on task that is neither archived nor sitting on a terminal
+// label). Used by the read-time block-reason resolver to both detect the
+// "dependency" gate and populate its Detail (blocking task ids/titles) for a
+// whole page in a single query, instead of one ListTaskBlockers call per task.
+func (q *Queries) ListUnsatisfiedBlockersForTasks(ctx context.Context, taskIds []string) ([]ListUnsatisfiedBlockersForTasksRow, error) {
+	query := listUnsatisfiedBlockersForTasks
+	var queryParams []interface{}
+	if len(taskIds) > 0 {
+		for _, v := range taskIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", strings.Repeat(",?", len(taskIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUnsatisfiedBlockersForTasksRow
+	for rows.Next() {
+		var i ListUnsatisfiedBlockersForTasksRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.BlockerTaskID,
+			&i.BlockerTitle,
+			&i.BlockerLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkflowDependencyEdges = `-- name: ListWorkflowDependencyEdges :many
 SELECT d.task_id, d.depends_on_task_id
 FROM task_dependencies d

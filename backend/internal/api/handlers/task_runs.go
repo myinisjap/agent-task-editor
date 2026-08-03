@@ -33,6 +33,15 @@ type ReplyDispatcher interface {
 	DispatchReply(ctx context.Context, taskID, message string) (string, error)
 }
 
+// BlockReasonResolver computes, at read time, the first reason each of a set
+// of tasks is not currently dispatch-eligible (see agent.BlockReasonResolver,
+// which implements this). May be nil in contexts (e.g. some tests) where no
+// resolver is wired, in which case blockReasonMap returns nil and no task
+// response carries a block_reason.
+type BlockReasonResolver interface {
+	ResolveMany(ctx context.Context, tasks []gen.Task) (map[string]*agent.BlockReason, error)
+}
+
 // ListRuns returns a page of a task's agent runs, newest first. Query
 // parameters:
 //   - limit: page size (default 100, capped at 500)

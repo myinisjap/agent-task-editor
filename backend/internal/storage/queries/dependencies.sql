@@ -112,3 +112,27 @@ SELECT
 FROM tasks t
 WHERE t.id IN (sqlc.slice('task_ids'))
   AND EXISTS (SELECT 1 FROM task_dependencies d3 WHERE d3.task_id = t.id OR d3.depends_on_task_id = t.id);
+
+-- name: ListUnsatisfiedBlockersForTasks :many
+-- Batched mirror of the NOT EXISTS dependency gate in ListAgentPickupTasks:
+-- for every task in task_ids, returns one row per still-unsatisfied blocker
+-- (a depended-on task that is neither archived nor sitting on a terminal
+-- label). Used by the read-time block-reason resolver to both detect the
+-- "dependency" gate and populate its Detail (blocking task ids/titles) for a
+-- whole page in a single query, instead of one ListTaskBlockers call per task.
+SELECT
+    d.task_id AS task_id,
+    d.depends_on_task_id AS blocker_task_id,
+    dt.title AS blocker_title,
+    dt.label AS blocker_label
+FROM task_dependencies d
+JOIN tasks dt ON dt.id = d.depends_on_task_id
+WHERE d.task_id IN (sqlc.slice('task_ids'))
+  AND dt.archived = 0
+  AND NOT EXISTS (
+      SELECT 1 FROM workflow_labels wl
+      WHERE wl.workflow_id = dt.workflow_id
+        AND wl.name = dt.label
+        AND wl.is_terminal != 0
+  )
+ORDER BY d.task_id, dt.created_at ASC;
