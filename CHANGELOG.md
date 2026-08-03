@@ -301,6 +301,19 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **`PATCH /tasks/{id}` no longer blanks `title`/`description`/`type` when
+  they're omitted from the request body, and `PUT /provider-configs/{id}`
+  no longer blanks `model`** (#334). Both handlers already fell back to the
+  existing row for some fields (`repo_id`/`max_cost_usd`/`priority` on
+  tasks; `name`/`provider`/`env` on provider configs) but wrote the
+  remaining string fields straight from the decoded body, so a client that
+  omitted them (a documented-valid partial update per the OpenAPI spec, and
+  the whole point of `PATCH`) had them silently overwritten with empty
+  strings — wiping a task's title/description/type, or breaking dispatch
+  for every agent config referencing a provider config whose `model` got
+  blanked. Omitted fields now merge with the existing row like the other
+  fields already did; an explicitly empty `title` is rejected with 400
+  instead of being persisted.
 - **Subtask creation from planning runs no longer silently fails on permission.**
   When an agent config had `subtasks_enabled`, the sidecar registered the
   `create_subtask` MCP tool, but the Claude and Qwen runners never added it to

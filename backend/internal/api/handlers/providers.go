@@ -137,6 +137,9 @@ func (h *ProviderConfigsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	if body.Env == "" {
 		body.Env = existing.Env
 	}
+	if body.Model == "" {
+		body.Model = existing.Model
+	}
 
 	cfg, err := h.q.UpdateProviderConfig(r.Context(), gen.UpdateProviderConfigParams{
 		Name:     body.Name,

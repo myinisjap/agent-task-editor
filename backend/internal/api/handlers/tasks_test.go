@@ -779,6 +779,72 @@ func TestTasks_Update_PriorityOmitted_Preserved(t *testing.T) {
 	}
 }
 
+func TestTasks_Update_TitleDescriptionTypeOmitted_Preserved(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:          uuid.NewString(),
+		Title:       "Original Title",
+		Description: "Original description",
+		Type:        "feature",
+		WorkflowID:  wfID,
+		RepoID:      repoID,
+		Label:       "work",
+	})
+
+	body := map[string]any{"priority": 2}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID, jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Title != "Original Title" {
+		t.Errorf("expected title to be preserved, got %q", updated.Title)
+	}
+	if updated.Description != "Original description" {
+		t.Errorf("expected description to be preserved, got %q", updated.Description)
+	}
+	if updated.Type != "feature" {
+		t.Errorf("expected type to be preserved, got %q", updated.Type)
+	}
+}
+
+func TestTasks_Update_EmptyTitle_Returns400(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID:         uuid.NewString(),
+		Title:      "Original",
+		WorkflowID: wfID,
+		RepoID:     repoID,
+		Label:      "work",
+	})
+
+	body := map[string]string{"title": ""}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID, jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+
+	// Confirm the title was not blanked.
+	updated, err := q.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if updated.Title != "Original" {
+		t.Errorf("expected title to remain 'Original', got %q", updated.Title)
+	}
+}
+
 func TestTasks_Update_InvalidPriority_Returns400(t *testing.T) {
 	r, q, wfID, repoID := setupTaskRouter(t)
 

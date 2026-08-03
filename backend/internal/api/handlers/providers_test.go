@@ -251,6 +251,39 @@ func TestProviderConfigsUpdate_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestProviderConfigsUpdate_OmittedModelPreserved verifies that omitting
+// "model" from a PUT request preserves the existing model rather than
+// blanking it (blanking it would break dispatch for agent configs
+// referencing this provider config).
+func TestProviderConfigsUpdate_OmittedModelPreserved(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{
+		"name": "keep-model", "provider": "claude", "model": "sonnet",
+	})
+	var created gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/provider-configs/"+created.ID, map[string]any{
+		"name": "renamed-only",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.Model != "sonnet" {
+		t.Errorf("expected model to be preserved as 'sonnet', got %q", updated.Model)
+	}
+	if updated.Name != "renamed-only" {
+		t.Errorf("expected name to be updated to 'renamed-only', got %q", updated.Name)
+	}
+}
+
 // TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider verifies a
 // config on a non-deprecated provider cannot be switched to anthropic/llm.
 func TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider(t *testing.T) {
