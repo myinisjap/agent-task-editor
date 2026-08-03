@@ -55,13 +55,6 @@ func TestMain(m *testing.M) {
 		// from the task, with a non-zero exit (as real 429s from the CLI do).
 		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"duration_ms":844,"duration_api_ms":0,"num_turns":1,"result":"You've hit your session limit ` + "·" + ` resets 6pm (America/Chicago)","stop_reason":"stop_sequence","session_id":"16228fd1-bcd9-4dee-b14d-7537b3bce8ea","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0},"modelUsage":{},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","uuid":"044c12cd-40a6-4e81-8ee8-e7da2e1f9c23"}`)
 		os.Exit(1)
-	case "error_max_turns":
-		// Simulate: claude exhausts its configured --max-turns and exits 0
-		// (unlike auth errors/crashes, which exit non-zero) with a
-		// subtype:"error_max_turns" result — the case that must NOT be
-		// treated as a normal "completed" run.
-		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns","session_id":"max-turns-session","total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20}}`)
-		os.Exit(0)
 	case "rate_limit_with_usage":
 		// Like "session_limit_429", but the terminal "result" event carries
 		// non-zero usage/total_cost_usd — a run that spent money before
@@ -79,14 +72,21 @@ func TestMain(m *testing.M) {
 		fmt.Println(`{"type":"result","subtype":"success","is_error":true,"result":"ECONNRESET: connection reset by peer","session_id":"transient-usage-session","total_cost_usd":2.25,"usage":{"input_tokens":800,"output_tokens":150}}`)
 		os.Exit(1)
 	case "timeout_with_usage":
-		// Simulate: claude reports usage on a terminal "result" event that
-		// arrives *before* the run wedges (e.g. hangs waiting on a tool call
-		// that never returns), so the process is still alive — and gets
-		// killed via context deadline — when the configured TimeoutSecs
+		// Simulate: claude reports usage on an assistant-message "result"-shaped
+		// event that arrives *before* the run wedges (e.g. hangs waiting on a
+		// tool call that never returns), so the process is still alive — and
+		// gets killed via context deadline — when the configured TimeoutSecs
 		// elapses. Regression coverage for the same dropped-usage bug on the
 		// timeout return path (runCtx.Err() == context.DeadlineExceeded).
 		fmt.Println(`{"type":"result","subtype":"success","session_id":"timeout-usage-session","total_cost_usd":1.75,"usage":{"input_tokens":300,"output_tokens":90}}`)
 		time.Sleep(30 * time.Second)
+		os.Exit(0)
+	case "error_max_turns":
+		// Simulate: claude exhausts its configured --max-turns and exits 0
+		// (unlike auth errors/crashes, which exit non-zero) with a
+		// subtype:"error_max_turns" result — the case that must NOT be
+		// treated as a normal "completed" run.
+		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns","session_id":"max-turns-session","total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":20}}`)
 		os.Exit(0)
 	case "cost_watchdog_kill":
 		// Simulate: a long-running agent whose incremental per-turn usage

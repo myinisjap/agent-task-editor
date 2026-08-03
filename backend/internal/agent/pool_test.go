@@ -704,15 +704,19 @@ func (blockingProvider) Run(ctx context.Context, _ agent.RunInput, _ chan<- agen
 	return agent.Result{Status: "failed"}, ctx.Err()
 }
 
-// blockingProviderWithUsage behaves like blockingProvider but returns a
-// Result carrying non-zero usage on cancellation, mimicking a CLI subprocess
-// that had already burned tokens/spend before being killed mid-run.
+// blockingProviderWithUsage behaves like blockingProvider but returns
+// pre-accrued usage on cancellation, mimicking a killed run that had already
+// spent money before the human cancelled it.
 type blockingProviderWithUsage struct{}
 
 func (blockingProviderWithUsage) Run(ctx context.Context, _ agent.RunInput, _ chan<- agent.LogEntry) (agent.Result, error) {
 	<-ctx.Done()
 	return agent.Result{
-		Status: "failed", InputTokens: 1500, OutputTokens: 600, CostUSD: 2.5, CostUnknown: true,
+		Status:       "failed",
+		InputTokens:  750,
+		OutputTokens: 300,
+		CostUSD:      2.50,
+		CostUnknown:  true,
 	}, ctx.Err()
 }
 
@@ -760,15 +764,11 @@ func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
 	}
 }
 
-// TestPool_Cancel_PersistsCost verifies a human-requested cancel persists
-// whatever usage the provider had already accumulated before it was killed
-// (input_tokens, output_tokens, cost_usd, cost_unknown) rather than
-// recording the cancelled run's spend as $0 — a cancelled run has still
-// burned real tokens and must count toward cost aggregates (per-task
-// budgets and the global daily/monthly spend ceiling) the same as any other
-// terminal run. Completes the fix started by #337, which covered the
-// max-turns and cost-budget-exceeded paths but left this one at cost_usd=0.
-func TestPool_Cancel_PersistsCost(t *testing.T) {
+// TestPool_Cancel_PreservesUsage verifies that a cancelled run which had
+// already accrued usage before the human stopped it persists that usage
+// (including the cost_unknown flag, bool→int64 round-tripped) on the
+// "cancelled" run row instead of recording it as free.
+func TestPool_Cancel_PreservesUsage(t *testing.T) {
 	db := openAgentTestDB(t)
 	pub := &testPub{}
 	q := gen.New(db.SQL())
@@ -799,14 +799,17 @@ func TestPool_Cancel_PersistsCost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get agent run: %v", err)
 	}
-	if run.InputTokens != 1500 || run.OutputTokens != 600 {
-		t.Errorf("expected token counts persisted, got in=%d out=%d", run.InputTokens, run.OutputTokens)
+	if run.InputTokens != 750 {
+		t.Errorf("expected input_tokens=750, got %d", run.InputTokens)
 	}
-	if run.CostUsd != 2.5 {
-		t.Errorf("expected cost_usd=2.5 persisted, got %v", run.CostUsd)
+	if run.OutputTokens != 300 {
+		t.Errorf("expected output_tokens=300, got %d", run.OutputTokens)
+	}
+	if run.CostUsd != 2.50 {
+		t.Errorf("expected cost_usd=2.50, got %v", run.CostUsd)
 	}
 	if run.CostUnknown != 1 {
-		t.Errorf("expected cost_unknown=1 persisted, got %d", run.CostUnknown)
+		t.Errorf("expected cost_unknown=1, got %d", run.CostUnknown)
 	}
 }
 
@@ -950,53 +953,6 @@ func TestPool_TransientFailure_RetriesUnderCap(t *testing.T) {
 	}
 }
 
-// TestPool_TransientFailure_PersistsCost verifies a transient/rate-limit
-// error that follows a provider call which already burned tokens persists
-// that spend on the run row (input_tokens, output_tokens, cost_usd,
-// cost_unknown) instead of recording it as $0 — a transient-failed run has
-// still consumed real spend and must count toward cost aggregates (per-task
-// budgets and the global daily/monthly spend ceiling) the same as a
-// completed run. Completes the fix started by #337, which covered the
-// max-turns and cost-budget-exceeded paths but left this one at cost_usd=0.
-func TestPool_TransientFailure_PersistsCost(t *testing.T) {
-	db := openAgentTestDB(t)
-	pub := &testPub{}
-	q := gen.New(db.SQL())
-	engine := workflow.New(db.SQL(), pub)
-	pool := agent.NewPool(1, db.SQL(), engine, pub)
-
-	wfs, _ := q.ListWorkflows(context.Background())
-	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
-
-	provider := &mockProvider{
-		result: agent.Result{
-			InputTokens: 2000, OutputTokens: 800, CostUSD: 1.23, CostUnknown: true,
-		},
-		err: &agent.ErrTransient{Cause: context.DeadlineExceeded},
-	}
-
-	_, stop := startPool(t, pool)
-
-	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
-
-	waitForStatus(t, q, runID, "failed")
-	stop()
-
-	run, err := q.GetAgentRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("get agent run: %v", err)
-	}
-	if run.InputTokens != 2000 || run.OutputTokens != 800 {
-		t.Errorf("expected token counts persisted, got in=%d out=%d", run.InputTokens, run.OutputTokens)
-	}
-	if run.CostUsd != 1.23 {
-		t.Errorf("expected cost_usd=1.23 persisted, got %v", run.CostUsd)
-	}
-	if run.CostUnknown != 1 {
-		t.Errorf("expected cost_unknown=1 persisted, got %d", run.CostUnknown)
-	}
-}
-
 func TestPool_TransientFailure_EscalatesAfterMaxRetries(t *testing.T) {
 	db := openAgentTestDB(t)
 	pub := &testPub{}
@@ -1047,6 +1003,105 @@ func TestPool_TransientFailure_EscalatesAfterMaxRetries(t *testing.T) {
 	}
 	if task.ActiveAgentRunID == nil {
 		t.Error("expected active_agent_run_id to remain set (locked) while waiting_human")
+	}
+}
+
+// TestPool_TransientFailure_PreservesUsage verifies that a transient-error
+// run which had already accrued token usage/cost before failing persists
+// that usage on the run row instead of recording it as free — regression
+// coverage for the issue where handleTransientFailure only wrote Status/ID
+// and silently zeroed out cost_usd/input_tokens/output_tokens/cost_unknown.
+func TestPool_TransientFailure_PreservesUsage(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	provider := &mockProvider{
+		result: agent.Result{
+			Status:       "failed",
+			InputTokens:  1000,
+			OutputTokens: 500,
+			CostUSD:      4.00,
+			CostUnknown:  true,
+		},
+		err: &agent.ErrTransient{Cause: context.DeadlineExceeded},
+	}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	stop()
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.InputTokens != 1000 {
+		t.Errorf("expected input_tokens=1000, got %d", run.InputTokens)
+	}
+	if run.OutputTokens != 500 {
+		t.Errorf("expected output_tokens=500, got %d", run.OutputTokens)
+	}
+	if run.CostUsd != 4.00 {
+		t.Errorf("expected cost_usd=4.00, got %v", run.CostUsd)
+	}
+	if run.CostUnknown != 1 {
+		t.Errorf("expected cost_unknown=1, got %d", run.CostUnknown)
+	}
+}
+
+// TestPool_RateLimit_PreservesUsage verifies that a rate-limited run which
+// had already accrued usage before hitting the 429 persists that usage on
+// the run row rather than recording it as free.
+func TestPool_RateLimit_PreservesUsage(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	provider := &mockProvider{
+		result: agent.Result{
+			Status:       "failed",
+			InputTokens:  2000,
+			OutputTokens: 250,
+			CostUSD:      1.25,
+		},
+		err: &agent.ErrRateLimit{Message: "rate limited"},
+	}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	stop()
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.InputTokens != 2000 {
+		t.Errorf("expected input_tokens=2000, got %d", run.InputTokens)
+	}
+	if run.OutputTokens != 250 {
+		t.Errorf("expected output_tokens=250, got %d", run.OutputTokens)
+	}
+	if run.CostUsd != 1.25 {
+		t.Errorf("expected cost_usd=1.25, got %v", run.CostUsd)
+	}
+	if run.CostUnknown != 0 {
+		t.Errorf("expected cost_unknown=0, got %d", run.CostUnknown)
 	}
 }
 

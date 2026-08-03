@@ -20,6 +20,27 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Global daily/monthly spend ceiling, with a burn-rate forecast.** Cost
+  budgets were previously only per-task (`tasks.max_cost_usd`) and
+  per-agent-config (`agent_configs.max_cost_usd`) — nothing bounded total
+  spend across every task, even though tasks can be created automatically
+  and unattended (cron scheduler, issue import, subtask decomposition). Two
+  new optional config settings, `MAX_DAILY_COST_USD` and
+  `MAX_MONTHLY_COST_USD` (calendar-day/calendar-month in UTC, default unset
+  = unlimited so upgrading never silently halts an existing board), are
+  checked once per dispatch sweep against `SumCostForDay`/`SumCostForMonth`.
+  Tripping a cap doesn't touch or escalate any individual task (avoiding a
+  synthetic `waiting_human` run per task at global scale) — it halts the
+  dispatcher from starting *new* work, publishes a single alert on the
+  transition, and lets already-running work finish. Blocked tasks report the
+  new `cost_budget_global` block reason (checked second, right after
+  `paused`) from the block-reason work above. `/health` and `/healthz` now
+  surface the tripped/untripped `GlobalCostStatus` without failing
+  readiness — the system has stopped *dispatching*, not gone unhealthy. The
+  dashboard's Usage page adds a burn forecast (trailing 7-day mean
+  extrapolated to the end of the day/month) shown next to each configured
+  cap, plus a new cost-by-repo rollup (`cost_by_repo`) to help identify which
+  repo is driving spend before setting per-repo limits.
 - **Surfaced *why* a task isn't dispatching, on the task itself.** GET
   `/tasks` and GET `/tasks/{id}` now carry an optional, structured
   `block_reason` field explaining why a pickup-eligible task isn't currently
