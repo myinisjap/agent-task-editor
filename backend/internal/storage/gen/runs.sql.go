@@ -908,6 +908,46 @@ func (q *Queries) SetAgentRunStarted(ctx context.Context, id string) (AgentRun, 
 	return i, err
 }
 
+const sumCostForDay = `-- name: SumCostForDay :one
+SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs WHERE date(created_at) = CAST(?1 AS TEXT)
+`
+
+// Cumulative recorded cost across ALL runs regardless of status (same "every
+// run counts" rationale as SumTaskCost above), for a single UTC calendar day.
+// Used by the dispatcher's global daily spend-ceiling guard (see
+// Dispatcher.checkGlobalCostBudget) so a rate-limited/failed/in-flight run
+// that already burned spend still counts against the cap the same sweep it
+// happened, not just once it reaches a terminal status. day is a
+// 'YYYY-MM-DD' string (UTC), matching date(created_at) below; the
+// CAST(sqlc.arg(day) AS TEXT) pins the generated Go param type to string
+// instead of sqlc inferring time.Time from the datetime column it's
+// compared against.
+func (q *Queries) SumCostForDay(ctx context.Context, day string) (float64, error) {
+	row := q.db.QueryRowContext(ctx, sumCostForDay, day)
+	var cost_usd float64
+	err := row.Scan(&cost_usd)
+	return cost_usd, err
+}
+
+const sumCostForMonth = `-- name: SumCostForMonth :one
+SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs WHERE strftime('%Y-%m', created_at) = CAST(?1 AS TEXT)
+`
+
+// Cumulative recorded cost across ALL runs regardless of status, for a
+// single UTC calendar month. month is a 'YYYY-MM' string (UTC), matching
+// strftime('%Y-%m', created_at) below; the CAST(sqlc.arg(month) AS TEXT)
+// pins the generated Go param type to string, same reason as SumCostForDay
+// above. See SumCostForDay for the "every run counts" rationale and its
+// dispatcher usage.
+func (q *Queries) SumCostForMonth(ctx context.Context, month string) (float64, error) {
+	row := q.db.QueryRowContext(ctx, sumCostForMonth, month)
+	var cost_usd float64
+	err := row.Scan(&cost_usd)
+	return cost_usd, err
+}
+
 const sumTaskCost = `-- name: SumTaskCost :one
 SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
 FROM agent_runs WHERE task_id = ?
@@ -1012,6 +1052,61 @@ func (q *Queries) SumUsageByProvider(ctx context.Context) ([]SumUsageByProviderR
 		var i SumUsageByProviderRow
 		if err := rows.Scan(
 			&i.Provider,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CostUsd,
+			&i.RunCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sumUsageByRepo = `-- name: SumUsageByRepo :many
+SELECT t.repo_id AS repo_id,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
+       COUNT(*) AS run_count
+FROM agent_runs ar
+JOIN tasks t ON t.id = ar.task_id
+GROUP BY t.repo_id
+ORDER BY cost_usd DESC
+`
+
+type SumUsageByRepoRow struct {
+	RepoID       string  `json:"repo_id"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUsd      float64 `json:"cost_usd"`
+	RunCount     int64   `json:"run_count"`
+}
+
+// Per-repo token/cost rollup across ALL runs regardless of status (same
+// rationale as SumUsageByTask above), joined through tasks since agent_runs
+// has no repo_id of its own. Ordered by cost descending so the caller can
+// cheaply take a top-N slice for a "which repo is expensive" view -- the
+// natural companion to repos.max_concurrent_runs for an operator setting
+// per-repo limits.
+func (q *Queries) SumUsageByRepo(ctx context.Context) ([]SumUsageByRepoRow, error) {
+	rows, err := q.db.QueryContext(ctx, sumUsageByRepo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SumUsageByRepoRow
+	for rows.Next() {
+		var i SumUsageByRepoRow
+		if err := rows.Scan(
+			&i.RepoID,
 			&i.InputTokens,
 			&i.OutputTokens,
 			&i.CostUsd,

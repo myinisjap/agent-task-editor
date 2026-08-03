@@ -399,6 +399,79 @@ editable via `GET`/`PUT /api/v1/settings/cost-warning` — see
 [api.md](api.md). Changes take effect on the next dispatch/run check without
 a restart.
 
+## Global Cost Ceiling
+
+Everything in [Cost Budgets](#cost-budgets) above bounds a single **task**'s
+spend. Nothing bounds total spend across the whole system — three paths
+create tasks automatically (the cron scheduler, GitHub/Gitea issue import,
+and subtask decomposition), each arriving with a fresh, full budget, so
+per-task caps do nothing about the actual risk: task *count*. Two optional
+server settings close that gap:
+
+- `MAX_DAILY_COST_USD` — a rolling cap on total recorded spend (across every
+  provider/task/agent config, regardless of run status — same "every run
+  counts" accounting as [Cost Budgets](#cost-budgets)) for the current
+  **UTC calendar day**.
+- `MAX_MONTHLY_COST_USD` — the same, for the current **UTC calendar month**.
+
+Both default to `0` (unset/unlimited), matching how `REPO_BASE_DIR`/
+`API_TOKEN` treat "not configured" — upgrading never silently halts an
+existing deployment. Calendar-aligned (not a rolling window) because the
+operator's mental model is a monthly bill, and it reuses the same day/month
+buckets the Dashboard's cost-by-day series already uses.
+
+**Enforcement is gate-at-dispatch, not kill-mid-run.** Once either
+configured cap is reached or exceeded, the dispatcher (`Dispatcher.sweep`,
+via `refreshGlobalCostStatus`) stops starting **any** new run, system-wide,
+for the rest of that sweep and every sweep after until spend for the
+tripped period drops back under its cap (i.e. the next UTC day/month
+begins). Runs already in flight are left to finish — killing them mid-run
+would waste spend already incurred on work that might be one turn from
+done. If you need a harder mid-run global stop, that would be a separate,
+opt-in setting; this feature intentionally doesn't do it.
+
+**Tripping the cap does NOT escalate every task to `waiting_human`.**
+Unlike the per-task guard's phantom-run escalation (see
+[Cost Budgets](#cost-budgets) above), doing that at global scale would
+create hundreds of phantom runs and would repeatedly clobber
+`current_agent_run_id` on every affected task. Instead:
+
+- Dispatch halts globally (no phantom runs, no per-task writes).
+- A one-shot `system.cost_budget_tripped` WebSocket event fires on the
+  transition into the tripped state (never re-published on every
+  subsequent sweep while it stays tripped) — see
+  [websocket.md](websocket.md).
+- Every otherwise-eligible task's read-time `block_reason` reports
+  `cost_budget_global` (see the `BlockReason` codes table in
+  [api.md](api.md)) ahead of every other reason — since it applies
+  identically to every task in the system at once, it's more informative
+  to surface immediately than to first walk through per-task gates that
+  are, at that moment, moot.
+- The tripped status is surfaced loudly, not just in logs: `GET /readyz`
+  (still reports `200` — a tripped cap is intentional backpressure, not a
+  broken backend — but with `global_cost_tripped`/
+  `global_cost_tripped_reason` fields) and `GET /api/v1/health/providers`
+  (a `global_cost` object) both include it, since this is the one condition
+  where the whole system has stopped doing its job while otherwise
+  appearing healthy.
+
+**Dashboard.** `GET /dashboard`'s `global_cost_budget` field (present only
+when at least one cap is configured) carries the current spent/limit/
+tripped snapshot plus a deliberately simple **burn-rate forecast** per
+configured period — the trailing 7-day mean of recorded daily cost,
+extrapolated linearly to the end of the day/month. The goal is "am I on
+track to blow through this", not an accurate prediction; nothing
+statistical is attempted. The Cost & Usage page renders this as a progress
+bar per period (daily/monthly) plus the forecast figure, with a banner when
+tripped.
+
+**Cost-by-repo.** While wiring the plumbing above, `GET /dashboard` also
+gained a `cost_by_repo` rollup (per-repo token/cost, every run status,
+joined through `tasks` since `agent_runs` has no `repo_id` of its own) —
+the natural companion to `cost_by_task`/`cost_by_provider` for answering
+"which repo is expensive" before setting a per-repo
+`repos.max_concurrent_runs` limit.
+
 ## Task Priority
 
 Every task has a `priority` (plain `INTEGER` column, default `0`), one of

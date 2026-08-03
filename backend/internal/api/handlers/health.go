@@ -83,8 +83,22 @@ func (h *HealthHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 	if v == "" {
 		v = "dev"
 	}
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	resp := map[string]any{
 		"status":  "ok",
 		"version": v,
-	})
+	}
+	// A tripped global cost ceiling does NOT fail readiness (dispatch halting
+	// on purpose is not "the backend is broken" — see
+	// agent.Dispatcher.refreshGlobalCostStatus's doc comment for why this is
+	// gated at dispatch rather than killed mid-run), but it's surfaced here
+	// too since Readyz is what orchestrators/uptime checks actually poll and
+	// this is the one condition where the system has stopped doing its job
+	// while still reporting healthy.
+	if h.globalCost != nil {
+		if status := h.globalCost.GlobalCostStatus(); status.Tripped {
+			resp["global_cost_tripped"] = true
+			resp["global_cost_tripped_reason"] = status.TrippedReason
+		}
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }

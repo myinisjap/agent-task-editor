@@ -101,6 +101,21 @@ type Config struct {
 	// GitTimeout and dispatch keeps working on the next task/sweep instead of
 	// stalling system-wide.
 	GitTimeout time.Duration `yaml:"git_timeout"`
+
+	// MaxDailyCostUSD, if > 0, caps total recorded agent spend (see
+	// agent_runs.cost_usd, summed across every provider/task/agent config)
+	// for the current UTC calendar day. Once cumulative spend for today
+	// reaches this cap, the dispatcher stops starting new runs globally
+	// (see Dispatcher.checkGlobalCostBudget) until the next UTC day begins —
+	// in-flight runs are left to finish, only new dispatch is gated. 0 (the
+	// default) means unlimited, matching how RepoBaseDir/APIToken treat "not
+	// configured" — this must never default to a nonzero cap that could
+	// silently halt an existing deployment on upgrade.
+	MaxDailyCostUSD float64 `yaml:"max_daily_cost_usd"`
+	// MaxMonthlyCostUSD is MaxDailyCostUSD's calendar-month equivalent (UTC),
+	// checked independently — either cap tripping halts dispatch globally.
+	// 0 (the default) means unlimited.
+	MaxMonthlyCostUSD float64 `yaml:"max_monthly_cost_usd"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -291,6 +306,20 @@ func Load(path string) (Config, error) {
 			cfg.GitTimeout = d
 		} else {
 			slog.Warn("invalid GIT_TIMEOUT; using default", "value", v, "default", cfg.GitTimeout)
+		}
+	}
+	if v := os.Getenv("MAX_DAILY_COST_USD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			cfg.MaxDailyCostUSD = f
+		} else {
+			slog.Warn("invalid MAX_DAILY_COST_USD; using default", "value", v, "default", cfg.MaxDailyCostUSD)
+		}
+	}
+	if v := os.Getenv("MAX_MONTHLY_COST_USD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			cfg.MaxMonthlyCostUSD = f
+		} else {
+			slog.Warn("invalid MAX_MONTHLY_COST_USD; using default", "value", v, "default", cfg.MaxMonthlyCostUSD)
 		}
 	}
 

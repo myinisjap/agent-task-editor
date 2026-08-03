@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -27,27 +28,62 @@ type DashboardHandler struct {
 	// per-repo concurrency limit for any repo with no repos.max_concurrent_runs
 	// override (see repoConcurrency).
 	maxWorkers int
+	// globalCost supplies the dispatcher's cached global daily/monthly
+	// spend-ceiling snapshot (see GlobalCostReporter), surfaced in the
+	// dashboard response alongside a simple burn-rate forecast (see
+	// globalCostBudget). May be nil (e.g. in tests), in which case the
+	// dashboard response's global_cost_budget field is omitted.
+	globalCost GlobalCostReporter
 
 	usageMu       sync.Mutex
 	cachedUsage   claudeUsageResponse
 	cachedUsageAt time.Time
 }
 
-func NewDashboardHandler(q *gen.Queries, maxWorkers int) *DashboardHandler {
-	return &DashboardHandler{q: q, maxWorkers: maxWorkers}
+func NewDashboardHandler(q *gen.Queries, maxWorkers int, globalCost GlobalCostReporter) *DashboardHandler {
+	return &DashboardHandler{q: q, maxWorkers: maxWorkers, globalCost: globalCost}
 }
 
 type dashboardResponse struct {
-	LabelCounts       map[string]int       `json:"label_counts"`
-	ActiveAgents      []activeAgentRow     `json:"active_agents"`
-	InterventionQueue []interventionRow    `json:"intervention_queue"`
-	CostTotal         costTotals           `json:"cost_total"`
-	CostByProvider    []providerCostRow    `json:"cost_by_provider"`
-	AgentConfigStats  []agentConfigStatRow `json:"agent_config_stats"`
-	CostByDay         []costByDayRow       `json:"cost_by_day"`
-	CostByTask        []taskCostRow        `json:"cost_by_task"`
-	ClaudeUsage       claudeUsageResponse  `json:"claude_usage"`
-	RepoConcurrency   []repoConcurrencyRow `json:"repo_concurrency"`
+	LabelCounts       map[string]int        `json:"label_counts"`
+	ActiveAgents      []activeAgentRow      `json:"active_agents"`
+	InterventionQueue []interventionRow     `json:"intervention_queue"`
+	CostTotal         costTotals            `json:"cost_total"`
+	CostByProvider    []providerCostRow     `json:"cost_by_provider"`
+	AgentConfigStats  []agentConfigStatRow  `json:"agent_config_stats"`
+	CostByDay         []costByDayRow        `json:"cost_by_day"`
+	CostByTask        []taskCostRow         `json:"cost_by_task"`
+	CostByRepo        []repoCostRow         `json:"cost_by_repo"`
+	ClaudeUsage       claudeUsageResponse   `json:"claude_usage"`
+	RepoConcurrency   []repoConcurrencyRow  `json:"repo_concurrency"`
+	GlobalCostBudget  *globalCostBudgetView `json:"global_cost_budget,omitempty"`
+}
+
+// repoCostRow is a per-repo token/cost rollup (see SumUsageByRepo), the
+// natural companion to CostByTask/CostByProvider for answering "which repo
+// is expensive" -- the intended input to setting a per-repo
+// repos.max_concurrent_runs limit.
+type repoCostRow struct {
+	RepoID       string  `json:"repo_id"`
+	RepoName     string  `json:"repo_name"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+	RunCount     int64   `json:"run_count"`
+}
+
+// globalCostBudgetView is the dashboard's rendering of the dispatcher's
+// global daily/monthly spend ceiling (see agent.GlobalCostStatus) plus a
+// simple "projected spend at current burn" forecast per period, deliberately
+// unsophisticated (trailing 7-day mean extrapolated linearly to the end of
+// the period) -- the goal is "am I on track to blow through this", not an
+// accurate prediction. Only present when at least one of MaxDailyCostUSD/
+// MaxMonthlyCostUSD is configured (a forecast against an unlimited budget is
+// meaningless).
+type globalCostBudgetView struct {
+	agent.GlobalCostStatus
+	DailyForecastUSD   *float64 `json:"daily_forecast_usd,omitempty"`
+	MonthlyForecastUSD *float64 `json:"monthly_forecast_usd,omitempty"`
 }
 
 // repoConcurrencyRow is the per-repo worker-slot breakdown: how many of a
@@ -304,6 +340,34 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repoCosts, err := h.q.SumUsageByRepo(ctx)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	repoNameByID := make(map[string]string, len(repoCosts))
+	if len(repoCosts) > 0 {
+		repos, err := h.q.ListRepos(ctx)
+		if err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, repo := range repos {
+			repoNameByID[repo.ID] = repo.Name
+		}
+	}
+	repoCostRows := make([]repoCostRow, 0, len(repoCosts))
+	for _, rc := range repoCosts {
+		repoCostRows = append(repoCostRows, repoCostRow{
+			RepoID:       rc.RepoID,
+			RepoName:     repoNameByID[rc.RepoID],
+			InputTokens:  rc.InputTokens,
+			OutputTokens: rc.OutputTokens,
+			CostUSD:      rc.CostUsd,
+			RunCount:     rc.RunCount,
+		})
+	}
+
 	JSON(w, http.StatusOK, dashboardResponse{
 		LabelCounts:       counts,
 		ActiveAgents:      activeRows,
@@ -317,9 +381,80 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		AgentConfigStats: agentConfigStats,
 		CostByDay:        dayRows,
 		CostByTask:       taskCostRows,
+		CostByRepo:       repoCostRows,
 		ClaudeUsage:      h.claudeUsage(ctx),
 		RepoConcurrency:  repoConcurrency,
+		GlobalCostBudget: h.globalCostBudget(dayRows),
 	})
+}
+
+// globalCostBudget renders the dispatcher's global spend-ceiling snapshot
+// (see GlobalCostReporter) plus a simple burn-rate forecast, or nil if no
+// dispatcher was wired or neither daily/monthly cap is configured — a
+// forecast against an unlimited budget has nothing to be "on track" toward.
+// dayRows is the same CostByDay series already fetched for the dashboard
+// response (most-recent-day-first, see SumUsageByDay), reused here instead
+// of a second query.
+func (h *DashboardHandler) globalCostBudget(dayRows []costByDayRow) *globalCostBudgetView {
+	if h.globalCost == nil {
+		return nil
+	}
+	status := h.globalCost.GlobalCostStatus()
+	if status.DailyLimitUSD <= 0 && status.MonthlyLimitUSD <= 0 {
+		return nil
+	}
+
+	view := &globalCostBudgetView{GlobalCostStatus: status}
+
+	// Trailing 7-day mean of recorded daily cost (dayRows is most-recent-
+	// first and capped at 30 days by SumUsageByDay), extrapolated linearly to
+	// the end of the current UTC day/month — deliberately simple; the value
+	// is "am I on track to blow through this", not an accurate prediction.
+	const trailingDays = 7
+	n := len(dayRows)
+	if n > trailingDays {
+		n = trailingDays
+	}
+	var sum float64
+	for i := 0; i < n; i++ {
+		sum += dayRows[i].CostUSD
+	}
+	if n == 0 {
+		return view
+	}
+	dailyMean := sum / float64(n)
+
+	now := time.Now().UTC()
+	if status.DailyLimitUSD > 0 {
+		// The rest of "today" plus today's own already-recorded spend —
+		// forecasting the day's total, not just what's left, so it compares
+		// directly against DailyLimitUSD/DailySpentUSD.
+		forecast := status.DailySpentUSD + dailyMean*hoursRemainingInDay(now)/24
+		view.DailyForecastUSD = &forecast
+	}
+	if status.MonthlyLimitUSD > 0 {
+		daysRemaining := float64(daysRemainingInMonth(now))
+		forecast := status.MonthlySpentUSD + dailyMean*daysRemaining
+		view.MonthlyForecastUSD = &forecast
+	}
+	return view
+}
+
+// hoursRemainingInDay returns how many hours remain in now's UTC calendar
+// day (including the fractional current hour), used to extrapolate the
+// trailing daily mean to a same-day total.
+func hoursRemainingInDay(now time.Time) float64 {
+	startOfTomorrow := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	return startOfTomorrow.Sub(now).Hours()
+}
+
+// daysRemainingInMonth returns how many days (including today) remain in
+// now's UTC calendar month, used to extrapolate the trailing daily mean to a
+// month-to-date total.
+func daysRemainingInMonth(now time.Time) int {
+	firstOfNextMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+	lastOfMonth := firstOfNextMonth.AddDate(0, 0, -1)
+	return lastOfMonth.Day() - now.Day() + 1
 }
 
 // repoConcurrency builds the per-repo worker-slot breakdown (see

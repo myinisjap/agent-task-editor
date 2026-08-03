@@ -320,6 +320,18 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Transient-failure and cancelled runs now record the cost/tokens they
+  actually consumed instead of `$0`.** #337 taught the max-turns and
+  mid-run-cost-budget-exceeded escalation paths to persist `cost_usd`/token
+  counts on the run row, but `Pool.handleTransientFailure` (rate-limit and
+  other transient provider errors) and `Pool.handleCancelled`
+  (human-cancelled runs) still wrote `cost_usd = 0` even when the provider
+  had already burned real tokens before failing/being killed. Both now
+  receive the run's `Result` and persist `input_tokens`/`output_tokens`/
+  `cost_usd`/`cost_unknown` the same way, so per-task budgets and any
+  cost aggregate (daily/monthly totals, cost-by-provider, etc.) built on top
+  of `agent_runs` no longer systematically undercount exactly the runs most
+  likely to repeat.
 - **`PATCH /tasks/{id}` no longer blanks `title`/`description`/`type` when
   they're omitted from the request body, and `PUT /provider-configs/{id}`
   no longer blanks `model`** (#334). Both handlers already fell back to the

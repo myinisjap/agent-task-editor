@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 // UpdateWorkflowLabel query — labels are recreated wholesale elsewhere).
 type blockReasonFixture struct {
 	q          *gen.Queries
+	db         *sql.DB
 	workflowID string
 	repoID     string
 }
@@ -92,7 +94,7 @@ func newBlockReasonFixtureWithOpts(t *testing.T, opts blockReasonFixtureOpts) *b
 		t.Fatalf("create repo: %v", err)
 	}
 
-	return &blockReasonFixture{q: q, workflowID: wf.ID, repoID: repo.ID}
+	return &blockReasonFixture{q: q, db: db.SQL(), workflowID: wf.ID, repoID: repo.ID}
 }
 
 func (f *blockReasonFixture) newTask(t *testing.T, label string) gen.Task {
@@ -157,7 +159,7 @@ func resolveOne(t *testing.T, r *BlockReasonResolver, task gen.Task) *BlockReaso
 
 func TestBlockReasonResolver_NotACandidate(t *testing.T) {
 	f := newBlockReasonFixture(t)
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 
 	t.Run("archived task has no reason", func(t *testing.T) {
 		task := f.newTask(t, "ready")
@@ -200,7 +202,7 @@ func TestBlockReasonResolver_NotACandidate(t *testing.T) {
 
 func TestBlockReasonResolver_Paused(t *testing.T) {
 	f := newBlockReasonFixture(t)
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 
 	task := f.newTask(t, "ready")
 	task, err := f.q.SetTaskPaused(context.Background(), gen.SetTaskPausedParams{Paused: 1, ID: task.ID})
@@ -215,7 +217,7 @@ func TestBlockReasonResolver_Paused(t *testing.T) {
 
 func TestBlockReasonResolver_AgentIgnore(t *testing.T) {
 	f := newBlockReasonFixtureWithOpts(t, blockReasonFixtureOpts{agentIgnoreReady: true})
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	task := f.newTask(t, "ready")
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockAgentIgnore {
@@ -234,7 +236,7 @@ func TestBlockReasonResolver_Dependency(t *testing.T) {
 		t.Fatalf("create dependency: %v", err)
 	}
 
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockDependency {
 		t.Fatalf("expected %q, got %+v", BlockDependency, reason)
@@ -256,7 +258,7 @@ func TestBlockReasonResolver_RetryBackoff(t *testing.T) {
 		t.Fatalf("set retry: %v", err)
 	}
 
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockRetryBackoff {
 		t.Fatalf("expected %q, got %+v", BlockRetryBackoff, reason)
@@ -270,7 +272,7 @@ func TestBlockReasonResolver_NoConfig(t *testing.T) {
 	f := newBlockReasonFixture(t)
 	task := f.newTask(t, "ready")
 
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockNoConfig {
 		t.Fatalf("expected %q, got %+v", BlockNoConfig, reason)
@@ -296,7 +298,7 @@ func TestBlockReasonResolver_RepoConcurrency(t *testing.T) {
 	}
 
 	task := f.newTask(t, "ready")
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockRepoConcurrency {
 		t.Fatalf("expected %q, got %+v", BlockRepoConcurrency, reason)
@@ -312,7 +314,7 @@ func TestBlockReasonResolver_RateLimited(t *testing.T) {
 	until := time.Now().Add(30 * time.Minute)
 	rl.Block(cfgID, until)
 
-	r := NewBlockReasonResolver(f.q, nil, rl)
+	r := NewBlockReasonResolver(f.q, nil, rl, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockRateLimited {
 		t.Fatalf("expected %q, got %+v", BlockRateLimited, reason)
@@ -349,7 +351,7 @@ func TestBlockReasonResolver_CostBudgetExhausted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get task: %v", err)
 	}
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockCostBudget {
 		t.Fatalf("expected %q, got %+v", BlockCostBudget, reason)
@@ -409,7 +411,7 @@ func TestBlockReasonResolver_CostBudgetUnenforceable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get task: %v", err)
 	}
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockCostBudget {
 		t.Fatalf("expected %q, got %+v", BlockCostBudget, reason)
@@ -446,7 +448,7 @@ func TestBlockReasonResolver_WIPLimit(t *testing.T) {
 	f.newTask(t, "next") // fills the WIP limit of "next"
 
 	task := f.newTask(t, "ready")
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockWIPLimit {
 		t.Fatalf("expected %q, got %+v", BlockWIPLimit, reason)
@@ -470,10 +472,122 @@ func TestBlockReasonResolver_Ordering(t *testing.T) {
 	rl := NewRateLimitRegistry()
 	rl.Block(cfgID, time.Now().Add(time.Hour))
 
-	r := NewBlockReasonResolver(f.q, nil, rl)
+	r := NewBlockReasonResolver(f.q, nil, rl, nil)
 	reason := resolveOne(t, r, task)
 	if reason == nil || reason.Code != BlockPaused {
 		t.Fatalf("expected paused to take priority over rate_limited, got %+v", reason)
+	}
+}
+
+// TestBlockReasonResolver_GlobalCostBudget_Tripped verifies a task that would
+// otherwise dispatch cleanly reports cost_budget_global once the shared
+// Dispatcher's global daily/monthly spend ceiling has tripped (see
+// checkGlobalCostBudget), previewing the same state the dispatcher itself
+// would act on without writing anything.
+func TestBlockReasonResolver_GlobalCostBudget_Tripped(t *testing.T) {
+	f := newBlockReasonFixture(t)
+	f.createEnabledConfig(t, "ready")
+	task := f.newTask(t, "ready")
+
+	d := NewDispatcher(f.db, &Pool{maxWorkers: 1}, nil, nil)
+	d.MaxDailyCostUSD = 1
+	// Seed a run carrying enough cost to exceed the cap, against the same
+	// task the resolver will check (task_id is FK-enforced by agent_runs).
+	runID := uuid.NewString()
+	if _, err := f.q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create agent run: %v", err)
+	}
+	if _, err := f.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
+		Status: "completed", CostUsd: 5, ID: runID,
+	}); err != nil {
+		t.Fatalf("complete agent run: %v", err)
+	}
+	if tripped := d.refreshGlobalCostStatus(context.Background()); !tripped {
+		t.Fatal("expected the seeded spend to trip the global daily cap")
+	}
+
+	r := NewBlockReasonResolver(f.q, nil, nil, d)
+	reason := resolveOne(t, r, task)
+	if reason == nil || reason.Code != BlockCostBudgetGlobal {
+		t.Fatalf("expected %q, got %+v", BlockCostBudgetGlobal, reason)
+	}
+}
+
+// TestBlockReasonResolver_GlobalCostBudget_NotTrippedIsAbsent verifies a task
+// reports no block reason when the wired dispatcher's global cap is
+// configured but not yet tripped — the normal, common case.
+func TestBlockReasonResolver_GlobalCostBudget_NotTrippedIsAbsent(t *testing.T) {
+	f := newBlockReasonFixture(t)
+	f.createEnabledConfig(t, "ready")
+	task := f.newTask(t, "ready")
+
+	d := NewDispatcher(f.db, &Pool{maxWorkers: 1}, nil, nil)
+	d.MaxDailyCostUSD = 1000
+	if tripped := d.refreshGlobalCostStatus(context.Background()); tripped {
+		t.Fatal("expected no spend recorded to leave the cap untripped")
+	}
+
+	r := NewBlockReasonResolver(f.q, nil, nil, d)
+	reason := resolveOne(t, r, task)
+	if reason != nil {
+		t.Fatalf("expected no block reason, got %+v", reason)
+	}
+}
+
+// TestBlockReasonResolver_GlobalCostBudget_TakesPriorityOverCostBudget
+// verifies cost_budget_global is reported ahead of the per-task cost_budget
+// reason when both would otherwise apply — the global halt affects every
+// task at once, so it's more informative to surface first (see resolveOne's
+// doc comment).
+func TestBlockReasonResolver_GlobalCostBudget_TakesPriorityOverCostBudget(t *testing.T) {
+	f := newBlockReasonFixture(t)
+	cfgID := f.createEnabledConfig(t, "ready")
+	task := f.newTask(t, "ready")
+	// Give the task its own exhausted per-task budget too.
+	updated, err := f.q.UpdateTask(context.Background(), gen.UpdateTaskParams{
+		Title: task.Title, Description: task.Description, Type: task.Type, RepoID: task.RepoID,
+		MaxCostUsd: 1, ID: task.ID,
+	})
+	if err != nil {
+		t.Fatalf("set task max_cost_usd: %v", err)
+	}
+	task = updated
+
+	runID := uuid.NewString()
+	if _, err := f.q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID, AgentConfigID: &cfgID}); err != nil {
+		t.Fatalf("create agent run: %v", err)
+	}
+	if _, err := f.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
+		Status: "completed", CostUsd: 5, ID: runID,
+	}); err != nil {
+		t.Fatalf("complete agent run: %v", err)
+	}
+
+	d := NewDispatcher(f.db, &Pool{maxWorkers: 1}, nil, nil)
+	d.MaxDailyCostUSD = 1
+	if tripped := d.refreshGlobalCostStatus(context.Background()); !tripped {
+		t.Fatal("expected the seeded spend to trip the global daily cap")
+	}
+
+	r := NewBlockReasonResolver(f.q, nil, nil, d)
+	reason := resolveOne(t, r, task)
+	if reason == nil || reason.Code != BlockCostBudgetGlobal {
+		t.Fatalf("expected global cost budget to take priority, got %+v", reason)
+	}
+}
+
+// TestBlockReasonResolver_GlobalCostBudget_NilDispatcherNeverBlocks verifies
+// a nil dispatcher (e.g. a caller that hasn't wired one) is treated as "no
+// global ceiling configured" rather than panicking or always blocking.
+func TestBlockReasonResolver_GlobalCostBudget_NilDispatcherNeverBlocks(t *testing.T) {
+	f := newBlockReasonFixture(t)
+	f.createEnabledConfig(t, "ready")
+	task := f.newTask(t, "ready")
+
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
+	reason := resolveOne(t, r, task)
+	if reason != nil {
+		t.Fatalf("expected no block reason with a nil dispatcher, got %+v", reason)
 	}
 }
 
@@ -482,7 +596,7 @@ func TestBlockReasonResolver_NoResolverIsNilSafe(t *testing.T) {
 	// just documents that ResolveMany itself is safe to call with an empty
 	// task slice (used when no tasks are on the page).
 	f := newBlockReasonFixture(t)
-	r := NewBlockReasonResolver(f.q, nil, nil)
+	r := NewBlockReasonResolver(f.q, nil, nil, nil)
 	m, err := r.ResolveMany(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ResolveMany with no tasks: %v", err)

@@ -704,6 +704,18 @@ func (blockingProvider) Run(ctx context.Context, _ agent.RunInput, _ chan<- agen
 	return agent.Result{Status: "failed"}, ctx.Err()
 }
 
+// blockingProviderWithUsage behaves like blockingProvider but returns a
+// Result carrying non-zero usage on cancellation, mimicking a CLI subprocess
+// that had already burned tokens/spend before being killed mid-run.
+type blockingProviderWithUsage struct{}
+
+func (blockingProviderWithUsage) Run(ctx context.Context, _ agent.RunInput, _ chan<- agent.LogEntry) (agent.Result, error) {
+	<-ctx.Done()
+	return agent.Result{
+		Status: "failed", InputTokens: 1500, OutputTokens: 600, CostUSD: 2.5, CostUnknown: true,
+	}, ctx.Err()
+}
+
 // TestPool_Cancel_MarksCancelledAndPauses verifies a human-requested cancel
 // stops a running provider, records the run as "cancelled" (not failed), pauses
 // the task, clears the active-run lock, and reports the run gone afterwards.
@@ -745,6 +757,56 @@ func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
 	}
 	if !pub.hasEvent("task.agent_done") {
 		t.Errorf("expected task.agent_done event")
+	}
+}
+
+// TestPool_Cancel_PersistsCost verifies a human-requested cancel persists
+// whatever usage the provider had already accumulated before it was killed
+// (input_tokens, output_tokens, cost_usd, cost_unknown) rather than
+// recording the cancelled run's spend as $0 — a cancelled run has still
+// burned real tokens and must count toward cost aggregates (per-task
+// budgets and the global daily/monthly spend ceiling) the same as any other
+// terminal run. Completes the fix started by #337, which covered the
+// max-turns and cost-budget-exceeded paths but left this one at cost_usd=0.
+func TestPool_Cancel_PersistsCost(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	startPool(t, pool)
+
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProviderWithUsage{}))
+
+	waitForStatus(t, q, runID, "running")
+	if !pool.Cancel(runID) {
+		t.Fatal("expected Cancel to find the active run")
+	}
+
+	waitForStatus(t, q, runID, "cancelled")
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.InputTokens != 1500 || run.OutputTokens != 600 {
+		t.Errorf("expected token counts persisted, got in=%d out=%d", run.InputTokens, run.OutputTokens)
+	}
+	if run.CostUsd != 2.5 {
+		t.Errorf("expected cost_usd=2.5 persisted, got %v", run.CostUsd)
+	}
+	if run.CostUnknown != 1 {
+		t.Errorf("expected cost_unknown=1 persisted, got %d", run.CostUnknown)
 	}
 }
 
@@ -885,6 +947,53 @@ func TestPool_TransientFailure_RetriesUnderCap(t *testing.T) {
 	run, _ := q.GetAgentRun(context.Background(), runID)
 	if run.Status != "failed" {
 		t.Errorf("expected run status 'failed', got %q", run.Status)
+	}
+}
+
+// TestPool_TransientFailure_PersistsCost verifies a transient/rate-limit
+// error that follows a provider call which already burned tokens persists
+// that spend on the run row (input_tokens, output_tokens, cost_usd,
+// cost_unknown) instead of recording it as $0 — a transient-failed run has
+// still consumed real spend and must count toward cost aggregates (per-task
+// budgets and the global daily/monthly spend ceiling) the same as a
+// completed run. Completes the fix started by #337, which covered the
+// max-turns and cost-budget-exceeded paths but left this one at cost_usd=0.
+func TestPool_TransientFailure_PersistsCost(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	provider := &mockProvider{
+		result: agent.Result{
+			InputTokens: 2000, OutputTokens: 800, CostUSD: 1.23, CostUnknown: true,
+		},
+		err: &agent.ErrTransient{Cause: context.DeadlineExceeded},
+	}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	stop()
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.InputTokens != 2000 || run.OutputTokens != 800 {
+		t.Errorf("expected token counts persisted, got in=%d out=%d", run.InputTokens, run.OutputTokens)
+	}
+	if run.CostUsd != 1.23 {
+		t.Errorf("expected cost_usd=1.23 persisted, got %v", run.CostUsd)
+	}
+	if run.CostUnknown != 1 {
+		t.Errorf("expected cost_unknown=1 persisted, got %d", run.CostUnknown)
 	}
 }
 

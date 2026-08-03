@@ -57,7 +57,7 @@ Key fields returned by task endpoints:
 | `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
 | `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
 | `cumulative_cost_usd` | number | Task's lifetime recorded cost across every run regardless of status (matching the dispatcher's cost-budget guard). Only populated on `GET /tasks/{id}`, since `GET /tasks/{id}/runs` is paginated — omitted (`0`) on list responses |
-| `block_reason` | object? | Derived, read-time explanation of why a pickup-eligible task isn't currently being dispatched: `{code, message, clears_at, detail}`, where `code` is one of `paused`, `agent_ignore`, `dependency`, `retry_backoff`, `no_config`, `repo_concurrency`, `rate_limited`, `cost_budget`, `wip_limit`. Only the first reason the dispatcher would actually hit is reported, evaluated in that same order, so it never drifts from real dispatch behavior. `clears_at` is set only for the transient reasons (`rate_limited`, `retry_backoff`). `null`/absent when the task isn't currently a dispatch candidate, or is a candidate with nothing blocking it (see `queue_position`, a separate concern) — see [agents.md#dispatcher](agents.md#dispatcher) |
+| `block_reason` | object? | Derived, read-time explanation of why a pickup-eligible task isn't currently being dispatched: `{code, message, clears_at, detail}`, where `code` is one of `paused`, `cost_budget_global`, `agent_ignore`, `dependency`, `retry_backoff`, `no_config`, `repo_concurrency`, `rate_limited`, `cost_budget`, `wip_limit`. Only the first reason the dispatcher would actually hit is reported, evaluated in that same order, so it never drifts from real dispatch behavior. `clears_at` is set only for the transient reasons (`rate_limited`, `retry_backoff`). `cost_budget_global` (the server's daily/monthly spend ceiling — see [agents.md#global-cost-ceiling](agents.md#global-cost-ceiling)) is checked second, right after `paused`, since it blocks every dispatch-eligible task at once rather than being task-specific. `null`/absent when the task isn't currently a dispatch candidate, or is a candidate with nothing blocking it (see `queue_position`, a separate concern) — see [agents.md#dispatcher](agents.md#dispatcher) |
 
 ---
 
@@ -783,12 +783,24 @@ Returns aggregated statistics:
   "cost_by_task": [
     { "task_id": "...", "task_title": "Refactor auth flow", "input_tokens": 89012, "output_tokens": 23456, "cost_usd": 0.58 }
   ],
+  "cost_by_repo": [
+    { "repo_id": "...", "repo_name": "backend", "input_tokens": 89012, "output_tokens": 23456, "cost_usd": 0.58, "run_count": 12 }
+  ],
   "claude_usage": {
     "available": true,
     "five_hour_percent": 42.5,
     "five_hour_resets_at": "2026-07-03T18:00:00Z",
     "weekly_percent": 12.0,
     "weekly_resets_at": "2026-07-10T00:00:00Z"
+  },
+  "global_cost_budget": {
+    "daily_limit_usd": 25.0,
+    "monthly_limit_usd": 500.0,
+    "daily_spent_usd": 4.10,
+    "monthly_spent_usd": 88.20,
+    "tripped": false,
+    "daily_forecast_usd": 9.75,
+    "monthly_forecast_usd": 195.0
   }
 }
 ```
@@ -842,6 +854,19 @@ Returns aggregated statistics:
   includes runs in **every** status (not just terminal ones), matching the
   same filtering the dispatcher's cost-budget guard uses — see
   [agents.md#cost-budgets](agents.md#cost-budgets).
+- `cost_by_repo` — per-repo token/cost rollup, sorted by cost descending,
+  joined through `tasks` since `agent_runs` has no `repo_id` of its own.
+  Same every-status filtering as `cost_by_task`. The companion to
+  `cost_by_task`/`cost_by_provider` for answering "which repo is expensive"
+  before setting a per-repo `repos.max_concurrent_runs` limit.
+- `global_cost_budget` — the server's global daily/monthly spend-ceiling
+  status (`MAX_DAILY_COST_USD`/`MAX_MONTHLY_COST_USD`) plus a simple
+  burn-rate forecast per configured period — see
+  [agents.md#global-cost-ceiling](agents.md#global-cost-ceiling). Present
+  only when at least one of the two env vars is configured; `tripped_reason`
+  (`"daily"` or `"monthly"`) is present only when `tripped` is `true`.
+  `daily_forecast_usd`/`monthly_forecast_usd` are present only when the
+  corresponding limit is configured.
 
 ### `GET /dashboard/cost-by-task`
 Returns the full per-task cost rollup (no top-20 cap, no `task_title`) as a
@@ -882,6 +907,15 @@ sweeper that picks up agent-triggerable tasks) has ticked recently.
   if the dispatch loop hasn't ticked recently (e.g. it's wedged on a hung git
   operation inside a sweep).
 
+If the global daily/monthly spend ceiling (see
+[agents.md#global-cost-ceiling](agents.md#global-cost-ceiling)) is
+currently tripped, the `200 OK` response also carries
+`"global_cost_tripped": true` and `"global_cost_tripped_reason": "daily"|"monthly"`
+— this does **not** flip the response to `503`, since a tripped cap is
+intentional backpressure (the dispatcher stopping *new* dispatch on
+purpose), not a broken backend, but it's surfaced here too since this is
+what orchestrators/uptime checks actually poll.
+
 This is the endpoint the Docker Compose healthcheck now targets (see
 `docker-compose.yml` / `docker-compose.release.yml`), so a backend with a
 locked DB or a wedged dispatch loop is reported unhealthy and restarted
@@ -902,13 +936,29 @@ list of checks:
     { "id": "repo_base_dir", "name": "Repo base directory", "status": "error", "detail": "REPO_BASE_DIR is set but does not exist: /repos", "hint": "Create the directory or point REPO_BASE_DIR at an existing path." },
     { "id": "version", "name": "Version", "status": "ok", "detail": "running v1.4.0" },
     { "id": "update_check", "name": "Update available", "status": "warn", "detail": "update available: v1.5.0 (running v1.4.0)", "hint": "https://github.com/myinisjap/agent-task-editor/releases" }
-  ]
+  ],
+  "global_cost": {
+    "daily_limit_usd": 25.0,
+    "monthly_limit_usd": 500.0,
+    "daily_spent_usd": 4.10,
+    "monthly_spent_usd": 88.20,
+    "tripped": false
+  }
 }
 ```
 
 - `status` is `ok` (green — ready), `warn` (yellow — optional/degraded, or a
   credential we couldn't detect heuristically), or `error` (red — a required
   item is missing and runs using it will fail).
+- `global_cost` — same global daily/monthly spend-ceiling snapshot as
+  `GET /dashboard`'s `global_cost_budget` (minus the forecast fields) — see
+  [agents.md#global-cost-ceiling](agents.md#global-cost-ceiling). Present
+  whenever the server has a dispatcher wired (effectively always in
+  production), regardless of whether `MAX_DAILY_COST_USD`/
+  `MAX_MONTHLY_COST_USD` are actually configured — unlike the Dashboard
+  field, which is additionally gated on at least one cap being set. `*_limit_usd`
+  fields read `0` when that cap isn't configured, and `tripped` is always
+  `false` in that case.
 - `hint` is a one-line fix, present whenever `status` is not `ok`.
 - Checks covered: the `claude` CLI (present + authenticated), API keys for the
   `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for

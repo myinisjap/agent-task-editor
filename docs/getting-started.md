@@ -92,6 +92,13 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `SCHEDULE_INTERVAL` | `30s` | Poll interval for the recurring task-schedule sweep ([task-templates.md](task-templates.md#recurring-schedules)) |
 | `CONFIG_FILE` | _(empty)_ | Path to a YAML config file (all keys are optional) |
 
+### Cost Controls
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAX_DAILY_COST_USD` | `0` (unlimited) | Global cap on total recorded agent spend for the current UTC calendar day, across every task/provider/agent config. Once reached, the dispatcher stops starting new runs system-wide (in-flight runs finish normally) until the next UTC day. Distinct from the per-task `max_cost_usd` budget — see [agents.md#global-cost-ceiling](agents.md#global-cost-ceiling). |
+| `MAX_MONTHLY_COST_USD` | `0` (unlimited) | Same as above, for the current UTC calendar month. |
+
 ### Repository Access
 
 | Variable | Default | Description |

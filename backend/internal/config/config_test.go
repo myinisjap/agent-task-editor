@@ -432,6 +432,74 @@ func TestLoad_InvalidGitTimeout_UsesDefault(t *testing.T) {
 	}
 }
 
+func TestLoad_MaxDailyCostUSDEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("MAX_DAILY_COST_USD", "25.50")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxDailyCostUSD != 25.50 {
+		t.Errorf("expected max daily cost 25.50, got %v", cfg.MaxDailyCostUSD)
+	}
+}
+
+func TestLoad_InvalidMaxDailyCostUSD_UsesDefault(t *testing.T) {
+	t.Setenv("MAX_DAILY_COST_USD", "not-a-number")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxDailyCostUSD != config.Defaults().MaxDailyCostUSD {
+		t.Errorf("expected default max daily cost on invalid input, got %v", cfg.MaxDailyCostUSD)
+	}
+}
+
+func TestLoad_MaxDailyCostUSDDefaultsToUnlimited(t *testing.T) {
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxDailyCostUSD != 0 {
+		t.Errorf("expected max daily cost to default to 0 (unlimited), got %v", cfg.MaxDailyCostUSD)
+	}
+}
+
+func TestLoad_MaxMonthlyCostUSDEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("MAX_MONTHLY_COST_USD", "500")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxMonthlyCostUSD != 500 {
+		t.Errorf("expected max monthly cost 500, got %v", cfg.MaxMonthlyCostUSD)
+	}
+}
+
+func TestLoad_InvalidMaxMonthlyCostUSD_UsesDefault(t *testing.T) {
+	t.Setenv("MAX_MONTHLY_COST_USD", "not-a-number")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxMonthlyCostUSD != config.Defaults().MaxMonthlyCostUSD {
+		t.Errorf("expected default max monthly cost on invalid input, got %v", cfg.MaxMonthlyCostUSD)
+	}
+}
+
+func TestLoad_MaxMonthlyCostUSDDefaultsToUnlimited(t *testing.T) {
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MaxMonthlyCostUSD != 0 {
+		t.Errorf("expected max monthly cost to default to 0 (unlimited), got %v", cfg.MaxMonthlyCostUSD)
+	}
+}
+
 func TestLoad_LogRetentionFromYAML(t *testing.T) {
 	t.Setenv("LOG_RETENTION_DAYS", "")
 	t.Setenv("LOG_RETENTION_INTERVAL", "")

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -83,6 +84,37 @@ func TestProvidersEndpoint_NoConfigs(t *testing.T) {
 		if resp.has(id) {
 			t.Errorf("did not expect provider check %q with no configs", id)
 		}
+	}
+}
+
+// TestProvidersEndpoint_SurfacesGlobalCostStatus verifies GET
+// /health/providers includes the dispatcher's global_cost snapshot when the
+// wired dispatcher implements GlobalCostReporter — this is the Health page's
+// surface for a tripped daily/monthly spend ceiling.
+func TestProvidersEndpoint_SurfacesGlobalCostStatus(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	disp := fakeDispatcherWithCost{
+		last:   time.Now(),
+		status: agent.GlobalCostStatus{Tripped: true, TrippedReason: "monthly", MonthlySpentUSD: 550, MonthlyLimitUSD: 500},
+	}
+	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", false, disp)
+
+	req := httptest.NewRequest(http.MethodGet, "/health/providers", nil)
+	w := httptest.NewRecorder()
+	h.Providers(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		GlobalCost agent.GlobalCostStatus `json:"global_cost"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.GlobalCost.Tripped || body.GlobalCost.TrippedReason != "monthly" {
+		t.Errorf("expected tripped monthly global_cost, got %+v", body.GlobalCost)
 	}
 }
 

@@ -268,11 +268,14 @@ func main() {
 	dispatcher.SetUploadDir(uploadDir)
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = hub
+	dispatcher.MaxDailyCostUSD = cfg.MaxDailyCostUSD
+	dispatcher.MaxMonthlyCostUSD = cfg.MaxMonthlyCostUSD
 
 	// Shares the dispatcher's own collaborators (queries, pool, rate-limit
-	// registry) so the read-time /tasks block_reason field can never drift
-	// from what the dispatcher itself would actually do — see issue #353.
-	blockReasons := agent.NewBlockReasonResolver(gen.New(db.SQL()), pool, rateLimits)
+	// registry, and the dispatcher itself for the global cost-ceiling status)
+	// so the read-time /tasks block_reason field can never drift from what
+	// the dispatcher itself would actually do — see issue #353.
+	blockReasons := agent.NewBlockReasonResolver(gen.New(db.SQL()), pool, rateLimits, dispatcher)
 
 	// Interactive chat terminal — runs each session's provider CLI in a PTY, one
 	// live process per session (no shared concurrency budget; a session is a

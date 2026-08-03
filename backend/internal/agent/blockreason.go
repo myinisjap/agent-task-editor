@@ -26,18 +26,19 @@ type BlockReason struct {
 	Detail   any        `json:"detail"`
 }
 
-// Block reason codes. These mirror the nine non-dispatch paths in
-// Dispatcher.dispatch and the SQL gates in ListAgentPickupTasks.
+// Block reason codes. These mirror the non-dispatch paths in
+// Dispatcher.dispatch/sweep and the SQL gates in ListAgentPickupTasks.
 const (
-	BlockPaused          = "paused"
-	BlockAgentIgnore     = "agent_ignore"
-	BlockDependency      = "dependency"
-	BlockRetryBackoff    = "retry_backoff"
-	BlockNoConfig        = "no_config"
-	BlockRepoConcurrency = "repo_concurrency"
-	BlockRateLimited     = "rate_limited"
-	BlockCostBudget      = "cost_budget"
-	BlockWIPLimit        = "wip_limit"
+	BlockPaused           = "paused"
+	BlockAgentIgnore      = "agent_ignore"
+	BlockDependency       = "dependency"
+	BlockRetryBackoff     = "retry_backoff"
+	BlockNoConfig         = "no_config"
+	BlockRepoConcurrency  = "repo_concurrency"
+	BlockRateLimited      = "rate_limited"
+	BlockCostBudget       = "cost_budget"
+	BlockCostBudgetGlobal = "cost_budget_global"
+	BlockWIPLimit         = "wip_limit"
 )
 
 // BlockReasonResolver computes, at read time, the first reason each of a set
@@ -61,16 +62,18 @@ type BlockReasonResolver struct {
 	q          *gen.Queries
 	pool       *Pool
 	rateLimits *RateLimitRegistry
+	dispatcher *Dispatcher
 }
 
 // NewBlockReasonResolver constructs a resolver sharing the dispatcher's
-// collaborators. pool and rateLimits may be nil (e.g. in tests); a nil pool
-// falls back to treating repo_concurrency as never blocking (there is no
-// global worker cap to compare against), and a nil rateLimits registry is
-// treated as "nothing is rate-limited", matching Dispatcher.dispatch's own
-// nil-guard on d.RateLimits.
-func NewBlockReasonResolver(q *gen.Queries, pool *Pool, rateLimits *RateLimitRegistry) *BlockReasonResolver {
-	return &BlockReasonResolver{q: q, pool: pool, rateLimits: rateLimits}
+// collaborators. pool, rateLimits, and dispatcher may be nil (e.g. in
+// tests); a nil pool falls back to treating repo_concurrency as never
+// blocking (there is no global worker cap to compare against), a nil
+// rateLimits registry is treated as "nothing is rate-limited", matching
+// Dispatcher.dispatch's own nil-guard on d.RateLimits, and a nil dispatcher
+// is treated as "no global cost ceiling configured" (see checkGlobalCost).
+func NewBlockReasonResolver(q *gen.Queries, pool *Pool, rateLimits *RateLimitRegistry, dispatcher *Dispatcher) *BlockReasonResolver {
+	return &BlockReasonResolver{q: q, pool: pool, rateLimits: rateLimits, dispatcher: dispatcher}
 }
 
 // blockSharedState is the once-per-request set of shared lookups needed to
@@ -216,13 +219,23 @@ func (r *BlockReasonResolver) isDispatchCandidate(t gen.Task, state *blockShared
 // ever sees it, so in practice they are evaluated "first" from the system's
 // point of view. This resolver receives tasks that may already be filtered
 // out of that query, so it re-derives those gates directly. The chosen order
-// — paused, agent_ignore, dependency, retry_backoff, no_config,
-// repo_concurrency, rate_limited, cost_budget, wip_limit — surfaces the
-// harder-to-miss / more-permanent-looking reasons first and is pinned by
-// TestBlockReasonResolver_Ordering (blockreason_test.go) and the individual
-// per-code tests alongside it, one per row in the table above.
+// — paused, cost_budget_global, agent_ignore, dependency, retry_backoff,
+// no_config, repo_concurrency, rate_limited, cost_budget, wip_limit —
+// surfaces the harder-to-miss / more-permanent-looking reasons first and is
+// pinned by TestBlockReasonResolver_Ordering (blockreason_test.go) and the
+// individual per-code tests alongside it, one per row in the table above.
+// cost_budget_global is checked second (right after paused, itself the most
+// fundamental/task-local gate) because — unlike every other reason here,
+// which is specific to this task's label/config/repo — it applies
+// identically to every dispatch-eligible task in the system at once: once
+// the global daily/monthly spend ceiling trips, NO task is being dispatched,
+// so it's more informative to report that immediately than to first walk
+// through per-task gates that are, at that moment, moot.
 func (r *BlockReasonResolver) resolveOne(ctx context.Context, t gen.Task, state *blockSharedState) *BlockReason {
 	if reason := r.checkPaused(t); reason != nil {
+		return reason
+	}
+	if reason := r.checkGlobalCostBudget(); reason != nil {
 		return reason
 	}
 	if reason := r.checkAgentIgnore(t, state); reason != nil {
@@ -394,6 +407,40 @@ func (r *BlockReasonResolver) checkRateLimited(matches []*gen.AgentConfig, label
 		reason.ClearsAt = &earliest
 	}
 	return nil, reason
+}
+
+// checkGlobalCostBudget reports the shared cost_budget_global reason when
+// the dispatcher's global daily/monthly spend ceiling has tripped (see
+// Dispatcher.refreshGlobalCostStatus) — identical for every task, computed
+// once from the dispatcher's already-cached GlobalCostStatus rather than
+// re-querying SumCostForDay/SumCostForMonth per task or per request. A nil
+// dispatcher (e.g. in tests that don't wire one) is treated as "no global
+// ceiling configured", matching the nil-guards on pool/rateLimits above.
+func (r *BlockReasonResolver) checkGlobalCostBudget() *BlockReason {
+	if r.dispatcher == nil {
+		return nil
+	}
+	status := r.dispatcher.GlobalCostStatus()
+	if !status.Tripped {
+		return nil
+	}
+	var spent, limit float64
+	if status.TrippedReason == "monthly" {
+		spent, limit = status.MonthlySpentUSD, status.MonthlyLimitUSD
+	} else {
+		spent, limit = status.DailySpentUSD, status.DailyLimitUSD
+	}
+	return &BlockReason{
+		Code:    BlockCostBudgetGlobal,
+		Message: fmt.Sprintf("global %s cost budget exhausted: $%.2f of $%.2f — all dispatch halted", status.TrippedReason, spent, limit),
+		Detail: map[string]any{
+			"reason":            status.TrippedReason,
+			"daily_spent_usd":   status.DailySpentUSD,
+			"daily_limit_usd":   status.DailyLimitUSD,
+			"monthly_spent_usd": status.MonthlySpentUSD,
+			"monthly_limit_usd": status.MonthlyLimitUSD,
+		},
+	}
 }
 
 // checkCostBudget is a READ-ONLY preview of Dispatcher.checkCostBudget's

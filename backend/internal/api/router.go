@@ -39,7 +39,14 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
-	dashH := handlers.NewDashboardHandler(q, maxWorkers)
+	// dispatcherLiveness may also implement GlobalCostReporter (as
+	// *agent.Dispatcher does) to supply the dashboard's global spend-ceiling
+	// snapshot/forecast — same optional-capability pattern as HealthHandler.
+	var globalCost handlers.GlobalCostReporter
+	if gc, ok := dispatcherLiveness.(handlers.GlobalCostReporter); ok {
+		globalCost = gc
+	}
+	dashH := handlers.NewDashboardHandler(q, maxWorkers, globalCost)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates, dispatcherLiveness)
 	backupH := handlers.NewBackupHandler(db)

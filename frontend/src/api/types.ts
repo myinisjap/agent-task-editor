@@ -3906,21 +3906,21 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        /** @description Explains why a pickup-eligible task is not currently being dispatched. Mirrors the nine non-dispatch paths in the agent dispatcher (see docs/agents.md#dispatch): a task paused, its repo at its concurrency limit, no enabled agent config matching its label, every matching config rate-limited, its cost budget exhausted, the target label's WIP limit full, an unmet dependency, transient-retry backoff, or its label excluded via agent_ignore. */
+        /** @description Explains why a pickup-eligible task is not currently being dispatched. Mirrors the non-dispatch paths in the agent dispatcher (see docs/agents.md#dispatch): a task paused, the server's global daily/monthly spend ceiling tripped (halting ALL dispatch, not just this task), its repo at its concurrency limit, no enabled agent config matching its label, every matching config rate-limited, its own cost budget exhausted, the target label's WIP limit full, an unmet dependency, transient-retry backoff, or its label excluded via agent_ignore. */
         BlockReason: {
             /**
-             * @description Stable machine-readable reason code. See the "code" list above; evaluated in this exact order, so an earlier code always takes precedence over a later one when several apply simultaneously.
+             * @description Stable machine-readable reason code. See the "code" list above; evaluated in this exact order, so an earlier code always takes precedence over a later one when several apply simultaneously. cost_budget_global is checked second (right after paused) because — unlike every other code here, which is specific to this task — it applies identically to every dispatch-eligible task at once: see GET /dashboard's global_cost_budget for the underlying daily/monthly spend-ceiling status this mirrors.
              * @enum {string}
              */
-            code: "paused" | "agent_ignore" | "dependency" | "retry_backoff" | "no_config" | "repo_concurrency" | "rate_limited" | "cost_budget" | "wip_limit";
+            code: "paused" | "cost_budget_global" | "agent_ignore" | "dependency" | "retry_backoff" | "no_config" | "repo_concurrency" | "rate_limited" | "cost_budget" | "wip_limit";
             /** @description Human-readable, already-formatted explanation. */
             message: string;
             /**
              * Format: date-time
-             * @description When this reason is expected to clear on its own (rate-limit reset, next_retry_at). Null for reasons with no natural expiry (e.g. paused, cost_budget, wip_limit) — those require a human/config action to clear.
+             * @description When this reason is expected to clear on its own (rate-limit reset, next_retry_at). Null for reasons with no natural expiry (e.g. paused, cost_budget, cost_budget_global, wip_limit) — those require a human/config action to clear.
              */
             clears_at?: string | null;
-            /** @description Reason-specific structured context (e.g. blocking task ids/ titles for "dependency"; limit vs. current count for "repo_concurrency"/"wip_limit"; spent vs. budget for "cost_budget"). Shape varies by code; treat as opaque/optional in generic UI and only key off it for known codes. */
+            /** @description Reason-specific structured context (e.g. blocking task ids/ titles for "dependency"; limit vs. current count for "repo_concurrency"/"wip_limit"; spent vs. budget for "cost_budget"/"cost_budget_global"). Shape varies by code; treat as opaque/optional in generic UI and only key off it for known codes. */
             detail?: unknown;
         };
         /** @description One end of a task dependency edge (a blocker or a dependent). */
@@ -4339,6 +4339,16 @@ export interface components {
                 /** Format: double */
                 cost_usd: number;
             }[];
+            /** @description Per-repo token/cost rollup, sorted by cost descending -- the companion to cost_by_task for answering "which repo is expensive" before setting a per-repo repos.max_concurrent_runs limit. Like cost_by_task, includes runs in EVERY status (not just terminal ones), joined through tasks since agent_runs has no repo_id of its own. */
+            cost_by_repo: {
+                repo_id: string;
+                repo_name: string;
+                input_tokens: number;
+                output_tokens: number;
+                /** Format: double */
+                cost_usd: number;
+                run_count: number;
+            }[];
             /** @description Live Claude account rate-limit usage from Anthropic's OAuth usage endpoint (5-hour rolling window + weekly window). `available` is false when the server has no Claude OAuth credentials or the fetch failed; other fields are zero/absent in that case. */
             claude_usage: {
                 available: boolean;
@@ -4358,6 +4368,33 @@ export interface components {
                 in_use: number;
                 limit: number;
             }[];
+            /** @description The server's global daily/monthly spend-ceiling status (see MAX_DAILY_COST_USD/MAX_MONTHLY_COST_USD), plus a simple "projected spend at current burn" forecast per configured period (trailing 7-day mean extrapolated linearly to the end of the day/month -- deliberately unsophisticated; the value is "am I on track to blow through this", not an accurate prediction). Omitted entirely when neither MAX_DAILY_COST_USD nor MAX_MONTHLY_COST_USD is configured. When tripped, the dispatcher halts all new dispatch (in-flight runs are left to finish) until spend for the tripped period drops back under its cap on the next calendar day/month -- see each task's block_reason, which reports cost_budget_global while this is tripped. */
+            global_cost_budget?: {
+                /** Format: double */
+                daily_limit_usd: number;
+                /** Format: double */
+                monthly_limit_usd: number;
+                /** Format: double */
+                daily_spent_usd: number;
+                /** Format: double */
+                monthly_spent_usd: number;
+                tripped: boolean;
+                /**
+                 * @description Which cap tripped first. Absent when tripped is false.
+                 * @enum {string}
+                 */
+                tripped_reason?: "daily" | "monthly";
+                /**
+                 * Format: double
+                 * @description Projected total spend for today (already-recorded spend plus the trailing burn rate extrapolated to end of day). Present only when daily_limit_usd > 0.
+                 */
+                daily_forecast_usd?: number;
+                /**
+                 * Format: double
+                 * @description Projected total spend for this calendar month. Present only when monthly_limit_usd > 0.
+                 */
+                monthly_forecast_usd?: number;
+            } | null;
         };
         /** @description A single provider/onboarding readiness row. */
         ProviderCheck: {

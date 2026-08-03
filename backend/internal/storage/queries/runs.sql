@@ -278,6 +278,47 @@ FROM tasks t
 JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label
 WHERE wl.is_terminal != 0;
 
+-- name: SumCostForDay :one
+-- Cumulative recorded cost across ALL runs regardless of status (same "every
+-- run counts" rationale as SumTaskCost above), for a single UTC calendar day.
+-- Used by the dispatcher's global daily spend-ceiling guard (see
+-- Dispatcher.checkGlobalCostBudget) so a rate-limited/failed/in-flight run
+-- that already burned spend still counts against the cap the same sweep it
+-- happened, not just once it reaches a terminal status. day is a
+-- 'YYYY-MM-DD' string (UTC), matching date(created_at) below; the
+-- CAST(sqlc.arg(day) AS TEXT) pins the generated Go param type to string
+-- instead of sqlc inferring time.Time from the datetime column it's
+-- compared against.
+SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs WHERE date(created_at) = CAST(sqlc.arg(day) AS TEXT);
+
+-- name: SumCostForMonth :one
+-- Cumulative recorded cost across ALL runs regardless of status, for a
+-- single UTC calendar month. month is a 'YYYY-MM' string (UTC), matching
+-- strftime('%Y-%m', created_at) below; the CAST(sqlc.arg(month) AS TEXT)
+-- pins the generated Go param type to string, same reason as SumCostForDay
+-- above. See SumCostForDay for the "every run counts" rationale and its
+-- dispatcher usage.
+SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs WHERE strftime('%Y-%m', created_at) = CAST(sqlc.arg(month) AS TEXT);
+
+-- name: SumUsageByRepo :many
+-- Per-repo token/cost rollup across ALL runs regardless of status (same
+-- rationale as SumUsageByTask above), joined through tasks since agent_runs
+-- has no repo_id of its own. Ordered by cost descending so the caller can
+-- cheaply take a top-N slice for a "which repo is expensive" view -- the
+-- natural companion to repos.max_concurrent_runs for an operator setting
+-- per-repo limits.
+SELECT t.repo_id AS repo_id,
+       CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
+       CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
+       COUNT(*) AS run_count
+FROM agent_runs ar
+JOIN tasks t ON t.id = ar.task_id
+GROUP BY t.repo_id
+ORDER BY cost_usd DESC;
+
 -- name: CountTaskCostUnknownRuns :one
 -- Count of a task's agent_runs rows (across ALL statuses, same "every run
 -- counts" rationale as SumTaskCost above) flagged cost_unknown = 1, i.e.
