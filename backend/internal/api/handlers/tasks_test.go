@@ -28,20 +28,21 @@ import (
 // The Attachments field is []string because the handler serialises the stored
 // JSON string as a proper JSON array, not a raw string.
 type apiTask struct {
-	ID                string   `json:"id"`
-	Title             string   `json:"title"`
-	Description       string   `json:"description"`
-	Type              string   `json:"type"`
-	Label             string   `json:"label"`
-	RepoID            string   `json:"repo_id"`
-	WorkflowID        string   `json:"workflow_id"`
-	AgentNotes        string   `json:"agent_notes"`
-	Attachments       []string `json:"attachments"`
-	Paused            bool     `json:"paused"`
-	Archived          bool     `json:"archived"`
-	Priority          int      `json:"priority"`
-	QueuePosition     *int     `json:"queue_position"`
-	CumulativeCostUsd float64  `json:"cumulative_cost_usd"`
+	ID                string             `json:"id"`
+	Title             string             `json:"title"`
+	Description       string             `json:"description"`
+	Type              string             `json:"type"`
+	Label             string             `json:"label"`
+	RepoID            string             `json:"repo_id"`
+	WorkflowID        string             `json:"workflow_id"`
+	AgentNotes        string             `json:"agent_notes"`
+	Attachments       []string           `json:"attachments"`
+	Paused            bool               `json:"paused"`
+	Archived          bool               `json:"archived"`
+	Priority          int                `json:"priority"`
+	QueuePosition     *int               `json:"queue_position"`
+	CumulativeCostUsd float64            `json:"cumulative_cost_usd"`
+	BlockReason       *agent.BlockReason `json:"block_reason"`
 }
 
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
@@ -112,7 +113,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil, nil)
 
 	r := chi.NewRouter()
 	r.Get("/tasks", h.List)
@@ -164,7 +165,7 @@ func setupTaskRouterWithWriteback(t *testing.T) (http.Handler, *gen.Queries, str
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil, nil)
 
 	fwb := &fakeWriteback{}
 	h.SetWriteback(writeback.NewWithClient(q,
@@ -219,7 +220,7 @@ func setupCancelRouter(t *testing.T, canceller handlers.RunCanceller) (http.Hand
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), canceller, nil)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), canceller, nil, nil)
 	r := chi.NewRouter()
 	r.Post("/tasks/{id}/runs/{run_id}/cancel", h.CancelRun)
 	return r, q, wfID, repoID
@@ -1860,7 +1861,7 @@ func setupQueuePositionRouter(t *testing.T, saturated bool) (http.Handler, *gen.
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}, saturated: saturated}, nil)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}, saturated: saturated}, nil, nil)
 	r := chi.NewRouter()
 	r.Get("/tasks/{id}", h.Get)
 	return r, q, wfID, repoID
@@ -1959,6 +1960,188 @@ func TestTasks_Get_QueuePosition_NotSaturated(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&got)
 	if got.QueuePosition != nil {
 		t.Errorf("expected nil queue_position for an eligible task when pool has idle capacity, got %d", *got.QueuePosition)
+	}
+}
+
+// fakeBlockReasonResolver returns a scripted reason for the task ids present
+// in its reasons map, ignoring every other task passed to ResolveMany — good
+// enough to test the handler's plumbing (blockReasonMap/applyBlockReason)
+// without re-testing agent.BlockReasonResolver's own predicate logic (see
+// internal/agent/blockreason_test.go for that).
+type fakeBlockReasonResolver struct {
+	reasons map[string]*agent.BlockReason
+}
+
+func (f *fakeBlockReasonResolver) ResolveMany(_ context.Context, tasks []gen.Task) (map[string]*agent.BlockReason, error) {
+	out := make(map[string]*agent.BlockReason)
+	for _, t := range tasks {
+		if r, ok := f.reasons[t.ID]; ok {
+			out[t.ID] = r
+		}
+	}
+	return out, nil
+}
+
+// setupBlockReasonRouter wires both GET /tasks and GET /tasks/{id} against a
+// fakeBlockReasonResolver so tests can assert block_reason plumbing without
+// depending on real dispatcher state.
+func setupBlockReasonRouter(t *testing.T, resolver handlers.BlockReasonResolver) (http.Handler, *gen.Queries, string, string) {
+	t.Helper()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), noopPub{})
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID:         repoID,
+		Name:       "test-repo",
+		Path:       t.TempDir(),
+		WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil, resolver)
+	r := chi.NewRouter()
+	r.Get("/tasks", h.List)
+	r.Get("/tasks/{id}", h.Get)
+	return r, q, wfID, repoID
+}
+
+// TestTasks_Get_BlockReason verifies GET /tasks/{id} surfaces the resolver's
+// block_reason for a blocked task and omits it for one the resolver has no
+// entry for.
+func TestTasks_Get_BlockReason(t *testing.T) {
+	reason := &agent.BlockReason{Code: agent.BlockPaused, Message: "task is paused"}
+	resolver := &fakeBlockReasonResolver{reasons: map[string]*agent.BlockReason{}}
+	r, q, wfID, repoID := setupBlockReasonRouter(t, resolver)
+	ctx := context.Background()
+
+	blockedTask, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Blocked", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	resolver.reasons[blockedTask.ID] = reason
+
+	notBlocked, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Not blocked", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+blockedTask.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	_ = json.NewDecoder(w.Body).Decode(&got)
+	if got.BlockReason == nil {
+		t.Fatal("expected non-nil block_reason for a blocked task")
+	}
+	if got.BlockReason.Code != agent.BlockPaused {
+		t.Errorf("expected code %q, got %q", agent.BlockPaused, got.BlockReason.Code)
+	}
+	if got.BlockReason.Message != "task is paused" {
+		t.Errorf("expected message %q, got %q", "task is paused", got.BlockReason.Message)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/tasks/"+notBlocked.ID, nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var gotNotBlocked apiTask
+	_ = json.NewDecoder(w.Body).Decode(&gotNotBlocked)
+	if gotNotBlocked.BlockReason != nil {
+		t.Errorf("expected nil block_reason for a non-blocked task, got %+v", gotNotBlocked.BlockReason)
+	}
+}
+
+// TestTasks_Get_BlockReason_NilResolver verifies GET /tasks/{id} omits
+// block_reason entirely (no panic, no error) when no resolver is wired —
+// mirrors the h.canceller == nil guard used elsewhere in this handler.
+func TestTasks_Get_BlockReason_NilResolver(t *testing.T) {
+	r, q, wfID, repoID := setupBlockReasonRouter(t, nil)
+	ctx := context.Background()
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Task", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got apiTask
+	_ = json.NewDecoder(w.Body).Decode(&got)
+	if got.BlockReason != nil {
+		t.Errorf("expected nil block_reason with no resolver wired, got %+v", got.BlockReason)
+	}
+}
+
+// TestTasks_List_BlockReason verifies GET /tasks surfaces block_reason per
+// row using a single resolver call across the whole page (the fake records
+// nothing about call count, but this exercises the List code path in
+// addition to Get's).
+func TestTasks_List_BlockReason(t *testing.T) {
+	reason := &agent.BlockReason{Code: agent.BlockRateLimited, Message: "rate limited"}
+	resolver := &fakeBlockReasonResolver{reasons: map[string]*agent.BlockReason{}}
+	r, q, wfID, repoID := setupBlockReasonRouter(t, resolver)
+	ctx := context.Background()
+
+	blockedTask, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Blocked", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	resolver.reasons[blockedTask.ID] = reason
+
+	if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Not blocked", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got []apiTask
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, tk := range got {
+		if tk.ID != blockedTask.ID {
+			if tk.BlockReason != nil {
+				t.Errorf("expected nil block_reason for task %q, got %+v", tk.ID, tk.BlockReason)
+			}
+			continue
+		}
+		found = true
+		if tk.BlockReason == nil || tk.BlockReason.Code != agent.BlockRateLimited {
+			t.Errorf("expected block_reason code %q for task %q, got %+v", agent.BlockRateLimited, tk.ID, tk.BlockReason)
+		}
+	}
+	if !found {
+		t.Fatalf("expected blocked task %q in list response", blockedTask.ID)
 	}
 }
 
@@ -2253,7 +2436,7 @@ func setupReplyRouter(t *testing.T, disp handlers.ReplyDispatcher) (http.Handler
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, disp)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, disp, nil)
 	r := chi.NewRouter()
 	r.Post("/tasks/{id}/runs/{run_id}/reply", h.ReplyRun)
 	return r, q, wfID, repoID
@@ -2944,7 +3127,7 @@ func TestTasks_Create_DefaultsToAlphabeticallyFirstWorkflow_WhenNoneNamedDefault
 		t.Fatalf("create repo: %v", err)
 	}
 
-	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil)
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil, nil)
 	r := chi.NewRouter()
 	r.Post("/tasks", h.Create)
 

@@ -269,6 +269,11 @@ func main() {
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = hub
 
+	// Shares the dispatcher's own collaborators (queries, pool, rate-limit
+	// registry) so the read-time /tasks block_reason field can never drift
+	// from what the dispatcher itself would actually do — see issue #353.
+	blockReasons := agent.NewBlockReasonResolver(gen.New(db.SQL()), pool, rateLimits)
+
 	// Interactive chat terminal — runs each session's provider CLI in a PTY, one
 	// live process per session (no shared concurrency budget; a session is a
 	// single interactive process). Streamed over the /chat/sessions/{id}/terminal
@@ -302,7 +307,7 @@ func main() {
 		slog.Info("chat terminal idle reaper enabled", "idle_timeout", cfg.ChatIdleTimeout)
 	}
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher, blockReasons)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -42,6 +43,13 @@ type taskResponse struct {
 	// runs than fit on a page (see TaskHeader's cost badge). Omitted (zero
 	// value) on list responses to avoid an extra query per row.
 	CumulativeCostUsd float64 `json:"cumulative_cost_usd"`
+	// BlockReason is a derived, read-time explanation of why this task isn't
+	// currently being dispatched (e.g. paused, rate-limited, cost budget
+	// exhausted — see agent.BlockReason). Nil when the task isn't currently a
+	// dispatch candidate, or is a candidate with no active block (i.e. it's
+	// simply next in line — see QueuePosition, a separate concern). Only the
+	// first reason the dispatcher would hit is reported, not the full set.
+	BlockReason *agent.BlockReason `json:"block_reason,omitempty"`
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the
@@ -193,6 +201,32 @@ func applyQueuePosition(resp taskResponse, positions map[string]int) taskRespons
 	if p, ok := positions[resp.ID]; ok {
 		pos := p
 		resp.QueuePosition = &pos
+	}
+	return resp
+}
+
+// blockReasonMap resolves the derived BlockReason for each of the given
+// tasks in one shared-state pass (see agent.BlockReasonResolver), keyed by
+// task id. Tasks absent from the map either aren't dispatch candidates or
+// have no active block. Nil when no resolver is wired (h.blockReasons ==
+// nil, e.g. some tests) — mirrors the h.canceller == nil guard elsewhere in
+// this file.
+func (h *TasksHandler) blockReasonMap(ctx context.Context, tasks []gen.Task) map[string]*agent.BlockReason {
+	if h.blockReasons == nil || len(tasks) == 0 {
+		return nil
+	}
+	m, err := h.blockReasons.ResolveMany(ctx, tasks)
+	if err != nil {
+		return nil
+	}
+	return m
+}
+
+// applyBlockReason sets the derived block reason on a response from the map,
+// leaving it nil when the task has none.
+func applyBlockReason(resp taskResponse, reasons map[string]*agent.BlockReason) taskResponse {
+	if reason, ok := reasons[resp.ID]; ok {
+		resp.BlockReason = reason
 	}
 	return resp
 }

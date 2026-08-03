@@ -5,6 +5,8 @@ import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
 import AgentNotesModal from './AgentNotesModal'
 import { useIsMobile } from '../../lib/useIsMobile'
+import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
+import { formatRelativeCountdown } from '../../lib/format'
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -287,10 +289,22 @@ export default function TaskHeader({
       ) : (
         <div>
           <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
-          {task.paused && (
-            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-900/70 text-amber-300 mt-2">
-              ⏸ Paused — agents will not pick up this task
-            </span>
+          {task.block_reason ? (
+            <div className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg font-medium bg-red-900/40 text-red-300 mt-2">
+              <span>🚫 Not dispatching — {blockReasonLabel(task.block_reason)}:</span>
+              <span className="text-red-200/90">{task.block_reason.message}</span>
+              {task.block_reason.clears_at && isTransientBlockReason(task.block_reason) && (
+                <span className="text-red-400/80">
+                  (clears {formatRelativeCountdown(task.block_reason.clears_at)})
+                </span>
+              )}
+            </div>
+          ) : (
+            task.paused && (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-900/70 text-amber-300 mt-2">
+                ⏸ Paused — agents will not pick up this task
+              </span>
+            )
           )}
           {task.description && (
             isMobile ? (
@@ -365,9 +379,16 @@ export default function TaskHeader({
         <Row label="Priority">
           <span className="text-xs text-slate-300">
             {priorityLabel(task.priority)}
-            {task.queue_position != null ? ` — #${task.queue_position + 1} in dispatch queue` : ''}
+            {!task.block_reason && task.queue_position != null
+              ? ` — #${task.queue_position + 1} in dispatch queue`
+              : ''}
           </span>
         </Row>
+        {task.block_reason?.code === 'dependency' && (
+          <Row label="Blocked">
+            <span className="text-xs text-red-300">See Dependencies below for the blocking task(s).</span>
+          </Row>
+        )}
         <Row label="Cost">
           <span className="text-xs text-slate-300">
             ${cumulativeCost.toFixed(2)}

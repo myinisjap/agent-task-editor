@@ -155,3 +155,79 @@ describe('TaskCard running indicator (#249)', () => {
     expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
   })
 })
+
+// #353 — the block_reason badge surfaces why a pickup-eligible task isn't
+// dispatching, and takes precedence over the queue_position badge when both
+// are somehow present (block_reason is the "stuck" signal).
+describe('TaskCard block_reason badge (#353)', () => {
+  beforeEach(() => {
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+    useReposStore.setState({ repos: [], loading: false, error: null })
+  })
+
+  it('renders a badge with the reason label when block_reason is set', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard
+          task={baseTask({
+            block_reason: { code: 'cost_budget', message: 'budget exhausted: $5.00 of $5.00' },
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/Budget exhausted/)).toBeInTheDocument()
+  })
+
+  it('does not render a block_reason badge when block_reason is absent', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask()} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByText(/Budget exhausted/)).not.toBeInTheDocument()
+  })
+
+  it('renders a countdown for transient reasons with clears_at', () => {
+    const clearsAt = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+    render(
+      <MemoryRouter>
+        <TaskCard
+          task={baseTask({
+            block_reason: { code: 'rate_limited', message: 'all matching configs are rate-limited', clears_at: clearsAt },
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/Rate limited/)).toBeInTheDocument()
+    expect(screen.getByText(/\(in \d+m\)/)).toBeInTheDocument()
+  })
+
+  it('prefers the block_reason badge over queue_position when both are present', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard
+          task={baseTask({
+            queue_position: 2,
+            block_reason: { code: 'paused', message: 'task is paused' },
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/Paused/)).toBeInTheDocument()
+    expect(screen.queryByText(/in queue/)).not.toBeInTheDocument()
+  })
+
+  it('falls back to the queue_position badge when block_reason is absent', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ queue_position: 0 })} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/#1 in queue/)).toBeInTheDocument()
+  })
+})
