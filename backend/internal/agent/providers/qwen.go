@@ -342,7 +342,9 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
-		return agent.Result{Status: "failed", CostWarned: finalCostWarned}, &agent.ErrTransient{Cause: fmt.Errorf("qwen run timed out")}
+		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
+		applyUsage(&res, finalUsage)
+		return res, &agent.ErrTransient{Cause: fmt.Errorf("qwen run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited: %v", err), At: time.Now()}
@@ -351,10 +353,14 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		tr := transient
 		mu.Unlock()
 		if rl {
-			return agent.Result{Status: "failed", CostWarned: finalCostWarned}, &agent.ErrRateLimit{Message: "qwen CLI 429: Request rejected by API rate limit"}
+			res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
+			applyUsage(&res, finalUsage)
+			return res, &agent.ErrRateLimit{Message: "qwen CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
-			return agent.Result{Status: "failed", CostWarned: finalCostWarned}, &agent.ErrTransient{Cause: fmt.Errorf("qwen CLI exited with transient infra error: %w", err)}
+			res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
+			applyUsage(&res, finalUsage)
+			return res, &agent.ErrTransient{Cause: fmt.Errorf("qwen CLI exited with transient infra error: %w", err)}
 		}
 	}
 

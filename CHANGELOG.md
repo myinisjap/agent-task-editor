@@ -320,6 +320,20 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Transient, rate-limited, and cancelled agent runs no longer persist at
+  `cost_usd = 0`, defeating budget accounting.** `handleTransientFailure`
+  (hit on rate-limit and other transient provider errors) and
+  `handleCancelled` (hit when a human cancels a run) only wrote
+  `status`/`id`/`notes` to `SetAgentRunCompleted`, which overwrites every
+  usage column unconditionally — so a run that had already spent money
+  before failing or being cancelled was recorded as free, silently
+  understating `SumTaskCost` rollups and letting `max_cost_usd` budgets
+  never trip on a repeatedly rate-limited task. Both handlers now thread the
+  provider's `Result` through and populate `input_tokens`/`output_tokens`/
+  `cost_usd`/`cost_unknown` the same way `handleMaxTurnsExhausted` and
+  `handleCostBudgetExceeded` already did. The `qwen` provider also now
+  carries its session id and accrued usage on timeout/rate-limit/transient
+  returns (previously dropped both), matching claude/codex/opencode.
 - **`PATCH /tasks/{id}` no longer blanks `title`/`description`/`type` when
   they're omitted from the request body, and `PUT /provider-configs/{id}`
   no longer blanks `model`** (#334). Both handlers already fell back to the

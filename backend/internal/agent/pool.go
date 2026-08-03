@@ -226,7 +226,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// re-dispatched. Checked before error classification because a cancelled
 	// provider typically returns a context/transient-looking error.
 	if rc.cancelled.Load() {
-		p.handleCancelled(job, startedAt)
+		p.handleCancelled(job, result, startedAt)
 		return
 	}
 
@@ -419,7 +419,7 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 				"unblocked_at":    unblockStr,
 			})
 		}
-		p.handleTransientFailure(ctx, job, "rate limited: "+rl.Message, startedAt)
+		p.handleTransientFailure(ctx, job, result, "rate limited: "+rl.Message, startedAt)
 		return true
 	}
 
@@ -427,7 +427,7 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 	if errors.As(err, &te) {
 		log.Warn("pool: agent run transient error", "classification", string(ClassTransient), "err", err)
 		metrics.RunClassificationTotal.WithLabelValues(string(ClassTransient)).Inc()
-		p.handleTransientFailure(ctx, job, err.Error(), startedAt)
+		p.handleTransientFailure(ctx, job, result, err.Error(), startedAt)
 		return true
 	}
 

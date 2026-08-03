@@ -704,6 +704,22 @@ func (blockingProvider) Run(ctx context.Context, _ agent.RunInput, _ chan<- agen
 	return agent.Result{Status: "failed"}, ctx.Err()
 }
 
+// blockingProviderWithUsage behaves like blockingProvider but returns
+// pre-accrued usage on cancellation, mimicking a killed run that had already
+// spent money before the human cancelled it.
+type blockingProviderWithUsage struct{}
+
+func (blockingProviderWithUsage) Run(ctx context.Context, _ agent.RunInput, _ chan<- agent.LogEntry) (agent.Result, error) {
+	<-ctx.Done()
+	return agent.Result{
+		Status:       "failed",
+		InputTokens:  750,
+		OutputTokens: 300,
+		CostUSD:      2.50,
+		CostUnknown:  true,
+	}, ctx.Err()
+}
+
 // TestPool_Cancel_MarksCancelledAndPauses verifies a human-requested cancel
 // stops a running provider, records the run as "cancelled" (not failed), pauses
 // the task, clears the active-run lock, and reports the run gone afterwards.
@@ -745,6 +761,55 @@ func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
 	}
 	if !pub.hasEvent("task.agent_done") {
 		t.Errorf("expected task.agent_done event")
+	}
+}
+
+// TestPool_Cancel_PreservesUsage verifies that a cancelled run which had
+// already accrued usage before the human stopped it persists that usage
+// (including the cost_unknown flag, bool→int64 round-tripped) on the
+// "cancelled" run row instead of recording it as free.
+func TestPool_Cancel_PreservesUsage(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	startPool(t, pool)
+
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProviderWithUsage{}))
+
+	waitForStatus(t, q, runID, "running")
+	if !pool.Cancel(runID) {
+		t.Fatal("expected Cancel to find the active run")
+	}
+
+	waitForStatus(t, q, runID, "cancelled")
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.InputTokens != 750 {
+		t.Errorf("expected input_tokens=750, got %d", run.InputTokens)
+	}
+	if run.OutputTokens != 300 {
+		t.Errorf("expected output_tokens=300, got %d", run.OutputTokens)
+	}
+	if run.CostUsd != 2.50 {
+		t.Errorf("expected cost_usd=2.50, got %v", run.CostUsd)
+	}
+	if run.CostUnknown != 1 {
+		t.Errorf("expected cost_unknown=1, got %d", run.CostUnknown)
 	}
 }
 
@@ -938,6 +1003,105 @@ func TestPool_TransientFailure_EscalatesAfterMaxRetries(t *testing.T) {
 	}
 	if task.ActiveAgentRunID == nil {
 		t.Error("expected active_agent_run_id to remain set (locked) while waiting_human")
+	}
+}
+
+// TestPool_TransientFailure_PreservesUsage verifies that a transient-error
+// run which had already accrued token usage/cost before failing persists
+// that usage on the run row instead of recording it as free — regression
+// coverage for the issue where handleTransientFailure only wrote Status/ID
+// and silently zeroed out cost_usd/input_tokens/output_tokens/cost_unknown.
+func TestPool_TransientFailure_PreservesUsage(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	provider := &mockProvider{
+		result: agent.Result{
+			Status:       "failed",
+			InputTokens:  1000,
+			OutputTokens: 500,
+			CostUSD:      4.00,
+			CostUnknown:  true,
+		},
+		err: &agent.ErrTransient{Cause: context.DeadlineExceeded},
+	}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	stop()
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.InputTokens != 1000 {
+		t.Errorf("expected input_tokens=1000, got %d", run.InputTokens)
+	}
+	if run.OutputTokens != 500 {
+		t.Errorf("expected output_tokens=500, got %d", run.OutputTokens)
+	}
+	if run.CostUsd != 4.00 {
+		t.Errorf("expected cost_usd=4.00, got %v", run.CostUsd)
+	}
+	if run.CostUnknown != 1 {
+		t.Errorf("expected cost_unknown=1, got %d", run.CostUnknown)
+	}
+}
+
+// TestPool_RateLimit_PreservesUsage verifies that a rate-limited run which
+// had already accrued usage before hitting the 429 persists that usage on
+// the run row rather than recording it as free.
+func TestPool_RateLimit_PreservesUsage(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	provider := &mockProvider{
+		result: agent.Result{
+			Status:       "failed",
+			InputTokens:  2000,
+			OutputTokens: 250,
+			CostUSD:      1.25,
+		},
+		err: &agent.ErrRateLimit{Message: "rate limited"},
+	}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	stop()
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.InputTokens != 2000 {
+		t.Errorf("expected input_tokens=2000, got %d", run.InputTokens)
+	}
+	if run.OutputTokens != 250 {
+		t.Errorf("expected output_tokens=250, got %d", run.OutputTokens)
+	}
+	if run.CostUsd != 1.25 {
+		t.Errorf("expected cost_usd=1.25, got %v", run.CostUsd)
+	}
+	if run.CostUnknown != 0 {
+		t.Errorf("expected cost_unknown=0, got %d", run.CostUnknown)
 	}
 }
 
