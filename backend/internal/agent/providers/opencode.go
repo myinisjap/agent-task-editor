@@ -44,7 +44,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	defer cancel()
 
 	slog.Info("opencode args", "args", args)
-	cmd := exec.CommandContext(runCtx, r.binary(), args...)
+	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
 	cmd.Dir = input.RepoPath
 	cmd.Env = mergeEnv(allowlistEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
 

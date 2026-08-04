@@ -367,6 +367,17 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Agent runs no longer fail to launch (`fork/exec: invalid argument`) when
+  task content contains a NUL byte.** A NUL byte anywhere in a process
+  argument makes the Linux `execve` syscall reject it outright, so a NUL
+  that leaked into a prompt (e.g. an agent writing a literal `\x00` into
+  `tasks.agent_notes`, suggesting it as a JS array join delimiter, which then
+  flowed into the `-p` prompt argument via the "NOTES FROM PRIOR AGENT"
+  section on every dispatch) made every launch for that task die before the
+  CLI subprocess ever started. Control bytes that are illegal in process
+  arguments are now stripped right before each CLI provider execs
+  (`claude`, `codex_cli`, `qwen_code`, `opencode`), fixing this at the exec
+  boundary for any prompt-fed field rather than any one source field.
 - **Transient-failure and cancelled runs now record the cost/tokens they
   actually consumed instead of `$0`.** #337 taught the max-turns and
   mid-run-cost-budget-exceeded escalation paths to persist `cost_usd`/token
