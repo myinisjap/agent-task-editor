@@ -215,7 +215,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), args...)
+	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
 	cmd.Dir = input.RepoPath
 	env := mergeEnv(allowlistEnv(codexEnvAllowlist), input.AgentConfig.Env)
 	if codexHome != nil {
