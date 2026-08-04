@@ -378,6 +378,22 @@ triggers the "Release" workflow the same way.
   arguments are now stripped right before each CLI provider execs
   (`claude`, `codex_cli`, `qwen_code`, `opencode`), fixing this at the exec
   boundary for any prompt-fed field rather than any one source field.
+- **A task whose agent fails to launch no longer re-dispatches in a tight
+  5-second loop.** When a provider errored before ever streaming any output
+  (e.g. failing to build settings/args or spawn its subprocess), the pool
+  treated it as a plain genuine `failed` result: the retry budget was reset
+  and the dispatch lock cleared, so the next 5s sweep picked the task right
+  back up — and since the same pre-stream error just recurred, this looped
+  indefinitely (one observed task racked up 100 runs in 3 hours, every one
+  0 tokens/0 logs/empty session). The existing auth-escalation safety net
+  (`hasLoginError`) couldn't catch this either, since it only inspects the
+  run's persisted logs, and a pre-stream failure has none. `Pool.run` now
+  detects this case — no logs, no session id, zero token usage — and routes
+  it through the same handling as a transient infra failure instead: bounded
+  backoff per the agent config's `max_retries`/`retry_backoff_secs`, then
+  escalation to `waiting_human` once the budget is exhausted. A genuine
+  failure that already streamed real output still fails immediately as
+  before.
 - **Transient-failure and cancelled runs now record the cost/tokens they
   actually consumed instead of `$0`.** #337 taught the max-turns and
   mid-run-cost-budget-exceeded escalation paths to persist `cost_usd`/token

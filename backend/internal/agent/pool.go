@@ -253,6 +253,21 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		if p.handleProviderError(ctx, job, err, result, startedAt, log) {
 			return
 		}
+		// A genuine error that never produced any evidence of actually starting
+		// (no logs, no session, zero usage) is a "pre-stream" failure — e.g. the
+		// provider errored building settings/args or spawning its subprocess,
+		// before any output streamed. hasLoginError's auth-escalation net only
+		// inspects the run's LOGS, so a pre-stream failure has nothing for it to
+		// find and bypasses it; left as a plain "failed" result, it resets the
+		// retry budget and clears the dispatch lock, so the 5s sweep re-picks
+		// the task immediately — forever, since the same pre-stream error just
+		// recurs (see the 100-run/3h loop this fixes). Routing it through
+		// handleTransientFailure instead applies max_retries/retry_backoff_secs
+		// and escalates to waiting_human once the budget is exhausted.
+		if p.isPreStreamFailure(ctx, job, result) {
+			p.handleTransientFailure(ctx, job, result, "provider failed before producing any output", startedAt)
+			return
+		}
 		result = Result{Status: "failed"}
 	}
 
