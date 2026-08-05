@@ -143,4 +143,26 @@ describe('UsagePage global spend ceiling', () => {
     await waitFor(() => expect(screen.getByText('Cost by repo')).toBeInTheDocument())
     expect(screen.getByText('my-repo')).toBeInTheDocument()
   })
+
+  it('shows a temporarily-unavailable note instead of hiding the section when rate limited', async () => {
+    dashboardGetMock.mockResolvedValue({
+      label_counts: {},
+      active_agents: [],
+      intervention_queue: [],
+      cost_total: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+      cost_by_provider: [],
+      agent_config_stats: [],
+      cost_by_day: [],
+      cost_by_task: [],
+      cost_by_repo: [],
+      claude_usage: { available: false, rate_limited: true, five_hour_percent: 0, weekly_percent: 0 },
+      repo_concurrency: [],
+    })
+
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('Claude usage')).toBeInTheDocument())
+    expect(screen.getByText(/Usage temporarily unavailable/)).toBeInTheDocument()
+    expect(screen.queryByText('No usage data yet.')).not.toBeInTheDocument()
+  })
 })
