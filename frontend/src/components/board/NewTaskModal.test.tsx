@@ -399,4 +399,27 @@ describe('NewTaskModal attachment preview revocation (#350)', () => {
     expect(img.getAttribute('src')).not.toBe('https://evil.example/x')
     expect(img).not.toHaveAttribute('src', 'https://evil.example/x')
   })
+
+  // `toSafePreviewSrc` reconstructs the URL from `new URL(src).pathname`
+  // rather than returning `src` itself (see its comment for why: CodeQL's
+  // js/xss-through-dom taint tracking follows a plain `.startsWith()` guard
+  // straight through, since the "safe" branch still returns the original
+  // tainted string). A real browser blob URL's `pathname` is the full
+  // `origin/uuid` opaque-path portion, so the reconstruction must round-trip
+  // that exactly for genuine attachments to keep rendering correctly.
+  it('renders a realistic browser-shaped blob: URL unchanged', async () => {
+    createSpy.mockRestore()
+    const realistic = 'blob:http://localhost:3000/8b1d6e2a-9c3f-4a1e-9b0f-1234567890ab'
+    createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => realistic)
+
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-repo-select')
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, makeImageFile('a.png'))
+
+    const img = await screen.findByAltText('a.png')
+    expect(img).toHaveAttribute('src', realistic)
+  })
 })
