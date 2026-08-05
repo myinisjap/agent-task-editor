@@ -169,6 +169,27 @@ func TestAllowlistEnv_EveryProviderHasPathAndHome(t *testing.T) {
 	}
 }
 
+// TestAllowlistEnv_EveryProviderHasGitHubToken guards the credential-path
+// regression fixed alongside this test: agents authenticate their own git
+// push / gh calls via the container's `gh auth git-credential` helper, which
+// reads GITHUB_TOKEN/GH_TOKEN from the subprocess environment. If these fall
+// out of the allowlist, an agent can commit its work but never push it
+// (git fails with "could not read Username for 'https://github.com'"), even
+// though the backend's own PushBranch keeps working, so the gap is easy to
+// miss. Every provider that shells out to git must admit at least one.
+func TestAllowlistEnv_EveryProviderHasGitHubToken(t *testing.T) {
+	for name, allow := range allProviderAllowlists {
+		t.Run(name, func(t *testing.T) {
+			if !allow["GITHUB_TOKEN"] {
+				t.Errorf("%s allowlist missing GITHUB_TOKEN (required for the agent's own git push auth via gh credential helper)", name)
+			}
+			if !allow["GH_TOKEN"] {
+				t.Errorf("%s allowlist missing GH_TOKEN (gh's own token env var; kept in parity with GITHUB_TOKEN)", name)
+			}
+		})
+	}
+}
+
 // TestAllowlistEnv_NoProviderLeaksBackendSecrets verifies that none of the
 // backend-only secrets are present in any provider's allowlist output, and
 // that none of the allowlists happen to key on a name that would re-admit
