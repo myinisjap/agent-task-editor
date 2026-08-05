@@ -38,7 +38,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 4g
     environment:
       - PORT=8080
       - DB_PATH=/data/agent-task-editor.db
