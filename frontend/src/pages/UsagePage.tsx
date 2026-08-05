@@ -24,21 +24,32 @@ export default function UsagePage() {
       )}
 
       {/* Claude usage (live 5-hour / weekly rate-limit utilization) */}
-      {dash && dash.claude_usage?.available && (
+      {dash && (dash.claude_usage?.available || dash.claude_usage?.rate_limited) && (
         <section className="mb-8">
           <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Claude usage</h2>
-          <div className="bg-slate-900 rounded-lg border border-slate-800 p-4 flex flex-col gap-4">
-            <UsageBar
-              label="5-hour window"
-              percent={dash.claude_usage.five_hour_percent ?? 0}
-              resetsAt={dash.claude_usage.five_hour_resets_at}
-            />
-            <UsageBar
-              label="Weekly window"
-              percent={dash.claude_usage.weekly_percent ?? 0}
-              resetsAt={dash.claude_usage.weekly_resets_at}
-            />
-          </div>
+          {dash.claude_usage.available ? (
+            <div className="bg-slate-900 rounded-lg border border-slate-800 p-4 flex flex-col gap-4">
+              <UsageBar
+                label="5-hour window"
+                percent={dash.claude_usage.five_hour_percent ?? 0}
+                resetsAt={dash.claude_usage.five_hour_resets_at}
+              />
+              <UsageBar
+                label="Weekly window"
+                percent={dash.claude_usage.weekly_percent ?? 0}
+                resetsAt={dash.claude_usage.weekly_resets_at}
+              />
+            </div>
+          ) : (
+            <div className="bg-slate-900 rounded-lg border border-slate-800 p-4">
+              <p className="text-sm text-slate-400">
+                Usage temporarily unavailable —{' '}
+                <span className="text-slate-500">
+                  Claude's usage API is rate-limiting requests. This will refresh automatically.
+                </span>
+              </p>
+            </div>
+          )}
         </section>
       )}
 
@@ -243,6 +254,7 @@ export default function UsagePage() {
 
       {dash &&
         !dash.claude_usage?.available &&
+        !dash.claude_usage?.rate_limited &&
         !(dash.cost_total && (dash.cost_total.input_tokens > 0 || dash.cost_total.output_tokens > 0 || (dash.cost_by_provider?.length ?? 0) > 0)) && (
           <p className="text-sm text-slate-500">No usage data yet.</p>
         )}

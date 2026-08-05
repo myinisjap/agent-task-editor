@@ -375,6 +375,15 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **The Claude usage widget on the Cost & Usage page no longer silently
+  disappears when Anthropic's usage endpoint is rate-limiting (429).** It
+  previously hid the whole "Claude usage" section on any fetch failure,
+  including a 429, with no explanation — and kept re-polling the
+  already-rate-limited endpoint every 45s. The backend now distinguishes a
+  429 from other failures, surfaces it as `claude_usage.rate_limited` in the
+  `/dashboard` response, and caches the unavailable result for 10 minutes
+  instead of 45 seconds to back off. The frontend now shows a "temporarily
+  unavailable" note in place of the usage bars instead of hiding the section.
 - **Agent runs no longer fail to launch (`fork/exec: invalid argument`) when
   task content contains a NUL byte.** A NUL byte anywhere in a process
   argument makes the Linux `execve` syscall reject it outright, so a NUL

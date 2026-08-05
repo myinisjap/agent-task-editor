@@ -1064,6 +1064,13 @@ components:
             failed; other fields are zero/absent in that case.
           properties:
             available:           { type: boolean }
+            rate_limited:
+              type: boolean
+              description: >-
+                True when `available` is false because Anthropic's usage
+                endpoint itself returned 429. The server caches this result
+                longer than a normal failure to back off from the
+                already-rate-limited endpoint.
             five_hour_percent:   { type: number, format: double }
             five_hour_resets_at: { type: string, format: date-time, nullable: true }
             weekly_percent:      { type: number, format: double }
