@@ -126,14 +126,33 @@ func seedSchedule(t *testing.T, q *gen.Queries, tmplID, repoID, cronExpr, target
 	return sched
 }
 
+// backdateLastRun sets a schedule's last_run_at a couple of minutes into the
+// past. fireIfDue treats a never-run schedule's created_at as its baseline
+// and (correctly) does not fire for the minute in which it was created, so
+// tests that expect an immediate "due" schedule need a baseline far enough
+// in the past for cron.Next to land at-or-before "now".
+func backdateLastRun(t *testing.T, q *gen.Queries, scheduleID string) {
+	t.Helper()
+	past := time.Now().Add(-2 * time.Minute)
+	if err := q.SetTaskScheduleLastRun(context.Background(), gen.SetTaskScheduleLastRunParams{
+		LastRunAt: &past,
+		ID:        scheduleID,
+	}); err != nil {
+		t.Fatalf("backdate last_run_at: %v", err)
+	}
+}
+
 func TestSweepFiresDueSchedule(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
 	wf := seedWorkflow(t, q)
 	repo := seedRepo(t, q, &wf.ID)
 	tmpl := seedTemplate(t, q)
-	// "every minute" cron always due relative to created_at.
-	seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "not_ready", true)
+	// "every minute" cron; backdate last_run_at so the first sweep is due
+	// (a never-run schedule's created_at baseline intentionally does not
+	// fire within the same minute it was created).
+	sched := seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "not_ready", true)
+	backdateLastRun(t, q, sched.ID)
 
 	pub := &recordingPub{}
 	s := New(db.SQL(), pub, time.Minute)
@@ -191,6 +210,7 @@ func TestSweepSkipsWhenOpenTaskExists(t *testing.T) {
 	repo := seedRepo(t, q, &wf.ID)
 	tmpl := seedTemplate(t, q)
 	sched := seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "not_ready", true)
+	backdateLastRun(t, q, sched.ID)
 
 	s := New(db.SQL(), &recordingPub{}, time.Minute)
 	ctx := context.Background()
@@ -227,7 +247,8 @@ func TestSweepFiresAgainOnceTaskClosed(t *testing.T) {
 	wf := seedWorkflow(t, q)
 	repo := seedRepo(t, q, &wf.ID)
 	tmpl := seedTemplate(t, q)
-	seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "not_ready", true)
+	sched0 := seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "not_ready", true)
+	backdateLastRun(t, q, sched0.ID)
 
 	s := New(db.SQL(), &recordingPub{}, time.Minute)
 	ctx := context.Background()
@@ -269,6 +290,51 @@ func TestSweepFiresAgainOnceTaskClosed(t *testing.T) {
 	}
 	if len(tasks) != 2 {
 		t.Fatalf("expected 2 tasks after prior one closed, got %d", len(tasks))
+	}
+}
+
+// TestSweepDoesNotDoubleFireSameOccurrence guards against a regression where
+// due-ness was computed as cron.Next(last_run_at - 1min): because
+// last_run_at is stored as wall-clock now (not truncated to the cron grid),
+// that rewind put the occurrence that had just fired back inside the search
+// window, so a second sweep re-evaluated it as due. That bug was masked
+// whenever the fired task's label was non-terminal (HasOpenTaskForSchedule
+// would block the second firing) — so this test targets a schedule whose
+// target_label is terminal, where the guard doesn't apply and a duplicate
+// task would previously slip through on the very next sweep.
+func TestSweepDoesNotDoubleFireSameOccurrence(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	wf := seedWorkflow(t, q)
+	repo := seedRepo(t, q, &wf.ID)
+	tmpl := seedTemplate(t, q)
+	// Target the terminal "done" label directly, so HasOpenTaskForSchedule
+	// never blocks a second firing for the same occurrence — isolating the
+	// due-ness computation as the only remaining guard against a duplicate.
+	sched := seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "done", true)
+	backdateLastRun(t, q, sched.ID)
+
+	s := New(db.SQL(), &recordingPub{}, time.Minute)
+	ctx := context.Background()
+
+	s.Sweep(ctx)
+	tasks, err := q.ListTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task after first sweep, got %d", len(tasks))
+	}
+
+	// A second sweep immediately after, before another cron occurrence has
+	// elapsed, must not create a duplicate task for the same occurrence.
+	s.Sweep(ctx)
+	tasks, err = q.ListTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected still 1 task after second sweep (no double-fire), got %d", len(tasks))
 	}
 }
 
@@ -320,7 +386,8 @@ func TestRun_SweepsOnTickerAndStopsOnCancel(t *testing.T) {
 	wf := seedWorkflow(t, q)
 	repo := seedRepo(t, q, &wf.ID)
 	tmpl := seedTemplate(t, q)
-	seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "not_ready", true)
+	sched := seedSchedule(t, q, tmpl.ID, repo.ID, "* * * * *", "not_ready", true)
+	backdateLastRun(t, q, sched.ID)
 
 	s := New(db.SQL(), &recordingPub{}, 10*time.Millisecond)
 

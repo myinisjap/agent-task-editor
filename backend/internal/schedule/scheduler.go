@@ -101,12 +101,11 @@ func (s *Scheduler) fireIfDue(ctx context.Context, sched gen.TaskSchedule, now t
 	if sched.LastRunAt != nil {
 		last = *sched.LastRunAt
 	}
-	// Next() is exclusive of its argument, so back up one minute before
-	// asking: this way a fire time that lands exactly on `last` (e.g. a
-	// schedule that was just created and immediately matches, or one whose
-	// last run was recorded at exactly a matching minute) is still found
-	// rather than skipped.
-	next := cron.Next(last.Add(-time.Minute))
+	// last_run_at is stored as wall-clock now (e.g. 10:00:37). Truncate to the
+	// minute so the occurrence that already fired isn't re-found by Next().
+	// cron.Next() is exclusive of its argument, so from a truncated 10:00:00 it
+	// returns the *following* occurrence — the just-fired one is not re-evaluated.
+	next := cron.Next(last.Truncate(time.Minute))
 	if next.After(now) {
 		return false // not due yet
 	}
