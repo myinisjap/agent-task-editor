@@ -435,6 +435,18 @@ triggers the "Release" workflow the same way.
     previously only `HelpModal` had any of this, and `NewWorkflowModal` had
     no Escape or backdrop dismissal at all. All three now share a new
     `ModalShell` component.
+- **Agents can now authenticate their own `git push` again.** The env
+  allow-list that shields agent subprocesses from backend secrets (#321)
+  didn't include `GITHUB_TOKEN`/`GH_TOKEN`, so when an agent ran `git push`
+  itself, the container's `gh auth git-credential` helper had no token to
+  hand git and the push failed with `could not read Username for
+  'https://github.com'`. The backend's own post-run `PushBranch` kept
+  working (it runs with the full process environment), which masked the gap
+  and made it surface as a "non-fast-forward"/"push credentials" error on
+  the task instead. `GITHUB_TOKEN` and `GH_TOKEN` are now in the shared
+  provider env allow-list (`commonBaseEnvKeys`), with a regression test
+  asserting every provider admits them and the existing
+  secret-exclusion test still guarding that real backend secrets stay out.
 - **The Claude usage widget on the Cost & Usage page no longer silently
   disappears when Anthropic's usage endpoint is rate-limiting (429).** It
   previously hid the whole "Claude usage" section on any fetch failure,
