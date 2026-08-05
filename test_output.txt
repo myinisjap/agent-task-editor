@@ -1,7 +1,0 @@
-# ./backend/internal/agent/providers/...
-pattern ./backend/internal/agent/providers/...: directory prefix backend/internal/agent/providers does not contain main module or its selected dependencies
-FAIL	./backend/internal/agent/providers/... [setup failed]
-# ./backend/internal/schedule/...
-pattern ./backend/internal/schedule/...: directory prefix backend/internal/schedule does not contain main module or its selected dependencies
-FAIL	./backend/internal/schedule/... [setup failed]
-FAIL
