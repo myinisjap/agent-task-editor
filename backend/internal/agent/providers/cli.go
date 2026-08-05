@@ -83,6 +83,19 @@ var commonBaseEnvKeys = map[string]bool{
 	"http_proxy":  true,
 	"https_proxy": true,
 	"no_proxy":    true,
+
+	// GITHUB_TOKEN / GH_TOKEN authenticate the agent's own git operations
+	// (git push, gh) against GitHub over HTTPS: the container wires git's
+	// credential.helper to `gh auth git-credential`, which reads the token
+	// from the environment. Without these in the allowlist, an agent that
+	// commits its work can never push it — git fails with "could not read
+	// Username for 'https://github.com'" — even though the backend's own
+	// post-run PushBranch (which runs with the full os.Environ()) succeeds,
+	// masking the gap. Unlike the secrets #321 deliberately withholds
+	// (API_TOKEN, LLM_API_KEY, DB creds), this is a credential the agent is
+	// meant to use, so it belongs in the allowlist.
+	"GITHUB_TOKEN": true,
+	"GH_TOKEN":     true,
 }
 
 // withCommonBase returns a new allowlist set containing commonBaseEnvKeys
