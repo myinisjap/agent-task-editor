@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -472,7 +471,7 @@ func TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked(t *testing.T) {
 	// Same regression guard as TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked:
 	// the task must stay locked on this run indefinitely, not get re-picked
 	// with a fresh budget on the next sweep.
-	time.Sleep(200 * time.Millisecond)
+	h.waitForSweeps(t, 5)
 	still, err := h.q.GetTask(context.Background(), taskID)
 	if err != nil {
 		t.Fatalf("get task: %v", err)

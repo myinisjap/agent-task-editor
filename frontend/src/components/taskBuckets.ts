@@ -37,7 +37,7 @@ export function bucketize(workflow: Workflow): Buckets | null {
 }
 
 // ponytail: assert-based self-check for the only non-trivial logic here;
-// full coverage lives in the colocated TaskFactory.test.tsx.
+// full coverage lives in the colocated taskBuckets.test.ts.
 function selfCheck() {
   const defaultWf: Workflow = {
     id: 'wf', name: '', description: '', created_at: '', updated_at: '',

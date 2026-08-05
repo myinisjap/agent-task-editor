@@ -360,6 +360,14 @@ triggers the "Release" workflow the same way.
   small clamped, tappable preview box that opens a full-screen modal on tap
   — the same box/modal pattern already used for Agent Notes. Desktop is
   unchanged (still renders inline).
+- **Test-suite refinements.** Removed sleep-based synchronization in
+  dispatcher/WS/pickup-ordering tests in favor of deterministic waits (a new
+  dispatcher sweep counter and a test-only WS subscription-count accessor
+  replace fixed-duration naps), strengthened the migration round-trip test's
+  schema assertion so it hard-fails on any post-round-trip regression instead
+  of silently passing, deleted an unused test fixture factory and a trivial
+  test of a five-line test helper, and renamed two frontend test files to
+  match what they actually test. Test-only; no behavioral changes.
 
 ### Removed
 - **The `gemini_cli` provider has been removed.** The Gemini CLI is no longer
