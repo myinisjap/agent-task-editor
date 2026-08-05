@@ -136,8 +136,12 @@ export default function TaskHeader({
     return () => {
       cancelled = true
     }
+    // Depend on a stable key derived from the attachment paths rather than the
+    // array itself — `task.attachments` gets a fresh identity on every
+    // refetch (JSON.parse), which would otherwise revoke and re-download all
+    // attachments on every unrelated WS-driven task refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.id, attachments])
+  }, [task.id, attachments?.join('|')])
 
   useEffect(() => {
     return () => {

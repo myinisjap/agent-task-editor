@@ -383,6 +383,61 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Board frontend polish: attachment thrash, revoked previews, board
+  re-render storms, WS→REST request fan-out, and modal accessibility**
+  (#350). Six related client-side issues, all in the board/task-detail UI:
+  - Task attachments no longer flash blank and re-download on every
+    WS-driven task refresh. `TaskHeader`'s blob-fetch effect depended on
+    `task.attachments` itself — a `string[]` that gets a fresh identity on
+    every JSON-parsed refetch — so any `task.label_changed`/`agent_started`/
+    `agent_done`/`needs_human`/`task.updated` event revoked every blob URL
+    and re-fetched all attachments even when the attachment list hadn't
+    changed. The effect now depends on a stable joined-path key instead.
+  - The New Task modal's image previews no longer break when attaching a
+    second image or removing one. The unmount-cleanup effect listed
+    `attachmentPreviews` in its deps, so its cleanup ran before *every*
+    array change (not just unmount), revoking still-rendered preview URLs.
+    Previews are now tracked in a ref and revoked only on genuine unmount
+    (or, for `removeAttachment`, exactly the one URL being dropped). The
+    preview thumbnail's `src` is also now re-derived through the browser's
+    `URL` parser and strictly limited to the `blob:` scheme before
+    rendering (rather than a plain `.startsWith('blob:')` check, which
+    still returns the original string on its "safe" branch and so doesn't
+    register as a sanitizer to static analysis), so a future refactor can't
+    accidentally put an untrusted string in front of the DOM there.
+  - Board cards no longer all re-render on every unrelated task-store
+    change. `TaskCard`, `TaskColumn`, `TaskBoard`, `AgentGroupColumn`, and
+    `BoardPage` subscribed to the whole tasks store with no selector; none
+    of the board components were memoized; and `TaskBoard` re-filtered the
+    full task list per column on every render. `TaskCard` is now wrapped in
+    `React.memo` with narrowed store selectors and stable per-card
+    callbacks, and `TaskBoard` buckets tasks by label once via `useMemo`
+    instead of re-filtering per column.
+  - Bursts of WS events no longer fan out into a REST request storm. A bulk
+    board move (or several agents finishing together) used to issue one
+    `GET /tasks/{id}` per `task.label_changed`/`created`/`git_state_changed`/
+    `pr_mergeable_changed` event and one `GET /dashboard/cost-by-task` per
+    `task.agent_done`, all undebounced; `useDashboard` refetched
+    `GET /dashboard` the same way. Both now coalesce WS-driven refetches
+    behind a ~250ms trailing debounce (new `useDebouncedCallback` hook), and
+    `BoardPage` falls back to a single list refresh instead of N individual
+    gets once a burst exceeds a small per-id threshold.
+  - Task cards no longer nest interactive controls inside a `role="button"`
+    drag container. The Pause/Archive/Edit/Duplicate/Delete buttons
+    (hover-only, `opacity-0` until hover) are dynamically excluded from the
+    tab order while hidden and re-included once the card is genuinely
+    hovered or focused — an initial fix shipped a static `tabIndex={-1}`
+    with no way to re-enable it, which made those five actions (including
+    Delete) completely unreachable by keyboard; that's been corrected to
+    track hover/focus state and toggle `tabIndex` (and visibility)
+    dynamically, restoring keyboard access while still keeping the buttons
+    out of the tab order when they're actually invisible.
+  - The New Task and New Workflow modals now have proper dialog semantics
+    (`role="dialog"`, `aria-modal`, `aria-label`), Escape-to-close,
+    backdrop-click dismissal, and a focus trap with focus restore on close —
+    previously only `HelpModal` had any of this, and `NewWorkflowModal` had
+    no Escape or backdrop dismissal at all. All three now share a new
+    `ModalShell` component.
 - **Agents can now authenticate their own `git push` again.** The env
   allow-list that shields agent subprocesses from backend secrets (#321)
   didn't include `GITHUB_TOKEN`/`GH_TOKEN`, so when an agent ran `git push`

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
 import { api } from '../../api/client'
@@ -24,7 +24,7 @@ type Props = {
 
 export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
-  const { remove } = useTasksStore()
+  const remove = useTasksStore((s) => s.remove)
   const [expanded, setExpanded] = useState(false)
 
   const shouldCollapse = !!isTerminal && tasks.length > MAX_VISIBLE
@@ -47,14 +47,32 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
       ? `At/over WIP limit (${tasks.length}/${wipLimit}) — visual warning only, dispatch is not blocked`
       : undefined
 
-  const handleDelete = async (taskId: string) => {
+  // Stable callback identity (keyed only on `remove`, not per-render) so
+  // memo(TaskCard) below can actually skip re-rendering unrelated cards.
+  // TaskCard calls onDelete(task.id) directly rather than the column handing
+  // it a pre-bound per-card closure (which would get a fresh identity every
+  // TaskColumn render and defeat the memo).
+  const handleDelete = useCallback(async (taskId: string) => {
     try {
       await api.tasks.delete(taskId)
       remove(taskId)
     } catch (e) {
       console.error('Failed to delete task:', e)
     }
-  }
+  }, [remove])
+
+  // Same reasoning for multi-select: pass the ordered visible-task ids as a
+  // stable array (memoized alongside visibleTasks upstream isn't necessary
+  // here — onToggleSelect itself already takes taskId directly) and let
+  // TaskCard call onToggleSelect(taskId, shiftKey); the column supplies the
+  // rest of the ordered-ids context via a ref-free wrapper keyed only on the
+  // stable onToggleSelect prop and the current visibleTasks identity.
+  const handleToggleSelect = useCallback(
+    (taskId: string, shiftKey: boolean) => {
+      onToggleSelect?.(taskId, visibleTasks.map((t) => t.id), shiftKey)
+    },
+    [onToggleSelect, visibleTasks],
+  )
 
   return (
     <div className={`flex flex-col shrink-0${className ? ` ${className}` : ' w-72'}`}>
@@ -77,14 +95,11 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             isRunning={runningTaskIds.has(task.id)}
             rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
             costWarned={costWarnedTaskIds?.has(task.id)}
-            onDelete={() => handleDelete(task.id)}
+            onDelete={handleDelete}
             onDuplicate={onDuplicate}
             isEditable={isStartingColumn}
             selected={selectedIds?.has(task.id)}
-            onToggleSelect={
-              onToggleSelect &&
-              ((taskId, shiftKey) => onToggleSelect(taskId, visibleTasks.map((t) => t.id), shiftKey))
-            }
+            onToggleSelect={onToggleSelect ? handleToggleSelect : undefined}
           />
         ))}
         {tasks.length === 0 && (

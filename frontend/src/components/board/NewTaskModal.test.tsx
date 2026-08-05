@@ -2,7 +2,7 @@
 // the board. Verify the workflow <select> renders sorted alphabetically,
 // defaults to "Default" when present, shows all repos (not filtered by
 // workflow), and submits the chosen workflow_id.
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import NewTaskModal from './NewTaskModal'
@@ -236,5 +236,190 @@ describe('NewTaskModal', () => {
       expect(source).toEqual(sourceSnapshot)
       expect(titleInput).toBeInTheDocument()
     })
+  })
+})
+
+// issue #350 — NewTaskModal used to be a hand-rolled overlay with no dialog
+// role, no Escape handling, and no focus containment. It's now built on the
+// shared ModalShell.
+describe('NewTaskModal dialog semantics (#350)', () => {
+  beforeEach(() => {
+    reposListMock.mockReset().mockResolvedValue([repo({ id: 'repo-1', name: 'repo-one' })])
+    workflowsListMock.mockReset().mockResolvedValue([workflow({ id: 'wf-default', name: 'Default' })])
+    templatesListMock.mockReset().mockResolvedValue([])
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+  })
+
+  it('renders with dialog role and an accessible label', async () => {
+    render(<NewTaskModal onClose={() => {}} />)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAttribute('aria-label', 'New Task')
+  })
+
+  it('uses "Duplicate Task" as the aria-label when duplicating', async () => {
+    const source = task({ id: 'src-1' })
+    render(<NewTaskModal source={source} onClose={() => {}} />)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAttribute('aria-label', 'Duplicate Task')
+  })
+
+  it('calls onClose when Escape is pressed', async () => {
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={onClose} />)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls onClose when the backdrop is clicked', async () => {
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={onClose} />)
+    const dialog = await screen.findByRole('dialog')
+    await user.click(dialog)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('focuses the title input on open', async () => {
+    render(<NewTaskModal onClose={() => {}} />)
+    const titleInput = await screen.findByPlaceholderText('Short task description')
+    expect(titleInput).toHaveFocus()
+  })
+})
+
+// issue #350 — the unmount-cleanup effect used to list `attachmentPreviews`
+// in its deps, so its cleanup ran before every array change (not just
+// unmount), revoking still-mounted preview URLs. Attaching a second image
+// used to revoke the first's URL while its <img> was still rendered.
+describe('NewTaskModal attachment preview revocation (#350)', () => {
+  let createSpy: ReturnType<typeof vi.spyOn>
+  let revokeSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    reposListMock.mockReset().mockResolvedValue([repo({ id: 'repo-1', name: 'repo-one' })])
+    workflowsListMock.mockReset().mockResolvedValue([workflow({ id: 'wf-default', name: 'Default' })])
+    templatesListMock.mockReset().mockResolvedValue([])
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+
+    let n = 0
+    createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:preview-${++n}`)
+    revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    // Use afterEach (not an in-test mockRestore()) so a failed assertion
+    // mid-test can't leak these spies into the next test.
+    createSpy.mockRestore()
+    revokeSpy.mockRestore()
+  })
+
+  function makeImageFile(name: string): File {
+    return new File(['fake-image-bytes'], name, { type: 'image/png' })
+  }
+
+  it('attaching a second image does not revoke the first preview URL', async () => {
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-repo-select')
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    expect(fileInput).toBeTruthy()
+
+    await user.upload(fileInput, makeImageFile('a.png'))
+    expect(await screen.findByAltText('a.png')).toBeInTheDocument()
+    expect(revokeSpy).not.toHaveBeenCalled()
+
+    await user.upload(fileInput, makeImageFile('b.png'))
+    await screen.findByAltText('b.png')
+
+    // Attaching the second file must not have revoked the first's URL —
+    // both thumbnails should still be backed by live object URLs.
+    expect(revokeSpy).not.toHaveBeenCalled()
+    expect(screen.getByAltText('a.png')).toHaveAttribute('src', 'blob:preview-1')
+    expect(screen.getByAltText('b.png')).toHaveAttribute('src', 'blob:preview-2')
+  })
+
+  it('removeAttachment revokes exactly the removed URL, not survivors', async () => {
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-repo-select')
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, [makeImageFile('a.png'), makeImageFile('b.png')])
+    await screen.findByAltText('a.png')
+    await screen.findByAltText('b.png')
+
+    // Remove the first attachment (a.png) — its "Remove" button is the first
+    // of the two.
+    await user.click(screen.getAllByTitle('Remove')[0])
+
+    expect(revokeSpy).toHaveBeenCalledTimes(1)
+    expect(revokeSpy).toHaveBeenCalledWith('blob:preview-1')
+    // The survivor's preview is untouched.
+    expect(screen.getByAltText('b.png')).toHaveAttribute('src', 'blob:preview-2')
+  })
+
+  it('revokes remaining preview URLs on unmount', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-repo-select')
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, makeImageFile('a.png'))
+    await screen.findByAltText('a.png')
+
+    expect(revokeSpy).not.toHaveBeenCalled()
+    unmount()
+    expect(revokeSpy).toHaveBeenCalledWith('blob:preview-1')
+  })
+
+  // Defensive check (see `toSafePreviewSrc` in NewTaskModal.tsx): the
+  // attachment thumbnail's `src` must only ever be a `blob:` URL created by
+  // this component itself. If `URL.createObjectURL` is ever stubbed/replaced
+  // with something that doesn't return a `blob:` string (accidentally or via
+  // a future refactor), the guard must blank the `src` rather than pass an
+  // untrusted string straight into the DOM.
+  it('never renders a preview src that is not a blob: URL', async () => {
+    createSpy.mockRestore()
+    createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'https://evil.example/x')
+
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-repo-select')
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, makeImageFile('a.png'))
+
+    const img = await screen.findByAltText('a.png')
+    // React omits the `src` attribute entirely for an empty string rather
+    // than rendering `src=""` — either way, the untrusted URL never reaches
+    // the DOM.
+    expect(img.getAttribute('src')).not.toBe('https://evil.example/x')
+    expect(img).not.toHaveAttribute('src', 'https://evil.example/x')
+  })
+
+  // `toSafePreviewSrc` reconstructs the URL from `new URL(src).pathname`
+  // rather than returning `src` itself (see its comment for why: CodeQL's
+  // js/xss-through-dom taint tracking follows a plain `.startsWith()` guard
+  // straight through, since the "safe" branch still returns the original
+  // tainted string). A real browser blob URL's `pathname` is the full
+  // `origin/uuid` opaque-path portion, so the reconstruction must round-trip
+  // that exactly for genuine attachments to keep rendering correctly.
+  it('renders a realistic browser-shaped blob: URL unchanged', async () => {
+    createSpy.mockRestore()
+    const realistic = 'blob:http://localhost:3000/8b1d6e2a-9c3f-4a1e-9b0f-1234567890ab'
+    createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => realistic)
+
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-repo-select')
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, makeImageFile('a.png'))
+
+    const img = await screen.findByAltText('a.png')
+    expect(img).toHaveAttribute('src', realistic)
   })
 })

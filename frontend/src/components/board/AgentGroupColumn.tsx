@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
 import { api } from '../../api/client'
@@ -27,16 +28,23 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
   // Use the first label's name as the droppable id so DnD moves tasks here
   const dropId = labels[0]?.name ?? '__agent-group__'
   const { setNodeRef, isOver } = useDroppable({ id: dropId })
-  const { remove } = useTasksStore()
+  const remove = useTasksStore((s) => s.remove)
 
-  const handleDelete = async (taskId: string) => {
+  const handleDelete = useCallback(async (taskId: string) => {
     try {
       await api.tasks.delete(taskId)
       remove(taskId)
     } catch (e) {
       console.error('Failed to delete task:', e)
     }
-  }
+  }, [remove])
+
+  const handleToggleSelect = useCallback(
+    (taskId: string, shiftKey: boolean) => {
+      onToggleSelect?.(taskId, tasks.map((t) => t.id), shiftKey)
+    },
+    [onToggleSelect, tasks],
+  )
 
   return (
     <div className={`flex flex-col shrink-0${className ? ` ${className}` : ' w-72'}`}>
@@ -62,14 +70,11 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
             isRunning={runningTaskIds.has(task.id)}
             rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
             costWarned={costWarnedTaskIds?.has(task.id)}
-            onDelete={() => handleDelete(task.id)}
+            onDelete={handleDelete}
             onDuplicate={onDuplicate}
             showColumnLabel={task.label}
             selected={selectedIds?.has(task.id)}
-            onToggleSelect={
-              onToggleSelect &&
-              ((taskId, shiftKey) => onToggleSelect(taskId, tasks.map((t) => t.id), shiftKey))
-            }
+            onToggleSelect={onToggleSelect ? handleToggleSelect : undefined}
           />
         ))}
         {tasks.length === 0 && (
