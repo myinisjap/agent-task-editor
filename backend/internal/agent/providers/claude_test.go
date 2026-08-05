@@ -166,10 +166,9 @@ func TestMain(m *testing.M) {
 	case "exit1_no_output":
 		os.Exit(1)
 	case "exit1_with_outcome":
-		// Unlike claude (which explicitly overrides a parsed outcome when the
-		// exit code is non-zero), qwen.go has no such override: a non-empty
-		// parsed outcome wins regardless of exit code. This case documents
-		// that actual (if surprising) behavior.
+		// qwen.go now matches claude's override: a non-zero exit code always
+		// wins over any parsed outcome (see
+		// TestQwenRunner_Run_Exit1WithOutcome_ExitCodeWins).
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
 		os.Exit(1)
 	case "error_max_turns":

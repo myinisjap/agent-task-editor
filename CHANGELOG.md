@@ -431,6 +431,41 @@ triggers the "Release" workflow the same way.
   escalation to `waiting_human` once the budget is exhausted. A genuine
   failure that already streamed real output still fails immediately as
   before.
+- **Provider parity: opencode no longer logs full prompts, recurring
+  schedules no longer double-fire an occurrence, and every CLI provider now
+  treats a non-zero exit as an unverified/failed outcome.** (#352) Three
+  independent runtime fixes bringing the non-`claude` providers up to
+  claude's existing behavior: (1) `opencode.go` logged its full rendered
+  argv (including the task description, prior-run feedback, and any
+  untrusted review-comment text) at `slog.Info` on every run — no other
+  provider logs its argv, and on a default `LOG_LEVEL=info` deployment this
+  dumped the full prompt into container logs on every run; the line is
+  removed. (2) `Scheduler.fireIfDue` computed due-ness as
+  `cron.Next(last_run_at.Add(-time.Minute))`, but `last_run_at` is stored as
+  wall-clock `now` rather than a value aligned to the cron grid, so the
+  one-minute rewind put the occurrence that had just fired back inside the
+  search window and a later sweep could re-evaluate it as due — masked
+  whenever the resulting task's label was non-terminal (the
+  `HasOpenTaskForSchedule` guard caught it), but a schedule targeting a
+  terminal label, or whose task closed within one sweep interval, could
+  create two tasks for the same cron occurrence; due-ness is now computed
+  from `cron.Next(last_run_at.Truncate(time.Minute))`, with a new
+  regression test (`TestSweepDoesNotDoubleFireSameOccurrence`) covering the
+  terminal-label case the existing `* * * * *` tests couldn't distinguish
+  from a legitimate next firing. (3) `codex.go`, `qwen.go`, and
+  `opencode.go` only overrode a signalled/parsed outcome to `failed` when
+  the exit code was non-zero *and* no outcome had been recorded — so a run
+  that called `signal_complete(success)` (or, for codex, emitted a
+  `turn.failed` event resolving a non-empty outcome) and then crashed
+  before exiting cleanly (mid-turn auth expiry, a panic during teardown)
+  was persisted as `completed` and the task moved forward on an unverified
+  result. `claude.go` already applied the stricter rule — any non-zero exit
+  means the run's outcome is unverified, regardless of what was
+  signalled/parsed — and all three providers now match it, logging a
+  `"<provider> exited with error but had outcome ... — treating as
+  failed"` system entry when overriding a run that did report an outcome.
+  Usage/cost already accumulated before the crash is still applied to the
+  resulting failed `Result`.
 - **Transient-failure and cancelled runs now record the cost/tokens they
   actually consumed instead of `$0`.** #337 taught the max-turns and
   mid-run-cost-budget-exceeded escalation paths to persist `cost_usd`/token
