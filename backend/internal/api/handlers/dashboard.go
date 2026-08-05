@@ -22,6 +22,13 @@ import (
 // Anthropic's usage endpoint.
 const claudeUsageCacheTTL = 45 * time.Second
 
+// claudeUsageRateLimitedCacheTTL is the cache TTL applied when the last
+// fetch got a 429 from Anthropic's usage endpoint. A 429 means Anthropic is
+// itself rate-limiting the usage endpoint, so respect it by caching the
+// unavailable result far longer than the normal success TTL rather than
+// re-poking every dashboard load.
+const claudeUsageRateLimitedCacheTTL = 10 * time.Minute
+
 type DashboardHandler struct {
 	q *gen.Queries
 	// maxWorkers is the global MAX_WORKERS setting, used as the effective
@@ -107,6 +114,7 @@ type repoConcurrencyRow struct {
 // other reason — this must never fail the /dashboard request as a whole.
 type claudeUsageResponse struct {
 	Available        bool       `json:"available"`
+	RateLimited      bool       `json:"rate_limited,omitempty"`
 	FiveHourPercent  float64    `json:"five_hour_percent"`
 	FiveHourResetsAt *time.Time `json:"five_hour_resets_at,omitempty"`
 	WeeklyPercent    float64    `json:"weekly_percent"`
@@ -653,10 +661,17 @@ func percentile90(sorted []float64) float64 {
 // using a short-TTL cache to avoid hitting Anthropic's usage endpoint on
 // every dashboard refresh (the dashboard page refetches on several WS
 // events). Never fails — degrades to Available: false on any error,
-// including missing credentials.
+// including missing credentials. If the last fetch was rate-limited by
+// Anthropic (429), the cache is held for claudeUsageRateLimitedCacheTTL
+// instead of the normal claudeUsageCacheTTL to back off from the
+// already-rate-limited endpoint.
 func (h *DashboardHandler) claudeUsage(ctx context.Context) claudeUsageResponse {
 	h.usageMu.Lock()
-	if time.Since(h.cachedUsageAt) < claudeUsageCacheTTL {
+	ttl := claudeUsageCacheTTL
+	if h.cachedUsage.RateLimited {
+		ttl = claudeUsageRateLimitedCacheTTL
+	}
+	if time.Since(h.cachedUsageAt) < ttl {
 		cached := h.cachedUsage
 		h.usageMu.Unlock()
 		return cached
@@ -672,7 +687,11 @@ func (h *DashboardHandler) claudeUsage(ctx context.Context) claudeUsageResponse 
 		if !errors.Is(err, providers.ErrNoClaudeCredentials) {
 			slog.Debug("dashboard: claude usage fetch failed", "err", err)
 		}
-		result = claudeUsageResponse{Available: false}
+		if errors.Is(err, providers.ErrClaudeUsageRateLimited) {
+			result = claudeUsageResponse{Available: false, RateLimited: true}
+		} else {
+			result = claudeUsageResponse{Available: false}
+		}
 	} else {
 		result = claudeUsageResponse{
 			Available:        true,

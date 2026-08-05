@@ -4393,6 +4393,8 @@ export interface components {
             /** @description Live Claude account rate-limit usage from Anthropic's OAuth usage endpoint (5-hour rolling window + weekly window). `available` is false when the server has no Claude OAuth credentials or the fetch failed; other fields are zero/absent in that case. */
             claude_usage: {
                 available: boolean;
+                /** @description True when `available` is false because Anthropic's usage endpoint itself returned 429. The server caches this result longer than a normal failure to back off from the already-rate-limited endpoint. */
+                rate_limited?: boolean;
                 /** Format: double */
                 five_hour_percent: number;
                 /** Format: date-time */

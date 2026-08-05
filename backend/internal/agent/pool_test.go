@@ -3,6 +3,8 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +21,14 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+// pollDeadline bounds the wait helpers below (waitForStatus, waitForLabel,
+// waitForTaskRetryCount). It mirrors the E2E harness's pollTask rationale:
+// CI runs the whole module with -race, whose 10-20x slowdown on a loaded
+// 2-core runner can starve the pool's worker/dispatch goroutines long enough
+// that a tighter window produces a spurious timeout even though the logic
+// under test is correct.
+const pollDeadline = 15 * time.Second
 
 // testPub records published event types.
 type testPub struct {
@@ -166,7 +176,7 @@ func buildJobWithRetry(runID, taskID, agCfgID, wfID, repoPath string, provider a
 // waitForStatus polls until the run has the expected status or times out.
 func waitForStatus(t *testing.T, q *gen.Queries, runID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(pollDeadline)
 	for time.Now().Before(deadline) {
 		run, err := q.GetAgentRun(context.Background(), runID)
 		if err == nil && run.Status == want {
@@ -184,7 +194,7 @@ func waitForStatus(t *testing.T, q *gen.Queries, runID, want string) {
 // than the run status to avoid racing the pool's post-completion work.
 func waitForLabel(t *testing.T, q *gen.Queries, taskID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(pollDeadline)
 	for time.Now().Before(deadline) {
 		task, err := q.GetTask(context.Background(), taskID)
 		if err == nil && task.Label == want {
@@ -228,7 +238,7 @@ func startPool(t *testing.T, pool *agent.Pool) (context.Context, func()) {
 // waitForTaskRetryCount polls until the task's transient_retry_count matches want.
 func waitForTaskRetryCount(t *testing.T, q *gen.Queries, taskID string, want int64) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(pollDeadline)
 	for time.Now().Before(deadline) {
 		task, err := q.GetTask(context.Background(), taskID)
 		if err == nil && task.TransientRetryCount == want {
@@ -1219,6 +1229,156 @@ func TestPool_GenuineFailure_DoesNotConsumeRetryBudget(t *testing.T) {
 	}
 }
 
+// TestPool_PreStreamFailure_RoutesToTransientRetry verifies the fix for the
+// infinite 5s re-dispatch loop: a genuine (non-transient) provider error that
+// produced no logs, no session id, and zero usage — i.e. the provider errored
+// before ever streaming any output, so hasLoginError's log-based auth-
+// escalation net has nothing to inspect — must consume the transient-retry
+// budget (bounded backoff) rather than falling through as a plain "failed"
+// result that resets the budget and re-dispatches on the very next sweep.
+func TestPool_PreStreamFailure_RoutesToTransientRetry(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// A genuine error (does not implement Transient(), not ErrMaxTurns/
+	// ErrCostBudgetExceeded/ErrRateLimit) with a zero-value Result: no
+	// session id, no usage, and — since no logs were ever written for this
+	// run — no persisted logs either. Mirrors a provider failing to build
+	// settings/args or spawn its subprocess before any stream output.
+	provider := &mockProvider{err: errors.New("exec: failed to start subprocess")}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	waitForTaskRetryCount(t, q, taskID, 1)
+	stop()
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.TransientRetryCount != 1 {
+		t.Errorf("expected transient_retry_count=1 (pre-stream failure consumes retry budget), got %d", task.TransientRetryCount)
+	}
+	if task.NextRetryAt == nil {
+		t.Error("expected next_retry_at to be set")
+	} else if !task.NextRetryAt.After(time.Now()) {
+		t.Errorf("expected next_retry_at in the future, got %v", *task.NextRetryAt)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Error("expected active_agent_run_id cleared so the task can be re-picked once eligible (not immediately)")
+	}
+}
+
+// TestPool_PreStreamFailure_EscalatesAfterMaxRetries verifies that once a
+// pre-stream failure's retry budget is exhausted, the task escalates to
+// waiting_human instead of looping forever — this is the terminal state that
+// closes out the storm the fix addresses (100 runs/3h -> a few backed-off
+// retries then a human handoff).
+func TestPool_PreStreamFailure_EscalatesAfterMaxRetries(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// Pre-seed the task at the retry cap (max_retries=1) so this run should escalate.
+	if _, err := q.SetTaskTransientRetry(context.Background(), gen.SetTaskTransientRetryParams{
+		TransientRetryCount: 1,
+		ID:                  taskID,
+	}); err != nil {
+		t.Fatalf("seed retry count: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ActiveAgentRunID: &runID,
+		ID:               taskID,
+	}); err != nil {
+		t.Fatalf("seed active run: %v", err)
+	}
+
+	provider := &mockProvider{err: errors.New("exec: failed to start subprocess")}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 1, 1))
+
+	waitForStatus(t, q, runID, "waiting_human")
+	stop()
+
+	if !pub.hasEvent("task.needs_human") {
+		t.Error("expected task.needs_human event on retry-budget exhaustion")
+	}
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.ActiveAgentRunID == nil {
+		t.Error("expected active_agent_run_id to remain set (locked) while waiting_human")
+	}
+}
+
+// TestPool_GenuineFailureWithLogs_DoesNotRouteToTransientRetry verifies the
+// counterpart to the pre-stream-failure fix: a genuine provider error where
+// the run DID stream real work (logs were persisted) before failing must
+// still take the plain "failed" / immediate-re-dispatch path, not the
+// transient-retry path — only a failure with zero streamed evidence is a
+// pre-stream failure.
+func TestPool_GenuineFailureWithLogs_DoesNotRouteToTransientRetry(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// Persist a log entry for this run before submitting the job, so
+	// isPreStreamFailure sees non-empty logs (ListAgentLogs is keyed by
+	// run id, independent of the pool's own log-persistence goroutine).
+	if err := q.CreateAgentLog(context.Background(), gen.CreateAgentLogParams{
+		ID:         uuid.NewString(),
+		AgentRunID: runID,
+		Timestamp:  time.Now(),
+		Type:       "stdout",
+		Content:    "some real provider output",
+	}); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+
+	provider := &mockProvider{err: errors.New("exec: exit status 1")}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 3, 30))
+
+	waitForStatus(t, q, runID, "failed")
+	stop()
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.TransientRetryCount != 0 {
+		t.Errorf("expected transient_retry_count to stay 0 (genuine failure with logs must not consume retry budget), got %d", task.TransientRetryCount)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Error("expected active_agent_run_id cleared (immediate re-dispatch, same as any other genuine failure)")
+	}
+}
+
 func TestPool_Success_ResetsRetryCount(t *testing.T) {
 	db := openAgentTestDB(t)
 	pub := &testPub{}
@@ -1367,6 +1527,7 @@ func TestListAgentPickupTasks_OrdersByPriorityThenCreatedAt(t *testing.T) {
 	// Create tasks in a deliberately mixed order: normal, low, urgent, high,
 	// then a second normal-priority task created after the first normal one
 	// to verify the created_at ASC tiebreak within a priority level.
+	var seq int
 	mkTask := func(title string, priority int64) string {
 		id := uuid.NewString()
 		if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
@@ -1379,9 +1540,13 @@ func TestListAgentPickupTasks_OrdersByPriorityThenCreatedAt(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("create task %s: %v", title, err)
 		}
-		// Ensure distinct created_at ordering across the fixtures below;
-		// SQLite's CURRENT_TIMESTAMP has second granularity.
-		time.Sleep(1100 * time.Millisecond)
+		// Stagger created_at explicitly so ordering is deterministic without
+		// relying on wall-clock delays between inserts.
+		ts := fmt.Sprintf("2020-01-01 00:00:%02d", seq)
+		if _, err := db.SQL().Exec(`UPDATE tasks SET created_at = ? WHERE id = ?`, ts, id); err != nil {
+			t.Fatalf("stagger created_at for %s: %v", title, err)
+		}
+		seq++
 		return id
 	}
 

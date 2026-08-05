@@ -8,6 +8,24 @@ import (
 	"strings"
 )
 
+// sanitizeArgs strips NUL bytes from each CLI argument. A NUL byte anywhere
+// in an argv element makes the Linux execve syscall fail with EINVAL
+// ("fork/exec ...: invalid argument"), so any NUL that leaks in from
+// task/prompt content (e.g. an agent or human writing a literal \x00 into
+// task notes, a description, or synced issue comments) would make every
+// launch fail before the CLI ever starts — with no logs, silently. Stripping
+// is always safe: a NUL can never legally appear in a process argument.
+func sanitizeArgs(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if strings.IndexByte(a, 0) >= 0 {
+			a = strings.ReplaceAll(a, "\x00", "")
+		}
+		out[i] = a
+	}
+	return out
+}
+
 // dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.
 var dangerousEnvKeys = map[string]bool{
 	"PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true,

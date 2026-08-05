@@ -228,7 +228,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), args...)
+	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
 	cmd.Dir = input.RepoPath
 	env := mergeEnv(allowlistEnv(claudeEnvAllowlist), input.AgentConfig.Env)
 	if tok := ClaudeOAuthAccessToken(); tok != "" {

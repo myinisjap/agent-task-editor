@@ -134,6 +134,32 @@ func TestFetchClaudeUsage_NonOKStatus(t *testing.T) {
 	}
 }
 
+// TestFetchClaudeUsage_RateLimited verifies that a 429 response from the
+// usage endpoint produces an error satisfying errors.Is(err,
+// ErrClaudeUsageRateLimited), so callers (the dashboard handler) can back
+// off harder than on a generic failure.
+func TestFetchClaudeUsage_RateLimited(t *testing.T) {
+	withFakeClaudeHome(t, "test-token-123")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+	}))
+	defer srv.Close()
+
+	old := claudeUsageBaseURL
+	claudeUsageBaseURL = srv.URL
+	defer func() { claudeUsageBaseURL = old }()
+
+	usage, err := FetchClaudeUsage(context.Background())
+	if usage != nil {
+		t.Errorf("expected nil usage, got %+v", usage)
+	}
+	if !errors.Is(err, ErrClaudeUsageRateLimited) {
+		t.Fatalf("expected ErrClaudeUsageRateLimited, got %v", err)
+	}
+}
+
 func containsToken(s, tok string) bool {
 	return len(s) >= len(tok) && (func() bool {
 		for i := 0; i+len(tok) <= len(s); i++ {

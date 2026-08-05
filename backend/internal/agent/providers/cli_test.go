@@ -7,6 +7,36 @@ import (
 	"testing"
 )
 
+// --- sanitizeArgs (cli.go) ---
+
+// TestSanitizeArgs_StripsNulBytes verifies a NUL byte anywhere in an arg is
+// removed while the rest of the argument is preserved — regression coverage
+// for the live EINVAL ("fork/exec ...: invalid argument") failure caused by a
+// prior planning agent writing a literal '\x00' (suggested as a JS array
+// join delimiter) into task notes, which then leaked into the "-p" prompt
+// argument via buildPrompt's "NOTES FROM PRIOR AGENT" section.
+func TestSanitizeArgs_StripsNulBytes(t *testing.T) {
+	in := []string{"notes.join('\x00')"}
+	out := sanitizeArgs(in)
+	want := "notes.join('')"
+	if out[0] != want {
+		t.Errorf("sanitizeArgs(%q) = %q, want %q", in[0], out[0], want)
+	}
+}
+
+// TestSanitizeArgs_LeavesCleanArgsUnchanged verifies args without a NUL byte
+// pass through unmodified, including ordinary whitespace like newlines and
+// tabs — prompts legitimately contain those and must not be touched.
+func TestSanitizeArgs_LeavesCleanArgsUnchanged(t *testing.T) {
+	in := []string{"-p", "line one\nline two\tindented", "--model", "sonnet"}
+	out := sanitizeArgs(in)
+	for i := range in {
+		if out[i] != in[i] {
+			t.Errorf("sanitizeArgs mutated clean arg %d: got %q, want %q", i, out[i], in[i])
+		}
+	}
+}
+
 // TestMergeEnv_BlocksDangerousKeys verifies mergeEnv drops every key in
 // dangerousEnvKeys (case-insensitively), regardless of how the caller cased
 // it, while preserving benign keys unchanged. This is an untested security

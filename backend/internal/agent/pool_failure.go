@@ -309,6 +309,22 @@ func (p *Pool) hasLoginError(ctx context.Context, runID string) bool {
 	return false
 }
 
+// isPreStreamFailure reports whether a genuine provider error fired before the
+// run produced any evidence of actually starting: no persisted logs, no
+// session id, and zero token usage. Checked via ListAgentLogs the same way
+// hasLoginError is — that's the definitive "nothing streamed" signal — combined
+// with the zero-usage/empty-session checks to be safe.
+func (p *Pool) isPreStreamFailure(ctx context.Context, job Job, result Result) bool {
+	if result.SessionID != "" || result.InputTokens != 0 || result.OutputTokens != 0 {
+		return false
+	}
+	logs, err := p.q.ListAgentLogs(ctx, job.RunID)
+	if err != nil {
+		return false
+	}
+	return len(logs) == 0
+}
+
 // resolveOutcome finds the to_label for a given outcome ("success"|"failure") from the task's current label.
 // Returns empty string if no unambiguous match is found.
 func (p *Pool) resolveOutcome(ctx context.Context, task Task, outcome string) string {

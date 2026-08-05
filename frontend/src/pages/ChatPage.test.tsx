@@ -26,10 +26,11 @@ test('renders without crashing when the API returns null lists', async () => {
   expect(container.textContent).toContain('Select a terminal')
   // Mobile single-pane logic: with no chat open, the sidebar is shown (not
   // hidden) so the list gets the screen. (Class check, not computed layout —
-  // jsdom doesn't evaluate media queries.)
-  const sidebar = container.querySelector('.md\\:w-64')
-  expect(sidebar?.className).toContain('flex')
-  expect(sidebar?.className).not.toContain('hidden')
+  // jsdom doesn't evaluate media queries — but the element is located by a
+  // stable testid rather than a Tailwind layout class.)
+  const sidebar = screen.getByTestId('chat-sidebar')
+  expect(sidebar.className).toContain('flex')
+  expect(sidebar.className).not.toContain('hidden')
 })
 
 test('opening a session mounts the on-screen key bar with the terminal', async () => {

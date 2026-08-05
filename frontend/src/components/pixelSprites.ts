@@ -1,6 +1,6 @@
 // Pixel-art sprite DATA for the office-floor dashboard visualization. Pure
 // data + a frame-composition helper, no React and no renderer — consumed by
-// officeScene.ts (canvas blitting) and covered by TaskFactory.test.tsx.
+// officeScene.ts (canvas blitting) and covered by taskBuckets.test.ts.
 //
 // Each sprite is a 16x24 grid of characters; a palette maps each char to a
 // color (space and '.' are transparent). Characters are DIRECTIONAL: separate

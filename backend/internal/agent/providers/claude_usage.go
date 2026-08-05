@@ -24,6 +24,11 @@ var claudeUsageHTTPClient = &http.Client{Timeout: 10 * time.Second}
 // API-key-only setup rather than `claude login`).
 var ErrNoClaudeCredentials = errors.New("no claude oauth credentials available")
 
+// ErrClaudeUsageRateLimited is returned by FetchClaudeUsage when Anthropic's
+// usage endpoint itself responds 429, distinct from other request failures
+// so callers can back off harder before retrying.
+var ErrClaudeUsageRateLimited = errors.New("claude usage endpoint rate limited")
+
 // ClaudeUsage holds the current account's rate-limit utilization for the
 // rolling 5-hour window and the weekly (7-day) window, as reported by
 // Anthropic's OAuth usage endpoint.
@@ -74,7 +79,7 @@ func FetchClaudeUsage(ctx context.Context) (*ClaudeUsage, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("claude usage request rate limited (429)")
+		return nil, fmt.Errorf("claude usage request rate limited (429): %w", ErrClaudeUsageRateLimited)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))

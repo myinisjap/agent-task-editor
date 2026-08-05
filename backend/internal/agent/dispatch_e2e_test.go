@@ -319,6 +319,23 @@ func (h *e2eHarness) pollTask(t *testing.T, taskID string, cond func(gen.Task) b
 	return gen.Task{}
 }
 
+// waitForSweeps blocks until the dispatcher has completed at least n
+// additional sweeps beyond the count captured at call setup, so an "assert
+// nothing changed" check runs after real sweep opportunities rather than a
+// fixed wall-clock nap (which -race can starve).
+func (h *e2eHarness) waitForSweeps(t *testing.T, n int64) {
+	t.Helper()
+	start := h.disp.SweepCount()
+	deadline := time.Now().Add(15 * time.Second) // match pollTask's -race-safe budget
+	for time.Now().Before(deadline) {
+		if h.disp.SweepCount()-start >= n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d dispatcher sweeps", n)
+}
+
 // pollAgentRun waits until cond(run) holds or the deadline elapses. Needed
 // because pollTask's conditions are typically satisfied by task-row fields
 // (e.g. active_agent_run_id) that are written synchronously at dispatch time
@@ -492,7 +509,7 @@ func TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked(t *testing.T) {
 	// starts a second run — this is the regression: with the old ClassGenuine
 	// "failed" behavior, clearing the lock let the very next sweep re-pick the
 	// task and hand a fresh provider a fresh --max-turns budget, forever.
-	time.Sleep(200 * time.Millisecond)
+	h.waitForSweeps(t, 5)
 	still, err := h.q.GetTask(context.Background(), taskID)
 	if err != nil {
 		t.Fatalf("get task: %v", err)
@@ -577,7 +594,7 @@ func TestE2E_WaitingHumanStaysLocked(t *testing.T) {
 
 	// The lock must hold: give the dispatcher room to sweep several times and
 	// confirm it never starts a second run.
-	time.Sleep(200 * time.Millisecond)
+	h.waitForSweeps(t, 5)
 	still, err := h.q.GetTask(context.Background(), taskID)
 	if err != nil {
 		t.Fatalf("get task: %v", err)
@@ -780,7 +797,7 @@ func TestE2E_FailoverAllBlocked_NoDispatch(t *testing.T) {
 	h.disp.RateLimits.Block(config1ID, time.Now().Add(time.Hour))
 
 	// Give the dispatcher several sweeps' worth of time to (not) act.
-	time.Sleep(200 * time.Millisecond)
+	h.waitForSweeps(t, 5)
 
 	task, err := h.q.GetTask(context.Background(), taskID)
 	if err != nil {
@@ -867,7 +884,7 @@ func TestE2E_RepoConcurrencyLimit(t *testing.T) {
 
 	// Give the dispatcher several more sweeps' worth of time to (not) also
 	// dispatch the second task while the first holds the repo's only slot.
-	time.Sleep(200 * time.Millisecond)
+	h.waitForSweeps(t, 5)
 
 	task1, err := h.q.GetTask(context.Background(), task1ID)
 	if err != nil {

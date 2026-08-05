@@ -141,7 +141,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), args...)
+	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
 	cmd.Dir = input.RepoPath
 	// QWEN_CODE_SUPPRESS_YOLO_WARNING keeps the headless yolo warning out of stderr logs.
 	cmd.Env = mergeEnv(allowlistEnv(qwenEnvAllowlist), input.AgentConfig.Env)

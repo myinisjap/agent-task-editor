@@ -725,15 +725,3 @@ func TestParseGitHubName(t *testing.T) {
 		})
 	}
 }
-
-// Sanity check that our scriptedRunner's arg-join helper is usable elsewhere
-// if needed for debugging failures.
-func TestArgsContainHelper(t *testing.T) {
-	if !argsContain([]string{"a", "b"}, "b") {
-		t.Fatal("expected argsContain to find b")
-	}
-	if argsContain([]string{"a", "b"}, "c") {
-		t.Fatal("expected argsContain to not find c")
-	}
-	_ = strings.Join([]string{"a"}, " ")
-}

@@ -53,6 +53,11 @@ type Dispatcher struct {
 	// Stored atomically since Run's ticker goroutine writes it while an
 	// HTTP handler goroutine reads it concurrently.
 	lastSweep atomic.Int64
+	// sweeps counts the number of sweep ticks that have fully completed.
+	// Test-only support for deterministic synchronization (see SweepCount):
+	// tests can wait for N additional sweeps instead of sleeping a fixed
+	// wall-clock duration and hoping the dispatcher got enough ticks in.
+	sweeps atomic.Int64
 	// globalCostTripped records the current global-spend-ceiling state (see
 	// checkGlobalCostBudget), read by GlobalCostStatus for the health
 	// endpoints and written under globalCostMu each sweep. A separate mutex
@@ -101,6 +106,7 @@ func (d *Dispatcher) Run(ctx context.Context) {
 			// a hang for as long as it lasts.
 			d.lastSweep.Store(time.Now().UnixNano())
 			d.sweep(ctx)
+			d.sweeps.Add(1)
 		}
 	}
 }
@@ -114,6 +120,12 @@ func (d *Dispatcher) LastSweep() time.Time {
 		return time.Time{}
 	}
 	return time.Unix(0, ns)
+}
+
+// SweepCount returns the number of sweep ticks that have fully completed.
+// Test-only support for deterministic synchronization; see the sweeps field.
+func (d *Dispatcher) SweepCount() int64 {
+	return d.sweeps.Load()
 }
 
 func (d *Dispatcher) sweep(ctx context.Context) {

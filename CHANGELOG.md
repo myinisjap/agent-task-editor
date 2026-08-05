@@ -347,11 +347,27 @@ triggers the "Release" workflow the same way.
   bars) get smoke coverage too. See `frontend/e2e/README.md`.
 
 ### Changed
+- **Backend container default memory ceiling raised from 2 GB to 4 GB.**
+  Under several concurrent agent runs (`MAX_WORKERS`), memory-hungry agent
+  steps — notably a frontend test suite (`npm run test`/vitest) — could push
+  the 2 GB cgroup over its cap and get the CLI subprocess OOM-killed
+  mid-run (surfacing as a `signal: killed` run failure). The default in both
+  `docker-compose.yml` and `docker-compose.release.yml` is now 4 GB; raise it
+  further under the backend service's `deploy.resources.limits.memory` if you
+  still hit the ceiling.
 - **Mobile Task Detail overview: long task descriptions no longer force a
   wall of scrolling.** On mobile viewports the description now renders as a
   small clamped, tappable preview box that opens a full-screen modal on tap
   — the same box/modal pattern already used for Agent Notes. Desktop is
   unchanged (still renders inline).
+- **Test-suite refinements.** Removed sleep-based synchronization in
+  dispatcher/WS/pickup-ordering tests in favor of deterministic waits (a new
+  dispatcher sweep counter and a test-only WS subscription-count accessor
+  replace fixed-duration naps), strengthened the migration round-trip test's
+  schema assertion so it hard-fails on any post-round-trip regression instead
+  of silently passing, deleted an unused test fixture factory and a trivial
+  test of a five-line test helper, and renamed two frontend test files to
+  match what they actually test. Test-only; no behavioral changes.
 
 ### Removed
 - **The `gemini_cli` provider has been removed.** The Gemini CLI is no longer
@@ -416,6 +432,42 @@ triggers the "Release" workflow the same way.
     previously only `HelpModal` had any of this, and `NewWorkflowModal` had
     no Escape or backdrop dismissal at all. All three now share a new
     `ModalShell` component.
+- **The Claude usage widget on the Cost & Usage page no longer silently
+  disappears when Anthropic's usage endpoint is rate-limiting (429).** It
+  previously hid the whole "Claude usage" section on any fetch failure,
+  including a 429, with no explanation — and kept re-polling the
+  already-rate-limited endpoint every 45s. The backend now distinguishes a
+  429 from other failures, surfaces it as `claude_usage.rate_limited` in the
+  `/dashboard` response, and caches the unavailable result for 10 minutes
+  instead of 45 seconds to back off. The frontend now shows a "temporarily
+  unavailable" note in place of the usage bars instead of hiding the section.
+- **Agent runs no longer fail to launch (`fork/exec: invalid argument`) when
+  task content contains a NUL byte.** A NUL byte anywhere in a process
+  argument makes the Linux `execve` syscall reject it outright, so a NUL
+  that leaked into a prompt (e.g. an agent writing a literal `\x00` into
+  `tasks.agent_notes`, suggesting it as a JS array join delimiter, which then
+  flowed into the `-p` prompt argument via the "NOTES FROM PRIOR AGENT"
+  section on every dispatch) made every launch for that task die before the
+  CLI subprocess ever started. Control bytes that are illegal in process
+  arguments are now stripped right before each CLI provider execs
+  (`claude`, `codex_cli`, `qwen_code`, `opencode`), fixing this at the exec
+  boundary for any prompt-fed field rather than any one source field.
+- **A task whose agent fails to launch no longer re-dispatches in a tight
+  5-second loop.** When a provider errored before ever streaming any output
+  (e.g. failing to build settings/args or spawn its subprocess), the pool
+  treated it as a plain genuine `failed` result: the retry budget was reset
+  and the dispatch lock cleared, so the next 5s sweep picked the task right
+  back up — and since the same pre-stream error just recurred, this looped
+  indefinitely (one observed task racked up 100 runs in 3 hours, every one
+  0 tokens/0 logs/empty session). The existing auth-escalation safety net
+  (`hasLoginError`) couldn't catch this either, since it only inspects the
+  run's persisted logs, and a pre-stream failure has none. `Pool.run` now
+  detects this case — no logs, no session id, zero token usage — and routes
+  it through the same handling as a transient infra failure instead: bounded
+  backoff per the agent config's `max_retries`/`retry_backoff_secs`, then
+  escalation to `waiting_human` once the budget is exhausted. A genuine
+  failure that already streamed real output still fails immediately as
+  before.
 - **Transient-failure and cancelled runs now record the cost/tokens they
   actually consumed instead of `$0`.** #337 taught the max-turns and
   mid-run-cost-budget-exceeded escalation paths to persist `cost_usd`/token
