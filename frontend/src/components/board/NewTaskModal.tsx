@@ -355,6 +355,15 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
             <div className="flex flex-wrap gap-2 mt-1">
               {attachmentPreviews.map((src, i) => (
                 <div key={i} className="relative group">
+                  {/* `src` is always a same-origin `blob:` URL minted locally
+                      by `URL.createObjectURL(file)` in `handleFilesSelected`
+                      above — never a string derived from user/network input —
+                      so it can't carry an HTML/script payload. React also
+                      assigns `src`/`alt` as plain DOM attributes, not via
+                      `innerHTML`, so neither is parsed as markup. This is a
+                      CodeQL `js/xss-through-dom` false positive: see
+                      https://github.com/myinisjap/agent-task-editor/security/code-scanning/18 */}
+                  {/* codeql[js/xss-through-dom] */}
                   <img
                     src={src}
                     alt={attachments[i]?.name}
