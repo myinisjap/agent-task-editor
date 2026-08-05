@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import type { Repo, Task, TaskTemplate, Workflow } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { PRIORITY_LEVELS } from '../../lib/priority'
+import ModalShell from '../shared/ModalShell'
 
 type Props = {
   // Optional hint for the initially-selected workflow (e.g. the board's
@@ -57,6 +58,11 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
   const [templateId, setTemplateId] = useState('')
   const titleRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Mirrors `attachmentPreviews` so the unmount-only cleanup effect below can
+  // revoke the *current* set of preview URLs without re-subscribing to the
+  // array (which would otherwise revoke still-mounted previews on every
+  // attach/remove — see issue #350).
+  const attachmentPreviewsRef = useRef<string[]>([])
 
   useEffect(() => {
     // Repos are no longer scoped to a workflow for task creation — a task's
@@ -75,7 +81,7 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
       setWorkflowId(pickDefaultWorkflowId(sorted, source?.workflow_id ?? workflow?.id))
     })
     api.templates.list().then(setTemplates).catch(() => {})
-    titleRef.current?.focus()
+    // Initial focus is handled by ModalShell (via titleRef as initialFocusRef).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -119,12 +125,21 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
     }
   }
 
-  // Revoke object URLs when component unmounts to avoid memory leaks
+  // Keep the ref in sync with the latest previews so the unmount cleanup
+  // below can access them without depending on the array itself.
+  useEffect(() => {
+    attachmentPreviewsRef.current = attachmentPreviews
+  }, [attachmentPreviews])
+
+  // Revoke object URLs when the component unmounts to avoid memory leaks.
+  // Empty deps: this must run its cleanup ONLY on unmount, not on every
+  // `attachmentPreviews` change, or it would revoke URLs still rendered by
+  // the preview <img> elements (see issue #350).
   useEffect(() => {
     return () => {
-      attachmentPreviews.forEach((url) => URL.revokeObjectURL(url))
+      attachmentPreviewsRef.current.forEach((url) => URL.revokeObjectURL(url))
     }
-  }, [attachmentPreviews])
+  }, [])
 
   function handleFilesSelected(files: FileList | null) {
     if (!files) return
@@ -170,10 +185,6 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
     }
   }
 
-  function handleBackdrop(e: React.MouseEvent) {
-    if (e.target === e.currentTarget) onClose()
-  }
-
   function handleDrop(e: React.DragEvent) {
     e.preventDefault()
     handleFilesSelected(e.dataTransfer.files)
@@ -184,215 +195,215 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      onClick={handleBackdrop}
+    <ModalShell
+      onClose={onClose}
+      ariaLabel={source ? 'Duplicate Task' : 'New Task'}
+      initialFocusRef={titleRef}
+      className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] flex flex-col"
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-          <h2 className="text-sm font-semibold text-slate-100">{source ? 'Duplicate Task' : 'New Task'}</h2>
-          <button
-            onClick={onClose}
-            className="text-slate-500 hover:text-slate-300 transition-colors text-lg leading-none"
-          >
-            ×
-          </button>
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+        <h2 className="text-sm font-semibold text-slate-100">{source ? 'Duplicate Task' : 'New Task'}</h2>
+        <button
+          onClick={onClose}
+          className="text-slate-500 hover:text-slate-300 transition-colors text-lg leading-none"
+        >
+          ×
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
+        {templates.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-slate-400">Template</label>
+            <div className="flex items-center gap-2">
+              <select
+                value={templateId}
+                onChange={(e) => applyTemplate(e.target.value)}
+                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="">— none —</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              {templateId && (
+                <button
+                  type="button"
+                  onClick={deleteTemplate}
+                  className="text-slate-500 hover:text-red-400 transition-colors text-sm"
+                  title="Delete this template"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-slate-400">Title</label>
+          <input
+            ref={titleRef}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Short task description"
+            required
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
-          {templates.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">Template</label>
-              <div className="flex items-center gap-2">
-                <select
-                  value={templateId}
-                  onChange={(e) => applyTemplate(e.target.value)}
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                >
-                  <option value="">— none —</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-                {templateId && (
-                  <button
-                    type="button"
-                    onClick={deleteTemplate}
-                    className="text-slate-500 hover:text-red-400 transition-colors text-sm"
-                    title="Delete this template"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-slate-400">Description</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Additional context for the agent (optional)"
+            rows={3}
+            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
+          />
+        </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Title</label>
-            <input
-              ref={titleRef}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Short task description"
-              required
-              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Description</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Additional context for the agent (optional)"
-              rows={3}
-              className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
-            />
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
-              <label className="text-xs font-medium text-slate-400">Type</label>
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as typeof type)}
-                className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              >
-                <option value="feature">Feature</option>
-                <option value="bug">Bug</option>
-                <option value="chore">Chore</option>
-                <option value="spike">Spike</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
-              <label className="text-xs font-medium text-slate-400">Priority</label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(Number(e.target.value))}
-                className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              >
-                {PRIORITY_LEVELS.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
-              <label className="text-xs font-medium text-slate-400">Repo</label>
-              {repos.length === 0 ? (
-                <div className="text-xs text-slate-500 py-2">No repos configured</div>
-              ) : (
-                <select
-                  data-testid="new-task-repo-select"
-                  value={repoId}
-                  onChange={(e) => setRepoId(e.target.value)}
-                  className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                >
-                  {repos.map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
-              <label className="text-xs font-medium text-slate-400">Workflow</label>
-              {workflows.length === 0 ? (
-                <div className="text-xs text-slate-500 py-2">No workflows configured</div>
-              ) : (
-                <select
-                  data-testid="new-task-workflow-select"
-                  value={workflowId}
-                  onChange={(e) => setWorkflowId(e.target.value)}
-                  className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                >
-                  {workflows.map((w) => (
-                    <option key={w.id} value={w.id}>{w.name}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-          </div>
-
-          {/* Image Attachments */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Attachments</label>
-            <div
-              className="border border-dashed border-slate-600 rounded-lg p-3 text-center cursor-pointer hover:border-slate-500 transition-colors"
-              onClick={() => fileInputRef.current?.click()}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
+        <div className="flex flex-wrap gap-3">
+          <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
+            <label className="text-xs font-medium text-slate-400">Type</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as typeof type)}
+              className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
-              <p className="text-xs text-slate-500">
-                Click or drag &amp; drop images here
-              </p>
-              <p className="text-xs text-slate-700 mt-0.5">PNG, JPG, GIF, WebP — max 10 MB each</p>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => handleFilesSelected(e.target.files)}
-            />
+              <option value="feature">Feature</option>
+              <option value="bug">Bug</option>
+              <option value="chore">Chore</option>
+              <option value="spike">Spike</option>
+            </select>
+          </div>
 
-            {attachmentPreviews.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-1">
-                {attachmentPreviews.map((src, i) => (
-                  <div key={i} className="relative group">
-                    <img
-                      src={src}
-                      alt={attachments[i]?.name}
-                      className="w-16 h-16 object-cover rounded border border-slate-700"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeAttachment(i)}
-                      className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Remove"
-                    >
-                      ×
-                    </button>
-                    <p className="text-xs text-slate-600 mt-0.5 truncate w-16 text-center">{attachments[i]?.name}</p>
-                  </div>
+          <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
+            <label className="text-xs font-medium text-slate-400">Priority</label>
+            <select
+              value={priority}
+              onChange={(e) => setPriority(Number(e.target.value))}
+              className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              {PRIORITY_LEVELS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
+            <label className="text-xs font-medium text-slate-400">Repo</label>
+            {repos.length === 0 ? (
+              <div className="text-xs text-slate-500 py-2">No repos configured</div>
+            ) : (
+              <select
+                data-testid="new-task-repo-select"
+                value={repoId}
+                onChange={(e) => setRepoId(e.target.value)}
+                className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {repos.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
-              </div>
+              </select>
             )}
           </div>
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
-
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={saveAsTemplate}
-              disabled={!title.trim()}
-              className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title="Save the current title/description/type as a reusable template"
-            >
-              Save as template
-            </button>
-            <div className="flex-1" />
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting || !title.trim() || !repoId}
-              className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-            >
-              {submitting ? 'Creating…' : 'Create'}
-            </button>
+          <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
+            <label className="text-xs font-medium text-slate-400">Workflow</label>
+            {workflows.length === 0 ? (
+              <div className="text-xs text-slate-500 py-2">No workflows configured</div>
+            ) : (
+              <select
+                data-testid="new-task-workflow-select"
+                value={workflowId}
+                onChange={(e) => setWorkflowId(e.target.value)}
+                className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {workflows.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            )}
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
+
+        {/* Image Attachments */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-slate-400">Attachments</label>
+          <div
+            className="border border-dashed border-slate-600 rounded-lg p-3 text-center cursor-pointer hover:border-slate-500 transition-colors"
+            onClick={() => fileInputRef.current?.click()}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+          >
+            <p className="text-xs text-slate-500">
+              Click or drag &amp; drop images here
+            </p>
+            <p className="text-xs text-slate-700 mt-0.5">PNG, JPG, GIF, WebP — max 10 MB each</p>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => handleFilesSelected(e.target.files)}
+          />
+
+          {attachmentPreviews.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-1">
+              {attachmentPreviews.map((src, i) => (
+                <div key={i} className="relative group">
+                  <img
+                    src={src}
+                    alt={attachments[i]?.name}
+                    className="w-16 h-16 object-cover rounded border border-slate-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(i)}
+                    className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                  <p className="text-xs text-slate-600 mt-0.5 truncate w-16 text-center">{attachments[i]?.name}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {error && <p className="text-xs text-red-400">{error}</p>}
+
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={saveAsTemplate}
+            disabled={!title.trim()}
+            className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Save the current title/description/type as a reusable template"
+          >
+            Save as template
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={submitting || !title.trim() || !repoId}
+            className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+          >
+            {submitting ? 'Creating…' : 'Create'}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
   )
 }

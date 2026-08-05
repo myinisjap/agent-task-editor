@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   DndContext,
   KeyboardCode,
@@ -17,6 +17,12 @@ import AgentGroupColumn from './AgentGroupColumn'
 import { computeCondensedGroups } from '../../lib/condensedBoard'
 import { useIsMobile } from '../../lib/useIsMobile'
 import { useSwipe } from '../../lib/useSwipe'
+
+// Shared empty array so byLabel()/byLabels() returns a referentially-stable
+// value for labels with no tasks, instead of a fresh [] every render (which
+// would defeat memo(TaskCard)'s parent-level React.memo equivalents and
+// cause empty columns to still "change" on every render).
+const EMPTY_TASKS: Task[] = []
 
 // Extracted to module level so React sees a stable component type across renders.
 // If defined inside TaskBoard's function body, React would create a new type on
@@ -99,7 +105,7 @@ export default function TaskBoard({
   selectedIds,
   onToggleSelect,
 }: Props) {
-  const { upsert } = useTasksStore()
+  const upsert = useTasksStore((s) => s.upsert)
   const isMobile = useIsMobile()
 
   // Require 5px movement to start a drag so clicks still navigate. KeyboardSensor
@@ -122,8 +128,24 @@ export default function TaskBoard({
     }),
   )
 
-  const byLabel = (name: string) => tasks.filter((t) => t.label === name)
-  const byLabels = (names: string[]) => tasks.filter((t) => names.includes(t.label ?? ''))
+  // Bucket tasks by label once per `tasks` change instead of re-filtering
+  // the full list per column, per render (O(labels × tasks) previously).
+  const tasksByLabel = useMemo(() => {
+    const m = new Map<string, Task[]>()
+    for (const t of tasks) {
+      const key = t.label ?? ''
+      const bucket = m.get(key)
+      if (bucket) {
+        bucket.push(t)
+      } else {
+        m.set(key, [t])
+      }
+    }
+    return m
+  }, [tasks])
+
+  const byLabel = (name: string) => tasksByLabel.get(name) ?? EMPTY_TASKS
+  const byLabels = (names: string[]) => names.flatMap((n) => tasksByLabel.get(n) ?? EMPTY_TASKS)
 
   // Labels an agent can pick tasks up from: some agent/both transition leaves
   // the label and the label itself isn't agent_ignore. Dropping a blocked task

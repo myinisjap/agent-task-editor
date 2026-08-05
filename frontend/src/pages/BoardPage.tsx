@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTasksStore } from '../stores/tasks'
 import { useWorkflowStore } from '../stores/workflow'
 import { useReposStore } from '../stores/repos'
@@ -10,14 +10,30 @@ import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { BoardHelp } from '../components/shared/pageHelp'
+import { useDebouncedCallback } from '../lib/useDebouncedCallback'
 
 const CONDENSED_STORAGE_KEY = 'board.condensed'
 
 const TASK_TYPES = ['feature', 'bug', 'chore', 'spike']
 const GIT_STATES = ['pushed', 'pr_open', 'pr_merged', 'pr_closed']
 
+// Trailing debounce window for coalescing WS-driven REST refetches (per-task
+// `GET /tasks/{id}` fan-out and the cost rollup) — see task.label_changed /
+// task.git_state_changed / task.pr_mergeable_changed / task.created /
+// task.agent_done handling below.
+const WS_REFETCH_DEBOUNCE_MS = 250
+
+// Above this many distinct task ids pending in a single debounce window, do
+// one list refresh (`fetchTasks`) instead of N individual `api.tasks.get`
+// calls — keeps the low-latency single-event case fast while avoiding a
+// request storm on bulk moves / bursts of simultaneous events.
+const REFETCH_COALESCE_THRESHOLD = 3
+
 export default function BoardPage() {
-  const { tasks, loading, fetch: fetchTasks, upsert } = useTasksStore()
+  const tasks = useTasksStore((s) => s.tasks)
+  const loading = useTasksStore((s) => s.loading)
+  const fetchTasks = useTasksStore((s) => s.fetch)
+  const upsert = useTasksStore((s) => s.upsert)
   const { workflows, fetch: fetchWorkflows, setSelectedId, active } = useWorkflowStore()
   const { repos, fetch: fetchRepos } = useReposStore()
   const [runningTaskIds, setRunningTaskIds] = useState(() => new Set<string>())
@@ -94,9 +110,34 @@ export default function BoardPage() {
       .catch(() => {})
   }
 
+  // Debounce the cost rollup so a burst of simultaneous task.agent_done
+  // events (several agents finishing together) triggers one
+  // GET /dashboard/cost-by-task instead of one per event.
+  const debouncedRefreshCostByTask = useDebouncedCallback(refreshCostByTask, WS_REFETCH_DEBOUNCE_MS)
+
   useEffect(() => {
     refreshCostByTask()
   }, [])
+
+  // Ids accumulated from task.label_changed / task.created /
+  // task.git_state_changed / task.pr_mergeable_changed while the flush below
+  // is debounced. Cleared every time the debounced flush runs.
+  const pendingRefetchIdsRef = useRef<Set<string>>(new Set())
+
+  const flushPendingRefetches = useDebouncedCallback(() => {
+    const ids = [...pendingRefetchIdsRef.current]
+    pendingRefetchIdsRef.current = new Set()
+    if (ids.length === 0) return
+    if (ids.length <= REFETCH_COALESCE_THRESHOLD) {
+      for (const id of ids) {
+        api.tasks.get(id).then(upsert).catch(() => {})
+      }
+    } else {
+      // Above the threshold, a single list refresh is cheaper than N
+      // individual gets — matches what task.created_bulk already does below.
+      fetchTasks(showArchived ? { archived: 'all' } : undefined)
+    }
+  }, WS_REFETCH_DEBOUNCE_MS)
 
   useEffect(() => {
     const off = wsClient.on((event) => {
@@ -111,9 +152,13 @@ export default function BoardPage() {
         event.type === 'task.pr_mergeable_changed'
       ) {
         // These payloads carry only partial fields (or, for task.created, a
-        // subset the sender says to refetch) — get the full task from the API.
+        // subset the sender says to refetch) — get the full task from the
+        // API. Accumulate ids and coalesce the REST refetches behind a
+        // trailing debounce so a burst (bulk move, several events at once)
+        // doesn't fan out into one GET per task.
         const taskId = event.type === 'task.created' ? event.payload.id : event.payload.task_id
-        api.tasks.get(taskId).then(upsert).catch(() => {})
+        pendingRefetchIdsRef.current.add(taskId)
+        flushPendingRefetches()
       }
       if (event.type === 'task.label_changed') {
         // A label change moves the task to a new lifecycle stage — clear any
@@ -172,8 +217,10 @@ export default function BoardPage() {
         })
       }
       if (event.type === 'task.agent_done') {
-        // A run just recorded its cost — refresh the per-task cost map.
-        refreshCostByTask()
+        // A run just recorded its cost — refresh the per-task cost map
+        // (debounced so a burst of simultaneous agent-done events triggers
+        // one rollup fetch instead of one per task).
+        debouncedRefreshCostByTask()
         // Run finished (success or failure) — clear the running indicator.
         setRunningTaskIds(prev => {
           const next = new Set(prev)

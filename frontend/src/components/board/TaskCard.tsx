@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
@@ -20,7 +20,7 @@ const TYPE_COLORS: Record<string, string> = {
 
 const TASK_TYPES = ['feature', 'bug', 'chore', 'spike']
 
-export default function TaskCard({
+function TaskCard({
   task,
   isRunning,
   rateLimitedUntil,
@@ -37,7 +37,7 @@ export default function TaskCard({
   rateLimitedUntil?: string
   /** True once this task has crossed the cost early-warning threshold (see task.cost_warning WS event) */
   costWarned?: boolean
-  onDelete?: () => void
+  onDelete?: (taskId: string) => void
   /** When set, renders a "Duplicate task" button that opens a pre-filled New Task modal for this task. */
   onDuplicate?: (task: Task) => void
   isEditable?: boolean
@@ -48,7 +48,7 @@ export default function TaskCard({
   onToggleSelect?: (taskId: string, shiftKey: boolean) => void
 }) {
   const navigate = useNavigate()
-  const { upsert } = useTasksStore()
+  const upsert = useTasksStore((s) => s.upsert)
   const repoName = useReposStore((s) => s.byId(task.repo_id))?.name
   // A task with any unsatisfied blocker is gated from dispatch; mute it and show
   // a badge so an idle-looking card isn't mysterious.
@@ -190,12 +190,27 @@ export default function TaskCard({
     )
   }
 
+  // dnd-kit's `attributes` includes `role="button"` + `tabIndex=0` (its
+  // `defaultRole`), intended for a single focusable/interactive drag
+  // surface. The card renders several real <button>s inside it (Pause/
+  // Archive/Edit/Duplicate/Delete below), so applying `role="button"` to the
+  // card would nest interactive controls inside an interactive ancestor —
+  // invalid ARIA that screen readers flatten (see issue #350). Drop dnd-kit's
+  // role/aria-pressed/roledescription from the card (destructured out below)
+  // but keep `tabIndex` and the drag *listeners* (pointer/touch/keyboard
+  // activation) so the card stays keyboard-focusable, draggable, and
+  // Enter-openable — it's just no longer announced as a "button" itself,
+  // which is accurate: it's a generic container whose real interactive
+  // children (the action buttons) are its accessible controls, plus a
+  // click-to-navigate affordance exposed via onClick/onKeyDown+aria-label.
+  const { role: _dndRole, 'aria-pressed': _ariaPressed, 'aria-roledescription': _ariaRoleDescription, ...cardAttributes } = attributes
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...listeners}
-      {...attributes}
+      {...cardAttributes}
       aria-label={`${task.title} — ${task.label}`}
       onClick={(e) => {
         if (!isDragging) navigate(`/tasks/${task.id}`)
@@ -234,7 +249,7 @@ export default function TaskCard({
           )}
           <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0 focus-within:opacity-100">
           {isChild && (
             <button
               onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.parent_task_id}`) }}
@@ -367,6 +382,12 @@ export default function TaskCard({
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
+            // Hidden until hover/focus (opacity-0) — tabIndex=-1 keeps it out
+            // of the normal tab order so a keyboard user tabbing across the
+            // board doesn't land on an invisible control (see issue #350).
+            // Still reachable by mouse click; reachable by keyboard only once
+            // e.g. a mouse-hover or an explicit accessibility tool reveals it.
+            tabIndex={-1}
             className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none"
             title={task.paused ? 'Resume task' : 'Pause task'}
           >
@@ -383,6 +404,7 @@ export default function TaskCard({
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
+            tabIndex={-1}
             className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
             title={task.archived ? 'Unarchive task' : 'Archive task — hide from the board'}
           >
@@ -392,6 +414,7 @@ export default function TaskCard({
             <button
               onClick={handleEditClick}
               onPointerDown={(e) => e.stopPropagation()}
+              tabIndex={-1}
               className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
               title="Edit task"
             >
@@ -405,6 +428,7 @@ export default function TaskCard({
                 onDuplicate(task)
               }}
               onPointerDown={(e) => e.stopPropagation()}
+              tabIndex={-1}
               className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
               title="Duplicate task"
             >
@@ -415,9 +439,10 @@ export default function TaskCard({
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                if (window.confirm('Delete this task?')) onDelete()
+                if (window.confirm('Delete this task?')) onDelete(task.id)
               }}
               onPointerDown={(e) => e.stopPropagation()}
+              tabIndex={-1}
               className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none"
               title="Delete task"
             >
@@ -448,3 +473,11 @@ export default function TaskCard({
     </div>
   )
 }
+
+// Board renders can involve hundreds of cards; memoize so an unrelated
+// tasks-store change (a different task's upsert) doesn't re-run useDraggable
+// / useReposStore for every card. Effective when zustand's upsert() replaces
+// only the changed task's array entry, leaving unaffected tasks' object
+// identity intact — see TaskColumn/TaskBoard for the narrowed selectors that
+// make this worthwhile.
+export default memo(TaskCard)

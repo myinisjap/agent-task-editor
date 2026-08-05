@@ -231,3 +231,64 @@ describe('TaskCard block_reason badge (#353)', () => {
     expect(screen.getByText(/#1 in queue/)).toBeInTheDocument()
   })
 })
+
+// issue #350 — TaskCard is wrapped in React.memo so a board re-render
+// triggered by an unrelated tasks-store change doesn't re-run useDraggable
+// / useReposStore for every card. Assert the memo actually skips a
+// re-render when props are referentially/structurally unchanged, and does
+// re-render when the task prop genuinely changes.
+describe('TaskCard memoization (#350)', () => {
+  beforeEach(() => {
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+    useReposStore.setState({ repos: [], loading: false, error: null })
+  })
+
+  it('skips re-rendering (and re-invoking its store selectors) when re-rendered with an unchanged task prop', () => {
+    const task = baseTask()
+    // TaskCard calls useReposStore((s) => s.byId(task.repo_id)) on every
+    // render — spy on the store's byId to detect whether TaskCard's own
+    // render function actually re-ran, independent of its parent wrapper.
+    const byIdSpy = vi.spyOn(useReposStore.getState(), 'byId')
+
+    function Wrapper({ t }: { t: Task }) {
+      return <TaskCard task={t} />
+    }
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <Wrapper t={task} />
+      </MemoryRouter>,
+    )
+    const callsAfterFirstRender = byIdSpy.mock.calls.length
+    expect(callsAfterFirstRender).toBeGreaterThan(0)
+
+    // Re-render the wrapper (simulating a parent re-render triggered by an
+    // unrelated tasks-store change) with the exact same task object — memo
+    // should bail out before TaskCard's body (and its selectors) re-run.
+    rerender(
+      <MemoryRouter>
+        <Wrapper t={task} />
+      </MemoryRouter>,
+    )
+    expect(byIdSpy.mock.calls.length).toBe(callsAfterFirstRender)
+
+    byIdSpy.mockRestore()
+  })
+
+  it('re-renders and reflects updated content when the task prop changes', () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ title: 'Original title' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Original title')).toBeInTheDocument()
+
+    rerender(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ title: 'Updated title' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Updated title')).toBeInTheDocument()
+    expect(screen.queryByText('Original title')).not.toBeInTheDocument()
+  })
+})

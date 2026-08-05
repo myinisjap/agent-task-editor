@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type Dashboard } from '../api/client'
 import { wsClient } from '../api/ws'
+import { useDebouncedCallback } from './useDebouncedCallback'
+
+// A burst of task.label_changed/agent_started/agent_done/needs_human events
+// (e.g. several agents finishing around the same time, or a bulk board
+// action) would otherwise each trigger their own GET /dashboard round-trip.
+// Coalesce them behind a short trailing debounce.
+const WS_REFRESH_DEBOUNCE_MS = 250
 
 /**
  * Fetches the shared `GET /dashboard` payload on mount and re-fetches it
@@ -16,6 +23,8 @@ export function useDashboard() {
     api.dashboard.get().then(setDash).catch(() => {})
   }, [])
 
+  const debouncedRefresh = useDebouncedCallback(refresh, WS_REFRESH_DEBOUNCE_MS)
+
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -28,10 +37,10 @@ export function useDashboard() {
         event.type === 'task.agent_done' ||
         event.type === 'task.needs_human'
       ) {
-        refresh()
+        debouncedRefresh()
       }
     })
-  }, [refresh])
+  }, [debouncedRefresh])
 
   return { dash, refresh }
 }

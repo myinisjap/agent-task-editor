@@ -367,6 +367,50 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Board frontend polish: attachment thrash, revoked previews, board
+  re-render storms, WS→REST request fan-out, and modal accessibility**
+  (#350). Six related client-side issues, all in the board/task-detail UI:
+  - Task attachments no longer flash blank and re-download on every
+    WS-driven task refresh. `TaskHeader`'s blob-fetch effect depended on
+    `task.attachments` itself — a `string[]` that gets a fresh identity on
+    every JSON-parsed refetch — so any `task.label_changed`/`agent_started`/
+    `agent_done`/`needs_human`/`task.updated` event revoked every blob URL
+    and re-fetched all attachments even when the attachment list hadn't
+    changed. The effect now depends on a stable joined-path key instead.
+  - The New Task modal's image previews no longer break when attaching a
+    second image or removing one. The unmount-cleanup effect listed
+    `attachmentPreviews` in its deps, so its cleanup ran before *every*
+    array change (not just unmount), revoking still-rendered preview URLs.
+    Previews are now tracked in a ref and revoked only on genuine unmount
+    (or, for `removeAttachment`, exactly the one URL being dropped).
+  - Board cards no longer all re-render on every unrelated task-store
+    change. `TaskCard`, `TaskColumn`, `TaskBoard`, `AgentGroupColumn`, and
+    `BoardPage` subscribed to the whole tasks store with no selector; none
+    of the board components were memoized; and `TaskBoard` re-filtered the
+    full task list per column on every render. `TaskCard` is now wrapped in
+    `React.memo` with narrowed store selectors and stable per-card
+    callbacks, and `TaskBoard` buckets tasks by label once via `useMemo`
+    instead of re-filtering per column.
+  - Bursts of WS events no longer fan out into a REST request storm. A bulk
+    board move (or several agents finishing together) used to issue one
+    `GET /tasks/{id}` per `task.label_changed`/`created`/`git_state_changed`/
+    `pr_mergeable_changed` event and one `GET /dashboard/cost-by-task` per
+    `task.agent_done`, all undebounced; `useDashboard` refetched
+    `GET /dashboard` the same way. Both now coalesce WS-driven refetches
+    behind a ~250ms trailing debounce (new `useDebouncedCallback` hook), and
+    `BoardPage` falls back to a single list refresh instead of N individual
+    gets once a burst exceeds a small per-id threshold.
+  - Task cards no longer nest interactive controls inside a `role="button"`
+    drag container, and the Pause/Archive/Edit/Duplicate/Delete buttons
+    (hover-only, `opacity-0` until hover) are no longer reachable via Tab
+    while invisible — they're excluded from the tab order (`tabIndex={-1}`)
+    and revealed on focus-within as well as hover.
+  - The New Task and New Workflow modals now have proper dialog semantics
+    (`role="dialog"`, `aria-modal`, `aria-label`), Escape-to-close,
+    backdrop-click dismissal, and a focus trap with focus restore on close —
+    previously only `HelpModal` had any of this, and `NewWorkflowModal` had
+    no Escape or backdrop dismissal at all. All three now share a new
+    `ModalShell` component.
 - **Transient-failure and cancelled runs now record the cost/tokens they
   actually consumed instead of `$0`.** #337 taught the max-turns and
   mid-run-cost-budget-exceeded escalation paths to persist `cost_usd`/token
