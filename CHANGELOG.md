@@ -347,6 +347,14 @@ triggers the "Release" workflow the same way.
   bars) get smoke coverage too. See `frontend/e2e/README.md`.
 
 ### Changed
+- **Backend container default memory ceiling raised from 2 GB to 4 GB.**
+  Under several concurrent agent runs (`MAX_WORKERS`), memory-hungry agent
+  steps — notably a frontend test suite (`npm run test`/vitest) — could push
+  the 2 GB cgroup over its cap and get the CLI subprocess OOM-killed
+  mid-run (surfacing as a `signal: killed` run failure). The default in both
+  `docker-compose.yml` and `docker-compose.release.yml` is now 4 GB; raise it
+  further under the backend service's `deploy.resources.limits.memory` if you
+  still hit the ceiling.
 - **Mobile Task Detail overview: long task descriptions no longer force a
   wall of scrolling.** On mobile viewports the description now renders as a
   small clamped, tappable preview box that opens a full-screen modal on tap
