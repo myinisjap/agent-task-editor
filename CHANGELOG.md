@@ -401,10 +401,15 @@ triggers the "Release" workflow the same way.
     `BoardPage` falls back to a single list refresh instead of N individual
     gets once a burst exceeds a small per-id threshold.
   - Task cards no longer nest interactive controls inside a `role="button"`
-    drag container, and the Pause/Archive/Edit/Duplicate/Delete buttons
-    (hover-only, `opacity-0` until hover) are no longer reachable via Tab
-    while invisible — they're excluded from the tab order (`tabIndex={-1}`)
-    and revealed on focus-within as well as hover.
+    drag container. The Pause/Archive/Edit/Duplicate/Delete buttons
+    (hover-only, `opacity-0` until hover) are dynamically excluded from the
+    tab order while hidden and re-included once the card is genuinely
+    hovered or focused — an initial fix shipped a static `tabIndex={-1}`
+    with no way to re-enable it, which made those five actions (including
+    Delete) completely unreachable by keyboard; that's been corrected to
+    track hover/focus state and toggle `tabIndex` (and visibility)
+    dynamically, restoring keyboard access while still keeping the buttons
+    out of the tab order when they're actually invisible.
   - The New Task and New Workflow modals now have proper dialog semantics
     (`role="dialog"`, `aria-modal`, `aria-label`), Escape-to-close,
     backdrop-click dismissal, and a focus trap with focus restore on close —

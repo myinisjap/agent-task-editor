@@ -9,7 +9,7 @@
 // control is visibly tappable without a prior hover) belongs in a visual/E2E
 // layer (see task notes — Playwright E2E deferred).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import TaskCard from './TaskCard'
@@ -290,5 +290,124 @@ describe('TaskCard memoization (#350)', () => {
     )
     expect(screen.getByText('Updated title')).toBeInTheDocument()
     expect(screen.queryByText('Original title')).not.toBeInTheDocument()
+  })
+})
+
+// Regression guard for a review finding on #350: the action cluster
+// (Pause/Archive/Edit/Duplicate/Delete) is hover-only, so a *static*
+// tabIndex={-1} was applied to keep the buttons out of the tab order while
+// invisible. But a permanent -1 with no re-enabling mechanism makes them
+// unreachable by keyboard at all — strictly worse than the original bug
+// (invisible-but-focusable), since a keyboard-only user could never open
+// Delete/Pause/Archive/Edit/Duplicate. These assert the buttons dynamically
+// regain tabIndex=0 (and become the real next Tab stop, not just an
+// attribute flip) once the card itself receives focus, and drop back to -1
+// once focus/hover genuinely leaves the card.
+describe('TaskCard action buttons keyboard reachability (#350)', () => {
+  beforeEach(() => {
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+    useReposStore.setState({ repos: [], loading: false, error: null })
+  })
+
+  it('excludes the hover-only action buttons from the tab order before the card is focused/hovered', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask()} isEditable onDuplicate={() => {}} onDelete={() => {}} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTitle('Pause task')).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByTitle('Archive task — hide from the board')).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByTitle('Edit task')).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByTitle('Duplicate task')).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByTitle('Delete task')).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('makes the action buttons keyboard-reachable (tabIndex=0) once the card receives focus', async () => {
+    const user = userEvent.setup()
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask()} isEditable onDuplicate={() => {}} onDelete={() => {}} />
+      </MemoryRouter>,
+    )
+
+    const deleteButton = screen.getByTitle('Delete task')
+    expect(deleteButton).toHaveAttribute('tabindex', '-1')
+
+    // Tab onto the card itself (the first tab stop on the page).
+    await user.tab()
+    expect(deleteButton).toHaveAttribute('tabindex', '0')
+  })
+
+  it('actually reaches and can activate the Delete button via sequential Tab presses once the card is focused', async () => {
+    const onDelete = vi.fn()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const user = userEvent.setup()
+
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask()} isEditable onDuplicate={() => {}} onDelete={onDelete} />
+      </MemoryRouter>,
+    )
+
+    // Tab order: card -> Pause -> Archive -> Edit -> Duplicate -> Delete.
+    await user.tab() // card
+    await user.tab() // Pause
+    await user.tab() // Archive
+    await user.tab() // Edit
+    await user.tab() // Duplicate
+    await user.tab() // Delete
+    expect(screen.getByTitle('Delete task')).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(onDelete).toHaveBeenCalledWith('task-1')
+
+    confirmSpy.mockRestore()
+  })
+
+  it('drops the action buttons back out of the tab order once focus moves off the card entirely', async () => {
+    const user = userEvent.setup()
+    render(
+      <MemoryRouter>
+        <div>
+          <TaskCard task={baseTask()} isEditable onDuplicate={() => {}} onDelete={() => {}} />
+          <button>Somewhere else</button>
+        </div>
+      </MemoryRouter>,
+    )
+
+    await user.tab() // card
+    expect(screen.getByTitle('Delete task')).toHaveAttribute('tabindex', '0')
+
+    // Tab all the way through the action cluster and off the card onto the
+    // next focusable element on the page.
+    await user.tab() // Pause
+    await user.tab() // Archive
+    await user.tab() // Edit
+    await user.tab() // Duplicate
+    await user.tab() // Delete
+    await user.tab() // "Somewhere else" button — now off the card entirely
+
+    expect(screen.getByText('Somewhere else')).toHaveFocus()
+    expect(screen.getByTitle('Delete task')).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('keeps the action buttons reachable while hovered, even without focus', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask()} isEditable onDuplicate={() => {}} onDelete={() => {}} />
+      </MemoryRouter>,
+    )
+
+    const deleteButton = screen.getByTitle('Delete task')
+    expect(deleteButton).toHaveAttribute('tabindex', '-1')
+
+    const card = deleteButton.closest('.group') as HTMLElement
+    fireEvent.mouseEnter(card)
+    expect(deleteButton).toHaveAttribute('tabindex', '0')
+
+    fireEvent.mouseLeave(card)
+    expect(deleteButton).toHaveAttribute('tabindex', '-1')
   })
 })

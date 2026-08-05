@@ -64,6 +64,26 @@ function TaskCard({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
 
+  // The Pause/Archive/Edit/Duplicate/Delete action cluster is visually
+  // hover-only (opacity-0 until :hover) to avoid cluttering the card, but a
+  // *static* tabIndex={-1} on those buttons would make them permanently
+  // keyboard-unreachable — strictly worse than the original bug (invisible
+  // but focusable). Instead, track hover/focus in JS (`cardActive`, set via
+  // onMouseEnter/Leave + onFocus/Blur on the card below) and use it to
+  // drive both the buttons' opacity *and* their tabIndex (0 when visible,
+  // -1 when not), so a keyboard user can Tab onto the card, see the buttons
+  // become visible, and continue tabbing into them — CSS-only `:hover`/
+  // `:focus-within` can't drive `tabIndex` (a DOM attribute, not a style),
+  // hence the JS state. Touch devices (which can't hover) always show them
+  // via `isTouchDevice`, matching the existing `no-hover:opacity-100` class.
+  const [cardActive, setCardActive] = useState(false)
+  const [isTouchDevice] = useState(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false
+    return window.matchMedia('(hover: none)').matches
+  })
+  const controlsVisible = cardActive || isTouchDevice
+  const actionTabIndex = controlsVisible ? 0 : -1
+
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.id,
     disabled: editing,
@@ -220,10 +240,30 @@ function TaskCard({
         // Enter opens the task; Space is reserved for dnd-kit's
         // pick-up/drop (see TaskBoard's KeyboardSensor keyboardCodes, which
         // restricts drag start/end to Space so the two keys don't collide).
-        if (e.key === 'Enter') {
+        // Guard on `e.target === e.currentTarget`: this handler is on the
+        // card, but React's synthetic onKeyDown bubbles from whichever
+        // descendant is actually focused — now that the action buttons are
+        // keyboard-reachable (tabIndex 0 while visible, see `cardActive`
+        // above), pressing Enter on e.g. the focused Delete button must
+        // trigger *that button's* own click, not hijack the keypress to
+        // navigate away instead (which previously masked this bug, since
+        // the buttons were never reachable to begin with — see issue #350).
+        if (e.key === 'Enter' && e.target === e.currentTarget) {
           e.preventDefault()
           navigate(`/tasks/${task.id}`)
         }
+      }}
+      onMouseEnter={() => setCardActive(true)}
+      onMouseLeave={() => setCardActive(false)}
+      onFocus={() => setCardActive(true)}
+      onBlur={(e) => {
+        // React's onBlur fires (via the underlying focusout) for every
+        // focus change within the card, including moving focus from the
+        // card itself onto one of its own action buttons — only treat this
+        // as "left the card" once focus actually moves outside it, or the
+        // buttons would flicker `tabIndex={-1}` right as the user tries to
+        // Tab into them.
+        if (!e.currentTarget.contains(e.relatedTarget)) setCardActive(false)
       }}
       className={`group bg-slate-800 border rounded-lg p-3 hover:border-slate-500 transition-colors select-none ${
         selected ? 'border-indigo-500' : blocked ? 'border-amber-700/60' : 'border-slate-700'
@@ -249,7 +289,7 @@ function TaskCard({
           )}
           <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 focus-within:opacity-100">
+        <div className="flex items-center gap-1.5 shrink-0">
           {isChild && (
             <button
               onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.parent_task_id}`) }}
@@ -382,13 +422,14 @@ function TaskCard({
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
-            // Hidden until hover/focus (opacity-0) — tabIndex=-1 keeps it out
-            // of the normal tab order so a keyboard user tabbing across the
-            // board doesn't land on an invisible control (see issue #350).
-            // Still reachable by mouse click; reachable by keyboard only once
-            // e.g. a mouse-hover or an explicit accessibility tool reveals it.
-            tabIndex={-1}
-            className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none"
+            // Visually hidden until the card is hovered/focused or the
+            // device can't hover (touch) — see `controlsVisible` above.
+            // tabIndex tracks the same condition dynamically (0 when
+            // visible, -1 when not) rather than a permanent -1, so the
+            // button stays reachable via keyboard once the card is focused,
+            // instead of being unreachable outright (see issue #350).
+            tabIndex={actionTabIndex}
+            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none`}
             title={task.paused ? 'Resume task' : 'Pause task'}
           >
             {task.paused ? '▶' : '⏸'}
@@ -404,8 +445,8 @@ function TaskCard({
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
-            tabIndex={-1}
-            className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
+            tabIndex={actionTabIndex}
+            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
             title={task.archived ? 'Unarchive task' : 'Archive task — hide from the board'}
           >
             {task.archived ? '↩' : '🗄'}
@@ -414,8 +455,8 @@ function TaskCard({
             <button
               onClick={handleEditClick}
               onPointerDown={(e) => e.stopPropagation()}
-              tabIndex={-1}
-              className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
+              tabIndex={actionTabIndex}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
               title="Edit task"
             >
               ✎
@@ -428,8 +469,8 @@ function TaskCard({
                 onDuplicate(task)
               }}
               onPointerDown={(e) => e.stopPropagation()}
-              tabIndex={-1}
-              className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none"
+              tabIndex={actionTabIndex}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
               title="Duplicate task"
             >
               ⧉
@@ -442,8 +483,8 @@ function TaskCard({
                 if (window.confirm('Delete this task?')) onDelete(task.id)
               }}
               onPointerDown={(e) => e.stopPropagation()}
-              tabIndex={-1}
-              className="opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none"
+              tabIndex={actionTabIndex}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none`}
               title="Delete task"
             >
               ✕
