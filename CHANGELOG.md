@@ -398,7 +398,10 @@ triggers the "Release" workflow the same way.
     `attachmentPreviews` in its deps, so its cleanup ran before *every*
     array change (not just unmount), revoking still-rendered preview URLs.
     Previews are now tracked in a ref and revoked only on genuine unmount
-    (or, for `removeAttachment`, exactly the one URL being dropped).
+    (or, for `removeAttachment`, exactly the one URL being dropped). The
+    preview thumbnail's `src` is also now passed through an explicit
+    `blob:`-scheme allow-list before rendering, so a future refactor can't
+    accidentally put an untrusted string in front of the DOM there.
   - Board cards no longer all re-render on every unrelated task-store
     change. `TaskCard`, `TaskColumn`, `TaskBoard`, `AgentGroupColumn`, and
     `BoardPage` subscribed to the whole tasks store with no selector; none

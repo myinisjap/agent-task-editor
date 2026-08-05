@@ -374,4 +374,29 @@ describe('NewTaskModal attachment preview revocation (#350)', () => {
     unmount()
     expect(revokeSpy).toHaveBeenCalledWith('blob:preview-1')
   })
+
+  // Defensive check (see `toSafePreviewSrc` in NewTaskModal.tsx): the
+  // attachment thumbnail's `src` must only ever be a `blob:` URL created by
+  // this component itself. If `URL.createObjectURL` is ever stubbed/replaced
+  // with something that doesn't return a `blob:` string (accidentally or via
+  // a future refactor), the guard must blank the `src` rather than pass an
+  // untrusted string straight into the DOM.
+  it('never renders a preview src that is not a blob: URL', async () => {
+    createSpy.mockRestore()
+    createSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'https://evil.example/x')
+
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-repo-select')
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, makeImageFile('a.png'))
+
+    const img = await screen.findByAltText('a.png')
+    // React omits the `src` attribute entirely for an empty string rather
+    // than rendering `src=""` — either way, the untrusted URL never reaches
+    // the DOM.
+    expect(img.getAttribute('src')).not.toBe('https://evil.example/x')
+    expect(img).not.toHaveAttribute('src', 'https://evil.example/x')
+  })
 })

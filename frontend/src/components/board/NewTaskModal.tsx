@@ -40,6 +40,18 @@ function pickDefaultWorkflowId(sorted: Workflow[], hintId?: string): string {
   return sorted[0]?.id ?? ''
 }
 
+// toSafePreviewSrc guards the attachment-preview <img src>: every value in
+// `attachmentPreviews` is created by this component itself via
+// `URL.createObjectURL(file)` (see `handleFilesSelected` below) and is never
+// derived from user text, a server response, or file *contents* — so it's
+// not attacker-controllable HTML/script. This explicit allow-list check
+// (rather than passing the string straight through) makes that invariant
+// impossible to silently break in a future refactor, and keeps the object
+// URL out of the DOM if it's ever anything other than what we expect.
+function toSafePreviewSrc(src: string): string {
+  return src.startsWith('blob:') ? src : ''
+}
+
 export default function NewTaskModal({ workflow, source, onClose }: Props) {
   const { upsert } = useTasksStore()
   const [repos, setRepos] = useState<Repo[]>([])
@@ -355,17 +367,8 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
             <div className="flex flex-wrap gap-2 mt-1">
               {attachmentPreviews.map((src, i) => (
                 <div key={i} className="relative group">
-                  {/* `src` is always a same-origin `blob:` URL minted locally
-                      by `URL.createObjectURL(file)` in `handleFilesSelected`
-                      above — never a string derived from user/network input —
-                      so it can't carry an HTML/script payload. React also
-                      assigns `src`/`alt` as plain DOM attributes, not via
-                      `innerHTML`, so neither is parsed as markup. This is a
-                      CodeQL `js/xss-through-dom` false positive: see
-                      https://github.com/myinisjap/agent-task-editor/security/code-scanning/18 */}
-                  {/* codeql[js/xss-through-dom] */}
                   <img
-                    src={src}
+                    src={toSafePreviewSrc(src)}
                     alt={attachments[i]?.name}
                     className="w-16 h-16 object-cover rounded border border-slate-700"
                   />
