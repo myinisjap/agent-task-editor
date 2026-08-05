@@ -71,7 +71,7 @@ The `backend` service in `docker-compose.yml` / `docker-compose.release.yml` is 
 
 - `restart: unless-stopped` — the container is restarted automatically after a crash or OOM kill (and on daemon restart), unless you've explicitly stopped it.
 - A healthcheck against `GET /readyz` (not `/healthz`) — this actually checks DB connectivity and that the dispatch loop is still ticking, so Docker detects a wedged backend (e.g. a locked SQLite file or a hung sweep) instead of it appearing healthy forever. See [`docs/api.md`](api.md#get-readyz).
-- A default memory ceiling of **2 GB** via `deploy.resources.limits.memory` — a modest cap that leaves headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to. If you run many concurrent agent runs and hit this ceiling (the container gets OOM-killed and auto-restarts), raise `memory:` under the backend service's `deploy.resources.limits` in your compose file.
+- A default memory ceiling of **4 GB** via `deploy.resources.limits.memory` — headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to, including memory-hungry steps like a frontend test suite running under several concurrent agents. If you run many concurrent agent runs and still hit this ceiling (the container gets OOM-killed and auto-restarts), raise `memory:` under the backend service's `deploy.resources.limits` in your compose file.
 
 ## Environment Variables
 
