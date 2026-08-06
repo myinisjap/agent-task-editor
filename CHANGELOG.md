@@ -407,6 +407,13 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Planning runs now store the full plan in task notes, not just a summary.**
+  The universal run instruction asked every agent for a "concise summary"
+  before completing, which nudged planning runs to leave only a one-liner in
+  `agent_notes` (or write the plan into the task description) — so the task
+  detail page's "Agent Notes" box showed nothing while the plan lived only in
+  the Description box. Planning runs are now told to store the full plan in the
+  notes, so the plan appears in its own expandable box on the task page.
 - **Stale-chunk page crash after a deploy.** The frontend nginx config served
   `index.html` with no cache headers, so browsers cached it and then 404'd on
   the content-hashed JS chunks a later deploy had replaced ("Failed to fetch
