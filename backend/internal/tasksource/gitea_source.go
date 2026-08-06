@@ -57,11 +57,12 @@ func (GiteaIssues) Fetch(ctx context.Context, repo gen.Repo) ([]ExternalTask, er
 	tasks := make([]ExternalTask, 0, len(issues))
 	for _, is := range issues {
 		tasks = append(tasks, ExternalTask{
-			Ref:    fmt.Sprintf("%s#%d", repoName, is.Number),
-			Title:  is.Title,
-			Body:   is.Body,
-			URL:    is.URL,
-			Labels: is.Labels,
+			Ref:         fmt.Sprintf("%s#%d", repoName, is.Number),
+			Title:       is.Title,
+			Body:        is.Body,
+			URL:         is.URL,
+			Labels:      is.Labels,
+			AuthorAssoc: is.AuthorAssociation,
 		})
 	}
 	return tasks, nil

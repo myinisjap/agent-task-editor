@@ -404,6 +404,12 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost
 	}
+	if task.MatchedRuleID != nil {
+		if rule, rerr := h.q.GetIntakeRule(r.Context(), *task.MatchedRuleID); rerr == nil {
+			name := rule.Name
+			resp.MatchedRuleName = &name
+		}
+	}
 	JSON(w, http.StatusOK, resp)
 }
 

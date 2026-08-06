@@ -101,3 +101,21 @@ The sweep runs on a fixed interval, configurable via the `SCHEDULE_INTERVAL`
 env var / `schedule_interval` YAML key (Go duration syntax, default `30s`).
 Cron expressions are minute-granularity, so this only needs to be frequent
 enough to reliably catch each minute boundary.
+
+## Intake rules also apply to schedules
+
+A firing schedule is matched against enabled [intake rules](task-sources.md#intake-routing-rules)
+(`match_source: schedule`, matched against the template's own title/body) the
+same way an imported issue is. A matching rule can supply `apply_priority`
+and `apply_max_cost_usd` unconditionally, and can supply `apply_target_label`
+— but **only when the schedule's own `target_label` is left empty**. A
+schedule's explicit `target_label` is a human-set, already-validated value
+and always takes precedence over a rule's; a rule only fills in the label
+when the schedule doesn't specify one itself. This lets a rule provide a
+shared default target label across many schedules while still letting any
+individual schedule override it.
+
+Unlike issue import, a matched rule's `apply_target_label` is **not** subject
+to the [auto-start safety gate](task-sources.md#the-auto-start-safety-gate):
+a schedule's target label is operator-authored configuration, not untrusted
+imported content, so the mitigation that gate exists for doesn't apply here.

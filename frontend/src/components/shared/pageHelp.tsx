@@ -399,6 +399,13 @@ export function ReposHelp() {
           updated to match (subject to the update policy below); if the issue closes or loses the
           filter label, the task is flagged rather than silently left behind.
         </p>
+        <p>
+          The label filter here is deprecated in favor of <strong>Intake Rules</strong>{' '}
+          (Configuration → Intake Rules), which can match on more than one label and shape the
+          resulting task (template, priority, target label, cost budget) rather than just
+          filtering which issues come in. It's still honoured for one more release; existing
+          values were migrated into equivalent rules automatically.
+        </p>
       </section>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Keeping tasks in sync (update policy)</h3>
@@ -461,6 +468,51 @@ export function TemplatesHelp() {
           A template can also be attached to a cron schedule against a repo, so a new task is
           created automatically on that schedule — no human has to click "New Task". Deleting a
           template also deletes any schedules that use it.
+        </p>
+      </section>
+    </>
+  )
+}
+
+export function IntakeRulesHelp() {
+  return (
+    <>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">What intake rules are for</h3>
+        <p>
+          A rule matches an incoming imported issue or a firing schedule (source, repo, labels,
+          title/body pattern, issue author association) and applies shaping to the task it
+          creates: a template, priority, target label, workflow override, and/or cost budget.
+          Rules are evaluated first-match-wins, in the order shown below — the first enabled rule
+          whose conditions all hold wins, and no rule after it is considered.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">The auto-start safety gate</h3>
+        <p>
+          Imported issues land on the workflow's human-review gate label by default, so a person
+          promotes them before an agent ever runs — the mitigation for untrusted imported issue
+          content. A rule can target a different, agent-triggerable label instead (skipping that
+          review step), but only when it also restricts the issue author's association to
+          OWNER, MEMBER, or COLLABORATOR. The form blocks saving a rule that would auto-start
+          without that constraint.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">issue_sync_label is deprecated</h3>
+        <p>
+          The old per-repo "only import issues with this label" setting still controls which
+          issues are fetched for one more release, but an intake rule with a matching
+          match_labels condition is the way to both filter and shape new work going forward.
+          Existing issue_sync_label values were migrated into equivalent rules automatically.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Preview</h3>
+        <p>
+          "Preview matches" checks a rule (saved or still being edited) against the repo's most
+          recently imported tasks, using the exact same matching logic the importer and
+          scheduler use at runtime — so what you see previewed is what will actually happen.
         </p>
       </section>
     </>

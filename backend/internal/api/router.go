@@ -39,6 +39,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
+	intakeRulesH := handlers.NewIntakeRulesHandler(q)
 	// dispatcherLiveness may also implement GlobalCostReporter (as
 	// *agent.Dispatcher does) to supply the dashboard's global spend-ceiling
 	// snapshot/forecast — same optional-capability pattern as HealthHandler.
@@ -156,6 +157,16 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Get("/schedules/{id}", schedulesH.Get)
 			r.Put("/schedules/{id}", schedulesH.Update)
 			r.Delete("/schedules/{id}", schedulesH.Delete)
+
+			// Intake routing rules — match->apply rules evaluated at
+			// task-creation time for the issue-import and schedule sources
+			// (see internal/intake and migration 051)
+			r.Get("/intake-rules", intakeRulesH.List)
+			r.Post("/intake-rules", intakeRulesH.Create)
+			r.Post("/intake-rules/preview", intakeRulesH.Preview)
+			r.Get("/intake-rules/{id}", intakeRulesH.Get)
+			r.Put("/intake-rules/{id}", intakeRulesH.Update)
+			r.Delete("/intake-rules/{id}", intakeRulesH.Delete)
 
 			// Inline diff review comments — persisted, injected into agent prompts while open
 			r.Get("/tasks/{id}/review-comments", reviewH.List)

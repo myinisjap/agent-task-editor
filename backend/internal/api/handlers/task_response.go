@@ -50,6 +50,15 @@ type taskResponse struct {
 	// simply next in line — see QueuePosition, a separate concern). Only the
 	// first reason the dispatcher would hit is reported, not the full set.
 	BlockReason *agent.BlockReason `json:"block_reason,omitempty"`
+	// MatchedRuleName is the display name of the intake rule referenced by
+	// MatchedRuleID (embedded via gen.Task), resolved at read time so the UI
+	// can show "Created by rule <name>" without a second round trip. Nil
+	// when MatchedRuleID is nil, or if the rule was since deleted (the
+	// column's ON DELETE SET NULL means that combination shouldn't persist,
+	// but a lookup miss degrades gracefully to omitting the name rather than
+	// erroring the whole task response). Only populated on the single-task
+	// GET, mirroring CumulativeCostUsd.
+	MatchedRuleName *string `json:"matched_rule_name,omitempty"`
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the

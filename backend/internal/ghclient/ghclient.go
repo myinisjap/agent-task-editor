@@ -482,11 +482,12 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 	var issues []Issue
 	for dec.More() {
 		var page []struct {
-			Number      int    `json:"number"`
-			Title       string `json:"title"`
-			Body        string `json:"body"`
-			HTMLURL     string `json:"html_url"`
-			PullRequest *struct {
+			Number            int    `json:"number"`
+			Title             string `json:"title"`
+			Body              string `json:"body"`
+			HTMLURL           string `json:"html_url"`
+			AuthorAssociation string `json:"author_association"`
+			PullRequest       *struct {
 				URL string `json:"url"`
 			} `json:"pull_request"`
 			Labels []struct {
@@ -508,11 +509,12 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 				labels = append(labels, l.Name)
 			}
 			issues = append(issues, Issue{
-				Number: r.Number,
-				Title:  r.Title,
-				Body:   r.Body,
-				URL:    r.HTMLURL,
-				Labels: labels,
+				Number:            r.Number,
+				Title:             r.Title,
+				Body:              r.Body,
+				URL:               r.HTMLURL,
+				Labels:            labels,
+				AuthorAssociation: r.AuthorAssociation,
 			})
 		}
 	}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api, authedRawFetch, type Task, type Repo, type WorkflowLabel } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
@@ -485,6 +486,17 @@ export default function TaskHeader({
                 ⚠ source issue closed or unlabeled
               </span>
             )}
+          </Row>
+        )}
+        {task.matched_rule_id && (
+          <Row label="Intake rule">
+            <Link
+              to="/intake-rules"
+              className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+              title="This task's label/priority/template/workflow were shaped by this intake rule at creation — see Configuration → Intake Rules."
+            >
+              {task.matched_rule_name || task.matched_rule_id}
+            </Link>
           </Row>
         )}
         <Row label="Created">

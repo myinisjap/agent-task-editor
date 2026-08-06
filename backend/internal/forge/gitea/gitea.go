@@ -527,13 +527,23 @@ type giteaIssue struct {
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
 }
 
 // ListOpenIssues implements forge.Forge. Paginates through the complete
 // result set (never capped) per the Forge contract — see issue #265.
+//
+// Gitea's issue API doesn't return an author_association-equivalent field
+// the way GitHub's does, so forge.Issue.AuthorAssociation is derived the
+// same way GetIssueComments derives it for comment authors: a per-call
+// memoized collaborator-status check (COLLABORATOR or NONE), so a backlog of
+// N issues by M distinct authors costs M collaborator-check calls, not N.
 func (g *Gitea) ListOpenIssues(ctx context.Context, repoName, label string) ([]forge.Issue, error) {
 	const pageSize = 50
 	var issues []forge.Issue
+	collaboratorCache := map[string]bool{}
 
 	for page := 1; ; page++ {
 		q := url.Values{}
@@ -561,12 +571,25 @@ func (g *Gitea) ListOpenIssues(ctx context.Context, repoName, label string) ([]f
 			for _, l := range r.Labels {
 				labels = append(labels, l.Name)
 			}
+			association := "NONE"
+			if trusted, ok := collaboratorCache[r.User.Login]; ok {
+				if trusted {
+					association = "COLLABORATOR"
+				}
+			} else {
+				trusted := g.isCollaborator(ctx, repoName, r.User.Login)
+				collaboratorCache[r.User.Login] = trusted
+				if trusted {
+					association = "COLLABORATOR"
+				}
+			}
 			issues = append(issues, forge.Issue{
-				Number: r.Number,
-				Title:  r.Title,
-				Body:   r.Body,
-				URL:    r.HTMLURL,
-				Labels: labels,
+				Number:            r.Number,
+				Title:             r.Title,
+				Body:              r.Body,
+				URL:               r.HTMLURL,
+				Labels:            labels,
+				AuthorAssociation: association,
 			})
 		}
 		if len(raw) < pageSize {

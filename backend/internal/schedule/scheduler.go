@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/cronexpr"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intake"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -73,10 +74,18 @@ func (s *Scheduler) Sweep(ctx context.Context) {
 		return
 	}
 
+	// Loaded once per sweep, mirroring tasksource.Importer.Sweep: every
+	// schedule firing in this sweep evaluates against the same rule set.
+	rules, err := s.q.ListEnabledIntakeRules(ctx)
+	if err != nil {
+		log.Warn("schedule sweep: list intake rules failed; firing without rule shaping", "err", err)
+		rules = nil
+	}
+
 	now := time.Now()
 	fired := 0
 	for _, sched := range schedules {
-		if s.fireIfDue(ctx, sched, now) {
+		if s.fireIfDue(ctx, sched, now, rules) {
 			fired++
 		}
 	}
@@ -88,7 +97,18 @@ func (s *Scheduler) Sweep(ctx context.Context) {
 // fireIfDue evaluates one schedule and creates a task if it is due, has no
 // open task outstanding, and its repo has a workflow assigned. It returns
 // true if a task was created.
-func (s *Scheduler) fireIfDue(ctx context.Context, sched gen.TaskSchedule, now time.Time) bool {
+//
+// rules is matched with Source: "schedule" against the schedule's own
+// template title/description. Unlike the issue-import path,
+// intake.AutoStartAllowed is deliberately NOT enforced here: a schedule's
+// target_label is already a human-configured, validated value (see
+// validateTargetLabelForRepo in the schedules API handler), not untrusted
+// third-party content, so the auto-start safety gate that protects against
+// imported issue bodies (#331) doesn't apply to it. A later reader should
+// not "fix" this to call AutoStartAllowed — that would incorrectly reject a
+// human-authored schedule for lacking an author-association constraint that
+// makes no sense for it.
+func (s *Scheduler) fireIfDue(ctx context.Context, sched gen.TaskSchedule, now time.Time, rules []gen.IntakeRule) bool {
 	log := slog.With("component", "schedule", "schedule_id", sched.ID)
 
 	cron, err := cronexpr.Parse(sched.CronExpr)
@@ -143,22 +163,69 @@ func (s *Scheduler) fireIfDue(ctx context.Context, sched gen.TaskSchedule, now t
 	}
 	description += "_Created from schedule " + sched.CronExpr + "_"
 
+	// A rule only supplies target_label when the schedule leaves its own
+	// empty — the schedule's own explicit target_label is the more specific,
+	// human-set config and always wins. Priority and max_cost_usd, however,
+	// come from the rule whenever it matches (a schedule has no equivalent
+	// field of its own to prefer).
+	decision, matched := intake.Match(rules, intake.Candidate{
+		Source: "schedule",
+		RepoID: repo.ID,
+		Title:  tmpl.Title,
+		Body:   tmpl.Description,
+	})
+
+	labels, err := s.q.ListWorkflowLabels(ctx, *repo.WorkflowID)
+	if err != nil {
+		log.Warn("schedule sweep: label lookup failed", "workflow_id", *repo.WorkflowID, "err", err)
+		return false
+	}
+	gate, first := workflow.GateLabel(labels)
+	fallback := gate
+	if fallback == "" {
+		fallback = first
+	}
+
 	targetLabel := sched.TargetLabel
-	if targetLabel == "" {
-		labels, err := s.q.ListWorkflowLabels(ctx, *repo.WorkflowID)
-		if err != nil {
-			log.Warn("schedule sweep: label lookup failed", "workflow_id", *repo.WorkflowID, "err", err)
-			return false
+	if targetLabel == "" && matched && decision.TargetLabel != "" {
+		// Validate a rule-supplied label the same way a human-set one is
+		// validated (see validateTargetLabelForRepo in the schedules API
+		// handler): an invalid rule-supplied label falls back to the gate
+		// rather than creating a task nothing can place.
+		valid := false
+		for _, l := range labels {
+			if l.Name == decision.TargetLabel {
+				valid = true
+				break
+			}
 		}
-		gate, first := workflow.GateLabel(labels)
-		if gate != "" {
-			targetLabel = gate
-		} else if first != "" {
-			targetLabel = first
+		if valid {
+			targetLabel = decision.TargetLabel
 		} else {
+			log.Warn("schedule sweep: rule target_label is not a label in the repo's workflow; ignoring", "rule_id", decision.RuleID, "target_label", decision.TargetLabel)
+		}
+	}
+	if targetLabel == "" {
+		if fallback == "" {
 			log.Warn("schedule sweep: repo workflow has no labels; skipping")
 			return false
 		}
+		targetLabel = fallback
+	}
+
+	taskType := tmpl.Type
+	var priority int64
+	var maxCostUSD float64
+	var matchedRuleID *string
+	if matched {
+		if decision.Priority != nil {
+			priority = *decision.Priority
+		}
+		if decision.MaxCostUsd != nil {
+			maxCostUSD = *decision.MaxCostUsd
+		}
+		ruleID := decision.RuleID
+		matchedRuleID = &ruleID
 	}
 
 	// source_ref must be unique per firing (tasks has a UNIQUE(source,
@@ -167,16 +234,19 @@ func (s *Scheduler) fireIfDue(ctx context.Context, sched gen.TaskSchedule, now t
 	sourceRef := sched.ID + "#" + strconv.FormatInt(now.UnixNano(), 10)
 
 	task, err := s.q.CreateSourcedTask(ctx, gen.CreateSourcedTaskParams{
-		ID:          uuid.NewString(),
-		Title:       tmpl.Title,
-		Description: description,
-		Type:        tmpl.Type,
-		Label:       targetLabel,
-		RepoID:      repo.ID,
-		WorkflowID:  *repo.WorkflowID,
-		Attachments: "[]",
-		Source:      "schedule",
-		SourceRef:   sourceRef,
+		ID:            uuid.NewString(),
+		Title:         tmpl.Title,
+		Description:   description,
+		Type:          taskType,
+		Label:         targetLabel,
+		RepoID:        repo.ID,
+		WorkflowID:    *repo.WorkflowID,
+		Attachments:   "[]",
+		Source:        "schedule",
+		SourceRef:     sourceRef,
+		Priority:      priority,
+		MaxCostUsd:    maxCostUSD,
+		MatchedRuleID: matchedRuleID,
 	})
 	if err != nil {
 		log.Warn("schedule sweep: create task failed", "err", err)

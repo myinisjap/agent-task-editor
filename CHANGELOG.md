@@ -20,6 +20,32 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Intake routing rules — a match→apply engine for issue import and
+  schedules.** (#357) Previously, issue import could only be scoped to a
+  single per-repo `issue_sync_label` string, and both issue import and cron
+  schedules always landed new tasks on the workflow's default label with no
+  way to route different kinds of incoming work differently or apply a
+  template automatically. A new `/intake-rules` table
+  (Configuration → Intake Rules) matches incoming issues/schedule firings on
+  source, repo, labels, title/body regexp, and issue author association,
+  first-match-wins by `sort_order`, and applies a template, priority, target
+  label, workflow override, and/or cost budget to the resulting task. The
+  matched rule's id (and name) is now surfaced on the task detail page
+  ("Intake rule") so routing decisions are no longer invisible. A "Preview
+  matches" action checks a rule against a repo's recently imported tasks
+  using the exact same matcher the importer/scheduler use at runtime.
+  **Safety gate:** a rule may only target an agent-triggerable label
+  (bypassing the human-review step that protects against untrusted imported
+  issue content — see #331) when it also restricts the issue author's
+  association to `OWNER`/`MEMBER`/`COLLABORATOR`; the API, UI, and importer
+  each independently enforce this. **`issue_sync_label` is now deprecated**
+  (still honoured for one more release as a fetch-time filter; existing
+  values were migrated into equivalent rules automatically) — see
+  [task-sources.md](docs/task-sources.md#intake-routing-rules) for the full
+  behavior including the auto-start gate and the `issue_sync_label`
+  migration/deprecation plan. `agent_config_id`-based routing was
+  deliberately left out of this first pass; it needs task→config pinning in
+  the dispatcher, which is a separate, larger change.
 - **Outcome-quality metrics: rework rate, cost-to-done, review burden,
   human-touch rate, escalation rate.** `success_rate_percent` on the Agent
   Performance page only measures whether a run exited cleanly, which is a
