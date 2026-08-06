@@ -383,6 +383,13 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Stale-chunk page crash after a deploy.** The frontend nginx config served
+  `index.html` with no cache headers, so browsers cached it and then 404'd on
+  the content-hashed JS chunks a later deploy had replaced ("Failed to fetch
+  dynamically imported module"). `index.html` is now served `no-cache` and
+  `/tasks/assets/*` is served `immutable` (safe — their filenames are
+  content-hashed), so returning users always get fresh HTML pointing at assets
+  that still exist.
 - **Board frontend polish: attachment thrash, revoked previews, board
   re-render storms, WS→REST request fan-out, and modal accessibility**
   (#350). Six related client-side issues, all in the board/task-detail UI:
