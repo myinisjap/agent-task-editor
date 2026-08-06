@@ -1323,6 +1323,24 @@ func TestTasks_SetPaused_Unpause(t *testing.T) {
 	}
 }
 
+// TestTasks_SetPaused_UnknownTask verifies pausing a nonexistent task
+// returns 404 rather than a raw 500 "sql: no rows in result set" — SetPaused
+// uses a `:one` query the same way SetArchived does, so it needs the same
+// sql.ErrNoRows -> 404 mapping.
+func TestTasks_SetPaused_UnknownTask(t *testing.T) {
+	r, _, _, _ := setupTaskRouter(t)
+
+	body := map[string]bool{"paused": true}
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+uuid.NewString()+"/pause", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body)
+	}
+}
+
 // ---------- List filters / search ----------
 
 // listTasks is a helper that GETs /tasks with the given query string and
@@ -1803,10 +1821,16 @@ func TestTasks_Bulk_Move_PartialFailure(t *testing.T) {
 func TestTasks_Bulk_Validation(t *testing.T) {
 	r, _, _, _ := setupTaskRouter(t)
 
+	tooManyIDs := make([]string, 201)
+	for i := range tooManyIDs {
+		tooManyIDs[i] = uuid.NewString()
+	}
+
 	cases := []map[string]any{
 		{"ids": []string{}, "action": "archive"},    // empty ids
 		{"ids": []string{"x"}, "action": "explode"}, // unknown action
 		{"ids": []string{"x"}, "action": "move"},    // move without to_label
+		{"ids": tooManyIDs, "action": "archive"},    // over the bulk-size cap
 	}
 	for i, body := range cases {
 		req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))

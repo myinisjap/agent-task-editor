@@ -57,6 +57,16 @@ const (
 	maxConfigPageLimit     = 500
 )
 
+// maxBulkIDs caps how many task ids a single POST /tasks/bulk request may
+// carry. Each id is processed as its own sequential BEGIN IMMEDIATE write
+// transaction (engine.Transition, or a single-row UPDATE) against a
+// single-writer SQLite file, so an unbounded batch starves every other
+// writer and can blow past the server's WriteTimeout before the client ever
+// sees a response. 200 comfortably covers realistic bulk-action usage
+// (selecting a page of the board) while keeping worst-case request latency
+// bounded.
+const maxBulkIDs = 200
+
 // parsePageLimit parses a ?limit= value, falling back to def when empty or
 // invalid and clamping into [1, max].
 func parsePageLimit(raw string, def, max int) int {

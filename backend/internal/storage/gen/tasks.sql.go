@@ -106,6 +106,45 @@ func (q *Queries) CountActiveRunsByRepo(ctx context.Context) ([]CountActiveRunsB
 	return items, nil
 }
 
+const countAllTasksByLabel = `-- name: CountAllTasksByLabel :many
+SELECT label, COUNT(*) AS count
+FROM tasks
+WHERE archived = 0
+GROUP BY label
+`
+
+type CountAllTasksByLabelRow struct {
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+// Per-label counts of non-archived tasks across all workflows, for the
+// dashboard's label_counts map. Scans only (label, archived) instead of
+// pulling every column (including the full description text) of every task
+// row via ListTasks.
+func (q *Queries) CountAllTasksByLabel(ctx context.Context) ([]CountAllTasksByLabelRow, error) {
+	rows, err := q.db.QueryContext(ctx, countAllTasksByLabel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountAllTasksByLabelRow
+	for rows.Next() {
+		var i CountAllTasksByLabelRow
+		if err := rows.Scan(&i.Label, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countSubtasks = `-- name: CountSubtasks :one
 SELECT COUNT(*) FROM tasks WHERE parent_task_id = ?
 `
@@ -818,6 +857,50 @@ func (q *Queries) ListSubtasks(ctx context.Context, parentTaskID *string) ([]Tas
 			&i.PrMergeable,
 			&i.CostWarned,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskTitlesByIDs = `-- name: ListTaskTitlesByIDs :many
+SELECT id, title FROM tasks WHERE id IN (/*SLICE:task_ids*/?)
+`
+
+type ListTaskTitlesByIDsRow struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// Titles for a specific set of task ids, e.g. resolving the top-N-by-cost
+// table on the dashboard without pulling every column of every task row.
+func (q *Queries) ListTaskTitlesByIDs(ctx context.Context, taskIds []string) ([]ListTaskTitlesByIDsRow, error) {
+	query := listTaskTitlesByIDs
+	var queryParams []interface{}
+	if len(taskIds) > 0 {
+		for _, v := range taskIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", strings.Repeat(",?", len(taskIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTaskTitlesByIDsRow
+	for rows.Next() {
+		var i ListTaskTitlesByIDsRow
+		if err := rows.Scan(&i.ID, &i.Title); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

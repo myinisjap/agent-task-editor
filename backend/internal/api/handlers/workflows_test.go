@@ -203,6 +203,84 @@ func TestWorkflows_Update_DuplicateNameRejected(t *testing.T) {
 	}
 }
 
+// TestWorkflows_Update_OmittedNameAndDescriptionPreserved verifies that a
+// PUT body omitting name/description keeps the existing values instead of
+// blanking them to "" — an empty name would break
+// GetWorkflowByName("Default"), which resolveDefaultWorkflowID depends on
+// for task creation.
+func TestWorkflows_Update_OmittedNameAndDescriptionPreserved(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	ctx := context.Background()
+
+	wf, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{
+		ID: "wf-omit-fields", Name: "Keep Me", Description: "keep this too",
+	})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/workflows/"+wf.ID, jsonBody(t, map[string]any{
+		"labels":      []map[string]any{{"name": "work", "color": "#111", "sort_order": 0}},
+		"transitions": []map[string]any{},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+
+	updated, err := q.GetWorkflow(ctx, wf.ID)
+	if err != nil {
+		t.Fatalf("get workflow: %v", err)
+	}
+	if updated.Name != "Keep Me" {
+		t.Errorf("expected name to be preserved as 'Keep Me', got %q", updated.Name)
+	}
+	if updated.Description != "keep this too" {
+		t.Errorf("expected description to be preserved, got %q", updated.Description)
+	}
+}
+
+// TestWorkflows_Update_RenameRollsBackOnTransitionFailure verifies that if
+// replacing transitions fails partway through (here: an invalid
+// trigger_type, rejected by the CHECK constraint), the workflow rename is
+// rolled back along with everything else in the transaction rather than
+// being silently committed against a DB state the client never asked for.
+func TestWorkflows_Update_RenameRollsBackOnTransitionFailure(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	ctx := context.Background()
+
+	wf, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{
+		ID: "wf-rollback", Name: "Original Name", Description: "orig",
+	})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/workflows/"+wf.ID, jsonBody(t, map[string]any{
+		"name":   "New Name",
+		"labels": []map[string]any{{"name": "work", "color": "#111", "sort_order": 0}},
+		"transitions": []map[string]any{
+			{"from_label": "work", "to_label": "done", "trigger_type": "not-a-real-type"},
+		},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 from the CHECK constraint failure, got %d: %s", w.Code, w.Body)
+	}
+
+	after, err := q.GetWorkflow(ctx, wf.ID)
+	if err != nil {
+		t.Fatalf("get workflow: %v", err)
+	}
+	if after.Name != "Original Name" {
+		t.Errorf("expected rename to roll back with the rest of the transaction, but name is now %q", after.Name)
+	}
+}
+
 func TestWorkflows_Get_Found(t *testing.T) {
 	r, q := setupWorkflowRouter(t)
 
@@ -246,6 +324,59 @@ func TestWorkflows_Delete_OK(t *testing.T) {
 
 	if w.Code != http.StatusNoContent {
 		t.Errorf("expected 204, got %d", w.Code)
+	}
+}
+
+// TestWorkflows_Delete_NotFound verifies deleting an id that doesn't exist
+// returns 404 rather than a false-positive 204.
+func TestWorkflows_Delete_NotFound(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/workflows/ghost", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body)
+	}
+}
+
+// TestWorkflows_Delete_ConflictWhenTasksReference verifies deleting a
+// workflow that still has tasks pointing at it returns 409 with the
+// referencing task count instead of a raw 500 "FOREIGN KEY constraint
+// failed" from the DB.
+func TestWorkflows_Delete_ConflictWhenTasksReference(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	ctx := context.Background()
+
+	wf, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{ID: "wf-in-use", Name: "In Use"})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	repoID := "repo-in-use"
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "repo", Path: t.TempDir(), WorkflowID: &wf.ID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: "task-in-use", Title: "t", WorkflowID: wf.ID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/workflows/"+wf.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body)
+	}
+
+	// The workflow must still exist — the delete must not have partially
+	// applied.
+	if _, err := q.GetWorkflow(ctx, wf.ID); err != nil {
+		t.Errorf("expected workflow to still exist after conflicting delete: %v", err)
 	}
 }
 

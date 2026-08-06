@@ -1323,6 +1323,66 @@ func TestReposDelete_OK(t *testing.T) {
 	}
 }
 
+// TestReposDelete_NotFound verifies deleting an id that doesn't exist
+// returns 404 rather than a false-positive 204.
+func TestReposDelete_NotFound(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	req := httptest.NewRequest(http.MethodDelete, "/repos/ghost", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReposDelete_ConflictWhenTasksReference verifies deleting a repo that
+// still has tasks pointing at it returns 409 with the referencing task
+// count instead of a raw 500 "FOREIGN KEY constraint failed" from the DB.
+func TestReposDelete_ConflictWhenTasksReference(t *testing.T) {
+	base := t.TempDir()
+	router, q := setupReposRouter(t, base)
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myorg/myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	repoID, _ := created["id"].(string)
+
+	ctx := context.Background()
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	if _, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "t", WorkflowID: wfs[0].ID, RepoID: repoID, Label: "work",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/repos/"+repoID, nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// The repo must still exist — the delete must not have partially applied.
+	req = httptest.NewRequest(http.MethodGet, "/repos/"+repoID, nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected repo to still exist after conflicting delete, got %d", w.Code)
+	}
+}
+
 func TestReposTree_OK(t *testing.T) {
 	base := t.TempDir()
 	router, _ := setupReposRouter(t, base)
