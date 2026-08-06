@@ -30,7 +30,13 @@ ARG INSECURE_SKIP_SSL_VERIFY=false
 RUN apk add --no-cache ca-certificates git github-cli bash build-base su-exec shadow ripgrep
 RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl false; fi
 # Install Claude Code CLI globally so 'claude' is on PATH
-RUN npm install -g @anthropic-ai/claude-code
+#
+# Pinned so two builds of the same git tag produce the same agent runtime and
+# a breaking CLI release can't turn a green docker-build into a broken
+# published image. Bump deliberately (Dependabot's docker ecosystem only
+# tracks FROM lines).
+ARG CLAUDE_CLI_VERSION=2.1.223
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}
 
 # Codex CLI (codex_cli provider) and Qwen CLI (qwen_code provider) are NOT
 # installed by default — unlike claude above, both are gated behind build
@@ -40,8 +46,11 @@ RUN npm install -g @anthropic-ai/claude-code
 #   INSTALL_QWEN_CLI=true docker compose build
 ARG INSTALL_CODEX_CLI=false
 ARG INSTALL_QWEN_CLI=false
-RUN if [ "$INSTALL_CODEX_CLI" = "true" ]; then npm install -g @openai/codex; fi
-RUN if [ "$INSTALL_QWEN_CLI" = "true" ]; then npm install -g @qwen-code/qwen-code; fi
+# Pinned for the same reproducibility reason as CLAUDE_CLI_VERSION above.
+ARG CODEX_CLI_VERSION=0.146.1
+ARG QWEN_CLI_VERSION=0.21.6
+RUN if [ "$INSTALL_CODEX_CLI" = "true" ]; then npm install -g @openai/codex@${CODEX_CLI_VERSION}; fi
+RUN if [ "$INSTALL_QWEN_CLI" = "true" ]; then npm install -g @qwen-code/qwen-code@${QWEN_CLI_VERSION}; fi
 ENV SHELL=/bin/sh
 
 # Bring in the same Go toolchain used to build this image's own server binary

@@ -183,7 +183,10 @@ Agent shell commands run inside the **backend** Docker container, against your b
 - [ ] Set `CORS_ORIGINS` to your actual origin instead of `*`
 - [ ] Run behind a reverse proxy or VPN; do not expose port 8080 directly to the internet
 
-The server binds to all interfaces (`:8080`) by default. In Docker, map it to `127.0.0.1:8080` if you don't need external access.
+`docker-compose.yml`/`docker-compose.release.yml` publish the backend (`8080`) and frontend
+(`5173`) ports on `127.0.0.1` by default, so the stack is only reachable from localhost out of
+the box. Set `ATE_BIND_ADDR=0.0.0.0` in `.env` (or the environment) to publish on all
+interfaces — only do this alongside `API_TOKEN` and `CORS_ORIGINS` above.
 
 ---
 

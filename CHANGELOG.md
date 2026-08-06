@@ -345,8 +345,32 @@ triggers the "Release" workflow the same way.
   viewport and once on a mobile viewport — via a new `mobile-chrome`
   Playwright project, so mobile-only layouts (collapsed nav, mobile header
   bars) get smoke coverage too. See `frontend/e2e/README.md`.
+- **CI drift check for the generated Capability Matrix.** The frontend CI job
+  already gated `frontend/src/api/types.ts` and sqlc's generated code against
+  drift; it now also re-runs `npm run gen:capability-docs` and fails the
+  build if `docs/agents.md`'s Capability Matrix (generated from
+  `frontend/src/lib/providerCapabilities.ts`) comes out different, so it can
+  no longer silently drift from the source of truth the UI reads.
 
 ### Changed
+- **Compose now publishes on `127.0.0.1` by default instead of all
+  interfaces.** `docker-compose.yml`/`docker-compose.release.yml` previously
+  bound the backend (`8080`) and frontend (`5173`) ports to `0.0.0.0` while
+  `API_TOKEN` ships commented out, exposing the board — and the agent-dispatch
+  path — to anyone on the same network. Both files now default to
+  `127.0.0.1`; set `ATE_BIND_ADDR=0.0.0.0` to restore the old behavior, and
+  set `API_TOKEN`/`CORS_ORIGINS` if you do. No effect if you're using
+  `docker-compose.traefik.yml`, which already drops host port bindings
+  entirely. **This is a behavior change** — if you relied on the previous
+  all-interfaces default (e.g. reaching the board from another machine on
+  your LAN without Traefik), set `ATE_BIND_ADDR=0.0.0.0` after upgrading.
+- **`govulncheck` and the bundled agent CLIs are now pinned.** CI installed
+  `govulncheck@latest` and `backend/Dockerfile` installed
+  `@anthropic-ai/claude-code`, `@openai/codex`, and `@qwen-code/qwen-code`
+  unpinned, so a new upstream release could fail unrelated PRs or make two
+  builds of the same git tag produce different (and potentially broken)
+  agent runtimes. All four are now pinned to explicit versions, bumped
+  deliberately.
 - **Backend container default memory ceiling raised from 2 GB to 4 GB.**
   Under several concurrent agent runs (`MAX_WORKERS`), memory-hungry agent
   steps — notably a frontend test suite (`npm run test`/vitest) — could push
@@ -390,6 +414,37 @@ triggers the "Release" workflow the same way.
   `/tasks/assets/*` is served `immutable` (safe — their filenames are
   content-hashed), so returning users always get fresh HTML pointing at assets
   that still exist.
+- **Prerelease tags no longer republish `:latest`.** The release workflow's
+  `docker/metadata-action` config had no guard on the raw `latest` tag —
+  pushing a prerelease tag like `v1.3.0-rc.1` republished
+  `ghcr.io/.../backend:latest` (and the `-all-cli` variant) as a release
+  candidate. Since `run.sh` defaults `ATE_VERSION=latest` and the release
+  compose file sets `pull_policy: always`, every default deployment would
+  have silently rolled onto the RC. The raw `latest` tag is now only enabled
+  for tags without a `-` (i.e. non-prerelease semver).
+- **`dev.sh`/`run.sh` now `set -euo pipefail`.** Previously, a failed `go
+  build` (or any other failing command) in `./dev.sh dev` was silently
+  ignored and the script went on to launch a stale binary from a prior
+  build. Both scripts now exit immediately on error/unset-variable/failed
+  pipeline; every previously-optional variable (`REPO_BASE_DIR`,
+  `TRAEFIK_HOST`, `GH_TOKEN`, `AGENT_RAW_LOG_DIR`) and command
+  (`gh auth token`, `lsof`/`kill` in `dev-stop`, the final `wait`) was
+  audited so a clean shell with none of these set still runs cleanly.
+- **macOS Keychain credential sync no longer truncates existing credentials
+  on failure.** `dev.sh`/`run.sh` redirected `security
+  find-generic-password` output straight into
+  `~/.claude/.credentials.json`, which truncated the file *before* `security`
+  ran — a missing/locked keychain entry or a denied access prompt silently
+  zeroed out a previously-valid credentials file. Both scripts now write to a
+  temp file first and only move it into place on success, leaving any
+  existing credentials file untouched otherwise (and print a note instead of
+  failing silently).
+- **`dev.sh`/`run.sh` pre-create `~/.claude.json`.** The Docker bind mount
+  `${HOME}/.claude.json:/home/node/.claude.json` names a file, but Docker
+  creates a *directory* there when the host path doesn't already exist —
+  breaking `./dev.sh login`/`./run.sh login` and host-side `claude` for
+  first-time users. Both scripts now pre-create it as an empty file (if
+  missing) before invoking Docker Compose.
 - **Board frontend polish: attachment thrash, revoked previews, board
   re-render storms, WS→REST request fan-out, and modal accessibility**
   (#350). Six related client-side issues, all in the board/task-detail UI:

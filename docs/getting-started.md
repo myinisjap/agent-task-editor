@@ -22,7 +22,9 @@ cd agent-task-editor
 
 Open `http://localhost:5173` in your browser.
 
-The backend starts on `:8080`, the frontend nginx on `:5173`.
+The backend starts on `:8080`, the frontend nginx on `:5173`. Both ports are published on
+`127.0.0.1` by default (see `ATE_BIND_ADDR` below) — for anyone else on your network to reach
+the board, you need to opt in.
 
 ## `dev.sh` Commands
 
@@ -39,7 +41,7 @@ The backend starts on `:8080`, the frontend nginx on `:5173`.
 
 ## Deploying Behind Traefik
 
-A `docker-compose.traefik.yml` override is included for running the app behind a Traefik reverse proxy. It removes the host port bindings and adds the Traefik labels needed to route traffic.
+A `docker-compose.traefik.yml` override is included for running the app behind a Traefik reverse proxy. It removes the host port bindings (so `ATE_BIND_ADDR` — see [Environment Variables](#environment-variables) — has no effect once this override is in play) and adds the Traefik labels needed to route traffic.
 
 Create a `.env` file in the project root (gitignored) with your hostname:
 
@@ -81,6 +83,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 
 | Variable | Default | Description |
 |---|---|---|
+| `ATE_BIND_ADDR` | `127.0.0.1` | **Not read by the Go server** — consumed by `docker-compose.yml`/`docker-compose.release.yml` to pick the host address the `backend` (`8080`) and `frontend` (`5173`) ports are published on. Defaults to loopback-only; set to `0.0.0.0` to publish on all interfaces, and only alongside `API_TOKEN`/`CORS_ORIGINS` above. No effect when using `docker-compose.traefik.yml`, which drops host port bindings entirely. |
 | `PORT` | `8080` | Backend HTTP port |
 | `DB_PATH` | `agent-task-editor.db` | SQLite database file path |
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth. Requests using this token are recorded anonymously (no actor name) in the label history audit trail — see `API_TOKENS` below for named tokens. |
@@ -215,6 +218,12 @@ volumes:
 ```
 
 Run `./dev.sh login` to authenticate the CLI inside the container.
+
+`dev.sh`/`run.sh` also bind-mount `~/.claude.json` into the container. Docker creates a
+*directory* at a bind-mount source path that doesn't already exist on the host, which would
+break both `./dev.sh login` and host-side `claude` for first-time users — both scripts
+pre-create `~/.claude.json` as an empty file (if missing) before invoking Docker Compose, so
+this doesn't happen.
 
 ### Anthropic API (`anthropic` provider) — deprecated
 
