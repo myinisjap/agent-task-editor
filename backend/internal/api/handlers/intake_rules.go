@@ -143,6 +143,18 @@ func (h *IntakeRulesHandler) validate(ctx context.Context, body intakeRuleBody) 
 		if _, err := h.q.GetTaskTemplate(ctx, *body.ApplyTemplateID); err != nil {
 			return "", http.StatusNotFound, "apply_template_id: template not found"
 		}
+		// apply_template_id is a silent no-op for match_source == "schedule":
+		// internal/schedule.fireIfDue always shapes the created task from the
+		// schedule's own gen.TaskSchedule.TemplateID (the template a human
+		// picked when creating the schedule) and never reads
+		// intake.Decision.TemplateID — a schedule's template is not
+		// "optional" the way an issue's shaping is, so there is no sensible
+		// "apply this template on top of the schedule's own" semantics to
+		// fall back to. Reject at write time rather than let this be
+		// configured and silently never take effect (see docs/task-sources.md).
+		if body.MatchSource == "schedule" {
+			return "", http.StatusBadRequest, "apply_template_id has no effect for match_source \"schedule\": scheduled tasks are always shaped from the schedule's own template. Leave apply_template_id empty for schedule rules, or set match_source to \"issue\"/\"\" to shape imported issues instead."
+		}
 	}
 	if body.ApplyPriority != nil && !validPriority(int(*body.ApplyPriority)) {
 		return "", http.StatusBadRequest, "apply_priority must be -1 (low), 0 (normal), 1 (high), or 2 (urgent)"
@@ -195,9 +207,22 @@ func (h *IntakeRulesHandler) validate(ctx context.Context, body intakeRuleBody) 
 		// exclusively trusted associations — see intake.AutoStartAllowed,
 		// the single place this predicate lives (this handler defers to it
 		// rather than re-implementing the trust list).
-		probe := gen.IntakeRule{MatchAuthorAssoc: encodeOrEmpty(body.MatchAuthorAssoc)}
-		if !intake.AutoStartAllowed(probe, isGate) {
-			return "", http.StatusBadRequest, "apply_target_label targets an agent-triggerable label, which lets this rule auto-start a task from untrusted imported content. Restrict match_author_assoc to " + trustedAssocList() + " before this can be saved, or target the workflow's human-review (agent_ignore) label instead."
+		//
+		// This gate only applies to rules that can match an 'issue' —
+		// i.e. match_source is "issue" or "" (any, since an any-source
+		// rule can still match an issue). It is deliberately NOT enforced
+		// for match_source == "schedule": a schedule's target_label is
+		// already human-configured, validated content (see
+		// internal/schedule's fireIfDue doc comment and
+		// docs/task-sources.md), not third-party imported text, so
+		// requiring an author-association constraint there would be
+		// nonsensical (schedules have no author) and would make an
+		// intentionally-supported configuration impossible to save.
+		if body.MatchSource != "schedule" {
+			probe := gen.IntakeRule{MatchAuthorAssoc: encodeOrEmpty(body.MatchAuthorAssoc)}
+			if !intake.AutoStartAllowed(probe, isGate) {
+				return "", http.StatusBadRequest, "apply_target_label targets an agent-triggerable label, which lets this rule auto-start a task from untrusted imported content. Restrict match_author_assoc to " + trustedAssocList() + " before this can be saved, or target the workflow's human-review (agent_ignore) label instead."
+			}
 		}
 	}
 

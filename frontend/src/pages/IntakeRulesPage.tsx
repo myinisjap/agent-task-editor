@@ -193,7 +193,25 @@ export default function IntakeRulesPage() {
   }
 
   function autoStartUnsafe(f: RuleForm) {
+    // The auto-start gate only applies to rules that can match an 'issue'
+    // (match_source is "issue" or "" for any). It does not apply to
+    // match_source "schedule": a schedule's target_label is already
+    // human-configured, validated content, not untrusted imported text, so
+    // requiring an author-association constraint (which a schedule firing
+    // has no equivalent of) would be nonsensical — mirrors the backend's
+    // validate() in intake_rules.go.
+    if (f.match_source === 'schedule') return false
     return !isGateLabel(f) && !hasTrustedAuthorConstraint(f)
+  }
+
+  // templateNoOpForSchedule reports whether apply_template_id is set on a
+  // rule whose match_source is "schedule" — a combination the scheduler
+  // silently ignores (scheduled tasks are always shaped from the
+  // schedule's own template, never from a matched rule's), so the backend
+  // rejects it at write time. Mirrored here so the form can warn/block
+  // before submitting rather than surfacing only as a server 400.
+  function templateNoOpForSchedule(f: RuleForm) {
+    return f.match_source === 'schedule' && !!f.apply_template_id
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -312,6 +330,8 @@ export default function IntakeRulesPage() {
 
   function renderFormFields(f: RuleForm, setF: (fn: (f: RuleForm) => RuleForm) => void, idPrefix: string) {
     const unsafe = autoStartUnsafe(f)
+    const templateDisabledForSchedule = f.match_source === 'schedule'
+    const templateWarn = templateNoOpForSchedule(f)
     return (
       <div className="flex flex-col gap-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -392,7 +412,8 @@ export default function IntakeRulesPage() {
             <select
               value={f.apply_template_id}
               onChange={(e) => setF((p) => ({ ...p, apply_template_id: e.target.value }))}
-              className={inputCls}
+              disabled={templateDisabledForSchedule}
+              className={`${inputCls} disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               <option value="">None</option>
               {templateOptions.map((t) => (
@@ -401,6 +422,12 @@ export default function IntakeRulesPage() {
                 </option>
               ))}
             </select>
+            {templateDisabledForSchedule && (
+              <p className="text-[11px] text-slate-500">
+                Not available for schedule rules — scheduled tasks are always shaped from the schedule's own
+                template.
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-slate-400">Priority</label>
@@ -479,6 +506,14 @@ export default function IntakeRulesPage() {
             leave the target label empty to keep landing on the gate.
           </div>
         )}
+
+        {templateWarn && (
+          <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2.5 text-xs text-amber-300">
+            <strong>No effect:</strong> "Apply template" has no effect for schedule rules — scheduled tasks are
+            always shaped from the schedule's own template. Set "Apply template" to None to save this rule, or
+            change Source to Issue import to shape imported issues with a template instead.
+          </div>
+        )}
       </div>
     )
   }
@@ -523,7 +558,7 @@ export default function IntakeRulesPage() {
             </button>
             <button
               type="submit"
-              disabled={saving || !form.name.trim() || autoStartUnsafe(form)}
+              disabled={saving || !form.name.trim() || autoStartUnsafe(form) || templateNoOpForSchedule(form)}
               className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
             >
               {saving ? 'Adding…' : 'Add Rule'}
@@ -625,7 +660,7 @@ export default function IntakeRulesPage() {
                     </button>
                     <button
                       type="submit"
-                      disabled={editSaving || !editForm.name.trim() || autoStartUnsafe(editForm)}
+                      disabled={editSaving || !editForm.name.trim() || autoStartUnsafe(editForm) || templateNoOpForSchedule(editForm)}
                       className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
                     >
                       {editSaving ? 'Saving…' : 'Save'}

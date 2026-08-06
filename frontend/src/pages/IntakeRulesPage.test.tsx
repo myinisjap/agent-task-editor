@@ -144,6 +144,50 @@ describe('IntakeRulesPage', () => {
     expect(screen.getByText('Add Rule')).not.toBeDisabled()
   })
 
+  it('does not require a trusted author constraint for a schedule-source target label', async () => {
+    render(<IntakeRulesPage />)
+    await screen.findByText('Bug triage')
+
+    await userEvent.click(screen.getByText('+ Add Rule'))
+    const nameInputs = screen.getAllByPlaceholderText('Bug triage')
+    await userEvent.type(nameInputs[0], 'schedule rule')
+
+    // Switch source to Schedule — the auto-start gate (which exists to
+    // protect against untrusted imported issue content) should not apply,
+    // since a schedule firing has no author to check.
+    const sourceSelects = screen.getAllByDisplayValue('Issue import')
+    await userEvent.selectOptions(sourceSelects[0], 'schedule')
+
+    const repoSelects = screen.getAllByDisplayValue('Any repo')
+    await userEvent.selectOptions(repoSelects[0], 'repo-1')
+
+    const targetInputs = screen.getAllByPlaceholderText('Leave default (human-gate label)')
+    await userEvent.type(targetInputs[0], 'work')
+
+    expect(screen.queryByText(/Auto-start warning/i)).not.toBeInTheDocument()
+    expect(screen.getByText('Add Rule')).not.toBeDisabled()
+  })
+
+  it('warns and blocks submission when a schedule-source rule sets a template', async () => {
+    templatesListMock.mockResolvedValue([
+      { id: 'tmpl-1', name: 'Triage', title: 'Triage', description: '', type: 'bug', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    ] as TaskTemplate[])
+    render(<IntakeRulesPage />)
+    await screen.findByText('Bug triage')
+
+    await userEvent.click(screen.getByText('+ Add Rule'))
+    const nameInputs = screen.getAllByPlaceholderText('Bug triage')
+    await userEvent.type(nameInputs[0], 'schedule with template')
+
+    const sourceSelects = screen.getAllByDisplayValue('Issue import')
+    await userEvent.selectOptions(sourceSelects[0], 'schedule')
+
+    // The template select should now be disabled for a schedule-source rule.
+    const templateSelects = await screen.findAllByDisplayValue('None')
+    const templateSelect = templateSelects.find((el) => el.tagName === 'SELECT') as HTMLSelectElement
+    expect(templateSelect).toBeDisabled()
+  })
+
   it('deletes a rule', async () => {
     deleteMock.mockResolvedValue(undefined)
     window.confirm = vi.fn().mockReturnValue(true)

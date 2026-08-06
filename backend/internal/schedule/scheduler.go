@@ -226,6 +226,15 @@ func (s *Scheduler) fireIfDue(ctx context.Context, sched gen.TaskSchedule, now t
 		}
 		ruleID := decision.RuleID
 		matchedRuleID = &ruleID
+		if decision.TemplateID != nil && *decision.TemplateID != "" {
+			// apply_template_id is a no-op here: the task is always shaped
+			// from the schedule's own tmpl (sched.TemplateID) above, per
+			// the CRUD handler's write-time rejection of this combination
+			// (see intake_rules.go's validate). This can only be reached
+			// via a direct DB edit that bypassed that check; log loudly
+			// rather than silently ignoring it so it's debuggable.
+			log.Warn("schedule sweep: rule apply_template_id has no effect for scheduled tasks; ignoring", "rule_id", decision.RuleID, "template_id", *decision.TemplateID)
+		}
 	}
 
 	// source_ref must be unique per firing (tasks has a UNIQUE(source,

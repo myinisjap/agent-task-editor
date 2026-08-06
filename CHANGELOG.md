@@ -38,9 +38,18 @@ triggers the "Release" workflow the same way.
   (bypassing the human-review step that protects against untrusted imported
   issue content — see #331) when it also restricts the issue author's
   association to `OWNER`/`MEMBER`/`COLLABORATOR`; the API, UI, and importer
-  each independently enforce this. **`issue_sync_label` is now deprecated**
-  (still honoured for one more release as a fetch-time filter; existing
-  values were migrated into equivalent rules automatically) — see
+  each independently enforce this. This gate applies only to rules that can
+  match an `issue` (`match_source` "issue" or "" for any) — it is not
+  required for `match_source: "schedule"` rules, since a schedule's target
+  label is already human-configured content, not untrusted imported text
+  (a schedule firing has no author to check). Separately, `apply_template_id`
+  only takes effect for `issue`-sourced rules; a scheduled task is always
+  shaped from the schedule's own template, so a rule combining
+  `match_source: "schedule"` with `apply_template_id` is rejected at
+  create/update time (400) rather than silently doing nothing.
+  **`issue_sync_label` is now deprecated** (still honoured for one more
+  release as a fetch-time filter; existing values were migrated into
+  equivalent rules automatically) — see
   [task-sources.md](docs/task-sources.md#intake-routing-rules) for the full
   behavior including the auto-start gate and the `issue_sync_label`
   migration/deprecation plan. `agent_config_id`-based routing was

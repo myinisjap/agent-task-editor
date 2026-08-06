@@ -30,6 +30,15 @@ type apiIntakeRule struct {
 // agent-triggerable label) to reference from rule bodies.
 func setupIntakeRulesRouter(t *testing.T) (http.Handler, string) {
 	t.Helper()
+	r, _, repoID := setupIntakeRulesRouterWithQueries(t)
+	return r, repoID
+}
+
+// setupIntakeRulesRouterWithQueries is setupIntakeRulesRouter plus the
+// underlying *gen.Queries, for tests that need to seed additional fixtures
+// (e.g. a task template) against the same database the router uses.
+func setupIntakeRulesRouterWithQueries(t *testing.T) (http.Handler, *gen.Queries, string) {
+	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
 
@@ -57,7 +66,7 @@ func setupIntakeRulesRouter(t *testing.T) (http.Handler, string) {
 	r.Get("/intake-rules/{id}", h.Get)
 	r.Put("/intake-rules/{id}", h.Update)
 	r.Delete("/intake-rules/{id}", h.Delete)
-	return r, repoID
+	return r, q, repoID
 }
 
 func createIntakeRule(t *testing.T, r http.Handler, body map[string]any) (apiIntakeRule, int) {
@@ -235,6 +244,60 @@ func TestIntakeRules_Create_GateLabelNoAuthorConstraintNeeded_Returns201(t *test
 	})
 	if code != http.StatusCreated {
 		t.Fatalf("expected 201 (landing on the gate label needs no author constraint), got %d", code)
+	}
+}
+
+// TestIntakeRules_Create_ScheduleSourceSkipsAutoStartGate_Returns201 verifies
+// the auto-start safety gate (which exists to protect against untrusted
+// imported issue content, see #331) is not enforced for
+// match_source == "schedule": a schedule's target label is already
+// human-configured content, and a schedule firing has no author to check,
+// so requiring match_author_assoc here would make an intentionally
+// supported configuration impossible to save. Mirrors
+// internal/schedule.fireIfDue's doc comment and the same case in
+// IntakeRulesPage.tsx's autoStartUnsafe.
+func TestIntakeRules_Create_ScheduleSourceSkipsAutoStartGate_Returns201(t *testing.T) {
+	r, repoID := setupIntakeRulesRouter(t)
+	rule, code := createIntakeRule(t, r, map[string]any{
+		"name":               "schedule auto-start ok",
+		"match_source":       "schedule",
+		"match_repo_id":      repoID,
+		"apply_target_label": "work", // agent-triggerable, not the gate
+		"match_author_assoc": []string{},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("expected 201 (schedule rules don't need an author-association constraint to target an agent-triggerable label), got %d", code)
+	}
+	if rule.ApplyTargetLabel != "work" {
+		t.Errorf("apply_target_label = %q, want work", rule.ApplyTargetLabel)
+	}
+}
+
+// TestIntakeRules_Create_ScheduleWithTemplate_Returns400 verifies
+// apply_template_id is rejected for match_source == "schedule": the
+// scheduler always shapes the created task from the schedule's own
+// template (internal/schedule.fireIfDue never reads
+// intake.Decision.TemplateID), so this combination would otherwise be a
+// silent no-op.
+func TestIntakeRules_Create_ScheduleWithTemplate_Returns400(t *testing.T) {
+	r, q, repoID := setupIntakeRulesRouterWithQueries(t)
+	tmpl, err := q.CreateTaskTemplate(context.Background(), gen.CreateTaskTemplateParams{
+		ID:    uuid.NewString(),
+		Name:  "triage",
+		Title: "Triage",
+		Type:  "bug",
+	})
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	_, code := createIntakeRule(t, r, map[string]any{
+		"name":              "schedule with template",
+		"match_source":      "schedule",
+		"match_repo_id":     repoID,
+		"apply_template_id": tmpl.ID,
+	})
+	if code != http.StatusBadRequest {
+		t.Errorf("expected 400 (apply_template_id has no effect for schedule rules), got %d", code)
 	}
 }
 

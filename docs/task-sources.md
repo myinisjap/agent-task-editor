@@ -145,12 +145,22 @@ match field left empty matches "any" for that dimension; all specified
 fields must hold together (AND across fields, OR within a list).
 
 **Apply:** a template (supplies `type`, and the template's own description is
-prepended to the composed issue/schedule description — the issue's or
-schedule's own **title** always wins, since an imported task must stay
-identifiable against its source), a priority, a target label, a workflow
-override, and/or a per-task cost budget (`max_cost_usd`). Every apply field
-left unset means "leave the caller's existing default" — a rule only has to
-say what it actually wants to change.
+prepended to the composed issue description — the issue's own **title**
+always wins, since an imported task must stay identifiable against its
+source), a priority, a target label, a workflow override, and/or a per-task
+cost budget (`max_cost_usd`). Every apply field left unset means "leave the
+caller's existing default" — a rule only has to say what it actually wants
+to change.
+
+`apply_template_id` only applies to `issue`-sourced matches. A scheduled
+task is always shaped from the schedule's own template (the one a human
+picked when creating the schedule, see
+[task-templates.md](task-templates.md)) — there is no "apply a different
+template on top of the schedule's own" semantics to fall back to. A rule
+with `match_source: "schedule"` and `apply_template_id` set is rejected at
+create/update time (400) rather than silently doing nothing; the scheduler
+also logs a warning and ignores it defensively in the unlikely case a rule
+reaches it in that shape anyway (e.g. a direct database edit).
 
 The matched rule's id is recorded on the task (`matched_rule_id`, surfaced on
 the task detail page as "Intake rule") so "why did this task land here with
@@ -187,9 +197,15 @@ inconsistently.
 Cron schedules do **not** go through this gate: a schedule's `target_label`
 is already a human-configured, validated value (see
 [task-templates.md](task-templates.md)), not third-party content, so the
-concern this gate exists for doesn't apply there. A rule's `target_label`
-for a matched schedule only takes effect when the schedule's own
-`target_label` is left empty — the schedule's own setting always wins when
+concern this gate exists for doesn't apply there. Concretely, a rule with
+`match_source: "schedule"` may set `apply_target_label` to any
+agent-triggerable label without an author-association constraint — the API
+does not require one for schedule-sourced rules, and the UI does not show
+the auto-start warning or block saving in that case. (Requiring an author
+association on a schedule rule would be nonsensical: a schedule firing has
+no author to check.) A rule's `target_label` for a matched schedule only
+takes effect when the schedule's own `target_label` is left empty — the
+schedule's own setting always wins when
 present.
 
 ### Preview
