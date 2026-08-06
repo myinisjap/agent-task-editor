@@ -82,6 +82,15 @@ and the UI will look subtly wrong. Instead run a real (cheap) dispatch:
 
 ## 4. Capture the static screenshots
 
+**URLs assume the Vite dev server** (`./dev.sh dev`, step 1), which serves the
+app at base `/` — hence `http://localhost:5173/board` and
+`http://localhost:5173/tasks/<id>`. If you instead capture against the
+*built* app behind nginx (`./dev.sh start` / docker compose), the frontend is
+served under the `/tasks/` base path (`frontend/vite.config.ts`), so every
+route gains that prefix: `http://localhost:5173/tasks/board`,
+`http://localhost:5173/tasks/tasks/<id>`. Stick to `./dev.sh dev` unless you
+have a reason not to.
+
 Most pages (`board`, `dashboard`, `health`, `workflow`, task detail's default
 Overview tab) load fine with a plain single-shot headless capture:
 

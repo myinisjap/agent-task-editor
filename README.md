@@ -220,7 +220,7 @@ The fastest path is the dev helper script:
 Or run services individually:
 
 ```bash
-# Backend (Go 1.24+)
+# Backend (Go 1.25+)
 cd backend && go run ./cmd/server
 
 # Frontend (Node 20+)
@@ -240,10 +240,14 @@ cd backend && go build -o mcp-server ./cmd/mcp-server
 | [docs/getting-started.md](docs/getting-started.md) | Installation, environment variables, local dev setup |
 | [docs/workflows.md](docs/workflows.md) | State machine format, labels, transitions, YAML import/export |
 | [docs/agents.md](docs/agents.md) | Providers, dispatcher, worker pool, run lifecycle, prompt construction |
+| [docs/providers/](docs/providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code`, plus the deprecated `anthropic`/`llm` |
 | [docs/task-sources.md](docs/task-sources.md) | Importing GitHub Issues as tasks |
 | [docs/task-templates.md](docs/task-templates.md) | Task templates and recurring cron-scheduled task creation |
 | [docs/api.md](docs/api.md) | Full REST API endpoint reference |
+| [docs/mcp-tools.md](docs/mcp-tools.md) | MCP sidecar tool reference (for `claude`, `qwen_code`, and `codex_cli` providers) |
+| [docs/board-mcp.md](docs/board-mcp.md) | Standalone MCP server for creating board tickets from a chat client |
 | [docs/websocket.md](docs/websocket.md) | Live log streaming WebSocket protocol |
+| [docs/backup.md](docs/backup.md) | Backup, restore, and continuous replication |
 | [docs/screenshots.md](docs/screenshots.md) | How to regenerate the README/docs screenshots and hero GIF |
 
 ---
