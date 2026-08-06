@@ -22,6 +22,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    # Bound the json-file log so a restart/crash loop can't fill the disk, and
+    # keep a few rotated files so the "shutting down... signal=... uptime=..."
+    # lines survive long enough to diagnose why the container restarted.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       # /readyz (not /healthz) so Docker actually detects a wedged backend —
       # it checks DB connectivity and dispatch-loop liveness, not just that

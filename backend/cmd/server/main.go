@@ -52,6 +52,7 @@ func main() {
 	}
 	agent.SetGitTimeout(cfg.GitTimeout)
 
+	startTime := time.Now()
 	slog.Info("agent-task-editor starting", "version", Version)
 	if cfg.APIToken != "" {
 		slog.Info("bearer auth enabled")
@@ -440,9 +441,12 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	sig := <-quit
 
-	slog.Info("shutting down...")
+	// Log which signal triggered shutdown and how long we'd been up, so a
+	// restart loop can be traced to its source (docker stop, OOM, an external
+	// kill) instead of just showing a bare "shutting down".
+	slog.Info("shutting down...", "signal", sig.String(), "uptime", time.Since(startTime).Round(time.Second).String())
 	cancel()
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
