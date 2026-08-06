@@ -5,12 +5,13 @@ backend/bin/
 *.db-shm
 *.db-wal
 *.db.backup
-backend/coverage.out
+backend/coverage*.out
 backend/test_results.txt
 backend/test-output.log
 frontend/frontend_test_results.txt
 
 # Node
+node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/coverage/
