@@ -383,6 +383,13 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Stale-chunk page crash after a deploy.** The frontend nginx config served
+  `index.html` with no cache headers, so browsers cached it and then 404'd on
+  the content-hashed JS chunks a later deploy had replaced ("Failed to fetch
+  dynamically imported module"). `index.html` is now served `no-cache` and
+  `/tasks/assets/*` is served `immutable` (safe — their filenames are
+  content-hashed), so returning users always get fresh HTML pointing at assets
+  that still exist.
 - **Agents can now authenticate their own `git push` again.** The env
   allow-list that shields agent subprocesses from backend secrets (#321)
   didn't include `GITHUB_TOKEN`/`GH_TOKEN`, so when an agent ran `git push`
