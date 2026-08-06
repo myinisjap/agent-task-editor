@@ -2,7 +2,7 @@
 // api.tasks.bulk is called with the right (ids, action, opts) shape, and
 // that a partial-failure response surfaces the error banner without
 // clearing the selection.
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
@@ -381,5 +381,167 @@ describe('BoardPage running indicator (#249)', () => {
     await waitFor(() => {
       expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
     })
+  })
+})
+
+// issue #350 — a burst of task.label_changed/task.created/task.git_state_changed/
+// task.pr_mergeable_changed events used to fan out into one `api.tasks.get`
+// call per event; these assert the debounce/coalesce behavior instead:
+// small bursts (<= threshold) still do individual gets, once the trailing
+// debounce window elapses, but larger bursts fall back to a single list
+// refresh.
+describe('BoardPage WS refetch coalescing (#350)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    bulkMock.mockReset()
+    costByTaskMock.mockReset().mockResolvedValue([])
+    tasksListMock.mockReset()
+    workflowsListMock.mockReset()
+    tasksGetMock.mockReset()
+    wsOnHandler = null
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('does not call api.tasks.get immediately — it waits for the debounce window', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one' })])
+    tasksGetMock.mockResolvedValue(task({ id: 'task-1', label: 'doing' }))
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await vi.waitFor(() => expect(wsOnHandler).not.toBeNull())
+
+    wsOnHandler!({
+      type: 'task.label_changed',
+      payload: { task_id: 'task-1', from: 'todo', to: 'doing', note: '' },
+    })
+
+    expect(tasksGetMock).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(tasksGetMock).toHaveBeenCalledWith('task-1')
+  })
+
+  it('a small burst of distinct task ids (at/under the threshold) coalesces into one get per id, not one per event', async () => {
+    seedStores([
+      task({ id: 'task-1', title: 'Task one' }),
+      task({ id: 'task-2', title: 'Task two' }),
+    ])
+    tasksGetMock.mockImplementation((id: string) => Promise.resolve(task({ id })))
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await vi.waitFor(() => expect(wsOnHandler).not.toBeNull())
+
+    // Two events referencing the same task id within one debounce window —
+    // should still only need one get for that id once flushed (Set
+    // dedupes), plus one for the second, distinct id.
+    wsOnHandler!({
+      type: 'task.label_changed',
+      payload: { task_id: 'task-1', from: 'todo', to: 'doing', note: '' },
+    })
+    wsOnHandler!({
+      type: 'task.git_state_changed',
+      payload: { task_id: 'task-1', git_state: 'pushed' },
+    })
+    wsOnHandler!({
+      type: 'task.pr_mergeable_changed',
+      payload: { task_id: 'task-2', pr_mergeable: true },
+    })
+
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(tasksGetMock).toHaveBeenCalledTimes(2)
+    expect(tasksGetMock).toHaveBeenCalledWith('task-1')
+    expect(tasksGetMock).toHaveBeenCalledWith('task-2')
+  })
+
+  it('a burst above the coalesce threshold does one list refresh instead of N individual gets', async () => {
+    const tasks = Array.from({ length: 5 }, (_, i) => task({ id: `task-${i}`, title: `Task ${i}` }))
+    seedStores(tasks)
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await vi.waitFor(() => expect(wsOnHandler).not.toBeNull())
+
+    const callsAfterMount = tasksListMock.mock.calls.length
+
+    for (const t of tasks) {
+      wsOnHandler!({
+        type: 'task.label_changed',
+        payload: { task_id: t.id, from: 'todo', to: 'doing', note: '' },
+      })
+    }
+
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(tasksGetMock).not.toHaveBeenCalled()
+    expect(tasksListMock.mock.calls.length).toBe(callsAfterMount + 1)
+  })
+})
+
+// issue #350 — a burst of simultaneous task.agent_done events used to
+// trigger one GET /dashboard/cost-by-task per event; assert it's debounced
+// into a single rollup fetch.
+describe('BoardPage cost rollup debounce (#350)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    bulkMock.mockReset()
+    costByTaskMock.mockReset().mockResolvedValue([])
+    tasksListMock.mockReset()
+    workflowsListMock.mockReset()
+    tasksGetMock.mockReset()
+    wsOnHandler = null
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('coalesces a burst of task.agent_done events into a single cost-by-task refetch', async () => {
+    seedStores([
+      task({ id: 'task-1', title: 'Task one' }),
+      task({ id: 'task-2', title: 'Task two' }),
+      task({ id: 'task-3', title: 'Task three' }),
+    ])
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await vi.waitFor(() => expect(wsOnHandler).not.toBeNull())
+
+    const callsAfterMount = costByTaskMock.mock.calls.length
+
+    for (const id of ['task-1', 'task-2', 'task-3']) {
+      wsOnHandler!({
+        type: 'task.agent_done',
+        payload: { task_id: id, run_id: `r-${id}`, status: 'success' },
+      })
+    }
+
+    // Not yet — still within the debounce window.
+    expect(costByTaskMock.mock.calls.length).toBe(callsAfterMount)
+
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(costByTaskMock.mock.calls.length).toBe(callsAfterMount + 1)
   })
 })

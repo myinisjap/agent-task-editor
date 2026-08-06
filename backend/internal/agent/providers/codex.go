@@ -390,7 +390,14 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		}
 		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 		res.SessionID = finalSession
-		if err != nil && res.Outcome == "" {
+		// Any non-zero exit from the codex binary means something went wrong
+		// (e.g. auth error, crash, bad config). Even if a signal_complete outcome
+		// was recorded, a non-zero exit overrides it — the agent may have signalled
+		// before crashing, or the exit code may reflect an internal SDK error.
+		if err != nil {
+			if res.Outcome != "" {
+				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex exited with error but had outcome %q — treating as failed", res.Outcome), At: time.Now()}
+			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession}
 			applyUsageWithCost(ctx, &failed, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 			return failed, nil
@@ -398,7 +405,11 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		return res, nil
 	}
 
-	if err != nil && outcome == "" {
+	// Non-zero exit means the agent failed regardless of any parsed outcome.
+	if err != nil {
+		if outcome != "" {
+			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
+		}
 		failed := agent.Result{Status: "failed", SessionID: finalSession}
 		applyUsageWithCost(ctx, &failed, finalUsage, r.PriceResolver, input.AgentConfig.Model)
 		return failed, nil

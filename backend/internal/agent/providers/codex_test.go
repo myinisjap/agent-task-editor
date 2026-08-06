@@ -384,7 +384,7 @@ func TestCodexRunner_Run_UnpricedModelFlagsCostUnknown(t *testing.T) {
 
 // TestCodexRunner_Run_FailurePathPersistsPricedCost verifies that a run
 // whose turn reports usage before ultimately failing (exit1 with
-// turn.completed usage followed by turn.failed, resolving Outcome=failure —
+// turn.completed usage followed by turn.failed, resolving Status=failed —
 // see TestCodexRunner_Run_Exit1WithTurnFailed) still prices whatever usage
 // was captured, mirroring qwen's equivalent failure-path coverage. Before
 // the #245 fix, codex captured tokens but never priced them on any path,
@@ -408,8 +408,8 @@ func TestCodexRunner_Run_FailurePathPersistsPricedCost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: unexpected error: %v", err)
 	}
-	if result.Outcome != "failure" {
-		t.Errorf("Outcome = %q, want failure", result.Outcome)
+	if result.Status != "failed" {
+		t.Errorf("Status = %q, want failed", result.Status)
 	}
 	if result.InputTokens != 10 || result.OutputTokens != 20 {
 		t.Errorf("usage = %d/%d, want 10/20", result.InputTokens, result.OutputTokens)
@@ -500,11 +500,11 @@ func TestCodexRunner_Run_WithMCP_PreparesAndCleansUpCodexHome(t *testing.T) {
 }
 
 // TestCodexRunner_Run_Exit1WithTurnFailed verifies a non-zero exit whose
-// stream carries a "turn.failed" event surfaces outcome=failure. Unlike
-// claude's runner (see TestClaudeExitCode1_IsFailed), codex's turn.failed
-// event is itself a resolved outcome ("failure"), not just discarded stdout
-// noise, so Status stays "completed" while Outcome reports the failure —
-// this matches codex.go's actual `err != nil && outcome == ""` gate.
+// stream carries a "turn.failed" event surfaces Status=failed. codex's
+// turn.failed event resolves a non-empty outcome ("failure"), but a non-zero
+// exit always overrides to Status=failed regardless of any parsed outcome
+// (parity with claude's runner — see TestClaudeExitCode1_IsFailed — a
+// non-zero exit means the run's outcome is unverified).
 func TestCodexRunner_Run_Exit1WithTurnFailed(t *testing.T) {
 	runner := &CodexRunner{BinaryPath: os.Args[0]}
 	logCh := make(chan agent.LogEntry, 256)
@@ -517,8 +517,8 @@ func TestCodexRunner_Run_Exit1WithTurnFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: unexpected error: %v", err)
 	}
-	if result.Outcome != "failure" {
-		t.Errorf("Outcome = %q, want failure", result.Outcome)
+	if result.Status != "failed" {
+		t.Errorf("Status = %q, want failed", result.Status)
 	}
 }
 

@@ -143,6 +143,61 @@ describe('TaskHeader attachment URLs (#145 / #178)', () => {
     await screen.findByAltText('attachment')
     expect(fetchedUrls()).toContain('/api/v1/uploads/foo.png')
   })
+
+  // Regression test for the attachment-thrash bug: `task.attachments` is a
+  // freshly-parsed array on every refetch (e.g. from a WS-driven
+  // `refreshTask()`), so a naive `[task.id, attachments]` dependency array
+  // would re-run the fetch effect — revoking and re-downloading every
+  // attachment — even when the attachment list is unchanged in content.
+  it('does not re-fetch attachments when re-rendered with a new-identity but equal attachments array', async () => {
+    vi.stubEnv('BASE_URL', '/')
+    const { default: TaskHeader } = await import('./TaskHeader')
+
+    const { rerender } = renderHeader(TaskHeader, baseTask({ attachments: ['foo.png'] }))
+    await screen.findByAltText('attachment')
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+    // Re-render with a brand new array instance containing the same paths,
+    // simulating a WS-driven refetch that re-parses the task JSON.
+    rerender(
+      <TaskHeader
+        task={baseTask({ attachments: ['foo.png'] })}
+        repos={[]}
+        isStartingColumn={false}
+        editingTask={false}
+        editTitle=""
+        setEditTitle={noop}
+        editDesc=""
+        setEditDesc={noop}
+        editType=""
+        setEditType={noop}
+        editRepoId=""
+        setEditRepoId={noop}
+        editMaxCostUsd=""
+        setEditMaxCostUsd={noop}
+        editPriority={0}
+        setEditPriority={noop}
+        taskSaving={false}
+        taskSaveError=""
+        onStartEdit={noop}
+        onCancelEdit={noop}
+        onTaskSave={noop}
+        onDelete={noop}
+        onTogglePause={noop}
+        actionPending={false}
+        onCreatePR={noop}
+        creatingPR={false}
+        onSyncGitState={noop}
+        onBack={noop}
+        labels={[]}
+        onMoveLabel={noop}
+      />,
+    )
+
+    // Give any (unwanted) async effect a tick to run.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('TaskHeader agent notes modal', () => {

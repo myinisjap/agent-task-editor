@@ -520,14 +520,15 @@ func TestQwenRunner_Run_Exit1NoOutputIsFailed(t *testing.T) {
 	}
 }
 
-// TestQwenRunner_Run_Exit1WithOutcome_OutcomeWins documents that, unlike
-// claude's runner (which explicitly re-classifies a parsed success outcome
-// as failed when the exit code is non-zero — see
-// TestClaudeExitCode1_IsFailed), qwen.go has no such override: a non-empty
-// parsed outcome wins over the exit code. This is a real, if surprising,
-// behavioral difference between the two providers worth having pinned down
-// by a test rather than left as tribal knowledge.
-func TestQwenRunner_Run_Exit1WithOutcome_OutcomeWins(t *testing.T) {
+// TestQwenRunner_Run_Exit1WithOutcome_ExitCodeWins verifies qwen's runner
+// now matches claude's stricter rule (see TestClaudeExitCode1_IsFailed): a
+// non-zero exit always overrides to Status=failed, even when the stream
+// carried a parsed success outcome. Previously qwen let a non-empty parsed
+// outcome win over the exit code, which meant a run that signalled success
+// and then crashed (mid-turn auth expiry, panic during teardown) was
+// persisted as "completed" and the task moved forward on an unverified
+// result — this test now pins down the corrected, safer behavior.
+func TestQwenRunner_Run_Exit1WithOutcome_ExitCodeWins(t *testing.T) {
 	runner := &QwenRunner{BinaryPath: os.Args[0]}
 	logCh := make(chan agent.LogEntry, 256)
 	go func() {
@@ -539,11 +540,8 @@ func TestQwenRunner_Run_Exit1WithOutcome_OutcomeWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: unexpected error: %v", err)
 	}
-	if result.Status != "completed" {
-		t.Errorf("Status = %q, want completed (outcome wins over exit code for qwen)", result.Status)
-	}
-	if result.Outcome != "success" {
-		t.Errorf("Outcome = %q, want success", result.Outcome)
+	if result.Status != "failed" {
+		t.Errorf("Status = %q, want failed (non-zero exit overrides parsed outcome)", result.Status)
 	}
 }
 

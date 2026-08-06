@@ -7,6 +7,7 @@ import { validateWorkflow, type WorkflowValidationError } from '../lib/validateW
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { WorkflowHelp } from '../components/shared/pageHelp'
+import ModalShell from '../components/shared/ModalShell'
 
 // ── New-workflow modal ──────────────────────────────────────────────────────
 
@@ -22,10 +23,6 @@ function NewWorkflowModal({
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -43,10 +40,15 @@ function NewWorkflowModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <ModalShell
+      onClose={onClose}
+      ariaLabel="New Workflow"
+      initialFocusRef={inputRef}
+      className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-6 w-full max-w-sm flex flex-col gap-4"
+    >
       <form
         onSubmit={handleSubmit}
-        className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-6 w-full max-w-sm flex flex-col gap-4"
+        className="flex flex-col gap-4"
       >
         <h2 className="text-lg font-semibold text-slate-100">New Workflow</h2>
 
@@ -90,7 +92,7 @@ function NewWorkflowModal({
           </button>
         </div>
       </form>
-    </div>
+    </ModalShell>
   )
 }
 
