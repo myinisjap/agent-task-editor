@@ -1,0 +1,7 @@
+*.db*
+tmp/
+bin/
+coverage*.out
+server
+mcp-server
+mcp-board
