@@ -74,7 +74,7 @@ func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 
 func (h *TasksHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	run, err := h.q.GetAgentRun(r.Context(), chi.URLParam(r, "run_id"))
-	if err != nil {
+	if err != nil || run.TaskID != chi.URLParam(r, "id") {
 		Err(w, http.StatusNotFound, "run not found")
 		return
 	}
@@ -176,6 +176,12 @@ func (h *TasksHandler) ReplyRun(w http.ResponseWriter, r *http.Request) {
 func (h *TasksHandler) GetRunLogs(w http.ResponseWriter, r *http.Request) {
 	runID := chi.URLParam(r, "run_id")
 	limit := parsePageLimit(r.URL.Query().Get("limit"), defaultLogPageLimit, maxLogPageLimit)
+
+	run, err := h.q.GetAgentRun(r.Context(), runID)
+	if err != nil || run.TaskID != chi.URLParam(r, "id") {
+		Err(w, http.StatusNotFound, "run not found")
+		return
+	}
 
 	// Fetch one extra row (newest first) to detect whether older entries exist.
 	logs, err := h.q.ListAgentLogsPage(r.Context(), gen.ListAgentLogsPageParams{

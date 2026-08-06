@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -36,6 +37,10 @@ func (h *TasksHandler) SetPaused(w http.ResponseWriter, r *http.Request) {
 		ID:     chi.URLParam(r, "id"),
 	})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			Err(w, http.StatusNotFound, "task not found")
+			return
+		}
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -140,6 +145,10 @@ func (h *TasksHandler) Bulk(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.IDs) == 0 {
 		Err(w, http.StatusBadRequest, "ids is required")
+		return
+	}
+	if len(body.IDs) > maxBulkIDs {
+		Err(w, http.StatusBadRequest, fmt.Sprintf("ids must not exceed %d", maxBulkIDs))
 		return
 	}
 	switch body.Action {

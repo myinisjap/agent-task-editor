@@ -33,6 +33,9 @@ RETURNING *;
 -- name: DeleteWorkflow :exec
 DELETE FROM workflows WHERE id = ?;
 
+-- name: CountTasksByWorkflow :one
+SELECT COUNT(*) FROM tasks WHERE workflow_id = ?;
+
 -- name: ListWorkflowLabels :many
 SELECT * FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC;
 

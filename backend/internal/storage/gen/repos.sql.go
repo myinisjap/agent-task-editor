@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countTasksByRepo = `-- name: CountTasksByRepo :one
+SELECT COUNT(*) FROM tasks WHERE repo_id = ?
+`
+
+func (q *Queries) CountTasksByRepo(ctx context.Context, repoID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTasksByRepo, repoID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRepo = `-- name: CreateRepo :one
 INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

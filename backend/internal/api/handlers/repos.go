@@ -708,8 +708,24 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, repo)
 }
 
+// Delete removes a repo. Returns 404 if the repo doesn't exist and 409 (with
+// the referencing task count) if any task still references it — the tasks
+// FK has no ON DELETE clause, so letting the DELETE hit the DB directly
+// would otherwise surface as a raw 500 "FOREIGN KEY constraint failed".
 func (h *ReposHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.q.DeleteRepo(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if _, err := h.q.GetRepo(r.Context(), id); err != nil {
+		Err(w, http.StatusNotFound, "repo not found")
+		return
+	}
+	if n, err := h.q.CountTasksByRepo(r.Context(), id); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if n > 0 {
+		Err(w, http.StatusConflict, fmt.Sprintf("repo is used by %d task(s)", n))
+		return
+	}
+	if err := h.q.DeleteRepo(r.Context(), id); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
