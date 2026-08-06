@@ -295,7 +295,7 @@ func TestCreateNewTasksSkipsConflictingRowWithoutAbortingBatch(t *testing.T) {
 		{Ref: "acme/widgets#2", Title: "Add dark mode", Labels: []string{"enhancement"}},
 	}
 
-	n := im.createNewTasks(context.Background(), repo, fakeSource{}.Name(), "triage", items, slog.Default())
+	n := im.createNewTasks(context.Background(), repo, fakeSource{}.Name(), "triage", items, nil, map[string][]gen.WorkflowLabel{}, slog.Default())
 	if n != 2 {
 		t.Fatalf("createNewTasks returned %d, want 2 (one ref collided, two survived in the same txn)", n)
 	}

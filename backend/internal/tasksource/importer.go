@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intake"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -146,9 +147,28 @@ func (im *Importer) Sweep(ctx context.Context) {
 	}
 	log.Info("issue import: sweep start", "repos", len(repos))
 
+	// Rules are loaded once per sweep (not once per repo): the candidate set
+	// is the same for every repo, and ListEnabledIntakeRules is already
+	// ordered for first-match-wins evaluation — see internal/intake.
+	rules, err := im.q.ListEnabledIntakeRules(ctx)
+	if err != nil {
+		log.Warn("issue import: list intake rules failed; importing without rule shaping", "err", err)
+		rules = nil
+	}
+
 	var total sweepStats
+	warnedDeprecated := false
 	for _, repo := range repos {
-		s := im.sweepRepo(ctx, repo)
+		// issue_sync_label is deprecated in favor of intake rules (see
+		// docs/task-sources.md): it still narrows the fetch, but authors
+		// should migrate to a rule with match_labels for shaping. Warn at
+		// most once per sweep, not once per repo, to avoid log spam on a
+		// large fleet of repos that haven't migrated yet.
+		if repo.IssueSyncLabel != "" && !warnedDeprecated {
+			log.Warn("issue import: issue_sync_label is deprecated; configure an equivalent intake rule instead (see docs/task-sources.md)")
+			warnedDeprecated = true
+		}
+		s := im.sweepRepo(ctx, repo, rules)
 		total.created += s.created
 		total.updated += s.updated
 		total.commented += s.commented
@@ -192,8 +212,11 @@ func (im *Importer) resolveSource(repo gen.Repo) (Source, bool) {
 }
 
 // sweepRepo syncs tasks for one repo: fetch -> per-item create-or-update ->
-// reconcile disappeared items.
-func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
+// reconcile disappeared items. rules is the enabled intake-rule set for this
+// sweep (see Sweep), already ordered for first-match-wins evaluation; nil is
+// a valid value (rule lookup failed or there are no rules) and simply means
+// every item falls back to the gate label with no shaping.
+func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo, rules []gen.IntakeRule) sweepStats {
 	log := slog.With("component", "tasksource", "repo", repo.Name)
 	var stats sweepStats
 
@@ -215,7 +238,13 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 	// workflow, the equivalent gate for any custom one. The gate label also
 	// determines when field updates / comment ingestion are allowed under the
 	// default "gate" update policy.
-	labels, err := im.q.ListWorkflowLabels(ctx, *repo.WorkflowID)
+	//
+	// labelCache memoizes ListWorkflowLabels per workflow id for the rest of
+	// this sweepRepo call: a rule may override the effective workflow via
+	// apply_workflow_id (see resolveRuleTarget), so more than one workflow's
+	// labels can be looked up in a single sweep of one repo.
+	labelCache := map[string][]gen.WorkflowLabel{}
+	labels, err := im.workflowLabels(ctx, *repo.WorkflowID, labelCache)
 	if err != nil {
 		log.Warn("issue import: label lookup failed", "workflow_id", *repo.WorkflowID, "err", err)
 		return stats
@@ -277,7 +306,7 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 			continue
 		}
 
-		if im.applyFieldUpdates(ctx, &task, item, log) {
+		if im.applyFieldUpdates(ctx, &task, item, rules, log) {
 			stats.updated++
 		}
 
@@ -286,10 +315,26 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 		}
 	}
 
-	stats.created += im.createNewTasks(ctx, repo, source.Name(), startLabel, toCreate, log)
+	stats.created += im.createNewTasks(ctx, repo, source.Name(), startLabel, toCreate, rules, labelCache, log)
 
 	stats.flagged += im.reconcile(ctx, repo, source.Name(), seen, log)
 	return stats
+}
+
+// workflowLabels fetches (and memoizes in cache) the workflow_labels for
+// workflowID, so a sweep that touches more than one effective workflow
+// (repo default plus any apply_workflow_id overrides from matched rules)
+// only looks each one up once.
+func (im *Importer) workflowLabels(ctx context.Context, workflowID string, cache map[string][]gen.WorkflowLabel) ([]gen.WorkflowLabel, error) {
+	if labels, ok := cache[workflowID]; ok {
+		return labels, nil
+	}
+	labels, err := im.q.ListWorkflowLabels(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	cache[workflowID] = labels
+	return labels, nil
 }
 
 // createNewTasks imports every not-yet-seen external item for one repo in a
@@ -298,7 +343,12 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo) sweepStats {
 // task.created_bulk event instead of one task.created per item. The event is
 // only published after the transaction commits successfully, so it always
 // reflects DB truth.
-func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, sourceName, startLabel string, items []ExternalTask, log *slog.Logger) int {
+//
+// rules is the enabled intake-rule set for this sweep (nil if none/lookup
+// failed); labelCache memoizes ListWorkflowLabels per workflow id for rules
+// that override the effective workflow via apply_workflow_id (see
+// shapeItem).
+func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, sourceName, startLabel string, items []ExternalTask, rules []gen.IntakeRule, labelCache map[string][]gen.WorkflowLabel, log *slog.Logger) int {
 	if len(items) == 0 {
 		return 0
 	}
@@ -314,17 +364,22 @@ func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, sourceNam
 
 	created := make([]gen.Task, 0, len(items))
 	for _, item := range items {
+		shaped := im.shapeItem(ctx, repo, item, startLabel, rules, labelCache, log)
+
 		task, err := qtx.CreateSourcedTask(ctx, gen.CreateSourcedTaskParams{
-			ID:          uuid.NewString(),
-			Title:       item.Title,
-			Description: composeDescription(item.Body, item.URL),
-			Type:        TaskTypeFromLabels(item.Labels),
-			Label:       startLabel,
-			RepoID:      repo.ID,
-			WorkflowID:  *repo.WorkflowID,
-			Attachments: "[]",
-			Source:      sourceName,
-			SourceRef:   item.Ref,
+			ID:            uuid.NewString(),
+			Title:         shaped.title,
+			Description:   shaped.description,
+			Type:          shaped.taskType,
+			Label:         shaped.label,
+			RepoID:        repo.ID,
+			WorkflowID:    shaped.workflowID,
+			Attachments:   "[]",
+			Source:        sourceName,
+			SourceRef:     item.Ref,
+			Priority:      shaped.priority,
+			MaxCostUsd:    shaped.maxCostUsd,
+			MatchedRuleID: shaped.matchedRuleID,
 		})
 		if err != nil {
 			// A UNIQUE violation here means a concurrent insert won the race —
@@ -381,6 +436,162 @@ func composeDescription(body, url string) string {
 	return description
 }
 
+// shapedItem is the result of applying rule matching + (optional) template
+// shaping to one external item — the fields both createNewTasks and
+// applyFieldUpdates need to agree on, so a task is never "corrected" back
+// and forth between what the create path wrote and what the update path
+// would compute (see the drift-thrash note on applyFieldUpdates).
+type shapedItem struct {
+	title         string
+	description   string
+	taskType      string
+	label         string
+	workflowID    string
+	priority      int64
+	maxCostUsd    float64
+	matchedRuleID *string
+}
+
+// shapeItem computes the full set of task fields for one external item:
+// matches it against rules, resolves the effective workflow/label (applying
+// the security gate before ever letting a rule bypass the human-review
+// gate), and layers an optional template's type/description-prefix on top.
+//
+// Field precedence (deliberate, documented here since it's otherwise
+// unguessable):
+//   - title: always the issue's own title (an imported task must stay
+//     identifiable against its source issue; a template never overrides it).
+//   - type: the template's type if a rule applied one, else the
+//     TaskTypeFromLabels heuristic on the issue's own labels.
+//   - description: the composed issue body+link, with the template's own
+//     description (if any) prepended as context.
+//   - label: the rule's apply_target_label if set AND permitted by
+//     intake.AutoStartAllowed AND it is a real label in the *effective*
+//     workflow; otherwise startLabel (the gate). A rule that fails the
+//     auto-start gate or names an unrecognised label falls back to the gate
+//     rather than being silently dropped — imported issue content is
+//     untrusted, so "fail closed to the human gate" is the only safe
+//     default here (see #331).
+//   - workflow: the rule's apply_workflow_id if set, else the repo's own
+//     workflow. When overridden, the gate/label validity check above is
+//     re-evaluated against *that* workflow's labels, not the repo's.
+func (im *Importer) shapeItem(ctx context.Context, repo gen.Repo, item ExternalTask, startLabel string, rules []gen.IntakeRule, labelCache map[string][]gen.WorkflowLabel, log *slog.Logger) shapedItem {
+	shaped := shapedItem{
+		title:       item.Title,
+		description: composeDescription(item.Body, item.URL),
+		taskType:    TaskTypeFromLabels(item.Labels),
+		label:       startLabel,
+		workflowID:  *repo.WorkflowID,
+	}
+
+	decision, rule, ok := matchRule(rules, intake.Candidate{
+		Source:      "issue",
+		RepoID:      repo.ID,
+		Title:       item.Title,
+		Body:        item.Body,
+		Labels:      item.Labels,
+		AuthorAssoc: item.AuthorAssoc,
+	})
+	if !ok {
+		return shaped
+	}
+
+	// Resolve the effective workflow first: a target-label validity/gate
+	// check must run against the workflow the task will actually land in.
+	effectiveWorkflowID := shaped.workflowID
+	if decision.WorkflowID != nil && *decision.WorkflowID != "" {
+		effectiveWorkflowID = *decision.WorkflowID
+	}
+	effectiveLabels, err := im.workflowLabels(ctx, effectiveWorkflowID, labelCache)
+	if err != nil {
+		log.Warn("issue import: rule workflow label lookup failed; falling back to repo default", "rule_id", decision.RuleID, "workflow_id", effectiveWorkflowID, "err", err)
+		effectiveWorkflowID = shaped.workflowID
+		effectiveLabels, err = im.workflowLabels(ctx, effectiveWorkflowID, labelCache)
+		if err != nil {
+			log.Warn("issue import: repo workflow label lookup failed; using startLabel as-is", "err", err)
+			effectiveLabels = nil
+		}
+	}
+	gate, first := workflow.GateLabel(effectiveLabels)
+	effectiveGate := gate
+	if effectiveGate == "" {
+		effectiveGate = first
+	}
+
+	shaped.workflowID = effectiveWorkflowID
+	shaped.label = effectiveGate
+	if shaped.label == "" {
+		// The overridden workflow has no labels at all; fall back to the
+		// caller's original (repo-default) gate rather than an empty label.
+		shaped.label = startLabel
+		shaped.workflowID = *repo.WorkflowID
+	}
+
+	if decision.TargetLabel != "" {
+		targetIsGate := decision.TargetLabel == effectiveGate
+		labelExists := false
+		for _, l := range effectiveLabels {
+			if l.Name == decision.TargetLabel {
+				labelExists = true
+				break
+			}
+		}
+		if !labelExists {
+			log.Warn("issue import: rule target_label is not a label in the effective workflow; falling back to gate", "rule_id", decision.RuleID, "target_label", decision.TargetLabel)
+		} else if !intake.AutoStartAllowed(rule, targetIsGate) {
+			// Defensive re-check: the CRUD handler should already have
+			// rejected a rule combining an agent-triggerable target label
+			// with no/untrusted author-association constraint, but a rule
+			// could still reach here via a direct DB edit or a future code
+			// path — never let imported issue content silently bypass the
+			// human-review gate. See intake.AutoStartAllowed's doc comment.
+			log.Warn("issue import: rule target_label bypasses the auto-start safety gate; falling back to gate label", "rule_id", decision.RuleID, "target_label", decision.TargetLabel)
+		} else {
+			shaped.label = decision.TargetLabel
+		}
+	}
+
+	if decision.Priority != nil {
+		shaped.priority = *decision.Priority
+	}
+	if decision.MaxCostUsd != nil {
+		shaped.maxCostUsd = *decision.MaxCostUsd
+	}
+	ruleID := decision.RuleID
+	shaped.matchedRuleID = &ruleID
+
+	if decision.TemplateID != nil && *decision.TemplateID != "" {
+		tmpl, err := im.q.GetTaskTemplate(ctx, *decision.TemplateID)
+		if err != nil {
+			log.Warn("issue import: rule template lookup failed; shaping without it", "rule_id", decision.RuleID, "template_id", *decision.TemplateID, "err", err)
+		} else {
+			shaped.taskType = tmpl.Type
+			if tmpl.Description != "" {
+				shaped.description = tmpl.Description + "\n\n" + shaped.description
+			}
+		}
+	}
+
+	return shaped
+}
+
+// matchRule runs intake.Match and, on a match, also returns the matched
+// gen.IntakeRule itself (not just its Decision) — shapeItem needs the raw
+// rule to re-run intake.AutoStartAllowed with the correctly-resolved
+// "is this the gate label" bit, which Decision alone doesn't carry.
+func matchRule(rules []gen.IntakeRule, c intake.Candidate) (intake.Decision, gen.IntakeRule, bool) {
+	decision, ok := intake.Match(rules, c)
+	if !ok {
+		return intake.Decision{}, gen.IntakeRule{}, false
+	}
+	for _, r := range rules {
+		if r.ID == decision.RuleID {
+			return decision, r, true
+		}
+	}
+	return decision, gen.IntakeRule{}, false
+}
+
 // updateAllowed implements the update-permission predicate shared by field
 // updates and comment ingestion:
 //   - "never" -> false
@@ -399,23 +610,42 @@ func updateAllowed(repo gen.Repo, taskLabel, gateLabel string) bool {
 	}
 }
 
-// applyFieldUpdates recomputes the description exactly as the create path
-// does and writes title/description/type drift to the task if anything
-// differs. Returns true if a write happened. task is updated in place on
-// success so later steps in the same sweep (e.g. comment ingestion, which
-// doesn't currently need task fields but might) see the fresh row.
-func (im *Importer) applyFieldUpdates(ctx context.Context, task *gen.Task, item ExternalTask, log *slog.Logger) bool {
-	desc := composeDescription(item.Body, item.URL)
-	desiredType := TaskTypeFromLabels(item.Labels)
+// applyFieldUpdates recomputes title/description/type exactly as the create
+// path does — including any rule/template shaping (see shapeItem) — and
+// writes drift to the task if anything differs. Returns true if a write
+// happened. task is updated in place on success so later steps in the same
+// sweep (e.g. comment ingestion, which doesn't currently need task fields
+// but might) see the fresh row.
+//
+// Using shapeItem here (rather than only composeDescription/
+// TaskTypeFromLabels, as this used to) is the fix for the update-thrash
+// hazard: if this recomputed type/description WITHOUT the rule's template
+// shaping applied at creation, a rule-shaped task would appear to have
+// drifted on every subsequent sweep and get silently "corrected" back,
+// producing an endless update loop and a task.updated WS event storm. Label
+// is deliberately never touched here — matches the pre-existing contract of
+// UpdateTaskFromSource never moving a task off wherever a human (or the
+// create path) placed it.
+func (im *Importer) applyFieldUpdates(ctx context.Context, task *gen.Task, item ExternalTask, rules []gen.IntakeRule, log *slog.Logger) bool {
+	// startLabel/labelCache only affect the *label* shapeItem would choose,
+	// which this call site ignores — passed through only because shapeItem
+	// needs a repo to resolve template/workflow lookups against.
+	repo, err := im.q.GetRepo(ctx, task.RepoID)
+	if err != nil {
+		log.Warn("issue import: repo lookup failed during update; skipping", "task_id", task.ID, "err", err)
+		return false
+	}
+	labelCache := map[string][]gen.WorkflowLabel{}
+	shaped := im.shapeItem(ctx, repo, item, task.Label, rules, labelCache, log)
 
-	if task.Title == item.Title && task.Description == desc && task.Type == desiredType {
+	if task.Title == shaped.title && task.Description == shaped.description && task.Type == shaped.taskType {
 		return false
 	}
 
 	updated, err := im.q.UpdateTaskFromSource(ctx, gen.UpdateTaskFromSourceParams{
-		Title:       item.Title,
-		Description: desc,
-		Type:        desiredType,
+		Title:       shaped.title,
+		Description: shaped.description,
+		Type:        shaped.taskType,
 		ID:          task.ID,
 	})
 	if err != nil {

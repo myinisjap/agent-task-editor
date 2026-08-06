@@ -20,6 +20,7 @@ const ProviderConfigPage = lazy(() => import('./pages/ProviderConfigPage'))
 const PricingSettingsPage = lazy(() => import('./pages/PricingSettingsPage'))
 const ReposPage = lazy(() => import('./pages/ReposPage'))
 const TemplatesPage = lazy(() => import('./pages/TemplatesPage'))
+const IntakeRulesPage = lazy(() => import('./pages/IntakeRulesPage'))
 const HealthPage = lazy(() => import('./pages/HealthPage'))
 
 function AppRoutes() {
@@ -44,6 +45,7 @@ function AppRoutes() {
           <Route path="/settings/pricing"      element={<PricingSettingsPage />} />
           <Route path="/repos"                 element={<ReposPage />} />
           <Route path="/templates"             element={<TemplatesPage />} />
+          <Route path="/intake-rules"          element={<IntakeRulesPage />} />
           <Route path="/health"                element={<HealthPage />} />
         </Routes>
       </Suspense>

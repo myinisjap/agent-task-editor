@@ -457,6 +457,77 @@ Delete a schedule. Returns `204`.
 
 ---
 
+## Intake Routing Rules
+
+A match→apply table evaluated first-match-wins (by `sort_order`) at
+task-creation time for the `issue` (issue import) and `schedule` sources. See
+[task-sources.md](task-sources.md#intake-routing-rules) for the full
+semantics — matching fields, the auto-start safety gate, and the
+`issue_sync_label` deprecation.
+
+### `GET /intake-rules`
+List all rules, ordered by `sort_order` then `created_at` (the same order
+evaluation walks).
+
+### `POST /intake-rules`
+Create a rule. `name` is required; every other field is optional and
+defaults to "no constraint" (match fields) or "leave the caller's default"
+(apply fields).
+
+```json
+{
+  "name": "Bug triage",
+  "match_source": "issue",
+  "match_repo_id": "uuid",
+  "match_labels": ["bug"],
+  "apply_template_id": "uuid",
+  "apply_priority": 1,
+  "apply_target_label": "not_ready"
+}
+```
+
+`400` if `match_source` isn't a recognized value, a `match_title_pattern`/
+`match_body_pattern` doesn't compile as a Go regexp, `apply_priority` isn't
+one of `-1`/`0`/`1`/`2`, `apply_max_cost_usd` is negative, `apply_target_label`
+isn't a label in the effective workflow (`apply_workflow_id` if set, else the
+repo pointed to by `match_repo_id`), or — the most important check —
+`apply_target_label` targets an agent-triggerable (non-`agent_ignore`) label
+without `match_author_assoc` restricted to `OWNER`/`MEMBER`/`COLLABORATOR`
+(see the auto-start safety gate in task-sources.md). `404` if `match_repo_id`,
+`apply_template_id`, or `apply_workflow_id` is set but doesn't exist.
+
+### `GET /intake-rules/{id}`
+Get a single rule. `404` if missing.
+
+### `PUT /intake-rules/{id}`
+Update a rule (same body and validation as create). `404` if missing.
+
+### `DELETE /intake-rules/{id}`
+Delete a rule. Returns `204`. Tasks that were previously matched by it keep
+their `matched_rule_id` set to null (`ON DELETE SET NULL`) rather than being
+altered.
+
+### `POST /intake-rules/preview`
+Preview which of a repo's most recently imported tasks (up to `limit`,
+capped at 50) an unsaved or being-edited rule body would have matched,
+using the same matcher the importer/scheduler call at runtime.
+
+```json
+{ "repo_id": "uuid", "limit": 20, "rule": { "match_labels": ["bug"] } }
+```
+
+```json
+{
+  "matches": [
+    { "task_id": "uuid", "title": "Fix crash on startup", "matched": true, "target_label": "work" }
+  ]
+}
+```
+
+`400` if `repo_id` is missing; `404` if the repo doesn't exist.
+
+---
+
 ## Agent Runs
 
 ### AgentRun Object

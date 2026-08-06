@@ -43,6 +43,7 @@ const groups: NavGroup[] = [
       { to: '/settings/pricing', label: 'Pricing' },
       { to: '/repos', label: 'Repos' },
       { to: '/templates', label: 'Templates' },
+      { to: '/intake-rules', label: 'Intake Rules' },
     ],
   },
   {

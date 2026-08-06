@@ -41,6 +41,7 @@ agent-task-editor/
 │       ├── ghclient/         # GitHub `forge.Forge` impl: thin `gh` CLI wrapper (PR lookup/create, issue listing, repo name parsing)
 │       ├── ghsync/           # Background poller: refreshes task PR state (incl. merge conflicts) via the repo's `forge.Forge`
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
+│       ├── intake/           # Intake routing rules: match->apply engine shared by tasksource + schedule; leaf package, no deps beyond storage/gen
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
 │       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates

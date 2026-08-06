@@ -145,6 +145,24 @@ components:
           format: date-time
           nullable: true
           description: Timestamp of the last source_state change. Null until set.
+        matched_rule_id:
+          type: string
+          nullable: true
+          description: >
+            The intake rule (see IntakeRule, docs/task-sources.md) that
+            matched and shaped this task at creation, if any. Null for
+            manually created tasks and for imported/scheduled tasks that
+            didn't match any enabled rule. Surfaced so "why did this task
+            land here with this label/priority" is answerable from the task
+            itself.
+        matched_rule_name:
+          type: string
+          nullable: true
+          description: >
+            Display name of the intake rule referenced by matched_rule_id,
+            resolved at read time. Only populated on GET /tasks/{id} (not on
+            list responses). Absent/null when matched_rule_id is null or the
+            rule was since deleted.
         blocked_by_count:
           type: integer
           description: >
@@ -375,6 +393,43 @@ components:
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
       required: [id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at]
+
+    IntakeRule:
+      type: object
+      description: >
+        A match->apply intake routing rule, evaluated first-match-wins (by
+        sort_order) at task-creation time for the 'issue' (issue import) and
+        'schedule' sources (see internal/intake and docs/task-sources.md).
+        Subsumes the deprecated per-repo issue_sync_label filter, which
+        narrowed only the fetch; rules shape the resulting task (template,
+        priority, target label, workflow, cost budget) after fetch/creation.
+        Every match_* field left empty/absent matches "any"; every apply_*
+        field left empty/absent means "leave the caller's default".
+        Landing a task on a non-agent_ignore apply_target_label bypasses the
+        human-review gate that protects against untrusted imported issue
+        content, so it is only permitted when match_author_assoc is
+        restricted to OWNER/MEMBER/COLLABORATOR — the API rejects a rule
+        that doesn't satisfy this with 400 Bad Request.
+      properties:
+        id:                  { type: string }
+        name:                { type: string }
+        enabled:             { type: boolean }
+        sort_order:          { type: integer, description: "Lower sorts first; first-match-wins evaluation order among enabled rules." }
+        match_source:        { type: string, enum: ['', manual, issue, schedule, subtask], description: "Empty = any. Only 'issue' and 'schedule' are currently evaluated by any code path." }
+        match_repo_id:       { type: string, nullable: true, description: "Null = any repo." }
+        match_labels:        { type: array, items: { type: string }, description: "ANY-of, case-insensitive. Empty = any." }
+        match_title_pattern: { type: string, description: "Go regexp (unanchored substring search unless anchored). Empty = any." }
+        match_body_pattern:  { type: string, description: "Go regexp. Empty = any." }
+        match_author_assoc:  { type: array, items: { type: string, enum: [OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE] }, description: "ANY-of. Empty = any. Required (restricted to OWNER/MEMBER/COLLABORATOR) when apply_target_label is not the workflow's human-gate label." }
+        apply_template_id:   { type: string, nullable: true, description: "Template supplies type and prepends its description; the issue/schedule's own title always wins." }
+        apply_priority:      { type: integer, nullable: true, description: "-1 (low), 0 (normal), 1 (high), or 2 (urgent). Null = leave default." }
+        apply_target_label:  { type: string, description: "Empty = leave default (the workflow's human-gate label)." }
+        apply_workflow_id:   { type: string, nullable: true, description: "Overrides the repo's default workflow for this task. Null = use the repo's own workflow." }
+        apply_max_cost_usd:  { type: number, format: double, nullable: true, description: "Null = leave default (no per-task override)." }
+        stop_processing:     { type: boolean, description: "Reserved; first-match-wins is the only evaluation mode in v1." }
+        created_at:          { type: string, format: date-time }
+        updated_at:          { type: string, format: date-time }
+      required: [id, name, enabled, sort_order, match_source, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_target_label, stop_processing, created_at, updated_at]
 
     BackupSettings:
       type: object
@@ -661,8 +716,17 @@ components:
             imported as tasks (requires remote_url and workflow_id). 0 = off.
         issue_sync_label:
           type: string
+          deprecated: true
           description: >
-            Only import issues carrying this label (empty = all open issues).
+            DEPRECATED — narrows the issue-import fetch to issues carrying
+            this label (empty = all open issues fetched). Prefer an
+            IntakeRule (see /intake-rules) with a match_labels condition,
+            which additionally lets you shape (template/priority/target
+            label/cost) the resulting task, not just filter which issues are
+            fetched. Still honoured for one more release: it continues to
+            control which issues are FETCHED, while any matching rule
+            continues to control how the fetched issue is SHAPED — the two
+            layer, they don't compete. See docs/task-sources.md.
         issue_writeback_enabled:
           type: integer
           description: >
@@ -2291,6 +2355,143 @@ paths:
         "404": { description: Schedule not found }
     delete:
       summary: Delete a task schedule
+      responses:
+        "204": { description: Deleted }
+
+  /intake-rules:
+    get:
+      summary: List intake routing rules
+      description: >
+        Ordered by sort_order then created_at — the same order rule
+        evaluation walks (first-match-wins).
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/IntakeRule" } }
+    post:
+      summary: Create an intake routing rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:                { type: string }
+                enabled:             { type: boolean, default: true }
+                sort_order:          { type: integer, default: 0 }
+                match_source:        { type: string, enum: ['', manual, issue, schedule, subtask] }
+                match_repo_id:       { type: string, nullable: true }
+                match_labels:        { type: array, items: { type: string } }
+                match_title_pattern: { type: string }
+                match_body_pattern:  { type: string }
+                match_author_assoc:  { type: array, items: { type: string, enum: [OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE] } }
+                apply_template_id:   { type: string, nullable: true }
+                apply_priority:      { type: integer, nullable: true, enum: [-1, 0, 1, 2] }
+                apply_target_label:  { type: string }
+                apply_workflow_id:   { type: string, nullable: true }
+                apply_max_cost_usd:  { type: number, format: double, nullable: true }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeRule" }
+        "400": { description: "Invalid body — including the auto-start safety-gate rejection: apply_target_label targets an agent-triggerable label without match_author_assoc restricted to OWNER/MEMBER/COLLABORATOR" }
+        "404": { description: match_repo_id, apply_template_id, or apply_workflow_id not found }
+
+  /intake-rules/preview:
+    post:
+      summary: Preview which recently-imported tasks a rule would match
+      description: >
+        Evaluates an unsaved (or being-edited) rule body against the most
+        recently imported tasks for a repo, using the same intake.Match
+        function the importer and scheduler call at runtime, so preview and
+        runtime behaviour can never disagree. Previews against
+        already-imported task history for the repo rather than making a
+        live forge API call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo_id, rule]
+              properties:
+                repo_id: { type: string }
+                limit:   { type: integer, default: 50, maximum: 50, description: "Number of most-recently-imported tasks to check." }
+                rule:
+                  type: object
+                  description: An unsaved IntakeRule body — same shape as POST /intake-rules's request body.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matches:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        task_id:      { type: string }
+                        title:        { type: string }
+                        matched:      { type: boolean }
+                        target_label: { type: string }
+                        priority:     { type: integer, nullable: true }
+                        max_cost_usd: { type: number, format: double, nullable: true }
+        "400": { description: Missing repo_id or invalid rule body }
+        "404": { description: Repo not found }
+
+  /intake-rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get an intake routing rule
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeRule" }
+        "404": { description: Rule not found }
+    put:
+      summary: Update an intake routing rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:                { type: string }
+                enabled:             { type: boolean, default: true }
+                sort_order:          { type: integer, default: 0 }
+                match_source:        { type: string, enum: ['', manual, issue, schedule, subtask] }
+                match_repo_id:       { type: string, nullable: true }
+                match_labels:        { type: array, items: { type: string } }
+                match_title_pattern: { type: string }
+                match_body_pattern:  { type: string }
+                match_author_assoc:  { type: array, items: { type: string, enum: [OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE] } }
+                apply_template_id:   { type: string, nullable: true }
+                apply_priority:      { type: integer, nullable: true, enum: [-1, 0, 1, 2] }
+                apply_target_label:  { type: string }
+                apply_workflow_id:   { type: string, nullable: true }
+                apply_max_cost_usd:  { type: number, format: double, nullable: true }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeRule" }
+        "400": { description: "Invalid body — including the auto-start safety-gate rejection (see POST /intake-rules)" }
+        "404": { description: Rule, match_repo_id, apply_template_id, or apply_workflow_id not found }
+    delete:
+      summary: Delete an intake routing rule
       responses:
         "204": { description: Deleted }
 

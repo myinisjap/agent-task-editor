@@ -67,7 +67,7 @@ API):
 | Repo field | Meaning |
 |---|---|
 | `issue_sync_enabled` | `1` to turn the importer on for this repo |
-| `issue_sync_label` | Only import open issues carrying this label (e.g. `agent-ok`). Empty = **all** open issues |
+| `issue_sync_label` | **Deprecated** (see [Intake routing rules](#intake-routing-rules) below) — only import open issues carrying this label (e.g. `agent-ok`). Empty = **all** open issues |
 
 Two prerequisites are enforced when enabling:
 
@@ -119,6 +119,132 @@ published for the repo instead of one `task.created` per issue (see
 import (or backlog catch-up) from repeatedly acquiring SQLite's write lock
 and from flooding connected clients with one event — and one board refetch —
 per issue.
+
+## Intake routing rules
+
+Issue import, and separately [cron schedules](task-templates.md#recurring-schedules),
+both create tasks. Before intake rules, the only shaping either path could do
+was land the task on the workflow's gate label (issue import) or a single
+fixed `target_label` (schedules) — there was no way to say "an issue labeled
+`bug` from repo X should get the triage template, priority 1, and start on
+`work` instead of the gate." Intake rules (`/intake-rules`, "Intake Rules" in
+Configuration) close that gap: a small match→apply table evaluated at
+task-creation time for the `issue` and `schedule` sources.
+
+Rules are evaluated **first-match-wins**, in `sort_order` (then `created_at`)
+order — the first *enabled* rule whose match conditions all hold applies, and
+no rule after it is considered. This mirrors how the dispatcher walks agent
+config `matchConfigs`.
+
+**Match on:** source (`issue` or `schedule` — `manual`/`subtask` are valid
+values in the schema for forward-compatibility but not currently evaluated by
+any code path), repo, incoming labels (any-of, case-insensitive), a Go
+regexp against the title and/or body, and the issue's author association
+(`OWNER`/`MEMBER`/`COLLABORATOR`/`CONTRIBUTOR`/`NONE`, any-of). Every
+match field left empty matches "any" for that dimension; all specified
+fields must hold together (AND across fields, OR within a list).
+
+**Apply:** a template (supplies `type`, and the template's own description is
+prepended to the composed issue description — the issue's own **title**
+always wins, since an imported task must stay identifiable against its
+source), a priority, a target label, a workflow override, and/or a per-task
+cost budget (`max_cost_usd`). Every apply field left unset means "leave the
+caller's existing default" — a rule only has to say what it actually wants
+to change.
+
+`apply_template_id` only applies to `issue`-sourced matches. A scheduled
+task is always shaped from the schedule's own template (the one a human
+picked when creating the schedule, see
+[task-templates.md](task-templates.md)) — there is no "apply a different
+template on top of the schedule's own" semantics to fall back to. A rule
+with `match_source: "schedule"` and `apply_template_id` set is rejected at
+create/update time (400) rather than silently doing nothing; the scheduler
+also logs a warning and ignores it defensively in the unlikely case a rule
+reaches it in that shape anyway (e.g. a direct database edit).
+
+The matched rule's id is recorded on the task (`matched_rule_id`, surfaced on
+the task detail page as "Intake rule") so "why did this task land here with
+this label/priority" is answerable from the task itself, rather than
+requiring rule-table archaeology.
+
+### The auto-start safety gate
+
+This is the single most important behaviour to understand before using
+target-label overrides. Imported issues normally land on the workflow's
+human-gate label (the lowest-`sort_order` `agent_ignore` label) specifically
+so a human reviews and promotes the task before an agent ever runs on it —
+that review step is the mitigation for imported issue *bodies* being
+untrusted, attacker-influenced input (an issue can contain anything; treat it
+the same way you'd treat any other externally-supplied text reaching an
+agent's context).
+
+A rule that sets `apply_target_label` to anything other than that gate label
+**removes that mitigation** — the created task can start running unattended,
+on content nobody has looked at. This is useful (it's the main reason to want
+target-label overrides at all), but it is only permitted when the rule *also*
+restricts `match_author_assoc` to a non-empty list drawn exclusively from
+`OWNER`, `MEMBER`, `COLLABORATOR` — i.e. only issues from people who already
+have write access to the repo can skip the human gate. The API rejects
+(400) any rule that would combine an agent-triggerable target label with a
+missing or untrusted author-association constraint, the UI blocks submitting
+such a rule client-side with an inline warning, and the importer itself
+defensively re-checks and falls back to the gate label (logging a warning)
+if a rule somehow reaches it in an unsafe shape (e.g. a direct database
+edit). This is enforced in exactly one place in the code
+(`intake.AutoStartAllowed`) so the rule can never be re-implemented
+inconsistently.
+
+Cron schedules do **not** go through this gate: a schedule's `target_label`
+is already a human-configured, validated value (see
+[task-templates.md](task-templates.md)), not third-party content, so the
+concern this gate exists for doesn't apply there. Concretely, a rule with
+`match_source: "schedule"` may set `apply_target_label` to any
+agent-triggerable label without an author-association constraint — the API
+does not require one for schedule-sourced rules, and the UI does not show
+the auto-start warning or block saving in that case. (Requiring an author
+association on a schedule rule would be nonsensical: a schedule firing has
+no author to check.) A rule's `target_label` for a matched schedule only
+takes effect when the schedule's own `target_label` is left empty — the
+schedule's own setting always wins when
+present.
+
+### Preview
+
+The rule editor's "Preview matches" button evaluates a rule (saved or still
+being edited) against the repo's most recently imported tasks (up to 50),
+using the exact same matcher (`intake.Match`) the importer and scheduler
+call at runtime, so what's previewed is guaranteed to match what actually
+happens. It previews against already-imported task history rather than
+making a live forge API call, so a repo with no import history yet previews
+as empty.
+
+### Relationship to `issue_sync_label`
+
+`issue_sync_label` is now **deprecated** but still honoured for one more
+release; it is not being replaced by rules in a single migration because the
+two mechanisms operate at different points in the pipeline:
+
+- `issue_sync_label` narrows the **fetch** — it controls which issues the
+  importer's API query asks the forge for in the first place.
+- Intake rules only run **after** fetch, on issues that were already going
+  to be imported — they control how a fetched issue is *shaped* (template,
+  priority, label, workflow, cost), not whether it's imported at all.
+
+Concretely: for a repo that still has `issue_sync_label` set, that setting
+continues to decide *what gets imported*; any matching rule decides *how the
+resulting task looks*. The two layer rather than compete. This is
+deliberate — making rules the sole gatekeeper for *what* gets imported would
+mean a repo previously scoped to (say) `bug`-labeled issues would suddenly
+start importing every open issue the moment a `bug`-matching rule replaced
+its `issue_sync_label`, which is very much not what an operator moving from
+one to the other would expect. A migration converts every repo's existing
+`issue_sync_label` into an equivalent enabled rule
+(`match_source: issue`, `match_repo_id: <repo>`, `match_labels: ["<label>"]`)
+automatically, so the two mechanisms don't have to be reconciled by hand —
+but until `issue_sync_label` is removed in a future release, clearing it on
+a repo that still wants the same set of issues imported means adding an
+equivalent fetch-time mechanism yourself (there isn't one yet); don't clear
+it expecting the generated rule alone to keep the same issues out.
 
 ## Deduplication
 

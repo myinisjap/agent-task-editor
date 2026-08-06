@@ -22,6 +22,10 @@ type ExternalTask struct {
 	Body   string
 	URL    string   // web link back to the external item
 	Labels []string // labels on the external item (used for the task type heuristic)
+	// AuthorAssoc is the reporting item's author association, as populated
+	// by the forge.Issue this was fetched from — see forge.Issue's doc
+	// comment. Used by internal/intake's match_author_assoc rule condition.
+	AuthorAssoc string
 }
 
 // Source fetches candidate tasks for a repo from one external tracker.
@@ -92,11 +96,12 @@ func (GitHubIssues) Fetch(ctx context.Context, repo gen.Repo) ([]ExternalTask, e
 	tasks := make([]ExternalTask, 0, len(issues))
 	for _, is := range issues {
 		tasks = append(tasks, ExternalTask{
-			Ref:    fmt.Sprintf("%s#%d", ghName, is.Number),
-			Title:  is.Title,
-			Body:   is.Body,
-			URL:    is.URL,
-			Labels: is.Labels,
+			Ref:         fmt.Sprintf("%s#%d", ghName, is.Number),
+			Title:       is.Title,
+			Body:        is.Body,
+			URL:         is.URL,
+			Labels:      is.Labels,
+			AuthorAssoc: is.AuthorAssociation,
 		})
 	}
 	return tasks, nil

@@ -19,6 +19,7 @@ export type DependencyEdge = Schemas['DependencyEdge']
 export type TaskDependencies = Schemas['TaskDependencies']
 export type TaskTemplate = Schemas['TaskTemplate']
 export type TaskSchedule = Schemas['TaskSchedule']
+export type IntakeRule = Schemas['IntakeRule']
 export type BackupSettings = Schemas['BackupSettings']
 export type LogRetentionSettings = Schemas['LogRetentionSettings']
 export type ModelPricing = Schemas['ModelPricing']
@@ -72,6 +73,39 @@ export type BulkResult = { id: string; ok: boolean; error?: string }
 // this endpoint returns every task (no top-N cap, no title) since the board
 // needs a cost for every visible task, not just the most expensive ones.
 export type TaskCost = { task_id: string; input_tokens: number; output_tokens: number; cost_usd: number }
+
+// IntakeRuleBody is the create/update request shape for POST/PUT
+// /intake-rules (see openapi.yaml and internal/api/handlers/intake_rules.go
+// — match_* fields are AND'd together, empty/absent = "any"; apply_* fields
+// are all optional, absent = "leave the caller's default").
+export type IntakeRuleBody = {
+  name: string
+  enabled?: boolean
+  sort_order?: number
+  match_source?: '' | 'manual' | 'issue' | 'schedule' | 'subtask'
+  match_repo_id?: string | null
+  match_labels?: string[]
+  match_title_pattern?: string
+  match_body_pattern?: string
+  match_author_assoc?: ('OWNER' | 'MEMBER' | 'COLLABORATOR' | 'CONTRIBUTOR' | 'NONE')[]
+  apply_template_id?: string | null
+  apply_priority?: -1 | 0 | 1 | 2 | null
+  apply_target_label?: string
+  apply_workflow_id?: string | null
+  apply_max_cost_usd?: number | null
+}
+
+// IntakeRulePreviewMatch is one row of POST /intake-rules/preview's
+// `matches` array: an already-imported task for the repo, whether the
+// (possibly unsaved) rule would have matched it, and what it would apply.
+export type IntakeRulePreviewMatch = {
+  task_id: string
+  title: string
+  matched: boolean
+  target_label?: string
+  priority?: number | null
+  max_cost_usd?: number | null
+}
 
 // BASE is the API root, BASE_URL-prefixed so the app works when served from
 // a non-root base (e.g. the production '/tasks/' base set in
@@ -381,6 +415,20 @@ export const api = {
     update: (id: string, body: { cron_expr: string; target_label?: string; enabled?: boolean }) =>
       request<TaskSchedule>(`/schedules/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/schedules/${id}`, { method: 'DELETE' }),
+  },
+  intakeRules: {
+    list: () => request<IntakeRule[]>('/intake-rules'),
+    get: (id: string) => request<IntakeRule>(`/intake-rules/${id}`),
+    create: (body: IntakeRuleBody) =>
+      request<IntakeRule>('/intake-rules', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: IntakeRuleBody) =>
+      request<IntakeRule>(`/intake-rules/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/intake-rules/${id}`, { method: 'DELETE' }),
+    preview: (repoId: string, rule: IntakeRuleBody, limit?: number) =>
+      request<{ matches: IntakeRulePreviewMatch[] }>('/intake-rules/preview', {
+        method: 'POST',
+        body: JSON.stringify({ repo_id: repoId, rule, limit }),
+      }),
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),

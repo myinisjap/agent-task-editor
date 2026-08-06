@@ -86,6 +86,13 @@ type Issue struct {
 	Body   string
 	URL    string
 	Labels []string // label names only
+	// AuthorAssociation is the issue reporter's relationship to the repo:
+	// OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR | NONE | ... (same value
+	// set as IssueComment.AuthorAssociation). Used by internal/intake's
+	// match_author_assoc rule condition to gate auto-start decisions on
+	// otherwise-untrusted imported issue content (see #331). Empty when a
+	// forge implementation hasn't populated it.
+	AuthorAssociation string
 }
 
 // IssueComment is a single comment on an issue (not a PR/MR review comment —

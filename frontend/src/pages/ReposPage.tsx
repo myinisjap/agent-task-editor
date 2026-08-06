@@ -291,7 +291,10 @@ export default function ReposPage() {
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-400">
-                    Issue label filter <span className="text-slate-600">(empty = all open issues)</span>
+                    Issue label filter{' '}
+                    <span className="text-slate-600">
+                      (empty = all open issues; deprecated — prefer an Intake Rule with a match_labels condition)
+                    </span>
                   </label>
                   <input
                     value={form.issue_sync_label}
@@ -568,7 +571,10 @@ export default function ReposPage() {
 
                         <div className="flex flex-col gap-1.5">
                           <label className="text-xs font-medium text-slate-400">
-                            Issue label filter <span className="text-slate-600">(empty = all open issues)</span>
+                            Issue label filter{' '}
+                            <span className="text-slate-600">
+                              (empty = all open issues; deprecated — prefer an Intake Rule with a match_labels condition)
+                            </span>
                           </label>
                           <input
                             value={editForm.issue_sync_label}

@@ -83,6 +83,27 @@ type CostWarningSetting struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type IntakeRule struct {
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	Enabled           bool      `json:"enabled"`
+	SortOrder         int64     `json:"sort_order"`
+	MatchSource       string    `json:"match_source"`
+	MatchRepoID       *string   `json:"match_repo_id"`
+	MatchLabels       string    `json:"match_labels"`
+	MatchTitlePattern string    `json:"match_title_pattern"`
+	MatchBodyPattern  string    `json:"match_body_pattern"`
+	MatchAuthorAssoc  string    `json:"match_author_assoc"`
+	ApplyTemplateID   *string   `json:"apply_template_id"`
+	ApplyPriority     *int64    `json:"apply_priority"`
+	ApplyTargetLabel  string    `json:"apply_target_label"`
+	ApplyWorkflowID   *string   `json:"apply_workflow_id"`
+	ApplyMaxCostUsd   *float64  `json:"apply_max_cost_usd"`
+	StopProcessing    bool      `json:"stop_processing"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 type LogRetentionSetting struct {
 	ID              int64     `json:"id"`
 	Days            int64     `json:"days"`
@@ -165,6 +186,7 @@ type Task struct {
 	SourceStateAt           *time.Time `json:"source_state_at"`
 	PrMergeable             string     `json:"pr_mergeable"`
 	CostWarned              int64      `json:"cost_warned"`
+	MatchedRuleID           *string    `json:"matched_rule_id"`
 }
 
 type TaskDependency struct {

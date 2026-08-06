@@ -1975,6 +1975,301 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/intake-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List intake routing rules
+         * @description Ordered by sort_order then created_at — the same order rule evaluation walks (first-match-wins).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeRule"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create an intake routing rule */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        /** @default true */
+                        enabled?: boolean;
+                        /** @default 0 */
+                        sort_order?: number;
+                        /** @enum {string} */
+                        match_source?: "" | "manual" | "issue" | "schedule" | "subtask";
+                        match_repo_id?: string | null;
+                        match_labels?: string[];
+                        match_title_pattern?: string;
+                        match_body_pattern?: string;
+                        match_author_assoc?: ("OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "NONE")[];
+                        apply_template_id?: string | null;
+                        /** @enum {integer|null} */
+                        apply_priority?: -1 | 0 | 1 | 2 | null;
+                        apply_target_label?: string;
+                        apply_workflow_id?: string | null;
+                        /** Format: double */
+                        apply_max_cost_usd?: number | null;
+                    };
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeRule"];
+                    };
+                };
+                /** @description Invalid body — including the auto-start safety-gate rejection: apply_target_label targets an agent-triggerable label without match_author_assoc restricted to OWNER/MEMBER/COLLABORATOR */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description match_repo_id */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-rules/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview which recently-imported tasks a rule would match
+         * @description Evaluates an unsaved (or being-edited) rule body against the most recently imported tasks for a repo, using the same intake.Match function the importer and scheduler call at runtime, so preview and runtime behaviour can never disagree. Previews against already-imported task history for the repo rather than making a live forge API call.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        repo_id: string;
+                        /**
+                         * @description Number of most-recently-imported tasks to check.
+                         * @default 50
+                         */
+                        limit?: number;
+                        /** @description An unsaved IntakeRule body — same shape as POST /intake-rules's request body. */
+                        rule: Record<string, never>;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            matches?: {
+                                task_id?: string;
+                                title?: string;
+                                matched?: boolean;
+                                target_label?: string;
+                                priority?: number | null;
+                                /** Format: double */
+                                max_cost_usd?: number | null;
+                            }[];
+                        };
+                    };
+                };
+                /** @description Missing repo_id or invalid rule body */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get an intake routing rule */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeRule"];
+                    };
+                };
+                /** @description Rule not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /** Update an intake routing rule */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        /** @default true */
+                        enabled?: boolean;
+                        /** @default 0 */
+                        sort_order?: number;
+                        /** @enum {string} */
+                        match_source?: "" | "manual" | "issue" | "schedule" | "subtask";
+                        match_repo_id?: string | null;
+                        match_labels?: string[];
+                        match_title_pattern?: string;
+                        match_body_pattern?: string;
+                        match_author_assoc?: ("OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "NONE")[];
+                        apply_template_id?: string | null;
+                        /** @enum {integer|null} */
+                        apply_priority?: -1 | 0 | 1 | 2 | null;
+                        apply_target_label?: string;
+                        apply_workflow_id?: string | null;
+                        /** Format: double */
+                        apply_max_cost_usd?: number | null;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeRule"];
+                    };
+                };
+                /** @description Invalid body — including the auto-start safety-gate rejection (see POST /intake-rules) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Rule */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /** Delete an intake routing rule */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows": {
         parameters: {
             query?: never;
@@ -3904,6 +4199,10 @@ export interface components {
              * @description Timestamp of the last source_state change. Null until set.
              */
             source_state_at?: string | null;
+            /** @description The intake rule (see IntakeRule, docs/task-sources.md) that matched and shaped this task at creation, if any. Null for manually created tasks and for imported/scheduled tasks that didn't match any enabled rule. Surfaced so "why did this task land here with this label/priority" is answerable from the task itself. */
+            matched_rule_id?: string | null;
+            /** @description Display name of the intake rule referenced by matched_rule_id, resolved at read time. Only populated on GET /tasks/{id} (not on list responses). Absent/null when matched_rule_id is null or the rule was since deleted. */
+            matched_rule_name?: string | null;
             /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived. Zero when the task has no unsatisfied blockers. */
             blocked_by_count?: number;
             /** @description Derived (read-time) count of tasks that depend on this task (i.e. this task is a blocker for that many other tasks). */
@@ -4011,6 +4310,48 @@ export interface components {
             enabled: boolean;
             /** Format: date-time */
             last_run_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description A match->apply intake routing rule, evaluated first-match-wins (by sort_order) at task-creation time for the 'issue' (issue import) and 'schedule' sources (see internal/intake and docs/task-sources.md). Subsumes the deprecated per-repo issue_sync_label filter, which narrowed only the fetch; rules shape the resulting task (template, priority, target label, workflow, cost budget) after fetch/creation. Every match_* field left empty/absent matches "any"; every apply_* field left empty/absent means "leave the caller's default". Landing a task on a non-agent_ignore apply_target_label bypasses the human-review gate that protects against untrusted imported issue content, so it is only permitted when match_author_assoc is restricted to OWNER/MEMBER/COLLABORATOR — the API rejects a rule that doesn't satisfy this with 400 Bad Request. */
+        IntakeRule: {
+            id: string;
+            name: string;
+            enabled: boolean;
+            /** @description Lower sorts first; first-match-wins evaluation order among enabled rules. */
+            sort_order: number;
+            /**
+             * @description Empty = any. Only 'issue' and 'schedule' are currently evaluated by any code path.
+             * @enum {string}
+             */
+            match_source: "" | "manual" | "issue" | "schedule" | "subtask";
+            /** @description Null = any repo. */
+            match_repo_id?: string | null;
+            /** @description ANY-of, case-insensitive. Empty = any. */
+            match_labels: string[];
+            /** @description Go regexp (unanchored substring search unless anchored). Empty = any. */
+            match_title_pattern: string;
+            /** @description Go regexp. Empty = any. */
+            match_body_pattern: string;
+            /** @description ANY-of. Empty = any. Required (restricted to OWNER/MEMBER/COLLABORATOR) when apply_target_label is not the workflow's human-gate label. */
+            match_author_assoc: ("OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "NONE")[];
+            /** @description Template supplies type and prepends its description; the issue/schedule's own title always wins. */
+            apply_template_id?: string | null;
+            /** @description -1 (low), 0 (normal), 1 (high), or 2 (urgent). Null = leave default. */
+            apply_priority?: number | null;
+            /** @description Empty = leave default (the workflow's human-gate label). */
+            apply_target_label: string;
+            /** @description Overrides the repo's default workflow for this task. Null = use the repo's own workflow. */
+            apply_workflow_id?: string | null;
+            /**
+             * Format: double
+             * @description Null = leave default (no per-task override).
+             */
+            apply_max_cost_usd?: number | null;
+            /** @description Reserved; first-match-wins is the only evaluation mode in v1. */
+            stop_processing: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -4169,7 +4510,10 @@ export interface components {
             workflow_id?: string | null;
             /** @description 1 = open GitHub issues matching issue_sync_label are periodically imported as tasks (requires remote_url and workflow_id). 0 = off. */
             issue_sync_enabled?: number;
-            /** @description Only import issues carrying this label (empty = all open issues). */
+            /**
+             * @deprecated
+             * @description DEPRECATED — narrows the issue-import fetch to issues carrying this label (empty = all open issues fetched). Prefer an IntakeRule (see /intake-rules) with a match_labels condition, which additionally lets you shape (template/priority/target label/cost) the resulting task, not just filter which issues are fetched. Still honoured for one more release: it continues to control which issues are FETCHED, while any matching rule continues to control how the fetched issue is SHAPED — the two layer, they don't compete. See docs/task-sources.md.
+             */
             issue_sync_label?: string;
             /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the issue_writeback_label (or the "agent-in-progress" default) when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
             issue_writeback_enabled?: number;
