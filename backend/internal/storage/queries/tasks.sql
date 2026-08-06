@@ -1,6 +1,21 @@
 -- name: ListTasks :many
 SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned FROM tasks ORDER BY created_at DESC;
 
+-- name: CountAllTasksByLabel :many
+-- Per-label counts of non-archived tasks across all workflows, for the
+-- dashboard's label_counts map. Scans only (label, archived) instead of
+-- pulling every column (including the full description text) of every task
+-- row via ListTasks.
+SELECT label, COUNT(*) AS count
+FROM tasks
+WHERE archived = 0
+GROUP BY label;
+
+-- name: ListTaskTitlesByIDs :many
+-- Titles for a specific set of task ids, e.g. resolving the top-N-by-cost
+-- table on the dashboard without pulling every column of every task row.
+SELECT id, title FROM tasks WHERE id IN (sqlc.slice('task_ids'));
+
 -- name: SearchTasks :many
 -- Filterable task listing. Every filter is optional: an empty string means
 -- "no filter" for that dimension. @archived is tri-state: '' hides archived

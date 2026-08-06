@@ -219,20 +219,17 @@ type interventionRow struct {
 func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	tasks, err := h.q.ListTasks(ctx)
+	// Per-label counts of non-archived tasks, computed in SQL rather than by
+	// pulling every column (including the full description text) of every
+	// task row via ListTasks.
+	labelCounts, err := h.q.CountAllTasksByLabel(ctx)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	counts := map[string]int{}
-	for _, t := range tasks {
-		// Archived tasks are hidden from the board, so keep the dashboard's
-		// per-label counts consistent with what the board shows.
-		if t.Archived != 0 {
-			continue
-		}
-		counts[t.Label]++
+	counts := make(map[string]int, len(labelCounts))
+	for _, lc := range labelCounts {
+		counts[lc.Label] = int(lc.Count)
 	}
 
 	activeRuns, err := h.q.ListActiveAgentRuns(ctx)
@@ -316,23 +313,35 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Titles for the top-N-by-cost table, looked up from the already-fetched
-	// tasks slice above rather than a second query/join.
-	titleByID := make(map[string]string, len(tasks))
-	for _, t := range tasks {
-		titleByID[t.ID] = t.Title
-	}
 	taskCosts, err := h.q.SumUsageByTask(ctx)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	const topTasksByCost = 20
-	taskCostRows := make([]taskCostRow, 0, min(len(taskCosts), topTasksByCost))
-	for i, tc := range taskCosts {
-		if i >= topTasksByCost {
-			break
-		}
+	topN := taskCosts
+	if len(topN) > topTasksByCost {
+		topN = topN[:topTasksByCost]
+	}
+
+	// Titles for just the top-N-by-cost rows, rather than pulling every
+	// column of every task row via ListTasks.
+	topIDs := make([]string, len(topN))
+	for i, tc := range topN {
+		topIDs[i] = tc.TaskID
+	}
+	titleRows, err := h.q.ListTaskTitlesByIDs(ctx, topIDs)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	titleByID := make(map[string]string, len(titleRows))
+	for _, t := range titleRows {
+		titleByID[t.ID] = t.Title
+	}
+
+	taskCostRows := make([]taskCostRow, 0, len(topN))
+	for _, tc := range topN {
 		taskCostRows = append(taskCostRows, taskCostRow{
 			TaskID:       tc.TaskID,
 			TaskTitle:    titleByID[tc.TaskID],

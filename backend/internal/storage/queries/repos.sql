@@ -41,3 +41,6 @@ WHERE id = ?;
 
 -- name: DeleteRepo :exec
 DELETE FROM repos WHERE id = ?;
+
+-- name: CountTasksByRepo :one
+SELECT COUNT(*) FROM tasks WHERE repo_id = ?;

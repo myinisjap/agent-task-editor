@@ -624,6 +624,129 @@ func TestDashboardCostByTask_EmptyWhenNoRuns(t *testing.T) {
 	}
 }
 
+// TestDashboardGet_LabelCounts verifies the dashboard's label_counts map is
+// computed from a per-label GROUP BY (CountAllTasksByLabel) rather than
+// ListTasks, and that archived tasks are excluded — consistent with what
+// the board shows by default.
+func TestDashboardGet_LabelCounts(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "repo", Path: t.TempDir(), WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	mk := func(label string) gen.Task {
+		task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+			ID: uuid.NewString(), Title: "t", WorkflowID: wfID, RepoID: repoID, Label: label,
+		})
+		if err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+		return task
+	}
+	mk("backlog")
+	mk("backlog")
+	mk("in_progress")
+	archived := mk("backlog")
+	if _, err := q.SetTaskArchived(ctx, gen.SetTaskArchivedParams{Archived: 1, ID: archived.ID}); err != nil {
+		t.Fatalf("archive task: %v", err)
+	}
+
+	h := handlers.NewDashboardHandler(q, 5, nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		LabelCounts map[string]int `json:"label_counts"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := body.LabelCounts["backlog"]; got != 2 {
+		t.Errorf("expected 2 non-archived 'backlog' tasks, got %d (full map: %+v)", got, body.LabelCounts)
+	}
+	if got := body.LabelCounts["in_progress"]; got != 1 {
+		t.Errorf("expected 1 'in_progress' task, got %d (full map: %+v)", got, body.LabelCounts)
+	}
+}
+
+// TestDashboardGet_CostByTaskTitles verifies the dashboard's top-N-by-cost
+// table (cost_by_task) resolves task titles via a query scoped to just
+// those task ids (ListTaskTitlesByIDs), rather than pulling every task row.
+func TestDashboardGet_CostByTaskTitles(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	wfID := wfs[0].ID
+
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "repo", Path: t.TempDir(), WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "expensive task", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	run, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status: "completed", InputTokens: 100, OutputTokens: 50, CostUsd: 0.05, ID: run.ID,
+	}); err != nil {
+		t.Fatalf("finalize run: %v", err)
+	}
+
+	h := handlers.NewDashboardHandler(q, 5, nil)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		CostByTask []struct {
+			TaskID    string `json:"task_id"`
+			TaskTitle string `json:"task_title"`
+		} `json:"cost_by_task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.CostByTask) != 1 {
+		t.Fatalf("expected 1 cost_by_task row, got %d: %+v", len(body.CostByTask), body.CostByTask)
+	}
+	if body.CostByTask[0].TaskID != task.ID || body.CostByTask[0].TaskTitle != "expensive task" {
+		t.Errorf("expected task %s titled %q, got %+v", task.ID, "expensive task", body.CostByTask[0])
+	}
+}
+
 // TestDashboardGet_CostByRepo verifies the dashboard's cost_by_repo rollup
 // groups agent_runs cost/tokens by the repo their task belongs to, joined
 // through tasks (agent_runs has no repo_id of its own) -- the companion to

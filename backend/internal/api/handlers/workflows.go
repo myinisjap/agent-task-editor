@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -146,6 +147,25 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	wfID := chi.URLParam(r, "id")
 
+	// Look up the current row first: this both 404s cleanly on a bad id and
+	// lets omitted name/description fall back to their existing values
+	// instead of being blanked out (an empty name would break
+	// GetWorkflowByName("Default"), which resolveDefaultWorkflowID depends
+	// on for task creation).
+	current, err := h.q.GetWorkflow(r.Context(), wfID)
+	if err != nil {
+		Err(w, http.StatusNotFound, "workflow not found")
+		return
+	}
+	name := current.Name
+	if body.Name != "" {
+		name = body.Name
+	}
+	description := current.Description
+	if body.Description != "" {
+		description = body.Description
+	}
+
 	// Enforce name uniqueness — allow keeping the same name for the same workflow
 	if body.Name != "" {
 		if existing, err := h.q.GetWorkflowByName(r.Context(), body.Name); err == nil && existing.ID != wfID {
@@ -154,17 +174,11 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	wf, err := h.q.UpdateWorkflow(r.Context(), gen.UpdateWorkflowParams{
-		Name:        body.Name,
-		Description: body.Description,
-		ID:          wfID,
-	})
-	if err != nil {
-		Err(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Replace labels and transitions atomically inside a transaction.
+	// Rename plus replace labels and transitions atomically inside a single
+	// transaction, so a failure partway through (e.g. the trigger_type CHECK
+	// constraint, a duplicate (workflow_id, name)) rolls back the rename too
+	// instead of leaving it committed against a DB state the client never
+	// asked for.
 	tx, err := h.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -172,6 +186,16 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	tq := gen.New(tx)
+
+	wf, err := tq.UpdateWorkflow(r.Context(), gen.UpdateWorkflowParams{
+		Name:        name,
+		Description: description,
+		ID:          wfID,
+	})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	if err := tq.DeleteWorkflowLabels(r.Context(), wfID); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -238,8 +262,25 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, resp)
 }
 
+// Delete removes a workflow. Returns 404 if the workflow doesn't exist and
+// 409 (with the referencing task count) if any task still references it —
+// the tasks FK has no ON DELETE clause, so letting the DELETE hit the DB
+// directly would otherwise surface as a raw 500 "FOREIGN KEY constraint
+// failed".
 func (h *WorkflowsHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.q.DeleteWorkflow(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if _, err := h.q.GetWorkflow(r.Context(), id); err != nil {
+		Err(w, http.StatusNotFound, "workflow not found")
+		return
+	}
+	if n, err := h.q.CountTasksByWorkflow(r.Context(), id); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if n > 0 {
+		Err(w, http.StatusConflict, fmt.Sprintf("workflow is used by %d task(s)", n))
+		return
+	}
+	if err := h.q.DeleteWorkflow(r.Context(), id); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}

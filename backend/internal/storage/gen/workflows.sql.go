@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countTasksByWorkflow = `-- name: CountTasksByWorkflow :one
+SELECT COUNT(*) FROM tasks WHERE workflow_id = ?
+`
+
+func (q *Queries) CountTasksByWorkflow(ctx context.Context, workflowID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTasksByWorkflow, workflowID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countWorkflows = `-- name: CountWorkflows :one
 SELECT COUNT(*) FROM workflows
 `
