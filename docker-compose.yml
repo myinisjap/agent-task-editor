@@ -15,8 +15,12 @@ services:
         # only ships the Claude CLI.
         INSTALL_CODEX_CLI: ${INSTALL_CODEX_CLI:-false}
         INSTALL_QWEN_CLI: ${INSTALL_QWEN_CLI:-false}
+    # Bound to loopback by default: API_TOKEN ships commented out, so a
+    # 0.0.0.0 binding would expose the board and the agent-dispatch path to
+    # the whole LAN. Set ATE_BIND_ADDR=0.0.0.0 (and set API_TOKEN!) to expose
+    # it deliberately; see the Security section in the README.
     ports:
-      - "8080:8080"
+      - "${ATE_BIND_ADDR:-127.0.0.1}:8080:8080"
     # Lets the container reach services published on the host (e.g. a separate
     # local-model container). Use host.docker.internal as the hostname.
     extra_hosts:
@@ -111,7 +115,7 @@ services:
       args:
         INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
     ports:
-      - "5173:80"
+      - "${ATE_BIND_ADDR:-127.0.0.1}:5173:80"
     depends_on:
       backend:
         condition: service_healthy

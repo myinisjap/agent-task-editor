@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Exit on error/unset var/failed pipeline so a failed build (e.g. `go build`
+# in the `dev` branch below) can't silently fall through to launching a stale
+# binary from a previous run.
+set -euo pipefail
+
 # Load .env if present (without overriding existing shell vars)
 if [[ -f "$(dirname "$0")/.env" ]]; then
   set -o allexport
@@ -30,7 +35,7 @@ if [[ "$ALL_CLI" == "true" ]]; then
   export INSTALL_QWEN_CLI=true
 fi
 
-if [[ -z "$REPO_BASE_DIR" ]]; then
+if [[ -z "${REPO_BASE_DIR:-}" ]]; then
   REPO_BASE_DIR="/tmp/repos"
   echo "Warning: REPO_BASE_DIR not set — defaulting to $REPO_BASE_DIR (pass --repo-dir <path> or export REPO_BASE_DIR to override)"
 fi
@@ -50,7 +55,7 @@ export REPO_BASE_DIR
 # `dev` (local) path uses it as-is, while `start`/`restart` (docker) ignore the
 # host value and write to /data/raw-logs on the db_data volume — see
 # docker-compose.yml. Export so compose can gate the env line on its presence.
-export AGENT_RAW_LOG_DIR
+export AGENT_RAW_LOG_DIR="${AGENT_RAW_LOG_DIR:-}"
 # Passed to the backend container, which remaps its runtime user to these so
 # files agents write to bind-mounted repos are owned by the host user rather
 # than root (see backend/entrypoint.sh).
@@ -71,24 +76,45 @@ else
 fi
 
 COMPOSE="docker compose"
-if [[ -n "$TRAEFIK_HOST" ]]; then
+if [[ -n "${TRAEFIK_HOST:-}" ]]; then
   COMPOSE="docker compose -f docker-compose.yml -f docker-compose.traefik.yml"
 fi
 
 # Extract GH token from gh CLI (keyring or hosts.yml) if not already set.
-if [[ -z "$GH_TOKEN" ]] && command -v gh &>/dev/null; then
-  GH_TOKEN=$(gh auth token 2>/dev/null) && export GH_TOKEN
+if [[ -z "${GH_TOKEN:-}" ]] && command -v gh &>/dev/null; then
+  if GH_TOKEN=$(gh auth token 2>/dev/null); then
+    export GH_TOKEN
+  fi
 fi
 
 # On macOS, Claude Code stores OAuth credentials in the Keychain rather than a
 # file, so the container can't read them. Sync to ~/.claude/.credentials.json
 # (which is inside the already-mounted ~/.claude volume) before starting.
+# Written via a temp file + atomic move (rather than redirecting straight into
+# the destination) so a missing/locked keychain entry doesn't truncate a
+# previously-valid credentials file.
 if [[ "$(uname)" == "Darwin" ]] && command -v security &>/dev/null; then
-  if security find-generic-password -s "Claude Code-credentials" -w \
-      > "$HOME/.claude/.credentials.json" 2>/dev/null; then
+  mkdir -p "$HOME/.claude"
+  _cred_tmp=$(mktemp)
+  if security find-generic-password -s "Claude Code-credentials" -w > "$_cred_tmp" 2>/dev/null; then
+    chmod 600 "$_cred_tmp"
+    mv "$_cred_tmp" "$HOME/.claude/.credentials.json"
     echo "Claude credentials synced from macOS Keychain → ~/.claude/.credentials.json"
+  else
+    rm -f "$_cred_tmp"
+    # Keychain entry missing/locked or the user denied access — leave any
+    # existing ~/.claude/.credentials.json untouched rather than truncating it.
+    echo "Note: could not read Claude credentials from the macOS Keychain; leaving ~/.claude/.credentials.json as-is"
   fi
+  unset _cred_tmp
 fi
+
+# Docker creates a *directory* at the source path of a bind mount when it
+# doesn't exist, so a user who has never run the Claude CLI locally would end
+# up with ~/.claude.json as a directory (breaking `./dev.sh login` and
+# host-side `claude`). Pre-create it as an empty file.
+mkdir -p "$HOME/.claude"
+[ -e "$HOME/.claude.json" ] || : > "$HOME/.claude.json"
 
 CMD=${1:-start}
 
@@ -121,8 +147,12 @@ case "$CMD" in
     ;;
   dev-stop)
     # Kill any orphaned dev processes by port.
-    kill $(lsof -ti :8080 :5173 :5174 :5175 2>/dev/null) 2>/dev/null
-    pkill -f 'agent-task-editor/backend/server' 2>/dev/null
+    _dev_pids=$(lsof -ti :8080 :5173 :5174 :5175 2>/dev/null || true)
+    if [[ -n "$_dev_pids" ]]; then
+      kill $_dev_pids 2>/dev/null || true
+    fi
+    unset _dev_pids
+    pkill -f 'agent-task-editor/backend/server' 2>/dev/null || true
     echo "dev processes stopped"
     ;;
   dev)
@@ -155,7 +185,10 @@ case "$CMD" in
     echo "  API:     http://localhost:8080"
     echo ""
     echo "Press Ctrl+C to stop both."
-    wait $BACKEND_PID $FRONTEND_PID
+    # `|| true`: a backgrounded process exiting (Ctrl+C, or one side dying)
+    # makes `wait` return non-zero, which would otherwise trip `set -e` here
+    # and turn a normal Ctrl+C into a spurious error path.
+    wait "$BACKEND_PID" "$FRONTEND_PID" || true
     ;;
   *)
     echo "Usage: $0 [--repo-dir <path>] [--all-cli] [--raw-log-dir <path>] [start|stop|restart|logs|login|shell|dev]"

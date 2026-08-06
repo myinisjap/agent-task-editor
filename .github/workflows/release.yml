@@ -26,6 +26,10 @@ name: Release
 # backend/Dockerfile), for users who want every provider available without
 # building locally:
 #   ghcr.io/myinisjap/agent-task-editor-backend:{1.2.3,1.2,1,latest}-all-cli
+#
+# Prerelease tags (e.g. v1.3.0-rc.1) publish only the exact-version tag(s)
+# above — they never move :latest, so default deployments don't silently
+# roll onto a release candidate.
 
 on:
   push:
@@ -73,7 +77,11 @@ jobs:
             type=semver,pattern={{version}},value=${{ github.ref_name }}
             type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
             type=semver,pattern={{major}},value=${{ github.ref_name }}
-            type=raw,value=latest
+            # Prerelease tags (v1.3.0-rc.1) must not move :latest — the semver
+            # patterns above already skip {{major}}/{{major}}.{{minor}} for
+            # prereleases, but raw has no such guard, and run.sh defaults
+            # ATE_VERSION=latest with pull_policy: always.
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -122,7 +130,11 @@ jobs:
             type=semver,pattern={{version}},value=${{ github.ref_name }}
             type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
             type=semver,pattern={{major}},value=${{ github.ref_name }}
-            type=raw,value=latest
+            # Prerelease tags (v1.3.0-rc.1) must not move :latest — the semver
+            # patterns above already skip {{major}}/{{major}}.{{minor}} for
+            # prereleases, but raw has no such guard, and run.sh defaults
+            # ATE_VERSION=latest with pull_policy: always.
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
       - name: Build and push
         uses: docker/build-push-action@v7
