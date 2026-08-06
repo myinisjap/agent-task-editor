@@ -3,10 +3,11 @@
 // specific git-hosting provider ("forge"). It owns the forge-neutral data
 // types shared across providers and the Forge interface itself.
 //
-// The only implementation shipped so far is GitHub (see internal/ghclient),
-// but every operation here is deliberately provider-agnostic: no field or
-// method name leaks GitHub-specific vocabulary that a self-hosted Gitea or
-// GitLab instance couldn't also satisfy.
+// Two implementations ship today: GitHub (see internal/ghclient, a thin `gh`
+// CLI wrapper) and Gitea (see internal/forge/gitea, direct REST calls). Every
+// operation here is deliberately provider-agnostic: no field or method name
+// leaks GitHub-specific vocabulary that a self-hosted Gitea or GitLab
+// instance couldn't also satisfy.
 //
 // forge is a leaf package: it must never import ghclient, ghsync,
 // tasksource, writeback, or metrics, so any package may depend on it without

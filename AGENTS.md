@@ -17,25 +17,38 @@ agent-task-editor/
 │   ├── getting-started.md
 │   ├── workflows.md
 │   ├── agents.md
+│   ├── providers/            # Per-provider deep-dives (claude, codex_cli, opencode, qwen_code, + deprecated anthropic/llm)
 │   ├── api.md
 │   ├── task-sources.md
+│   ├── task-templates.md
 │   ├── websocket.md
 │   ├── mcp-tools.md
+│   ├── board-mcp.md
+│   ├── backup.md
 │   └── screenshots.md
-├── backend/                  # Go 1.24 server
+├── backend/                  # Go server (go.mod: 1.25; CI + Docker builder: 1.26.5)
 │   ├── cmd/server/           # Main entrypoint
 │   ├── cmd/mcp-server/       # MCP sidecar (signal_complete / request_human)
+│   ├── cmd/mcp-board/        # Standalone MCP server for creating board tickets from a chat client (see docs/board-mcp.md)
 │   └── internal/
 │       ├── agent/            # Provider system, pool, dispatcher
 │       ├── api/              # Chi router, handlers, middleware
+│       ├── backup/           # Optional rotated local `VACUUM INTO` snapshot scheduler (see docs/backup.md)
 │       ├── config/           # YAML + env var config
-│       ├── forge/            # Forge interface + forge-neutral types (git-hosting-provider seam); leaf package, no impl yet beyond ghclient
+│       ├── cronexpr/         # Minimal dependency-free 5-field cron evaluator used by task schedules
+│       ├── forge/            # Forge interface + forge-neutral types (git-hosting-provider seam); leaf package (no ghclient/ghsync/tasksource/writeback/metrics imports); two impls today
+│       │   └── gitea/        # Gitea `forge.Forge` impl: direct REST calls (no CLI dependency)
 │       ├── ghclient/         # GitHub `forge.Forge` impl: thin `gh` CLI wrapper (PR lookup/create, issue listing, repo name parsing)
 │       ├── ghsync/           # Background poller: refreshes task PR state (incl. merge conflicts) via the repo's `forge.Forge`
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
+│       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
+│       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
+│       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
 │       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues today, via `forge.Forge`)
 │       ├── workflow/         # State machine engine
+│       ├── worktreesweep/    # Periodic reconciliation/GC of each repo's .ate-worktrees/<id> dirs
+│       ├── writeback/        # Per-repo opt-in status write-back to the source issue (label / PR comment / close)
 │       └── ws/               # WebSocket hub and client management
 └── frontend/                 # React + TypeScript + Vite + Tailwind
     └── src/

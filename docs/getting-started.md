@@ -9,7 +9,7 @@
 ## Prerequisites
 
 - Docker and Docker Compose (recommended)
-- **Or** Go 1.24+ and Node 20+ for local development
+- **Or** Go 1.25+ and Node 20+ for local development
 - An AI provider credential — see [Providers](providers/) for options
 
 ## Quick Start with Docker Compose
@@ -317,7 +317,7 @@ cd backend
 go run ./cmd/server
 ```
 
-Requires Go 1.24. The database file is created automatically with migrations applied on startup.
+Requires Go 1.25. The database file is created automatically with migrations applied on startup.
 
 To regenerate SQL query code after editing `.sql` files:
 
