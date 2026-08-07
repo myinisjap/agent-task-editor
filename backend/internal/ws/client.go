@@ -19,6 +19,27 @@ import (
 
 const maxSubscriptions = 100
 
+// writeTimeout bounds a single frame write on the write pump; pingTimeout
+// bounds a ping frame's write-and-wait-for-pong. Both exist because a
+// hijacked connection has no socket deadlines and r.Context() is never
+// cancelled by a peer disconnect (laptop sleep, NAT timeout, proxy drop) — so
+// without them a half-open peer would park the write pump in Write/Ping
+// forever, the read pump would never error, hub.unregister would never run,
+// and the client would stay in Hub.clients (and the WSConnectedClients
+// gauge) for the process lifetime.
+const writeTimeout = 10 * time.Second
+const pingTimeout = 10 * time.Second
+
+// maxConcurrentReplays bounds how many replayTaskLogs goroutines a single
+// client may have in flight at once. Each replay does a GetTask +
+// ListAgentLogsPage(limit replayLimit+1) and marshals up to replayLimit
+// entries, so a client subscribing to many tasks in quick succession could
+// otherwise fan out unbounded concurrent DB reads and large payloads. Kept
+// small since a client rarely needs more than a handful of replays running
+// at once; new subscriptions simply wait for a slot rather than being
+// dropped, so every subscription still gets its replay.
+const maxConcurrentReplays = 4
+
 // replayLimit caps how many historical log entries are replayed to a client on
 // subscribe. A single batched agent.log_replay message carries the newest
 // replayLimit entries; older entries are fetched on demand via the REST logs
@@ -34,6 +55,10 @@ type Client struct {
 
 	subMu         sync.RWMutex
 	subscriptions map[string]bool
+
+	// replaySlots bounds concurrent replayTaskLogs goroutines for this
+	// client; see maxConcurrentReplays.
+	replaySlots chan struct{}
 }
 
 // inboundMsg is sent by the browser to subscribe/unsubscribe a task.
@@ -118,6 +143,7 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 		conn:          conn,
 		send:          make(chan []byte, 256),
 		subscriptions: make(map[string]bool),
+		replaySlots:   make(chan struct{}, maxConcurrentReplays),
 	}
 	hub.register(c)
 	defer hub.unregister(c)
@@ -146,13 +172,27 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 				if msg.TaskID != "" {
 					c.subMu.Lock()
 					added := false
-					if len(c.subscriptions) < maxSubscriptions {
+					if !c.subscriptions[msg.TaskID] && len(c.subscriptions) < maxSubscriptions {
 						c.subscriptions[msg.TaskID] = true
 						added = true
 					}
 					c.subMu.Unlock()
 					if added && q != nil {
-						go replayTaskLogs(ctx, c, q, msg.TaskID)
+						// Bound concurrent replays per client (see
+						// maxConcurrentReplays); block for a slot rather than
+						// drop so every newly-added subscription still gets
+						// its replay. Capture taskID by value: msg is reused
+						// across loop iterations.
+						taskID := msg.TaskID
+						go func() {
+							select {
+							case c.replaySlots <- struct{}{}:
+							case <-ctx.Done():
+								return
+							}
+							defer func() { <-c.replaySlots }()
+							replayTaskLogs(ctx, c, q, taskID)
+						}()
 					}
 				}
 			case "unsubscribe":
@@ -179,12 +219,21 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 				if !ok {
 					return
 				}
-				if err := conn.Write(ctx, websocket.MessageText, msg); err != nil {
+				wctx, wcancel := context.WithTimeout(ctx, writeTimeout)
+				err := conn.Write(wctx, websocket.MessageText, msg)
+				wcancel()
+				if err != nil {
 					return
 				}
 			case <-ticker.C:
-				// Keepalive ping
-				if err := conn.Ping(ctx); err != nil {
+				// Keepalive ping. pingTimeout bounds both the ping frame's
+				// write and the wait for the pong, so a half-open peer that
+				// never responds gets its connection closed instead of
+				// parking this goroutine forever.
+				pctx, pcancel := context.WithTimeout(ctx, pingTimeout)
+				err := conn.Ping(pctx)
+				pcancel()
+				if err != nil {
 					return
 				}
 			}

@@ -20,7 +20,7 @@ This keeps the long-lived `API_TOKEN` out of the WebSocket URL, since query stri
 
 **Deprecated fallback:** `ws://host/ws?token=<API_TOKEN>` still works (checked with a constant-time compare) for existing setups that haven't migrated, but it puts the durable token in the URL and may be removed in a future release. Prefer the ticket flow above. Each use of the fallback is logged server-side as a warning.
 
-The connection is kept alive with a server-side ping every 25 seconds.
+The connection is kept alive with a server-side ping every 25 seconds. Each ping (and each outgoing message write) must complete within 10 seconds; if a peer doesn't respond in time (e.g. it's half-open — laptop sleep, NAT timeout, dropped proxy), the server closes the connection rather than waiting indefinitely.
 
 ## Subscribing to Tasks
 
@@ -34,6 +34,8 @@ Send JSON messages to control which tasks you receive events for:
 Maximum 100 active subscriptions per connection.
 
 **On subscribe**, the server immediately replays the tail of the persisted log for the task's current agent run as a single batched `agent.log_replay` message (see below). This ensures a reconnecting browser sees prior output without any gap. Only the most recent entries are replayed (capped at 500); if the run is longer, `has_more` is `true` and earlier entries can be loaded on demand via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
+
+Re-subscribing to a task you're already subscribed to on the same connection is a no-op — it does not grow your subscription count and does not trigger a second replay.
 
 ## Event Types
 

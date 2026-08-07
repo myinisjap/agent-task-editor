@@ -391,6 +391,135 @@ func TestTerminalManager_ReapIdleOnceDisabledByDefault(t *testing.T) {
 	}
 }
 
+// TestTerminalManager_OutputPumpDeleteIsOwnerScoped verifies the output
+// pump's session-map cleanup at the end of ensure() only deletes its own
+// *ptySession* entry: if a session is Stop()'d and a fresh session is
+// inserted under the same id before the old pump's goroutine observes the
+// process exit, the old pump must not delete the new session out from under
+// it (same ownership-bug class as #244's ClearActiveAgentRunIfOwner).
+func TestTerminalManager_OutputPumpDeleteIsOwnerScoped(t *testing.T) {
+	m := NewTerminalManager()
+	orig := buildTerminalCommand
+	buildTerminalCommand = func(_, _ string, _ bool) (string, []string, error) { return "sh", nil, nil }
+	t.Cleanup(func() { buildTerminalCommand = orig })
+
+	repoDir := t.TempDir()
+	const sessionID = "owner-scoped-sess"
+
+	oldSession, err := m.ensure(sessionID, repoDir, "claude", "", false)
+	if err != nil {
+		t.Fatalf("ensure (old): %v", err)
+	}
+
+	// Stop kills the process and removes it from the map immediately.
+	m.Stop(sessionID)
+
+	// Wait for the old session's output pump to observe the process exit
+	// (its done channel closes) before reattaching, so the race is against
+	// the pump's *cleanup* (delete(m.sessions, ...)) rather than its exit
+	// detection.
+	select {
+	case <-oldSession.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("old session's process did not exit in time")
+	}
+	// Small grace period: cmd.Wait()/cleanup()/delete run just after done is
+	// closed, so give the goroutine a moment to reach (or nearly reach) the
+	// delete before we insert the new session under the same id.
+	time.Sleep(20 * time.Millisecond)
+
+	newSession, err := m.ensure(sessionID, repoDir, "claude", "", false)
+	if err != nil {
+		t.Fatalf("ensure (new): %v", err)
+	}
+	defer m.Stop(sessionID)
+	if newSession == oldSession {
+		t.Fatal("expected a fresh session to be created under the same id")
+	}
+
+	// Poll: the old pump's goroutine may still be finishing (cmd.Wait,
+	// cleanup) after done closed; once it reaches its delete, the map must
+	// still hold the *new* session, not be missing the entry or holding the
+	// old one.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		m.mu.Lock()
+		got := m.sessions[sessionID]
+		m.mu.Unlock()
+		if got == newSession {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected m.sessions[%q] to remain the new session, got %v (want %v)", sessionID, got, newSession)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestTerminalManager_AttachUnblocksOnProcessExit verifies that when the CLI
+// process exits while a client is attached but idle (not sending anything),
+// Attach's read pump unblocks (conn.Read errors because the server side
+// closes the connection) instead of leaking the handler goroutine and WS
+// connection forever.
+func TestTerminalManager_AttachUnblocksOnProcessExit(t *testing.T) {
+	m := NewTerminalManager()
+	sessionID := "exit-unblock-sess"
+	defer m.Stop(sessionID)
+
+	orig := buildTerminalCommand
+	buildTerminalCommand = func(_, _ string, _ bool) (string, []string, error) {
+		return "sh", nil, nil
+	}
+	t.Cleanup(func() { buildTerminalCommand = orig })
+
+	repoDir := t.TempDir()
+
+	attachReturned := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, conn)
+		close(attachReturned)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	// Terminate the shell; the client then goes idle (sends nothing further).
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("exit\n")); err != nil {
+		t.Fatalf("write exit: %v", err)
+	}
+
+	// The server must close the connection once the CLI process exits, which
+	// unblocks conn.Read on the client side within a couple of seconds even
+	// though the client itself sends nothing more.
+	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer readCancel()
+	for {
+		if _, _, err := conn.Read(readCtx); err != nil {
+			break // connection closed by the server, as expected
+		}
+	}
+
+	// The handler goroutine (and therefore Attach) must also have returned.
+	select {
+	case <-attachReturned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Attach did not return after the CLI process exited")
+	}
+}
+
 // readUntil reads frames until `marker` appears in the accumulated output or the
 // context deadline hits.
 func readUntil(t *testing.T, ctx context.Context, c *websocket.Conn, marker string) string {
