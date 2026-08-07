@@ -146,13 +146,17 @@ jobs:
       # Coverage floor (statements), mirroring the backend gate. vitest's
       # 'json-summary' reporter (configured in vite.config.ts) emits
       # coverage/coverage-summary.json with a machine-readable "total" block.
-      # Set a few points below the coverage at the time this gate was added
-      # (~59.75% statements) to leave headroom for run-to-run variance.
+      # coverage.all + include in vite.config.ts force every src/**/*.{ts,tsx}
+      # file into the report (not just files a test happens to import), so
+      # this floor can actually detect a newly-added, entirely-untested file
+      # dragging the percentage down. Set a few points below the coverage
+      # measured right after that change (~47.98% statements) to leave
+      # headroom for run-to-run variance.
       - name: Enforce coverage floor
         run: |
           node -e '
             const s = require("./coverage/coverage-summary.json").total.statements.pct;
-            const floor = 55.0;
+            const floor = 44.0;
             console.log(`frontend statement coverage: ${s}% (floor: ${floor}%)`);
             if (s < floor) {
               console.error(`::error::frontend coverage ${s}% is below the ${floor}% floor`);
