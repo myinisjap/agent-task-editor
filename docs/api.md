@@ -53,7 +53,7 @@ Key fields returned by task endpoints:
 | `paused` | boolean | Paused tasks are never picked up by the dispatcher |
 | `archived` | boolean | Archived tasks are hidden from the default board view, skipped by the GitHub PR sweep, and never dispatched |
 | `active_agent_run_id` | UUID? | Set while an agent run is in progress |
-| `current_agent_run_id` | UUID? | ID of the most recent agent run |
+| `current_agent_run_id` | UUID? | ID of the most recent *real* agent run. A cost-budget or provider-unavailable "phantom" `waiting_human` escalation (no logs, no feedback) does not take this field — see [agents.md](agents.md#cost-budgets) |
 | `priority` | integer | Dispatch priority: `-1`=low, `0`=normal (default), `1`=high, `2`=urgent. `ListAgentPickupTasks` orders eligible tasks by priority desc, then oldest first — see [agents.md#task-priority](agents.md#task-priority) |
 | `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
 | `cumulative_cost_usd` | number | Task's lifetime recorded cost across every run regardless of status (matching the dispatcher's cost-budget guard). Only populated on `GET /tasks/{id}`, since `GET /tasks/{id}/runs` is paginated — omitted (`0`) on list responses |

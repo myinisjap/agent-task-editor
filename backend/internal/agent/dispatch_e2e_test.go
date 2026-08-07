@@ -1021,4 +1021,12 @@ func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
 	if runs[0].Status != "waiting_human" {
 		t.Fatalf("expected the run to stay waiting_human, got %q", runs[0].Status)
 	}
+	// Regression (#344): persistRunRow sets current_agent_run_id to this
+	// phantom run before the nil-provider guard fires; startRun must restore
+	// it to the prior value (nil here, since seedTaskOnReady creates the task
+	// with no prior run) rather than leaving it pointed at the phantom, which
+	// has no logs/feedback for WS replay or the next dispatch to read.
+	if task.CurrentAgentRunID != nil {
+		t.Errorf("expected current_agent_run_id to be restored to nil (no prior run existed), got %v", *task.CurrentAgentRunID)
+	}
 }

@@ -24,9 +24,23 @@ var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // repoGitLocks serializes ref-mutating git operations within a single repo.
 // Git worktrees share one object/ref store, so concurrent commits, merges,
 // branch deletes, and worktree adds/removes across sibling worktrees can race on
-// the ref lock ("cannot lock ref 'HEAD'…"). The pool (safety-net commit / push)
-// and the subtask coordinator (merge-back / branch teardown) both take the
-// repo's lock around their git writes so those operations never overlap.
+// the ref lock ("cannot lock ref 'HEAD'…"). Call sites that take the repo's
+// lock around their git writes, so those operations never overlap:
+//   - the pool's safety-net commit / push (pool.go)
+//   - the subtask coordinator's merge-back / branch teardown (subtasks.go)
+//   - the dispatcher's worktree provisioning — `git fetch --prune` + `git
+//     worktree add -b` (dispatcher.go's ensureWorktree)
+//   - cmd/server/main.go's engine.OnTerminal — branch push + worktree teardown
+//     for non-subtask tasks
+//   - the worktree sweeper's reclaim pass — `git worktree remove --force` and
+//     `git worktree prune` (internal/worktreesweep/sweeper.go)
+//
+// The mutex is a plain sync.Mutex and is NOT reentrant. It is always taken at
+// the call site around the git operation(s), never inside the shared helpers
+// themselves (provisionWorktree, provisionWorktreeFrom, RemoveWorktree,
+// PushBranch) — the subtask coordinator already holds the lock across calls
+// into those helpers, so locking inside them would self-deadlock. See issue
+// #344.
 var (
 	repoGitLockMu sync.Mutex
 	repoGitLocks  = map[string]*sync.Mutex{}

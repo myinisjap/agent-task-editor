@@ -292,8 +292,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	p.applyTerminalTransition(ctx, job, result, finalStatus, resolvedLabel, log)
 
 	// Clear rate-limit backoff on any non-rate-limited completion (success or normal failure).
+	// Conditional on no newer 429 having landed since this run started, so a
+	// slow sibling run sharing the same agent config can't wipe a fresh block
+	// registered by a concurrently-finishing run (see issue #344).
 	if p.RateLimits != nil {
-		p.RateLimits.Unblock(job.Input.AgentConfig.ID)
+		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.ID, startedAt)
 	}
 
 	// If this task is a parent with subtasks, settle merge-backs now that its run

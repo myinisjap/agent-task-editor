@@ -1411,6 +1411,28 @@ func (q *Queries) SetTaskActiveRun(ctx context.Context, arg SetTaskActiveRunPara
 	return err
 }
 
+const setTaskActiveRunOnly = `-- name: SetTaskActiveRunOnly :exec
+UPDATE tasks
+SET active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type SetTaskActiveRunOnlyParams struct {
+	ActiveAgentRunID *string `json:"active_agent_run_id"`
+	ID               string  `json:"id"`
+}
+
+// Sets ONLY active_agent_run_id, leaving current_agent_run_id pointing at the
+// last real run. Used by the dispatcher's phantom waiting_human escalations
+// (cost budget exhausted / cost-unknown / disabled-or-unknown provider), whose
+// synthetic run has no logs and no feedback: it legitimately needs the
+// re-dispatch lock, but must never become the run that WS replay shows or that
+// the next dispatch reads rework feedback from (see issue #344).
+func (q *Queries) SetTaskActiveRunOnly(ctx context.Context, arg SetTaskActiveRunOnlyParams) error {
+	_, err := q.db.ExecContext(ctx, setTaskActiveRunOnly, arg.ActiveAgentRunID, arg.ID)
+	return err
+}
+
 const setTaskArchived = `-- name: SetTaskArchived :one
 UPDATE tasks
 SET archived = ?, updated_at = CURRENT_TIMESTAMP

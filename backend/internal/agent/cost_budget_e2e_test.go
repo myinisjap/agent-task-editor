@@ -84,7 +84,9 @@ func (h *e2eHarness) seedReady(t *testing.T, taskID string) {
 // moves the task onto the "ready" pickup label as the final step, so the
 // dispatcher's first sweep of the task always sees this cost already recorded
 // (see seedTaskWithBudgets for the race this closes).
-func (h *e2eHarness) seedRunWithCost(t *testing.T, taskID, agentConfigID string, cost float64) {
+// Returns the seeded prior run's id so callers can assert current_agent_run_id
+// still points at it after a phantom escalation (see issue #344).
+func (h *e2eHarness) seedRunWithCost(t *testing.T, taskID, agentConfigID string, cost float64) string {
 	t.Helper()
 	ctx := context.Background()
 	runID := uuid.NewString()
@@ -98,7 +100,29 @@ func (h *e2eHarness) seedRunWithCost(t *testing.T, taskID, agentConfigID string,
 	}); err != nil {
 		t.Fatalf("complete prior run: %v", err)
 	}
-	h.seedReady(t, taskID)
+	// Also record feedback on the prior run so the "phantom must not hijack
+	// current_agent_run_id" regression check can verify a later dispatch still
+	// reads it (rather than the phantom's empty feedback).
+	feedback := "please fix the widget"
+	if err := h.q.SetAgentRunFeedback(ctx, gen.SetAgentRunFeedbackParams{
+		Feedback: &feedback, ID: runID,
+	}); err != nil {
+		t.Fatalf("set prior run feedback: %v", err)
+	}
+	// A real dispatch always sets current_agent_run_id via persistRunRow;
+	// mirror that here so callers can assert the phantom escalation preserves
+	// it instead of hijacking it (see issue #344). Moves the task onto
+	// "ready" in the same UpdateTaskLabel call (rather than via seedReady)
+	// since that query unconditionally overwrites current_agent_run_id —
+	// setting it first, then calling seedReady, would silently wipe it, and
+	// setting it after would race the dispatcher's first sweep of the
+	// now-pickup-labeled task.
+	if _, err := h.q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{
+		Label: "ready", CurrentAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("move task to ready with prior run recorded: %v", err)
+	}
+	return runID
 }
 
 // seedRunWithUnknownCost inserts a completed agent_runs row for taskID under
@@ -149,7 +173,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		h := newE2EHarness(t, fp)
 		wfID := seedE2EWorkflow(t, h.q)
 		taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 1.00, 0)
-		h.seedRunWithCost(t, taskID, cfgID, 1.50)
+		priorRunID := h.seedRunWithCost(t, taskID, cfgID, 1.50)
 
 		esc := h.pollTask(t, taskID, func(tk gen.Task) bool {
 			return tk.ActiveAgentRunID != nil
@@ -174,6 +198,17 @@ func TestE2E_CostBudget(t *testing.T) {
 		}
 		if len(fp.inputs) != 0 {
 			t.Errorf("expected the provider to never be invoked, got %d invocations", len(fp.inputs))
+		}
+		// Regression (#344): the phantom escalation run must lock
+		// active_agent_run_id (asserted via esc.ActiveAgentRunID above) but must
+		// NOT hijack current_agent_run_id — that should still point at the
+		// seeded prior real run, so WS replay and the next dispatch's feedback
+		// lookup see the real run, not this phantom.
+		if esc.CurrentAgentRunID == nil || *esc.CurrentAgentRunID != priorRunID {
+			t.Errorf("expected current_agent_run_id to stay on prior real run %q, got %v", priorRunID, esc.CurrentAgentRunID)
+		}
+		if esc.ActiveAgentRunID == nil || *esc.CurrentAgentRunID == *esc.ActiveAgentRunID {
+			t.Errorf("expected current_agent_run_id (%v) to differ from the phantom active_agent_run_id (%v)", esc.CurrentAgentRunID, esc.ActiveAgentRunID)
 		}
 	})
 
@@ -398,6 +433,52 @@ func TestE2E_CostBudget(t *testing.T) {
 			t.Errorf("expected the ordinary exhaustion message %q, got %v", wantMsg, run.Notes)
 		}
 	})
+}
+
+// TestE2E_CostBudgetEscalation_PreservesFeedbackForNextDispatch is a
+// regression test for issue #344: the cost-budget phantom escalation run must
+// set only active_agent_run_id, not current_agent_run_id, so that once a
+// human raises the budget and replies (waking the task via DispatchReply),
+// the new real run's feedback comes from the prior REAL run — not from the
+// phantom, which has none.
+func TestE2E_CostBudgetEscalation_PreservesFeedbackForNextDispatch(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 1.00, 0)
+	priorRunID := h.seedRunWithCost(t, taskID, cfgID, 1.50)
+
+	esc := h.pollTask(t, taskID, func(tk gen.Task) bool {
+		return tk.ActiveAgentRunID != nil
+	}, "task to be locked on a budget-exhausted phantom run")
+
+	if esc.CurrentAgentRunID == nil || *esc.CurrentAgentRunID != priorRunID {
+		t.Fatalf("expected current_agent_run_id to stay on prior real run %q, got %v", priorRunID, esc.CurrentAgentRunID)
+	}
+
+	// Raise the task's budget so the guard no longer blocks dispatch, then
+	// reply — same as a human unblocking a waiting_human escalation.
+	if _, err := h.q.UpdateTask(context.Background(), gen.UpdateTaskParams{
+		Title: esc.Title, Description: esc.Description, Type: esc.Type, RepoID: esc.RepoID,
+		MaxCostUsd: 100.00, ID: taskID,
+	}); err != nil {
+		t.Fatalf("raise task budget: %v", err)
+	}
+	if _, err := h.disp.DispatchReply(context.Background(), taskID, "budget raised, please continue"); err != nil {
+		t.Fatalf("DispatchReply: %v", err)
+	}
+
+	h.pollTask(t, taskID, func(tk gen.Task) bool {
+		return tk.Label == "next"
+	}, "task to dispatch and complete now that the budget was raised")
+
+	if len(fp.inputs) != 1 {
+		t.Fatalf("expected exactly one real provider invocation, got %d", len(fp.inputs))
+	}
+	got := fp.inputs[0].Feedback
+	if got == nil || *got != "please fix the widget" {
+		t.Errorf("expected the new run's feedback to come from the prior real run, got %v", got)
+	}
 }
 
 // TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked covers the mid-run
