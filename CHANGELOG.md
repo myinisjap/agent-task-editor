@@ -926,6 +926,21 @@ triggers the "Release" workflow the same way.
   paint instead of a placeholder that immediately disappears.
 
 ### Security
+- **Workflow label `color` is now validated as a hex color, closing a stored
+  XSS reachable from a shared or imported workflow YAML.** `color` was
+  persisted verbatim by `PUT /workflows/{id}`, `PUT /workflows/{id}/yaml`,
+  and `POST /workflows/import`, and the Dashboard's "Visualize" factory
+  view (`factory` mode) interpolates it directly into SVG markup that's
+  rendered with `dangerouslySetInnerHTML`/`innerHTML` — a label named e.g.
+  `#fff"/></svg><img src=x onerror=...>` broke out of the SVG and executed
+  script in the viewer's session, which given the bearer token in
+  `localStorage` amounts to full API access. All three write paths now
+  reject any `color` that isn't empty or a `#rgb`/`#rrggbb`/`#rrggbbaa` hex
+  literal (400). The frontend factory visualization also normalizes colors
+  to a safe fallback before building SVG markup, so the rendering sink is
+  safe independently of server-side validation. Existing rows with a
+  non-hex color keep rendering (falling back to the default color) but the
+  workflow can't be saved again until that label's color is fixed. (#343)
 - **CLI agent subprocesses (`claude`, `codex_cli`, `qwen_code`, `opencode`)
   no longer inherit the full backend process environment — including the
   interactive chat terminal, not just headless runs.** Previously each

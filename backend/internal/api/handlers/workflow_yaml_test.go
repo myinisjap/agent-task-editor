@@ -31,6 +31,33 @@ func TestYamlWorkflow_Validate_CreatePR(t *testing.T) {
 	}
 }
 
+func TestYamlWorkflow_Validate_Color(t *testing.T) {
+	cases := []struct {
+		name    string
+		color   string
+		wantErr bool
+	}{
+		{"empty allowed", "", false},
+		{"short hex", "#fff", false},
+		{"long hex uppercase", "#FFFFFF", false},
+		{"eight digit hex", "#11223344", false},
+		{"invalid hex chars", "#ggg", true},
+		{"named color rejected", "red", true},
+		{"missing hash", "fff", true},
+		{"svg breakout payload rejected", `#fff"/></svg><img src=x onerror=alert(1)>`, true},
+		{"css injection rejected", "#fff; background:url(x)", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wf := yamlWorkflow{Name: "wf", Labels: []yamlLabel{{Name: "todo", Color: tc.color}}}
+			err := wf.validate()
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("validate() err = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestYamlWorkflow_Validate_WipLimit(t *testing.T) {
 	intp := func(v int) *int { return &v }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { stationsFor } from './factoryStations'
-import { machineSvg, itemSvg, DEFAULT_FACTORY_ACTIONS, type FactoryAction } from './factoryMachines'
+import { machineSvg, itemSvg, safeColor, FACTORY_FALLBACK_COLOR, DEFAULT_FACTORY_ACTIONS, type FactoryAction } from './factoryMachines'
 import type { Workflow } from '../api/client'
 
 function label(overrides: Partial<Workflow['labels'][number]>): Workflow['labels'][number] {
@@ -84,5 +84,41 @@ describe('machineSvg / itemSvg', () => {
 
   it('falls back to the intake machine for an unknown action', () => {
     expect(machineSvg('nope' as FactoryAction, '#fff')).toBe(machineSvg('idle', '#fff'))
+  })
+})
+
+// Regression tests for #343 (stored XSS via workflow label color): a
+// malicious color must never survive into the SVG markup that FactoryLine.tsx
+// injects with dangerouslySetInnerHTML / innerHTML.
+describe('safeColor / markup safety', () => {
+  const PAYLOAD = '#fff"/></svg><img src=x onerror=alert(1)>'
+
+  it('passes through well-formed hex colors unchanged', () => {
+    expect(safeColor('#fff')).toBe('#fff')
+    expect(safeColor('#abc')).toBe('#abc')
+    expect(safeColor('#3366FF')).toBe('#3366FF')
+    expect(safeColor('#11223344')).toBe('#11223344')
+  })
+
+  it('falls back to the default for non-hex / malicious input', () => {
+    expect(safeColor(PAYLOAD)).toBe(FACTORY_FALLBACK_COLOR)
+    expect(safeColor('red')).toBe(FACTORY_FALLBACK_COLOR)
+    expect(safeColor('red; background:url(x)')).toBe(FACTORY_FALLBACK_COLOR)
+    expect(safeColor(undefined)).toBe(FACTORY_FALLBACK_COLOR)
+    expect(safeColor(null)).toBe(FACTORY_FALLBACK_COLOR)
+    expect(safeColor('')).toBe(FACTORY_FALLBACK_COLOR)
+  })
+
+  it('machineSvg neutralizes a malicious color and never emits the payload', () => {
+    const svg = machineSvg('idle', PAYLOAD)
+    expect(svg).not.toContain('<img')
+    expect(svg).not.toContain('onerror')
+    expect(svg).toContain(FACTORY_FALLBACK_COLOR)
+  })
+
+  it('itemSvg neutralizes a malicious color independently of machineSvg', () => {
+    const svg = itemSvg(6, 'red; background:url(x)')
+    expect(svg).not.toContain('background:url')
+    expect(svg).toContain(FACTORY_FALLBACK_COLOR)
   })
 })

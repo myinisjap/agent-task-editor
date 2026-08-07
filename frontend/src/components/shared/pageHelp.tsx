@@ -45,7 +45,7 @@ export function WorkflowHelp() {
         <h3 className="text-slate-100 font-semibold">Labels</h3>
         <ul className="flex flex-col gap-1 list-disc list-inside">
           <li><code className="bg-slate-800 rounded px-1 font-mono">name</code> — unique identifier within the workflow</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">color</code> — hex color used on the board</li>
+          <li><code className="bg-slate-800 rounded px-1 font-mono">color</code> — hex color used on the board (e.g. <code className="bg-slate-800 rounded px-1 font-mono">#RRGGBB</code>); empty is allowed, anything else is rejected</li>
           <li><code className="bg-slate-800 rounded px-1 font-mono">sort_order</code> — column order on the board</li>
           <li><code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> — agents cannot move tasks here; the dispatcher skips tasks already on this label</li>
           <li><code className="bg-slate-800 rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
