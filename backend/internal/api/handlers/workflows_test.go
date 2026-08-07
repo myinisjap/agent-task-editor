@@ -242,6 +242,96 @@ func TestWorkflows_Update_OmittedNameAndDescriptionPreserved(t *testing.T) {
 	}
 }
 
+// TestWorkflows_Update_RejectsInvalidLabelColor verifies that a label color
+// that isn't a hex literal is rejected with 400 and does not get persisted.
+// Regression test for #343 (stored XSS via workflow label color).
+func TestWorkflows_Update_RejectsInvalidLabelColor(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	ctx := context.Background()
+
+	wf, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{
+		ID: "wf-bad-color", Name: "Bad Color Workflow",
+	})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	payload := `#fff"/></svg><img src=x onerror=alert(1)>`
+	req := httptest.NewRequest(http.MethodPut, "/workflows/"+wf.ID, jsonBody(t, map[string]any{
+		"labels":      []map[string]any{{"name": "todo", "color": payload, "sort_order": 0}},
+		"transitions": []map[string]any{},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malicious color, got %d: %s", w.Code, w.Body)
+	}
+
+	labels, err := q.ListWorkflowLabels(ctx, wf.ID)
+	if err != nil {
+		t.Fatalf("list labels: %v", err)
+	}
+	if len(labels) != 0 {
+		t.Errorf("expected no labels persisted after rejected update, got %d", len(labels))
+	}
+}
+
+// TestWorkflows_Update_AcceptsValidHexColor verifies a well-formed hex color
+// still round-trips successfully.
+func TestWorkflows_Update_AcceptsValidHexColor(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	ctx := context.Background()
+
+	wf, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{
+		ID: "wf-good-color", Name: "Good Color Workflow",
+	})
+	if err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/workflows/"+wf.ID, jsonBody(t, map[string]any{
+		"labels":      []map[string]any{{"name": "todo", "color": "#3366FF", "sort_order": 0}},
+		"transitions": []map[string]any{},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid hex color, got %d: %s", w.Code, w.Body)
+	}
+
+	labels, err := q.ListWorkflowLabels(ctx, wf.ID)
+	if err != nil {
+		t.Fatalf("list labels: %v", err)
+	}
+	if len(labels) != 1 || labels[0].Color != "#3366FF" {
+		t.Fatalf("expected persisted label color #3366FF, got %+v", labels)
+	}
+}
+
+// TestWorkflows_Import_RejectsInvalidLabelColor verifies the YAML import
+// path also rejects a malicious color, since a shared/imported workflow
+// YAML is the realistic delivery vehicle for this payload (#343).
+func TestWorkflows_Import_RejectsInvalidLabelColor(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+
+	yamlBody := `
+name: yaml-bad-color
+labels:
+  - name: todo
+    color: "#fff\"/></svg><img src=x onerror=alert(1)>"
+    sort_order: 0
+`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/import", strings.NewReader(yamlBody))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malicious color on import, got %d: %s", w.Code, w.Body)
+	}
+}
+
 // TestWorkflows_Update_RenameRollsBackOnTransitionFailure verifies that if
 // replacing transitions fails partway through (here: an invalid
 // trigger_type, rejected by the CHECK constraint), the workflow rename is

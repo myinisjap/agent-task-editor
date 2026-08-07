@@ -55,6 +55,11 @@ func (wf yamlWorkflow) validate() error {
 			return fmt.Errorf("label %q: wip_limit must be a positive integer if set", l.Name)
 		}
 	}
+	for _, l := range wf.Labels {
+		if err := validateLabelColor(l.Name, l.Color); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { Workflow } from '../api/client'
 import { stationsFor } from './factoryStations'
-import { machineSvg, itemSvg, FACTORY_DEFS } from './factoryMachines'
+import { machineSvg, itemSvg, safeColor, FACTORY_DEFS } from './factoryMachines'
 import './factoryLine.css'
 
 const CAP = 9 // max count shown in a station's badge before a "+N" suffix
@@ -191,7 +191,7 @@ export default function FactoryLine({
           {stations.map((st) => {
             const over = st.count - CAP
             return (
-              <div key={st.key} className="fl-station" style={{ ['--sc' as string]: st.color } as React.CSSProperties}>
+              <div key={st.key} className="fl-station" style={{ ['--sc' as string]: safeColor(st.color) } as React.CSSProperties}>
                 <div className="fl-top" />
                 <div className="fl-head">
                   <span className="fl-name">{st.name}</span>
