@@ -86,6 +86,10 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
       if (event.type === 'agent.log' && event.payload.task_id === taskId) {
         const entry = event.payload.entry as AgentLog
         if (entry && event.payload.run_id === runId) {
+          // entry.id is the persisted agent_logs row id (see toLog's doc
+          // comment), matching what agent.log_replay/REST pages return for
+          // the same row, so this guard actually catches reconnect
+          // duplicates rather than always seeing a fresh client-minted id.
           const l = toLog(entry)
           setLogs((prev) => (prev.some((x) => x.id === l.id) ? prev : [...prev, l]))
         }

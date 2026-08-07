@@ -442,6 +442,46 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Frontend data races: unscoped refetches, no request sequencing, and
+  client-minted log ids that break dedupe.** (#341) Three related races where
+  a response was applied without checking it was still the one being
+  awaited:
+  - The backend's `agent.log` WS broadcast carried only `{type, content, at}`
+    — no `id` — while the persisted `agent_logs` row got a server-side UUID,
+    so `toLog()` minted a random client-side id (`crypto.randomUUID()`) for
+    every live entry. On reconnect, the server replays the persisted tail via
+    `agent.log_replay`, and the id-keyed dedupe in `mergeLogs` couldn't match
+    a live entry against its own replayed row, duplicating the visible log
+    tail after any network blip (and, with the same mismatch, wherever a
+    "Load earlier" page overlapped the live stream). The pool now publishes
+    the persisted row's id in the live `agent.log` entry, so the frontend
+    dedupes correctly; the client-side fallback (for a payload that somehow
+    lacks an id) is now a deterministic content-derived key instead of a
+    random one.
+  - `TaskDetailPage`'s WS-driven refetches (`refreshTask`, `refreshRuns`,
+    `refreshLabelHistory`, `refreshSourceComments`) and `useDiffComments`'
+    `refreshComments`/mutation handlers were not scoped to the task id they
+    were issued for. Since React Router reuses the same component instance
+    across `/tasks/:id` navigations, navigating from task A to task B while
+    an A-triggered refresh was in flight (very likely, since
+    `agent_started`/`agent_done`/`task.updated` all trigger one) could apply
+    task A's response after the user had moved on to task B's page. Every
+    refresh now checks the current task id against the id it was issued for
+    before applying its result, and per-task state resets on navigation so a
+    new task's page never briefly shows the previous task's data.
+  - `useTasksStore.fetch()` paged through the whole task list with no request
+    sequencing and then did a blind `set({ tasks: all })`: an `upsert`/
+    `remove` applied by the WS handler while a multi-page sweep was in flight
+    was silently discarded once the sweep finished, and two overlapping
+    `fetch()` calls (e.g. toggling the Archived filter quickly) could resolve
+    out of order, leaving the board showing the earlier request's result.
+    This was exercised on every board load already, since `OnboardingChecklist`
+    fired its own unfiltered `fetchTasks()` racing `BoardPage`'s filtered one.
+    The store now tracks a monotonic request id (ignoring any result whose id
+    isn't current) and the ids of tasks upserted/removed mid-sweep (so a
+    finishing sweep can't resurrect or overwrite a newer WS update), and
+    `OnboardingChecklist` reads `tasks`/a new `loaded` flag from the store
+    instead of running its own fetch.
 - **Rate-limit block could be clobbered by a concurrently-finishing sibling
   run, defeating the 429 backoff.** (#344) With `MAX_WORKERS > 1`, several
   runs can share one agent config. Every non-rate-limited run completion

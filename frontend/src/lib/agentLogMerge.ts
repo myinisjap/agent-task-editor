@@ -5,12 +5,24 @@ export const LOG_PAGE_SIZE = 200
 
 // toLog normalises a log-ish payload (from a REST page, the batched replay, or
 // a live agent.log event) into an AgentLog. Live events carry the timestamp as
-// `at` and may omit the id, so fill both in.
+// `at`, so fill that in when `timestamp` is absent.
+//
+// The backend now stamps live `agent.log` entries with the same id as the
+// persisted `agent_logs` row (see backend/internal/agent/pool.go
+// `persistLogs`), so `e.id` should normally be present and this is the id we
+// dedupe on in `mergeLogs`. The fallback below only matters against an old
+// backend that predates that fix (or any payload that otherwise omits an
+// id): it must be a *deterministic* function of the entry's content, not a
+// random id, so that if the same entry later reappears (e.g. via
+// agent.log_replay on reconnect) it produces the same key and dedupes
+// correctly. A random id would silently defeat dedup and duplicate the
+// visible log on every reconnect.
 export function toLog(e: any): AgentLog {
+  const timestamp = e.timestamp ?? e.at ?? ''
   return {
-    id: e.id ?? crypto.randomUUID(),
+    id: e.id ?? `live:${timestamp}|${e.type}|${e.content}`,
     agent_run_id: e.agent_run_id ?? '',
-    timestamp: e.timestamp ?? e.at ?? '',
+    timestamp,
     type: e.type,
     content: e.content,
   }

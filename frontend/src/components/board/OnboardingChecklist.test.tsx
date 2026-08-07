@@ -104,7 +104,12 @@ function check(overrides: Partial<ProviderCheck> = {}): ProviderCheck {
 
 function resetStores() {
   useReposStore.setState({ repos: [], loading: false, error: null })
-  useTasksStore.setState({ tasks: [], loading: false, error: null })
+  // OnboardingChecklist no longer fetches tasks itself (#341) — it reads
+  // `tasks`/`loaded` from the store, which BoardPage (its real-world parent)
+  // is responsible for populating. Seed `loaded: true` here so the
+  // checklist's render gate passes in tests that render it standalone; tests
+  // that need a specific task list call useTasksStore.setState directly.
+  useTasksStore.setState({ tasks: [], loading: false, error: null, loaded: true })
   useProviderConfigsStore.setState({ configs: [], loading: false })
   useAgentsStore.setState({
     configs: [],
@@ -179,13 +184,31 @@ describe('OnboardingChecklist', () => {
     reposListMock.mockResolvedValue([repo()])
     providerConfigsListMock.mockResolvedValue([providerConfig()])
     agentsListMock.mockResolvedValue([agentConfig({ enabled: true })])
-    tasksListMock.mockResolvedValue({ items: [task()], nextCursor: null })
+    // Tasks come from the store (populated by BoardPage in production), not
+    // from a fetch this component makes itself — seed it directly.
+    useTasksStore.setState({ tasks: [task()], loading: false, error: null, loaded: true })
 
     const { container } = renderChecklist()
 
     await waitFor(() => {
       expect(container).toBeEmptyDOMElement()
     })
+  })
+
+  it('renders nothing while the tasks store has not loaded yet, even if other steps are complete', async () => {
+    reposListMock.mockResolvedValue([repo()])
+    providerConfigsListMock.mockResolvedValue([providerConfig()])
+    agentsListMock.mockResolvedValue([agentConfig({ enabled: true })])
+    // Simulate BoardPage's fetch still being in flight.
+    useTasksStore.setState({ tasks: [], loading: true, error: null, loaded: false })
+
+    const { container } = renderChecklist()
+
+    // Give the other (unrelated) fetches a chance to resolve.
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('surfaces a failing readiness check inline under its step', async () => {

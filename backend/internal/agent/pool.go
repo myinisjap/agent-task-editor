@@ -715,8 +715,9 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 				flush(context.Background())
 				return
 			}
+			logID := uuid.NewString()
 			batch = append(batch, gen.CreateAgentLogParams{
-				ID:         uuid.NewString(),
+				ID:         logID,
 				AgentRunID: runID,
 				Timestamp:  entry.At,
 				Type:       string(entry.Type),
@@ -725,12 +726,16 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 			if len(batch) >= 50 {
 				flush(ctx)
 			}
-			// Also publish to WebSocket for live streaming
+			// Also publish to WebSocket for live streaming. The published entry
+			// carries the same id as the persisted agent_logs row (logID) so
+			// clients can dedupe live entries against agent.log_replay and
+			// GET /tasks/{id}/runs/{run_id}/logs pages by id alone.
 			if p.pub != nil {
 				p.pub.Publish("agent.log", map[string]any{
 					"run_id":  runID,
 					"task_id": taskID,
 					"entry": map[string]any{
+						"id":      logID,
 						"type":    entry.Type,
 						"content": entry.Content,
 						"at":      entry.At,
