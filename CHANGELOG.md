@@ -1029,6 +1029,34 @@ triggers the "Release" workflow the same way.
   longer drags the number away from reflecting real test coverage; the
   enforced floor moves from 55.0% to 76.0% against that filtered metric. See
   `backend/AGENTS.md` § Testing for how to reproduce CI's number locally.
+- **Frontend coverage floor now actually measures every source file, not
+  just the ones a test happens to import.** (#345) The v8 coverage provider
+  only instruments modules a test imports, so with no `coverage.all`/
+  `include` configured, files nothing imported yet — including entire pages
+  like `ReposPage`, `WorkflowPage`, `DashboardPage`, and `App.tsx` — were
+  simply absent from `coverage-summary.json` rather than counted as 0%,
+  meaning a brand-new untested file could never lower the reported
+  percentage and the CI floor couldn't detect the regression it exists to
+  catch. `vite.config.ts`'s `test.coverage` now sets `all: true` and
+  `include: ['src/**/*.{ts,tsx}']` (excluding test files, the generated
+  `src/api/types.ts`, `src/main.tsx`, and `src/test/**`), and the floor in
+  `.github/workflows/ci.yml` is reset from 55.0% to 44.0% against the honest
+  number this now measures (~47.98% statements, down from the previously
+  self-selected ~62.39%). See `frontend/AGENTS.md` § Testing.
+- **`ghclient.GitHub` (the production `forge.Forge` adapter every GitHub
+  write-back/sync call goes through) is now covered on all 14 interface
+  methods, up from 0%.** (#345) A new table test
+  (`backend/internal/ghclient/ghclient_forge_test.go`) drives each method
+  through a `forge.Forge`-typed variable with `runGH` scripted, asserting
+  every argument (repo, branch, PR/issue number, label/title/body) lands in
+  its expected position — catching an argument-order swap in the mostly
+  one-line delegations that the rest of the suite couldn't see — plus a
+  direct assertion on `CompareURL`'s constructed URL string, the one method
+  with real logic. `SubtaskCoordinator.AfterParentRun`
+  (`backend/internal/agent/subtasks.go`) — the deferred-merge-back flush for
+  a parent that had a run in flight when a child went terminal — also moves
+  from 0% to fully covered, including the conflict-resolution and no-op
+  branches.
 
 ### Dependencies
 - **Dependabot now groups patch-only bumps into a single PR per ecosystem**
