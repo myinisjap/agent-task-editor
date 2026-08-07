@@ -10,6 +10,21 @@
 // 46..80) so a tight crop renders it on the belts too. Gradient/pattern ids are
 // `fl`-prefixed to avoid colliding with anything else on the page.
 
+// Colors reach this module from workflow label rows, which are user-supplied
+// (and shareable via workflow YAML). The machine art below is built as raw
+// HTML strings and injected via dangerouslySetInnerHTML / innerHTML by
+// FactoryLine.tsx, so an unvalidated color could break out of the SVG markup
+// and inject arbitrary HTML (stored XSS, see #343). The server now rejects
+// non-hex colors on write, but we normalize here too so this module's only
+// two entry points (machineSvg, itemSvg) are safe on their own regardless of
+// caller. TODO: render this art as React elements to remove the raw-HTML
+// sink entirely — tracked as the durable follow-up to #343.
+const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/
+export const FACTORY_FALLBACK_COLOR = '#6b7280'
+export function safeColor(c: string | undefined | null): string {
+  return typeof c === 'string' && HEX_COLOR.test(c) ? c : FACTORY_FALLBACK_COLOR
+}
+
 export type FactoryAction =
   | 'idle'
   | 'drawing'
@@ -74,6 +89,7 @@ function rollers(x: number, y: number, n: number): string {
 // The part being assembled. `stage` (0..6, derived from the station's position
 // on the line) controls how much structure it has gained.
 export function itemSvg(stage: number, c: string): string {
+  c = safeColor(c)
   let g = '<ellipse cx="66" cy="80" rx="17" ry="3" fill="#000" opacity=".35"/>'
   g += '<rect x="52" y="54" width="28" height="23" rx="3" fill="url(#flMetal)" stroke="#5b6b86" stroke-width="1"/>'
   g += '<rect x="52" y="54" width="28" height="5" rx="3" fill="#e4ebf5"/>'
@@ -293,5 +309,5 @@ const machines: Record<FactoryAction, (c: string) => string> = {
 }
 
 export function machineSvg(action: FactoryAction, color: string): string {
-  return (machines[action] ?? machines.idle)(color)
+  return (machines[action] ?? machines.idle)(safeColor(color))
 }

@@ -166,3 +166,139 @@ func TestCoordinator_ConflictFlagsChildNoAdvance(t *testing.T) {
 		t.Fatalf("expected conflict context for parent")
 	}
 }
+
+// TestCoordinator_DeferredMergeFlushedAfterParentRun verifies that when the
+// parent has a run in flight at the time a child goes terminal, the
+// merge-back is deferred (merge_status=pending, nothing lands on the parent
+// branch yet) and is flushed by AfterParentRun once the parent's run clears.
+func TestCoordinator_DeferredMergeFlushedAfterParentRun(t *testing.T) {
+	coord, q, repo, parent, child := setupCoordEnv(t)
+	ctx := context.Background()
+
+	// Child does some work and commits on its branch.
+	if err := os.WriteFile(filepath.Join(child.WorktreePath, "child.txt"), []byte("child work\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, child.WorktreePath, "add", "-A")
+	gitIn(t, child.WorktreePath, "-c", "user.name=test", "-c", "user.email=t@example.com", "commit", "-m", "child work")
+
+	// Simulate the parent having a run in flight.
+	runID := uuid.NewString()
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{ActiveAgentRunID: &runID, ID: parent.ID}); err != nil {
+		t.Fatalf("set parent active run: %v", err)
+	}
+
+	coord.OnChildTerminal(ctx, child, repo)
+
+	// Merge-back deferred: child pending, nothing landed on the parent branch.
+	child, _ = q.GetTask(ctx, child.ID)
+	if child.MergeStatus != "pending" {
+		t.Fatalf("child merge_status = %q, want pending", child.MergeStatus)
+	}
+	if _, err := os.Stat(filepath.Join(parent.WorktreePath, "child.txt")); !os.IsNotExist(err) {
+		t.Fatalf("child work should not have landed on parent branch yet")
+	}
+	parent, _ = q.GetTask(ctx, parent.ID)
+	if parent.Label != "work" {
+		t.Fatalf("parent should not have auto-advanced while merge is deferred, got %q", parent.Label)
+	}
+
+	// Parent's run completes; clear the active run and flush.
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{ActiveAgentRunID: nil, ID: parent.ID}); err != nil {
+		t.Fatalf("clear parent active run: %v", err)
+	}
+
+	changed := coord.AfterParentRun(ctx, parent.ID, repo, true)
+	if !changed {
+		t.Fatalf("AfterParentRun should report a change when flushing a deferred merge")
+	}
+
+	child, _ = q.GetTask(ctx, child.ID)
+	if child.MergeStatus != "merged" {
+		t.Fatalf("child merge_status = %q, want merged", child.MergeStatus)
+	}
+	if _, err := os.Stat(filepath.Join(parent.WorktreePath, "child.txt")); err != nil {
+		t.Fatalf("child work did not land on parent branch after flush: %v", err)
+	}
+	if _, err := os.Stat(child.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("child worktree should be removed after flush")
+	}
+}
+
+// TestCoordinator_AfterParentRunResolvesConflict verifies that a child left
+// in merge_conflict is resolved (marked merged, worktree/branch torn down)
+// once the parent's own run succeeds — the run is assumed to have committed
+// the conflict resolution directly on the parent branch — and that a failed
+// run leaves the child untouched.
+func TestCoordinator_AfterParentRunResolvesConflict(t *testing.T) {
+	coord, q, repo, parent, child := setupCoordEnv(t)
+	ctx := context.Background()
+
+	// Parent branch and child branch both change the same file differently ->
+	// conflict on merge-back.
+	if err := os.WriteFile(filepath.Join(parent.WorktreePath, "clash.txt"), []byte("parent side\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, parent.WorktreePath, "add", "-A")
+	gitIn(t, parent.WorktreePath, "-c", "user.name=test", "-c", "user.email=t@example.com", "commit", "-m", "parent change")
+
+	if err := os.WriteFile(filepath.Join(child.WorktreePath, "clash.txt"), []byte("child side\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, child.WorktreePath, "add", "-A")
+	gitIn(t, child.WorktreePath, "-c", "user.name=test", "-c", "user.email=t@example.com", "commit", "-m", "child change")
+
+	coord.OnChildTerminal(ctx, child, repo)
+
+	child, _ = q.GetTask(ctx, child.ID)
+	if child.MergeStatus != "merge_conflict" {
+		t.Fatalf("child merge_status = %q, want merge_conflict", child.MergeStatus)
+	}
+	childBranch := child.Branch
+
+	t.Run("failed run leaves child untouched", func(t *testing.T) {
+		changed := coord.AfterParentRun(ctx, parent.ID, repo, false)
+		if changed {
+			t.Fatalf("AfterParentRun should not report a change for a failed run against a conflicted child")
+		}
+		got, _ := q.GetTask(ctx, child.ID)
+		if got.MergeStatus != "merge_conflict" {
+			t.Fatalf("child merge_status = %q, want merge_conflict (unchanged)", got.MergeStatus)
+		}
+	})
+
+	t.Run("successful run resolves the conflict", func(t *testing.T) {
+		changed := coord.AfterParentRun(ctx, parent.ID, repo, true)
+		if !changed {
+			t.Fatalf("AfterParentRun should report a change when resolving a conflicted child")
+		}
+		got, _ := q.GetTask(ctx, child.ID)
+		if got.MergeStatus != "merged" {
+			t.Fatalf("child merge_status = %q, want merged", got.MergeStatus)
+		}
+		if _, err := os.Stat(child.WorktreePath); !os.IsNotExist(err) {
+			t.Fatalf("child worktree should be removed after conflict resolution")
+		}
+		if branchExists(t, repo, childBranch) {
+			t.Fatalf("child local branch %q should be deleted after conflict resolution", childBranch)
+		}
+	})
+}
+
+// TestCoordinator_AfterParentRunNoOpForNonParent verifies AfterParentRun is a
+// no-op (returns false) both for a task with no children and for an unknown
+// task id (the GetTask error branch).
+func TestCoordinator_AfterParentRunNoOpForNonParent(t *testing.T) {
+	coord, _, repo, _, child := setupCoordEnv(t)
+	ctx := context.Background()
+
+	// The child itself has no subtasks of its own.
+	if changed := coord.AfterParentRun(ctx, child.ID, repo, true); changed {
+		t.Fatalf("AfterParentRun on a task with no children should return false")
+	}
+
+	// Unknown task id: GetTask errors out.
+	if changed := coord.AfterParentRun(ctx, uuid.NewString(), repo, true); changed {
+		t.Fatalf("AfterParentRun on an unknown task id should return false")
+	}
+}

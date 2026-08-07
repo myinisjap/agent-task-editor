@@ -9,7 +9,7 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | Unique identifier within the workflow (used as the task's current state) |
-| `color` | string | Hex color for UI display |
+| `color` | string | Hex color for UI display. Must be empty (falls back to the UI default) or a hex literal matching `^#[0-9a-fA-F]{3,8}$` (`#rgb`, `#rrggbb`, or `#rrggbbaa`) — anything else is rejected with 400 on save/import. This value is interpolated into SVG markup by the dashboard's factory visualization, so it is validated server-side to prevent HTML/CSS injection (see #343). |
 | `sort_order` | int | Column order on the board |
 | `agent_ignore` | bool | Agents cannot move tasks to this label; dispatcher skips tasks already here |
 | `is_terminal` | bool | No further transitions; task is complete |

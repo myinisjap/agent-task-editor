@@ -2432,6 +2432,13 @@ export interface paths {
                         "application/json": components["schemas"]["Workflow"];
                     };
                 };
+                /** @description Duplicate workflow name or invalid label color */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         post?: never;
@@ -4406,6 +4413,7 @@ export interface components {
             id: string;
             workflow_id: string;
             name: string;
+            /** @description Hex color (#rgb/#rrggbb/#rrggbbaa) used by the UI, including the dashboard's factory visualization. Empty string is allowed (falls back to a UI default); anything else that isn't a hex literal is rejected with 400 on write. */
             color: string;
             sort_order: number;
             agent_ignore: number;

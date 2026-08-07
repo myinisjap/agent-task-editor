@@ -4,11 +4,32 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"regexp"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
+
+// validLabelColor matches the CSS hex color literal forms (#rgb, #rrggbb,
+// #rrggbbaa). Workflow label colors are interpolated into raw SVG markup by
+// the dashboard's factory visualization (frontend/src/components/factoryMachines.ts)
+// and rendered with dangerouslySetInnerHTML, so accepting arbitrary strings
+// here is an HTML/CSS injection vector reachable via a shared or imported
+// workflow YAML (see #343). Reject anything that isn't a hex color.
+var validLabelColor = regexp.MustCompile(`^#[0-9a-fA-F]{3,8}$`)
+
+// validateLabelColor accepts an empty color (meaning "use the UI default")
+// or a hex color literal, and rejects everything else.
+func validateLabelColor(name, color string) error {
+	if color == "" {
+		return nil
+	}
+	if !validLabelColor.MatchString(color) {
+		return fmt.Errorf("label %q: color must be a hex color like #RRGGBB", name)
+	}
+	return nil
+}
 
 type WorkflowsHandler struct {
 	q  *gen.Queries
@@ -170,6 +191,15 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Name != "" {
 		if existing, err := h.q.GetWorkflowByName(r.Context(), body.Name); err == nil && existing.ID != wfID {
 			Err(w, http.StatusBadRequest, "a workflow with that name already exists")
+			return
+		}
+	}
+
+	// Validate label colors before opening the transaction, so a bad payload
+	// never causes a half-applied delete/recreate of the labels (see #343).
+	for _, l := range body.Labels {
+		if err := validateLabelColor(l.Name, l.Color); err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}

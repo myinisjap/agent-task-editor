@@ -148,6 +148,19 @@ Common mocking patterns used by the component tests:
   dnd-kit's collision detection has real geometry — see
   `src/components/board/TaskBoard.test.tsx`.
 
+CI measures coverage with `npm run test:coverage` (`vitest run --coverage`)
+and enforces a statements floor (see `.github/workflows/ci.yml`, "Enforce
+coverage floor"). The v8 coverage provider only instruments modules a test
+actually *imports* by default, so a brand-new file nothing imports would be
+silently absent from the report instead of counted as 0% — meaning a floor
+computed that way could never detect newly-added untested code, which is the
+whole point of having one. To avoid that, `vite.config.ts`'s
+`test.coverage` block sets `all: true` plus an `include: ['src/**/*.{ts,tsx}']`
+glob, forcing every source file into the report regardless of whether any
+test imports it. A short `exclude` list keeps out files with nothing to
+assert: the test files themselves, `src/api/types.ts` (generated, see
+below), `src/main.tsx` (bootstrap), and `src/test/**` (setup/helpers).
+
 ## Code Generation
 
 `src/api/types.ts` is generated from the root `openapi.yaml` via
