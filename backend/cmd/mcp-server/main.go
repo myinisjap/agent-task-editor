@@ -323,7 +323,7 @@ func dispatchTool(name string, args json.RawMessage, st *toolState, transitions 
 		}
 		_ = json.Unmarshal(args, &a)
 		st.storedInfo = a.Info
-		return "stored", nil
+		return "stored", st.persist()
 
 	case "update_task_notes":
 		var a struct {
@@ -336,7 +336,7 @@ func dispatchTool(name string, args json.RawMessage, st *toolState, transitions 
 		} else {
 			st.notes = a.Notes
 		}
-		return "Task notes updated", nil
+		return "Task notes updated", st.persist()
 
 	case "resolve_comment":
 		var a struct {
@@ -438,6 +438,20 @@ func createSubtask(cfg subtaskConfig, args json.RawMessage, log *slog.Logger) st
 		return fmt.Sprintf("create_subtask failed (%d): %s", resp.StatusCode, errResp.Error)
 	}
 	return fmt.Sprintf("create_subtask failed (%d)", resp.StatusCode)
+}
+
+// persist returns a result to be written to RESULT_FILE so accumulated state
+// (notes, stored info) survives an agent that exits without calling
+// signal_complete. If a terminal result already exists, it re-fills and returns
+// that; otherwise it returns a partial result (no Status). Same pattern as
+// resolve_comment.
+func (st *toolState) persist() *result {
+	r := st.terminal
+	if r == nil {
+		r = &result{}
+	}
+	st.fill(r)
+	return r
 }
 
 // fill copies the accumulated notes/stored-info/resolutions onto a terminal result.
