@@ -407,6 +407,15 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Agent notes and stored info are no longer lost when a run ends without
+  calling `signal_complete`.** The MCP sidecar accumulated `update_task_notes`
+  and `store_info` in memory and only wrote them to the run's result file when
+  `signal_complete`/`request_human` fired. A run that recorded its notes and
+  then simply stopped (`stop_reason: end_turn`) — common for planning runs that
+  consider writing the plan to be the whole job — left no result file, so the
+  notes evaporated and the task's "Agent Notes" box stayed empty. Both tools now
+  persist a partial result immediately (the same pattern `resolve_comment`
+  already used), so notes survive regardless of how the run terminates.
 - **Planning runs now store the full plan in task notes, not just a summary.**
   The universal run instruction asked every agent for a "concise summary"
   before completing, which nudged planning runs to leave only a one-liner in

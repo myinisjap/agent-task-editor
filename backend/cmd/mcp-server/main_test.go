@@ -134,8 +134,13 @@ func TestDispatchTool_RequestHuman(t *testing.T) {
 func TestDispatchTool_StoreInfo(t *testing.T) {
 	st := newTestState()
 	text, r := dispatchTool("store_info", json.RawMessage(`{"info":"some context"}`), st, nil)
-	if r != nil {
-		t.Errorf("store_info should not persist a terminal/partial result, got %+v", r)
+	// store_info persists a partial result immediately so it survives an agent
+	// that exits without calling signal_complete.
+	if r == nil || r.StoredInfo == nil || *r.StoredInfo != "some context" {
+		t.Errorf("store_info should persist a partial result with stored info, got %+v", r)
+	}
+	if r != nil && r.Status != "" {
+		t.Errorf("partial result should have no Status, got %q", r.Status)
 	}
 	if text != "stored" {
 		t.Errorf("unexpected text: %q", text)
@@ -159,12 +164,20 @@ func TestDispatchTool_UpdateTaskNotes(t *testing.T) {
 	}
 
 	// Append=true concatenates with a blank line.
-	text, _ := dispatchTool("update_task_notes", json.RawMessage(`{"notes":"more","append":true}`), st, nil)
+	text, r := dispatchTool("update_task_notes", json.RawMessage(`{"notes":"more","append":true}`), st, nil)
 	if st.notes != "replaced\n\nmore" {
 		t.Fatalf("notes = %q, want %q", st.notes, "replaced\n\nmore")
 	}
 	if text != "Task notes updated" {
 		t.Errorf("unexpected text: %q", text)
+	}
+	// Notes persist a partial result immediately so they survive an agent that
+	// exits without calling signal_complete (the plan-notes bug).
+	if r == nil || r.Notes == nil || *r.Notes != "replaced\n\nmore" {
+		t.Errorf("update_task_notes should persist a partial result with notes, got %+v", r)
+	}
+	if r != nil && r.Status != "" {
+		t.Errorf("partial result should have no Status, got %q", r.Status)
 	}
 }
 
