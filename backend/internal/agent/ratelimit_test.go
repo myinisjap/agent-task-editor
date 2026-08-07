@@ -128,6 +128,78 @@ func TestRateLimitRegistry_Unblock(t *testing.T) {
 	}
 }
 
+func TestRateLimitRegistry_UnblockIfNotBlockedSince_PreservesNewerBlock(t *testing.T) {
+	r := NewRateLimitRegistry()
+	since := time.Now()
+	time.Sleep(2 * time.Millisecond)
+	// A sibling run registers a fresh 429 after `since`.
+	r.Block("cfg-1", time.Now().Add(5*time.Minute))
+
+	cleared := r.UnblockIfNotBlockedSince("cfg-1", since)
+	if cleared {
+		t.Error("expected UnblockIfNotBlockedSince to be a no-op when a newer block exists")
+	}
+	blocked, _ := r.IsBlocked("cfg-1")
+	if !blocked {
+		t.Error("expected block to survive UnblockIfNotBlockedSince")
+	}
+
+	// attempts must be preserved (not reset), so the backoff ladder escalates
+	// on the next 429 rather than resetting to the 30s floor.
+	r.mu.Lock()
+	r.blocked["cfg-1"] = time.Now().Add(-1 * time.Second) // force-expire so BlockWithBackoff logs another attempt
+	r.mu.Unlock()
+	r.BlockWithBackoff("cfg-1")
+	_, until := r.IsBlocked("cfg-1")
+	expected := time.Now().Add(59 * time.Second) // second attempt → ~60s, not 30s
+	if until.Before(expected) {
+		t.Errorf("expected backoff ladder to escalate (attempts preserved): unblock=%v, expected >= %v", until, expected)
+	}
+}
+
+func TestRateLimitRegistry_UnblockIfNotBlockedSince_ClearsOlderBlock(t *testing.T) {
+	r := NewRateLimitRegistry()
+	r.Block("cfg-1", time.Now().Add(5*time.Minute))
+	time.Sleep(2 * time.Millisecond)
+	since := time.Now()
+
+	cleared := r.UnblockIfNotBlockedSince("cfg-1", since)
+	if !cleared {
+		t.Error("expected UnblockIfNotBlockedSince to clear a block registered before `since`")
+	}
+	blocked, _ := r.IsBlocked("cfg-1")
+	if blocked {
+		t.Error("expected not blocked after UnblockIfNotBlockedSince clears an older block")
+	}
+
+	// attempts should be reset, so next backoff is back at the 30s floor.
+	r.BlockWithBackoff("cfg-1")
+	_, until := r.IsBlocked("cfg-1")
+	expected := time.Now().Add(29 * time.Second)
+	if until.Before(expected) {
+		t.Errorf("expected attempts reset after clear: unblock=%v, expected >= %v", until, expected)
+	}
+}
+
+func TestRateLimitRegistry_UnblockIfNotBlockedSince_NoBlockAtAll(t *testing.T) {
+	r := NewRateLimitRegistry()
+	if cleared := r.UnblockIfNotBlockedSince("cfg-1", time.Now()); !cleared {
+		t.Error("expected UnblockIfNotBlockedSince to report cleared=true when there was nothing to clear")
+	}
+}
+
+func TestRateLimitRegistry_UnblockIfNotBlockedSince_ZeroSinceAlwaysClears(t *testing.T) {
+	r := NewRateLimitRegistry()
+	r.Block("cfg-1", time.Now().Add(5*time.Minute))
+	if cleared := r.UnblockIfNotBlockedSince("cfg-1", time.Time{}); !cleared {
+		t.Error("expected zero `since` to behave like unconditional Unblock")
+	}
+	blocked, _ := r.IsBlocked("cfg-1")
+	if blocked {
+		t.Error("expected not blocked after zero-since UnblockIfNotBlockedSince")
+	}
+}
+
 func TestRateLimitRegistry_BlockedUntil(t *testing.T) {
 	r := NewRateLimitRegistry()
 	if !r.BlockedUntil("cfg-1").IsZero() {

@@ -420,11 +420,16 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 	}
 	// Lock the task on this run, same as a real waiting_human escalation —
 	// stays locked until a human acts (raises the budget, or replies via
-	// DispatchReply, which is not budget-gated).
-	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-		CurrentAgentRunID: &runID,
-		ActiveAgentRunID:  &runID,
-		ID:                t.ID,
+	// DispatchReply, which is not budget-gated). Deliberately set ONLY
+	// active_agent_run_id, not current_agent_run_id: this phantom run has no
+	// logs and no feedback, so it must never become the run WS replay shows
+	// (ws/client.go keys off current_agent_run_id) or the run the next
+	// dispatch reads rework feedback from (startRun's prior-feedback lookup
+	// also keys off current_agent_run_id). Leaving current_agent_run_id
+	// pointing at the last real run fixes both. See issue #344.
+	if err := d.q.SetTaskActiveRunOnly(ctx, gen.SetTaskActiveRunOnlyParams{
+		ActiveAgentRunID: &runID,
+		ID:               t.ID,
 	}); err != nil {
 		return true, fmt.Errorf("lock task on %s run: %w", reason, err)
 	}
@@ -792,6 +797,22 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		}); err != nil {
 			log.Warn("dispatcher: mark nil-provider run waiting_human", "err", err)
 		}
+		// persistRunRow (above) already set BOTH current_agent_run_id and
+		// active_agent_run_id to this phantom run before the provider was
+		// resolved. This run has no logs and no feedback, so — same reasoning
+		// as escalateCostBudget — restore current_agent_run_id to the prior
+		// real run (t.CurrentAgentRunID, captured before persistRunRow ran) so
+		// WS replay and the next dispatch's feedback lookup don't hit this
+		// phantom row. active_agent_run_id is deliberately left pointing at
+		// runID: it still needs to hold the re-dispatch lock until a human
+		// fixes the config. See issue #344.
+		if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+			CurrentAgentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
+			ActiveAgentRunID:  &runID,
+			ID:                t.ID,
+		}); err != nil {
+			log.Warn("dispatcher: restore current_agent_run_id after nil-provider escalation", "err", err)
+		}
 		if d.Publisher != nil {
 			d.Publisher.Publish("task.needs_human", map[string]any{
 				"task_id": t.ID,
@@ -892,13 +913,27 @@ func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Re
 		slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
 	}
 
+	// parentBranchBase does a DB read; resolve it before taking the repo git
+	// lock so a slow DB doesn't hold the lock.
+	base := d.parentBranchBase(ctx, t)
+
 	var wtPath, branch, baseRef string
 	var perr error
-	if base := d.parentBranchBase(ctx, t); base != "" {
+	// provisionWorktree(From) runs `git fetch --prune` and `git worktree add
+	// -b`, both of which mutate the repo's shared ref store. Serialize against
+	// sibling worktrees' commits/merges/branch-deletes/worktree-adds via the
+	// per-repo lock (see worktree.go's repoGitLocks doc comment / issue #344).
+	// The lock is a plain, non-reentrant mutex — never taken inside
+	// provisionWorktree itself, since subtasks.go already holds it around
+	// calls to provisionWorktree/RemoveWorktree.
+	lock := RepoGitLock(repo.Path)
+	lock.Lock()
+	if base != "" {
 		wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
 	} else {
 		wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
 	}
+	lock.Unlock()
 	if perr != nil {
 		return "", fmt.Errorf("provision worktree: %w", perr)
 	}

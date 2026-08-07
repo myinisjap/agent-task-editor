@@ -125,7 +125,7 @@ The dispatcher runs a background goroutine that sweeps the database every 5 seco
 2. Computes each repo's current in-flight run count (`CountActiveRunsByRepo`) and skips any task whose repo is already at its effective concurrency limit — see [Per-Repo Concurrency Limits](#per-repo-concurrency-limits) below.
 3. Loads all agent configs, matches each task to the first config whose `labels` array contains the task's label.
 4. Creates an `agent_runs` record with status `pending`.
-5. Sets the task's `active_agent_run_id` (and updates `current_agent_run_id`) — this prevents the next sweep from double-dispatching.
+5. Sets the task's `active_agent_run_id` (and updates `current_agent_run_id`) — this prevents the next sweep from double-dispatching. The two "phantom" `waiting_human` escalation paths (cost budget exhausted/unenforceable, and provider disabled or unknown) are the exception: their synthetic run has no logs and no feedback, so they set only `active_agent_run_id` (still gating re-dispatch) and leave `current_agent_run_id` pointing at the task's last real run — the run WS replay shows and the run the next dispatch reads rework feedback from. See [Cost Budgets](#cost-budgets) below and issue #344.
 6. Submits a `Job` to the worker pool. If the pool queue is full, marks the run `failed` and clears `active_agent_run_id`.
 
 ### Block Reasons
@@ -279,13 +279,17 @@ also a configurable **early warning** event fired before either guard trips
 - **Pre-dispatch escalation.** When the budget is already exhausted at
   sweep time, the dispatcher does *not* start a provider run. Instead it
   creates a "phantom" `agent_runs` row directly in `waiting_human` status
-  (no provider invocation happens), sets it as the task's active/current run
-  (locking the task exactly like a real `waiting_human` run would), and
+  (no provider invocation happens) and sets it as the task's **active** run
+  only (locking the task exactly like a real `waiting_human` run would), and
   publishes a `task.needs_human` WebSocket event so the Dashboard's
   intervention queue and the Task Detail page pick it up live — mirroring
   how `Pool.handleTransientFailure` escalates after a retry budget is
   exhausted. The task's label is left unchanged; `waiting_human` is a run
-  status, not a workflow label. The run's `notes` field (and the WS event's
+  status, not a workflow label. Deliberately, the task's **current** run
+  pointer (`current_agent_run_id`) is left untouched, still pointing at the
+  last real run: the phantom has no logs and no feedback, so it must never
+  become the run WS replay shows or the run the next dispatch reads rework
+  feedback from (see issue #344). The run's `notes` field (and the WS event's
   `message`) carry the exact string:
 
   ```

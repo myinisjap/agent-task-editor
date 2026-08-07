@@ -14,7 +14,7 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 | `terminal.go` | `TerminalManager`/`NewTerminalManager` — interactive chat session CLI process management |
 | `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure; `ErrMaxTurns` and `ErrCostBudgetExceeded` — typed, non-transient escalation signals (turn cap / mid-run cost-budget kill) that `pool.go#handleProviderError` detects via `errors.As` and routes to `waiting_human` instead of retrying |
 | `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`, plus the structurally-detected `max_turns`/`cost_budget`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `providers.is429Line`/`providers.isTransientLine` (in the `providers` package) are thin wrappers over this; `providers.classifyResultMessage` prefers the claude/qwen stream-json typed `result` event's `api_error_status` field / text over raw line sniffing |
-| `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers |
+| `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers; `UnblockIfNotBlockedSince` is the in-run-safe clear (see issue #344) — `Unblock` remains the unconditional variant |
 
 Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
 
@@ -135,7 +135,13 @@ govern automatic retries for **transient** provider errors only:
   blocks the *whole agent config* for a backed-off period (existing
   behavior, unrelated to any specific task) **and** consumes that task's
   transient-retry budget — the two mechanisms operate independently on
-  different scopes (config-wide throttle vs per-task retry cap).
+  different scopes (config-wide throttle vs per-task retry cap). With
+  `MAX_WORKERS > 1`, several runs can share one agent config; the pool's
+  post-run cleanup clears a config's rate-limit block via
+  `UnblockIfNotBlockedSince(cfgID, startedAt)` rather than the unconditional
+  `Unblock`, so a run that started before a sibling run's fresh 429 can't wipe
+  that block (or reset the consecutive-429 counter that drives
+  `BlockWithBackoff`'s escalating ladder) out from under it — see issue #344.
 
 ## Cost Budgets (Pre-Dispatch Guard + Mid-Run Kill Switch)
 
@@ -319,12 +325,22 @@ parent's run prompt via `BuildConflictContext`.
   - *Per-parent lock* (`plocks`): all merge-back + evaluate work for one parent
     runs under its mutex, so children finishing simultaneously merge one at a time
     in completion order and can't corrupt the parent worktree.
-  - *Per-repo git lock* (`RepoGitLock`, `worktree.go`): the pool's safety-net
-    commit/push **and** the coordinator's merge/teardown take the repo's lock
-    around their ref-mutating git calls. Git worktrees share one ref store, so
-    without this a commit in one worktree races a merge/branch-delete in another
-    ("cannot lock ref 'HEAD'"). Lock order is always parent-lock → repo-lock
-    (the pool only ever takes the repo lock), so there's no cycle.
+  - *Per-repo git lock* (`RepoGitLock`, `worktree.go`): every ref-mutating git
+    call site takes the repo's lock around its git calls — the pool's
+    safety-net commit/push, the coordinator's merge/teardown, the dispatcher's
+    worktree provisioning (`ensureWorktree`'s `git fetch --prune` + `git
+    worktree add -b`), `cmd/server/main.go`'s `engine.OnTerminal` (non-subtask
+    branch push + worktree teardown), and the worktree sweeper's reclaim pass
+    (`git worktree remove --force` / `git worktree prune`). Git worktrees
+    share one ref store, so without this a commit in one worktree races a
+    merge/branch-delete/provision in another ("cannot lock ref 'HEAD'"). Lock
+    order is always parent-lock → repo-lock (nothing but the coordinator ever
+    takes the parent lock), so there's no cycle. The mutex is plain and
+    **not reentrant** — it's always taken at the call site around the git
+    op(s), never inside the shared helpers themselves
+    (`provisionWorktree(From)`, `RemoveWorktree`, `PushBranch`), since the
+    coordinator already holds it across calls into those helpers; locking
+    inside them would self-deadlock. See issue #344.
   - *Double-advance guard:* requiring `merged` (not just terminal) in
     `evaluateParent` means a sibling that is terminal-but-not-yet-merged (its
     merge queued behind the parent lock) does not trigger a premature advance;

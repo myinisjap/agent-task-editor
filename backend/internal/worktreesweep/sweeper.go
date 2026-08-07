@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -142,7 +143,19 @@ func (s *Sweeper) reconcileRepo(ctx context.Context, repoPath string, keep map[s
 			continue // never touch anything that isn't a clean single segment
 		}
 		wtPath := filepath.Join(dir, id)
-		if removeWorktree(ctx, repoPath, wtPath) {
+		// `git worktree remove --force` (and its os.RemoveAll fallback) mutate
+		// the repo's shared ref/worktree-admin store, racing against sibling
+		// worktrees' concurrent commits/merges/provisioning if unserialized.
+		// Take the per-repo lock (shared with internal/agent's pool, subtask
+		// coordinator, dispatcher, and OnTerminal) per entry rather than for the
+		// whole loop, so a large sweep doesn't starve live runs waiting on the
+		// same repo lock. See internal/agent/worktree.go's repoGitLocks doc
+		// comment / issue #344.
+		lock := agent.RepoGitLock(repoPath)
+		lock.Lock()
+		removed := removeWorktree(ctx, repoPath, wtPath)
+		lock.Unlock()
+		if removed {
 			slog.Info("worktreesweep: reclaimed orphaned worktree", "repo", repoPath, "id", id)
 			pruneNeeded = true
 		}
@@ -151,7 +164,12 @@ func (s *Sweeper) reconcileRepo(ctx context.Context, repoPath string, keep map[s
 		// A dir removed via os.RemoveAll fallback (crash-orphaned, no longer a
 		// registered git worktree) leaves a stale entry in git's internal
 		// worktree administration; prune it so `git worktree list` stays clean.
+		// `git worktree prune` also mutates worktree administration state, so
+		// it's serialized under the same per-repo lock.
+		lock := agent.RepoGitLock(repoPath)
+		lock.Lock()
 		_, _ = exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "prune").CombinedOutput()
+		lock.Unlock()
 	}
 }
 

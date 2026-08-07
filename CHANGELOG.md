@@ -442,6 +442,43 @@ triggers the "Release" workflow the same way.
   before upgrading.
 
 ### Fixed
+- **Rate-limit block could be clobbered by a concurrently-finishing sibling
+  run, defeating the 429 backoff.** (#344) With `MAX_WORKERS > 1`, several
+  runs can share one agent config. Every non-rate-limited run completion
+  called `RateLimitRegistry.Unblock` unconditionally, which cleared *any*
+  block on that config — including one a sibling run had just registered a
+  moment earlier after hitting a 429 — and reset the consecutive-429 counter
+  that drives the escalating backoff ladder, so the dispatcher immediately
+  re-dispatched straight into another rate limit. The pool now clears a
+  config's block via a new `UnblockIfNotBlockedSince(cfgID, startedAt)`,
+  which is a no-op if a block was registered at or after the clearing run
+  started, preserving both the block and the backoff ladder's attempt count.
+- **Ref-mutating git operations could race outside the per-repo git lock,
+  corrupting a sibling worktree's ref store.** (#344) `RepoGitLock` exists
+  specifically because git worktrees share one object/ref store, but only
+  three of the operations that mutate it took the lock. The dispatcher's
+  worktree provisioning (`git fetch --prune` + `git worktree add -b`), the
+  terminal-transition branch push + worktree teardown, and the periodic
+  worktree sweeper's reclaim pass (`git worktree remove --force` / `git
+  worktree prune`) all ran unprotected, so terminalizing one task while a
+  sibling task's safety-net commit or worktree provisioning was in flight
+  against the same repo could fail with `cannot lock ref 'HEAD'` — surfacing
+  as a spurious run failure or a lost safety-net commit. All three now take
+  the per-repo lock around their git calls (never inside the shared git
+  helpers themselves, to avoid self-deadlocking against callers that already
+  hold it).
+- **A cost-budget or provider-unavailable escalation could hijack
+  `current_agent_run_id`, discarding the prior run's rework feedback.**
+  (#344) The dispatcher's "phantom" `waiting_human` escalations (cost budget
+  exhausted/unenforceable, or the matched agent config's provider disabled or
+  unknown) create a synthetic run with no logs and no feedback, but the
+  escalation wrote it onto both the task's active *and* current run pointers.
+  WebSocket replay (keyed on the current run) then showed an empty run
+  instead of the real last agent run, and the next real dispatch read the
+  phantom's (nonexistent) feedback instead of the prior run's — silently
+  discarding whatever rework feedback the failure-loop machinery depended on.
+  Both escalation paths now leave `current_agent_run_id` pointing at the last
+  real run, setting only the active-run lock the phantom legitimately needs.
 - **Planning runs now store the full plan in task notes, not just a summary.**
   The universal run instruction asked every agent for a "concise summary"
   before completing, which nudged planning runs to leave only a one-liner in

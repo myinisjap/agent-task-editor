@@ -152,6 +152,15 @@ func main() {
 		if task.WorktreePath == "" {
 			return
 		}
+		// PushBranch and RemoveWorktree mutate the repo's shared ref store;
+		// serialize against sibling worktrees' concurrent git writes (safety-net
+		// commits, subtask merges, dispatcher provisioning, the sweeper) via the
+		// per-repo lock. Locked only around these two calls — never wrap the
+		// subtask branch above, which takes the parent lock and then the repo
+		// lock itself inside SubtaskCoordinator; wrapping here would invert that
+		// ordering. See worktree.go's repoGitLocks doc comment / issue #344.
+		lock := agent.RepoGitLock(repo.Path)
+		lock.Lock()
 		if repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
 			if err := agent.PushBranch(ctx, task.WorktreePath, task.Branch); err != nil {
 				slog.Warn("onTerminal: push branch", "task_id", task.ID, "branch", task.Branch, "err", err)
@@ -160,6 +169,7 @@ func main() {
 		if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
 			slog.Warn("onTerminal: remove worktree", "task_id", task.ID, "err", err)
 		}
+		lock.Unlock()
 	}
 
 	// Status write-back to the source GitHub issue for imported tasks (opt-in

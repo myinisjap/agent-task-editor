@@ -281,8 +281,11 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time) {
 	}
 
 	// The agent config isn't why we stopped, so clear any rate-limit backoff.
+	// Conditional on no newer 429 having landed since this run started (see
+	// issue #344) so a concurrently-finishing sibling run's fresh block isn't
+	// clobbered.
 	if p.RateLimits != nil {
-		p.RateLimits.Unblock(job.Input.AgentConfig.ID)
+		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.ID, startedAt)
 	}
 
 	log.Info("pool: agent run cancelled by user")
