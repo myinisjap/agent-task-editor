@@ -152,6 +152,30 @@ func (m *TerminalManager) Attach(ctx context.Context, sessionID, repoPath, provi
 		s.mu.Unlock()
 	}()
 
+	// The read pump below blocks in conn.Read until the client sends
+	// something. If the CLI process exits first (crash, /exit, auth expiry)
+	// nothing would wake it: the session is already gone from m.sessions so
+	// the reaper can't reach it, and the handler goroutine + WS connection
+	// would leak with the browser showing a frozen terminal. Close the
+	// connection on process exit so Read returns and the caller can react.
+	//
+	// watchDone stops this goroutine when Attach returns for any other
+	// reason (client disconnect); without it a long-lived session would
+	// accumulate one watcher per attach. Registered before the read loop so
+	// it runs (and the watcher exits) before a subsequent attach could race
+	// it; defer ordering vs. the detach-bookkeeping defer above doesn't
+	// matter functionally.
+	watchDone := make(chan struct{})
+	defer close(watchDone)
+	go func() {
+		select {
+		case <-s.done:
+			_ = conn.Close(websocket.StatusNormalClosure, "terminal session ended")
+		case <-watchDone:
+		case <-ctx.Done():
+		}
+	}()
+
 	// Read pump: client keystrokes / control frames -> PTY.
 	for {
 		typ, data, rerr := conn.Read(ctx)
@@ -273,8 +297,16 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 		if s.cleanup != nil {
 			s.cleanup()
 		}
+		// Owner-scoped delete: Stop()/reapIdleOnce may already have removed
+		// this entry, and a reattach may have inserted a *fresh* session
+		// under the same id before cmd.Wait() returned here. Deleting
+		// unconditionally would orphan that new session — alive, but
+		// unreachable by Stop/reapIdleOnce and no longer counted against
+		// MaxSessions. Same fix shape as #244's ClearActiveAgentRunIfOwner.
 		m.mu.Lock()
-		delete(m.sessions, sessionID)
+		if m.sessions[sessionID] == s {
+			delete(m.sessions, sessionID)
+		}
 		m.mu.Unlock()
 	}()
 

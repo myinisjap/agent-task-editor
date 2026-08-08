@@ -27,8 +27,8 @@ Each WebSocket connection is managed by `ServeWS`:
      `API_TOKEN`, kept for existing setups. A warning is logged whenever it's used.
 2. WebSocket upgrade using `nhooyr.io/websocket`
 3. Two goroutines started under a shared context:
-   - **Read pump** — parses `subscribe`/`unsubscribe` messages; enforces max 100 subscriptions; spawns `replayTaskLogs` on new subscribe
-   - **Write pump** — drains `c.send` channel and writes to connection; sends keepalive pings every 25s
+   - **Read pump** — parses `subscribe`/`unsubscribe` messages; enforces max 100 subscriptions; spawns `replayTaskLogs` only when a subscribe is a *newly added* id (re-subscribing to an id already in the map is a no-op — otherwise a buggy/looping client resending the same frame would spawn one replay goroutine per frame without ever tripping the subscription cap). In-flight replays per client are capped at `maxConcurrentReplays` (4) via a semaphore channel (`Client.replaySlots`); new subscriptions block for a slot rather than being dropped, so every added subscription still gets its replay.
+   - **Write pump** — drains `c.send` channel and writes to connection; sends keepalive pings every 25s. Every `conn.Write` and `conn.Ping` is wrapped in its own `context.WithTimeout` (`writeTimeout` / `pingTimeout`, both 10s) rather than using the shared request context directly — a hijacked connection has no socket deadlines and the request ctx is never cancelled by a peer disconnect, so without a per-call timeout a half-open peer (laptop sleep, NAT timeout, proxy drop) would park the write pump in `Write`/`Ping` forever, leaving the client in `Hub.clients` (and the `WSConnectedClients` gauge) for the process lifetime.
 4. Either pump cancels the shared context on error/close
 5. `wg.Wait()` then graceful close
 

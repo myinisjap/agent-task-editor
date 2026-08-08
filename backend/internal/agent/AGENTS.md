@@ -303,6 +303,31 @@ only prevents the dispatcher from starting a new one. The reverse also holds:
 kill switch both stops the current run *and* blocks the immediate re-dispatch
 that clearing the lock would otherwise trigger.
 
+## Terminal Sessions (`terminal.go`)
+
+`TerminalManager` runs one live PTY subprocess per interactive chat session, kept
+alive across WebSocket disconnects (see the package-level doc comment on
+`TerminalManager`). Two lifecycle details worth knowing when touching this file:
+
+- **Owner-scoped session-map delete.** The output-pump goroutine (started at the
+  end of `ensure()`) deletes its session from `m.sessions` only if the map still
+  holds the *same* `*ptySession` it started with (`m.sessions[sessionID] == s`),
+  not an unconditional `delete`. `Stop()`/`reapIdleOnce` may already have removed
+  the entry before `cmd.Wait()` returns, and a reattach in that window inserts a
+  *fresh* session under the same id — an unconditional delete would then orphan
+  that new session (alive, but unreachable by `Stop`/`reapIdleOnce`, and no
+  longer counted against `MaxSessions`). Same ownership-bug class and fix shape
+  as `ClearActiveAgentRunIfOwner` above (#244), applied to a different map.
+- **`Attach` closes the WS when the CLI process exits.** The read pump in
+  `Attach` blocks in `conn.Read` until the client sends something, so if the CLI
+  process exits while the user is idle (crash, `/exit`, auth expiry), nothing
+  would otherwise wake it — the session is already gone from `m.sessions`, so the
+  reaper can't reach it either, and both the handler goroutine and the WS
+  connection would leak. `Attach` starts a small watcher goroutine (torn down via
+  `watchDone` when `Attach` returns for any other reason) that closes the
+  connection as soon as `s.done` fires, so `conn.Read` unblocks and the browser
+  sees the session end instead of freezing silently.
+
 ## Subtask Merge-Back Coordinator (Mechanism 2)
 
 `SubtaskCoordinator` (`subtasks.go`) owns the child→parent branch lifecycle for
