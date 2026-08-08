@@ -213,6 +213,8 @@ type TaskPrReviewState struct {
 	LastFailedCheckSha    *string   `json:"last_failed_check_sha"`
 	UpdatedAt             time.Time `json:"updated_at"`
 	LastConflictSha       *string   `json:"last_conflict_sha"`
+	LastPrUpdatedAt       *string   `json:"last_pr_updated_at"`
+	LastChecksPolledAt    *string   `json:"last_checks_polled_at"`
 }
 
 type TaskReviewComment struct {

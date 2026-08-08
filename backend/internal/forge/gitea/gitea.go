@@ -227,6 +227,7 @@ type giteaPR struct {
 	State   string `json:"state"` // "open" or "closed"
 	Merged  bool   `json:"merged"`
 	HTMLURL string `json:"html_url"`
+	Updated string `json:"updated_at"`
 	Head    struct {
 		Ref string `json:"ref"`
 		Sha string `json:"sha"`
@@ -355,7 +356,10 @@ func (g *Gitea) CreatePR(ctx context.Context, repoName, branch, base, title, bod
 	return normalizeState(pr), pr.HTMLURL, nil
 }
 
-// PRHead implements forge.Forge.
+// PRHead implements forge.Forge. Folds in the same normalised state/URL data
+// PRForBranch returns (including the "pushed, no PR yet" branch-existence
+// probe) so ghsync's single per-sweep PR lookup works the same way against
+// Gitea as it does against GitHub — see forge.PRHead's doc comment.
 func (g *Gitea) PRHead(ctx context.Context, repoName, branch string) (forge.PRHead, error) {
 	metrics.GiteaCallsTotal.WithLabelValues("pr_list_head").Inc()
 	pr, found, err := g.findPRForBranch(ctx, repoName, branch)
@@ -363,13 +367,19 @@ func (g *Gitea) PRHead(ctx context.Context, repoName, branch string) (forge.PRHe
 		return forge.PRHead{}, err
 	}
 	if !found {
-		return forge.PRHead{}, nil
+		if !g.branchExists(ctx, repoName, branch) {
+			return forge.PRHead{}, nil // branch not on remote yet
+		}
+		return forge.PRHead{State: "pushed"}, nil
 	}
 	return forge.PRHead{
 		Number:    pr.Number,
 		HeadSHA:   pr.Head.Sha,
 		BaseRef:   pr.Base.Ref,
 		Mergeable: normalizeMergeable(pr.Mergeable),
+		State:     normalizeState(pr),
+		URL:       pr.HTMLURL,
+		UpdatedAt: pr.Updated,
 	}, nil
 }
 

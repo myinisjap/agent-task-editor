@@ -2,6 +2,7 @@ package ghsync
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,10 +11,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
+
+// errTestForgeFailure is a sentinel error used by tests to simulate a forge
+// call failure (e.g. getPRHead) without depending on any particular forge
+// package's error type.
+var errTestForgeFailure = errors.New("simulated forge failure")
 
 // fakeHub records every Publish call for assertions.
 type fakeHub struct {
@@ -75,7 +82,7 @@ func branchExists(t *testing.T, repoPath, branch string) bool {
 }
 
 // newTestSyncer sets up a Syncer backed by a temp sqlite DB and the given
-// fake getPR function, bypassing New (which wires the real ghclient call).
+// fake getPRHead function, bypassing New (which wires the real ghclient call).
 // fakeWriteback records calls made through the writeback seam, for tests
 // that want to assert ghsync fires the write-back hooks at the right times
 // without shelling out to a real (or even faked) `gh` binary.
@@ -85,16 +92,23 @@ type fakeWriteback struct {
 	closeCalls   []string
 }
 
-func newTestSyncer(t *testing.T, getPR func(ctx context.Context, repo repoInfo, branch string) (string, string, int, error)) (*Syncer, *gen.Queries, *fakeHub) {
+func newTestSyncer(t *testing.T, getPRHead func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error)) (*Syncer, *gen.Queries, *fakeHub) {
 	t.Helper()
-	s, q, hub, _ := newTestSyncerWithWriteback(t, getPR)
+	s, q, hub, _ := newTestSyncerWithWriteback(t, getPRHead)
 	return s, q, hub
+}
+
+// fakePRHead builds a forge.PRHead out of the (state, url, number) tuple
+// most tests care about, for brevity at call sites that don't need to set
+// HeadSHA/UpdatedAt/etc.
+func fakePRHead(state, url string, number int) forge.PRHead {
+	return forge.PRHead{Number: number, State: state, URL: url}
 }
 
 // newTestSyncerWithWriteback is like newTestSyncer but also wires a
 // writeback.Writeback backed by fake gh-calling functions, and returns the
 // fake so tests can assert on what write-back actions fired.
-func newTestSyncerWithWriteback(t *testing.T, getPR func(ctx context.Context, repo repoInfo, branch string) (string, string, int, error)) (*Syncer, *gen.Queries, *fakeHub, *fakeWriteback) {
+func newTestSyncerWithWriteback(t *testing.T, getPRHead func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error)) (*Syncer, *gen.Queries, *fakeHub, *fakeWriteback) {
 	t.Helper()
 	f, err := os.CreateTemp("", "ghsync-*.db")
 	if err != nil {
@@ -127,11 +141,11 @@ func newTestSyncerWithWriteback(t *testing.T, getPR func(ctx context.Context, re
 		},
 	)
 	s := &Syncer{
-		q:        q,
-		hub:      hub,
-		interval: time.Hour,
-		wb:       wb,
-		getPR:    getPR,
+		q:         q,
+		hub:       hub,
+		interval:  time.Hour,
+		wb:        wb,
+		getPRHead: getPRHead,
 	}
 	return s, q, hub, fwb
 }
@@ -285,10 +299,10 @@ func TestSyncTask_MergedTriggersCleanup(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		return "pr_merged", "https://github.com/acme/widgets/pull/1", 1, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pr_merged", "https://github.com/acme/widgets/pull/1", 1), nil
 	}
-	s, q, hub := newTestSyncer(t, getPR)
+	s, q, hub := newTestSyncer(t, getPRHead)
 	wfID, label := newTestWorkflow(t, q)
 	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
 	task := newTestTask(t, q, repoID, wfID, label, branch, wtPath, "pr_open", "")
@@ -331,10 +345,10 @@ func TestSyncTask_ClosedWithoutMerge_NoCleanup(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		return "pr_closed", "https://github.com/acme/widgets/pull/2", 2, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pr_closed", "https://github.com/acme/widgets/pull/2", 2), nil
 	}
-	s, q, hub := newTestSyncer(t, getPR)
+	s, q, hub := newTestSyncer(t, getPRHead)
 	wfID, label := newTestWorkflow(t, q)
 	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
 	task := newTestTask(t, q, repoID, wfID, label, branch, wtPath, "pr_open", "")
@@ -367,10 +381,10 @@ func TestSyncTask_NoStateChange_NoOp(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		return "pr_open", "https://github.com/acme/widgets/pull/3", 3, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pr_open", "https://github.com/acme/widgets/pull/3", 3), nil
 	}
-	s, q, hub := newTestSyncer(t, getPR)
+	s, q, hub := newTestSyncer(t, getPRHead)
 	wfID, label := newTestWorkflow(t, q)
 	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
 	task := newTestTask(t, q, repoID, wfID, label, branch, wtPath, "pr_open", "https://github.com/acme/widgets/pull/3")
@@ -395,10 +409,10 @@ func TestSyncTask_PreservesExistingPRURLOnRegression(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		return "pushed", "", 0, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pushed", "", 0), nil
 	}
-	s, q, _ := newTestSyncer(t, getPR)
+	s, q, _ := newTestSyncer(t, getPRHead)
 	wfID, label := newTestWorkflow(t, q)
 	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
 	task := newTestTask(t, q, repoID, wfID, label, branch, wtPath, "pr_open", "https://github.com/acme/widgets/pull/4")
@@ -448,11 +462,11 @@ func TestSweep_SkipsNonGitHubRepo(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		t.Fatalf("getPR should not be called for a non-GitHub repo")
-		return "", "", 0, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		t.Fatalf("getPRHead should not be called for a non-GitHub repo")
+		return forge.PRHead{}, nil
 	}
-	s, q, hub := newTestSyncer(t, getPR)
+	s, q, hub := newTestSyncer(t, getPRHead)
 	wfID, label := newTestWorkflow(t, q)
 	// No remote URL at all -> not a GitHub repo.
 	repoID := newTestRepo(t, q, wfID, repoPath, nil)
@@ -465,6 +479,80 @@ func TestSweep_SkipsNonGitHubRepo(t *testing.T) {
 	}
 }
 
+// TestSweep_BackoffSkipsRepoAfterFailure asserts sweep's integration with
+// the per-repo backoff mechanism (see backoff.go, #340): a repo whose
+// getPRHead call fails on one sweep is skipped entirely (no forge calls at
+// all) on the very next sweep, rather than being hammered again identically.
+func TestSweep_BackoffSkipsRepoAfterFailure(t *testing.T) {
+	ctx := context.Background()
+	repoPath := initRepo(t)
+	branch := "feature-branch"
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	gitWorktreeAdd(t, repoPath, branch, wtPath)
+
+	calls := 0
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		calls++
+		return forge.PRHead{}, errTestForgeFailure
+	}
+	s, q, _ := newTestSyncer(t, getPRHead)
+	s.interval = 30 * time.Second
+	wfID, label := newTestWorkflow(t, q)
+	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
+	newTestTask(t, q, repoID, wfID, label, branch, wtPath, "", "")
+
+	s.sweep(ctx)
+	if calls != 1 {
+		t.Fatalf("expected 1 getPRHead call on first (failing) sweep, got %d", calls)
+	}
+
+	// Second sweep, immediately after: the repo should now be in backoff and
+	// skipped entirely.
+	s.sweep(ctx)
+	if calls != 1 {
+		t.Fatalf("expected getPRHead not to be called again while repo is in backoff, got %d total calls", calls)
+	}
+}
+
+// TestSweep_BackoffClearsOnSuccess asserts a repo that recovers (a
+// successful sweep once its backoff window has elapsed) has its backoff
+// state fully cleared, so it's polled normally again rather than staying
+// throttled or ramping back down gradually.
+func TestSweep_BackoffClearsOnSuccess(t *testing.T) {
+	ctx := context.Background()
+	repoPath := initRepo(t)
+	branch := "feature-branch"
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	gitWorktreeAdd(t, repoPath, branch, wtPath)
+
+	s, q, _ := newTestSyncer(t, func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return forge.PRHead{}, nil
+	})
+	s.interval = 30 * time.Second
+	wfID, label := newTestWorkflow(t, q)
+	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
+	newTestTask(t, q, repoID, wfID, label, branch, wtPath, "", "")
+
+	// Record a failure whose backoff window has already elapsed (relative
+	// to "now"), so the very next sweep both reaches syncTask (isn't skipped
+	// by backoffActive) and can observe/clear the backoff on success.
+	past := time.Now().Add(-time.Hour)
+	s.recordForgeFailure(repoID, past)
+	if s.backoffActive(repoID, time.Now()) {
+		t.Fatal("expected backoff window (relative to a past failure) to have already elapsed")
+	}
+
+	s.sweep(ctx)
+
+	if s.backoffActive(repoID, time.Now()) {
+		t.Error("expected backoff to be cleared after a successful sweep")
+	}
+	failures, _ := s.backoffStatus(repoID, time.Now())
+	if failures != 0 {
+		t.Errorf("failures = %d, want 0 after a successful sweep clears backoff state", failures)
+	}
+}
+
 func TestSyncTask_Writeback_PROpened(t *testing.T) {
 	ctx := context.Background()
 	repoPath := initRepo(t)
@@ -472,10 +560,10 @@ func TestSyncTask_Writeback_PROpened(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		return "pr_open", "https://github.com/acme/widgets/pull/9", 9, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pr_open", "https://github.com/acme/widgets/pull/9", 9), nil
 	}
-	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
+	s, q, _, fwb := newTestSyncerWithWriteback(t, getPRHead)
 	wfID, label := newTestWorkflow(t, q)
 	repoID := newTestRepoWithWriteback(t, q, wfID, repoPath, ghURL(), true)
 	task := newSourcedTestTask(t, q, repoID, wfID, label, branch, wtPath, "pushed", "", "acme/widgets#9")
@@ -502,10 +590,10 @@ func TestSyncTask_Writeback_PRMerged(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		return "pr_merged", "https://github.com/acme/widgets/pull/9", 9, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pr_merged", "https://github.com/acme/widgets/pull/9", 9), nil
 	}
-	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
+	s, q, _, fwb := newTestSyncerWithWriteback(t, getPRHead)
 	wfID, label := newTestWorkflow(t, q)
 	repoID := newTestRepoWithWriteback(t, q, wfID, repoPath, ghURL(), true)
 	task := newSourcedTestTask(t, q, repoID, wfID, label, branch, wtPath, "pr_open", "https://github.com/acme/widgets/pull/9", "acme/widgets#9")
@@ -537,10 +625,10 @@ func TestSyncTask_Writeback_DisabledRepo_NoOp(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		return "pr_open", "https://github.com/acme/widgets/pull/9", 9, nil
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pr_open", "https://github.com/acme/widgets/pull/9", 9), nil
 	}
-	s, q, _, fwb := newTestSyncerWithWriteback(t, getPR)
+	s, q, _, fwb := newTestSyncerWithWriteback(t, getPRHead)
 	wfID, label := newTestWorkflow(t, q)
 	// Write-back NOT enabled on this repo.
 	repoID := newTestRepoWithWriteback(t, q, wfID, repoPath, ghURL(), false)
@@ -582,14 +670,14 @@ func TestNew_WiresRealGHClient(t *testing.T) {
 	if s.q == nil || s.hub == nil || s.wb == nil {
 		t.Error("expected New to wire queries, hub, and writeback")
 	}
-	if s.getPR == nil || s.getPRHead == nil || s.getReviews == nil || s.getReviewComments == nil || s.getFailedChecks == nil {
+	if s.getPRHead == nil || s.getReviews == nil || s.getReviewComments == nil || s.getFailedChecks == nil {
 		t.Error("expected New to wire all real ghclient functions")
 	}
 }
 
 // TestRun_SweepsOnTickerAndStopsOnCancel verifies Run invokes sweep on each
-// tick (observed here via a fake getPR that signals on a channel) and returns
-// promptly once its context is cancelled.
+// tick (observed here via a fake getPRHead that signals on a channel) and
+// returns promptly once its context is cancelled.
 func TestRun_SweepsOnTickerAndStopsOnCancel(t *testing.T) {
 	repoPath := initRepo(t)
 	branch := "feature-branch"
@@ -597,14 +685,14 @@ func TestRun_SweepsOnTickerAndStopsOnCancel(t *testing.T) {
 	gitWorktreeAdd(t, repoPath, branch, wtPath)
 
 	swept := make(chan struct{}, 1)
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
 		select {
 		case swept <- struct{}{}:
 		default:
 		}
-		return "", "", 0, nil
+		return forge.PRHead{}, nil
 	}
-	s, q, _ := newTestSyncer(t, getPR)
+	s, q, _ := newTestSyncer(t, getPRHead)
 	s.interval = 10 * time.Millisecond
 	wfID, label := newTestWorkflow(t, q)
 	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())

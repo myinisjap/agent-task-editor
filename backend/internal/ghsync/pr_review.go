@@ -5,12 +5,22 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
+
+// checkPollFloor is the minimum time between FailedChecks fetches even when
+// the PR's updated_at hasn't changed. GHA checks complete asynchronously and
+// do not bump the PR's updated_at timestamp, so without this floor a PR that
+// stops accumulating new reviews/comments would also stop having its checks
+// polled at all — even though a later push (which does change updated_at)
+// would still be caught, an in-flight check run finishing between pushes
+// would not be.
+const checkPollFloor = 5 * time.Minute
 
 // ingestPRFeedback checks a task's PR for new changes-requested reviews,
 // inline review comments, failed GHA checks, and merge conflicts with the base
@@ -23,23 +33,40 @@ import (
 //     Feedback column, rendered under the FEEDBACK FROM PRIOR REVIEW: prompt
 //     section.
 //
-// prState is the PR state resolved by the caller this sweep ("pr_open",
+// head is the already-fetched forge.PRHead for this task's PR (see syncTask —
+// #340 folded what used to be two near-identical forge calls, getPR and
+// getPRHead, into one, so ingestPRFeedback no longer fetches it itself).
+// head.State is the PR state resolved by the caller this sweep ("pr_open",
 // "pr_merged", ...); merge-conflict detection only applies while the PR is
 // still open.
 //
 // Ingestion is cursor-based (task_pr_review_state) and idempotent: re-sweeps
-// never duplicate feedback already surfaced. When the PR's head commit SHA
-// changes (the agent pushed), the cursor resets so previously-seen reviews
-// don't block a fresh feedback cycle for new ones — but already-ingested
+// never duplicate feedback already surfaced. Reviews/inline comments/checks
+// are only actually fetched when the PR looks like it might have changed
+// since the last sweep (head.UpdatedAt differs from the stored cursor, or —
+// for checks specifically — checkPollFloor has elapsed), which is what keeps
+// ghsync's steady-state API usage on an unchanged PR to a single call
+// (getPRHead) rather than five every sweep (see #340). The gate fails open:
+// an empty head.UpdatedAt (a forge that doesn't report one) or a failed fetch
+// falls back to "fetch every sweep" rather than silently going quiet.
+//
+// When the PR's head commit SHA changes (the agent pushed), the failed-check
+// cursor resets so a check re-run against the new commit is treated as new,
+// but state.LastReviewSubmittedAt is deliberately NOT reset — see
+// ingestReviews's doc comment for why (#340: resetting it here re-injected
+// every historical changes-requested review on every push). Already-ingested
 // inline comments are left as-is (matching how open review comments persist
 // across pushes today) rather than being purged.
 //
 // Every step is best-effort: a `gh` hiccup on one signal (reviews, comments,
 // checks) is logged and swallowed rather than aborting the others or failing
-// the sweep, mirroring the writeback package's error-handling style.
-func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, prState string) {
+// the sweep, mirroring the writeback package's error-handling style. Returns
+// ok=false if any *attempted* (non-gated-out) forge call failed, so the
+// caller (syncTask) can feed per-repo consecutive-error backoff.
+func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoInfo, head forge.PRHead) bool {
+	prNumber := head.Number
 	if prNumber == 0 || s.q == nil {
-		return
+		return true
 	}
 	log := slog.With("component", "ghsync", "task_id", task.ID, "pr_number", prNumber)
 
@@ -49,48 +76,87 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 		state = gen.TaskPrReviewState{TaskID: task.ID}
 	}
 
-	var head forge.PRHead
-	if s.getPRHead != nil {
-		var err error
-		head, err = s.getPRHead(ctx, repo, task.Branch)
-		if err != nil {
-			log.Warn("ghsync: get PR head", "err", err)
-		}
-	}
-
-	// A new head SHA means the agent pushed since we last looked: start a
-	// fresh feedback cycle so reviews/checks against the old commit don't
-	// keep being (re-)considered "new" forever, but also don't re-inject
-	// anything we've already surfaced under the old head.
+	// A new head SHA means the agent pushed since we last looked: reset the
+	// check cursor so a check re-run against the new commit is treated as
+	// new. Deliberately does NOT reset LastReviewSubmittedAt — see
+	// ingestReviews's doc comment.
 	// LastConflictSha is deliberately not reset here: it already embeds the head
 	// SHA, so a push produces a different fingerprint on its own.
 	freshCycle := head.HeadSHA != "" && head.HeadSHA != state.HeadSha
 	if freshCycle {
-		state.LastReviewSubmittedAt = nil
 		state.LastFailedCheckSha = nil
+	}
+
+	// prChanged gates the reviews/comments fetch (and, absent the poll floor,
+	// checks) on whether the PR's updated_at has moved since the last full
+	// fetch. Fails open: an empty head.UpdatedAt (forge doesn't report one)
+	// or an empty stored cursor (first sweep, or a previous gated fetch that
+	// errored and so never advanced the cursor — see below) always fetches.
+	lastPRUpdatedAt := ""
+	if state.LastPrUpdatedAt != nil {
+		lastPRUpdatedAt = *state.LastPrUpdatedAt
+	}
+	prChanged := head.UpdatedAt == "" || head.UpdatedAt != lastPRUpdatedAt
+
+	checksDue := prChanged
+	if !checksDue {
+		lastPolled := ""
+		if state.LastChecksPolledAt != nil {
+			lastPolled = *state.LastChecksPolledAt
+		}
+		if lastPolled == "" {
+			checksDue = true
+		} else if t, err := time.Parse(time.RFC3339, lastPolled); err != nil || time.Since(t) >= checkPollFloor {
+			checksDue = true
+		}
 	}
 
 	var feedbackParts []string
 	changed := false
+	forgeErr := false
 
-	if parts := s.ingestReviews(ctx, task, repo, prNumber, &state, log); len(parts) > 0 {
-		feedbackParts = append(feedbackParts, parts...)
-		changed = true
+	if prChanged {
+		if ok, parts := s.ingestReviews(ctx, task, repo, prNumber, &state, log); !ok {
+			forgeErr = true
+		} else if len(parts) > 0 {
+			feedbackParts = append(feedbackParts, parts...)
+			changed = true
+		}
+		if ok := s.ingestReviewComments(ctx, task, repo, prNumber, log); ok == commentFetchFailed {
+			forgeErr = true
+		} else if ok == commentFetchInserted {
+			changed = true
+		}
 	}
-	if s.ingestReviewComments(ctx, task, repo, prNumber, log) {
-		changed = true
+	if checksDue {
+		if ok, parts := s.ingestFailedChecks(ctx, task, repo, prNumber, head.HeadSHA, &state, log); !ok {
+			forgeErr = true
+		} else {
+			now := time.Now().UTC().Format(time.RFC3339)
+			state.LastChecksPolledAt = &now
+			if len(parts) > 0 {
+				feedbackParts = append(feedbackParts, parts...)
+				changed = true
+			}
+		}
 	}
-	if parts := s.ingestFailedChecks(ctx, task, repo, prNumber, head.HeadSHA, &state, log); len(parts) > 0 {
-		feedbackParts = append(feedbackParts, parts...)
-		changed = true
-	}
-	if parts := s.ingestMergeConflict(ctx, task, head, prState, &state, log); len(parts) > 0 {
+	if parts := s.ingestMergeConflict(ctx, task, head, head.State, &state, log); len(parts) > 0 {
 		feedbackParts = append(feedbackParts, parts...)
 		changed = true
 	}
 
 	if len(feedbackParts) > 0 {
 		s.appendRunFeedback(ctx, task, strings.Join(feedbackParts, "\n\n"), log)
+	}
+
+	// Only advance the "PR changed" cursor when the gated fetches this sweep
+	// actually ran and succeeded — otherwise a transient `gh` failure would
+	// burn the cursor and permanently lose whatever review/comment arrived in
+	// that window (the next sweep would see head.UpdatedAt as already-seen
+	// and skip fetching again).
+	if prChanged && !forgeErr {
+		updatedAt := head.UpdatedAt
+		state.LastPrUpdatedAt = &updatedAt
 	}
 
 	if head.HeadSHA != "" {
@@ -102,6 +168,8 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 		LastReviewSubmittedAt: state.LastReviewSubmittedAt,
 		LastFailedCheckSha:    state.LastFailedCheckSha,
 		LastConflictSha:       state.LastConflictSha,
+		LastPrUpdatedAt:       state.LastPrUpdatedAt,
+		LastChecksPolledAt:    state.LastChecksPolledAt,
 	}); err != nil {
 		log.Warn("ghsync: upsert pr review state", "err", err)
 	}
@@ -109,19 +177,37 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 	if changed && repo.repo.PrReviewAutoTransitionEnabled != 0 {
 		s.autoTransitionOnFeedback(ctx, task, log)
 	}
+
+	return !forgeErr
 }
 
 // ingestReviews fetches PR reviews and returns feedback text for every
 // changes_requested review submitted after the stored cursor. Advances the
 // cursor (state.LastReviewSubmittedAt) to the newest review's timestamp seen.
-func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, state *gen.TaskPrReviewState, log *slog.Logger) []string {
+//
+// The cursor is a single timestamp watermark, not a per-review-id set: it
+// cannot distinguish two reviews submitted in the same second (the earlier
+// one would be silently treated as "already seen" if a later one shares its
+// exact SubmittedAt). This is a pre-existing, accepted limitation — see
+// #340's discussion of why a per-review-id cursor was scoped out (it needs a
+// schema change and a much larger blast radius for a narrow edge case).
+//
+// Deliberately never reset on a push (a new head SHA) — see ingestPRFeedback.
+// Doing so used to re-emit every historical changes_requested review into the
+// run's feedback on every push, since the reset made lastSeen == "" and the
+// filter below (`<= lastSeen`) then excluded nothing (#340).
+//
+// Returns ok=false if the fetch itself failed (so the caller can avoid
+// advancing the "PR changed" cursor and retry next sweep), and the feedback
+// text for any newly-surfaced changes_requested reviews.
+func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, state *gen.TaskPrReviewState, log *slog.Logger) (ok bool, parts []string) {
 	if s.getReviews == nil {
-		return nil
+		return true, nil
 	}
 	reviews, err := s.getReviews(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get PR reviews", "err", err)
-		return nil
+		return false, nil
 	}
 
 	lastSeen := ""
@@ -130,7 +216,6 @@ func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo
 	}
 	newest := lastSeen
 
-	var parts []string
 	for _, r := range reviews {
 		if r.State != "CHANGES_REQUESTED" {
 			continue
@@ -150,22 +235,32 @@ func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo
 	if newest != lastSeen {
 		state.LastReviewSubmittedAt = &newest
 	}
-	return parts
+	return true, parts
 }
+
+// commentFetchResult is ingestReviewComments' tri-state outcome: the fetch
+// either failed outright (distinct from "fetch succeeded but nothing new"),
+// so the caller can tell a transient `gh` error apart from a quiet sweep.
+type commentFetchResult int
+
+const (
+	commentFetchNoChange commentFetchResult = iota // fetch succeeded, nothing new to insert
+	commentFetchInserted                           // fetch succeeded, at least one new comment inserted
+	commentFetchFailed                             // the fetch itself errored
+)
 
 // ingestReviewComments fetches inline PR review comments and inserts any not
 // already ingested (deduped by external_id) into task_review_comments,
 // tagged with the source forge's name (see reviewCommentSourceName —
-// "github", "gitea", ...). Returns true if at least one new comment was
-// inserted.
-func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, log *slog.Logger) bool {
+// "github", "gitea", ...).
+func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, log *slog.Logger) commentFetchResult {
 	if s.getReviewComments == nil {
-		return false
+		return commentFetchNoChange
 	}
 	comments, err := s.getReviewComments(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get PR review comments", "err", err)
-		return false
+		return commentFetchFailed
 	}
 
 	sourceName := reviewCommentSourceName(repo)
@@ -222,7 +317,10 @@ func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo r
 			"source":     sourceName,
 		})
 	}
-	return inserted
+	if inserted {
+		return commentFetchInserted
+	}
+	return commentFetchNoChange
 }
 
 // reviewCommentSourceName returns the tasks_review_comments.source value to
@@ -243,17 +341,21 @@ func reviewCommentSourceName(repo repoInfo) string {
 // at this head SHA (tracked by state.LastFailedCheckSha, a compact fingerprint
 // of the failing check names rather than the commit SHA itself, so a repeat
 // sweep against the same failing commit doesn't re-inject the same feedback).
-func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, headSHA string, state *gen.TaskPrReviewState, log *slog.Logger) []string {
+//
+// Returns ok=false if the fetch itself failed (so the caller can avoid
+// advancing last_checks_polled_at and retry sooner rather than waiting out
+// checkPollFloor), and any newly-surfaced failed-check feedback text.
+func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, headSHA string, state *gen.TaskPrReviewState, log *slog.Logger) (ok bool, parts []string) {
 	if s.getFailedChecks == nil {
-		return nil
+		return true, nil
 	}
 	checks, err := s.getFailedChecks(ctx, repo, prNumber)
 	if err != nil {
 		log.Warn("ghsync: get failed checks", "err", err)
-		return nil
+		return false, nil
 	}
 	if len(checks) == 0 {
-		return nil
+		return true, nil
 	}
 
 	names := make([]string, 0, len(checks))
@@ -273,11 +375,11 @@ func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo rep
 		prev = *state.LastFailedCheckSha
 	}
 	if fingerprint == prev {
-		return nil // same failures already surfaced for this commit
+		return true, nil // same failures already surfaced for this commit
 	}
 	state.LastFailedCheckSha = &fingerprint
 
-	return []string{fmt.Sprintf("GitHub Actions — failed checks on the current commit:\n%s", strings.Join(lines, "\n"))}
+	return true, []string{fmt.Sprintf("GitHub Actions — failed checks on the current commit:\n%s", strings.Join(lines, "\n"))}
 }
 
 // ingestMergeConflict records GitHub's mergeability verdict for the task's PR

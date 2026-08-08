@@ -263,8 +263,12 @@ func TestPRHead_Mergeable(t *testing.T) {
 	}
 }
 
-func TestPRHead_NoPR(t *testing.T) {
+func TestPRHead_NoPR_BranchNotOnRemote(t *testing.T) {
 	g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/branches/") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		writeJSON(t, w, 200, []map[string]any{})
 	})
 	head, err := g.PRHead(t.Context(), "owner/repo", "ghost-branch")
@@ -273,6 +277,23 @@ func TestPRHead_NoPR(t *testing.T) {
 	}
 	if head != (forge.PRHead{}) {
 		t.Errorf("expected zero PRHead, got %+v", head)
+	}
+}
+
+func TestPRHead_NoPR_BranchPushed(t *testing.T) {
+	g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/branches/") {
+			writeJSON(t, w, 200, map[string]any{"name": "some-branch"})
+			return
+		}
+		writeJSON(t, w, 200, []map[string]any{})
+	})
+	head, err := g.PRHead(t.Context(), "owner/repo", "some-branch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if head.State != "pushed" || head.Number != 0 {
+		t.Errorf("head = %+v, want State: \"pushed\"", head)
 	}
 }
 
