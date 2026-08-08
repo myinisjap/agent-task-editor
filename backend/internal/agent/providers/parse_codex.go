@@ -33,9 +33,16 @@ import (
 // applyUsageWithCost against the pricing table (DB-backed with a hardcoded
 // fallback, see providers/pricing.go), setting CostUSD to an estimate and
 // CostUnknown when the configured model isn't in the table), a failure
-// Classification derived from "turn.failed"/"error" events, and the
-// session/thread_id carried on "thread.started".
-func classifyCodexJSON(line string) (agent.LogEntry, string, *runUsage, agent.Classification, string) {
+// Classification derived from "turn.failed"/"error" events, the
+// session/thread_id carried on "thread.started", and parsedJSON — true when
+// the line was valid JSON matching the codex envelope (any type, including
+// unrecognized), false only when json.Unmarshal failed. Callers use
+// parsedJSON the same way providers/parse_streamjson.go's streamEvent.Parsed
+// is used: to scope agent.ClassifyLine's raw-line sniffing to lines that
+// never parsed as JSON, since a parsed event's Content is the agent's own
+// prose/tool output and has already been classified (or deliberately left
+// ClassNone) by this typed path — see issue #335.
+func classifyCodexJSON(line string) (agent.LogEntry, string, *runUsage, agent.Classification, string, bool) {
 	var envelope struct {
 		Type     string `json:"type"`
 		ThreadID string `json:"thread_id"`
@@ -53,17 +60,17 @@ func classifyCodexJSON(line string) (agent.LogEntry, string, *runUsage, agent.Cl
 		// Codex interleaves plain-text diagnostic lines (e.g. Rust `tracing`
 		// ERROR logs) with the JSONL event stream on stdout; these aren't
 		// events, just raw log noise worth keeping for debuggability.
-		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, "", nil, agent.ClassNone, ""
+		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, "", nil, agent.ClassNone, "", false
 	}
 
 	switch envelope.Type {
 	case "thread.started":
-		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", nil, agent.ClassNone, envelope.ThreadID
+		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", nil, agent.ClassNone, envelope.ThreadID, true
 	case "turn.started":
-		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", nil, agent.ClassNone, ""
+		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", nil, agent.ClassNone, "", true
 	case "turn.completed":
 		usage := &runUsage{InputTokens: envelope.Usage.InputTokens, OutputTokens: envelope.Usage.OutputTokens}
-		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", usage, agent.ClassNone, ""
+		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", usage, agent.ClassNone, "", true
 	case "turn.failed":
 		msg := ""
 		if envelope.Error != nil {
@@ -73,15 +80,17 @@ func classifyCodexJSON(line string) (agent.LogEntry, string, *runUsage, agent.Cl
 		if class == agent.ClassNone {
 			class = agent.ClassGenuine
 		}
-		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "failure", nil, class, ""
+		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "failure", nil, class, "", true
 	case "item.started", "item.updated":
-		return classifyCodexItem(envelope.Item, line, false)
+		entry, outcome, usage, class, sid := classifyCodexItem(envelope.Item, line, false)
+		return entry, outcome, usage, class, sid, true
 	case "item.completed":
-		return classifyCodexItem(envelope.Item, line, true)
+		entry, outcome, usage, class, sid := classifyCodexItem(envelope.Item, line, true)
+		return entry, outcome, usage, class, sid, true
 	case "error":
-		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", nil, agent.ClassifyLine(envelope.Message), ""
+		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", nil, agent.ClassifyLine(envelope.Message), "", true
 	default:
-		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, "", nil, agent.ClassNone, ""
+		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, "", nil, agent.ClassNone, "", true
 	}
 }
 

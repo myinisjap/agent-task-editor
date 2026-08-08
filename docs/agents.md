@@ -667,9 +667,14 @@ so humans aren't paged for problems that will resolve themselves:
   current label and the next dispatcher sweep (~5s) re-picks it up
   immediately, with no retry limit.
 - **Transient failure** — a rate limit (`429`), a network-level error,
-  upstream `5xx`, or (for CLI providers) a best-effort text match on
-  stdout/stderr for signals like connection resets or `502/503/504`. These
-  are auto-retried up to `max_retries` times with exponential backoff
+  upstream `5xx`, or (for CLI providers) a text match for signals like
+  connection resets or `502/503/504`. The match is anchored (word/HTTP-status
+  boundaries, not a bare substring, so e.g. a diff hunk header containing
+  `429` doesn't false-positive) and, on stdout, is only applied to output
+  that isn't a structured event — a successfully-parsed event has already
+  been classified via its own typed path; stderr is always matched, since
+  it's untyped diagnostic output. These are auto-retried up to `max_retries`
+  times with exponential backoff
   (`retry_backoff_secs * 2^attempt`, capped at 10 minutes) before the task is
   escalated to `waiting_human` — so a human only gets involved once the
   automatic retries have been exhausted, not on every blip.

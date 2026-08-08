@@ -13,7 +13,7 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 | `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (Mechanism 2, issue #82) |
 | `terminal.go` | `TerminalManager`/`NewTerminalManager` — interactive chat session CLI process management |
 | `errors.go` | `ErrTransient` — marks an error as a transient infra problem rather than a genuine task failure; `ErrMaxTurns` and `ErrCostBudgetExceeded` — typed, non-transient escalation signals (turn cap / mid-run cost-budget kill) that `pool.go#handleProviderError` detects via `errors.As` and routes to `waiting_human` instead of retrying |
-| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`, plus the structurally-detected `max_turns`/`cost_budget`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. `providers.is429Line`/`providers.isTransientLine` (in the `providers` package) are thin wrappers over this; `providers.classifyResultMessage` prefers the claude/qwen stream-json typed `result` event's `api_error_status` field / text over raw line sniffing |
+| `errclass.go` | `Classification` (`genuine`/`transient`/`rate_limit`/`auth`, plus the structurally-detected `max_turns`/`cost_budget`) + `ClassifyLine` — the single source of truth for the string patterns that classify provider output. Most patterns are plain substrings, but the short ones (`429`/`502`/`503`/`504`/`eof`/`timeout`) are anchored regexps (word boundary and, for the 3-digit HTTP codes, an HTTP-status-ish context) so they don't false-positive on ordinary agent output like a diff hunk header (`@@ -429,7 +429,9 @@`) or a `typeof` in source code (issue #335). `providers.is429Line`/`providers.isTransientLine` (in the `providers` package) are thin wrappers over this; `providers.classifyResultMessage` prefers the claude/qwen stream-json typed `result` event's `api_error_status` field / text over raw line sniffing |
 | `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)` exponential-backoff helpers; `UnblockIfNotBlockedSince` is the in-run-safe clear (see issue #344) — `Unblock` remains the unconditional variant |
 
 Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
@@ -110,8 +110,21 @@ govern automatic retries for **transient** provider errors only:
   table in `errclass.go` (`ClassifyLine`) — connection resets, `502/503/504`,
   "timeout", `429`/rate limit, and "Not logged in"/"Please run /login" all live
   in that one table with per-pattern unit tests, so a CLI-wording change is a
-  one-line edit. For the claude/qwen providers, the typed stream-json `result`
-  event (`providers/parse_streamjson.go`'s `classifyResultMessage`) is preferred over raw line sniffing where
+  one-line edit. The short patterns (`429`/`502`/`503`/`504`/`eof`/`timeout`)
+  are anchored (word boundary, plus an HTTP-status-ish context for the
+  3-digit codes) rather than bare substrings, since they're short enough to
+  otherwise appear in ordinary agent prose or file contents (issue #335).
+  Raw-line sniffing on **stdout** is applied only to lines that failed to
+  parse as a structured event (`streamEvent.Parsed` for claude/qwen,
+  `classifyCodexJSON`'s `parsedJSON` return for codex, `classifyOpencodeJSON`'s
+  `parsedJSON` return for opencode) — a successfully-parsed
+  assistant/tool_use/tool_result/etc. event has already been classified (or
+  deliberately left `ClassNone`) by its typed path, so re-sniffing its
+  Content (the agent's own prose or a file it read/wrote) is pure
+  false-positive surface. **Stderr** is always sniffed regardless, since it's
+  untyped diagnostic output. For the claude/qwen providers, the typed
+  stream-json `result` event (`providers/parse_streamjson.go`'s
+  `classifyResultMessage`) is preferred over raw line sniffing where
   present; `providers/parse_codex.go` has its own dedicated
   `classifyCodexJSON` parser instead, since Codex's
   JSON event schema is not compatible with claude/qwen's stream-json envelope, but

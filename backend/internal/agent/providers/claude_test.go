@@ -116,6 +116,20 @@ func TestMain(m *testing.M) {
 		fmt.Println(`{"type":"assistant","message":{"role":"assistant","content":"` + strings.Repeat("A", 9*1024*1024) + `"}}`)
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
 		os.Exit(0)
+	case "prose_with_429":
+		// Regression coverage for issue #335: a successfully-parsed
+		// "assistant" stream-json event whose prose contains a diff hunk
+		// header ("@@ -429,7 +429,9 @@") and the word "timeout" (e.g. the
+		// agent quoting a file it edited), followed by a genuine failure —
+		// a terminal "result" event with subtype:"error" carrying no
+		// rate-limit/transient signal — and a non-zero exit. Before the fix,
+		// the raw-line ClassifyLine fallback ran against this JSON line
+		// regardless of it having already been parsed, latching
+		// rateLimited/transient for the whole run; Run must return a
+		// genuine failure here, NOT *ErrRateLimit / *ErrTransient.
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Applying patch:\n@@ -429,7 +429,9 @@ func foo() {\n+  const timeoutMs = 30_000 // socketTimeout\n"}]}}`)
+		fmt.Println(`{"type":"result","subtype":"error","is_error":true,"result":"the task could not be completed"}`)
+		os.Exit(1)
 	}
 	switch os.Getenv("CODEX_TEST_HELPER") {
 	case "exit0_success":
@@ -209,6 +223,13 @@ func TestMain(m *testing.M) {
 		fmt.Println(`{"type":"assistant","message":{"role":"assistant","content":"` + strings.Repeat("A", 9*1024*1024) + `"}}`)
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
 		os.Exit(0)
+	case "prose_with_429":
+		// Mirrors claude's "prose_with_429" case above — regression coverage
+		// for issue #335 on qwen.go, which reuses the same stream-json
+		// envelope/parser as claude (see parse_qwen.go).
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Applying patch:\n@@ -429,7 +429,9 @@ func foo() {\n+  const timeoutMs = 30_000 // socketTimeout\n"}]}}`)
+		fmt.Println(`{"type":"result","subtype":"error","is_error":true,"result":"the task could not be completed"}`)
+		os.Exit(1)
 	}
 
 	switch os.Getenv("OPENCODE_TEST_HELPER") {
@@ -505,6 +526,47 @@ func TestClaudeRunner_TransientError_PreservesUsage(t *testing.T) {
 	}
 	if res.r.CostUSD != 2.25 {
 		t.Errorf("want CostUSD=2.25, got %v", res.r.CostUSD)
+	}
+}
+
+// TestClaudeRunner_ProseContaining429DoesNotMisclassify is the end-to-end
+// regression test for issue #335: a successfully-parsed "assistant"
+// stream-json event whose prose contains a diff hunk header ("@@ -429,7
+// +429,9 @@") and the word "timeout" must NOT latch rateLimited/transient
+// for the run. The run then genuinely fails (terminal "result" with
+// subtype:"error" and a plain message, non-zero exit) — Run must return that
+// genuine failure, not *agent.ErrRateLimit or *agent.ErrTransient. Before the
+// fix, ClassifyLine's raw-line fallback ran unconditionally against every
+// stdout line (including already-parsed JSON), so the "429" in the diff hunk
+// header latched rate_limit for the whole run regardless of the real,
+// unrelated failure reason.
+func TestClaudeRunner_ProseContaining429DoesNotMisclassify(t *testing.T) {
+	runner := helperRunner("prose_with_429")
+	logCh := make(chan agent.LogEntry, 256)
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), makeInput("prose_with_429"), logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+	res := <-ch
+
+	var rl *agent.ErrRateLimit
+	if errors.As(res.err, &rl) {
+		t.Fatalf("want genuine failure, got misclassified as *ErrRateLimit: %v", res.err)
+	}
+	var te *agent.ErrTransient
+	if errors.As(res.err, &te) {
+		t.Fatalf("want genuine failure, got misclassified as *ErrTransient: %v", res.err)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
 	}
 }
 

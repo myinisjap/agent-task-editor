@@ -398,6 +398,33 @@ triggers the "Release" workflow the same way.
   `docker-compose.yml` and `docker-compose.release.yml` now pass them
   through, and they're documented in the env-var table in
   `docs/getting-started.md`.
+- **`ClassifyLine` substring false-positives could latch `rate_limit`/
+  `transient` on ordinary agent output, blocking a whole agent config.**
+  (#335) `ClassifyLine`'s short patterns (`429`, `502`, `503`, `504`, `eof`,
+  `timeout`) matched by bare substring, and every CLI provider ran it as a
+  fallback against **every raw stdout line** — including successfully-parsed
+  stream-json assistant/tool events, whose payload is the agent's own prose
+  or the contents of a file it read/wrote. A diff hunk header
+  (`@@ -429,7 +429,9 @@`), a token count containing `1429`, or a TypeScript
+  `typeof` in agent-authored code would misclassify an unrelated genuine
+  failure as `rate_limit`/`transient` — burning the task's retry budget and,
+  for `rate_limit`, blocking the *entire agent config* from dispatch for
+  30s–10min via `RateLimitRegistry.Block`. Two independent fixes: (1) the
+  short patterns are now anchored — `eof`/`timeout` require a word boundary,
+  and `429`/`502`/`503`/`504` additionally require an HTTP-status-ish
+  context (`http`/`status`/`code`/`error` prefix or a status phrase like
+  "too many requests"/"bad gateway" suffix) — so ordinary numbers/identifiers
+  in agent output no longer match; (2) raw-line sniffing is now scoped to
+  lines that failed to parse as structured JSON (`streamEvent.Parsed` /
+  `classifyCodexJSON`'s new `parsedJSON` return / `classifyOpencodeJSON`'s
+  new `parsedJSON` return) — a successfully-parsed event has already been
+  classified by its typed path, so re-sniffing its payload is pure
+  false-positive surface. Stderr is still unconditionally sniffed on every
+  provider (it's untyped diagnostic output). Note: opencode has no typed
+  error classification, so this narrows (but does not eliminate) its
+  stdout-based rate-limit/transient detection to non-JSON lines; opencode
+  errors reported only inside a structured event body are no longer caught
+  on stdout, though they still surface via stderr and non-zero exit.
 - **WebSocket + terminal resource leaks: no write/ping deadline, unscoped
   session delete, re-subscribe amplification.** (#339) Four related leaks in
   the long-lived connection paths, all a variant of lifecycle cleanup that

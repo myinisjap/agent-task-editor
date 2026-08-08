@@ -234,6 +234,36 @@ func TestQwenRunner_RateLimit_PreservesUsage(t *testing.T) {
 	}
 }
 
+// TestQwenRunner_ProseContaining429DoesNotMisclassify mirrors
+// TestClaudeRunner_ProseContaining429DoesNotMisclassify in claude_test.go —
+// regression coverage for issue #335 on qwen.go, which reuses claude's
+// stream-json parser (see parse_qwen.go). A successfully-parsed "assistant"
+// event whose prose contains a diff hunk header ("@@ -429,7 +429,9 @@") and
+// the word "timeout" must not latch rateLimited/transient; Run must return
+// the genuine failure signalled by the terminal "result" event instead.
+func TestQwenRunner_ProseContaining429DoesNotMisclassify(t *testing.T) {
+	runner := &QwenRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), qwenHelperInput("prose_with_429"), logCh)
+	close(logCh)
+
+	var rl *agent.ErrRateLimit
+	if errors.As(err, &rl) {
+		t.Fatalf("want genuine failure, got misclassified as *ErrRateLimit: %v", err)
+	}
+	var te *agent.ErrTransient
+	if errors.As(err, &te) {
+		t.Fatalf("want genuine failure, got misclassified as *ErrTransient: %v", err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", result.Status)
+	}
+}
+
 // TestQwenRunner_TransientError_PreservesUsage mirrors
 // TestQwenRunner_RateLimit_PreservesUsage above for the transient-exit
 // return path (a non-429 infra error, e.g. ECONNRESET) — same bug, same fix.

@@ -133,7 +133,7 @@ func TestRenderCodexMCPTOML_NoEnv(t *testing.T) {
 // the session id.
 func TestClassifyCodexJSON_ThreadStarted(t *testing.T) {
 	line := `{"type":"thread.started","thread_id":"019f3f4b-e798-7812-8d18-cfd4ab5ade09"}`
-	entry, _, _, class, sid := classifyCodexJSON(line)
+	entry, _, _, class, sid, _ := classifyCodexJSON(line)
 	if sid != "019f3f4b-e798-7812-8d18-cfd4ab5ade09" {
 		t.Errorf("session id = %q, want the thread_id", sid)
 	}
@@ -148,7 +148,7 @@ func TestClassifyCodexJSON_ThreadStarted(t *testing.T) {
 // TestClassifyCodexJSON_TurnCompleted verifies token usage is extracted.
 func TestClassifyCodexJSON_TurnCompleted(t *testing.T) {
 	line := `{"type":"turn.completed","usage":{"input_tokens":15,"cached_input_tokens":0,"output_tokens":25,"reasoning_output_tokens":5}}`
-	_, outcome, usage, class, _ := classifyCodexJSON(line)
+	_, outcome, usage, class, _, _ := classifyCodexJSON(line)
 	if outcome != "" {
 		t.Errorf("outcome = %q, want empty (turn.completed isn't terminal)", outcome)
 	}
@@ -164,7 +164,7 @@ func TestClassifyCodexJSON_TurnCompleted(t *testing.T) {
 // failure outcome and a classification derived from the error message.
 func TestClassifyCodexJSON_TurnFailed(t *testing.T) {
 	line := `{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header"}}`
-	_, outcome, _, class, _ := classifyCodexJSON(line)
+	_, outcome, _, class, _, _ := classifyCodexJSON(line)
 	if outcome != "failure" {
 		t.Errorf("outcome = %q, want failure", outcome)
 	}
@@ -177,7 +177,7 @@ func TestClassifyCodexJSON_TurnFailed(t *testing.T) {
 // message carries no recognizable infra/auth signal classifies as genuine.
 func TestClassifyCodexJSON_TurnFailedGenuine(t *testing.T) {
 	line := `{"type":"turn.failed","error":{"message":"the model declined to continue"}}`
-	_, _, _, class, _ := classifyCodexJSON(line)
+	_, _, _, class, _, _ := classifyCodexJSON(line)
 	if class != agent.ClassGenuine {
 		t.Errorf("class = %q, want genuine", class)
 	}
@@ -187,7 +187,7 @@ func TestClassifyCodexJSON_TurnFailedGenuine(t *testing.T) {
 // agent_message item is scanned for an OUTCOME marker.
 func TestClassifyCodexJSON_AgentMessageCompleted(t *testing.T) {
 	line := `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"All done. OUTCOME: success"}}`
-	entry, outcome, _, _, _ := classifyCodexJSON(line)
+	entry, outcome, _, _, _, _ := classifyCodexJSON(line)
 	if outcome != "success" {
 		t.Errorf("outcome = %q, want success", outcome)
 	}
@@ -201,7 +201,7 @@ func TestClassifyCodexJSON_AgentMessageCompleted(t *testing.T) {
 // terminal item.completed event should resolve one).
 func TestClassifyCodexJSON_AgentMessageStartedNoOutcome(t *testing.T) {
 	line := `{"type":"item.started","item":{"id":"item_0","type":"agent_message","text":"OUTCOME: success"}}`
-	_, outcome, _, _, _ := classifyCodexJSON(line)
+	_, outcome, _, _, _, _ := classifyCodexJSON(line)
 	if outcome != "" {
 		t.Errorf("outcome = %q, want empty for an in-progress item", outcome)
 	}
@@ -211,13 +211,13 @@ func TestClassifyCodexJSON_AgentMessageStartedNoOutcome(t *testing.T) {
 // to agent.LogToolCall (in-progress) / agent.LogToolResult (completed).
 func TestClassifyCodexJSON_CommandExecution(t *testing.T) {
 	started := `{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"ls","status":"in_progress"}}`
-	entry, _, _, _, _ := classifyCodexJSON(started)
+	entry, _, _, _, _, _ := classifyCodexJSON(started)
 	if entry.Type != agent.LogToolCall {
 		t.Errorf("entry.Type = %q, want tool_call", entry.Type)
 	}
 
 	completed := `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls","aggregated_output":"a.txt","exit_code":0,"status":"completed"}}`
-	entry, _, _, class, _ := classifyCodexJSON(completed)
+	entry, _, _, class, _, _ := classifyCodexJSON(completed)
 	if entry.Type != agent.LogToolResult {
 		t.Errorf("entry.Type = %q, want tool_result", entry.Type)
 	}
@@ -226,7 +226,7 @@ func TestClassifyCodexJSON_CommandExecution(t *testing.T) {
 	}
 
 	failed := `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"curl x","aggregated_output":"connection reset by peer","exit_code":1,"status":"failed"}}`
-	_, _, _, class, _ = classifyCodexJSON(failed)
+	_, _, _, class, _, _ = classifyCodexJSON(failed)
 	if class != agent.ClassTransient {
 		t.Errorf("class = %q, want transient for a connection-reset failure", class)
 	}
@@ -236,7 +236,7 @@ func TestClassifyCodexJSON_CommandExecution(t *testing.T) {
 // agent.LogToolCall/agent.LogToolResult and classify failures from the error message.
 func TestClassifyCodexJSON_McpToolCall(t *testing.T) {
 	completed := `{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"task-editor","tool":"signal_complete","status":"failed","error":{"message":"429 rate limit"}}}`
-	entry, _, _, class, _ := classifyCodexJSON(completed)
+	entry, _, _, class, _, _ := classifyCodexJSON(completed)
 	if entry.Type != agent.LogToolResult {
 		t.Errorf("entry.Type = %q, want tool_result", entry.Type)
 	}
@@ -250,7 +250,7 @@ func TestClassifyCodexJSON_McpToolCall(t *testing.T) {
 // entry rather than erroring.
 func TestClassifyCodexJSON_NonJSONLine(t *testing.T) {
 	line := `2026-07-08T01:16:07.304228Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket`
-	entry, outcome, usage, class, sid := classifyCodexJSON(line)
+	entry, outcome, usage, class, sid, _ := classifyCodexJSON(line)
 	if entry.Type != agent.LogStdout || entry.Content != line {
 		t.Errorf("unexpected entry for non-JSON line: %+v", entry)
 	}
