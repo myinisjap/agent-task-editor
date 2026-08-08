@@ -171,6 +171,87 @@ func TestReplayTaskLogs_SubscribeSendsBatchedReplay(t *testing.T) {
 	}
 }
 
+// TestReplayTaskLogs_RepeatSubscribe_ReplaysOnce verifies that sending the
+// same "subscribe" frame for a task multiple times on one connection only
+// triggers a single replay — a re-subscribe to an already-subscribed id must
+// be a no-op, not spawn another replayTaskLogs goroutine.
+func TestReplayTaskLogs_RepeatSubscribe_ReplaysOnce(t *testing.T) {
+	db := openReplayTestDB(t)
+	q := gen.New(db.SQL())
+	taskID := seedTaskWithLogs(t, q, []string{"first line", "second line"})
+
+	hub := NewHub()
+	_, wsURL := newTestWSServerWithQueries(t, hub, q)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	for i := 0; i < 5; i++ {
+		send(t, ctx, conn, inboundMsg{Type: "subscribe", TaskID: taskID})
+	}
+
+	// First message must be the replay.
+	readCtx, readCancel := context.WithTimeout(ctx, 3*time.Second)
+	_, data, err := conn.Read(readCtx)
+	readCancel()
+	if err != nil {
+		t.Fatalf("expected a log_replay message, got read error: %v", err)
+	}
+	var evt Event
+	if err := json.Unmarshal(data, &evt); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	if evt.Type != "agent.log_replay" {
+		t.Fatalf("expected type agent.log_replay, got %q", evt.Type)
+	}
+
+	// No second replay should follow, even though 4 more subscribe frames
+	// were sent for the same task id.
+	readCtx2, readCancel2 := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer readCancel2()
+	if _, _, err := conn.Read(readCtx2); err == nil {
+		t.Error("expected no second replay message for a repeated subscribe to the same task")
+	}
+}
+
+// TestServeWS_SubscriptionCap_RepeatedSameID_DoesNotGrowMap is the repeated-
+// id counterpart to TestServeWS_SubscriptionCap_IgnoresBeyondLimit: sending
+// the same task id far more times than maxSubscriptions must not affect the
+// cap check (the id is only counted once), and the map must settle at size 1.
+func TestServeWS_SubscriptionCap_RepeatedSameID_DoesNotGrowMap(t *testing.T) {
+	hub := NewHub()
+	_, wsURL := newTestWSServer(t, hub, "", "*")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	const sameID = "task-repeated"
+	for i := 0; i < maxSubscriptions+50; i++ {
+		send(t, ctx, conn, inboundMsg{Type: "subscribe", TaskID: sameID})
+	}
+
+	// Give the read pump a moment to process everything, then confirm the
+	// map settled at exactly 1 subscription and stays there.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	got := hub.subscriptionCount()
+	if got != 1 {
+		t.Fatalf("expected subscription count to be 1 for repeated same-id subscribes, got %d", got)
+	}
+}
+
 // TestReplayTaskLogs_UnknownTask_NoReplay verifies that subscribing to a task
 // id with no matching row (or no current run) doesn't crash and simply sends
 // nothing (replayTaskLogs returns early on GetTask error).

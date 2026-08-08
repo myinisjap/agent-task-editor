@@ -387,6 +387,39 @@ triggers the "Release" workflow the same way.
   `frontend/src/lib/providerCapabilities.ts`) comes out different, so it can
   no longer silently drift from the source of truth the UI reads.
 
+### Fixed
+- **WebSocket + terminal resource leaks: no write/ping deadline, unscoped
+  session delete, re-subscribe amplification.** (#339) Four related leaks in
+  the long-lived connection paths, all a variant of lifecycle cleanup that
+  wasn't scoped to the thing that owned it. (1) The WS write pump's
+  `conn.Write`/`conn.Ping` used the request context, which a hijacked
+  connection never gets a socket deadline for and which a peer disconnect
+  never cancels — a half-open client (laptop sleep, NAT timeout, dropped
+  proxy) parked the write pump forever, so the client never left `Hub.clients`
+  or the `WSConnectedClients` gauge and kept absorbing `Publish` broadcasts
+  (incrementing `WSBroadcastDroppedTotal` once its buffer filled); each write
+  and ping now runs under its own 10s timeout, so a stalled peer's connection
+  is closed instead. (2) Re-sending the same `subscribe` frame for a task
+  already subscribed on that connection used to spawn another
+  `replayTaskLogs` goroutine (a `GetTask` + up-to-501-row log fetch + payload
+  marshal) every time, and never tripped the 100-subscription cap since the
+  map didn't grow — a looping/buggy reconnect could fan out unbounded
+  concurrent DB reads; re-subscribing to an already-subscribed id is now a
+  no-op, and in-flight replays per client are capped at 4 concurrent. (3) The
+  interactive-terminal output pump ended with an unconditional
+  `delete(m.sessions, sessionID)`; if `Stop()`/idle-reaping removed a session
+  and a reattach inserted a fresh one under the same id before the old
+  pump's `cmd.Wait()` returned, that unconditional delete orphaned the new
+  session (alive, but unreachable by `Stop`/the reaper, uncounted against
+  `MaxSessions`) — same ownership-bug class as #244's
+  `ClearActiveAgentRunIfOwner`, fixed the same way (delete only if the map
+  still holds that same session). (4) `TerminalManager.Attach`'s read pump
+  only checked for process exit after `conn.Read` returned, so if the CLI
+  process exited while the user was idle, the handler goroutine blocked in
+  `conn.Read` forever and the browser showed a frozen terminal with no
+  error; `Attach` now closes the WebSocket as soon as the process exits, so
+  the read pump unblocks and the client sees the session end.
+
 ### Changed
 - **Compose now publishes on `127.0.0.1` by default instead of all
   interfaces.** `docker-compose.yml`/`docker-compose.release.yml` previously

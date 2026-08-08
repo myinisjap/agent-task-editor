@@ -257,6 +257,105 @@ func TestServeWS_SubscriptionCap_IgnoresBeyondLimit(t *testing.T) {
 	}
 }
 
+// TestServeWS_WritePump_SurvivesNormalTraffic is a regression guard for the
+// per-write/per-ping timeouts added to the write pump (writeTimeout /
+// pingTimeout): a healthy connection receiving ordinary traffic must not be
+// disconnected by them. Publishes several events and reads them all back,
+// then asserts the client is still registered in the hub afterwards.
+func TestServeWS_WritePump_SurvivesNormalTraffic(t *testing.T) {
+	hub := NewHub()
+	_, wsURL := newTestWSServer(t, hub, "", "*")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	// Wait for registration before publishing, otherwise Publish may run
+	// before the hub has this client.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		hub.mu.RLock()
+		n := len(hub.clients)
+		hub.mu.RUnlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	const numEvents = 20
+	for i := 0; i < numEvents; i++ {
+		hub.Publish("task.label_changed", map[string]any{"task_id": "t", "i": i})
+	}
+
+	for i := 0; i < numEvents; i++ {
+		readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
+		_, _, err := conn.Read(readCtx)
+		readCancel()
+		if err != nil {
+			t.Fatalf("expected to read event %d, got error: %v", i, err)
+		}
+	}
+
+	hub.mu.RLock()
+	n := len(hub.clients)
+	hub.mu.RUnlock()
+	if n != 1 {
+		t.Errorf("expected client to remain registered after normal traffic, hub has %d clients", n)
+	}
+}
+
+// TestServeWS_AbruptPeerClose_RemovesClientFromHub verifies that a
+// connection closed by the peer (rather than a clean close handshake) is
+// eventually removed from the hub — the read pump errors, cancels the
+// shared ctx, and the write pump's write/ping calls then observe a
+// cancelled context (or the connection itself is already gone) and return.
+func TestServeWS_AbruptPeerClose_RemovesClientFromHub(t *testing.T) {
+	hub := NewHub()
+	_, wsURL := newTestWSServer(t, hub, "", "*")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		hub.mu.RLock()
+		n := len(hub.clients)
+		hub.mu.RUnlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Abruptly terminate the underlying TCP connection rather than sending a
+	// close frame, simulating a half-open/dropped peer.
+	_ = conn.CloseNow()
+
+	deadline = time.Now().Add(5 * time.Second)
+	var n int
+	for time.Now().Before(deadline) {
+		hub.mu.RLock()
+		n = len(hub.clients)
+		hub.mu.RUnlock()
+		if n == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n != 0 {
+		t.Errorf("expected client to be removed from hub after abrupt peer close, hub still has %d clients", n)
+	}
+}
+
 func taskIDFor(i int) string {
 	return "task-" + string(rune('a'+i%26)) + string(rune('0'+i/26))
 }
