@@ -38,7 +38,7 @@ src/
 │   ├── ReposPage.tsx        Repo management
 │   └── HealthPage.tsx       Provider readiness / health checks
 ├── stores/
-│   ├── tasks.ts      Task list state + WebSocket updates
+│   ├── tasks.ts      Task list state + WebSocket updates (fetch() is request-sequenced via a monotonic reqId and preserves WS upserts/removes that land mid-sweep — see #341)
 │   ├── agents.ts     Agent config state
 │   ├── providerConfigs.ts Provider config state (provider/model/env)
 │   ├── repos.ts      Repo list state

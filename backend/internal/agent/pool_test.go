@@ -30,16 +30,18 @@ import (
 // under test is correct.
 const pollDeadline = 15 * time.Second
 
-// testPub records published event types.
+// testPub records published event types and their payloads.
 type testPub struct {
-	mu     sync.Mutex
-	events []string
+	mu       sync.Mutex
+	events   []string
+	payloads []map[string]any
 }
 
-func (p *testPub) Publish(eventType string, _ map[string]any) {
+func (p *testPub) Publish(eventType string, payload map[string]any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
+	p.payloads = append(p.payloads, payload)
 }
 
 func (p *testPub) hasEvent(name string) bool {
@@ -51,6 +53,20 @@ func (p *testPub) hasEvent(name string) bool {
 		}
 	}
 	return false
+}
+
+// payloadsFor returns the payloads published under the given event name, in
+// publish order.
+func (p *testPub) payloadsFor(name string) []map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []map[string]any
+	for i, e := range p.events {
+		if e == name {
+			out = append(out, p.payloads[i])
+		}
+	}
+	return out
 }
 
 // mockProvider returns a pre-configured Result immediately.
@@ -1668,5 +1684,70 @@ func TestPool_SafetyNetCommit_HumanReadableMessage(t *testing.T) {
 	}
 	if !strings.Contains(msg, "Agent-Run: "+runID) {
 		t.Errorf("expected Agent-Run trailer with run id %q, got:\n%s", runID, msg)
+	}
+}
+
+// logStreamingProvider writes a single log entry to the provided channel
+// before returning its configured Result, exercising the pool's
+// persistLogs goroutine (mockProvider ignores the channel entirely).
+type logStreamingProvider struct {
+	result agent.Result
+	err    error
+}
+
+func (p *logStreamingProvider) Run(_ context.Context, _ agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
+	logCh <- agent.LogEntry{Type: agent.LogStdout, Content: "hello from provider", At: time.Now()}
+	return p.result, p.err
+}
+
+// TestPool_PersistLogs_PublishedEntryIDMatchesPersistedRow verifies that the
+// "agent.log" WS payload published for a live log entry carries the same id
+// as the corresponding agent_logs row, so frontend clients can dedupe live
+// entries against agent.log_replay / paginated log reads by id alone (#341).
+func TestPool_PersistLogs_PublishedEntryIDMatchesPersistedRow(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	provider := &logStreamingProvider{result: agent.Result{Status: "completed", Outcome: "success"}}
+
+	_, stop := startPool(t, pool)
+
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
+
+	waitForStatus(t, q, runID, "completed")
+	stop()
+
+	logs, err := q.ListAgentLogs(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("list agent logs: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected exactly 1 persisted log row, got %d", len(logs))
+	}
+	persistedID := logs[0].ID
+	if persistedID == "" {
+		t.Fatal("expected persisted log row to have a non-empty id")
+	}
+
+	payloads := pub.payloadsFor("agent.log")
+	if len(payloads) != 1 {
+		t.Fatalf("expected exactly 1 agent.log publish, got %d", len(payloads))
+	}
+	entry, ok := payloads[0]["entry"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected agent.log payload to have an 'entry' map, got %#v", payloads[0])
+	}
+	publishedID, _ := entry["id"].(string)
+	if publishedID == "" {
+		t.Fatal("expected published agent.log entry to carry a non-empty id")
+	}
+	if publishedID != persistedID {
+		t.Errorf("published entry id %q does not match persisted row id %q", publishedID, persistedID)
 	}
 }

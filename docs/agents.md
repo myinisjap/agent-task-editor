@@ -148,7 +148,7 @@ The pool manages `MAX_WORKERS` concurrent goroutines (default 5). Each worker:
 1. Sets the run status to `running`.
 2. Calls `Provider.Run()` which streams `LogEntry` values on a channel.
 3. Persists log entries to `agent_logs` in batched transactions (flush every 500ms or every 50 entries).
-4. Simultaneously publishes each entry to the WebSocket hub for live streaming.
+4. Simultaneously publishes each entry to the WebSocket hub for live streaming; the published entry carries the same id as the persisted `agent_logs` row, so clients can dedupe live entries against replay/pagination.
 5. On completion, sets the run status to `completed`, `failed`, or `waiting_human`.
 6. For `completed`/`failed`, clears `active_agent_run_id` so the dispatcher can re-pick-up the task.
 7. For `waiting_human`, leaves `active_agent_run_id` set — dispatch is blocked until a human approves or rejects.

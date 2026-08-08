@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import { fromApiComment, type DiffComment } from '../../lib/diffComments'
 
@@ -7,12 +7,28 @@ import { fromApiComment, type DiffComment } from '../../lib/diffComments'
 // approval panel (open-comment count banner + reject validation).
 export function useDiffComments(taskId: string | undefined) {
   const [diffComments, setDiffComments] = useState<DiffComment[]>([])
+  // Tracks the taskId currently "owned" by this hook instance so an in-flight
+  // refreshComments() response can't clobber state after the caller (e.g.
+  // TaskDetailPage on navigation) has moved on to a different taskId. Kept in
+  // sync synchronously during render (not in an effect) so there's no window
+  // where a response could land and read a stale value before an effect runs.
+  const currentTaskIdRef = useRef(taskId)
+  currentTaskIdRef.current = taskId
 
   const refreshComments = useCallback(() => {
     if (!taskId) return
     api.tasks.reviewComments(taskId)
-      .then((cs) => setDiffComments((cs ?? []).map(fromApiComment)))
+      .then((cs) => {
+        if (currentTaskIdRef.current !== taskId) return
+        setDiffComments((cs ?? []).map(fromApiComment))
+      })
       .catch(() => {})
+  }, [taskId])
+
+  // Reset comments when the task changes so a navigation never shows the
+  // previous task's comments while the new fetch is in flight.
+  useEffect(() => {
+    setDiffComments([])
   }, [taskId])
 
   // Load persisted review comments (open + resolved) when the task changes.
@@ -34,8 +50,13 @@ export function useDiffComments(taskId: string | undefined) {
         quoted_text: draft.quotedText,
         body: draft.comment,
       })
+      // Bail if the user navigated to a different task while this request
+      // was in flight — applying it now would inject task A's comment into
+      // task B's list.
+      if (currentTaskIdRef.current !== taskId) return
       setDiffComments((prev) => prev.map((c) => (c.id === draft.id ? fromApiComment(created) : c)))
     } catch (e: any) {
+      if (currentTaskIdRef.current !== taskId) return
       setDiffComments((prev) => prev.filter((c) => c.id !== draft.id))
       alert(`Failed to save comment: ${e.message ?? e}`)
     }
@@ -45,8 +66,10 @@ export function useDiffComments(taskId: string | undefined) {
     if (!taskId) return
     try {
       await api.tasks.deleteReviewComment(taskId, commentId)
+      if (currentTaskIdRef.current !== taskId) return
       setDiffComments((prev) => prev.filter((c) => c.id !== commentId))
     } catch (e: any) {
+      if (currentTaskIdRef.current !== taskId) return
       alert(`Failed to delete comment: ${e.message ?? e}`)
     }
   }
@@ -55,8 +78,10 @@ export function useDiffComments(taskId: string | undefined) {
     if (!taskId) return
     try {
       const updated = await api.tasks.updateReviewComment(taskId, commentId, { status: 'open' })
+      if (currentTaskIdRef.current !== taskId) return
       setDiffComments((prev) => prev.map((c) => (c.id === commentId ? fromApiComment(updated) : c)))
     } catch (e: any) {
+      if (currentTaskIdRef.current !== taskId) return
       alert(`Failed to reopen comment: ${e.message ?? e}`)
     }
   }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
@@ -50,14 +50,29 @@ export default function TaskDetailPage() {
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
+  // Tracks the task id this page instance currently "owns". React Router
+  // reuses this component instance across `/tasks/:id` navigations, so any
+  // refresh callback captured for task A must not apply its response after
+  // the user has navigated to task B. Assigned synchronously during render
+  // (not in an effect) so there is no window where an in-flight response
+  // could land and read a stale value before an effect has run.
+  const currentIdRef = useRef(id)
+  currentIdRef.current = id
+
   const refreshTask = useCallback(() => {
     if (!id) return
-    api.tasks.get(id).then(setTask).catch(() => {})
+    const taskId = id
+    api.tasks.get(taskId).then((t) => {
+      if (currentIdRef.current !== taskId) return
+      setTask(t)
+    }).catch(() => {})
   }, [id])
 
   const refreshRuns = useCallback(() => {
     if (!id) return
-    api.tasks.runs(id).then(({ items: r }) => {
+    const taskId = id
+    api.tasks.runs(taskId).then(({ items: r }) => {
+      if (currentIdRef.current !== taskId) return
       setRuns(r ?? [])
       if (r && r.length > 0) {
         setSelectedRun((prev) => prev ?? r[0].id)
@@ -67,12 +82,20 @@ export default function TaskDetailPage() {
 
   const refreshLabelHistory = useCallback(() => {
     if (!id) return
-    api.tasks.listLabelHistory(id).then((h) => setLabelHistory(h ?? [])).catch(() => {})
+    const taskId = id
+    api.tasks.listLabelHistory(taskId).then((h) => {
+      if (currentIdRef.current !== taskId) return
+      setLabelHistory(h ?? [])
+    }).catch(() => {})
   }, [id])
 
   const refreshSourceComments = useCallback(() => {
     if (!id) return
-    api.tasks.sourceComments(id).then((c) => setSourceComments(c ?? [])).catch(() => {})
+    const taskId = id
+    api.tasks.sourceComments(taskId).then((c) => {
+      if (currentIdRef.current !== taskId) return
+      setSourceComments(c ?? [])
+    }).catch(() => {})
   }, [id])
 
   // Fetch agent configs for name lookup
@@ -85,13 +108,34 @@ export default function TaskDetailPage() {
     api.repos.list().then(setRepos).catch(() => {})
   }, [])
 
+  // Reset per-task state when the task id changes, so a navigation never
+  // shows the previous task's header/runs/history while the new task's
+  // fetches are in flight. Must run before the initial-load effect below on
+  // an id change, which source order guarantees (effects run in declaration
+  // order). `activeTab` is intentionally left alone: the panes it can show
+  // (RunLogPane/DiffReviewPane) are driven by `id`/`selectedRun`, both reset
+  // here, so keeping the tab selection is safe and less surprising than
+  // bouncing the user back to "overview" on every navigation.
+  useEffect(() => {
+    setTask(null)
+    setRuns([])
+    setSelectedRun(null)
+    setLabelHistory([])
+    setSourceComments([])
+    setCostWarning(null)
+    setEditingTask(false)
+    setTaskSaveError('')
+    setWorkflow(null)
+  }, [id])
+
   // Initial load
   useEffect(() => {
     if (!id) return
+    const taskId = id
     let cancelled = false
-    Promise.all([api.tasks.get(id), api.tasks.runs(id), api.tasks.listLabelHistory(id), api.tasks.sourceComments(id)])
+    Promise.all([api.tasks.get(taskId), api.tasks.runs(taskId), api.tasks.listLabelHistory(taskId), api.tasks.sourceComments(taskId)])
       .then(([t, runsPage, h, c]) => {
-        if (cancelled) return
+        if (cancelled || currentIdRef.current !== taskId) return
         const r = runsPage.items
         setTask(t)
         setRuns(r ?? [])

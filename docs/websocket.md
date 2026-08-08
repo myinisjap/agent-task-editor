@@ -342,6 +342,10 @@ An async repo clone failed. Same purpose as `repo.clone_done` — the
 
 ### `agent.log`
 A single log entry from a running agent. Sent for every line of output in real time.
+`entry.id` is the persisted `agent_logs` row id (the same id returned by
+`agent.log_replay` and `GET /tasks/{id}/runs/{run_id}/logs`), so clients can
+dedupe a live entry against a later replay/page by id alone — important after
+a reconnect, where the server re-sends the log tail via `agent.log_replay`.
 
 ```json
 {
@@ -350,6 +354,7 @@ A single log entry from a running agent. Sent for every line of output in real t
     "run_id": "uuid",
     "task_id": "uuid",
     "entry": {
+      "id": "uuid",
       "type": "stdout | stderr | system | tool_call | tool_result",
       "content": "string",
       "at": "RFC3339 timestamp"

@@ -35,7 +35,14 @@ function readDismissed(): boolean {
 
 export default function OnboardingChecklist() {
   const { repos, fetch: fetchRepos } = useReposStore()
-  const { tasks, fetch: fetchTasks } = useTasksStore()
+  // Tasks come from BoardPage's own fetch + WS subscription — this
+  // component is always rendered as a BoardPage child, so it never needs
+  // (and must not run) its own competing fetchTasks() sweep; doing so raced
+  // BoardPage's own fetch on every mount (#341). Read via a selector rather
+  // than destructuring the whole store so this component doesn't re-render
+  // on unrelated store field changes (loading/reqId/etc.).
+  const tasks = useTasksStore((s) => s.tasks)
+  const tasksLoaded = useTasksStore((s) => s.loaded)
   const { configs: providerConfigs, fetch: fetchProviderConfigs } = useProviderConfigsStore()
   const { configs: agentConfigs, fetch: fetchAgentConfigs } = useAgentsStore()
   const [checks, setChecks] = useState<ProviderCheck[]>([])
@@ -46,7 +53,6 @@ export default function OnboardingChecklist() {
   // is already done. Gate rendering on the initial load finishing so we
   // only ever show real state, never the empty-store placeholder state.
   const [initialLoadDone, setInitialLoadDone] = useState(false)
-  const [tasksLoadDone, setTasksLoadDone] = useState(false)
   // Guards against overlapping/duplicate refreshes when several `focus`
   // events fire in quick succession (e.g. alt-tabbing repeatedly).
   const refreshing = useRef(false)
@@ -75,15 +81,6 @@ export default function OnboardingChecklist() {
     const onFocus = () => refresh()
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    // Tasks are already kept fresh by BoardPage's own fetch + WS
-    // subscription; make sure at least one fetch has happened so a
-    // checklist rendered before BoardPage's effect runs still has data.
-    if (tasks.length === 0) fetchTasks().finally(() => setTasksLoadDone(true))
-    else setTasksLoadDone(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -135,7 +132,7 @@ export default function OnboardingChecklist() {
 
   const allComplete = steps.every((s) => s.complete)
 
-  if (dismissed || !initialLoadDone || !tasksLoadDone || allComplete) return null
+  if (dismissed || !initialLoadDone || !tasksLoaded || allComplete) return null
 
   const firstIncompleteKey = steps.find((s) => !s.complete)?.key
 

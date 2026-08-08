@@ -52,6 +52,8 @@ On subscribe, `replayTaskLogs` fetches the **tail** of the task's current agent 
 
 Replay uses `task.current_agent_run_id` (not `active_agent_run_id`) — so clients can also replay logs from completed or failed runs.
 
+Live `agent.log` entries published by the pool (`internal/agent/pool.go` `persistLogs`) carry the same `id` as the row `replayTaskLogs` later returns for that entry (both are the persisted `agent_logs` row id). This is the dedupe contract clients rely on: a browser that reconnects mid-run gets the live stream plus a replay batch that overlaps it, and matches on `id` to avoid showing duplicate lines.
+
 ## Send Buffer
 
 Each client has a 256-message buffered channel. If a client is too slow to consume messages and the buffer fills, subsequent publishes drop the message for that client. The connection is not forcibly closed — backpressure is absorbed by dropping rather than blocking.
