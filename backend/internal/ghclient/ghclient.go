@@ -159,17 +159,24 @@ func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL 
 		return "pushed", "", 0, nil
 	}
 
-	// gh returns state as OPEN, MERGED, CLOSED (uppercase)
-	s := strings.ToLower(prs[0].State)
-	switch s {
+	return normalizePRState(prs[0].State), prs[0].URL, prs[0].Number, nil
+}
+
+// normalizePRState maps gh's raw PR state (OPEN, MERGED, CLOSED — uppercase)
+// onto the cross-forge normalised state strings ("pr_open", "pr_merged",
+// "pr_closed"). Shared by GetPRForBranch and GetPRHead so the two calls can
+// never drift on how they classify the same raw value.
+func normalizePRState(raw string) string {
+	switch strings.ToLower(raw) {
 	case "open":
-		s = "pr_open"
+		return "pr_open"
 	case "merged":
-		s = "pr_merged"
+		return "pr_merged"
 	case "closed":
-		s = "pr_closed"
+		return "pr_closed"
+	default:
+		return strings.ToLower(raw)
 	}
-	return s, prs[0].URL, prs[0].Number, nil
 }
 
 // CreatePR opens a pull request for the given branch using the gh CLI, or
@@ -253,18 +260,24 @@ func normalizeMergeable(raw string) Mergeability {
 // PR currently conflicts with its base (see GetPRHead).
 type PRHead = forge.PRHead
 
-// GetPRHead returns the PR number, head commit SHA, base branch, and
-// mergeability for the given branch, or a zero PRHead if no PR exists yet for
-// the branch. Used to detect a fresh push since the last sweep (the
-// review/feedback ingestion cursor resets when the head SHA changes) and to
-// spot a PR that has started conflicting with its base branch.
+// GetPRHead returns the PR number, head commit SHA, base branch,
+// mergeability, normalised state, web URL, and last-updated timestamp for
+// the given branch — the single `gh` call ghsync makes per task per sweep
+// (see forge.PRHead's doc comment for why PRForBranch's data was folded in
+// here rather than kept as a second call). Returns PRHead{State: "pushed"}
+// if the branch is pushed but has no PR yet, or a zero PRHead if the branch
+// doesn't exist on the remote at all. Used to detect a fresh push since the
+// last sweep (the review/feedback ingestion cursor resets when the head SHA
+// changes), to spot a PR that has started conflicting with its base branch,
+// and to gate review/comment/check ingestion on whether the PR has actually
+// changed since the last sweep (via UpdatedAt).
 func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_list_head").Inc()
 	cmd := runGH(ctx, "pr", "list",
 		"--repo", repoName,
 		"--head", branch,
 		"--state", "all",
-		"--json", "number,headRefOid,baseRefName,mergeable",
+		"--json", "number,headRefOid,baseRefName,mergeable,state,url,updatedAt",
 		"--limit", "1",
 	)
 	out, err := cmd.Output()
@@ -276,18 +289,32 @@ func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 		HeadRefOid  string `json:"headRefOid"`
 		BaseRefName string `json:"baseRefName"`
 		Mergeable   string `json:"mergeable"`
+		State       string `json:"state"`
+		URL         string `json:"url"`
+		UpdatedAt   string `json:"updatedAt"`
 	}
 	if err := json.Unmarshal(out, &prs); err != nil {
 		return PRHead{}, err
 	}
 	if len(prs) == 0 {
-		return PRHead{}, nil
+		// No PR yet — verify the branch actually exists on the remote, same
+		// as GetPRForBranch, so ghsync can still distinguish "pushed, no PR
+		// yet" from "branch not on the remote" from this one call.
+		metrics.GhCallsTotal.WithLabelValues("branch_check").Inc()
+		chk := runGH(ctx, "api", "repos/"+repoName+"/branches/"+branch, "--silent")
+		if chk.Run() != nil {
+			return PRHead{}, nil // branch not on remote yet
+		}
+		return PRHead{State: "pushed"}, nil
 	}
 	return PRHead{
 		Number:    prs[0].Number,
 		HeadSHA:   prs[0].HeadRefOid,
 		BaseRef:   prs[0].BaseRefName,
 		Mergeable: normalizeMergeable(prs[0].Mergeable),
+		State:     normalizePRState(prs[0].State),
+		URL:       prs[0].URL,
+		UpdatedAt: prs[0].UpdatedAt,
 	}, nil
 }
 

@@ -151,6 +151,14 @@ var (
 		Buckets: prometheus.DefBuckets,
 	})
 
+	// GhsyncReposBackedOff is the number of repos currently in ghsync's
+	// per-repo consecutive-error backoff (and therefore skipped) as of the
+	// most recent sweep.
+	GhsyncReposBackedOff = factory.NewGauge(prometheus.GaugeOpts{
+		Name: "ate_ghsync_repos_backed_off",
+		Help: "Number of repos currently in ghsync error backoff (skipped this sweep).",
+	})
+
 	// TasksourceSweepDurationSeconds observes the wall-clock duration of each
 	// tasksource (GitHub issue import) sweep.
 	TasksourceSweepDurationSeconds = factory.NewHistogram(prometheus.HistogramOpts{

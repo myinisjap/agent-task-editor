@@ -2,12 +2,14 @@
 SELECT * FROM task_pr_review_state WHERE task_id = ?;
 
 -- name: UpsertTaskPRReviewState :one
-INSERT INTO task_pr_review_state (task_id, head_sha, last_review_submitted_at, last_failed_check_sha, last_conflict_sha, updated_at)
-VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+INSERT INTO task_pr_review_state (task_id, head_sha, last_review_submitted_at, last_failed_check_sha, last_conflict_sha, last_pr_updated_at, last_checks_polled_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 ON CONFLICT(task_id) DO UPDATE SET
     head_sha = excluded.head_sha,
     last_review_submitted_at = excluded.last_review_submitted_at,
     last_failed_check_sha = excluded.last_failed_check_sha,
     last_conflict_sha = excluded.last_conflict_sha,
+    last_pr_updated_at = excluded.last_pr_updated_at,
+    last_checks_polled_at = excluded.last_checks_polled_at,
     updated_at = CURRENT_TIMESTAMP
 RETURNING *;

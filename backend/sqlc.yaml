@@ -54,6 +54,7 @@ sql:
       - "internal/storage/migrations/049_task_read_indexes.up.sql"
       - "internal/storage/migrations/050_cost_warning.up.sql"
       - "internal/storage/migrations/051_intake_rules.up.sql"
+      - "internal/storage/migrations/052_pr_review_state_cursors.up.sql"
     gen:
       go:
         package: "gen"

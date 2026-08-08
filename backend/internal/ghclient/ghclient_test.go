@@ -272,10 +272,16 @@ func TestGetPRHead(t *testing.T) {
 	}
 }
 
-func TestGetPRHead_NoPR(t *testing.T) {
+func TestGetPRHead_NoPR_BranchNotOnRemote(t *testing.T) {
 	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
 		func(t *testing.T, args []string) fakeCmd {
 			return fakeCmd{output: []byte(`[]`)}
+		},
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "repos/acme/widgets/branches/some-branch") {
+				t.Errorf("expected branch-existence check, got args %v", args)
+			}
+			return fakeCmd{err: errors.New("exit status 1")}
 		},
 	})
 
@@ -283,8 +289,30 @@ func TestGetPRHead_NoPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if head.Number != 0 || head.HeadSHA != "" {
+	if head != (PRHead{}) {
 		t.Errorf("head = %+v, want zero value", head)
+	}
+}
+
+func TestGetPRHead_NoPR_BranchPushed(t *testing.T) {
+	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
+		func(t *testing.T, args []string) fakeCmd {
+			return fakeCmd{output: []byte(`[]`)}
+		},
+		func(t *testing.T, args []string) fakeCmd {
+			if !argsContain(args, "repos/acme/widgets/branches/some-branch") {
+				t.Errorf("expected branch-existence check, got args %v", args)
+			}
+			return fakeCmd{} // branch exists, no error
+		},
+	})
+
+	head, err := GetPRHead(context.Background(), "acme/widgets", "some-branch")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if head.State != "pushed" || head.Number != 0 {
+		t.Errorf("head = %+v, want State: \"pushed\"", head)
 	}
 }
 

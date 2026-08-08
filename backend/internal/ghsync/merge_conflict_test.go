@@ -27,11 +27,8 @@ type conflictFixture struct {
 func newConflictFixture(t *testing.T, autoTransition bool) *conflictFixture {
 	t.Helper()
 	ctx := context.Background()
-	head := &forge.PRHead{Number: 1, HeadSHA: "sha1", BaseRef: "main", Mergeable: forge.MergeableClean}
+	head := &forge.PRHead{Number: 1, HeadSHA: "sha1", BaseRef: "main", Mergeable: forge.MergeableClean, State: "pr_open", URL: "https://github.com/acme/widgets/pull/1"}
 
-	getPR := func(ctx context.Context, repo repoInfo, br string) (string, string, int, error) {
-		return "pr_open", "https://github.com/acme/widgets/pull/1", 1, nil
-	}
 	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
 		return *head, nil
 	}
@@ -41,7 +38,7 @@ func newConflictFixture(t *testing.T, autoTransition bool) *conflictFixture {
 	}
 	noChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) { return nil, nil }
 
-	s, q, hub := newTestSyncerFull(t, getPR, getPRHead, noReviews, noComments, noChecks, autoTransition)
+	s, q, hub := newTestSyncerFull(t, getPRHead, noReviews, noComments, noChecks, autoTransition)
 
 	var wfID, label string
 	var repoID string
@@ -73,7 +70,11 @@ func newConflictFixture(t *testing.T, autoTransition bool) *conflictFixture {
 }
 
 // sweep runs one ingestion pass with a freshly-read task row, the way the real
-// sweep does (it re-lists tasks every interval).
+// sweep does (it re-lists tasks every interval). prState overrides f.head's
+// State for this call (ingestPRFeedback now reads PR state off the passed
+// forge.PRHead rather than a separate parameter — see #340), letting tests
+// exercise merge-conflict handling against a PR state other than "pr_open"
+// without otherwise touching the fixture's head.
 func (f *conflictFixture) sweep(t *testing.T, prState string) {
 	t.Helper()
 	ctx := context.Background()
@@ -82,7 +83,9 @@ func (f *conflictFixture) sweep(t *testing.T, prState string) {
 		t.Fatalf("get task: %v", err)
 	}
 	f.task = task
-	f.s.ingestPRFeedback(ctx, task, f.repo, 1, prState)
+	head := *f.head
+	head.State = prState
+	f.s.ingestPRFeedback(ctx, task, f.repo, head)
 }
 
 // feedback returns the current agent run's accumulated feedback text.

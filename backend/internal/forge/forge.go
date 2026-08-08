@@ -35,14 +35,31 @@ const (
 	MergeableConflicting Mergeability = "conflicting" // conflicts with the base branch
 )
 
-// PRHead holds a PR/MR's number, current head commit SHA, base branch, and
-// mergeability. Used by ghsync to detect when the agent has pushed a new
-// commit and whether the PR currently conflicts with its base.
+// PRHead holds a PR/MR's number, current head commit SHA, base branch,
+// mergeability, normalised state, web URL, and last-updated timestamp. Used
+// by ghsync both to detect when the agent has pushed a new commit / whether
+// the PR currently conflicts with its base, and (since #340) as the single
+// forge call backing PR-state sync too — it returns the same normalised
+// state/URL contract as PRForBranch (including "branch exists on the remote
+// but has no PR yet" -> State: "pushed"), so ghsync no longer needs a
+// separate PRForBranch call every sweep just to detect a git-state change.
 type PRHead struct {
 	Number    int
 	HeadSHA   string
 	BaseRef   string
 	Mergeable Mergeability
+	// State is the normalised PR/MR state: "" (branch not on the remote
+	// yet), "pushed" (branch pushed, no PR yet), "pr_open", "pr_merged", or
+	// "pr_closed" — the same value set PRForBranch returns.
+	State string
+	// URL is the PR/MR's web URL; "" when no PR exists yet.
+	URL string
+	// UpdatedAt is the PR's last-updated timestamp (RFC3339), used to gate
+	// review/comment/check ingestion on whether anything could plausibly
+	// have changed since the last sweep. "" if the forge implementation
+	// doesn't report one — callers must treat that as "always fetch" rather
+	// than silently skipping ingestion forever.
+	UpdatedAt string
 }
 
 // Review is a single review left on a PR/MR (a "changes requested"/
@@ -142,8 +159,13 @@ type Forge interface {
 	// (idempotent). Returns the normalised state and the PR/MR web URL.
 	CreatePR(ctx context.Context, repoName, branch, base, title, body string) (state, prURL string, err error)
 
-	// PRHead returns the PR/MR number, head commit SHA, base branch, and
-	// mergeability for the given repo+branch, or a zero PRHead if none exists.
+	// PRHead returns the PR/MR number, head commit SHA, base branch,
+	// mergeability, normalised state, web URL, and last-updated timestamp
+	// for the given repo+branch — the single forge call ghsync uses per
+	// sweep per task for both PR-state sync and feedback ingestion (see
+	// PRHead's doc comment). Returns a zero PRHead (State: "") if the
+	// branch doesn't exist on the remote yet, or PRHead{State: "pushed"} if
+	// the branch is pushed but has no PR yet.
 	PRHead(ctx context.Context, repoName, branch string) (PRHead, error)
 
 	// PRReviews returns all reviews submitted on the given PR/MR, oldest first.

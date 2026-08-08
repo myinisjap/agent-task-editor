@@ -50,7 +50,10 @@ func (f *fakeSecondForge) CreatePR(ctx context.Context, repoName, branch, base, 
 }
 func (f *fakeSecondForge) PRHead(ctx context.Context, repoName, branch string) (forge.PRHead, error) {
 	f.calls = append(f.calls, "PRHead")
-	return forge.PRHead{Number: 1, HeadSHA: "abc123", BaseRef: "main", Mergeable: forge.MergeableClean}, nil
+	return forge.PRHead{
+		Number: 1, HeadSHA: "abc123", BaseRef: "main", Mergeable: forge.MergeableClean,
+		State: "pr_open", URL: "https://" + f.host + "/" + repoName + "/pulls/1",
+	}, nil
 }
 func (f *fakeSecondForge) PRReviews(ctx context.Context, repoName string, prNumber int) ([]forge.Review, error) {
 	f.calls = append(f.calls, "PRReviews")
@@ -94,8 +97,8 @@ var _ forge.Forge = (*fakeSecondForge)(nil)
 // TestSyncer_DispatchesToResolvedForge_NotHardcodedToGitHub proves that a
 // Syncer built via New() calls through to whichever forge.Forge
 // forge.ForRemote resolves for a repo's remote URL — not always GitHub's
-// ghclient implementation — closing the gap where getPR/getPRHead/
-// getReviews/getReviewComments/getFailedChecks were previously bound once at
+// ghclient implementation — closing the gap where getPRHead/getReviews/
+// getReviewComments/getFailedChecks were previously bound once at
 // construction time to ghclient.GitHub{} regardless of which forge actually
 // owned a given repo.
 func TestSyncer_DispatchesToResolvedForge_NotHardcodedToGitHub(t *testing.T) {
@@ -144,12 +147,23 @@ func TestSyncer_DispatchesToResolvedForge_NotHardcodedToGitHub(t *testing.T) {
 	}
 	found := false
 	for _, c := range fake.calls {
-		if c == "PRForBranch" {
+		if c == "PRHead" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected PRForBranch to be called on the resolved fake forge, got calls: %v", fake.calls)
+		t.Errorf("expected PRHead to be called on the resolved fake forge, got calls: %v", fake.calls)
+	}
+	// #340: syncTask makes exactly one PR-lookup call per task per sweep now
+	// (PRForBranch and PRHead used to be two near-identical calls).
+	prForBranchCalls := 0
+	for _, c := range fake.calls {
+		if c == "PRForBranch" {
+			prForBranchCalls++
+		}
+	}
+	if prForBranchCalls != 0 {
+		t.Errorf("expected PRForBranch NOT to be called by syncTask (folded into PRHead — #340), got %d calls", prForBranchCalls)
 	}
 
 	updated, err := q.GetTask(context.Background(), task.ID)
@@ -157,7 +171,7 @@ func TestSyncer_DispatchesToResolvedForge_NotHardcodedToGitHub(t *testing.T) {
 		t.Fatalf("get task: %v", err)
 	}
 	if updated.GitState != "pr_open" {
-		t.Errorf("expected git_state updated via the fake forge's PRForBranch result, got %q", updated.GitState)
+		t.Errorf("expected git_state updated via the fake forge's PRHead result, got %q", updated.GitState)
 	}
 }
 
@@ -204,7 +218,11 @@ func TestIngestReviewComments_TagsSourceWithResolvedForgeName(t *testing.T) {
 		t.Fatalf("expected repoInfo.forge to be the registered fake forge, got %#v", repo.forge)
 	}
 
-	s.ingestPRFeedback(context.Background(), task, repo, 1, "pr_open")
+	head, err := s.getPRHead(context.Background(), repo, branch)
+	if err != nil {
+		t.Fatalf("getPRHead: %v", err)
+	}
+	s.ingestPRFeedback(context.Background(), task, repo, head)
 
 	comments, err := q.ListOpenTaskReviewComments(context.Background(), task.ID)
 	if err != nil {

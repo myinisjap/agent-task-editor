@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -39,24 +40,38 @@ type Syncer struct {
 	// how wb being nil disables write-back.
 	engine *workflow.Engine
 
-	// getPR resolves the PR state for a branch. In production (see New),
-	// this is a thin dispatcher that calls PRForBranch on whichever
+	// getPRHead resolves the PR head (number, head SHA, base ref,
+	// mergeability, normalised state, URL, and last-updated timestamp) for a
+	// branch — the single per-task forge call each sweep makes, backing both
+	// PR-state sync (syncTask) and PR review/GHA-status feedback ingestion
+	// (see pr_review.go). Prior to #340 this was two near-identical forge
+	// calls (getPR + getPRHead); folding them into one call per task per
+	// sweep is what keeps ghsync's API usage bounded. In production (see
+	// New), this is a thin dispatcher that calls PRHead on whichever
 	// forge.Forge repoInfo.forge was resolved to (see resolveRepoInfo) —
 	// GitHub via ghclient, a self-hosted Gitea via internal/forge/gitea, or
 	// any other forge.Forge registered in the future. Kept as an overridable
 	// field (rather than calling repo.forge inline at every call site) so
 	// existing tests can keep injecting a fake without needing a real
 	// forge.Forge or DB-backed repo row.
-	getPR func(ctx context.Context, repo repoInfo, branch string) (state, prURL string, prNumber int, err error)
-
-	// getPRHead, getReviews, getReviewComments, getFailedChecks back the PR
+	//
+	// getReviews, getReviewComments, getFailedChecks back the rest of PR
 	// review/GHA-status feedback ingestion (see pr_review.go). Default to
-	// dispatching to repoInfo.forge the same way getPR does; overridable in
-	// tests.
+	// dispatching to repoInfo.forge the same way getPRHead does; overridable
+	// in tests.
 	getPRHead         func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error)
 	getReviews        func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error)
 	getReviewComments func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error)
 	getFailedChecks   func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error)
+
+	// backoff tracks, per repo, consecutive forge-call failures observed
+	// during sweeps, so a rate-limited or otherwise-failing repo's effective
+	// poll interval lengthens instead of hammering the forge identically
+	// every sweep (see backoff.go). Guarded by backoffMu. nil-safe: every
+	// accessor tolerates a nil map, since tests construct Syncer literals
+	// directly, bypassing New.
+	backoffMu sync.Mutex
+	backoff   map[string]*repoBackoff
 }
 
 // New creates a Syncer that polls on the given interval. engine may be nil,
@@ -66,7 +81,7 @@ type Syncer struct {
 //
 // Unlike an earlier version of this Syncer (which always called
 // ghclient.GitHub directly, regardless of which forge actually owned a
-// repo's remote), the getPR/getPRHead/getReviews/getReviewComments/
+// repo's remote), the getPRHead/getReviews/getReviewComments/
 // getFailedChecks funcs wired here dispatch to repoInfo.forge — the
 // forge.Forge resolveRepoInfo already resolves per repo via forge.ForRemote
 // — so PR-state sync, review/comment ingestion, and failed-check ingestion
@@ -79,9 +94,7 @@ func New(db *sql.DB, hub Publisher, interval time.Duration, engine *workflow.Eng
 		interval: interval,
 		wb:       writeback.New(gen.New(db)),
 		engine:   engine,
-		getPR: func(ctx context.Context, repo repoInfo, branch string) (string, string, int, error) {
-			return repo.forge.PRForBranch(ctx, repo.ghName, branch)
-		},
+		backoff:  map[string]*repoBackoff{},
 		getPRHead: func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
 			return repo.forge.PRHead(ctx, repo.ghName, branch)
 		},
@@ -134,7 +147,17 @@ func (s *Syncer) sweep(ctx context.Context) {
 	// Build a per-repo cache of resolved repo info to avoid repeated DB queries.
 	repoCache := map[string]repoInfo{} // repoID -> repoInfo (ghName == "" => no registered forge recognises this repo's remote)
 
+	now := time.Now()
+	// recordedThisSweep dedupes backoff bookkeeping to at most one
+	// success/failure recorded per repo per sweep, no matter how many of the
+	// repo's tasks are visited — otherwise a repo with N eligible tasks would
+	// rack up N failures (and hit the backoff cap) from a single bad sweep.
+	// Sweep-scoped on purpose: it must not survive past this one sweep call.
+	recordedThisSweep := map[string]bool{}
+	backedOffRepos := map[string]bool{}
+
 	checked := 0
+	skippedBackoff := 0
 	for _, task := range tasks {
 		// Resolve the repo's forge name/implementation and local path (cached).
 		info, ok := repoCache[task.RepoID]
@@ -146,10 +169,31 @@ func (s *Syncer) sweep(ctx context.Context) {
 			continue // no registered forge recognises this repo's remote
 		}
 
+		if s.backoffActive(task.RepoID, now) {
+			skippedBackoff++
+			if !backedOffRepos[task.RepoID] {
+				backedOffRepos[task.RepoID] = true
+				failures, remaining := s.backoffStatus(task.RepoID, now)
+				log.Info("ghsync: repo in error backoff, skipping this sweep",
+					"repo_id", task.RepoID, "consecutive_failures", failures, "retry_in", remaining)
+			}
+			continue
+		}
+
 		checked++
-		s.syncTask(ctx, task, info)
+		ok = s.syncTask(ctx, task, info)
+		if !recordedThisSweep[task.RepoID] {
+			recordedThisSweep[task.RepoID] = true
+			if ok {
+				s.recordForgeSuccess(task.RepoID)
+			} else {
+				s.recordForgeFailure(task.RepoID, now)
+			}
+		}
 	}
-	log.Info("ghsync: sweep done", "total_tasks", len(tasks), "checked", checked)
+
+	metrics.GhsyncReposBackedOff.Set(float64(len(backedOffRepos)))
+	log.Info("ghsync: sweep done", "total_tasks", len(tasks), "checked", checked, "skipped_backoff", skippedBackoff)
 }
 
 // repoInfo holds the resolved details for a task's repo needed during a sweep.
@@ -193,26 +237,39 @@ func (s *Syncer) resolveRepoInfo(ctx context.Context, repoID string) repoInfo {
 // with an open PR (see ingestPRFeedback in pr_review.go) — a task can sit on
 // "pr_open" across many sweeps while new reviews/comments/check runs keep
 // arriving and the base branch keeps moving underneath it.
-func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
+//
+// Makes exactly one forge call for PR state (getPRHead) — prior to #340 this
+// was two near-identical calls (getPR + getPRHead); see the getPRHead field's
+// doc comment.
+//
+// Returns ok=false if the getPRHead call itself failed or any forge call
+// inside ingestPRFeedback failed, so the caller (sweep) can feed per-repo
+// consecutive-error backoff (see backoff.go); ok=true (including when
+// ingestPRFeedback was never called, e.g. prNumber == 0) otherwise.
+func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok bool) {
 	log := slog.With("component", "ghsync", "task_id", task.ID)
-	state, prURL, prNumber, err := s.getPR(ctx, repo, task.Branch)
+	head, err := s.getPRHead(ctx, repo, task.Branch)
 	if err != nil {
-		log.Warn("ghsync: get PR for branch", "branch", task.Branch, "err", err)
-		return
+		log.Warn("ghsync: get PR head", "branch", task.Branch, "err", err)
+		return false
+	}
+	ok = true
+
+	if head.Number != 0 {
+		if !s.ingestPRFeedback(ctx, task, repo, head) {
+			ok = false
+		}
 	}
 
-	if prNumber != 0 {
-		s.ingestPRFeedback(ctx, task, repo, prNumber, state)
-	}
-
+	state := head.State
 	if state == task.GitState {
-		return // no git-state change — nothing further to do
+		return ok // no git-state change — nothing further to do
 	}
 
 	// Persist the new state, and the PR URL when the live query surfaced one.
 	// Keep any previously stored URL if it didn't (e.g. state regressed to a
 	// plain "pushed" branch), so we never blank out a valid link.
-	storeURL := prURL
+	storeURL := head.URL
 	if storeURL == "" {
 		storeURL = task.PrUrl
 	}
@@ -223,7 +280,7 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 	})
 	if err != nil {
 		log.Warn("ghsync: update git state", "err", err)
-		return
+		return ok
 	}
 
 	log.Info("ghsync: git state updated", "old_state", task.GitState, "new_state", state)
@@ -250,6 +307,7 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) {
 	if state == "pr_merged" {
 		s.cleanupMergedBranch(ctx, task, repo.path)
 	}
+	return ok
 }
 
 // cleanupMergedBranch removes the task's worktree (if any is still attached)
