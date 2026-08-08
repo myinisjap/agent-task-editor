@@ -1,6 +1,9 @@
 package agent
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // Classification explains *why* an agent run failed. It is the single, explicit
 // signal that drives retry/escalation behavior and is logged on every failure
@@ -50,17 +53,42 @@ const (
 	ClassCostBudget Classification = "cost_budget"
 )
 
-// classPattern is one substring→classification rule. Substr must be lowercase;
+// classPattern is one match→classification rule: either a plain substring
+// match (Substr) or an anchored regexp match (Re) — mutually exclusive,
+// ClassifyLine checks Re first when non-nil. Substr must be lowercase.
 // ClassifyLine lowercases the input before matching, so matching is
-// case-insensitive.
+// case-insensitive; Re patterns must therefore be written lowercase and must
+// NOT use "(?i)" (redundant and slower).
+//
+// Re exists for patterns short enough to appear inside ordinary agent
+// output rather than only in genuine infra-failure text — e.g. a diff hunk
+// header "@@ -429,7 +429,9 @@" would match the bare substring "429", and
+// TypeScript's "typeof" would match the bare substring "eof". Anchoring
+// these with a regexp (word boundaries and/or an HTTP-status-ish context)
+// avoids latching rate_limit/transient on ordinary prose or file contents.
+// See issue #335.
 type classPattern struct {
 	Substr string
+	Re     *regexp.Regexp
 	Class  Classification
+}
+
+// httpStatusRe builds a regexp matching a 3-digit HTTP status code only in an
+// HTTP-status-ish context (preceded by "http"/"status"/"code"/"error", or
+// followed by a status-phrase like "too many requests"/"bad gateway"), so
+// ordinary numbers in agent output — diff hunk headers ("@@ -429,7 +429,9
+// @@"), token counts ("1429"), line numbers ("api.ts:429:12") — don't
+// false-positive. See issue #335.
+func httpStatusRe(code string) *regexp.Regexp {
+	return regexp.MustCompile(
+		`(?:\bhttp[a-z/. ]*|\bstatus[a-z]*[: ]+|\bcode[: ]+|\berror[: ]+)` + code + `\b` +
+			`|\b` + code + `\b\s*(?:too many requests|rate|bad gateway|service unavailable|gateway timeout|error|status)`,
+	)
 }
 
 // classPatterns is the single source of truth for classifying a raw provider
 // output line (CLI stdout/stderr, or the text of a structured error event) by
-// substring.
+// anchored substring/regexp match.
 //
 // Ordering encodes priority: ClassifyLine returns the FIRST match, so the more
 // specific / more actionable classes (rate_limit, auth) are listed before the
@@ -69,10 +97,13 @@ type classPattern struct {
 var classPatterns = []classPattern{
 	// Rate limiting (HTTP 429). Most specific — checked first so a 429 that
 	// also mentions e.g. "timeout" is still classified as a rate limit.
-	{"429", ClassRateLimit},
-	{"request rejected", ClassRateLimit},
-	{"rate limit", ClassRateLimit},
-	{"rate_limit", ClassRateLimit},
+	// Anchored to an HTTP-status-ish context (see httpStatusRe) so a diff
+	// hunk header ("@@ -429,7 +429,9 @@") or token count ("1429") doesn't
+	// false-positive — see issue #335.
+	{Re: httpStatusRe("429"), Class: ClassRateLimit},
+	{Substr: "request rejected", Class: ClassRateLimit},
+	{Substr: "rate limit", Class: ClassRateLimit},
+	{Substr: "rate_limit", Class: ClassRateLimit},
 	// Claude CLI session/usage limit messages (e.g. "You've hit your session
 	// limit · resets 6pm (America/Chicago)") carry no "429"/"rate limit"
 	// substring in the result text itself — the 429 lives in the separate
@@ -81,49 +112,62 @@ var classPatterns = []classPattern{
 	// here too so these are still classified as rate limits when
 	// encountered outside that structured field (e.g. in a raw
 	// stdout/stderr line).
-	{"session limit", ClassRateLimit},
-	{"usage limit", ClassRateLimit},
+	{Substr: "session limit", Class: ClassRateLimit},
+	{Substr: "usage limit", Class: ClassRateLimit},
 
 	// Authentication / login. Requires a human to re-authenticate, so it must
 	// win over the generic transient markers below (an auth failure that also
 	// mentions a network hiccup should still escalate, not silently retry).
-	{"not logged in", ClassAuth},
-	{"please run /login", ClassAuth},
+	{Substr: "not logged in", Class: ClassAuth},
+	{Substr: "please run /login", Class: ClassAuth},
 	// Codex CLI: expired/missing ChatGPT OAuth session or OPENAI_API_KEY.
-	{"missing bearer or basic authentication", ClassAuth},
-	{"401 unauthorized", ClassAuth},
+	{Substr: "missing bearer or basic authentication", Class: ClassAuth},
+	{Substr: "401 unauthorized", Class: ClassAuth},
 
 	// Transient infrastructure problems (network blips, upstream 5xx, resets,
 	// ambiguous timeouts). Least specific — checked last.
-	{"connection reset", ClassTransient},
-	{"econnreset", ClassTransient},
-	{"econnrefused", ClassTransient},
-	{"etimedout", ClassTransient},
-	{"enotfound", ClassTransient},
-	{"eai_again", ClassTransient},
-	{"timeout", ClassTransient},
-	{"timed out", ClassTransient},
-	{"temporary failure", ClassTransient},
-	{"network error", ClassTransient},
-	{"network is unreachable", ClassTransient},
-	{"socket hang up", ClassTransient},
-	{"eof", ClassTransient},
-	{"502", ClassTransient},
-	{"503", ClassTransient},
-	{"504", ClassTransient},
-	{"bad gateway", ClassTransient},
-	{"service unavailable", ClassTransient},
-	{"gateway timeout", ClassTransient},
+	{Substr: "connection reset", Class: ClassTransient},
+	{Substr: "econnreset", Class: ClassTransient},
+	{Substr: "econnrefused", Class: ClassTransient},
+	{Substr: "etimedout", Class: ClassTransient},
+	{Substr: "enotfound", Class: ClassTransient},
+	{Substr: "eai_again", Class: ClassTransient},
+	// "timeout" is anchored to a word boundary rather than a bare substring
+	// match so identifiers like "timeoutMs"/"socketTimeout" in agent-authored
+	// source code don't false-positive — see issue #335.
+	{Re: regexp.MustCompile(`\btimeout\b`), Class: ClassTransient},
+	{Substr: "timed out", Class: ClassTransient},
+	{Substr: "temporary failure", Class: ClassTransient},
+	{Substr: "network error", Class: ClassTransient},
+	{Substr: "network is unreachable", Class: ClassTransient},
+	{Substr: "socket hang up", Class: ClassTransient},
+	// "eof" is anchored to a word boundary so it doesn't fire on
+	// "typeof"/other identifiers containing the substring — see issue #335.
+	{Re: regexp.MustCompile(`\beof\b`), Class: ClassTransient},
+	{Re: httpStatusRe("502"), Class: ClassTransient},
+	{Re: httpStatusRe("503"), Class: ClassTransient},
+	{Re: httpStatusRe("504"), Class: ClassTransient},
+	{Substr: "bad gateway", Class: ClassTransient},
+	{Substr: "service unavailable", Class: ClassTransient},
+	{Substr: "gateway timeout", Class: ClassTransient},
 }
 
 // ClassifyLine returns the classification signalled by a single raw output
 // line, or ClassNone if the line carries no failure signal. Matching is
 // case-insensitive and the first pattern (in classPatterns priority order)
-// wins. This is the one place raw provider text is turned into a
-// Classification.
+// wins — each pattern is either a plain substring match or, for patterns
+// short enough to appear in ordinary agent output, an anchored regexp match
+// (see classPattern's doc comment and issue #335). This is the one place raw
+// provider text is turned into a Classification.
 func ClassifyLine(line string) Classification {
 	lower := strings.ToLower(line)
 	for _, p := range classPatterns {
+		if p.Re != nil {
+			if p.Re.MatchString(lower) {
+				return p.Class
+			}
+			continue
+		}
 		if strings.Contains(lower, p.Substr) {
 			return p.Class
 		}

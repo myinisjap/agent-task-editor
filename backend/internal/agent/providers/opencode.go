@@ -87,7 +87,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 				return
 			}
 			rawDump.WriteLine(line)
-			entry, parsed, u, sid := classifyOpencodeJSON(line)
+			entry, parsed, u, sid, parsedJSON := classifyOpencodeJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
@@ -104,14 +104,26 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 				usage = u
 				mu.Unlock()
 			}
-			if is429Line(line) {
-				mu.Lock()
-				rateLimited = true
-				mu.Unlock()
-			} else if isTransientLine(line) {
-				mu.Lock()
-				transient = true
-				mu.Unlock()
+			// opencode has no typed error classification (unlike
+			// claude/qwen's Class or codex's Classification return), so the
+			// raw-line sniff below is opencode's only rate-limit/transient
+			// signal on stdout. Scope it to lines that never parsed as JSON:
+			// a successfully-parsed event's Content is the agent's own
+			// prose/tool output, and sniffing it is pure false-positive
+			// surface (see issue #335). A rate limit reported only inside a
+			// structured event body would no longer be caught here — accept
+			// this; opencode CLI errors also surface on stderr (still
+			// unconditionally sniffed below) and via non-zero exit.
+			if !parsedJSON {
+				if is429Line(line) {
+					mu.Lock()
+					rateLimited = true
+					mu.Unlock()
+				} else if isTransientLine(line) {
+					mu.Lock()
+					transient = true
+					mu.Unlock()
+				}
 			}
 		})
 		if scanErr != nil {

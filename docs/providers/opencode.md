@@ -123,7 +123,7 @@ applies, which is now effective since `cost_usd` is recorded. See
 | `request_human` | ❌ Not available |
 | Image attachments | ❌ Not wired up — `opencode run` has an `-f`/`--file` flag, but attachments are not passed to it |
 | Outcome signalling | ⚠️ Text-based only (`OUTCOME: success/failure`) |
-| Rate limit detection | ✅ Implemented — stdout/stderr are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit` |
+| Rate limit detection | ✅ Implemented — stderr, and stdout lines that aren't structured JSON events, are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit`. opencode has no typed error classification, so a rate limit reported only inside a structured event body's text isn't caught on stdout (it still surfaces via stderr or a non-zero exit) — see issue #335 |
 | Cost & usage reporting | ✅ Recorded from the CLI's `step_finish` event (cost + tokens), authoritative — see above |
 | Command allowlist/denylist | ❌ Not enforced |
 | Session resume | ✅ `sessionID` + `--session` (see above) |

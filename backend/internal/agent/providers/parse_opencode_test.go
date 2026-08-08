@@ -18,7 +18,7 @@ import (
 func TestClassifyOpencodeJSON_SessionIDFromErrorEvent(t *testing.T) {
 	line := `{"type":"error","timestamp":1234567890,"sessionID":"ses_05b608ca5ffeHrFbuP1WD9i4zS","error":{"name":"UnknownError"}}`
 
-	entry, outcome, usage, sid := classifyOpencodeJSON(line)
+	entry, outcome, usage, sid, _ := classifyOpencodeJSON(line)
 
 	if usage != nil {
 		t.Errorf("want nil usage for error event, got %+v", usage)
@@ -40,7 +40,7 @@ func TestClassifyOpencodeJSON_SessionIDFromErrorEvent(t *testing.T) {
 func TestClassifyOpencodeJSON_TextEventCarriesSessionAndOutcome(t *testing.T) {
 	line := `{"type":"text","sessionID":"ses_abc123","part":{"type":"text","text":"OUTCOME: success"}}`
 
-	entry, outcome, usage, sid := classifyOpencodeJSON(line)
+	entry, outcome, usage, sid, _ := classifyOpencodeJSON(line)
 
 	if outcome != "success" {
 		t.Errorf("want outcome=success, got %q", outcome)
@@ -66,7 +66,7 @@ func TestClassifyOpencodeJSON_TextEventCarriesSessionAndOutcome(t *testing.T) {
 func TestClassifyOpencodeJSON_StepFinishCarriesSessionID(t *testing.T) {
 	line := `{"type":"step_finish","sessionID":"ses_xyz789","part":{"reason":"stop"}}`
 
-	entry, outcome, usage, sid := classifyOpencodeJSON(line)
+	entry, outcome, usage, sid, _ := classifyOpencodeJSON(line)
 
 	if sid != "ses_xyz789" {
 		t.Errorf("want sessionID=ses_xyz789, got %q", sid)
@@ -88,7 +88,7 @@ func TestClassifyOpencodeJSON_StepFinishCarriesSessionID(t *testing.T) {
 func TestClassifyOpencodeJSON_StepFinishCarriesUsage(t *testing.T) {
 	line := `{"type":"step_finish","sessionID":"ses_xyz789","part":{"reason":"stop","cost":0.042,"tokens":{"input":123,"output":456,"reasoning":0,"cache":{"read":0,"write":0}}}}`
 
-	_, _, usage, _ := classifyOpencodeJSON(line)
+	_, _, usage, _, _ := classifyOpencodeJSON(line)
 
 	if usage == nil {
 		t.Fatalf("want non-nil usage, got nil")
@@ -111,7 +111,7 @@ func TestClassifyOpencodeJSON_StepFinishCarriesUsage(t *testing.T) {
 func TestClassifyOpencodeJSON_StepFinishNoUsageFields(t *testing.T) {
 	line := `{"type":"step_finish","sessionID":"ses_xyz789","part":{"reason":"tool_calls"}}`
 
-	_, _, usage, _ := classifyOpencodeJSON(line)
+	_, _, usage, _, _ := classifyOpencodeJSON(line)
 
 	if usage != nil {
 		t.Errorf("want nil usage when neither cost nor tokens present, got %+v", usage)
@@ -122,7 +122,7 @@ func TestClassifyOpencodeJSON_StepFinishNoUsageFields(t *testing.T) {
 // sessionID field (or malformed JSON) degrades gracefully to an empty id
 // rather than panicking or erroring.
 func TestClassifyOpencodeJSON_NoSessionIDField(t *testing.T) {
-	entry, outcome, usage, sid := classifyOpencodeJSON(`{"type":"tool_use"}`)
+	entry, outcome, usage, sid, parsedJSON := classifyOpencodeJSON(`{"type":"tool_use"}`)
 	if sid != "" {
 		t.Errorf("want empty sessionID, got %q", sid)
 	}
@@ -135,8 +135,11 @@ func TestClassifyOpencodeJSON_NoSessionIDField(t *testing.T) {
 	if entry.Type != agent.LogToolCall {
 		t.Errorf("want LogToolCall entry, got %v", entry.Type)
 	}
+	if !parsedJSON {
+		t.Errorf("want parsedJSON=true for valid JSON, got false")
+	}
 
-	entry2, _, usage2, sid2 := classifyOpencodeJSON("not json")
+	entry2, _, usage2, sid2, parsedJSON2 := classifyOpencodeJSON("not json")
 	if sid2 != "" {
 		t.Errorf("want empty sessionID for malformed json, got %q", sid2)
 	}
@@ -145,5 +148,8 @@ func TestClassifyOpencodeJSON_NoSessionIDField(t *testing.T) {
 	}
 	if entry2.Type != agent.LogStdout {
 		t.Errorf("want LogStdout fallback entry, got %v", entry2.Type)
+	}
+	if parsedJSON2 {
+		t.Errorf("want parsedJSON=false for malformed json, got true")
 	}
 }

@@ -207,7 +207,7 @@ Token usage and cost are parsed from the CLI's `result` stream-json message (`us
 
 ## Rate Limit Handling
 
-The runner detects 429 responses in stdout/stderr (looks for `429`, `Request rejected`, `rate limit`, `session limit`, `usage limit`) and returns `ErrRateLimit`. The dispatcher will back off and retry.
+The runner detects 429 responses in stderr, and in stdout lines that aren't structured `stream-json` events (an already-parsed event is classified via its own typed path below instead — see "Fix 2" in issue #335), by an anchored text match (`429` in an HTTP-status-ish context, `Request rejected`, `rate limit`, `session limit`, `usage limit`) and returns `ErrRateLimit`. The dispatcher will back off and retry.
 
 For the CLI's structured `stream-json` terminal `"result"` event, the runner also
 checks the `api_error_status` field directly (treating `429` as an unconditional

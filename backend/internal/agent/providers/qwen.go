@@ -214,9 +214,13 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 				mu.Unlock()
 			}
 			// Prefer the structured classification from the typed "result"
-			// event; fall back to sniffing the raw line. See errclass.go.
+			// event. Raw-line sniffing (ClassifyLine) is reserved for lines
+			// that never parsed as stream-json — a successfully-parsed event
+			// has already been classified by the typed path, and re-sniffing
+			// its Content (the agent's own prose/file contents) is pure
+			// false-positive surface. See errclass.go and issue #335.
 			class := ev.Class
-			if class == agent.ClassNone {
+			if class == agent.ClassNone && !ev.Parsed {
 				class = agent.ClassifyLine(line)
 			}
 			switch class {

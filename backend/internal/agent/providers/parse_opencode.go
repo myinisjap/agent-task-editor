@@ -31,7 +31,20 @@ import (
 // (verified against opencode-ai v1.18.6), so it's extracted here regardless
 // of event type and returned alongside the log entry/outcome so the caller
 // can persist it for session resume (see #283).
-func classifyOpencodeJSON(line string) (agent.LogEntry, string, *runUsage, string) {
+//
+// The final return value, parsedJSON, is true when the line was valid JSON
+// matching the opencode envelope (any type, including unrecognized), false
+// only when json.Unmarshal failed. Callers use it to scope
+// is429Line/isTransientLine raw-line sniffing to lines that never parsed as
+// JSON — a successfully-parsed event's Content is the agent's own prose/tool
+// output, and re-sniffing it is pure false-positive surface (see issue
+// #335). Note opencode has no typed error classification today (unlike
+// claude/qwen's Class from the "result" envelope, or codex's from
+// "turn.failed"/"error"), so scoping the fallback this way means a rate
+// limit reported only inside a structured event body is no longer detected
+// on stdout — mitigated by the fact that opencode CLI errors also surface on
+// stderr (still unconditionally sniffed) and via non-zero exit.
+func classifyOpencodeJSON(line string) (agent.LogEntry, string, *runUsage, string, bool) {
 	var raw struct {
 		Type      string `json:"type"`
 		SessionID string `json:"sessionID"`
@@ -47,33 +60,33 @@ func classifyOpencodeJSON(line string) (agent.LogEntry, string, *runUsage, strin
 		} `json:"part"`
 	}
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, "", nil, ""
+		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, "", nil, "", false
 	}
 
 	switch raw.Type {
 	case "text":
 		outcome := extractOutcome(raw.Part.Text)
-		return agent.LogEntry{Type: agent.LogStdout, Content: raw.Part.Text, At: time.Now()}, outcome, nil, raw.SessionID
+		return agent.LogEntry{Type: agent.LogStdout, Content: raw.Part.Text, At: time.Now()}, outcome, nil, raw.SessionID, true
 	case "tool_use":
-		return agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, "", nil, raw.SessionID
+		return agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, "", nil, raw.SessionID, true
 	case "tool_result":
-		return agent.LogEntry{Type: agent.LogToolResult, Content: line, At: time.Now()}, "", nil, raw.SessionID
+		return agent.LogEntry{Type: agent.LogToolResult, Content: line, At: time.Now()}, "", nil, raw.SessionID, true
 	case "step_finish":
 		usage := extractOpencodeUsage(raw.Part.Cost, raw.Part.Tokens)
 		// step_finish with reason="stop" means the agent is done
 		if raw.Part.Reason == "stop" {
-			return agent.LogEntry{Type: agent.LogSystem, Content: "step finished", At: time.Now()}, "", usage, raw.SessionID
+			return agent.LogEntry{Type: agent.LogSystem, Content: "step finished", At: time.Now()}, "", usage, raw.SessionID, true
 		}
-		return agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("step finished: %s", raw.Part.Reason), At: time.Now()}, "", usage, raw.SessionID
+		return agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("step finished: %s", raw.Part.Reason), At: time.Now()}, "", usage, raw.SessionID, true
 	case "step_start":
-		return agent.LogEntry{Type: agent.LogSystem, Content: "step started", At: time.Now()}, "", nil, raw.SessionID
+		return agent.LogEntry{Type: agent.LogSystem, Content: "step started", At: time.Now()}, "", nil, raw.SessionID, true
 	default:
 		// Log unknown types as raw stdout for debuggability
 		text := raw.Part.Text
 		if text == "" {
 			text = line
 		}
-		return agent.LogEntry{Type: agent.LogStdout, Content: text, At: time.Now()}, "", nil, raw.SessionID
+		return agent.LogEntry{Type: agent.LogStdout, Content: text, At: time.Now()}, "", nil, raw.SessionID, true
 	}
 }
 

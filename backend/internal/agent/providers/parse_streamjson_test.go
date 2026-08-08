@@ -322,3 +322,32 @@ func TestClassifyStreamJSON_NonResultNoClassification(t *testing.T) {
 		}
 	}
 }
+
+// TestClassifyStreamJSON_Parsed verifies streamEvent.Parsed is true for every
+// event type (including a "result" and an unrecognized type, both of which
+// parsed successfully as JSON) and false only when the line isn't JSON at
+// all. Callers (claude.go/qwen.go) use Parsed to scope agent.ClassifyLine's
+// raw-line sniffing to lines that failed to parse — see issue #335.
+func TestClassifyStreamJSON_Parsed(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"assistant", `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`, true},
+		{"tool_use", `{"type":"tool_use"}`, true},
+		{"tool_result", `{"type":"tool_result"}`, true},
+		{"user", `{"type":"user","message":{"role":"user","content":[]}}`, true},
+		{"result success", `{"type":"result","subtype":"success","result":"OUTCOME: success"}`, true},
+		{"result error", `{"type":"result","subtype":"error","is_error":true,"result":"boom"}`, true},
+		{"unknown type", `{"type":"some_future_event"}`, true},
+		{"not json at all", `not json at all`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyStreamJSON(tc.line).Parsed; got != tc.want {
+				t.Errorf("classifyStreamJSON(%q).Parsed = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}
