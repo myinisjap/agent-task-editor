@@ -79,6 +79,15 @@ services:
       # gh CLI picks this up automatically; set it here to enable PR state sync
       # without mounting the gh config directory.
       - GITHUB_TOKEN=${GH_TOKEN:-}
+      # Optional: self-hosted Gitea support. GITEA_HOST is what enables it at
+      # all — comma-separated host(s) whose git remotes should be handled by the
+      # Gitea forge (e.g. git.example.com,gitea.internal:3000). GITEA_TOKEN is a
+      # PAT with repo read/write scope; GITEA_BASE_URL optionally overrides the
+      # API base URL (defaults to https://<first GITEA_HOST>).
+      # See docs/task-sources.md.
+      - GITEA_HOST=${GITEA_HOST:-}
+      - GITEA_TOKEN=${GITEA_TOKEN:-}
+      - GITEA_BASE_URL=${GITEA_BASE_URL:-}
       # SSL bypass — active when INSECURE_SKIP_SSL_VERIFY=true (see build args above).
       # These vars are pre-computed by dev.sh so that setting INSECURE_SKIP_SSL_VERIFY=false
       # never accidentally disables SSL (compose's :+ expansion fires on any non-empty value).

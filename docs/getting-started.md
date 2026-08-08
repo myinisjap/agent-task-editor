@@ -109,6 +109,16 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory. Supports `~/` prefix. If unset, any host path can be registered (not recommended in production). |
 | `UPLOAD_DIR` | `uploads` (next to DB) | Directory for task attachment uploads |
 
+### Forge / Gitea
+
+These are read directly via `os.Getenv` by `internal/forge/gitea`, not through the config struct — they **cannot** be set via `CONFIG_FILE` YAML.
+
+| Variable | Default | Description |
+|---|---|---|
+| `GITEA_HOST` | _(empty)_ | Comma-separated git remote host(s) handled by the self-hosted Gitea forge (e.g. `git.example.com,gitea.internal:3000`). **Required to enable Gitea support at all** — with it unset the Gitea forge/issue source is never registered and every repo falls back to GitHub. See [task-sources.md](task-sources.md). |
+| `GITEA_TOKEN` | _(empty)_ | Gitea personal access token with repo read/write scope, sent as `Authorization: token <value>`. Empty = anonymous (public repos only). |
+| `GITEA_BASE_URL` | `https://<first GITEA_HOST>` | Override for the Gitea API base URL — set when the API is reached at a different scheme/host/port than what appears in git remote URLs. |
+
 ### AI Providers
 
 | Variable | Default | Description |

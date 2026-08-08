@@ -388,6 +388,16 @@ triggers the "Release" workflow the same way.
   no longer silently drift from the source of truth the UI reads.
 
 ### Fixed
+- **Gitea configuration now actually reaches the backend container.** (#338)
+  `GITEA_HOST`/`GITEA_TOKEN`/`GITEA_BASE_URL` were documented in
+  `docs/task-sources.md` but were not declared in either shipped compose
+  file's backend `environment:` block, and Docker Compose does not forward
+  undeclared host env vars — so setting them in your shell or `.env` and
+  running `./run.sh` silently produced a backend with Gitea disabled (every
+  repo fell back to the GitHub forge, with no error). Both
+  `docker-compose.yml` and `docker-compose.release.yml` now pass them
+  through, and they're documented in the env-var table in
+  `docs/getting-started.md`.
 - **WebSocket + terminal resource leaks: no write/ping deadline, unscoped
   session delete, re-subscribe amplification.** (#339) Four related leaks in
   the long-lived connection paths, all a variant of lifecycle cleanup that

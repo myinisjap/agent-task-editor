@@ -34,6 +34,10 @@ not something that varies per repo the way `issue_sync_label` does:
 
 See `internal/forge/gitea`'s package doc for the full detail on these.
 
+These are passed through to the backend container by both `docker-compose.yml`
+and `docker-compose.release.yml`, so set them in your shell or in the
+repo-root `.env` file before running `./run.sh` / `./dev.sh`.
+
 ### Running the Gitea smoke test against a real instance
 
 `internal/forge/gitea` is covered by ordinary httptest-server-backed unit
