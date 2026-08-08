@@ -340,10 +340,15 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 			}
 			mu.Unlock()
 			// Prefer the structured classification from the typed "result"
-			// event; fall back to sniffing the raw line for non-result / non-
-			// JSON output. See errclass.go.
+			// event. Raw-line sniffing (ClassifyLine) is reserved for lines
+			// that never parsed as stream-json: a successfully-parsed
+			// assistant/tool_use/tool_result/etc. event has already been
+			// classified by the typed path above, and its Content is the
+			// agent's own prose or file contents — re-sniffing it is pure
+			// false-positive surface (e.g. a diff hunk header containing
+			// "429"). See errclass.go and issue #335.
 			class := ev.Class
-			if class == agent.ClassNone {
+			if class == agent.ClassNone && !ev.Parsed {
 				class = agent.ClassifyLine(line)
 			}
 			switch class {

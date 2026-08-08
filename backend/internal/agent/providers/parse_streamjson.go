@@ -48,6 +48,20 @@ type streamEvent struct {
 	// over text-sniffing when present since it's authoritative and immune
 	// to wording changes.
 	APIErrorStatus int
+	// Parsed is true when the line was valid stream-json (any event type,
+	// including an unrecognized "type"). False only when json.Unmarshal
+	// failed, i.e. the line wasn't JSON at all.
+	//
+	// Callers use this to scope agent.ClassifyLine's raw-line sniffing to
+	// lines that failed to parse as structured JSON. A successfully-parsed
+	// assistant/tool_use/tool_result event has already been classified (or
+	// deliberately left ClassNone) by this typed path — its Content is the
+	// agent's own prose or the contents of a file it read/wrote, and
+	// re-sniffing that payload with ClassifyLine is pure false-positive
+	// surface (a diff hunk header containing "429", a "timeout" identifier
+	// in source code, etc. — see issue #335). Only lines that never parsed
+	// as JSON (interleaved plain-text CLI output) should still be sniffed.
+	Parsed bool
 }
 
 // classifyStreamJSON parses one NDJSON line from claude --output-format
@@ -86,15 +100,16 @@ func classifyStreamJSON(line string) streamEvent {
 			// providers/cost_watchdog.go) to project mid-run cost; the caller
 			// is responsible for summing across assistant messages since each
 			// one reports only its own turn's usage, not a running total.
-			Usage: extractAssistantUsage(raw),
+			Usage:  extractAssistantUsage(raw),
+			Parsed: true,
 		}
 	case "tool_use":
-		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, SessionID: sessionID}
+		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, SessionID: sessionID, Parsed: true}
 	case "tool_result":
-		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolResult, Content: line, At: time.Now()}, SessionID: sessionID}
+		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolResult, Content: line, At: time.Now()}, SessionID: sessionID, Parsed: true}
 	case "user":
 		// Claude SDK wraps tool results in a user message: {"type":"user","message":{"role":"user","content":[{"type":"tool_result",...}]}}
-		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolResult, Content: line, At: time.Now()}, SessionID: sessionID}
+		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolResult, Content: line, At: time.Now()}, SessionID: sessionID, Parsed: true}
 	case "result":
 		// Parse OUTCOME: success|failure from the result text; fall back to subtype.
 		var resultText string
@@ -132,9 +147,10 @@ func classifyStreamJSON(line string) streamEvent {
 			SessionID:      sessionID,
 			ResultText:     resultText,
 			APIErrorStatus: apiErrorStatus,
+			Parsed:         true,
 		}
 	default:
-		return streamEvent{Entry: agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, SessionID: sessionID}
+		return streamEvent{Entry: agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, SessionID: sessionID, Parsed: true}
 	}
 }
 

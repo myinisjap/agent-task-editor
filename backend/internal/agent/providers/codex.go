@@ -254,8 +254,11 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	// Stream stdout (JSONL events) — Codex's own event schema. Note: codex
 	// exec --json can interleave non-JSON diagnostic lines (e.g. "ERROR
 	// codex_api::... failed to connect") on stdout alongside the JSONL
-	// events; classifyCodexJSON falls back to a raw LogStdout entry (still
-	// scanned by ClassifyLine below) for any line that doesn't parse as JSON.
+	// events; classifyCodexJSON falls back to a raw LogStdout entry for any
+	// line that doesn't parse as JSON — only those lines are still scanned
+	// by ClassifyLine below (raw-line sniffing is pure false-positive
+	// surface on the payload of a successfully-parsed event; see issue
+	// #335).
 	go func() {
 		defer wg.Done()
 		rawDump := openRawDump(input.RunID) // dev-only; see rawDump in cli.go
@@ -265,7 +268,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 				return
 			}
 			rawDump.WriteLine(line)
-			entry, parsed, u, class, sid := classifyCodexJSON(line)
+			entry, parsed, u, class, sid, isJSON := classifyCodexJSON(line)
 			logCh <- entry
 			if parsed != "" {
 				mu.Lock()
@@ -277,7 +280,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 				sessionID = sid
 				mu.Unlock()
 			}
-			if class == agent.ClassNone {
+			if class == agent.ClassNone && !isJSON {
 				class = agent.ClassifyLine(line)
 			}
 			switch class {
