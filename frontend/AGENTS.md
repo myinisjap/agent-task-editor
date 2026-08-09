@@ -32,7 +32,7 @@ src/
 │   ├── BoardPage.tsx        Main Kanban board
 │   ├── TaskDetailPage.tsx   Task detail + live agent log stream
 │   ├── DashboardPage.tsx    Stats and recent activity
-│   ├── WorkflowPage.tsx     Workflow editor (labels + transitions)
+│   ├── WorkflowPage.tsx     Workflow editor (labels + transitions; per-workflow loads are request-sequenced and Save is guarded against stale YAML — see #332)
 │   ├── AgentConfigPage.tsx  Agent config management
 │   ├── ProviderConfigPage.tsx Provider config management (provider/model/env — shared by agent configs and chat sessions)
 │   ├── ReposPage.tsx        Repo management
