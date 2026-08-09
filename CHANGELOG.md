@@ -388,6 +388,20 @@ triggers the "Release" workflow the same way.
   no longer silently drift from the source of truth the UI reads.
 
 ### Fixed
+- **Workflow YAML editor could silently save one workflow's YAML onto
+  another.** (#332) `loadWorkflow` fired its `GET /workflows/:id` and
+  `GET /workflows/:id/export.yaml` requests with no cancellation or
+  sequencing: clicking workflow A then quickly clicking workflow B left A's
+  now-stale responses free to land after B's and overwrite the flowchart
+  and/or the YAML textarea with A's data while `selectedWorkflowId` was
+  still B — and pressing Save then replaced B's labels/transitions with A's,
+  with no error or warning. Per-workflow loads are now request-sequenced (a
+  monotonic counter, matching the pattern already used by
+  `TaskDetailPage`/`stores/tasks.ts`), so a slow response for a
+  previously-selected workflow is dropped instead of applied. Save also now
+  refuses to submit if the YAML currently in the editor wasn't loaded for
+  the selected workflow (the Save button is disabled in that window too),
+  as a second line of defense.
 - **Bulk board moves could re-open the #244 double-dispatch window.** (#333)
   `POST /tasks/bulk` with `action: "move"` transitioned each task straight
   through `engine.Transition`, whose CAS unconditionally clears
