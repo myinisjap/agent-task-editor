@@ -1338,6 +1338,16 @@ triggers the "Release" workflow the same way.
   [docs/providers/anthropic.md](docs/providers/anthropic.md) and
   [docs/providers/llm.md](docs/providers/llm.md).
 
+### Changed
+- **Docs: README now lists the Chat tab, and the frontend TypeScript
+  strict-mode claim is corrected.** (#263) The interactive terminal chat
+  (`/chat`) — per-repo/provider xterm sessions with `mcp-board`
+  ticket-creation tools — was documented in `docs/board-mcp.md` but missing
+  from the README's feature list, making one of the more distinctive
+  features invisible to anyone evaluating the project. `frontend/AGENTS.md`
+  also still described full `strict` as "in progress" after it was enabled
+  in `tsconfig.app.json`.
+
 ## [0.14.0] - 2026-07-26
 
 ### Changed
