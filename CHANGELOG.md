@@ -388,6 +388,15 @@ triggers the "Release" workflow the same way.
   no longer silently drift from the source of truth the UI reads.
 
 ### Fixed
+- **Bulk board moves could re-open the #244 double-dispatch window.** (#333)
+  `POST /tasks/bulk` with `action: "move"` transitioned each task straight
+  through `engine.Transition`, whose CAS unconditionally clears
+  `active_agent_run_id` — so bulk-moving a task with an in-flight
+  (`pending`/`running`) agent run silently released the dispatch lock,
+  letting the next dispatcher sweep start a second run against the same
+  worktree. The bulk path now runs the same live-run guard as
+  `PATCH /tasks/{id}/label`, reporting a per-task failure (`207`) instead of
+  moving the task.
 - **Gitea configuration now actually reaches the backend container.** (#338)
   `GITEA_HOST`/`GITEA_TOKEN`/`GITEA_BASE_URL` were documented in
   `docs/task-sources.md` but were not declared in either shipped compose

@@ -132,6 +132,11 @@ type bulkResult struct {
 // "resume", "archive", "unarchive". Each task is processed independently —
 // one failure doesn't abort the rest — and the response reports per-task
 // results plus 200 if everything succeeded, 207 otherwise.
+//
+// "move" is refused per-task (recorded as a failed bulkResult, not a request
+// error) when the task has a live agent run (status "pending" or "running"),
+// mirroring the 409 that PATCH /tasks/{id}/label returns for the same case —
+// see taskRunIsLive.
 func (h *TasksHandler) Bulk(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs     []string `json:"ids"`
@@ -171,6 +176,15 @@ func (h *TasksHandler) Bulk(w http.ResponseWriter, r *http.Request) {
 		var err error
 		switch body.Action {
 		case "move":
+			var task gen.Task
+			task, err = h.q.GetTask(ctx, id)
+			if err != nil {
+				break
+			}
+			if h.taskRunIsLive(ctx, task) {
+				err = errRunLive
+				break
+			}
 			err = h.engine.Transition(ctx, id, body.ToLabel, workflow.TriggerHuman, actor, body.Note)
 		case "pause", "resume":
 			paused := int64(0)
@@ -218,6 +232,8 @@ func bulkErrorMessage(err error) string {
 		return "destination label is ignored by agents"
 	case errors.Is(err, workflow.ErrStale):
 		return "task label changed concurrently; refresh and retry"
+	case errors.Is(err, errRunLive):
+		return errRunLive.Error()
 	default:
 		return err.Error()
 	}

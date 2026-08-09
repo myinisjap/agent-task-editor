@@ -582,19 +582,26 @@ var runLiveStatuses = map[string]bool{
 	"running": true,
 }
 
-// rejectTransitionWhileRunLive guards a human-triggered label transition
-// (MoveLabel, Approve, Reject) against racing a live agent run. It writes a
-// 409 response and returns true if the caller must stop processing the
-// request; otherwise it returns false and the caller should proceed.
+// errRunLive is the error a human-triggered transition (MoveLabel, Approve,
+// Reject, and the bulk "move" action) fails with when the task's active
+// agent run is still live (see runLiveStatuses). The single-task endpoints
+// render this as a 409 with the same text; the bulk endpoint records it as a
+// per-task failure in bulkResult.
+var errRunLive = errors.New("a run is currently active on this task; cancel the run before moving its label")
+
+// taskRunIsLive reports whether task's active agent run (if any) is in a
+// status (see runLiveStatuses) during which clearing active_agent_run_id
+// would race a live run. A missing active run, or one that can't be read,
+// counts as not live — the caller should fall through and let the
+// transition proceed, matching prior behaviour.
 //
-// Without this, a human transition clears active_agent_run_id as part of the
-// transition's CAS (see engine.go) while the run is still live (see
-// runLiveStatuses). The next dispatcher sweep then sees the task eligible
-// again and starts a second run, and when the original run eventually
-// executes/finishes it either gets rejected (stale label) or, worse, clears
-// the *new* run's lock — two agents end up sharing one worktree (see issue
-// #244).
-func (h *TasksHandler) rejectTransitionWhileRunLive(ctx context.Context, w http.ResponseWriter, task gen.Task) bool {
+// Without this guard, a human transition clears active_agent_run_id as part
+// of the transition's CAS (see engine.go) while the run is still live. The
+// next dispatcher sweep then sees the task eligible again and starts a
+// second run, and when the original run eventually executes/finishes it
+// either gets rejected (stale label) or, worse, clears the *new* run's lock
+// — two agents end up sharing one worktree (see issue #244).
+func (h *TasksHandler) taskRunIsLive(ctx context.Context, task gen.Task) bool {
 	if task.ActiveAgentRunID == nil {
 		return false
 	}
@@ -603,11 +610,19 @@ func (h *TasksHandler) rejectTransitionWhileRunLive(ctx context.Context, w http.
 		// No run to check against — fall through and let Transition proceed.
 		return false
 	}
-	if runLiveStatuses[run.Status] {
-		Err(w, http.StatusConflict, "a run is currently active on this task; cancel the run before moving its label")
-		return true
+	return runLiveStatuses[run.Status]
+}
+
+// rejectTransitionWhileRunLive guards a human-triggered label transition
+// (MoveLabel, Approve, Reject) against racing a live agent run. It writes a
+// 409 response and returns true if the caller must stop processing the
+// request; otherwise it returns false and the caller should proceed.
+func (h *TasksHandler) rejectTransitionWhileRunLive(ctx context.Context, w http.ResponseWriter, task gen.Task) bool {
+	if !h.taskRunIsLive(ctx, task) {
+		return false
 	}
-	return false
+	Err(w, http.StatusConflict, errRunLive.Error())
+	return true
 }
 
 func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
