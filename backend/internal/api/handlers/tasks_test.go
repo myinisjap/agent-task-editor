@@ -1818,6 +1818,202 @@ func TestTasks_Bulk_Move_PartialFailure(t *testing.T) {
 	}
 }
 
+// TestTasks_Bulk_Move_RunningRun_Refused guards against issue #333: bulk
+// "move" must apply the same live-run guard as the single-task
+// PATCH /tasks/{id}/label endpoint (see TestTasks_MoveLabel_RunningRun_Returns409).
+// Without it, engine.Transition's CAS would silently clear
+// active_agent_run_id out from under a running agent run, re-opening the
+// #244 double-dispatch window. One task's failure must not abort the rest
+// of the batch.
+func TestTasks_Bulk_Move_RunningRun_Refused(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	locked, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Locked", WorkflowID: wfID, RepoID: repoID, Label: "not_ready",
+	})
+	clean, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Clean", WorkflowID: wfID, RepoID: repoID, Label: "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: locked.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.SetAgentRunStarted(ctx, runID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                locked.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	body := map[string]any{"ids": []string{locked.ID, clean.ID}, "action": "move", "to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d: %s", w.Code, w.Body)
+	}
+	var resp bulkResponse
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected 2 results, got %+v", resp.Results)
+	}
+
+	byID := make(map[string]struct {
+		ID    string `json:"id"`
+		Ok    bool   `json:"ok"`
+		Error string `json:"error"`
+	}, len(resp.Results))
+	for _, res := range resp.Results {
+		byID[res.ID] = res
+	}
+	lockedResult, ok := byID[locked.ID]
+	if !ok {
+		t.Fatalf("missing result for locked task: %+v", resp.Results)
+	}
+	if lockedResult.Ok || lockedResult.Error == "" {
+		t.Errorf("expected locked task's move to fail with an error, got %+v", lockedResult)
+	}
+
+	cleanResult, ok := byID[clean.ID]
+	if !ok {
+		t.Fatalf("missing result for clean task: %+v", resp.Results)
+	}
+	if !cleanResult.Ok {
+		t.Errorf("expected clean task's move to succeed despite the other failure: %+v", cleanResult)
+	}
+
+	// The locked task's label and lock must be untouched.
+	unchanged, err := q.GetTask(ctx, locked.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if unchanged.Label != "not_ready" {
+		t.Errorf("expected label to remain 'not_ready', got %q", unchanged.Label)
+	}
+	if unchanged.ActiveAgentRunID == nil || *unchanged.ActiveAgentRunID != runID {
+		t.Errorf("expected active_agent_run_id to remain %q, got %v", runID, unchanged.ActiveAgentRunID)
+	}
+
+	// The clean task moved normally.
+	moved, err := q.GetTask(ctx, clean.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if moved.Label != "plan" {
+		t.Errorf("expected clean task's label 'plan', got %q", moved.Label)
+	}
+}
+
+// TestTasks_Bulk_Move_PendingRun_Refused guards against the narrower window
+// in issue #244/#333 where a run has claimed the task's active-run lock but
+// the pool worker hasn't yet flipped its status to "running". See
+// TestTasks_MoveLabel_PendingRun_Returns409 for the single-task equivalent.
+func TestTasks_Bulk_Move_PendingRun_Refused(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	locked, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Locked", WorkflowID: wfID, RepoID: repoID, Label: "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: locked.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	// Deliberately do NOT call SetAgentRunStarted — the run stays "pending".
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                locked.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	body := map[string]any{"ids": []string{locked.ID}, "action": "move", "to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d: %s", w.Code, w.Body)
+	}
+	var resp bulkResponse
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 1 || resp.Results[0].Ok || resp.Results[0].Error == "" {
+		t.Fatalf("expected a single failing result, got %+v", resp.Results)
+	}
+
+	unchanged, err := q.GetTask(ctx, locked.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if unchanged.Label != "not_ready" {
+		t.Errorf("expected label to remain 'not_ready', got %q", unchanged.Label)
+	}
+	if unchanged.ActiveAgentRunID == nil || *unchanged.ActiveAgentRunID != runID {
+		t.Errorf("expected active_agent_run_id to remain %q, got %v", runID, unchanged.ActiveAgentRunID)
+	}
+}
+
+// TestTasks_Bulk_Move_WaitingHumanRun_Allowed asserts the bulk guard is
+// scoped to live statuses only (running/pending), mirroring
+// TestTasks_MoveLabel_WaitingHumanRun_Allowed.
+func TestTasks_Bulk_Move_WaitingHumanRun_Allowed(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	task, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Waiting", WorkflowID: wfID, RepoID: repoID, Label: "not_ready",
+	})
+
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.UpdateAgentRunStatus(ctx, gen.UpdateAgentRunStatusParams{Status: "waiting_human", ID: runID}); err != nil {
+		t.Fatalf("set run status: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID,
+		ActiveAgentRunID:  &runID,
+		ID:                task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	body := map[string]any{"ids": []string{task.ID}, "action": "move", "to_label": "plan"}
+	req := httptest.NewRequest(http.MethodPost, "/tasks/bulk", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a waiting_human active run, got %d: %s", w.Code, w.Body)
+	}
+	var resp bulkResponse
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Results) != 1 || !resp.Results[0].Ok {
+		t.Fatalf("expected the move to succeed, got %+v", resp.Results)
+	}
+
+	moved, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if moved.Label != "plan" {
+		t.Errorf("expected label 'plan', got %q", moved.Label)
+	}
+}
+
 func TestTasks_Bulk_Validation(t *testing.T) {
 	r, _, _, _ := setupTaskRouter(t)
 

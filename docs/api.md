@@ -132,7 +132,7 @@ Move the task to a different label via the workflow engine. Goes through normal 
 { "to_label": "label-name", "note": "optional note" }
 ```
 
-Returns `400` if no transition exists, `403` if the transition requires human auth or the target label is `agent_ignore`.
+Returns `400` if no transition exists, `403` if the transition requires human auth or the target label is `agent_ignore`, `409` if the task's active agent run is still live (`pending`/`running`) — cancel the run first (see issue #244).
 
 ### `GET /tasks/{id}/label-history`
 Returns the task's label-transition audit trail (`task_label_history`), oldest first:
@@ -293,7 +293,11 @@ failure doesn't abort the rest.
 ```
 
 `move` transitions are validated through the workflow engine per task, exactly
-like `PATCH /tasks/{id}/label`. Response is `200` if every task succeeded,
+like `PATCH /tasks/{id}/label`. A task whose active agent run is still live
+(`pending`/`running`) is refused with a per-task error (the same message
+`PATCH /tasks/{id}/label` returns as a `409`) rather than being moved — this
+is the same guard, just reported per-task instead of aborting the whole
+request. Response is `200` if every task succeeded,
 `207 Multi-Status` if any failed:
 
 ```json
