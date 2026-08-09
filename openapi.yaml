@@ -653,6 +653,18 @@ components:
             authoritative billed cost. Other providers (codex_cli, opencode,
             anthropic, llm) only block the *next* dispatch once the budget is
             already exhausted. See docs/agents.md#cost-budgets.
+        effort:
+          type: string
+          enum: ["", low, medium, high, xhigh, max]
+          description: >
+            Optional reasoning effort level. Empty string (default) leaves the
+            provider's own default effort in place. Passed as claude's
+            --effort flag (accepts exactly low/medium/high/xhigh/max — an
+            unrecognized model or an organization-side restriction can make
+            the CLI silently ignore it) and mapped to codex_cli's
+            model_reasoning_effort config override (xhigh/max clamp down to
+            high, since codex has no higher tier). Ignored by qwen_code,
+            opencode, anthropic, and llm. See docs/agents.md#effort.
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
       required:
@@ -669,6 +681,7 @@ components:
         - max_retries
         - retry_backoff_secs
         - max_cost_usd
+        - effort
         - created_at
         - updated_at
 

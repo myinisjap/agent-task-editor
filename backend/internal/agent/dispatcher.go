@@ -1216,6 +1216,7 @@ func toAgentConfig(cfg gen.AgentConfig, pc gen.ProviderConfig) AgentConfig {
 		SubtasksEnabled:   cfg.SubtasksEnabled != 0,
 		MaxSubtasks:       cfg.MaxSubtasks,
 		MaxCostUSD:        cfg.MaxCostUsd,
+		Effort:            cfg.Effort,
 		Env:               env,
 		EnabledPlugins:    enabledPlugins,
 		EnabledMCPServers: enabledMCPServers,

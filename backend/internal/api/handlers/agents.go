@@ -14,6 +14,21 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
+// validAgentConfigEffort is the set of values accepted for AgentConfig.Effort.
+// "" means unset (provider default). The claude CLI itself only *warns* (does
+// not error) on an unrecognized --effort value and silently falls back to the
+// default — see providers/effort.go — so this validation is the only thing
+// that actually catches a typo'd or stale effort level before it reaches a
+// live run.
+var validAgentConfigEffort = map[string]bool{
+	"":       true,
+	"low":    true,
+	"medium": true,
+	"high":   true,
+	"xhigh":  true,
+	"max":    true,
+}
+
 // validateAgentConfigNumeric enforces the non-negative bounds shared by Create
 // and Update on the optional numeric fields. It writes the 400 response and
 // returns false on the first violation.
@@ -196,6 +211,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxSubtasks       *int64    `json:"max_subtasks"`
 		MaxCostUsd        *float64  `json:"max_cost_usd"`
 		Priority          *int64    `json:"priority"`
+		Effort            *string   `json:"effort"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -210,6 +226,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validateAgentConfigNumeric(w, body.MaxRetries, body.RetryBackoffSecs, body.MaxCostUsd) {
+		return
+	}
+	if body.Effort != nil && !validAgentConfigEffort[*body.Effort] {
+		Err(w, http.StatusBadRequest, "effort must be one of: (empty), low, medium, high, xhigh, max")
 		return
 	}
 	if body.Labels == "" {
@@ -264,6 +284,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.Priority != nil {
 		priority = *body.Priority
 	}
+	effort := ""
+	if body.Effort != nil {
+		effort = *body.Effort
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -297,6 +321,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxSubtasks:       maxSubtasks,
 		MaxCostUsd:        maxCostUsd,
 		Priority:          priority,
+		Effort:            effort,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -315,6 +340,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ResumeSessions:  cfg.ResumeSessions,
 			SubtasksEnabled: cfg.SubtasksEnabled, MaxSubtasks: cfg.MaxSubtasks,
 			MaxCostUsd: cfg.MaxCostUsd, Priority: cfg.Priority,
+			Effort:  cfg.Effort,
 			Enabled: 0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -350,6 +376,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MaxSubtasks       *int64    `json:"max_subtasks"`
 		MaxCostUsd        *float64  `json:"max_cost_usd"`
 		Priority          *int64    `json:"priority"`
+		Effort            *string   `json:"effort"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -362,6 +389,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !validateAgentConfigNumeric(w, body.MaxRetries, body.RetryBackoffSecs, body.MaxCostUsd) {
+		return
+	}
+	if body.Effort != nil && !validAgentConfigEffort[*body.Effort] {
+		Err(w, http.StatusBadRequest, "effort must be one of: (empty), low, medium, high, xhigh, max")
 		return
 	}
 
@@ -445,6 +476,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Priority != nil {
 		priority = *body.Priority
 	}
+	effort := existing.Effort
+	if body.Effort != nil {
+		effort = *body.Effort
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -466,6 +501,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MaxSubtasks:       maxSubtasks,
 		MaxCostUsd:        maxCostUsd,
 		Priority:          priority,
+		Effort:            effort,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {

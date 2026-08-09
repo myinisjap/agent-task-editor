@@ -64,6 +64,44 @@ func TestBuildCodexArgs_NoModel(t *testing.T) {
 	}
 }
 
+// TestBuildCodexArgs_Effort verifies AgentConfig.Effort is translated into a
+// `-c model_reasoning_effort="<level>"` override, with xhigh/max clamped
+// down to high (codex only accepts minimal|low|medium|high), and omitted
+// entirely when unset.
+func TestBuildCodexArgs_Effort(t *testing.T) {
+	t.Run("unset omits the override", func(t *testing.T) {
+		args := buildCodexArgs(agent.RunInput{
+			Task:        agent.Task{Title: "t"},
+			AgentConfig: agent.AgentConfig{},
+		})
+		if containsArg(args, "-c") {
+			t.Fatalf("did not expect a -c model_reasoning_effort override when Effort is unset, args=%v", args)
+		}
+	})
+
+	cases := []struct {
+		level string
+		want  string
+	}{
+		{"low", `model_reasoning_effort="low"`},
+		{"medium", `model_reasoning_effort="medium"`},
+		{"high", `model_reasoning_effort="high"`},
+		{"xhigh", `model_reasoning_effort="high"`},
+		{"max", `model_reasoning_effort="high"`},
+	}
+	for _, c := range cases {
+		t.Run(c.level, func(t *testing.T) {
+			args := buildCodexArgs(agent.RunInput{
+				Task:        agent.Task{Title: "t"},
+				AgentConfig: agent.AgentConfig{Effort: c.level},
+			})
+			if got := findFlagValue(args, "-c"); got != c.want {
+				t.Fatalf("expected -c %s, got %q (args=%v)", c.want, got, args)
+			}
+		})
+	}
+}
+
 // TestBuildCodexArgs_Resume verifies the `resume <id>` subcommand is inserted
 // after the exec flags and before the trailing prompt (codex's resume is a
 // subcommand, not an appendable flag like other providers).

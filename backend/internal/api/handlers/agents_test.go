@@ -513,6 +513,153 @@ func TestAgentsUpdate_RetryPolicy_RoundTrip(t *testing.T) {
 	}
 }
 
+// ---------- Effort ----------
+
+// TestAgentsCreate_Effort_DefaultEmpty verifies a new config defaults to an
+// unset ("") effort when the field is omitted.
+func TestAgentsCreate_Effort_DefaultEmpty(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-effort-default",
+		"provider_config_id": pcID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var cfg agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if cfg.Effort != "" {
+		t.Errorf("expected effort to default to \"\", got %q", cfg.Effort)
+	}
+}
+
+// TestAgentsCreate_Effort_RoundTrip verifies every valid effort value is
+// persisted and returned as-is.
+func TestAgentsCreate_Effort_RoundTrip(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+		w := postJSON(t, router, "/agents", map[string]any{
+			"name":               "claude-effort-" + level,
+			"provider_config_id": pcID,
+			"effort":             level,
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("effort=%s: expected 201, got %d: %s", level, w.Code, w.Body.String())
+		}
+		var cfg agentConfigResponse
+		if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if cfg.Effort != level {
+			t.Errorf("expected effort=%s, got %q", level, cfg.Effort)
+		}
+	}
+}
+
+// TestAgentsCreate_Effort_RejectsInvalid verifies the API rejects an
+// unrecognized effort value on create — the claude CLI itself only warns
+// (not errors) on an unrecognized --effort value and silently falls back to
+// the default, so this backend validation is the only thing that actually
+// catches a typo before it reaches a live run.
+func TestAgentsCreate_Effort_RejectsInvalid(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-effort-invalid",
+		"provider_config_id": pcID,
+		"effort":             "bogus",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid effort, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentsUpdate_Effort_RejectsInvalid verifies the API rejects an
+// unrecognized effort value on update.
+func TestAgentsUpdate_Effort_RejectsInvalid(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-effort-update-invalid",
+		"provider_config_id": pcID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
+		"effort":             "bogus",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid effort, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentsUpdate_Effort_RoundTrip verifies updating effort persists, and
+// omitting it on a subsequent update preserves the existing value.
+func TestAgentsUpdate_Effort_RoundTrip(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-effort-update",
+		"provider_config_id": pcID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
+		"effort":             "high",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.Effort != "high" {
+		t.Errorf("expected effort=high, got %q", updated.Effort)
+	}
+
+	// Omitting the field on a subsequent update should preserve it.
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var preserved agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&preserved); err != nil {
+		t.Fatalf("decode second update response: %v", err)
+	}
+	if preserved.Effort != "high" {
+		t.Errorf("expected effort to stay high, got %q", preserved.Effort)
+	}
+}
+
 // ---------- Get / Delete / labelConflict ----------
 
 func TestAgentsGet_OK(t *testing.T) {

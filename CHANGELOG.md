@@ -20,6 +20,18 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Reasoning effort selection on agent configs.** A new optional `effort`
+  field (`""`/low/medium/high/xhigh/max) lets an agent config request a
+  specific reasoning effort level. `claude` maps it directly to the CLI's
+  `--effort` flag (verified against a live claude CLI, v2.1.223); `codex_cli`
+  maps it to a `-c model_reasoning_effort="<level>"` config override, clamping
+  `xhigh`/`max` down to `high` since codex has no higher tier. `qwen_code`,
+  `opencode`, `anthropic`, and `llm` ignore the field — no equivalent knob
+  exists for those providers. Because the claude CLI only *warns* (does not
+  error) on an unrecognized `--effort` value and silently falls back to the
+  default, the backend validates the field on create/update rather than
+  relying on the CLI to catch a bad value. See [agents.md §
+  Effort](docs/agents.md#effort).
 - **Intake routing rules — a match→apply engine for issue import and
   schedules.** (#357) Previously, issue import could only be scoped to a
   single per-repo `issue_sync_label` string, and both issue import and cron

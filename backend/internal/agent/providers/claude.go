@@ -107,6 +107,9 @@ func buildClaudeArgs(input agent.RunInput, sidecarEnabled bool, mcpCfg *MCPRunCo
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
 	}
+	if v, ok := claudeEffort(input.AgentConfig.Effort); ok {
+		args = append(args, "--effort", v)
+	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
 	}
@@ -250,6 +253,14 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	}
 
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started claude pid=%d", cmd.Process.Pid), At: time.Now()}
+	if v, ok := claudeEffort(input.AgentConfig.Effort); ok {
+		// The claude CLI only warns (does not error) on an unsupported model
+		// or an org-restricted effort level, silently falling back to the
+		// default — logging what was actually requested here lets an
+		// operator cross-reference against the CLI's own stderr warning
+		// (see effort.go) if the effect looks wrong.
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("requested effort=%s", v), At: time.Now()}
+	}
 
 	var (
 		wg              sync.WaitGroup

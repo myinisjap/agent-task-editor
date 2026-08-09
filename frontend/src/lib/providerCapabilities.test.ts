@@ -23,6 +23,16 @@ describe('providerCapabilities', () => {
     expect(getCapability('claude', 'subtasks').support).toBe('full')
   })
 
+  it('effort: claude is full, codex_cli is partial (clamped), everyone else is none', () => {
+    expect(getCapability('claude', 'effort').support).toBe('full')
+    expect(getCapability('codex_cli', 'effort').support).toBe('partial')
+    expect(getCapability('codex_cli', 'effort').note).toBeTruthy()
+    expect(getCapability('qwen_code', 'effort').support).toBe('none')
+    expect(getCapability('opencode', 'effort').support).toBe('none')
+    expect(getCapability('anthropic', 'effort').support).toBe('none')
+    expect(getCapability('llm', 'effort').support).toBe('none')
+  })
+
   it('falls back to none for an unrecognized provider', () => {
     expect(getCapability('made-up-provider', 'mcpServers')).toEqual({ support: 'none' })
   })
