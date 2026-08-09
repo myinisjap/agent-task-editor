@@ -106,7 +106,7 @@ export interface paths {
         put?: never;
         /**
          * Apply one action to many tasks
-         * @description Applies a single action to every task in ids. Each task is processed independently — one failure doesn't abort the rest. Returns 200 if every task succeeded, 207 if any failed; the per-task results array reports each outcome either way. "move" transitions are validated through the workflow engine exactly like PATCH /tasks/{id}/label.
+         * @description Applies a single action to every task in ids. Each task is processed independently — one failure doesn't abort the rest. Returns 200 if every task succeeded, 207 if any failed; the per-task results array reports each outcome either way. "move" transitions are validated through the workflow engine exactly like PATCH /tasks/{id}/label, including refusing (as a per-task failure, not a request error) any task whose active agent run is still live (pending/running) — the same rule PATCH /tasks/{id}/label enforces with a 409.
          */
         post: {
             parameters: {
