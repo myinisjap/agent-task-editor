@@ -65,7 +65,7 @@ func (f *fakeSecondForge) PRReviewComments(ctx context.Context, repoName string,
 		return nil, nil
 	}
 	return []forge.PRReviewComment{
-		{ID: "c1", Path: "main.go", Line: 10, StartLine: 10, Side: "RIGHT", Body: "please fix", DiffHunk: "@@ -8,3 +8,3 @@"},
+		{ID: "c1", Path: "main.go", Line: 10, StartLine: 10, Side: "RIGHT", Body: "please fix", DiffHunk: "@@ -8,3 +8,3 @@", AuthorAssociation: "COLLABORATOR"},
 	}, nil
 }
 func (f *fakeSecondForge) FailedChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {

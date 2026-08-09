@@ -362,8 +362,8 @@ func TestGetPRReviews(t *testing.T) {
 				t.Fatalf("expected pr view call, got %v", args)
 			}
 			return fakeCmd{output: []byte(`{"reviews":[
-				{"id":"r1","state":"changes_requested","body":"please fix X","author":{"login":"alice"},"submittedAt":"2024-01-01T00:00:00Z"},
-				{"id":"r2","state":"APPROVED","body":"lgtm","author":{"login":"bob"},"submittedAt":"2024-01-02T00:00:00Z"}
+				{"id":"r1","state":"changes_requested","body":"please fix X","author":{"login":"alice"},"submittedAt":"2024-01-01T00:00:00Z","authorAssociation":"collaborator"},
+				{"id":"r2","state":"APPROVED","body":"lgtm","author":{"login":"bob"},"submittedAt":"2024-01-02T00:00:00Z","authorAssociation":"NONE"}
 			]}`)}
 		},
 	})
@@ -381,6 +381,12 @@ func TestGetPRReviews(t *testing.T) {
 	if reviews[0].Author != "alice" || reviews[0].Body != "please fix X" {
 		t.Errorf("review[0] = %+v, unexpected", reviews[0])
 	}
+	if reviews[0].AuthorAssociation != "COLLABORATOR" {
+		t.Errorf("review[0].AuthorAssociation = %q, want normalized COLLABORATOR", reviews[0].AuthorAssociation)
+	}
+	if reviews[1].AuthorAssociation != "NONE" {
+		t.Errorf("review[1].AuthorAssociation = %q, want NONE", reviews[1].AuthorAssociation)
+	}
 }
 
 func TestGetPRReviewComments_Paginated(t *testing.T) {
@@ -390,8 +396,8 @@ func TestGetPRReviewComments_Paginated(t *testing.T) {
 				t.Fatalf("expected --paginate flag, got %v", args)
 			}
 			// Two pages concatenated back to back, as gh --paginate does for arrays.
-			page1 := `[{"id":1,"path":"a.go","line":10,"start_line":10,"side":"RIGHT","body":"fix this","diff_hunk":"@@ -1 +1 @@","commit_id":"sha1","user":{"login":"alice"},"created_at":"2024-01-01T00:00:00Z"}]`
-			page2 := `[{"id":2,"path":"b.go","line":20,"side":"RIGHT","body":"and this","diff_hunk":"@@ -2 +2 @@","commit_id":"sha1","user":{"login":"bob"},"created_at":"2024-01-01T00:01:00Z"}]`
+			page1 := `[{"id":1,"path":"a.go","line":10,"start_line":10,"side":"RIGHT","body":"fix this","diff_hunk":"@@ -1 +1 @@","commit_id":"sha1","user":{"login":"alice"},"created_at":"2024-01-01T00:00:00Z","author_association":"COLLABORATOR"}]`
+			page2 := `[{"id":2,"path":"b.go","line":20,"side":"RIGHT","body":"and this","diff_hunk":"@@ -2 +2 @@","commit_id":"sha1","user":{"login":"bob"},"created_at":"2024-01-01T00:01:00Z","author_association":"NONE"}]`
 			return fakeCmd{output: []byte(page1 + page2)}
 		},
 	})
@@ -406,8 +412,14 @@ func TestGetPRReviewComments_Paginated(t *testing.T) {
 	if comments[0].ID != "1" || comments[0].Path != "a.go" || comments[0].Line != 10 {
 		t.Errorf("comment[0] = %+v, unexpected", comments[0])
 	}
+	if comments[0].AuthorAssociation != "COLLABORATOR" {
+		t.Errorf("comment[0].AuthorAssociation = %q, want COLLABORATOR", comments[0].AuthorAssociation)
+	}
 	if comments[1].ID != "2" || comments[1].Path != "b.go" {
 		t.Errorf("comment[1] = %+v, unexpected", comments[1])
+	}
+	if comments[1].AuthorAssociation != "NONE" {
+		t.Errorf("comment[1].AuthorAssociation = %q, want NONE", comments[1].AuthorAssociation)
 	}
 }
 
