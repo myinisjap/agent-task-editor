@@ -398,12 +398,19 @@ type giteaReview struct {
 // PRReviews implements forge.Forge. Gitea's REQUEST_CHANGES review state
 // maps onto GitHub's CHANGES_REQUESTED so ghsync's ingestReviews (which
 // filters on that exact string) works unmodified across both forges.
+//
+// Gitea's review API doesn't return an author_association-equivalent field
+// the way GitHub's does, so forge.Review.AuthorAssociation is derived the
+// same way GetIssueComments derives it for comment authors (see
+// associationFor), costing at most one collaborator-check call per distinct
+// reviewer, memoized per call.
 func (g *Gitea) PRReviews(ctx context.Context, repoName string, prNumber int) ([]forge.Review, error) {
 	metrics.GiteaCallsTotal.WithLabelValues("pr_reviews").Inc()
 	var raw []giteaReview
 	if _, err := g.apiCall(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d/reviews", repoName, prNumber), nil, &raw); err != nil {
 		return nil, err
 	}
+	collaboratorCache := map[string]bool{}
 	reviews := make([]forge.Review, 0, len(raw))
 	for _, r := range raw {
 		state := strings.ToUpper(r.State)
@@ -411,11 +418,12 @@ func (g *Gitea) PRReviews(ctx context.Context, repoName string, prNumber int) ([
 			state = "CHANGES_REQUESTED"
 		}
 		reviews = append(reviews, forge.Review{
-			ID:          strconv.FormatInt(r.ID, 10),
-			State:       state,
-			Body:        r.Body,
-			Author:      r.User.Login,
-			SubmittedAt: r.Submitted,
+			ID:                strconv.FormatInt(r.ID, 10),
+			State:             state,
+			Body:              r.Body,
+			Author:            r.User.Login,
+			SubmittedAt:       r.Submitted,
+			AuthorAssociation: g.associationFor(ctx, repoName, r.User.Login, collaboratorCache),
 		})
 	}
 	return reviews, nil
@@ -436,12 +444,19 @@ type giteaReviewComment struct {
 }
 
 // PRReviewComments implements forge.Forge.
+//
+// Gitea's review-comment API doesn't return an author_association-equivalent
+// field the way GitHub's does, so forge.PRReviewComment.AuthorAssociation is
+// derived the same way GetIssueComments derives it for comment authors (see
+// associationFor), costing at most one collaborator-check call per distinct
+// commenter, memoized per call.
 func (g *Gitea) PRReviewComments(ctx context.Context, repoName string, prNumber int) ([]forge.PRReviewComment, error) {
 	metrics.GiteaCallsTotal.WithLabelValues("pr_review_comments").Inc()
 	var raw []giteaReviewComment
 	if _, err := g.apiCall(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d/comments", repoName, prNumber), nil, &raw); err != nil {
 		return nil, err
 	}
+	collaboratorCache := map[string]bool{}
 	comments := make([]forge.PRReviewComment, 0, len(raw))
 	for _, c := range raw {
 		side := "RIGHT"
@@ -451,16 +466,17 @@ func (g *Gitea) PRReviewComments(ctx context.Context, repoName string, prNumber 
 			line = -line
 		}
 		comments = append(comments, forge.PRReviewComment{
-			ID:        strconv.FormatInt(c.ID, 10),
-			Path:      c.Path,
-			Line:      line,
-			StartLine: line,
-			Side:      side,
-			Body:      c.Body,
-			DiffHunk:  c.DiffHunk,
-			CommitID:  c.CommitID,
-			Author:    c.User.Login,
-			CreatedAt: c.CreatedAt,
+			ID:                strconv.FormatInt(c.ID, 10),
+			Path:              c.Path,
+			Line:              line,
+			StartLine:         line,
+			Side:              side,
+			Body:              c.Body,
+			DiffHunk:          c.DiffHunk,
+			CommitID:          c.CommitID,
+			Author:            c.User.Login,
+			CreatedAt:         c.CreatedAt,
+			AuthorAssociation: g.associationFor(ctx, repoName, c.User.Login, collaboratorCache),
 		})
 	}
 	return comments, nil
@@ -581,25 +597,13 @@ func (g *Gitea) ListOpenIssues(ctx context.Context, repoName, label string) ([]f
 			for _, l := range r.Labels {
 				labels = append(labels, l.Name)
 			}
-			association := "NONE"
-			if trusted, ok := collaboratorCache[r.User.Login]; ok {
-				if trusted {
-					association = "COLLABORATOR"
-				}
-			} else {
-				trusted := g.isCollaborator(ctx, repoName, r.User.Login)
-				collaboratorCache[r.User.Login] = trusted
-				if trusted {
-					association = "COLLABORATOR"
-				}
-			}
 			issues = append(issues, forge.Issue{
 				Number:            r.Number,
 				Title:             r.Title,
 				Body:              r.Body,
 				URL:               r.HTMLURL,
 				Labels:            labels,
-				AuthorAssociation: association,
+				AuthorAssociation: g.associationFor(ctx, repoName, r.User.Login, collaboratorCache),
 			})
 		}
 		if len(raw) < pageSize {
@@ -646,22 +650,10 @@ func (g *Gitea) GetIssueComments(ctx context.Context, repoName string, issueNumb
 			break
 		}
 		for _, c := range raw {
-			association := "NONE"
-			if trusted, ok := collaboratorCache[c.User.Login]; ok {
-				if trusted {
-					association = "COLLABORATOR"
-				}
-			} else {
-				trusted := g.isCollaborator(ctx, repoName, c.User.Login)
-				collaboratorCache[c.User.Login] = trusted
-				if trusted {
-					association = "COLLABORATOR"
-				}
-			}
 			comments = append(comments, forge.IssueComment{
 				ID:                strconv.FormatInt(c.ID, 10),
 				Author:            c.User.Login,
-				AuthorAssociation: association,
+				AuthorAssociation: g.associationFor(ctx, repoName, c.User.Login, collaboratorCache),
 				Body:              c.Body,
 				CreatedAt:         c.CreatedAt,
 			})
@@ -685,6 +677,26 @@ func (g *Gitea) isCollaborator(ctx context.Context, repoName, username string) b
 	metrics.GiteaCallsTotal.WithLabelValues("collaborator_check").Inc()
 	_, err := g.apiCall(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/collaborators/%s", repoName, url.PathEscape(username)), nil, nil)
 	return err == nil
+}
+
+// associationFor derives a forge.Issue/IssueComment/Review/PRReviewComment-
+// style AuthorAssociation value ("COLLABORATOR" or "NONE") for username on
+// repoName, since Gitea's APIs don't return an author_association-equivalent
+// field the way GitHub's do. Backed by isCollaborator, memoized in cache
+// (keyed by username) so a batch of N items by M distinct authors costs M
+// collaborator-check API calls rather than N — cache must be created fresh
+// per top-level call (e.g. per PRReviews/PRReviewComments/ListOpenIssues/
+// GetIssueComments invocation), not shared across calls.
+func (g *Gitea) associationFor(ctx context.Context, repoName, username string, cache map[string]bool) string {
+	trusted, ok := cache[username]
+	if !ok {
+		trusted = g.isCollaborator(ctx, repoName, username)
+		cache[username] = trusted
+	}
+	if trusted {
+		return "COLLABORATOR"
+	}
+	return "NONE"
 }
 
 // AddIssueLabel implements forge.Forge.

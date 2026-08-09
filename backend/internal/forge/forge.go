@@ -71,6 +71,15 @@ type Review struct {
 	Body        string
 	Author      string
 	SubmittedAt string // RFC3339 timestamp string, compared lexically for cursor purposes
+	// AuthorAssociation is the reviewer's relationship to the repo: OWNER |
+	// MEMBER | COLLABORATOR | CONTRIBUTOR | NONE | ... (same value set as
+	// IssueComment.AuthorAssociation). ghsync uses this to drop feedback
+	// from authors without write access before it ever reaches the agent
+	// prompt (see #331) — implementations MUST populate it, and MUST return
+	// a non-trusted value (e.g. "NONE") rather than "" when the
+	// association can't be determined, since ghsync treats empty/unknown
+	// as untrusted by design.
+	AuthorAssociation string
 }
 
 // PRReviewComment is a single inline (file/line-anchored) review comment left
@@ -86,6 +95,11 @@ type PRReviewComment struct {
 	CommitID  string
 	Author    string
 	CreatedAt string
+	// AuthorAssociation is the commenter's relationship to the repo: OWNER |
+	// MEMBER | COLLABORATOR | CONTRIBUTOR | NONE | ... (same value set as
+	// IssueComment.AuthorAssociation). See Review.AuthorAssociation for the
+	// trust contract implementations must follow.
+	AuthorAssociation string
 }
 
 // Check is a single CI/status check result on a PR/MR.
@@ -168,11 +182,16 @@ type Forge interface {
 	// the branch is pushed but has no PR yet.
 	PRHead(ctx context.Context, repoName, branch string) (PRHead, error)
 
-	// PRReviews returns all reviews submitted on the given PR/MR, oldest first.
+	// PRReviews returns all reviews submitted on the given PR/MR, oldest
+	// first. Implementations MUST populate Review.AuthorAssociation (see its
+	// doc comment) — ghsync relies on it to drop feedback from authors
+	// without write access before it reaches the agent prompt (#331).
 	PRReviews(ctx context.Context, repoName string, prNumber int) ([]Review, error)
 
 	// PRReviewComments returns all inline review comments on the given PR/MR's
-	// diff, across all reviews.
+	// diff, across all reviews. Implementations MUST populate
+	// PRReviewComment.AuthorAssociation (see its doc comment), for the same
+	// reason as PRReviews.
 	PRReviewComments(ctx context.Context, repoName string, prNumber int) ([]PRReviewComment, error)
 
 	// FailedChecks returns the checks on the given PR/MR that failed or were
