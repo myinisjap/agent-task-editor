@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"bytes"
+	"image"
+	"image/color"
+	"image/png"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -40,8 +43,26 @@ func multipartUploadRequest(t *testing.T, files map[string][]byte) *http.Request
 }
 
 // tinyPNG is a minimal valid PNG file signature + a few bytes, enough for
-// http.DetectContentType to sniff "image/png".
+// http.DetectContentType to sniff "image/png" but not enough to be a
+// decodable image (no IHDR chunk etc.) — exercises the fallback path where
+// shrinkImageToBounds fails to decode and the original bytes are stored as-is.
 var tinyPNG = []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0}
+
+// encodeTestPNG builds a real, decodable w x h PNG for resize tests.
+func encodeTestPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x % 255), G: uint8(y % 255), B: 100, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("png.Encode: %v", err)
+	}
+	return buf.Bytes()
+}
 
 func TestSaveUploadedAttachments_NoMultipartForm_ReturnsEmptyOK(t *testing.T) {
 	h := &TasksHandler{uploadDir: t.TempDir()}
@@ -169,5 +190,89 @@ func TestSaveUploadedAttachments_DefaultsUploadDirWhenEmpty(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "uploads", paths[0])); err != nil {
 		t.Errorf("expected file under ./uploads/, got err: %v", err)
+	}
+}
+
+// TestSaveUploadedAttachments_DownscalesOversizedImage verifies an oversized,
+// decodable PNG is downscaled (preserving aspect ratio) before being stored.
+func TestSaveUploadedAttachments_DownscalesOversizedImage(t *testing.T) {
+	dir := t.TempDir()
+	h := &TasksHandler{uploadDir: dir}
+	big := encodeTestPNG(t, 2500, 1200)
+	req := multipartUploadRequest(t, map[string][]byte{"big.png": big})
+	w := httptest.NewRecorder()
+
+	paths, ok := h.saveUploadedAttachments(w, req, "task-1")
+	if !ok {
+		t.Fatalf("expected ok=true, response: %s", w.Body.String())
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected exactly one saved attachment, got %v", paths)
+	}
+
+	full := filepath.Join(dir, paths[0])
+	data, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatalf("saved file not found at %q: %v", full, err)
+	}
+	if bytes.Equal(data, big) {
+		t.Fatalf("expected downscaled bytes to differ from the original")
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("failed to decode stored image: %v", err)
+	}
+	b := img.Bounds()
+	if b.Dx() != 2000 || b.Dy() != 960 {
+		t.Errorf("expected 2000x960, got %dx%d", b.Dx(), b.Dy())
+	}
+}
+
+// TestSaveUploadedAttachments_StoresSmallImageUnchanged verifies a small,
+// decodable image is stored byte-for-byte identical to the upload.
+func TestSaveUploadedAttachments_StoresSmallImageUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	h := &TasksHandler{uploadDir: dir}
+	small := encodeTestPNG(t, 50, 50)
+	req := multipartUploadRequest(t, map[string][]byte{"small.png": small})
+	w := httptest.NewRecorder()
+
+	paths, ok := h.saveUploadedAttachments(w, req, "task-1")
+	if !ok {
+		t.Fatalf("expected ok=true, response: %s", w.Body.String())
+	}
+
+	full := filepath.Join(dir, paths[0])
+	data, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatalf("saved file not found at %q: %v", full, err)
+	}
+	if !bytes.Equal(data, small) {
+		t.Errorf("expected stored file to be byte-identical to the upload")
+	}
+}
+
+// TestSaveUploadedAttachments_NonDecodableImageStoredAsIs verifies that a
+// file which sniffs as an image but fails to decode (e.g. the tinyPNG
+// fixture, which is only a signature) is still accepted and stored
+// unchanged, rather than causing the resize step to fail the request.
+func TestSaveUploadedAttachments_NonDecodableImageStoredAsIs(t *testing.T) {
+	dir := t.TempDir()
+	h := &TasksHandler{uploadDir: dir}
+	req := multipartUploadRequest(t, map[string][]byte{"photo.png": tinyPNG})
+	w := httptest.NewRecorder()
+
+	paths, ok := h.saveUploadedAttachments(w, req, "task-1")
+	if !ok {
+		t.Fatalf("expected ok=true, response: %s", w.Body.String())
+	}
+
+	full := filepath.Join(dir, paths[0])
+	data, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatalf("saved file not found at %q: %v", full, err)
+	}
+	if !bytes.Equal(data, tinyPNG) {
+		t.Errorf("expected non-decodable image to be stored unchanged")
 	}
 }

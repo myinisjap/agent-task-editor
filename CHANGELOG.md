@@ -402,6 +402,16 @@ triggers the "Release" workflow the same way.
   refuses to submit if the YAML currently in the editor wasn't loaded for
   the selected workflow (the Save button is disabled in that window too),
   as a second line of defense.
+- **Oversized task attachment images are now downscaled on upload.** Images
+  wider or taller than 2000x2000px are resized (aspect ratio preserved)
+  before being stored, so agents no longer fail to read them with "Unable to
+  resize image — dimensions exceed the 2000x2000px limit". GIF and WebP
+  attachments are re-encoded to PNG when resized; images that already fit are
+  stored byte-for-byte unchanged. Images whose declared resolution exceeds
+  4096x4096px are not decoded at all (and are stored as-is) — the existing
+  10 MB per-file cap only bounds file *size*, and a small, highly-compressed
+  file can still declare an enormous pixel count that would otherwise force
+  an oversized in-memory decode buffer.
 - **Bulk board moves could re-open the #244 double-dispatch window.** (#333)
   `POST /tasks/bulk` with `action: "move"` transitioned each task straight
   through `engine.Transition`, whose CAS unconditionally clears

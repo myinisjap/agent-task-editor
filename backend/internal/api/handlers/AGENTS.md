@@ -8,7 +8,8 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 |---|---|---|
 | `tasks.go` | `TasksHandler` (CRUD, list/search, notes, label history, transitions) | `gen.Queries`, `workflow.Engine` |
 | `task_response.go` | helpers for `TasksHandler` (wire-format wrapper + derived dependency/subtask/queue-position fields) | — |
-| `task_uploads.go` | helper for `TasksHandler` (multipart attachment save) | — |
+| `task_uploads.go` | helper for `TasksHandler` (multipart attachment save; downscales oversized images via `image_resize.go`) | — |
+| `image_resize.go` | helper for `task_uploads.go` (downscales images exceeding 2000x2000px, preserving aspect ratio; GIF/WebP re-encoded to PNG when resized) | `golang.org/x/image/draw`, `golang.org/x/image/webp` |
 | `task_bulk.go` | `TasksHandler` (pause/archive toggles + bulk action) | — |
 | `task_runs.go` | `TasksHandler` (run list/get/logs/cancel/reply) | `agent` (error sentinels) |
 | `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state) | `ghclient`, `agent.PushBranch` |
