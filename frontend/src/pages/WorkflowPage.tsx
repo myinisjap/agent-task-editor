@@ -113,26 +113,58 @@ export default function WorkflowPage() {
   const [deleting, setDeleting] = useState(false)
   const [validationErrors, setValidationErrors] = useState<WorkflowValidationError[]>([])
 
+  // Monotonic id of the most recent loadWorkflow() call. Every async
+  // continuation captures the value at its start and bails if a newer load
+  // has begun, so a slow response for workflow A can never overwrite the
+  // editor / flowchart / error banner after the user has clicked workflow B
+  // (#332).
+  const loadReqRef = useRef(0)
+  // The workflow id the YAML currently in the textarea was loaded for. Used
+  // as a belt-and-braces guard in handleSave so we can never PUT one
+  // workflow's YAML onto another. null while a load is in flight / after a
+  // failed load.
+  const loadedYamlIdRef = useRef<string | null>(null)
+  // Mirrors loadedYamlIdRef in state so the Save button's `disabled` can
+  // react to it (refs don't trigger re-renders). handleSave itself reads the
+  // ref, not this, since state can lag inside an async handler.
+  const [yamlLoadedId, setYamlLoadedId] = useState<string | null>(null)
+
   // Load a specific workflow's YAML + full data
   const loadWorkflow = (id: string) => {
+    const req = ++loadReqRef.current
+    loadedYamlIdRef.current = null
+    setYamlLoadedId(null)
     setSelectedWorkflowIdLocal(id)
     setSelectedId(id)
     setYaml('')
     setError(null)
     setSaved(false)
     setValidationErrors([])
+    // Loading placeholder — WorkflowFlowchart renders a "Loading chart…"
+    // state for `workflow === null`, so this avoids showing workflow A's
+    // graph while B's data is still in flight.
+    setWorkflow(null)
 
-    api.workflows.get(id).then(setWorkflow).catch((err: unknown) => {
-      setError(err instanceof Error ? err.message : 'Failed to load workflow')
-    })
+    api.workflows.get(id)
+      .then((wf) => { if (req === loadReqRef.current) setWorkflow(wf) })
+      .catch((err: unknown) => {
+        if (req !== loadReqRef.current) return
+        setError(err instanceof Error ? err.message : 'Failed to load workflow')
+      })
 
     authedRawFetch(api.workflows.exportYaml(id))
       .then((r) => {
         if (!r.ok) throw new Error(`Failed to load YAML (${r.status})`)
         return r.text()
       })
-      .then(setYaml)
+      .then((text) => {
+        if (req !== loadReqRef.current) return
+        loadedYamlIdRef.current = id
+        setYamlLoadedId(id)
+        setYaml(text)
+      })
       .catch((err: unknown) => {
+        if (req !== loadReqRef.current) return
         setError(err instanceof Error ? err.message : 'Failed to load workflow YAML')
       })
   }
@@ -163,6 +195,15 @@ export default function WorkflowPage() {
   const handleSave = async () => {
     if (!selectedWorkflowId) return
 
+    // The YAML in the editor must belong to the workflow we're about to
+    // write. Cannot happen now that loadWorkflow sequences its responses,
+    // but a save that silently replaces workflow B's labels/transitions
+    // with A's is destructive enough to double-check (#332).
+    if (loadedYamlIdRef.current !== selectedWorkflowId) {
+      setError('Workflow YAML is still loading — try again in a moment.')
+      return
+    }
+
     setError(null)
     setValidationErrors([])
 
@@ -185,17 +226,27 @@ export default function WorkflowPage() {
 
     setSaving(true)
     setSaved(false)
+    const savedId = selectedWorkflowId
+    const req = loadReqRef.current
     try {
-      await api.workflows.updateYaml(selectedWorkflowId, yaml)
-      setValidationErrors([])
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
+      await api.workflows.updateYaml(savedId, yaml)
+      if (req === loadReqRef.current) {
+        setValidationErrors([])
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2000)
+      }
       // Re-fetch the workflow to update the flowchart + store
-      api.workflows.get(selectedWorkflowId).then(setWorkflow)
+      api.workflows.get(savedId).then((wf) => {
+        if (req === loadReqRef.current) setWorkflow(wf)
+      }).catch(() => {})
       fetchWorkflows()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Save failed')
+      if (req === loadReqRef.current) {
+        setError(err instanceof Error ? err.message : 'Save failed')
+      }
     } finally {
+      // Must stay unconditional — otherwise the button can stick on
+      // "Saving…" if the user switched workflows during the request.
       setSaving(false)
     }
   }
@@ -301,7 +352,7 @@ export default function WorkflowPage() {
           <HelpButton onClick={() => setShowHelpModal(true)} title="How workflows work" />
           <button
             onClick={handleSave}
-            disabled={saving || !selectedWorkflowId}
+            disabled={saving || !selectedWorkflowId || yamlLoadedId !== selectedWorkflowId}
             className="px-4 py-1.5 text-sm font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors"
           >
             {saving ? 'Saving…' : 'Save'}
