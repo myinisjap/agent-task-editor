@@ -370,7 +370,9 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
             <p className="text-xs text-slate-500">
               Click or drag &amp; drop images here
             </p>
-            <p className="text-xs text-slate-700 mt-0.5">PNG, JPG, GIF, WebP — max 10 MB each</p>
+            <p className="text-xs text-slate-700 mt-0.5">
+              PNG, JPG, GIF, WebP — max 10 MB each; larger than 2000x2000px is resized automatically
+            </p>
           </div>
           <input
             ref={fileInputRef}

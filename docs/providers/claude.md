@@ -195,6 +195,14 @@ If real visual image input is wanted later, it would require a different
 mechanism — the CLI's `--file <file_id:relative_path>` resource specs, not
 local absolute paths — and is not currently implemented.
 
+The CLI's `Read` tool also rejects any image whose pixel dimensions exceed
+2000x2000px outright ("Unable to resize image — dimensions exceed the
+2000x2000px limit and image processing failed."). To avoid that failure mode,
+the backend downscales oversized attachments (preserving aspect ratio) at
+upload time — see `saveUploadedAttachments` in
+`backend/internal/api/handlers/task_uploads.go` — so every attachment handed
+to the agent already fits within the bound.
+
 ## Model Selection
 
 Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) (e.g. `claude-sonnet-4-6`, `claude-opus-4`). If empty, the Claude CLI uses its own default.

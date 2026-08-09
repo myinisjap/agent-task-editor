@@ -12,6 +12,7 @@ require (
 
 require (
 	github.com/creack/pty v1.1.24
+	golang.org/x/image v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

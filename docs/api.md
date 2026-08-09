@@ -101,7 +101,7 @@ Create a task. Accepts JSON body or `multipart/form-data` (for image attachments
 ```
 
 **Multipart form** (`Content-Type: multipart/form-data`):
-Same fields as form values, plus `attachments` (multiple file fields). Images are validated (max 10 MB each, image/* MIME type only) and stored in `UPLOAD_DIR`.
+Same fields as form values, plus `attachments` (multiple file fields). Images are validated (max 10 MB each, image/* MIME type only) and stored in `UPLOAD_DIR`. Images wider or taller than 2000x2000px are downscaled on upload, preserving aspect ratio (GIF/WebP are re-encoded to PNG when resized); images that already fit, that declare a resolution above 4096x4096px, or that can't be decoded, are stored unchanged (the 4096x4096px decode ceiling protects against a small, highly-compressed file declaring an enormous pixel count).
 
 New tasks default to the `not_ready` label. Pass `label` to place a task
 directly on any column defined in the workflow (e.g. `work` to make it
