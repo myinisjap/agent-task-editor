@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"bytes"
+	"compress/zlib"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/gif"
@@ -77,6 +80,84 @@ func encodeGIF(t *testing.T, w, h int) []byte {
 		t.Fatalf("gif.Encode: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// buildHugeDimensionPNG constructs a syntactically valid but minimal PNG
+// (empty IDAT stream) whose IHDR declares an enormous width/height, without
+// actually allocating or encoding that many real pixels. This lets tests
+// exercise the maxDecodePixels guard cheaply: image.DecodeConfig reads the
+// declared dimensions from IHDR alone (a few dozen bytes), so this file is
+// tiny on disk yet claims to be huge — the same "small file, giant claimed
+// resolution" shape a memory-exhaustion attack would use.
+func buildHugeDimensionPNG(t *testing.T, width, height uint32) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	buf.Write([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+
+	writeChunk := func(typ string, data []byte) {
+		var lenBuf [4]byte
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+		buf.Write(lenBuf[:])
+		buf.WriteString(typ)
+		buf.Write(data)
+		crc := crc32.NewIEEE()
+		crc.Write([]byte(typ))
+		crc.Write(data)
+		var crcBuf [4]byte
+		binary.BigEndian.PutUint32(crcBuf[:], crc.Sum32())
+		buf.Write(crcBuf[:])
+	}
+
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], width)
+	binary.BigEndian.PutUint32(ihdr[4:8], height)
+	ihdr[8] = 8  // bit depth
+	ihdr[9] = 6  // color type: truecolor with alpha
+	ihdr[10] = 0 // compression method
+	ihdr[11] = 0 // filter method
+	ihdr[12] = 0 // interlace method
+	writeChunk("IHDR", ihdr)
+
+	var zbuf bytes.Buffer
+	zw := zlib.NewWriter(&zbuf)
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zlib.Close: %v", err)
+	}
+	writeChunk("IDAT", zbuf.Bytes())
+	writeChunk("IEND", nil)
+	return buf.Bytes()
+}
+
+func TestShrinkImageToBounds_HugeDeclaredDimensionsRejectedBeforeDecode(t *testing.T) {
+	// 15000x15000 declared in an ~80-byte file: well under the 10MB
+	// per-file upload cap, but would force a ~900MB RGBA allocation if
+	// handed to image.Decode/draw.CatmullRom.Scale unguarded.
+	src := buildHugeDimensionPNG(t, 15000, 15000)
+	if len(src) > 1<<10 {
+		t.Fatalf("test fixture should be tiny on disk, got %d bytes", len(src))
+	}
+
+	res, err := shrinkImageToBounds(src)
+	if err == nil {
+		t.Fatalf("expected an error for an image exceeding maxDecodePixels")
+	}
+	if res.Resized {
+		t.Fatalf("expected Resized=false so the caller falls back to storing the original bytes")
+	}
+}
+
+func TestShrinkImageToBounds_JustUnderPixelCapStillResizes(t *testing.T) {
+	// 4000x4000 = 16,000,000 px, under maxDecodePixels (4096*4096 =
+	// 16,777,216) and over the 2000x2000 bound, so it should still be
+	// decoded and downscaled rather than rejected by the pixel-count guard.
+	src := encodePNG(t, 4000, 4000)
+	res, err := shrinkImageToBounds(src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Resized {
+		t.Fatalf("expected Resized=true for a 4000x4000 image just under the pixel cap")
+	}
 }
 
 func TestShrinkImageToBounds_SmallImagePassthrough(t *testing.T) {

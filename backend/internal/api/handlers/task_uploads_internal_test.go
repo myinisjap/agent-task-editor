@@ -276,3 +276,36 @@ func TestSaveUploadedAttachments_NonDecodableImageStoredAsIs(t *testing.T) {
 		t.Errorf("expected non-decodable image to be stored unchanged")
 	}
 }
+
+// TestSaveUploadedAttachments_HugeDeclaredDimensionsStoredAsIs verifies the
+// end-to-end upload path for a file that sniffs as a valid image and reports
+// (via its header) an enormous pixel count while being tiny on disk — the
+// maxDecodePixels guard in shrinkImageToBounds must reject decoding it
+// before an oversized in-memory allocation is attempted, falling back to
+// storing the original bytes exactly like any other undecodable/oversized
+// case, rather than the request hanging or the process running out of
+// memory.
+func TestSaveUploadedAttachments_HugeDeclaredDimensionsStoredAsIs(t *testing.T) {
+	dir := t.TempDir()
+	h := &TasksHandler{uploadDir: dir}
+	huge := buildHugeDimensionPNG(t, 15000, 15000)
+	req := multipartUploadRequest(t, map[string][]byte{"huge.png": huge})
+	w := httptest.NewRecorder()
+
+	paths, ok := h.saveUploadedAttachments(w, req, "task-1")
+	if !ok {
+		t.Fatalf("expected ok=true, response: %s", w.Body.String())
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected exactly one saved attachment, got %v", paths)
+	}
+
+	full := filepath.Join(dir, paths[0])
+	data, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatalf("saved file not found at %q: %v", full, err)
+	}
+	if !bytes.Equal(data, huge) {
+		t.Errorf("expected the huge-declared-dimension file to be stored unchanged, not decoded/re-encoded")
+	}
+}

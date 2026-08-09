@@ -26,6 +26,18 @@ const (
 // jpegQuality is used when re-encoding a downscaled JPEG.
 const jpegQuality = 90
 
+// maxDecodePixels caps the pixel count (width * height, as reported by the
+// cheap image.DecodeConfig header parse) we're willing to hand to
+// image.Decode/draw.CatmullRom.Scale, which both allocate roughly one RGBA
+// pixel (4 bytes) per source/destination pixel. Without this guard, a small
+// compressed file with an enormous declared resolution (e.g. a ~700KB
+// 15000x15000 solid-color PNG, comfortably under the existing 10MB per-file
+// upload cap) can force a ~900MB in-memory allocation per file — and
+// multiple such files can be attached to a single request. 4096x4096
+// (~16.8M pixels, ~67MB decoded as RGBA) comfortably covers any real photo
+// or screenshot while keeping worst-case per-file decode memory bounded.
+const maxDecodePixels = 4096 * 4096
+
 // resizedImage is the result of shrinkImageToBounds.
 type resizedImage struct {
 	// Data holds the encoded, downscaled image bytes. Only meaningful when
@@ -59,6 +71,16 @@ func shrinkImageToBounds(src []byte) (resizedImage, error) {
 	if w2 == cfg.Width && h2 == cfg.Height {
 		// Already within bounds; store the original bytes untouched.
 		return resizedImage{Resized: false}, nil
+	}
+
+	// Guard against decoding an image whose declared pixel count would
+	// force an oversized in-memory allocation (image.Decode and
+	// draw.CatmullRom.Scale both allocate ~4 bytes/pixel for source and
+	// destination buffers) — a small compressed file can still declare a
+	// huge resolution. Bail out to the "store original bytes" fallback
+	// rather than attempting the decode at all.
+	if pixels := int64(cfg.Width) * int64(cfg.Height); pixels > maxDecodePixels {
+		return resizedImage{}, fmt.Errorf("image dimensions %dx%d (%d px) exceed the %d px decode limit", cfg.Width, cfg.Height, pixels, maxDecodePixels)
 	}
 
 	srcImg, decodedFormat, err := image.Decode(bytes.NewReader(src))
