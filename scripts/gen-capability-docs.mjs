@@ -39,6 +39,7 @@ const ROWS = [
   ['maxTurns', '`max_turns`'],
   ['sessionResume', 'Session resume'],
   ['subtasks', 'Subtasks (`create_subtask`)'],
+  ['effort', 'Effort (reasoning level)'],
 ]
 
 function cell(entry) {

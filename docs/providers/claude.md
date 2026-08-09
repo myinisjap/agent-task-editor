@@ -207,6 +207,34 @@ to the agent already fits within the bound.
 
 Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) (e.g. `claude-sonnet-4-6`, `claude-opus-4`). If empty, the Claude CLI uses its own default.
 
+## Effort
+
+`effort` (agent config field) is passed as claude's `--effort <level>` flag —
+verified against a live `claude` CLI, v2.1.223 — appended in `buildClaudeArgs`
+alongside `--model`/`--resume`. Accepted values are exactly `low`, `medium`,
+`high`, `xhigh`, and `max`; leaving the field unset (`""`, the default) omits
+the flag entirely and leaves the CLI's own default effort in place. There is
+no `off`/`minimal` tier — this flag cannot force zero reasoning.
+
+**This can degrade silently — validate on write, verify from logs.** An
+unrecognized `--effort` value does **not** make the CLI exit non-zero: it
+prints `Warning: Unknown --effort value '<v>' — ignoring it and using the
+default effort. Valid values: low, medium, high, xhigh, max.` to stderr and
+continues at the default. The backend rejects any value outside `"", low,
+medium, high, xhigh, max` with a 400 on create/update, which is the only
+thing standing between a typo/drift and a silently-degraded run — the CLI
+itself will not catch it. Two further ways effort can be a no-op even with a
+valid value, both outside this codebase's control: **not every model
+supports effort levels**, and **an Anthropic organization can restrict which
+effort levels are available**. The runner logs `requested effort=<level>` as
+a system log line on every run where effort is set, so you can
+cross-reference what was actually requested against the run's log output
+(and the CLI's own stderr warning, if present) if the effect looks wrong.
+
+Higher effort increases token spend — see [Cost & Usage
+Reporting](#cost--usage-reporting) below and [agents.md §
+Effort](../agents.md#effort) for the cost-budget interaction.
+
 ## Cost & Usage Reporting
 
 Token usage and cost are parsed from the CLI's `result` stream-json message (`usage` + `total_cost_usd`) and are **authoritative** — the CLI itself knows whether it's running under a Claude Max subscription (often `$0`) or metered API billing, so no estimation is applied. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).

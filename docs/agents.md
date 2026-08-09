@@ -30,6 +30,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. On `claude`/`qwen_code`, also enforced mid-run as a kill switch that cancels an in-flight run over budget. See [Cost Budgets](#cost-budgets) below. |
+| `effort` | Optional reasoning effort level: `""` (default/unset), `low`, `medium`, `high`, `xhigh`, or `max`. **`claude` (full) and `codex_cli` (partial, clamped)** — see [Effort](#effort) below. Ignored by `qwen_code`, `opencode`, `anthropic`, and `llm`. |
 
 ## Provider Configs
 
@@ -107,6 +108,7 @@ _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capab
 | `max_turns` | ✅ Enforced via --max-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
 | Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
 | Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |
+| Effort (reasoning level) | ✅ Passed as --effort. Supports low/medium/high/xhigh/max. Not all models support effort levels, and higher levels may be restricted by your Anthropic organization — either case degrades silently (the CLI only warns), so verify against the agent run logs. | ❌ No reasoning-effort flag on the qwen CLI — the field is ignored for this provider. | ⚠️ Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high. | ❌ Not implemented for this provider. | ❌ Not implemented for this provider. | ❌ No reasoning-effort flag on the opencode CLI — the field is ignored for this provider. |
 
 <!-- END capability-matrix (generated) -->
 
@@ -475,6 +477,55 @@ joined through `tasks` since `agent_runs` has no `repo_id` of its own) —
 the natural companion to `cost_by_task`/`cost_by_provider` for answering
 "which repo is expensive" before setting a per-repo
 `repos.max_concurrent_runs` limit.
+
+## Effort
+
+`effort` is an optional per-agent-config reasoning effort level: `""`
+(default/unset — leaves the provider's own default in place), `low`,
+`medium`, `high`, `xhigh`, or `max`. It maps onto each provider's own
+reasoning-effort surface differently (see the [Capability
+Matrix](#capability-matrix) above):
+
+- **`claude` — full support.** Verified against a live `claude` CLI (v2.1.223):
+  there is a first-class `--effort <level>` flag accepting exactly
+  `low|medium|high|xhigh|max` (no `off`/`minimal` tier — there is no way to
+  force zero reasoning via this flag). Set from `buildClaudeArgs`
+  alongside `--model`/`--resume`.
+
+  **Silent-degradation risk.** An unrecognized `--effort` value does **not**
+  make the CLI exit non-zero — it prints `Warning: Unknown --effort value
+  '<v>' — ignoring it and using the default effort.` to stderr and
+  continues at the provider default. Backend-side validation (`POST`/`PUT
+  /api/v1/agents` reject anything outside `"", low, medium, high, xhigh,
+  max` with a 400) is the only thing that actually prevents a typo'd or
+  stale value from reaching a live run — the CLI will not catch it for you.
+  Two further ways an accepted value can still be a silent no-op, entirely
+  outside this codebase's control: not every model supports effort levels,
+  and an Anthropic organization can restrict which levels are available to
+  it. The runner logs `requested effort=<level>` as a system log line for
+  every run where one was set, so you can cross-reference what was actually
+  requested against the run's own log output (and the CLI's stderr warning,
+  if any) when the effect looks wrong.
+
+- **`codex_cli` — partial support (clamped).** Codex has no `--effort`
+  flag; reasoning effort is set via a `-c
+  model_reasoning_effort="<level>"` config override on `codex exec`, which
+  accepts exactly `minimal|low|medium|high`. Since this codebase's `effort`
+  enum has no `off`/`minimal` tier, `xhigh` and `max` (levels codex has no
+  equivalent tier for) are clamped down to `high` rather than passed
+  through unrecognized.
+
+- **`qwen_code`, `opencode`, `anthropic`, `llm` — not supported.** No
+  reasoning-effort flag or config knob on any of these; the field is
+  simply ignored.
+
+**Cost interaction.** Raising effort meaningfully increases token spend
+(more reasoning tokens per turn) — see [Cost & Usage
+Tracking](#cost--usage-tracking) and [Cost Budgets](#cost-budgets) above.
+An agent config with both a high `effort` and a tight `max_cost_usd` may
+trip the mid-run cost watchdog (or the pre-dispatch budget guard) sooner
+than expected; consider raising the budget alongside the effort level, or
+leaving `effort` unset for cost-sensitive configs.
 
 ## Task Priority
 

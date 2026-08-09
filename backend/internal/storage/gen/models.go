@@ -31,6 +31,7 @@ type AgentConfig struct {
 	MaxCostUsd        float64   `json:"max_cost_usd"`
 	Priority          int64     `json:"priority"`
 	ProviderConfigID  string    `json:"provider_config_id"`
+	Effort            string    `json:"effort"`
 }
 
 type AgentLog struct {

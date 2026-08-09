@@ -15,13 +15,14 @@ Everything in this document was verified against a live install of `@openai/code
 Runs:
 
 ```
-codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox [--model <model>] "<prompt + system prompt>"
+codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox [--model <model>] [-c model_reasoning_effort="<level>"] "<prompt + system prompt>"
 ```
 
 - `codex exec` is the dedicated non-interactive/scriptable subcommand (as opposed to bare `codex`, which launches the interactive TUI).
 - `--json` emits one JSON object per line (JSONL) to stdout. **Codex interleaves plain-text diagnostic lines** (Rust `tracing` `ERROR ...` log lines) with the JSONL events on the same stream — the parser (`classifyCodexJSON`) falls back to a raw stdout log entry for any line that doesn't parse as JSON, rather than erroring.
 - `--skip-git-repo-check` allows running inside a git worktree the CLI might not otherwise recognize as a "real" repo.
 - `--dangerously-bypass-approvals-and-sandbox` skips **all** confirmation prompts and disables Codex's sandbox for the run. This is required for a headless run — without it, Codex pauses for interactive approval on every shell command the model wants to run. See "Command Allowlist / Denylist" below for the tradeoffs of this flag.
+- `-c model_reasoning_effort="<level>"` is only appended when the agent config's `effort` field is set — see [Effort](#effort) below.
 - There is no confirmed `--max-turns`-equivalent flag for `codex exec`, so no turn cap is passed.
 - There is no separate `--system-prompt` flag; the system prompt is appended to the same trailing prompt argument as the task prompt.
 
@@ -79,6 +80,19 @@ The `thread.started` event carries a `thread_id`, which the runner records. When
 ## Model Selection
 
 Pass `model` on the referenced [Provider Config](../agents.md#provider-configs). It is passed via `--model <model>` to the CLI.
+
+## Effort
+
+**Partial support (clamped).** Codex has no `--effort` flag; the agent
+config's `effort` field is instead translated to a `-c
+model_reasoning_effort="<level>"` config override on `codex exec`. Codex
+only accepts `minimal|low|medium|high` for this setting. Since this
+codebase's `effort` enum has no `off`/`minimal` tier, `xhigh` and `max`
+(levels codex has no equivalent tier for) are **clamped down to `high`**
+rather than passed through unrecognized — `low`/`medium`/`high` map
+through unchanged. Leaving `effort` unset (`""`, the default) omits the
+`-c` flag entirely, leaving Codex's own default reasoning effort in place.
+See [agents.md § Effort](../agents.md#effort).
 
 ## Fallback Outcome Parsing
 

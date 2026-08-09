@@ -1175,3 +1175,39 @@ func TestBuildClaudeArgs_NoResumeFlagOnColdStart(t *testing.T) {
 		t.Errorf("cold prompt should carry both the reply and the task, got %q", prompt)
 	}
 }
+
+// TestBuildClaudeArgs_Effort verifies that AgentConfig.Effort is passed
+// through as claude's --effort flag when set, and omitted entirely when
+// unset — the CLI's own default effort should apply in that case rather
+// than an explicit (and potentially wrong) value.
+func TestBuildClaudeArgs_Effort(t *testing.T) {
+	t.Run("unset omits the flag", func(t *testing.T) {
+		args, err := buildClaudeArgs(agent.RunInput{
+			Task:        agent.Task{Title: "t"},
+			AgentConfig: agent.AgentConfig{},
+		}, false, nil)
+		if err != nil {
+			t.Fatalf("buildClaudeArgs: %v", err)
+		}
+		for _, a := range args {
+			if a == "--effort" {
+				t.Fatalf("expected no --effort flag when Effort is unset, got args=%v", args)
+			}
+		}
+	})
+
+	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+		t.Run(level, func(t *testing.T) {
+			args, err := buildClaudeArgs(agent.RunInput{
+				Task:        agent.Task{Title: "t"},
+				AgentConfig: agent.AgentConfig{Effort: level},
+			}, false, nil)
+			if err != nil {
+				t.Fatalf("buildClaudeArgs: %v", err)
+			}
+			if got := findFlagValue(args, "--effort"); got != level {
+				t.Fatalf("expected --effort %q, got %q (args=%v)", level, got, args)
+			}
+		})
+	}
+}

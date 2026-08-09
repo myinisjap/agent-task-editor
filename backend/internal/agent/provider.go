@@ -252,6 +252,14 @@ type AgentConfig struct {
 	// including why the mid-run figure is an *estimate* (derived from the
 	// pricing table), not the provider's own authoritative billed cost.
 	MaxCostUSD float64
+	// Effort is the optional reasoning effort level for providers that
+	// support tuning it. Empty means unset (provider default). Valid values
+	// are "", "low", "medium", "high", "xhigh", "max" — enforced at the API
+	// layer (see handlers/agents.go). Currently honored by the claude
+	// provider (--effort) and codex_cli (model_reasoning_effort config
+	// override, with xhigh/max clamped down to high). Other providers
+	// ignore it. See providers/effort.go.
+	Effort string
 }
 
 // Provider is the interface all agent backends must satisfy.

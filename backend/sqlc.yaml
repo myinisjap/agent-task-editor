@@ -55,6 +55,7 @@ sql:
       - "internal/storage/migrations/050_cost_warning.up.sql"
       - "internal/storage/migrations/051_intake_rules.up.sql"
       - "internal/storage/migrations/052_pr_review_state_cursors.up.sql"
+      - "internal/storage/migrations/053_effort.up.sql"
     gen:
       go:
         package: "gen"

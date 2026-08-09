@@ -4490,6 +4490,11 @@ export interface components {
              * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost so far (across every run for the task, any status). 0 disables the cap (unlimited). Default 0. If the task itself also has a nonzero max_cost_usd, the effective budget is the lower of the two. Providers with a mid-run cost watchdog (claude, always; qwen_code, when the configured model is priced) additionally enforce this as a kill switch: they project cost from incremental token usage as the run progresses and cancel an in-flight run that crosses the cap, escalating to waiting_human — this projection is an *estimate* via the pricing table, not the provider's own authoritative billed cost. Other providers (codex_cli, opencode, anthropic, llm) only block the *next* dispatch once the budget is already exhausted. See docs/agents.md#cost-budgets.
              */
             max_cost_usd: number;
+            /**
+             * @description Optional reasoning effort level. Empty string (default) leaves the provider's own default effort in place. Passed as claude's --effort flag (accepts exactly low/medium/high/xhigh/max — an unrecognized model or an organization-side restriction can make the CLI silently ignore it) and mapped to codex_cli's model_reasoning_effort config override (xhigh/max clamp down to high, since codex has no higher tier). Ignored by qwen_code, opencode, anthropic, and llm. See docs/agents.md#effort.
+             * @enum {string}
+             */
+            effort: "" | "low" | "medium" | "high" | "xhigh" | "max";
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
