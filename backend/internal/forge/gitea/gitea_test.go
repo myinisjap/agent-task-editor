@@ -299,10 +299,19 @@ func TestPRHead_NoPR_BranchPushed(t *testing.T) {
 
 func TestPRReviews_MapsRequestChangesToChangesRequested(t *testing.T) {
 	g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, 200, []map[string]any{
-			{"id": 1, "state": "REQUEST_CHANGES", "body": "please fix", "submitted_at": "2026-01-01T00:00:00Z", "user": map[string]any{"login": "alice"}},
-			{"id": 2, "state": "APPROVED", "body": "lgtm", "submitted_at": "2026-01-02T00:00:00Z", "user": map[string]any{"login": "bob"}},
-		})
+		switch {
+		case strings.Contains(r.URL.Path, "/reviews"):
+			writeJSON(t, w, 200, []map[string]any{
+				{"id": 1, "state": "REQUEST_CHANGES", "body": "please fix", "submitted_at": "2026-01-01T00:00:00Z", "user": map[string]any{"login": "alice"}},
+				{"id": 2, "state": "APPROVED", "body": "lgtm", "submitted_at": "2026-01-02T00:00:00Z", "user": map[string]any{"login": "bob"}},
+			})
+		case strings.Contains(r.URL.Path, "/collaborators/alice"):
+			w.WriteHeader(204)
+		case strings.Contains(r.URL.Path, "/collaborators/bob"):
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 	})
 	reviews, err := g.PRReviews(t.Context(), "owner/repo", 5)
 	if err != nil {
@@ -314,17 +323,30 @@ func TestPRReviews_MapsRequestChangesToChangesRequested(t *testing.T) {
 	if reviews[0].State != "CHANGES_REQUESTED" || reviews[0].Author != "alice" {
 		t.Errorf("review[0] = %+v", reviews[0])
 	}
+	if reviews[0].AuthorAssociation != "COLLABORATOR" {
+		t.Errorf("review[0].AuthorAssociation = %q, want COLLABORATOR", reviews[0].AuthorAssociation)
+	}
 	if reviews[1].State != "APPROVED" {
 		t.Errorf("review[1] = %+v", reviews[1])
+	}
+	if reviews[1].AuthorAssociation != "NONE" {
+		t.Errorf("review[1].AuthorAssociation = %q, want NONE", reviews[1].AuthorAssociation)
 	}
 }
 
 func TestPRReviewComments_MapsSideFromSignedLine(t *testing.T) {
 	g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, 200, []map[string]any{
-			{"id": 100, "path": "main.go", "line": 42, "diff_hunk": "@@ -1,2 +1,2 @@", "commit_id": "abc", "body": "fix this", "created_at": "2026-01-01T00:00:00Z", "user": map[string]any{"login": "alice"}},
-			{"id": 101, "path": "main.go", "line": -7, "diff_hunk": "@@ -1,2 +1,2 @@", "commit_id": "abc", "body": "old side", "created_at": "2026-01-01T00:00:00Z", "user": map[string]any{"login": "alice"}},
-		})
+		switch {
+		case strings.Contains(r.URL.Path, "/comments"):
+			writeJSON(t, w, 200, []map[string]any{
+				{"id": 100, "path": "main.go", "line": 42, "diff_hunk": "@@ -1,2 +1,2 @@", "commit_id": "abc", "body": "fix this", "created_at": "2026-01-01T00:00:00Z", "user": map[string]any{"login": "alice"}},
+				{"id": 101, "path": "main.go", "line": -7, "diff_hunk": "@@ -1,2 +1,2 @@", "commit_id": "abc", "body": "old side", "created_at": "2026-01-01T00:00:00Z", "user": map[string]any{"login": "alice"}},
+			})
+		case strings.Contains(r.URL.Path, "/collaborators/alice"):
+			w.WriteHeader(204)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 	})
 	comments, err := g.PRReviewComments(t.Context(), "owner/repo", 5)
 	if err != nil {
@@ -336,8 +358,14 @@ func TestPRReviewComments_MapsSideFromSignedLine(t *testing.T) {
 	if comments[0].Side != "RIGHT" || comments[0].Line != 42 {
 		t.Errorf("comment[0] = %+v", comments[0])
 	}
+	if comments[0].AuthorAssociation != "COLLABORATOR" {
+		t.Errorf("comment[0].AuthorAssociation = %q, want COLLABORATOR", comments[0].AuthorAssociation)
+	}
 	if comments[1].Side != "LEFT" || comments[1].Line != 7 {
 		t.Errorf("comment[1] = %+v", comments[1])
+	}
+	if comments[1].AuthorAssociation != "COLLABORATOR" {
+		t.Errorf("comment[1].AuthorAssociation = %q, want COLLABORATOR (memoized, same author as comment[0])", comments[1].AuthorAssociation)
 	}
 }
 

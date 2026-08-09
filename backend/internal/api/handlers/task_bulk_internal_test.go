@@ -24,6 +24,7 @@ func TestBulkErrorMessage(t *testing.T) {
 		{"gate required", workflow.ErrGateRequired, "transition requires human approval"},
 		{"agent ignored", workflow.ErrAgentIgnored, "destination label is ignored by agents"},
 		{"stale", workflow.ErrStale, "task label changed concurrently; refresh and retry"},
+		{"run live", errRunLive, errRunLive.Error()},
 		{"unrecognized error falls back to Error()", errors.New("boom"), "boom"},
 	}
 	for _, tc := range cases {

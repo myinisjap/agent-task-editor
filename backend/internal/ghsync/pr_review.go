@@ -22,6 +22,24 @@ import (
 // would not be.
 const checkPollFloor = 5 * time.Minute
 
+// trustedAssociation reports whether a forge author_association value means
+// the author has write access to the repo, and so may put text in front of
+// an agent as an instruction it will treat as trusted. Mirrors
+// tasksource.mapIssueComments' identical filter for issue comments (#331).
+// Empty/unknown values are untrusted by design — a forge implementation that
+// hasn't populated AuthorAssociation goes silent (fail closed) rather than
+// letting arbitrary PR commenters/reviewers reach the trusted OPEN REVIEW
+// COMMENTS / FEEDBACK FROM PRIOR REVIEW prompt regions, which — combined with
+// pr_review_auto_transition_enabled — could otherwise re-dispatch the agent
+// on attacker-controlled instructions with no human in the loop.
+func trustedAssociation(assoc string) bool {
+	switch strings.ToUpper(strings.TrimSpace(assoc)) {
+	case "OWNER", "MEMBER", "COLLABORATOR":
+		return true
+	}
+	return false
+}
+
 // ingestPRFeedback checks a task's PR for new changes-requested reviews,
 // inline review comments, failed GHA checks, and merge conflicts with the base
 // branch since the last sweep, and surfaces them to the agent:
@@ -30,8 +48,15 @@ const checkPollFloor = 5 * time.Minute
 //     existing OPEN REVIEW COMMENTS prompt section and resolve loop.
 //   - changes_requested review bodies, failed check names/links, and a
 //     base-branch merge conflict (no anchor) are appended to the current run's
-//     Feedback column, rendered under the FEEDBACK FROM PRIOR REVIEW: prompt
-//     section.
+//     Feedback column, rendered under the FEEDBACK FROM PRIOR REVIEW:
+//     prompt section.
+//
+// Both of the above are gated on trustedAssociation: a review or inline
+// comment from an author without OWNER/MEMBER/COLLABORATOR access is dropped
+// entirely rather than ingested, matching tasksource's treatment of issue
+// comments (#331) — otherwise an outside contributor could put arbitrary
+// text in front of the agent as if it were trusted maintainer feedback,
+// including on a public repo with no write access of their own.
 //
 // head is the already-fetched forge.PRHead for this task's PR (see syncTask —
 // #340 folded what used to be two near-identical forge calls, getPR and
@@ -182,8 +207,10 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 }
 
 // ingestReviews fetches PR reviews and returns feedback text for every
-// changes_requested review submitted after the stored cursor. Advances the
-// cursor (state.LastReviewSubmittedAt) to the newest review's timestamp seen.
+// changes_requested review submitted after the stored cursor, from an author
+// with write access to the repo (see trustedAssociation). Advances the
+// cursor (state.LastReviewSubmittedAt) to the newest review's timestamp seen
+// — including untrusted ones (see below).
 //
 // The cursor is a single timestamp watermark, not a per-review-id set: it
 // cannot distinguish two reviews submitted in the same second (the earlier
@@ -197,9 +224,18 @@ func (s *Syncer) ingestPRFeedback(ctx context.Context, task gen.Task, repo repoI
 // run's feedback on every push, since the reset made lastSeen == "" and the
 // filter below (`<= lastSeen`) then excluded nothing (#340).
 //
+// An untrusted-author review still advances the cursor even though its body
+// is dropped: without this, the same untrusted review would be re-examined
+// (and re-logged) on every sweep forever, and — because the cursor is a
+// single watermark, not a per-id set — leaving it unadvanced could also let
+// it improperly compare against/mask a later trusted review sharing an
+// identical or earlier timestamp. So the timestamp advance and the
+// trust-filtered feedback-body append are two independent decisions made in
+// the same loop pass, not coupled.
+//
 // Returns ok=false if the fetch itself failed (so the caller can avoid
 // advancing the "PR changed" cursor and retry next sweep), and the feedback
-// text for any newly-surfaced changes_requested reviews.
+// text for any newly-surfaced, trusted-author changes_requested reviews.
 func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, state *gen.TaskPrReviewState, log *slog.Logger) (ok bool, parts []string) {
 	if s.getReviews == nil {
 		return true, nil
@@ -223,14 +259,19 @@ func (s *Syncer) ingestReviews(ctx context.Context, task gen.Task, repo repoInfo
 		if r.SubmittedAt == "" || r.SubmittedAt <= lastSeen {
 			continue
 		}
+		if r.SubmittedAt > newest {
+			newest = r.SubmittedAt
+		}
+		if !trustedAssociation(r.AuthorAssociation) {
+			log.Info("ghsync: skipping changes-requested review from author without write access",
+				"author", r.Author, "author_association", r.AuthorAssociation)
+			continue
+		}
 		body := strings.TrimSpace(r.Body)
 		if body == "" {
 			body = "(no summary provided)"
 		}
 		parts = append(parts, fmt.Sprintf("GitHub review — changes requested by %s:\n%s", authorOrUnknown(r.Author), body))
-		if r.SubmittedAt > newest {
-			newest = r.SubmittedAt
-		}
 	}
 	if newest != lastSeen {
 		state.LastReviewSubmittedAt = &newest
@@ -252,7 +293,13 @@ const (
 // ingestReviewComments fetches inline PR review comments and inserts any not
 // already ingested (deduped by external_id) into task_review_comments,
 // tagged with the source forge's name (see reviewCommentSourceName —
-// "github", "gitea", ...).
+// "github", "gitea", ...). Comments from an author without write access to
+// the repo (see trustedAssociation) are dropped entirely rather than
+// inserted (#331) — they would otherwise flow into the trusted OPEN REVIEW
+// COMMENTS prompt section as if a maintainer had left them. There is no
+// cursor for review comments (dedup is by external_id, not a timestamp
+// watermark), so skipping an untrusted comment is a plain, idempotent no-op:
+// it is simply never inserted, on this sweep or any later one.
 func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo repoInfo, prNumber int, log *slog.Logger) commentFetchResult {
 	if s.getReviewComments == nil {
 		return commentFetchNoChange
@@ -268,6 +315,11 @@ func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo r
 	inserted := false
 	for _, c := range comments {
 		if c.Path == "" || c.ID == "" {
+			continue
+		}
+		if !trustedAssociation(c.AuthorAssociation) {
+			log.Info("ghsync: skipping review comment from author without write access",
+				"external_id", c.ID, "author", c.Author, "author_association", c.AuthorAssociation)
 			continue
 		}
 		if _, err := s.q.GetTaskReviewCommentByExternalID(ctx, gen.GetTaskReviewCommentByExternalIDParams{

@@ -354,7 +354,8 @@ you have a specific need.
 
 The issue thread is where clarification usually happens *before* work starts,
 and it was previously invisible: PR review comments are ingested (see the
-section below), but nothing ever read the source issue. With
+section below, which is subject to the same write-access filter as this one),
+but nothing ever read the source issue. With
 `issue_comment_sync_enabled`, each sweep reads the issue's comments into
 `task_source_comments` (deduped by GitHub comment id), shows them on the task
 detail page, and renders them into the agent's prompt under a
@@ -512,6 +513,25 @@ On every sweep, for each task with a resolved PR number, the syncer:
    so it never clobbers a note a human already left via Reject. This is the
    same column rendered under the `FEEDBACK FROM PRIOR REVIEW:` prompt
    section on the run's next dispatch.
+
+**Write access only.** Both inline review comments (step 1) and reviews (step
+2) are ingested only from an author whose GitHub `author_association` is
+`OWNER`, `MEMBER`, or `COLLABORATOR` — exactly the same filter, for exactly
+the same reason, as [Issue comment ingestion](#issue-comment-ingestion)
+above. An outside contributor can comment on (or request changes on) any
+public repo's PR without write access to it; without this filter, that text
+would land verbatim in the `OPEN REVIEW COMMENTS` / `FEEDBACK FROM PRIOR
+REVIEW:` prompt sections — regions the agent is explicitly told to treat as
+trusted instructions to act on — and, with `pr_review_auto_transition_enabled`
+also on, could re-dispatch the agent against that content with no human in
+the loop. Feedback and comments from authors without write access are
+**dropped entirely, not fenced**: they never reach `task_review_comments` or
+the run's `Feedback` column at all. Each drop is logged
+(`ghsync: skipping ... from author without write access`) so an operator can
+see why expected feedback didn't show up. Gitea, which has no
+`author_association`-equivalent API field, derives the same COLLABORATOR/NONE
+classification via a per-author collaborator-status check, mirroring how it
+already does this for issue comments.
 
 ### Tracking / fresh-cycle-on-push
 

@@ -232,17 +232,31 @@ active-run lock moves to the new run. `dispatch()` and `DispatchReply` share
 ## Review Comment Feedback Loop
 
 Humans leave persistent, file/line-anchored review comments on a task's diff
-(`task_review_comments`, managed via `/tasks/{id}/review-comments`). The
-dispatcher loads the task's **open** comments into
-`RunInput.OpenReviewComments`; `buildPrompt` renders them (with `comment_id`s)
-under `"OPEN REVIEW COMMENTS"`, so every provider sees them on every run until
-resolved. CLI providers with the MCP sidecar (`claude`, `qwen_code`,
-`codex_cli`) expose a
+(`task_review_comments`, managed via `/tasks/{id}/review-comments`). Forge
+(GitHub/Gitea) inline PR review comments land in the same table via
+`ghsync.ingestReviewComments`, tagged with `source` — but only from an author
+with write access to the repo (`OWNER`/`MEMBER`/`COLLABORATOR`); an author
+without it is dropped entirely at ingestion time and never reaches this
+table, because this whole section renders as trusted, "address every one"
+content (see #331 and `docs/task-sources.md`'s "PR review / GitHub Actions
+feedback ingestion" section). The dispatcher loads the task's **open**
+comments into `RunInput.OpenReviewComments`; `buildPrompt` renders them (with
+`comment_id`s) under `"OPEN REVIEW COMMENTS"`, so every provider sees them on
+every run until resolved — stripping any occurrence of the
+`>>>END UNTRUSTED SOURCE COMMENTS` marker from each comment's body/quoted
+text first (defence in depth alongside the write-access filter above; see
+"Source Issue Comments" below for why the marker matters). CLI providers with
+the MCP sidecar (`claude`, `qwen_code`, `codex_cli`) expose a
 `resolve_comment(comment_id, note)` tool; the sidecar accumulates resolutions
 in the result file and the pool applies them to the DB **only when the run
 completes successfully** (a failed run's claimed fixes never reached the
 branch), then publishes `task.review_comments_changed`. Humans can also
 resolve/reopen comments directly in the UI.
+
+PR review bodies (`CHANGES_REQUESTED` reviews, ingested by
+`ghsync.ingestReviews`) land in `RunInput.Feedback` instead, rendered under
+`"FEEDBACK FROM PRIOR REVIEW:"` — the same write-access filter and end-marker
+stripping apply there too.
 
 ## Source Issue Comments (Untrusted)
 
