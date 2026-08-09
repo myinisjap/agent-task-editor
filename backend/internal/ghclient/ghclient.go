@@ -325,7 +325,9 @@ func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 type Review = forge.Review
 
 // GetPRReviews returns all reviews submitted on the given PR, in the order
-// GitHub returns them (oldest first).
+// GitHub returns them (oldest first). Populates Review.AuthorAssociation
+// from GitHub's authorAssociation field so ghsync can filter out feedback
+// from authors without write access (see #331).
 func GetPRReviews(ctx context.Context, repoName string, prNumber int) ([]Review, error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_reviews").Inc()
 	cmd := runGH(ctx, "pr", "view", fmt.Sprint(prNumber),
@@ -344,7 +346,8 @@ func GetPRReviews(ctx context.Context, repoName string, prNumber int) ([]Review,
 			Author struct {
 				Login string `json:"login"`
 			} `json:"author"`
-			SubmittedAt string `json:"submittedAt"`
+			SubmittedAt       string `json:"submittedAt"`
+			AuthorAssociation string `json:"authorAssociation"`
 		} `json:"reviews"`
 	}
 	if err := json.Unmarshal(out, &payload); err != nil {
@@ -353,11 +356,12 @@ func GetPRReviews(ctx context.Context, repoName string, prNumber int) ([]Review,
 	reviews := make([]Review, 0, len(payload.Reviews))
 	for _, r := range payload.Reviews {
 		reviews = append(reviews, Review{
-			ID:          r.ID,
-			State:       strings.ToUpper(r.State),
-			Body:        r.Body,
-			Author:      r.Author.Login,
-			SubmittedAt: r.SubmittedAt,
+			ID:                r.ID,
+			State:             strings.ToUpper(r.State),
+			Body:              r.Body,
+			Author:            r.Author.Login,
+			SubmittedAt:       r.SubmittedAt,
+			AuthorAssociation: strings.ToUpper(r.AuthorAssociation),
 		})
 	}
 	return reviews, nil
@@ -371,6 +375,9 @@ type PRReviewComment = forge.PRReviewComment
 
 // GetPRReviewComments returns all inline review comments left on the given
 // PR's diff, across all reviews. Paginates through the full result set.
+// Populates PRReviewComment.AuthorAssociation from GitHub's
+// author_association field so ghsync can filter out feedback from authors
+// without write access (see #331).
 func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]PRReviewComment, error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_review_comments").Inc()
 	cmd := runGH(ctx, "api",
@@ -399,7 +406,8 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 			User      struct {
 				Login string `json:"login"`
 			} `json:"user"`
-			CreatedAt string `json:"created_at"`
+			CreatedAt         string `json:"created_at"`
+			AuthorAssociation string `json:"author_association"`
 		}
 		if err := dec.Decode(&page); err != nil {
 			return nil, err
@@ -414,16 +422,17 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 				startLine = *c.StartLine
 			}
 			comments = append(comments, PRReviewComment{
-				ID:        fmt.Sprint(c.ID),
-				Path:      c.Path,
-				Line:      line,
-				StartLine: startLine,
-				Side:      c.Side,
-				Body:      c.Body,
-				DiffHunk:  c.DiffHunk,
-				CommitID:  c.CommitID,
-				Author:    c.User.Login,
-				CreatedAt: c.CreatedAt,
+				ID:                fmt.Sprint(c.ID),
+				Path:              c.Path,
+				Line:              line,
+				StartLine:         startLine,
+				Side:              c.Side,
+				Body:              c.Body,
+				DiffHunk:          c.DiffHunk,
+				CommitID:          c.CommitID,
+				Author:            c.User.Login,
+				CreatedAt:         c.CreatedAt,
+				AuthorAssociation: c.AuthorAssociation,
 			})
 		}
 	}
