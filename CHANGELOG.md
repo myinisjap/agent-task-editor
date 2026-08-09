@@ -465,6 +465,23 @@ triggers the "Release" workflow the same way.
   `conn.Read` forever and the browser showed a frozen terminal with no
   error; `Attach` now closes the WebSocket as soon as the process exits, so
   the read pump unblocks and the client sees the session end.
+- **Agent log view no longer dumps raw JSON for newer Claude Code CLI
+  `system` events.** The log parser's "hide SDK noise" check
+  (`frontend/src/lib/parseAgentLog.ts`) was a double negative that reduced
+  to only ever hiding `thinking`/`thinking_tokens`, so any other `system`
+  subtype fell through every known-shape check and hit the raw-JSON
+  fallback — visible in the Logs tab as verbatim NDJSON lines like
+  `{"type":"system","subtype":"vcs_state_changed",...}` interleaved between
+  normal tool-call/assistant rows. `vcs_state_changed` and
+  `code_change_published` (a VCS push and a published PR/MR) now render as
+  readable `system_event` summaries, e.g. "Version control · push ·
+  <branch>" and "Published code change · owner/repo#391"; any other/future
+  `system` subtype is humanised from its name instead of ever falling back
+  to raw JSON, so this class of bug can't recur for the next new CLI
+  subtype. Backend behaviour (passing the raw stream-json line through) is
+  unchanged — this was purely a frontend display-shaping bug, and it
+  retroactively cleans up historical runs' logs too since they replay
+  through the same parser.
 
 ### Changed
 - **Compose now publishes on `127.0.0.1` by default instead of all
