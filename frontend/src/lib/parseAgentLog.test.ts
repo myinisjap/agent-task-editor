@@ -378,3 +378,93 @@ describe('parseLogContent — background task lifecycle', () => {
     expect(summaryPart.endsWith('…')).toBe(true)
   })
 })
+
+describe('parseLogContent — new claude code system subtypes (regression: raw JSON leak)', () => {
+  it('formats a vcs_state_changed event on stdout (the path the backend actually produces)', () => {
+    const content = JSON.stringify({
+      type: 'system',
+      subtype: 'vcs_state_changed',
+      kind: 'push',
+      branch: 'agent/improve-logs',
+      commit: 'abc1234',
+      repo: 'myinisjap/agent-task-editor',
+      session_id: '6f5cbe56-aaaa-bbbb-cccc-000000000000',
+    })
+    const parsed = parseLogContent('stdout', content)
+    expect(parsed.kind).toBe('system_event')
+    if (parsed.kind !== 'system_event') return
+    expect(parsed.event.startsWith('{')).toBe(false)
+    expect(parsed.event).not.toContain('session_id')
+    expect(parsed.event).not.toContain('6f5cbe56')
+    expect(parsed.event).toContain('push')
+    expect(parsed.event).toContain('agent/improve-logs')
+    expect(parsed.detail ?? '').not.toContain('session_id')
+  })
+
+  it('formats a code_change_published event on stdout, surfacing the PR reference', () => {
+    const content = JSON.stringify({
+      type: 'system',
+      subtype: 'code_change_published',
+      provider: 'github',
+      url: 'https://github.com/myinisjap/agent-task-editor/pull/391',
+      repo: 'myinisjap/agent-task-editor',
+      session_id: '6f5cbe56-aaaa-bbbb-cccc-000000000000',
+    })
+    const parsed = parseLogContent('stdout', content)
+    expect(parsed.kind).toBe('system_event')
+    if (parsed.kind !== 'system_event') return
+    expect(parsed.event.startsWith('{')).toBe(false)
+    expect(parsed.event).toContain('myinisjap/agent-task-editor#391')
+    expect(parsed.event).not.toContain('session_id')
+    expect(parsed.detail).toBe('https://github.com/myinisjap/agent-task-editor/pull/391')
+  })
+
+  it('never emits raw JSON for an unrecognised system subtype — humanises it instead', () => {
+    const content = JSON.stringify({
+      type: 'system',
+      subtype: 'some_future_event',
+      foo: 'bar',
+      session_id: 'sess-x',
+    })
+    const parsed = parseLogContent('stdout', content)
+    expect(parsed.kind).not.toBe('raw')
+    expect(parsed.kind).toBe('system_event')
+    if (parsed.kind !== 'system_event') return
+    expect(parsed.event.startsWith('{')).toBe(false)
+    expect(parsed.event).toBe('Some future event')
+  })
+
+  it('never emits raw JSON for an unrecognised system subtype on type "system"', () => {
+    const content = JSON.stringify({ type: 'system', subtype: 'another_new_thing' })
+    const parsed = parseLogContent('system', content)
+    expect(parsed.kind).not.toBe('raw')
+    expect(parsed.kind).toBe('system_event')
+  })
+
+  it('never emits raw JSON for an unrecognised system subtype on type "tool_call"', () => {
+    const content = JSON.stringify({ type: 'system', subtype: 'yet_another_thing' })
+    const parsed = parseLogContent('tool_call', content)
+    expect(parsed.kind).not.toBe('raw')
+    expect(parsed.kind).toBe('system_event')
+  })
+
+  it('still hides thinking by default and reveals it under debug (existing behaviour preserved)', () => {
+    const thinking = JSON.stringify({ type: 'system', subtype: 'thinking', thinking: 'noise' })
+    expect(parseLogContent('stdout', thinking).kind).toBe('hidden')
+    expect(parseLogContent('stdout', thinking, true).kind).not.toBe('hidden')
+  })
+
+  it('still formats system init correctly (existing behaviour preserved)', () => {
+    const init = JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-opus-4',
+      tools: ['Read'],
+      session_id: 'sess-1',
+    })
+    const parsed = parseLogContent('stdout', init)
+    expect(parsed.kind).toBe('system_event')
+    if (parsed.kind !== 'system_event') return
+    expect(parsed.event).toContain('Session started')
+  })
+})

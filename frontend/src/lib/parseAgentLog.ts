@@ -305,6 +305,58 @@ function parseSystemInit(obj: Record<string, unknown>): ParsedLog {
   return { kind: 'system_event', event, detail }
 }
 
+/** Humanise a snake_case subtype into a short, sentence-cased label. */
+function humaniseSubtype(subtype: string): string {
+  const words = subtype.split('_').filter(Boolean)
+  if (words.length === 0) return 'Event'
+  return words.map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w)).join(' ')
+}
+
+/**
+ * Parse any `type: "system"` event into a readable summary.
+ *
+ * Handles the subtypes we know about explicitly (vcs_state_changed,
+ * code_change_published) and falls back to a humanised version of the
+ * subtype for anything else, so a new/unrecognised CLI subtype never
+ * falls through to a raw JSON dump.
+ */
+function parseSystemEvent(obj: Record<string, unknown>): ParsedLog {
+  const subtype = (obj.subtype as string | undefined) ?? ''
+
+  if (subtype === 'vcs_state_changed') {
+    const kind = (obj.kind as string | undefined) ?? ''
+    const branch = (obj.branch as string | undefined) ?? undefined
+    const commit = (obj.commit as string | undefined) ?? undefined
+    const repo = (obj.repo as string | undefined) ?? undefined
+    const parts = ['Version control']
+    if (kind) parts.push(kind)
+    if (branch) parts.push(branch)
+    const event = parts.join(' · ')
+    const detailParts: string[] = []
+    if (repo) detailParts.push(`repo: ${repo}`)
+    if (commit) detailParts.push(`commit: ${commit}`)
+    return { kind: 'system_event', event, detail: detailParts.length > 0 ? detailParts.join(' · ') : undefined }
+  }
+
+  if (subtype === 'code_change_published') {
+    const url = (obj.url ?? obj.pr_url ?? obj.link) as string | undefined
+    const repo = (obj.repo as string | undefined) ?? undefined
+    // Extract "owner/repo#123" from a PR/MR URL like ".../pull/391" or ".../merge_requests/391"
+    let ref = ''
+    if (url) {
+      const m = url.match(/\/(?:pull|merge_requests|pulls)\/(\d+)/)
+      if (m) ref = `#${m[1]}`
+    }
+    const label = repo ? `${repo}${ref}` : ref || undefined
+    const event = label ? `Published code change · ${label}` : 'Published code change'
+    return { kind: 'system_event', event, detail: url ?? undefined }
+  }
+
+  // Generic fallback: never emit raw JSON for an unrecognised system subtype.
+  const event = subtype ? humaniseSubtype(subtype) : 'System event'
+  return { kind: 'system_event', event }
+}
+
 /** Parse a background task lifecycle event (task_started / task_notification) */
 function parseTaskLifecycle(obj: Record<string, unknown>): ParsedLog | null {
   const subtype = obj.subtype as string | undefined
@@ -348,8 +400,8 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
     // stdout might be raw SDK JSON blobs (e.g. {"type":"user",...}) — try to parse them
     const obj = tryJson(content) as Record<string, unknown> | null
     if (obj) {
-      // ponytail: hide all SDK system events (thinking_tokens, thinking, etc) — noise
-      if (obj.type === 'system' && !(debug || !HIDDEN_SUBTYPES.has(obj.subtype as string))) return { kind: 'hidden' }
+      // ponytail: hide known debug-noise SDK system subtypes (thinking_tokens, thinking) unless debug is on
+      if (obj.type === 'system' && HIDDEN_SUBTYPES.has(obj.subtype as string) && !debug) return { kind: 'hidden' }
       if (obj.type === 'system' && obj.subtype === 'init') return parseSystemInit(obj)
       if (obj.type === 'system' && (obj.subtype === 'task_started' || obj.subtype === 'task_notification')) {
         const lifecycle = parseTaskLifecycle(obj)
@@ -363,6 +415,9 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
         const r = parseResult(obj)
         if (r) return r
       }
+      // Any other system subtype (known or future/unrecognised) — render as a
+      // readable summary rather than falling through to raw JSON.
+      if (obj.type === 'system') return parseSystemEvent(obj)
     }
     return { kind: 'text', text: content }
   }
@@ -371,8 +426,8 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
     // Could be plain text or JSON event
     const obj = tryJson(content) as Record<string, unknown> | null
     if (obj) {
-      // ponytail: hide all SDK system events — noise
-      if (obj.type === 'system' && !(debug || !HIDDEN_SUBTYPES.has(obj.subtype as string))) return { kind: 'hidden' }
+      // ponytail: hide known debug-noise SDK system subtypes (thinking_tokens, thinking) unless debug is on
+      if (obj.type === 'system' && HIDDEN_SUBTYPES.has(obj.subtype as string) && !debug) return { kind: 'hidden' }
       if (obj.type === 'system' && obj.subtype === 'init') return parseSystemInit(obj)
       if (obj.type === 'system' && (obj.subtype === 'task_started' || obj.subtype === 'task_notification')) {
         const lifecycle = parseTaskLifecycle(obj)
@@ -382,6 +437,9 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
         const r = parseResult(obj)
         if (r) return r
       }
+      // Any other system subtype (known or future/unrecognised) — render as a
+      // readable summary rather than falling through to raw JSON.
+      if (obj.type === 'system') return parseSystemEvent(obj)
     }
     return { kind: 'system_event', event: content }
   }
@@ -398,6 +456,9 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
   if (obj.type === 'system' && HIDDEN_SUBTYPES.has(obj.subtype as string) && !debug) {
     return { kind: 'hidden' }
   }
+
+  // system init
+  if (obj.type === 'system' && obj.subtype === 'init') return parseSystemInit(obj)
 
   // Background task lifecycle events (task_started / task_notification)
   if (obj.type === 'system' && (obj.subtype === 'task_started' || obj.subtype === 'task_notification')) {
@@ -427,6 +488,10 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
     const toolUseId = typeof obj.id === 'string' ? obj.id : undefined
     return { kind: 'tool_call', toolName, input, summary, toolUseId }
   }
+
+  // Any other system subtype (known or future/unrecognised) — render as a
+  // readable summary rather than falling through to raw JSON.
+  if (obj.type === 'system') return parseSystemEvent(obj)
 
   // Fallback: show content but truncated
   const truncated = content.length > 300 ? content.slice(0, 300) + '…' : content
