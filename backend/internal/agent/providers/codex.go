@@ -162,6 +162,14 @@ func buildCodexArgs(input agent.RunInput) []string {
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
 	}
+	if v, ok := codexReasoningEffort(input.AgentConfig.Effort); ok {
+		// codex has no --effort flag; reasoning effort is a `-c` config
+		// override. codex only accepts minimal|low|medium|high — xhigh/max
+		// (which codex has no equivalent tier for) are clamped down to
+		// "high" by codexReasoningEffort rather than passed through
+		// unrecognized. See effort.go.
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", v))
+	}
 	// codex resumes via a `resume <id>` subcommand inserted after `exec`, not an
 	// appendable --resume flag like every other provider. Flags above still apply.
 	if input.ResumeSessionID != "" {

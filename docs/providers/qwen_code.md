@@ -99,6 +99,12 @@ The CLI's stream-json result message carries a `session_id`, which the runner re
 
 Pass `model` on the referenced [Provider Config](../agents.md#provider-configs). It is passed via `--model <model>` to the CLI.
 
+## Effort
+
+**Not supported.** The qwen CLI has no reasoning-effort flag or config
+knob; the agent config's `effort` field is ignored for this provider. See
+[agents.md § Effort](../agents.md#effort).
+
 ## Fallback Outcome Parsing
 
 Like the `claude` provider, if the agent completes without calling `signal_complete`, the runner scans the final result text for `OUTCOME: success` or `OUTCOME: failure` as a fallback.

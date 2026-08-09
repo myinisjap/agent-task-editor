@@ -49,6 +49,7 @@ export default function AgentConfigForm({
   const costWatchdogCap = getCapability(providerStr, 'costWatchdog')
   const labelTransitionsCap = getCapability(providerStr, 'labelTransitions')
   const maxTurnsCap = getCapability(providerStr, 'maxTurns')
+  const effortCap = getCapability(providerStr, 'effort')
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -151,6 +152,26 @@ export default function AgentConfigForm({
           {form.max_turns > 0 && providerStr && maxTurnsCap.support !== 'full' && (
             <p className="mt-1 text-xs text-amber-400">
               ⚠️ {maxTurnsCap.note ?? `Max turns is not enforced for the ${providerStr} provider.`}
+            </p>
+          )}
+        </Field>
+
+        <Field label="Effort" hint="Higher effort = more reasoning, higher cost and latency. Leave as Default to use the provider's own default.">
+          <select
+            value={form.effort ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, effort: e.target.value as FormState['effort'] }))}
+            className="input"
+          >
+            <option value="">Default</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="xhigh">Extra high</option>
+            <option value="max">Max</option>
+          </select>
+          {form.effort && providerStr && effortCap.support !== 'full' && (
+            <p className="mt-1 text-xs text-amber-400">
+              ⚠️ {effortCap.note ?? `Effort is not supported for the ${providerStr} provider — this setting will be ignored.`}
             </p>
           )}
         </Field>

@@ -59,6 +59,12 @@ Pass `model` on the referenced [Provider Config](../agents.md#provider-configs).
 
 To see available models: `opencode models` (the UI calls `GET /api/v1/agents/models?provider=opencode` which runs this command).
 
+## Effort
+
+**Not supported.** The opencode CLI has no reasoning-effort flag or config
+knob; the agent config's `effort` field is ignored for this provider. See
+[agents.md § Effort](../agents.md#effort).
+
 ## Image Attachments
 
 **Not wired up.** `opencode run` has an `-f`/`--file` flag for attaching files to the

@@ -21,6 +21,7 @@ function baseForm(overrides: Partial<FormState> = {}): FormState {
     retry_backoff_secs: 30,
     priority: 0,
     max_cost_usd: 0,
+    effort: '',
     resume_sessions: true,
     subtasks_enabled: false,
     max_subtasks: 10,
@@ -94,5 +95,29 @@ describe('AgentConfigForm max_turns capability warning', () => {
     renderForm(form, [providerConfig('pc-codex', 'codex_cli')])
 
     expect(screen.queryByText(/turn-cap flag/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('AgentConfigForm effort capability warning', () => {
+  it('does not warn on claude, which has full effort support', () => {
+    const form = baseForm({ provider_config_id: 'pc-claude', effort: 'high' })
+    renderForm(form, [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.getByText('Effort')).toBeInTheDocument()
+    expect(screen.queryByText(/will be ignored/i)).not.toBeInTheDocument()
+  })
+
+  it('warns when effort is set on qwen_code, which does not support it', () => {
+    const form = baseForm({ provider_config_id: 'pc-qwen', effort: 'medium' })
+    renderForm(form, [providerConfig('pc-qwen', 'qwen_code')])
+
+    expect(screen.getByText(/no reasoning-effort flag on the qwen CLI/i)).toBeInTheDocument()
+  })
+
+  it('does not warn when effort is unset ("")', () => {
+    const form = baseForm({ provider_config_id: 'pc-qwen', effort: '' })
+    renderForm(form, [providerConfig('pc-qwen', 'qwen_code')])
+
+    expect(screen.queryByText(/no reasoning-effort flag/i)).not.toBeInTheDocument()
   })
 })

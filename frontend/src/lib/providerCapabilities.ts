@@ -24,6 +24,7 @@ export type Capability =
   | 'maxTurns'
   | 'sessionResume'
   | 'subtasks'
+  | 'effort'
 
 export type Support = 'full' | 'partial' | 'none'
 
@@ -75,6 +76,10 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     maxTurns: { support: 'full', note: 'Enforced via --max-turns. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
+    effort: {
+      support: 'full',
+      note: 'Passed as --effort. Supports low/medium/high/xhigh/max. Not all models support effort levels, and higher levels may be restricted by your Anthropic organization — either case degrades silently (the CLI only warns), so verify against the agent run logs.',
+    },
   },
   qwen_code: {
     taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
@@ -100,6 +105,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     maxTurns: { support: 'full', note: 'Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
+    effort: { support: 'none', note: 'No reasoning-effort flag on the qwen CLI — the field is ignored for this provider.' },
   },
   codex_cli: {
     taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
@@ -131,6 +137,10 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     sessionResume: { support: 'full', note: 'thread_id + codex exec resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
+    effort: {
+      support: 'partial',
+      note: 'Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high.',
+    },
   },
   anthropic: {
     taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
@@ -144,6 +154,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     maxTurns: { support: 'full', note: 'Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
+    effort: { support: 'none', note: 'Not implemented for this provider.' },
   },
   llm: {
     taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
@@ -157,6 +168,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     maxTurns: { support: 'full', note: 'Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying.' },
     sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
+    effort: { support: 'none', note: 'Not implemented for this provider.' },
   },
   opencode: {
     taskEditorTools: {
@@ -182,6 +194,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     maxTurns: { support: 'none', note: 'Not enforced — the opencode CLI has no turn-cap flag.' },
     sessionResume: { support: 'full', note: 'sessionID + --session.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
+    effort: { support: 'none', note: 'No reasoning-effort flag on the opencode CLI — the field is ignored for this provider.' },
   },
 }
 
