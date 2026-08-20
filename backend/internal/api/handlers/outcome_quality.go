@@ -276,7 +276,9 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID string) (out
 	// configAcc's tasksDone is the shared denominator for every rate below
 	// except escalation (see outcomeQualityConfigRow's doc comment): a task
 	// counts toward its *last* run's config, matching the existing
-	// avg_turns_to_done attribution convention in agentConfigStats. Rework's
+	// last-run attribution convention agentConfigStats still uses for its
+	// retry fields (avg_transient_retries, tasks_with_retries) - see that
+	// function's doc comment. Rework's
 	// numerator (reworkEvents) is the one exception - it is attributed to
 	// whichever config's run preceded the backward transition, which can
 	// differ from the task's last-run config (see the loop below) - but its

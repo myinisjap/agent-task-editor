@@ -199,8 +199,10 @@ func classifyResultMessage(raw map[string]json.RawMessage) agent.Classification 
 	return agent.ClassNone
 }
 
-// extractResultUsage parses the usage/total_cost_usd fields from a claude/qwen
-// CLI stream-json "result" message. Returns nil if neither field is present.
+// extractResultUsage parses the usage/total_cost_usd/num_turns fields from a
+// claude/qwen CLI stream-json "result" message. num_turns is the CLI's own
+// count of internal agent turns the run consumed, compared against the
+// configured max_turns cap. Returns nil if none of the fields are present.
 func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 	var parsed struct {
 		Usage *struct {
@@ -208,19 +210,26 @@ func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 			OutputTokens int64 `json:"output_tokens"`
 		} `json:"usage"`
 		TotalCostUSD *float64 `json:"total_cost_usd"`
+		NumTurns     *int64   `json:"num_turns"`
 	}
-	// usage/total_cost_usd live at the top level of the result envelope,
-	// alongside type/subtype/result.
+	// usage/total_cost_usd/num_turns live at the top level of the result
+	// envelope, alongside type/subtype/result.
 	if v, ok := raw["usage"]; ok {
 		_ = json.Unmarshal(v, &parsed.Usage)
 	}
 	if v, ok := raw["total_cost_usd"]; ok {
 		_ = json.Unmarshal(v, &parsed.TotalCostUSD)
 	}
-	if parsed.Usage == nil && parsed.TotalCostUSD == nil {
+	if v, ok := raw["num_turns"]; ok {
+		_ = json.Unmarshal(v, &parsed.NumTurns)
+	}
+	if parsed.Usage == nil && parsed.TotalCostUSD == nil && parsed.NumTurns == nil {
 		return nil
 	}
 	u := &runUsage{}
+	if parsed.NumTurns != nil {
+		u.Turns = *parsed.NumTurns
+	}
 	if parsed.Usage != nil {
 		u.InputTokens = parsed.Usage.InputTokens
 		u.OutputTokens = parsed.Usage.OutputTokens

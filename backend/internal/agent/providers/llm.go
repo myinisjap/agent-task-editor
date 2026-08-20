@@ -232,6 +232,7 @@ func (r *LLMRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- 
 		maxTurns = 50
 	}
 	for turn := 0; turn < maxTurns; turn++ {
+		acc.turns = int64(turn) + 1
 		resp, err := r.chatComplete(runCtx, input.AgentConfig.Model, messages)
 		if err != nil {
 			var rl *agent.ErrRateLimit

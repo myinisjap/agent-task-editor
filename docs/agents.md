@@ -19,7 +19,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
 | `timeout_secs` | Maximum run duration in seconds (0 = 600s default) |
-| `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default). Applies to `claude`, `qwen_code`, `anthropic`, and `llm` (see the capability table below — `codex_cli`/`opencode` don't enforce it). Hitting the cap **escalates the run to `waiting_human`** with an explanatory note rather than retrying — see [Retry Policy](#retry-policy) below. |
+| `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default). Applies to `claude`, `qwen_code`, `anthropic`, and `llm` (see the capability table below — `codex_cli`/`opencode` don't enforce it). Hitting the cap **escalates the run to `waiting_human`** with an explanatory note rather than retrying — see [Retry Policy](#retry-policy) below. To tune this against reality rather than guesswork, each run records the turns it actually used (`turns_used` on the run object, surfaced in the task's run history and aggregated per agent config on the Dashboard). |
 | `max_retries` | Number of automatic consecutive retries allowed for a task after a **transient** provider error (rate limit, network blip, upstream 5xx) before it's left `failed`/escalated to `waiting_human`. `0` disables auto-retry. Default `3`. See [Retry Policy](#retry-policy) below. |
 | `retry_backoff_secs` | Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (`base * 2^attempt`, capped at 10 minutes) is applied on top. Default `30`. |
 | `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
@@ -218,7 +218,13 @@ The Dashboard shows an aggregate total (tokens + cost) across all runs in a term
 
 The Dashboard also breaks cost/usage down further into a **per-agent-config
 performance table**: success rate (completed/failed/waiting_human counts),
-average and p90 run duration, average "turns to done" per task, a
+average and p90 run duration, average "runs per task" (how many `agent_runs`
+rows a done task needed under this config — a dispatch/retry-cycle count,
+*not* the internal LLM turns within a single run that `max_turns` caps),
+average and p90 *turns actually used* per run alongside the config's current
+`max_turns` cap (so an overly generous or too-tight cap is visible at a
+glance — averaged only over runs that reported a count; `codex_cli`/
+`opencode` report none and are excluded rather than counted as zero), a
 transient-retry snapshot, and tokens/cost — all grouped by `agent_config_id`
 instead of just `provider`, so you can compare individual agent configs
 against each other (e.g. "is opus-on-review worth it?") instead of only
@@ -227,12 +233,15 @@ comparing at the provider level. Same terminal-state + still-existing
 config was later deleted can't be attributed to any config, per-provider or
 per-config). Two known limitations apply here as well:
 
-- **Last-run attribution.** "Turns to done" and the retry snapshot are both
-  computed by attributing an entire task to the agent config of that task's
-  **last** run, not by proportionally splitting the task's history across
-  every config it passed through. If a task was retried under one agent
-  config and then finished by a different one, all of its turns/retries are
-  counted only against the config that finished it.
+- **Proportional split vs. last-run attribution.** "Runs per task" is a
+  proportional split: each done task contributes 1.0 "task credit" divided
+  across every agent config that ran on it, weighted by that config's share
+  of the task's total runs. A task retried twice under agent A and then
+  finished by agent B in one run gives A 2/3 of a task credit (and 2 runs)
+  and B 1/3 of a task credit (and 1 run) — so a config that only ever hands
+  work off to another config (e.g. a Worker whose tasks always finish under
+  a Reviewer) still shows up here. The retry snapshot, by contrast, is still
+  attributed entirely to the task's **last** run's agent config.
 - **Live, resettable retry snapshot.** The retry fields read
   `tasks.transient_retry_count` as it stands right now for tasks currently
   sitting on a terminal label. That counter resets to `0` on success or

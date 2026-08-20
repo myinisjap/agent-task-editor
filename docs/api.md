@@ -552,6 +552,7 @@ using the same matcher the importer/scheduler call at runtime.
 | `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`qwen_code`; estimated from tokens against the user-editable pricing table (falling back to an internal hardcoded table) for `anthropic`/`llm`; always `0` for `opencode`. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
 | `cost_unknown` | integer | `1` if tokens were consumed but no pricing table row matched the model, so `cost_usd` was left at `0` as a placeholder rather than a computed figure. `0` otherwise — including for `claude`/`qwen_code`, whose `cost_usd` (even a legitimate `0` under a Claude Max subscription) is always authoritative. |
 | `session_id` | string | Provider-side conversation session for this run (claude/qwen stream-json `session_id`); used to resume the session on a later run (see [agents.md § Session Resume](agents.md#session-resume)). Empty when the provider has no session |
+| `turns_used` | integer | Internal agent turns this run actually consumed, to compare against the agent config's `max_turns` cap. `0` means *not reported*, never "zero turns": only `claude`/`qwen_code` (from the CLI stream-json result event's `num_turns`) and `anthropic`/`llm` (from their own agentic loop counter) report a real count; `codex_cli`/`opencode` expose no comparable figure and always leave it `0`. The count is never estimated |
 
 ### `GET /tasks/{id}/runs`
 List a page of agent runs for a task (newest first) — cursor-paginated on
@@ -844,7 +845,10 @@ Returns aggregated statistics:
       "success_rate_percent": 83.3,
       "avg_duration_secs": 187.4,
       "p90_duration_secs": 412.0,
-      "avg_turns_to_done": 1.6,
+      "avg_turns_used": 14.2,
+      "p90_turns_used": 31.0,
+      "max_turns": 50,
+      "avg_runs_per_task": 1.6,
       "avg_transient_retries": 0.3,
       "tasks_with_retries": 4,
       "input_tokens": 512345,
@@ -892,19 +896,33 @@ Returns aggregated statistics:
   present in the database it aggregates: completed/failed/waiting_human
   counts and the resulting `success_rate_percent`; average and p90 run
   duration (`avg_duration_secs` / `p90_duration_secs`, seconds); average
-  "turns to done" per task (`avg_turns_to_done` — how many runs a task
-  needed before reaching a terminal label); a transient-retry snapshot
-  (`avg_transient_retries`, `tasks_with_retries`); and token/cost totals.
-  Only runs in a terminal state with a still-existing `agent_config_id` are
-  included — same filtering as `cost_by_provider` (a run whose agent config
-  was later deleted has `agent_config_id` set `NULL` and can no longer be
-  attributed to any config). Two important caveats:
-  1. **Last-run attribution**: `avg_turns_to_done`,
-     `avg_transient_retries`, and `tasks_with_retries` are all computed by
-     attributing a *whole task* to the agent config of that task's **last**
-     run, not by proportionally splitting the task across every config it
-     passed through. A task retried under agent A and then finished by
-     agent B has all of its turns/retries counted only toward B.
+  runs per task (`avg_runs_per_task` — how many `agent_runs` rows a done
+  task needed under this config before reaching a terminal label; note this
+  counts *dispatch/retry cycles*, not the internal LLM turns within a
+  single run that `max_turns` caps, which are reported separately as
+  `avg_turns_used`/`p90_turns_used` — see
+  [`docs/agents.md`](agents.md#agent-configuration) for that distinction);
+  average and p90 *internal agent turns* actually used per run
+  (`avg_turns_used` / `p90_turns_used`), alongside the config's current
+  `max_turns` cap, so the cap can be tuned against real usage rather than
+  guesswork. Both turn aggregates average only over runs that actually
+  reported a count: `claude`/`qwen_code` and `anthropic`/`llm` report one,
+  while `codex_cli`/`opencode` expose no comparable figure and are excluded
+  rather than counted as zero (see `turns_used` on the run object);
+  a transient-retry snapshot (`avg_transient_retries`, `tasks_with_retries`);
+  and token/cost totals. Only runs in a terminal state with a still-existing
+  `agent_config_id` are included — same filtering as `cost_by_provider` (a
+  run whose agent config was later deleted has `agent_config_id` set `NULL`
+  and can no longer be attributed to any config). Two important caveats:
+  1. **Proportional split vs. last-run attribution**: `avg_runs_per_task` is
+     a proportional split — each done task contributes 1.0 "task credit"
+     divided across every agent config that ran on it, weighted by that
+     config's share of the task's total runs. A task retried twice under
+     agent A and then finished by agent B in one run gives A 2/3 of a task
+     credit (and 2 runs) and B 1/3 of a task credit (and 1 run). The retry
+     fields (`avg_transient_retries`, `tasks_with_retries`), by contrast,
+     are still attributed entirely to the task's **last** run's agent
+     config.
   2. **Live, resettable retry snapshot**: the retry fields read
      `tasks.transient_retry_count` as it stands *right now* for tasks
      currently sitting on a terminal label. That counter resets to `0` on
@@ -988,7 +1006,8 @@ One row per agent config still present in the database:
   is the shared denominator for `avg_cost_to_done_usd`,
   `rework_rate_percent`, `human_touch_rate_percent`, and
   `avg_review_comments` — same last-run attribution convention as
-  `agent_config_stats.avg_turns_to_done`.
+  `agent_config_stats`'s retry fields (`avg_transient_retries`,
+  `tasks_with_retries`).
 - `avg_cost_to_done_usd` — average, across those tasks, of the **total**
   `cost_usd` recorded across every run of that task (including failed and
   mid-flight runs), from creation until it reached a terminal label. Same

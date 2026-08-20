@@ -19,6 +19,36 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Per-run turn tracking (`agent_runs.turns_used`).** Runs now record how
+  many internal agent turns they actually consumed, so the configured
+  `max_turns` cap can be tuned against reality instead of guesswork. The
+  count is only recorded where a provider genuinely reports one — `claude`
+  and `qwen_code` read it from the CLI stream-json result event's
+  `num_turns`, and `anthropic`/`llm` take it from their own agentic loop
+  counter; `codex_cli` and `opencode` expose no comparable figure and leave
+  it at 0 ("not reported"), which is never estimated. Surfaced on the API as
+  `AgentRun.turns_used`, in the task detail run history next to each run's
+  cost/token line, and aggregated per agent config on the dashboard as
+  `avg_turns_used`/`p90_turns_used` (averaged only over runs that reported a
+  count) alongside the config's current `max_turns` cap.
+
+### Changed
+- **Dashboard's "Avg turns/task" renamed to "Avg runs/task" and now split
+  proportionally across every contributing agent config.** The metric
+  (`agent_config_stats[].avg_turns_to_done` → `avg_runs_per_task`) counts
+  `agent_runs` rows per completed task, not the internal LLM turns within a
+  single run that an agent config's `max_turns` caps — the old name
+  collided with that unrelated concept. It also used to attribute a whole
+  task's run count entirely to the config of that task's *last* run, so a
+  config whose tasks always got handed off to another config before
+  reaching a terminal label (e.g. a Worker whose output a Reviewer always
+  finishes) showed 0 even after doing real work. Each done task now
+  contributes 1.0 "task credit" split across every config that ran on it,
+  weighted by that config's share of the task's total runs. The retry
+  snapshot (`avg_transient_retries`, `tasks_with_retries`) still uses
+  last-run attribution. See `docs/agents.md` and `docs/api.md` for details.
+
 ## [0.15.0] - 2026-08-13
 
 ### Added

@@ -114,6 +114,13 @@ export default function RunHistoryList({
                         ? <span title="Model not found in the pricing table — add it at Configuration → Pricing">cost unknown</span>
                         : <>${(run.cost_usd ?? 0).toFixed(4)}</>}
                       {' '}· {formatTokenCount(run.input_tokens ?? 0)}/{formatTokenCount(run.output_tokens ?? 0)} tok
+                      {/* turns_used is 0 for providers that report no turn count
+                          (codex_cli, opencode) — omit rather than show a made-up 0. */}
+                      {(run.turns_used ?? 0) > 0 && (
+                        <span title="Internal agent turns this run used">
+                          {' '}· {run.turns_used} turns
+                        </span>
+                      )}
                     </div>
                   )}
                 </button>

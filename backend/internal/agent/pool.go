@@ -499,6 +499,7 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
 		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
 		ID:           job.RunID,
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)

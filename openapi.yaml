@@ -942,6 +942,16 @@ components:
             task under the same agent config resumes it (claude provider only,
             unless the config's resume_sessions is off). Empty for
             providers/runs without a session.
+        turns_used:
+          type: integer
+          description: >-
+            Number of internal agent turns the run actually consumed, for
+            comparison against the agent config's configured `max_turns` cap.
+            0 means "not reported": only providers that expose a real count
+            set it (`claude`/`qwen_code` from the CLI stream-json result
+            event's `num_turns`; `anthropic`/`llm` from their own agentic
+            loop counter). `codex_cli` and `opencode` report no comparable
+            figure and always leave it 0 — the count is never estimated.
       required: [id, task_id, agent_config_id, status, created_at]
 
     TaskLabelHistory:
@@ -1037,10 +1047,12 @@ components:
             Per-agent-config run analytics, sorted by run_count descending.
             Only runs in a terminal status (completed/failed/waiting_human)
             with a still-existing agent_config are included, same filtering
-            as cost_by_provider. Two caveats: (1) avg_turns_to_done and the
-            retry fields are attributed entirely to a task's *last* run's
-            agent config, not proportionally split across every config a
-            task passed through; (2) avg_transient_retries and
+            as cost_by_provider. Two caveats: (1) avg_runs_per_task is a
+            proportional split — each done task contributes 1.0 "task
+            credit" divided across every config that ran on it, weighted by
+            that config's share of the task's total runs — while the retry
+            fields are still attributed entirely to a task's *last* run's
+            agent config; (2) avg_transient_retries and
             tasks_with_retries are a live snapshot of
             tasks.transient_retry_count, which resets to 0 on success or
             escalation to a human — not a lifetime/historical retry count.
@@ -1057,7 +1069,28 @@ components:
               success_rate_percent:   { type: number, format: double }
               avg_duration_secs:      { type: number, format: double }
               p90_duration_secs:      { type: number, format: double }
-              avg_turns_to_done:      { type: number, format: double }
+              avg_turns_used:
+                type: number
+                format: double
+                description: >-
+                  Mean internal agent turns per run, averaged only over runs
+                  that actually reported a count (see AgentRun.turns_used);
+                  0 when no run under this config reported one. Compare
+                  against max_turns to tune the cap.
+              p90_turns_used:
+                type: number
+                format: double
+                description: >-
+                  90th-percentile turns per run, over the same
+                  reported-count-only set as avg_turns_used.
+              max_turns:
+                type: integer
+                description: >-
+                  The agent config's currently-configured max_turns cap,
+                  returned alongside the used-turn aggregates. This is a live
+                  value — not necessarily the cap in force when the
+                  historical runs above executed.
+              avg_runs_per_task:      { type: number, format: double }
               avg_transient_retries:  { type: number, format: double }
               tasks_with_retries:     { type: integer }
               input_tokens:           { type: integer }
@@ -1074,7 +1107,10 @@ components:
               - success_rate_percent
               - avg_duration_secs
               - p90_duration_secs
-              - avg_turns_to_done
+              - avg_turns_used
+              - p90_turns_used
+              - max_turns
+              - avg_runs_per_task
               - avg_transient_retries
               - tasks_with_retries
               - input_tokens

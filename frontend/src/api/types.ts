@@ -4635,6 +4635,8 @@ export interface components {
             cost_unknown?: number;
             /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */
             session_id?: string;
+            /** @description Number of internal agent turns the run actually consumed, for comparison against the agent config's configured `max_turns` cap. 0 means "not reported": only providers that expose a real count set it (`claude`/`qwen_code` from the CLI stream-json result event's `num_turns`; `anthropic`/`llm` from their own agentic loop counter). `codex_cli` and `opencode` report no comparable figure and always leave it 0 — the count is never estimated. */
+            turns_used?: number;
         };
         /** @description One row of a task's label-transition audit trail (task_label_history), oldest first. */
         TaskLabelHistory: {
@@ -4693,7 +4695,7 @@ export interface components {
                 cost_usd: number;
                 run_count: number;
             }[];
-            /** @description Per-agent-config run analytics, sorted by run_count descending. Only runs in a terminal status (completed/failed/waiting_human) with a still-existing agent_config are included, same filtering as cost_by_provider. Two caveats: (1) avg_turns_to_done and the retry fields are attributed entirely to a task's *last* run's agent config, not proportionally split across every config a task passed through; (2) avg_transient_retries and tasks_with_retries are a live snapshot of tasks.transient_retry_count, which resets to 0 on success or escalation to a human — not a lifetime/historical retry count. */
+            /** @description Per-agent-config run analytics, sorted by run_count descending. Only runs in a terminal status (completed/failed/waiting_human) with a still-existing agent_config are included, same filtering as cost_by_provider. Two caveats: (1) avg_runs_per_task is a proportional split — each done task contributes 1.0 "task credit" divided across every config that ran on it, weighted by that config's share of the task's total runs — while the retry fields are still attributed entirely to a task's *last* run's agent config; (2) avg_transient_retries and tasks_with_retries are a live snapshot of tasks.transient_retry_count, which resets to 0 on success or escalation to a human — not a lifetime/historical retry count. */
             agent_config_stats: {
                 agent_config_id: string;
                 agent_name: string;
@@ -4708,8 +4710,20 @@ export interface components {
                 avg_duration_secs: number;
                 /** Format: double */
                 p90_duration_secs: number;
+                /**
+                 * Format: double
+                 * @description Mean internal agent turns per run, averaged only over runs that actually reported a count (see AgentRun.turns_used); 0 when no run under this config reported one. Compare against max_turns to tune the cap.
+                 */
+                avg_turns_used: number;
+                /**
+                 * Format: double
+                 * @description 90th-percentile turns per run, over the same reported-count-only set as avg_turns_used.
+                 */
+                p90_turns_used: number;
+                /** @description The agent config's currently-configured max_turns cap, returned alongside the used-turn aggregates. This is a live value — not necessarily the cap in force when the historical runs above executed. */
+                max_turns: number;
                 /** Format: double */
-                avg_turns_to_done: number;
+                avg_runs_per_task: number;
                 /** Format: double */
                 avg_transient_retries: number;
                 tasks_with_retries: number;
