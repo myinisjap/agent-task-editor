@@ -48,6 +48,14 @@ type runAccumulators struct {
 
 	inputTokens  int64
 	outputTokens int64
+
+	// turns counts agentic-loop iterations actually executed. Unlike the CLI
+	// providers (which read the count off the provider's own terminal
+	// event), these two runners drive the loop themselves, so the count is
+	// exact by construction. Incremented by the loop rather than by addUsage,
+	// which some responses skip when the API returns no usage block. See
+	// agent.Result.TurnsUsed.
+	turns int64
 }
 
 // addUsage accumulates per-turn token usage.
@@ -98,6 +106,7 @@ func (a *runAccumulators) attach(ctx context.Context, res *agent.Result) {
 	}
 	res.InputTokens = a.inputTokens
 	res.OutputTokens = a.outputTokens
+	res.TurnsUsed = a.turns
 	cost, known := estimateCostUSDWithResolver(ctx, a.priceResolver, a.model, a.inputTokens, a.outputTokens)
 	res.CostUSD = cost
 	res.CostUnknown = (a.inputTokens > 0 || a.outputTokens > 0) && !known

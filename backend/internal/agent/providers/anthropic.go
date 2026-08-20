@@ -224,6 +224,7 @@ func (r *AnthropicRunner) Run(ctx context.Context, input agent.RunInput, logCh c
 		maxTurns = 50
 	}
 	for turn := 0; turn < maxTurns; turn++ {
+		acc.turns = int64(turn) + 1
 		resp, err := r.messagesComplete(runCtx, input.AgentConfig.Model, buildSystemPrompt(input), maxTokens, messages)
 		if err != nil {
 			var rl *agent.ErrRateLimit

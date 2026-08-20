@@ -75,6 +75,14 @@ type Result struct {
 	// task.cost_warning when this is set. Always false for providers that
 	// don't implement the watchdog.
 	CostWarned bool
+	// TurnsUsed is the number of internal agent turns the run actually
+	// consumed, for comparison against the configured AgentConfig.MaxTurns
+	// cap. 0 means "not reported" — only providers that expose a real count
+	// set it (claude/qwen_code from the stream-json result event's num_turns;
+	// anthropic/llm from their own agentic loop counter). codex_cli and
+	// opencode report no comparable figure and leave it 0; it is never
+	// estimated, since an invented count is worse than an absent one.
+	TurnsUsed int64
 }
 
 // RunInput carries everything an agent needs to start work.

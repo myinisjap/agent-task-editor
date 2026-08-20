@@ -56,7 +56,7 @@ LIMIT 1;
 
 -- name: SetAgentRunCompleted :one
 UPDATE agent_runs
-SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, completed_at = CURRENT_TIMESTAMP
+SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, turns_used = ?, completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 
@@ -216,7 +216,13 @@ ORDER BY cost_usd DESC;
 -- agent_runs_new migration) are included, matching SumUsageByProvider's
 -- filtering above. Duration is only averaged over rows that actually have
 -- both started_at and completed_at (e.g. a run that failed before starting
--- has neither and would otherwise skew the average toward zero).
+-- has neither and would otherwise skew the average toward zero). Likewise
+-- avg_turns_used averages only over runs that actually reported a turn count
+-- (turns_used > 0, via NULLIF): 0 means "not reported" for providers that
+-- expose no count, and averaging those in would understate the real figure.
+-- max_turns is the config's currently-configured cap, returned alongside so
+-- the dashboard can show "avg used vs. cap" without a second lookup; it is a
+-- live value, not the cap in force when the historical runs executed.
 SELECT ac.id AS agent_config_id,
        ac.name AS agent_name,
        pc.provider AS provider,
@@ -229,12 +235,14 @@ SELECT ac.id AS agent_config_id,
                 ELSE NULL END), 0) AS REAL) AS avg_duration_secs,
        CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
        CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
-       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
+       CAST(COALESCE(AVG(NULLIF(ar.turns_used, 0)), 0) AS REAL) AS avg_turns_used,
+       ac.max_turns AS max_turns
 FROM agent_runs ar
 JOIN agent_configs ac ON ac.id = ar.agent_config_id
 JOIN provider_configs pc ON pc.id = ac.provider_config_id
 WHERE ar.status IN ('completed','failed','waiting_human')
-GROUP BY ac.id, ac.name, pc.provider
+GROUP BY ac.id, ac.name, pc.provider, ac.max_turns
 ORDER BY run_count DESC;
 
 -- name: ListRunDurationsByAgentConfig :many
@@ -252,16 +260,30 @@ WHERE ar.status IN ('completed','failed','waiting_human')
   AND ar.completed_at IS NOT NULL
 ORDER BY ar.agent_config_id, duration_secs ASC;
 
+-- name: ListRunTurnsByAgentConfig :many
+-- Raw per-run turn count for terminal-state runs with a still-existing
+-- agent_config, ordered by agent_config then turns ascending so the caller
+-- can slice out a p90 per group in Go (same shape and rationale as
+-- ListRunDurationsByAgentConfig above). Runs that reported no turn count
+-- (turns_used = 0) are excluded rather than counted as zero-turn runs - see
+-- RunStatsByAgentConfig for why.
+SELECT ar.agent_config_id AS agent_config_id,
+       ar.turns_used AS turns_used
+FROM agent_runs ar
+WHERE ar.status IN ('completed','failed','waiting_human')
+  AND ar.agent_config_id IS NOT NULL
+  AND ar.turns_used > 0
+ORDER BY ar.agent_config_id, turns_used ASC;
+
 -- name: ListTaskLastAgentConfig :many
 -- For every task sitting on a terminal label, returns the agent_config_id of
--- its *last* run (by created_at/id, the same tiebreak used elsewhere), the
--- number of runs that task had under a still-existing agent_config (used to
--- compute "turns to done" per config), and the task's current
--- transient_retry_count. Note this is a live snapshot of
+-- its *last* run (by created_at/id, the same tiebreak used elsewhere) and the
+-- task's current transient_retry_count. Note this is a live snapshot of
 -- tasks.transient_retry_count, which resets to 0 on success or escalation -
--- it is NOT a lifetime/historical retry count. Turns-to-done and the retry
--- snapshot are both attributed entirely to the task's last agent config, not
--- proportionally split across every config the task passed through.
+-- it is NOT a lifetime/historical retry count. The retry snapshot is
+-- attributed entirely to the task's last agent config, not proportionally
+-- split across every config the task passed through (unlike avg_runs_per_task
+-- below, which is a proportional split - see ListTaskRunCountsByAgentConfig).
 SELECT t.id AS task_id,
        t.transient_retry_count AS transient_retry_count,
        (
@@ -269,14 +291,26 @@ SELECT t.id AS task_id,
          WHERE ar.task_id = t.id AND ar.agent_config_id IS NOT NULL
          ORDER BY ar.created_at DESC, ar.id DESC
          LIMIT 1
-       ) AS last_agent_config_id,
-       (
-         SELECT COUNT(*) FROM agent_runs ar
-         WHERE ar.task_id = t.id AND ar.agent_config_id IS NOT NULL
-       ) AS run_count
+       ) AS last_agent_config_id
 FROM tasks t
 JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label
 WHERE wl.is_terminal != 0;
+
+-- name: ListTaskRunCountsByAgentConfig :many
+-- For every task sitting on a terminal label, and for each agent_config that
+-- contributed at least one run to that task, returns how many runs that
+-- config contributed. Used to compute avg_runs_per_task per config: each
+-- done task splits 1.0 "task credit" proportionally across every config that
+-- worked on it (weighted by that config's share of the task's total runs),
+-- rather than crediting the whole task to only its last-run config.
+SELECT t.id AS task_id,
+       ar.agent_config_id AS agent_config_id,
+       COUNT(*) AS run_count
+FROM tasks t
+JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label
+JOIN agent_runs ar ON ar.task_id = t.id AND ar.agent_config_id IS NOT NULL
+WHERE wl.is_terminal != 0
+GROUP BY t.id, ar.agent_config_id;
 
 -- name: SumCostForDay :one
 -- Cumulative recorded cost across ALL runs regardless of status (same "every

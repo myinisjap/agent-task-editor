@@ -89,7 +89,7 @@ func (q *Queries) CreateAgentLog(ctx context.Context, arg CreateAgentLogParams) 
 const createAgentRun = `-- name: CreateAgentRun :one
 INSERT INTO agent_runs (id, task_id, agent_config_id, status, feedback)
 VALUES (?, ?, ?, 'pending', ?)
-RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown
+RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown, turns_used
 `
 
 type CreateAgentRunParams struct {
@@ -123,6 +123,7 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 		&i.CostUsd,
 		&i.SessionID,
 		&i.CostUnknown,
+		&i.TurnsUsed,
 	)
 	return i, err
 }
@@ -182,7 +183,7 @@ func (q *Queries) DeleteOldAgentLogs(ctx context.Context, completedAt *time.Time
 }
 
 const getAgentRun = `-- name: GetAgentRun :one
-SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown FROM agent_runs WHERE id = ?
+SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown, turns_used FROM agent_runs WHERE id = ?
 `
 
 func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) {
@@ -204,6 +205,7 @@ func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) 
 		&i.CostUsd,
 		&i.SessionID,
 		&i.CostUnknown,
+		&i.TurnsUsed,
 	)
 	return i, err
 }
@@ -233,7 +235,7 @@ func (q *Queries) GetLatestTaskSession(ctx context.Context, arg GetLatestTaskSes
 }
 
 const listActiveAgentRuns = `-- name: ListActiveAgentRuns :many
-SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, ar.input_tokens, ar.output_tokens, ar.cost_usd, ar.session_id, ar.cost_unknown, t.title as task_title, ac.name as agent_name
+SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, ar.input_tokens, ar.output_tokens, ar.cost_usd, ar.session_id, ar.cost_unknown, ar.turns_used, t.title as task_title, ac.name as agent_name
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 JOIN agent_configs ac ON ac.id = ar.agent_config_id
@@ -257,6 +259,7 @@ type ListActiveAgentRunsRow struct {
 	CostUsd       float64    `json:"cost_usd"`
 	SessionID     string     `json:"session_id"`
 	CostUnknown   int64      `json:"cost_unknown"`
+	TurnsUsed     int64      `json:"turns_used"`
 	TaskTitle     string     `json:"task_title"`
 	AgentName     string     `json:"agent_name"`
 }
@@ -286,6 +289,7 @@ func (q *Queries) ListActiveAgentRuns(ctx context.Context) ([]ListActiveAgentRun
 			&i.CostUsd,
 			&i.SessionID,
 			&i.CostUnknown,
+			&i.TurnsUsed,
 			&i.TaskTitle,
 			&i.AgentName,
 		); err != nil {
@@ -400,7 +404,7 @@ func (q *Queries) ListAgentLogsPage(ctx context.Context, arg ListAgentLogsPagePa
 }
 
 const listAgentRuns = `-- name: ListAgentRuns :many
-SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown FROM agent_runs WHERE task_id = ? ORDER BY created_at DESC
+SELECT id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown, turns_used FROM agent_runs WHERE task_id = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAgentRuns(ctx context.Context, taskID string) ([]AgentRun, error) {
@@ -428,6 +432,7 @@ func (q *Queries) ListAgentRuns(ctx context.Context, taskID string) ([]AgentRun,
 			&i.CostUsd,
 			&i.SessionID,
 			&i.CostUnknown,
+			&i.TurnsUsed,
 		); err != nil {
 			return nil, err
 		}
@@ -443,7 +448,7 @@ func (q *Queries) ListAgentRuns(ctx context.Context, taskID string) ([]AgentRun,
 }
 
 const listAgentRunsPage = `-- name: ListAgentRunsPage :many
-SELECT r.id, r.task_id, r.agent_config_id, r.status, r.feedback, r.stored_info, r.started_at, r.completed_at, r.created_at, r.notes, r.input_tokens, r.output_tokens, r.cost_usd, r.session_id, r.cost_unknown FROM agent_runs r
+SELECT r.id, r.task_id, r.agent_config_id, r.status, r.feedback, r.stored_info, r.started_at, r.completed_at, r.created_at, r.notes, r.input_tokens, r.output_tokens, r.cost_usd, r.session_id, r.cost_unknown, r.turns_used FROM agent_runs r
 WHERE r.task_id = ?1
   AND (
     ?2 = ''
@@ -490,6 +495,7 @@ func (q *Queries) ListAgentRunsPage(ctx context.Context, arg ListAgentRunsPagePa
 			&i.CostUsd,
 			&i.SessionID,
 			&i.CostUnknown,
+			&i.TurnsUsed,
 		); err != nil {
 			return nil, err
 		}
@@ -548,6 +554,50 @@ func (q *Queries) ListRunDurationsByAgentConfig(ctx context.Context) ([]ListRunD
 	return items, nil
 }
 
+const listRunTurnsByAgentConfig = `-- name: ListRunTurnsByAgentConfig :many
+SELECT ar.agent_config_id AS agent_config_id,
+       ar.turns_used AS turns_used
+FROM agent_runs ar
+WHERE ar.status IN ('completed','failed','waiting_human')
+  AND ar.agent_config_id IS NOT NULL
+  AND ar.turns_used > 0
+ORDER BY ar.agent_config_id, turns_used ASC
+`
+
+type ListRunTurnsByAgentConfigRow struct {
+	AgentConfigID *string `json:"agent_config_id"`
+	TurnsUsed     int64   `json:"turns_used"`
+}
+
+// Raw per-run turn count for terminal-state runs with a still-existing
+// agent_config, ordered by agent_config then turns ascending so the caller
+// can slice out a p90 per group in Go (same shape and rationale as
+// ListRunDurationsByAgentConfig above). Runs that reported no turn count
+// (turns_used = 0) are excluded rather than counted as zero-turn runs - see
+// RunStatsByAgentConfig for why.
+func (q *Queries) ListRunTurnsByAgentConfig(ctx context.Context) ([]ListRunTurnsByAgentConfigRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRunTurnsByAgentConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunTurnsByAgentConfigRow
+	for rows.Next() {
+		var i ListRunTurnsByAgentConfigRow
+		if err := rows.Scan(&i.AgentConfigID, &i.TurnsUsed); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskLabelHistory = `-- name: ListTaskLabelHistory :many
 SELECT id, task_id, from_label, to_label, "trigger", actor_id, note, created_at FROM task_label_history WHERE task_id = ? ORDER BY created_at ASC
 `
@@ -592,11 +642,7 @@ SELECT t.id AS task_id,
          WHERE ar.task_id = t.id AND ar.agent_config_id IS NOT NULL
          ORDER BY ar.created_at DESC, ar.id DESC
          LIMIT 1
-       ) AS last_agent_config_id,
-       (
-         SELECT COUNT(*) FROM agent_runs ar
-         WHERE ar.task_id = t.id AND ar.agent_config_id IS NOT NULL
-       ) AS run_count
+       ) AS last_agent_config_id
 FROM tasks t
 JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label
 WHERE wl.is_terminal != 0
@@ -606,18 +652,16 @@ type ListTaskLastAgentConfigRow struct {
 	TaskID              string  `json:"task_id"`
 	TransientRetryCount int64   `json:"transient_retry_count"`
 	LastAgentConfigID   *string `json:"last_agent_config_id"`
-	RunCount            int64   `json:"run_count"`
 }
 
 // For every task sitting on a terminal label, returns the agent_config_id of
-// its *last* run (by created_at/id, the same tiebreak used elsewhere), the
-// number of runs that task had under a still-existing agent_config (used to
-// compute "turns to done" per config), and the task's current
-// transient_retry_count. Note this is a live snapshot of
+// its *last* run (by created_at/id, the same tiebreak used elsewhere) and the
+// task's current transient_retry_count. Note this is a live snapshot of
 // tasks.transient_retry_count, which resets to 0 on success or escalation -
-// it is NOT a lifetime/historical retry count. Turns-to-done and the retry
-// snapshot are both attributed entirely to the task's last agent config, not
-// proportionally split across every config the task passed through.
+// it is NOT a lifetime/historical retry count. The retry snapshot is
+// attributed entirely to the task's last agent config, not proportionally
+// split across every config the task passed through (unlike avg_runs_per_task
+// below, which is a proportional split - see ListTaskRunCountsByAgentConfig).
 func (q *Queries) ListTaskLastAgentConfig(ctx context.Context) ([]ListTaskLastAgentConfigRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTaskLastAgentConfig)
 	if err != nil {
@@ -627,12 +671,53 @@ func (q *Queries) ListTaskLastAgentConfig(ctx context.Context) ([]ListTaskLastAg
 	var items []ListTaskLastAgentConfigRow
 	for rows.Next() {
 		var i ListTaskLastAgentConfigRow
-		if err := rows.Scan(
-			&i.TaskID,
-			&i.TransientRetryCount,
-			&i.LastAgentConfigID,
-			&i.RunCount,
-		); err != nil {
+		if err := rows.Scan(&i.TaskID, &i.TransientRetryCount, &i.LastAgentConfigID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskRunCountsByAgentConfig = `-- name: ListTaskRunCountsByAgentConfig :many
+SELECT t.id AS task_id,
+       ar.agent_config_id AS agent_config_id,
+       COUNT(*) AS run_count
+FROM tasks t
+JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label
+JOIN agent_runs ar ON ar.task_id = t.id AND ar.agent_config_id IS NOT NULL
+WHERE wl.is_terminal != 0
+GROUP BY t.id, ar.agent_config_id
+`
+
+type ListTaskRunCountsByAgentConfigRow struct {
+	TaskID        string  `json:"task_id"`
+	AgentConfigID *string `json:"agent_config_id"`
+	RunCount      int64   `json:"run_count"`
+}
+
+// For every task sitting on a terminal label, and for each agent_config that
+// contributed at least one run to that task, returns how many runs that
+// config contributed. Used to compute avg_runs_per_task per config: each
+// done task splits 1.0 "task credit" proportionally across every config that
+// worked on it (weighted by that config's share of the task's total runs),
+// rather than crediting the whole task to only its last-run config.
+func (q *Queries) ListTaskRunCountsByAgentConfig(ctx context.Context) ([]ListTaskRunCountsByAgentConfigRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskRunCountsByAgentConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTaskRunCountsByAgentConfigRow
+	for rows.Next() {
+		var i ListTaskRunCountsByAgentConfigRow
+		if err := rows.Scan(&i.TaskID, &i.AgentConfigID, &i.RunCount); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -647,7 +732,7 @@ func (q *Queries) ListTaskLastAgentConfig(ctx context.Context) ([]ListTaskLastAg
 }
 
 const listWaitingHumanRuns = `-- name: ListWaitingHumanRuns :many
-SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, ar.input_tokens, ar.output_tokens, ar.cost_usd, ar.session_id, ar.cost_unknown, t.title as task_title
+SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, ar.input_tokens, ar.output_tokens, ar.cost_usd, ar.session_id, ar.cost_unknown, ar.turns_used, t.title as task_title
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
@@ -671,6 +756,7 @@ type ListWaitingHumanRunsRow struct {
 	CostUsd       float64    `json:"cost_usd"`
 	SessionID     string     `json:"session_id"`
 	CostUnknown   int64      `json:"cost_unknown"`
+	TurnsUsed     int64      `json:"turns_used"`
 	TaskTitle     string     `json:"task_title"`
 }
 
@@ -706,6 +792,7 @@ func (q *Queries) ListWaitingHumanRuns(ctx context.Context) ([]ListWaitingHumanR
 			&i.CostUsd,
 			&i.SessionID,
 			&i.CostUnknown,
+			&i.TurnsUsed,
 			&i.TaskTitle,
 		); err != nil {
 			return nil, err
@@ -734,12 +821,14 @@ SELECT ac.id AS agent_config_id,
                 ELSE NULL END), 0) AS REAL) AS avg_duration_secs,
        CAST(COALESCE(SUM(ar.input_tokens),0) AS INTEGER) AS input_tokens,
        CAST(COALESCE(SUM(ar.output_tokens),0) AS INTEGER) AS output_tokens,
-       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd
+       CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd,
+       CAST(COALESCE(AVG(NULLIF(ar.turns_used, 0)), 0) AS REAL) AS avg_turns_used,
+       ac.max_turns AS max_turns
 FROM agent_runs ar
 JOIN agent_configs ac ON ac.id = ar.agent_config_id
 JOIN provider_configs pc ON pc.id = ac.provider_config_id
 WHERE ar.status IN ('completed','failed','waiting_human')
-GROUP BY ac.id, ac.name, pc.provider
+GROUP BY ac.id, ac.name, pc.provider, ac.max_turns
 ORDER BY run_count DESC
 `
 
@@ -755,6 +844,8 @@ type RunStatsByAgentConfigRow struct {
 	InputTokens       int64   `json:"input_tokens"`
 	OutputTokens      int64   `json:"output_tokens"`
 	CostUsd           float64 `json:"cost_usd"`
+	AvgTurnsUsed      float64 `json:"avg_turns_used"`
+	MaxTurns          int64   `json:"max_turns"`
 }
 
 // Per-agent-config run outcome, duration, and token/cost aggregates for the
@@ -764,7 +855,13 @@ type RunStatsByAgentConfigRow struct {
 // agent_runs_new migration) are included, matching SumUsageByProvider's
 // filtering above. Duration is only averaged over rows that actually have
 // both started_at and completed_at (e.g. a run that failed before starting
-// has neither and would otherwise skew the average toward zero).
+// has neither and would otherwise skew the average toward zero). Likewise
+// avg_turns_used averages only over runs that actually reported a turn count
+// (turns_used > 0, via NULLIF): 0 means "not reported" for providers that
+// expose no count, and averaging those in would understate the real figure.
+// max_turns is the config's currently-configured cap, returned alongside so
+// the dashboard can show "avg used vs. cap" without a second lookup; it is a
+// live value, not the cap in force when the historical runs executed.
 func (q *Queries) RunStatsByAgentConfig(ctx context.Context) ([]RunStatsByAgentConfigRow, error) {
 	rows, err := q.db.QueryContext(ctx, runStatsByAgentConfig)
 	if err != nil {
@@ -786,6 +883,8 @@ func (q *Queries) RunStatsByAgentConfig(ctx context.Context) ([]RunStatsByAgentC
 			&i.InputTokens,
 			&i.OutputTokens,
 			&i.CostUsd,
+			&i.AvgTurnsUsed,
+			&i.MaxTurns,
 		); err != nil {
 			return nil, err
 		}
@@ -802,9 +901,9 @@ func (q *Queries) RunStatsByAgentConfig(ctx context.Context) ([]RunStatsByAgentC
 
 const setAgentRunCompleted = `-- name: SetAgentRunCompleted :one
 UPDATE agent_runs
-SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, completed_at = CURRENT_TIMESTAMP
+SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, turns_used = ?, completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown
+RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown, turns_used
 `
 
 type SetAgentRunCompletedParams struct {
@@ -815,6 +914,7 @@ type SetAgentRunCompletedParams struct {
 	OutputTokens int64   `json:"output_tokens"`
 	CostUsd      float64 `json:"cost_usd"`
 	CostUnknown  int64   `json:"cost_unknown"`
+	TurnsUsed    int64   `json:"turns_used"`
 	ID           string  `json:"id"`
 }
 
@@ -827,6 +927,7 @@ func (q *Queries) SetAgentRunCompleted(ctx context.Context, arg SetAgentRunCompl
 		arg.OutputTokens,
 		arg.CostUsd,
 		arg.CostUnknown,
+		arg.TurnsUsed,
 		arg.ID,
 	)
 	var i AgentRun
@@ -846,6 +947,7 @@ func (q *Queries) SetAgentRunCompleted(ctx context.Context, arg SetAgentRunCompl
 		&i.CostUsd,
 		&i.SessionID,
 		&i.CostUnknown,
+		&i.TurnsUsed,
 	)
 	return i, err
 }
@@ -882,7 +984,7 @@ const setAgentRunStarted = `-- name: SetAgentRunStarted :one
 UPDATE agent_runs
 SET status = 'running', started_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown
+RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown, turns_used
 `
 
 func (q *Queries) SetAgentRunStarted(ctx context.Context, id string) (AgentRun, error) {
@@ -904,6 +1006,7 @@ func (q *Queries) SetAgentRunStarted(ctx context.Context, id string) (AgentRun, 
 		&i.CostUsd,
 		&i.SessionID,
 		&i.CostUnknown,
+		&i.TurnsUsed,
 	)
 	return i, err
 }
@@ -1199,7 +1302,7 @@ const updateAgentRunStatus = `-- name: UpdateAgentRunStatus :one
 UPDATE agent_runs
 SET status = ?
 WHERE id = ?
-RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown
+RETURNING id, task_id, agent_config_id, status, feedback, stored_info, started_at, completed_at, created_at, notes, input_tokens, output_tokens, cost_usd, session_id, cost_unknown, turns_used
 `
 
 type UpdateAgentRunStatusParams struct {
@@ -1226,6 +1329,7 @@ func (q *Queries) UpdateAgentRunStatus(ctx context.Context, arg UpdateAgentRunSt
 		&i.CostUsd,
 		&i.SessionID,
 		&i.CostUnknown,
+		&i.TurnsUsed,
 	)
 	return i, err
 }

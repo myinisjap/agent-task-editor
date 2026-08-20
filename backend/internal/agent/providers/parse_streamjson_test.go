@@ -351,3 +351,49 @@ func TestClassifyStreamJSON_Parsed(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyStreamJSON_ResultNumTurns verifies that num_turns on the
+// terminal "result" envelope reaches runUsage.Turns, that a result carrying
+// only num_turns (no usage/total_cost_usd) still yields a non-nil usage, and
+// that a result with no num_turns leaves Turns at 0 ("not reported") rather
+// than inventing a count.
+func TestClassifyStreamJSON_ResultNumTurns(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want int64
+	}{
+		{
+			name: "alongside usage and cost",
+			line: `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":123,"output_tokens":456},"total_cost_usd":0.0789,"num_turns":37}`,
+			want: 37,
+		},
+		{
+			name: "num_turns only",
+			line: `{"type":"result","subtype":"success","result":"OUTCOME: success","num_turns":4}`,
+			want: 4,
+		},
+		{
+			name: "absent leaves zero",
+			line: `{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":1,"output_tokens":2}}`,
+			want: 0,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := classifyStreamJSON(tc.line)
+			if ev.Usage == nil {
+				t.Fatalf("want non-nil usage, got nil")
+			}
+			if ev.Usage.Turns != tc.want {
+				t.Errorf("want Turns=%d, got %d", tc.want, ev.Usage.Turns)
+			}
+			// The turn count must reach the Result the pool persists.
+			var res agent.Result
+			applyUsage(&res, ev.Usage)
+			if res.TurnsUsed != tc.want {
+				t.Errorf("want Result.TurnsUsed=%d, got %d", tc.want, res.TurnsUsed)
+			}
+		})
+	}
+}

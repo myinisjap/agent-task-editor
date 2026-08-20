@@ -190,7 +190,7 @@ export function PerformanceHelp() {
         <h3 className="text-slate-100 font-semibold">Agent config performance</h3>
         <p>
           Aggregated stats per agent config: number of runs, success rate, average/P90 run
-          duration, and average turns per task. Success rate is still useful for spotting a flaky
+          duration, and average runs per task. Success rate is still useful for spotting a flaky
           or crashing config, but it's a weaker signal than the outcome-quality metrics above —
           use it alongside them, not instead of them.
         </p>

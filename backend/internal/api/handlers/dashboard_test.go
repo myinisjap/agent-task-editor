@@ -60,7 +60,7 @@ func TestDashboardGet_ClaudeUsageUnavailableWithoutCredentials(t *testing.T) {
 // table end to end: it seeds one agent config with a completed run (task
 // ends on the terminal "done" label, with one transient retry recorded) and
 // one failed run (task left on a non-terminal label), then asserts the
-// aggregated success rate, duration, turns-to-done, retry snapshot, and
+// aggregated success rate, duration, runs-per-task, retry snapshot, and
 // token/cost fields all come back as expected.
 func TestDashboardGet_AgentConfigStats(t *testing.T) {
 	db := openTestDB(t)
@@ -95,6 +95,19 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
+	// reviewerCfg contributes runs to doneTask but never has the *last* run
+	// on it, so it exercises the difference between avg_runs_per_task's
+	// proportional split (which must credit reviewerCfg) and the retry
+	// fields' last-run attribution (which must not).
+	reviewerCfg, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: uuid.NewString(), Name: "reviewer", ProviderConfigID: pc.ID,
+		Labels: `["review"]`, MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
+		EnabledPlugins: "[]", EnabledMcpServers: "[]", CommandAllowlist: "[]", CommandDenylist: "[]",
+		MaxRetries: 3, RetryBackoffSecs: 30, ResumeSessions: 1, SubtasksEnabled: 0, MaxSubtasks: 10,
+	})
+	if err != nil {
+		t.Fatalf("create reviewer agent config: %v", err)
+	}
 
 	// Task 1: reaches the terminal "done" label after one transient retry,
 	// with a single completed run under cfg.
@@ -108,6 +121,40 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 		TransientRetryCount: 1, ID: doneTask.ID,
 	}); err != nil {
 		t.Fatalf("set transient retry: %v", err)
+	}
+	// Two earlier runs under reviewerCfg on the same task, superseded by the
+	// worker run below that actually lands it on "done". These must count
+	// toward reviewerCfg's avg_runs_per_task (proportional split) but not
+	// toward its retry snapshot (last-run attribution only credits worker).
+	// created_at is forced strictly earlier than the worker run below —
+	// CURRENT_TIMESTAMP has only 1s resolution, so back-to-back inserts in
+	// the same test can otherwise tie and fall back to a random UUID
+	// tiebreak, making "last run" nondeterministic.
+	for i := 0; i < 2; i++ {
+		reviewRun, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
+			ID: uuid.NewString(), TaskID: doneTask.ID, AgentConfigID: &reviewerCfg.ID,
+		})
+		if err != nil {
+			t.Fatalf("create review run: %v", err)
+		}
+		if _, err := q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+			Status: "completed", InputTokens: 5, OutputTokens: 5, CostUsd: 0.001, ID: reviewRun.ID,
+		}); err != nil {
+			t.Fatalf("finalize review run: %v", err)
+		}
+		if _, err := db.SQL().ExecContext(ctx,
+			`UPDATE agent_runs SET created_at = ? WHERE id = ?`,
+			// Match CURRENT_TIMESTAMP's own format exactly: UTC, no zone
+			// offset. Binding a time.Time directly writes a *local*-time
+			// string with an offset ("2026-08-19 21:18:50-05:00"), which
+			// string-compares against CURRENT_TIMESTAMP's UTC text rather
+			// than comparing as instants — so in any timezone at or ahead of
+			// UTC the "backdated" row sorts *after* the worker run and
+			// silently flips last-run attribution.
+			time.Now().UTC().Add(-time.Minute).Format("2006-01-02 15:04:05"), reviewRun.ID,
+		); err != nil {
+			t.Fatalf("backdate review run: %v", err)
+		}
 	}
 	completedRun, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID: uuid.NewString(), TaskID: doneTask.ID, AgentConfigID: &cfg.ID,
@@ -133,7 +180,7 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 
 	// Task 2: stays on a non-terminal label ("work") with one failed run
 	// under the same config — should count toward run/failed totals but not
-	// toward turns-to-done or the retry snapshot (task never reached done).
+	// toward avg_runs_per_task or the retry snapshot (task never reached done).
 	pendingTask, err := q.CreateTask(ctx, gen.CreateTaskParams{
 		ID: uuid.NewString(), Title: "pending task", WorkflowID: wfID, RepoID: repoID, Label: "work",
 	})
@@ -173,7 +220,7 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 			SuccessRatePercent  float64 `json:"success_rate_percent"`
 			AvgDurationSecs     float64 `json:"avg_duration_secs"`
 			P90DurationSecs     float64 `json:"p90_duration_secs"`
-			AvgTurnsToDone      float64 `json:"avg_turns_to_done"`
+			AvgRunsPerTask      float64 `json:"avg_runs_per_task"`
 			AvgTransientRetries float64 `json:"avg_transient_retries"`
 			TasksWithRetries    int64   `json:"tasks_with_retries"`
 			InputTokens         int64   `json:"input_tokens"`
@@ -185,10 +232,38 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if len(body.AgentConfigStats) != 1 {
-		t.Fatalf("expected 1 agent config stats row, got %d: %+v", len(body.AgentConfigStats), body.AgentConfigStats)
+	if len(body.AgentConfigStats) != 2 {
+		t.Fatalf("expected 2 agent config stats rows, got %d: %+v", len(body.AgentConfigStats), body.AgentConfigStats)
 	}
-	row := body.AgentConfigStats[0]
+	var row, reviewerRow *struct {
+		AgentConfigID       string  `json:"agent_config_id"`
+		AgentName           string  `json:"agent_name"`
+		Provider            string  `json:"provider"`
+		RunCount            int64   `json:"run_count"`
+		CompletedCount      int64   `json:"completed_count"`
+		FailedCount         int64   `json:"failed_count"`
+		WaitingHumanCount   int64   `json:"waiting_human_count"`
+		SuccessRatePercent  float64 `json:"success_rate_percent"`
+		AvgDurationSecs     float64 `json:"avg_duration_secs"`
+		P90DurationSecs     float64 `json:"p90_duration_secs"`
+		AvgRunsPerTask      float64 `json:"avg_runs_per_task"`
+		AvgTransientRetries float64 `json:"avg_transient_retries"`
+		TasksWithRetries    int64   `json:"tasks_with_retries"`
+		InputTokens         int64   `json:"input_tokens"`
+		OutputTokens        int64   `json:"output_tokens"`
+		CostUSD             float64 `json:"cost_usd"`
+	}
+	for i := range body.AgentConfigStats {
+		switch body.AgentConfigStats[i].AgentConfigID {
+		case cfg.ID:
+			row = &body.AgentConfigStats[i]
+		case reviewerCfg.ID:
+			reviewerRow = &body.AgentConfigStats[i]
+		}
+	}
+	if row == nil || reviewerRow == nil {
+		t.Fatalf("expected rows for both worker and reviewer configs, got: %+v", body.AgentConfigStats)
+	}
 
 	if row.AgentConfigID != cfg.ID || row.AgentName != "worker" || row.Provider != "claude" {
 		t.Errorf("unexpected identity fields: %+v", row)
@@ -212,16 +287,32 @@ func TestDashboardGet_AgentConfigStats(t *testing.T) {
 	if row.P90DurationSecs < 9 || row.P90DurationSecs > 11 {
 		t.Errorf("expected p90_duration_secs ~10, got %v", row.P90DurationSecs)
 	}
-	// Only doneTask counts toward turns-to-done/retries (it's the only task
-	// on a terminal label); it had exactly 1 run and 1 transient retry.
-	if row.AvgTurnsToDone != 1 {
-		t.Errorf("expected avg_turns_to_done=1, got %v", row.AvgTurnsToDone)
+	// Only doneTask counts toward avg_runs_per_task/retries (it's the only
+	// task on a terminal label). doneTask had 3 total runs: 1 under worker
+	// (cfg) and 2 under reviewer (reviewerCfg). worker's proportional credit
+	// is 1/3 of the task, so avg_runs_per_task = 1 run / (1/3 credit) = 3;
+	// reviewer's credit is 2/3, so avg_runs_per_task = 2 runs / (2/3
+	// credit) = 3 too (both configs' contributions average out to the
+	// task's 3 total runs). The retry snapshot, by contrast, is attributed
+	// entirely to worker as the *last* run's config — reviewer gets none of
+	// it, despite contributing 2 of the task's 3 runs.
+	if row.AvgRunsPerTask != 3 {
+		t.Errorf("expected avg_runs_per_task=3 for worker, got %v", row.AvgRunsPerTask)
 	}
 	if row.AvgTransientRetries != 1 {
 		t.Errorf("expected avg_transient_retries=1, got %v", row.AvgTransientRetries)
 	}
 	if row.TasksWithRetries != 1 {
 		t.Errorf("expected tasks_with_retries=1, got %d", row.TasksWithRetries)
+	}
+	if reviewerRow.AvgRunsPerTask != 3 {
+		t.Errorf("expected avg_runs_per_task=3 for reviewer, got %v", reviewerRow.AvgRunsPerTask)
+	}
+	if reviewerRow.AvgTransientRetries != 0 {
+		t.Errorf("expected avg_transient_retries=0 for reviewer (last-run attribution excludes it), got %v", reviewerRow.AvgTransientRetries)
+	}
+	if reviewerRow.TasksWithRetries != 0 {
+		t.Errorf("expected tasks_with_retries=0 for reviewer, got %d", reviewerRow.TasksWithRetries)
 	}
 	if row.InputTokens != 120 || row.OutputTokens != 60 {
 		t.Errorf("unexpected token totals: input=%d output=%d", row.InputTokens, row.OutputTokens)

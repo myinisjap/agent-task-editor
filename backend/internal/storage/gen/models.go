@@ -58,6 +58,7 @@ type AgentRun struct {
 	CostUsd       float64    `json:"cost_usd"`
 	SessionID     string     `json:"session_id"`
 	CostUnknown   int64      `json:"cost_unknown"`
+	TurnsUsed     int64      `json:"turns_used"`
 }
 
 type BackupSetting struct {

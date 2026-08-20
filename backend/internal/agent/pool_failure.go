@@ -81,6 +81,7 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Resul
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
 		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
 		ID:           job.RunID,
 	}
 	if message != nil {
@@ -148,6 +149,7 @@ func (p *Pool) handleMaxTurnsExhausted(ctx context.Context, job Job, result Resu
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
 		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
 		ID:           job.RunID,
 	}); err != nil {
 		log.Warn("pool: max-turns escalation: set run status", "err", err)
@@ -201,6 +203,7 @@ func (p *Pool) handleCostBudgetExceeded(ctx context.Context, job Job, result Res
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
 		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
 		ID:           job.RunID,
 	}); err != nil {
 		log.Warn("pool: cost-budget escalation: set run status", "err", err)
@@ -253,6 +256,7 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time) {
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
 		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
 		ID:           job.RunID,
 	}); err != nil {
 		log.Error("pool: set run cancelled", "err", err)
@@ -421,6 +425,7 @@ func (p *Pool) escalateFailureLoop(ctx context.Context, job Job, result Result, 
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
 		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
 		ID:           job.RunID,
 	}); err != nil {
 		log.Warn("pool: failure-loop escalation: set run status", "err", err)

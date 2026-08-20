@@ -142,16 +142,19 @@ type providerCostRow struct {
 }
 
 // agentConfigStatRow is a per-agent-config breakdown of run outcomes,
-// duration, turns-to-done, transient-retry frequency, and token/cost usage.
+// duration, turns used vs. the configured cap, runs-to-done,
+// transient-retry frequency, and token/cost usage.
 // It answers "which agent config is actually performing?" by combining
 // agent_runs (status/duration/tokens/cost) with tasks.transient_retry_count.
 //
 // Two caveats apply and are surfaced in docs/api.md and docs/agents.md:
-//  1. AvgTurnsToDone and the retry fields are attributed entirely to a
-//     task's *last* run's agent config, not proportionally split across
-//     every config a task passed through (e.g. if a task was retried under
-//     agent A, then reassigned to agent B which finished it, all of that
-//     task's turns/retries count only toward B).
+//  1. AvgRunsPerTask is a proportional split: each done task contributes
+//     1.0 "task credit" divided across every agent config that ran on it,
+//     weighted by that config's share of the task's total runs (e.g. if a
+//     task was retried twice under agent A then finished by agent B in one
+//     run, A gets 2/3 of a task credit and 2 runs, B gets 1/3 of a task
+//     credit and 1 run). The retry fields, by contrast, are still
+//     attributed entirely to a task's *last* run's agent config.
 //  2. TasksWithRetries/AvgTransientRetries are a live snapshot of
 //     tasks.transient_retry_count, which resets to 0 on success or
 //     escalation to a human — this is NOT a lifetime/historical retry
@@ -168,7 +171,10 @@ type agentConfigStatRow struct {
 	SuccessRatePercent  float64 `json:"success_rate_percent"`
 	AvgDurationSecs     float64 `json:"avg_duration_secs"`
 	P90DurationSecs     float64 `json:"p90_duration_secs"`
-	AvgTurnsToDone      float64 `json:"avg_turns_to_done"`
+	AvgTurnsUsed        float64 `json:"avg_turns_used"`
+	P90TurnsUsed        float64 `json:"p90_turns_used"`
+	MaxTurns            int64   `json:"max_turns"`
+	AvgRunsPerTask      float64 `json:"avg_runs_per_task"`
 	AvgTransientRetries float64 `json:"avg_transient_retries"`
 	TasksWithRetries    int64   `json:"tasks_with_retries"`
 	InputTokens         int64   `json:"input_tokens"`
@@ -535,16 +541,20 @@ func (h *DashboardHandler) CostByTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // agentConfigStats builds the per-agent-config analytics table by combining
-// three queries:
+// four queries:
 //   - RunStatsByAgentConfig: run outcome counts, avg duration, tokens/cost.
 //   - ListRunDurationsByAgentConfig: raw per-run durations, used here to
 //     compute p90 duration per config (SQLite has no percentile aggregate).
-//   - ListTaskLastAgentConfig: per-task last-run agent config, run count
-//     ("turns to done"), and the task's live transient_retry_count snapshot.
+//   - ListTaskLastAgentConfig: per-task last-run agent config and the
+//     task's live transient_retry_count snapshot.
+//   - ListTaskRunCountsByAgentConfig: per-(task, config) run counts, used to
+//     proportionally split each done task's "task credit" across every
+//     config that contributed to it ("runs per task").
 //
 // See agentConfigStatRow's doc comment for the two attribution/semantic
-// caveats (last-run attribution; live/resettable retry snapshot) that apply
-// to AvgTurnsToDone, AvgTransientRetries, and TasksWithRetries.
+// caveats (proportional split for AvgRunsPerTask vs. last-run attribution for
+// the retry fields; live/resettable retry snapshot) that apply to
+// AvgRunsPerTask, AvgTransientRetries, and TasksWithRetries.
 func (h *DashboardHandler) agentConfigStats(ctx context.Context) ([]agentConfigStatRow, error) {
 	stats, err := h.q.RunStatsByAgentConfig(ctx)
 	if err != nil {
@@ -566,6 +576,8 @@ func (h *DashboardHandler) agentConfigStats(ctx context.Context) ([]agentConfigS
 			FailedCount:       s.FailedCount,
 			WaitingHumanCount: s.WaitingHumanCount,
 			AvgDurationSecs:   s.AvgDurationSecs,
+			AvgTurnsUsed:      s.AvgTurnsUsed,
+			MaxTurns:          s.MaxTurns,
 			InputTokens:       s.InputTokens,
 			OutputTokens:      s.OutputTokens,
 			CostUSD:           s.CostUsd,
@@ -602,43 +614,108 @@ func (h *DashboardHandler) agentConfigStats(ctx context.Context) ([]agentConfigS
 		row.P90DurationSecs = percentile90(ds)
 	}
 
-	// Turns-to-done and retry snapshot: attribute each done task entirely to
-	// the agent config of its last run (see agentConfigStatRow doc comment).
+	// p90 turns per agent config: same single-pass grouping as durations
+	// above (rows arrive pre-sorted ascending per agent_config_id). Only runs
+	// that actually reported a turn count are in this set — providers that
+	// report none are absent rather than counted as zero.
+	turns, err := h.q.ListRunTurnsByAgentConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	turnsByConfig := make(map[string][]float64)
+	for _, t := range turns {
+		if t.AgentConfigID == nil {
+			continue
+		}
+		turnsByConfig[*t.AgentConfigID] = append(turnsByConfig[*t.AgentConfigID], float64(t.TurnsUsed))
+	}
+	for id, ts := range turnsByConfig {
+		row, ok := byConfig[id]
+		if !ok {
+			continue
+		}
+		row.P90TurnsUsed = percentile90(ts)
+	}
+
+	// Retry snapshot: attribute each done task entirely to the agent config
+	// of its last run (see agentConfigStatRow doc comment).
 	taskConfigs, err := h.q.ListTaskLastAgentConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	type turnsAcc struct {
-		totalRuns      int64
+	type retryAcc struct {
 		totalRetries   int64
 		taskCount      int64
 		tasksWithRetry int64
 	}
-	turnsByConfig := make(map[string]*turnsAcc)
+	retriesByConfig := make(map[string]*retryAcc)
 	for _, tc := range taskConfigs {
 		if tc.LastAgentConfigID == nil {
 			continue
 		}
-		acc, ok := turnsByConfig[*tc.LastAgentConfigID]
+		acc, ok := retriesByConfig[*tc.LastAgentConfigID]
 		if !ok {
-			acc = &turnsAcc{}
-			turnsByConfig[*tc.LastAgentConfigID] = acc
+			acc = &retryAcc{}
+			retriesByConfig[*tc.LastAgentConfigID] = acc
 		}
-		acc.totalRuns += tc.RunCount
 		acc.totalRetries += tc.TransientRetryCount
 		acc.taskCount++
 		if tc.TransientRetryCount > 0 {
 			acc.tasksWithRetry++
 		}
 	}
-	for id, acc := range turnsByConfig {
+	for id, acc := range retriesByConfig {
 		row, ok := byConfig[id]
 		if !ok || acc.taskCount == 0 {
 			continue
 		}
-		row.AvgTurnsToDone = float64(acc.totalRuns) / float64(acc.taskCount)
 		row.AvgTransientRetries = float64(acc.totalRetries) / float64(acc.taskCount)
 		row.TasksWithRetries = acc.tasksWithRetry
+	}
+
+	// Runs-per-task: split each done task's "task credit" proportionally
+	// across every agent config that contributed a run to it, weighted by
+	// that config's share of the task's total runs (see agentConfigStatRow
+	// doc comment). Requires two passes over ListTaskRunCountsByAgentConfig:
+	// first to total each task's run count, then to distribute credit.
+	taskRunCounts, err := h.q.ListTaskRunCountsByAgentConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	totalRunsByTask := make(map[string]int64, len(taskRunCounts))
+	for _, tr := range taskRunCounts {
+		if tr.AgentConfigID == nil {
+			continue
+		}
+		totalRunsByTask[tr.TaskID] += tr.RunCount
+	}
+	type runsAcc struct {
+		totalRuns   float64 // sum of this config's run counts across tasks it touched
+		taskCredits float64 // sum of this config's proportional share of each task
+	}
+	runsByConfig := make(map[string]*runsAcc)
+	for _, tr := range taskRunCounts {
+		if tr.AgentConfigID == nil {
+			continue
+		}
+		totalForTask := totalRunsByTask[tr.TaskID]
+		if totalForTask == 0 {
+			continue
+		}
+		acc, ok := runsByConfig[*tr.AgentConfigID]
+		if !ok {
+			acc = &runsAcc{}
+			runsByConfig[*tr.AgentConfigID] = acc
+		}
+		acc.totalRuns += float64(tr.RunCount)
+		acc.taskCredits += float64(tr.RunCount) / float64(totalForTask)
+	}
+	for id, acc := range runsByConfig {
+		row, ok := byConfig[id]
+		if !ok || acc.taskCredits == 0 {
+			continue
+		}
+		row.AvgRunsPerTask = acc.totalRuns / acc.taskCredits
 	}
 
 	sort.Slice(rows, func(i, j int) bool { return rows[i].RunCount > rows[j].RunCount })

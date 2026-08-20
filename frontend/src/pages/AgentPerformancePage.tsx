@@ -163,7 +163,7 @@ export default function AgentPerformancePage() {
                   <th className="text-right px-4 py-2">Success rate</th>
                   <th className="text-right px-4 py-2">Avg duration</th>
                   <th className="text-right px-4 py-2">P90 duration</th>
-                  <th className="text-right px-4 py-2">Avg turns/task</th>
+                  <th className="text-right px-4 py-2">Avg runs/task</th>
                   <th className="text-right px-4 py-2">Retries</th>
                   <th className="text-right px-4 py-2">Cost</th>
                 </tr>
@@ -192,7 +192,7 @@ export default function AgentPerformancePage() {
                     </td>
                     <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{formatDuration(s.avg_duration_secs)}</td>
                     <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{formatDuration(s.p90_duration_secs)}</td>
-                    <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{s.avg_turns_to_done.toFixed(1)}</td>
+                    <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{s.avg_runs_per_task.toFixed(1)}</td>
                     <td className="px-4 py-2.5 text-xs text-right">
                       {s.tasks_with_retries > 0 ? (
                         <span className="text-amber-400">
@@ -213,10 +213,13 @@ export default function AgentPerformancePage() {
           <p className="text-xs text-slate-500 mt-3">
             Success rate shows completed/failed/waiting-human counts — it measures whether a run
             exited cleanly, not whether the work stuck; see "Outcome quality" above for that.
-            "Avg turns/task" and the retry snapshot are attributed to a task's <em>last</em> run's
-            agent config, and the retry count reflects the task's current retry counter, which
-            resets to 0 on success or escalation to a human — it's not a lifetime count of every
-            retry that ever happened.
+            "Avg runs/task" counts <code>agent_runs</code> rows per done task (dispatch/retry
+            cycles), not the internal LLM turns within a single run that an agent config's "Max
+            turns" setting caps — each done task's credit is split proportionally across every
+            config that contributed a run to it. The retry snapshot, by contrast, is attributed
+            entirely to a task's <em>last</em> run's agent config, and reflects the task's current
+            retry counter, which resets to 0 on success or escalation to a human — it's not a
+            lifetime count of every retry that ever happened.
           </p>
         </section>
       )}

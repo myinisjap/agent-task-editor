@@ -13,6 +13,10 @@ type runUsage struct {
 	InputTokens  int64
 	OutputTokens int64
 	CostUSD      float64
+	// Turns is the run's actual turn count as reported by the provider
+	// (claude/qwen stream-json's result-event num_turns). 0 when the message
+	// carries no turn count — never estimated. See agent.Result.TurnsUsed.
+	Turns int64
 }
 
 // applyUsage copies token/cost usage from u onto res, if u is non-nil.
@@ -23,6 +27,7 @@ func applyUsage(res *agent.Result, u *runUsage) {
 	res.InputTokens = u.InputTokens
 	res.OutputTokens = u.OutputTokens
 	res.CostUSD = u.CostUSD
+	res.TurnsUsed = u.Turns
 }
 
 // applyUsageWithCost copies token usage from u onto res (like applyUsage)
@@ -45,6 +50,7 @@ func applyUsageWithCost(ctx context.Context, res *agent.Result, u *runUsage, res
 	}
 	res.InputTokens = u.InputTokens
 	res.OutputTokens = u.OutputTokens
+	res.TurnsUsed = u.Turns
 	if u.CostUSD > 0 {
 		res.CostUSD = u.CostUSD
 		return
