@@ -147,18 +147,18 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 
 ![Dashboard](img/dashboard.png)
 
-<!--
-  NOTE: this screenshot predates the dashboard split into Overview /
-  Cost & Usage / Performance pages and now only represents the Overview
-  page (label counts, active agents, intervention queue). It no longer
-  shows the cost/usage or per-agent-config performance tables, which moved
-  to /dashboard/usage and /dashboard/performance respectively. Refreshing
-  this screenshot, and adding new ones for the Cost & Usage and Agent
-  Performance pages, is a nice-to-have follow-up per docs/screenshots.md
-  (requires a clean seeded DB with some run history); not blocking for
-  this change.
--->
+**Cost & Usage**
+
+![Cost & Usage](img/dashboard-usage.png)
+
+**Agent Performance**
+
+![Agent Performance](img/dashboard-performance.png)
 
 **Health**
 
 ![Health page](img/health.png)
+
+**Chat**
+
+![Interactive chat terminal](img/chat.png)

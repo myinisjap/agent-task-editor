@@ -99,13 +99,11 @@ google-chrome --headless --disable-gpu --no-sandbox --window-size=1440,900 \
   --screenshot=docs/img/board.png http://localhost:5173/board
 ```
 
-Note: the dashboard is now split into three routes — `/` (Overview: label
+Note: the dashboard is split into three routes — `/` (Overview: label
 counts, active agents, intervention queue), `/dashboard/usage` (Cost &
-Usage), and `/dashboard/performance` (Agent Performance). `docs/img/dashboard.png`
-currently only captures the Overview page at `/`. Capturing
-`docs/img/dashboard-usage.png` and `docs/img/dashboard-performance.png` for
-the other two routes with the same single-shot approach is a nice-to-have
-follow-up, not required.
+Usage), and `/dashboard/performance` (Agent Performance). Capture all three
+with the same single-shot approach: `docs/img/dashboard.png`,
+`docs/img/dashboard-usage.png`, `docs/img/dashboard-performance.png`.
 
 The task detail page's **Logs** and **Diff** tabs are plain `useState`, not a
 URL param — a single-shot load always lands on Overview. Use
@@ -130,6 +128,20 @@ verbatim in your *own* shell command), `pkill -f` matches against full
 command lines — including the invoking shell's own argv — and can kill your
 current shell/session instead of (or in addition to) the target. Prefer
 `pkill -f` patterns that can't match your own invocation, or target by PID.
+
+**Chat (`docs/img/chat.png`)**: the interactive terminal is a real PTY over a
+WebSocket (`/api/v1/chat/sessions/{id}/terminal`), not reachable by
+`cdp_shot.py`'s click-then-capture approach — drive it with an interactive
+browser tool instead (click the session in the sidebar to attach, type a
+real question, wait for the reply, then screenshot). Two gotchas:
+- Under `./dev.sh dev`, the Vite dev-server proxy needs `ws: true` on the
+  `/api` entry in `vite.config.ts`, not just on `/ws` — without it the
+  terminal WebSocket silently never connects (blank pane, no error). Fixed
+  in this repo; if you ever see a blank Chat pane in local dev, this is the
+  first thing to check.
+- The Claude CLI's welcome banner shows your real name, account
+  email/org, and a `claude.ai/code/session_...` URL — blur those three
+  lines before publishing, same as the Health page paths below.
 
 ## 5. Blur any leaked local paths
 

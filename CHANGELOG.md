@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Fixed
+- **Chat terminal WebSocket under `./dev.sh dev`** — the Vite dev-server proxy was missing `ws: true` on the `/api` entry, so the interactive chat terminal's WebSocket (`/api/v1/chat/sessions/{id}/terminal`) silently never connected in local dev mode (blank terminal pane, no error); only worked when running behind Docker/nginx. `frontend/vite.config.ts` now enables WebSocket upgrades on `/api` as well as `/ws`.
+
 ## [0.16.0] - 2026-08-21
 
 ### Added
