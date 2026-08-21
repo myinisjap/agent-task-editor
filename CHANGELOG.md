@@ -19,6 +19,8 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-21
+
 ### Added
 - **Per-run turn tracking (`agent_runs.turns_used`).** Runs now record how
   many internal agent turns they actually consumed, so the configured
