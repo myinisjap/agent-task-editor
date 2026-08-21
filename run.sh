@@ -2,7 +2,7 @@
 # run.sh — start Agent Task Editor from prebuilt GHCR images (no local build).
 #
 # This is the counterpart to dev.sh: same env-var injection (repo mount, GitHub
-# token, Claude auth, SSL bypass), but it pulls published images via
+# token, Claude auth, SSL bypass/CA cert), but it pulls published images via
 # docker-compose.release.yml instead of building from source.
 #
 #   ./run.sh                       # pull + start :latest
@@ -78,6 +78,14 @@ else
   export GIT_SSL_NO_VERIFY=
   export NPM_CONFIG_STRICT_SSL=
   export NODE_TLS_REJECT_UNAUTHORIZED=
+fi
+
+# Alternative to the bypass above: trust a specific corporate CA instead of
+# disabling verification entirely. Set SSL_CA_CERT_PATH to a host .pem file;
+# it's bind-mounted into the container at a fixed path and wired into
+# git/npm/Node via GIT_SSL_CAINFO/NODE_EXTRA_CA_CERTS/SSL_CERT_FILE.
+if [[ -n "${SSL_CA_CERT_PATH:-}" ]]; then
+  export SSL_CA_CERT_PATH="$(cd "$(dirname "$SSL_CA_CERT_PATH")" && pwd)/$(basename "$SSL_CA_CERT_PATH")"
 fi
 
 COMPOSE="docker compose -f docker-compose.release.yml"

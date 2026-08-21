@@ -110,6 +110,7 @@ list — it doesn't print env vars, so here's what `run.sh` itself reads
 | `GH_TOKEN` | _(from `gh auth token`)_ | GitHub token for PR sync; auto-detected if the `gh` CLI is logged in |
 | `TRAEFIK_HOST` | _(empty)_ | If set, also loads `docker-compose.traefik.yml` to expose the app behind Traefik |
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set `true` to disable SSL verification (git/npm/Node) behind a corporate TLS proxy |
+| `SSL_CA_CERT_PATH` | _(empty)_ | Path to a corporate CA `.pem` file to trust instead — safer alternative to `INSECURE_SKIP_SSL_VERIFY` |
 
 Backend app config (`API_TOKEN`, `LLM_API_KEY`, etc.) is a separate set — see
 [Key Environment Variables](#key-environment-variables) below.
@@ -145,7 +146,7 @@ INSTALL_CODEX_CLI=true INSTALL_QWEN_CLI=true docker compose build
 
 Running from prebuilt images instead of building locally? Every release also publishes a backend image with both CLIs preinstalled, tagged with an `-all-cli` suffix (e.g. `ghcr.io/myinisjap/agent-task-editor-backend:latest-all-cli`). Run it with `./run.sh --all-cli`, or set `ATE_CLI_SUFFIX=-all-cli` if you're driving `docker-compose.release.yml` directly.
 
-`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. See [docs/providers/codex_cli.md](docs/providers/codex_cli.md) and [docs/providers/qwen_code.md](docs/providers/qwen_code.md) for authentication setup once installed.
+`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. For a safer alternative, set `SSL_CA_CERT_PATH=/path/to/ca.pem` to trust a specific CA instead — it's bind-mounted into the container and wired into git/npm/Node via `GIT_SSL_CAINFO`/`NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`. See [docs/providers/codex_cli.md](docs/providers/codex_cli.md) and [docs/providers/qwen_code.md](docs/providers/qwen_code.md) for authentication setup once installed.
 
 ### Mount your repositories
 

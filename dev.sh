@@ -75,6 +75,14 @@ else
   export NODE_TLS_REJECT_UNAUTHORIZED=
 fi
 
+# Alternative to the bypass above: trust a specific corporate CA instead of
+# disabling verification entirely. Set SSL_CA_CERT_PATH to a host .pem file;
+# it's bind-mounted into the container at a fixed path and wired into
+# git/npm/Node via GIT_SSL_CAINFO/NODE_EXTRA_CA_CERTS/SSL_CERT_FILE.
+if [[ -n "${SSL_CA_CERT_PATH:-}" ]]; then
+  export SSL_CA_CERT_PATH="$(cd "$(dirname "$SSL_CA_CERT_PATH")" && pwd)/$(basename "$SSL_CA_CERT_PATH")"
+fi
+
 COMPOSE="docker compose"
 if [[ -n "${TRAEFIK_HOST:-}" ]]; then
   COMPOSE="docker compose -f docker-compose.yml -f docker-compose.traefik.yml"
@@ -173,7 +181,7 @@ case "$CMD" in
     (cd "$SCRIPT_DIR/backend" && go build -o server ./cmd/server)
 
     echo "Starting backend on :8080..."
-    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" MCP_BOARD_PATH="$MCP_BOARD_PATH" LOG_LEVEL=DEBUG AGENT_RAW_LOG_DIR="$AGENT_RAW_LOG_DIR" ./server) &
+    (cd "$SCRIPT_DIR/backend" && MCP_SERVER_PATH="$MCP_SERVER_PATH" MCP_BOARD_PATH="$MCP_BOARD_PATH" LOG_LEVEL=DEBUG AGENT_RAW_LOG_DIR="$AGENT_RAW_LOG_DIR" GIT_SSL_CAINFO="${SSL_CA_CERT_PATH:-}" NODE_EXTRA_CA_CERTS="${SSL_CA_CERT_PATH:-}" SSL_CERT_FILE="${SSL_CA_CERT_PATH:-}" ./server) &
     BACKEND_PID=$!
 
     echo "Starting frontend on :5173..."

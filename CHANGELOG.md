@@ -19,7 +19,11 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **`SSL_CA_CERT_PATH`** — trust a specific corporate CA `.pem` file instead of disabling TLS verification entirely. Safer alternative to `INSECURE_SKIP_SSL_VERIFY`; bind-mounted into the backend container and wired into git/npm/Node via `GIT_SSL_CAINFO`/`NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`, so it applies to task runs and chat sessions alike. Supported by `dev.sh`, `run.sh`, and both compose files.
+
 ### Fixed
+- **`INSECURE_SKIP_SSL_VERIFY` / `SSL_CA_CERT_PATH` not reaching agent subprocesses** — `GIT_SSL_NO_VERIFY`, `NPM_CONFIG_STRICT_SSL`, `NODE_TLS_REJECT_UNAUTHORIZED`, and `GIT_SSL_CAINFO` were missing from the provider env allowlist (`backend/internal/agent/providers/cli.go`), so agent task runs and chat sessions never actually saw them even though they were set on the backend container — the SSL bypass/CA-trust silently only applied to the backend's own git/npm calls, not to what agents ran. Added to `commonBaseEnvKeys`.
 - **Chat terminal WebSocket under `./dev.sh dev`** — the Vite dev-server proxy was missing `ws: true` on the `/api` entry, so the interactive chat terminal's WebSocket (`/api/v1/chat/sessions/{id}/terminal`) silently never connected in local dev mode (blank terminal pane, no error); only worked when running behind Docker/nginx. `frontend/vite.config.ts` now enables WebSocket upgrades on `/api` as well as `/ws`.
 
 ## [0.16.0] - 2026-08-21

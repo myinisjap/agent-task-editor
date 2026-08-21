@@ -76,6 +76,15 @@ var commonBaseEnvKeys = map[string]bool{
 	"SSL_CERT_FILE":       true,
 	"SSL_CERT_DIR":        true,
 	"NODE_EXTRA_CA_CERTS": true,
+	"GIT_SSL_CAINFO":      true,
+
+	// INSECURE_SKIP_SSL_VERIFY's computed vars (see docker-compose.yml) —
+	// without these, a corporate-proxy user who opts into the bypass gets it
+	// for the backend's own git/npm calls but not for agent subprocesses,
+	// which then fail TLS verification against the same proxy.
+	"GIT_SSL_NO_VERIFY":            true,
+	"NPM_CONFIG_STRICT_SSL":        true,
+	"NODE_TLS_REJECT_UNAUTHORIZED": true,
 
 	"HTTP_PROXY":  true,
 	"HTTPS_PROXY": true,

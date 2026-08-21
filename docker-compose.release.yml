@@ -83,6 +83,12 @@ services:
       - GIT_SSL_NO_VERIFY=${GIT_SSL_NO_VERIFY:-}
       - NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL:-}
       - NODE_TLS_REJECT_UNAUTHORIZED=${NODE_TLS_REJECT_UNAUTHORIZED:-}
+      # Alternative to the bypass above: trust a specific corporate CA cert
+      # instead of disabling verification entirely. Set SSL_CA_CERT_PATH to a
+      # host .pem file (see volumes below); active only when it's non-empty.
+      - GIT_SSL_CAINFO=${SSL_CA_CERT_PATH:+/etc/ssl/custom-ca.pem}
+      - NODE_EXTRA_CA_CERTS=${SSL_CA_CERT_PATH:+/etc/ssl/custom-ca.pem}
+      - SSL_CERT_FILE=${SSL_CA_CERT_PATH:+/etc/ssl/custom-ca.pem}
       # Set to the host directory containing your repos. The backend rewrites
       # paths under this directory to /repos inside the container automatically.
       - REPO_BASE_DIR=${REPO_BASE_DIR:-/tmp/repos}
@@ -102,6 +108,10 @@ services:
       # then this mount shares that credential with the container.
       # The :ro flag makes it read-only (the container never writes new auth).
       - ${HOME}/.config/gh:/home/node/.config/gh:ro
+      # Custom CA cert (see SSL_CA_CERT_PATH above). Falls back to /dev/null
+      # (always present, mounts as an empty file) so the mount never errors
+      # when the var is unset — GIT_SSL_CAINFO etc. are only wired up when set.
+      - ${SSL_CA_CERT_PATH:-/dev/null}:/etc/ssl/custom-ca.pem:ro
       # Repos directory — mounted at the same path so host paths work as-is.
       - ${REPO_BASE_DIR:-/tmp/repos}:${REPO_BASE_DIR:-/tmp/repos}
 

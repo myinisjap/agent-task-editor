@@ -88,6 +88,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer (see `docs/task-sources.md`) |
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set to `true` behind corporate TLS-inspecting proxies. Disables SSL verification for git clone, npm, and the claude CLI (Node.js). Set in your shell or a `.env` file — docker compose passes it as a build arg (npm install of claude-code) and runtime env vars (`GIT_SSL_NO_VERIFY`, `NPM_CONFIG_STRICT_SSL`, `NODE_TLS_REJECT_UNAUTHORIZED`). |
+| `SSL_CA_CERT_PATH` | _(none)_ | Alternative to `INSECURE_SKIP_SSL_VERIFY`: path to a corporate CA `.pem` file to trust, instead of disabling verification entirely. Bind-mounted into the container and wired into git/npm/Node via `GIT_SSL_CAINFO`/`NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`. Applies to task runs and chat sessions alike, since both spawn their provider CLI inheriting the backend's environment. |
 
 ## Development Workflow
 
