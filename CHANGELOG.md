@@ -22,6 +22,13 @@ triggers the "Release" workflow the same way.
 ## [0.16.0] - 2026-08-21
 
 ### Added
+- **`install.sh`** — one-line installer (`curl ... | bash`) that downloads
+  just `run.sh` and the two Compose files needed to run from prebuilt images,
+  without a full `git clone`. README Quick Start now leads with it, and
+  documents `run.sh`'s subcommands (`stop`/`restart`/`pull`/`logs`/`login`/`shell`)
+  and the env vars it reads (`REPO_BASE_DIR`, `ATE_VERSION`, `ATE_CLI_SUFFIX`,
+  `GH_TOKEN`, `TRAEFIK_HOST`, `INSECURE_SKIP_SSL_VERIFY`), none of which
+  `--help` prints.
 - **Per-run turn tracking (`agent_runs.turns_used`).** Runs now record how
   many internal agent turns they actually consumed, so the configured
   `max_turns` cap can be tuned against reality instead of guesswork. The

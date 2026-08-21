@@ -60,14 +60,23 @@ See [docs/overview.md](docs/overview.md) for the full concepts and architecture 
 
 ## Quick Start
 
-Run from prebuilt, multi-arch (amd64 + arm64) images — no Go/Node toolchain or
-local build required:
+Run from prebuilt, multi-arch (amd64 + arm64) images — no Go/Node toolchain, no
+local build, and no full source checkout required:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/myinisjap/agent-task-editor/main/install.sh | bash
+# or pin a release:  ATE_VERSION=v0.1.0 ./run.sh   (after install.sh has run once)
+```
+
+This downloads `run.sh` and the two Compose files it needs into
+`./agent-task-editor` and starts the stack — nothing else from the repo. Prefer
+`git clone` instead if you want the source (e.g. to build locally or
+contribute):
 
 ```bash
 git clone https://github.com/myinisjap/agent-task-editor
 cd agent-task-editor
-./run.sh                       # pulls ghcr.io/myinisjap/... :latest and starts the stack
-# or pin a release:  ATE_VERSION=v0.1.0 ./run.sh
+./run.sh
 ```
 
 `run.sh` injects the runtime env vars for you (repo mount, GitHub token, Claude
@@ -86,6 +95,24 @@ Want the Codex/Qwen CLIs preinstalled instead of building them yourself (see bel
 ```
 
 Open **http://localhost:5173** in your browser.
+
+`run.sh` also takes `stop`, `restart`, `pull`, `logs` (tails the backend),
+`login` (runs `claude login` inside the container), and `shell` (drops into
+the backend container). Run `./run.sh --help` any time for the subcommand/flag
+list — it doesn't print env vars, so here's what `run.sh` itself reads
+(export them, or put them in `agent-task-editor/.env`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REPO_BASE_DIR` | `/tmp/repos` (warns) | Host directory containing the repos agents work in — set this to your real projects dir |
+| `ATE_VERSION` | `latest` | Image tag to pull, e.g. `v0.1.0` |
+| `ATE_CLI_SUFFIX` | _(empty)_ | Set to `-all-cli` to use the Codex/Qwen-preinstalled backend image (or just pass `--all-cli`) |
+| `GH_TOKEN` | _(from `gh auth token`)_ | GitHub token for PR sync; auto-detected if the `gh` CLI is logged in |
+| `TRAEFIK_HOST` | _(empty)_ | If set, also loads `docker-compose.traefik.yml` to expose the app behind Traefik |
+| `INSECURE_SKIP_SSL_VERIFY` | `false` | Set `true` to disable SSL verification (git/npm/Node) behind a corporate TLS proxy |
+
+Backend app config (`API_TOKEN`, `LLM_API_KEY`, etc.) is a separate set — see
+[Key Environment Variables](#key-environment-variables) below.
 
 > **Repo file ownership.** The backend container remaps its runtime user to your
 > host user (`PUID`/`PGID`) at startup, so files agents write to bind-mounted
