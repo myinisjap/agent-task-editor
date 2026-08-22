@@ -237,6 +237,13 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	if tok := ClaudeOAuthAccessToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
 	}
+	// Force-disabled: the CLI self-updating mid-run inside a container we
+	// version and rebuild ourselves (CLAUDE_CLI_VERSION in backend/Dockerfile)
+	// would silently drift the running binary away from what's pinned, and
+	// surfaces as an "update available" warning in every chat/task run
+	// regardless. Appended last so it always wins over any operator-set
+	// DISABLE_AUTOUPDATER in the backend's own env.
+	env = append(env, "DISABLE_AUTOUPDATER=1")
 	cmd.Env = env
 
 	stdout, err := cmd.StdoutPipe()

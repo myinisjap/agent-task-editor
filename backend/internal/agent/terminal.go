@@ -260,6 +260,19 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	// these values are accurate. Set after the base env so they win over any
 	// inherited value.
 	cmd.Env = append(baseEnv, "TERM=xterm-256color", "COLORTERM=truecolor")
+	// Force-disabled per provider: each CLI's binary is pinned by a
+	// *_CLI_VERSION build arg in backend/Dockerfile, so a self-update mid-session
+	// would silently drift the running binary away from what's pinned — and
+	// otherwise surfaces as an "update available" warning in the chat terminal.
+	// Mirrors the same env forcing in each headless Runner (claude.go, qwen.go);
+	// codex has no env var for this, so its opt-out is a CLI flag (see
+	// terminalCommand above) instead.
+	switch provider {
+	case "claude":
+		cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
+	case "qwen_code":
+		cmd.Env = append(cmd.Env, "NO_UPDATE_NOTIFIER=1")
+	}
 	cmd.Env = append(cmd.Env, extraEnv...)
 
 	tty, err := pty.Start(cmd)
@@ -413,6 +426,12 @@ func terminalCommand(provider, model string, resume bool) (name string, args []s
 		}
 	case "codex_cli":
 		name = "codex"
+		// Codex's TUI (unlike its headless `exec` mode) prints an "Update
+		// available!" banner from a background version check; suppress it
+		// since CODEX_CLI_VERSION is pinned in backend/Dockerfile and we don't
+		// want the running binary drifting from what's built into the image.
+		// -c overrides config.toml; no env var exists for this in Codex.
+		args = append(args, "-c", "check_for_update=false")
 		if resume {
 			args = append(args, "resume", "--last") // subcommand; cwd-filtered
 		}
