@@ -70,6 +70,24 @@ func ResolveDevcontainerSource(repoFileJSON, dbJSON string) (devcontainerSource,
 	return devcontainerNone, ""
 }
 
+// ResolveDevcontainerSourceName is ResolveDevcontainerSource with its result
+// exported as a string label instead of the package-private devcontainerSource
+// type, for callers outside this package (the GET /repos/{id}/devcontainer
+// API handler) that need to report which source won without duplicating the
+// precedence logic above. Labels match the source enum documented in
+// openapi.yaml: "repo_file", "db", "none".
+func ResolveDevcontainerSourceName(repoFileJSON, dbJSON string) (name string, rawJSON string) {
+	source, raw := ResolveDevcontainerSource(repoFileJSON, dbJSON)
+	switch source {
+	case devcontainerRepoFile:
+		return "repo_file", raw
+	case devcontainerDB:
+		return "db", raw
+	default:
+		return "none", raw
+	}
+}
+
 // ReadRepoDevcontainerFile reads .devcontainer/devcontainer.json from a repo
 // checkout, returning "" (no error) if the repo simply doesn't have one —
 // that's the common case, not a failure. A real read error (permissions,
@@ -314,6 +332,21 @@ func (m *RuntimeManager) ExpectedDevcontainerHash(repoPath, rawJSON string) (str
 		return "", err
 	}
 	return HashDevcontainerJSON(effective), nil
+}
+
+// EffectiveDevcontainerJSON returns the fully-resolved devcontainer.json
+// (rawJSON with this RuntimeManager's mount/hardening contract merged in) for
+// a repo's winning devcontainer source, without starting or touching any
+// container. Used by the GET /repos/{id}/devcontainer API handler to show a
+// user the configuration that would actually be built, sharing the exact
+// same merge logic ExpectedDevcontainerHash and EnsureDevcontainerRunning
+// use rather than re-deriving it. Returns "" for rawJSON == "" (no
+// devcontainer source configured for this repo).
+func (m *RuntimeManager) EffectiveDevcontainerJSON(repoPath, rawJSON string) (string, error) {
+	if rawJSON == "" {
+		return "", nil
+	}
+	return m.buildEffectiveDevcontainerJSON(repoPath, rawJSON)
 }
 
 // EnsureDevcontainerRunning builds (or reuses) a repo's devcontainer-CLI

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,7 +27,7 @@ func setupReposRouter(t *testing.T, repoBaseDir string) (http.Handler, *gen.Quer
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, repoBaseDir, nil)
+	h := handlers.NewReposHandler(q, repoBaseDir, nil, "")
 
 	r := chi.NewRouter()
 	r.Post("/repos", h.Create)
@@ -34,6 +35,7 @@ func setupReposRouter(t *testing.T, repoBaseDir string) (http.Handler, *gen.Quer
 	r.Get("/repos/{id}", h.Get)
 	r.Delete("/repos/{id}", h.Delete)
 	r.Get("/repos/{id}/tree", h.Tree)
+	r.Get("/repos/{id}/devcontainer", h.Devcontainer)
 	return r, q
 }
 
@@ -466,7 +468,7 @@ func TestReposUpdate_IssueSyncRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, "")
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -574,7 +576,7 @@ func TestReposUpdate_IssueWritebackRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, "")
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -634,7 +636,7 @@ func TestReposUpdate_IssueWritebackLabelRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, "")
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -733,7 +735,7 @@ func TestReposUpdate_PrReviewAutoTransitionRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, "")
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -1010,7 +1012,7 @@ func TestReposUpdate_IssueSyncPolicyFieldsRoundTripAndSurviveUnrelatedPatch(t *t
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, "")
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -1092,7 +1094,7 @@ func TestReposUpdate_InvalidIssueSyncPolicyFieldsRejected(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, "")
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -1187,7 +1189,7 @@ func TestReposUpdate_MaxConcurrentRunsOmittedVsNullVsSet(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, "")
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -1522,5 +1524,350 @@ func TestReposCreate_AsyncCloneFailure_MarksRepoError(t *testing.T) {
 	}
 	if repo.CloneError == "" {
 		t.Errorf("expected a non-empty clone_error message")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// devcontainer_json (T6 API surface — see runtime-images.md's round-2 plan)
+// ---------------------------------------------------------------------------
+
+// TestReposCreate_DevcontainerJsonRoundTrip verifies a valid devcontainer_json
+// JSON object round-trips through Create, and empty string (the default) is
+// accepted as "not configured".
+func TestReposCreate_DevcontainerJsonRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	// Omitted -> empty string default.
+	repoDir := filepath.Join(base, "omitted")
+	initBareGitRepo(t, repoDir)
+	w := postJSON(t, router, "/repos", map[string]any{"name": "omitted", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("omitted: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["devcontainer_json"]; got != "" {
+		t.Errorf("omitted devcontainer_json = %v, want empty", got)
+	}
+
+	// A valid JSON object round-trips.
+	repoDir2 := filepath.Join(base, "withdc")
+	initBareGitRepo(t, repoDir2)
+	dc := `{"image":"golang:1.26"}`
+	w = postJSON(t, router, "/repos", map[string]any{"name": "withdc", "path": repoDir2, "devcontainer_json": dc})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("withdc: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["devcontainer_json"]; got != dc {
+		t.Errorf("devcontainer_json = %v, want %q", got, dc)
+	}
+}
+
+// TestReposCreate_DevcontainerJsonMalformedRejected verifies malformed JSON
+// and non-object JSON (an array, a bare string) are both rejected with 400
+// naming the parse problem, per the trust-boundary requirement: a bad blob
+// must fail at save time, not at dispatch time inside a container.
+func TestReposCreate_DevcontainerJsonMalformedRejected(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"unterminated object", `{"image": "golang:1.26"`},
+		{"bare string", `"golang:1.26"`},
+		{"json array", `["golang:1.26"]`},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := filepath.Join(base, fmt.Sprintf("bad%d", i))
+			initBareGitRepo(t, repoDir)
+			w := postJSON(t, router, "/repos", map[string]any{
+				"name":              fmt.Sprintf("bad%d", i),
+				"path":              repoDir,
+				"devcontainer_json": tc.raw,
+			})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "devcontainer_json") {
+				t.Errorf("expected error to name devcontainer_json, got: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+// TestReposUpdate_DevcontainerJsonOmittedPreservesStoredValue is the
+// regression this change most needs to guard: a PATCH that omits
+// devcontainer_json entirely must preserve the stored value (not silently
+// wipe it), mirroring runtime_image's *string preserve-if-omitted pattern.
+// A PATCH that provides a new value replaces it; malformed JSON on update is
+// rejected the same way as on create.
+func TestReposUpdate_DevcontainerJsonOmittedPreservesStoredValue(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil, "")
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	dc := `{"image":"golang:1.26"}`
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":              "myorg/myrepo",
+		"path":              repoDir,
+		"devcontainer_json": dc,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+	if got := repo["devcontainer_json"]; got != dc {
+		t.Fatalf("initial devcontainer_json = %v, want %q", got, dc)
+	}
+
+	// A PATCH that doesn't mention the field must not reset it.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("unrelated patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["devcontainer_json"]; got != dc {
+		t.Errorf("devcontainer_json after unrelated patch = %v, want unchanged %q", got, dc)
+	}
+
+	// A new value replaces the existing one.
+	dc2 := `{"image":"python:3.12"}`
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"devcontainer_json": dc2})
+	if w.Code != http.StatusOK {
+		t.Fatalf("set patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["devcontainer_json"]; got != dc2 {
+		t.Errorf("devcontainer_json after set = %v, want %q", got, dc2)
+	}
+
+	// Explicit empty string clears it back to "not configured".
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"devcontainer_json": ""})
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if got := repo["devcontainer_json"]; got != "" {
+		t.Errorf("devcontainer_json after clear = %v, want empty", got)
+	}
+
+	// Malformed JSON on update is rejected the same way as on create.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"devcontainer_json": "not json"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("malformed on update: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GET /repos/{id}/devcontainer (effective-config endpoint)
+// ---------------------------------------------------------------------------
+
+// TestReposDevcontainer_SourceNone verifies a repo with neither runtime_image
+// nor devcontainer_json nor a repo-committed devcontainer.json reports source
+// "none" with an empty effective_json.
+func TestReposDevcontainer_SourceNone(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myorg/myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+id+"/devcontainer", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if got := resp["source"]; got != "none" {
+		t.Errorf("source = %v, want %q", got, "none")
+	}
+	if got := resp["effective_json"]; got != "" {
+		t.Errorf("effective_json = %v, want empty", got)
+	}
+	if got := resp["repo_file_present"]; got != false {
+		t.Errorf("repo_file_present = %v, want false", got)
+	}
+}
+
+// TestReposDevcontainer_SourceDB verifies a repo with only devcontainer_json
+// set (no repo-committed file, no runtime_image) reports source "db" and a
+// non-empty effective_json (the mount/hardening contract merged in).
+func TestReposDevcontainer_SourceDB(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	dc := `{"image":"golang:1.26"}`
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":              "myorg/myrepo",
+		"path":              repoDir,
+		"devcontainer_json": dc,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+id+"/devcontainer", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if got := resp["source"]; got != "db" {
+		t.Errorf("source = %v, want %q", got, "db")
+	}
+	if got, _ := resp["effective_json"].(string); got == "" {
+		t.Errorf("expected non-empty effective_json, got empty")
+	}
+	if got := resp["repo_file_present"]; got != false {
+		t.Errorf("repo_file_present = %v, want false", got)
+	}
+}
+
+// TestReposDevcontainer_SourceRepoFileWinsOverDB verifies a repo with both a
+// committed .devcontainer/devcontainer.json AND a DB-stored devcontainer_json
+// reports source "repo_file" (repo file wins) and repo_file_present true,
+// while the DB-stored config is not the one reflected in effective_json.
+func TestReposDevcontainer_SourceRepoFileWinsOverDB(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	// Commit a .devcontainer/devcontainer.json in the repo checkout.
+	dcDir := filepath.Join(repoDir, ".devcontainer")
+	if err := os.MkdirAll(dcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoFileJSON := `{"image":"from-repo-file"}`
+	if err := os.WriteFile(filepath.Join(dcDir, "devcontainer.json"), []byte(repoFileJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dbJSON := `{"image":"from-db"}`
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":              "myorg/myrepo",
+		"path":              repoDir,
+		"devcontainer_json": dbJSON,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+id+"/devcontainer", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if got := resp["source"]; got != "repo_file" {
+		t.Errorf("source = %v, want %q", got, "repo_file")
+	}
+	if got := resp["repo_file_present"]; got != true {
+		t.Errorf("repo_file_present = %v, want true", got)
+	}
+	effective, _ := resp["effective_json"].(string)
+	if !strings.Contains(effective, "from-repo-file") {
+		t.Errorf("effective_json should reflect the repo file's content, got: %s", effective)
+	}
+	if strings.Contains(effective, "from-db") {
+		t.Errorf("effective_json should NOT reflect the DB-stored config when a repo file wins, got: %s", effective)
+	}
+}
+
+// TestReposDevcontainer_SourceImageRef verifies a repo with runtime_image set
+// reports source "image_ref" with empty effective_json — an explicit image
+// ref always wins and skips the devcontainer build path entirely, even when
+// devcontainer_json is also configured.
+func TestReposDevcontainer_SourceImageRef(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil, "")
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+	router.Get("/repos/{id}/devcontainer", h.Devcontainer)
+
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":              "myorg/myrepo",
+		"path":              repoDir,
+		"runtime_image":     "ghcr.io/me/img:1",
+		"devcontainer_json": `{"image":"ignored"}`,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+id+"/devcontainer", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if got := resp["source"]; got != "image_ref" {
+		t.Errorf("source = %v, want %q", got, "image_ref")
+	}
+	if got := resp["effective_json"]; got != "" {
+		t.Errorf("effective_json = %v, want empty when runtime_image wins", got)
+	}
+}
+
+// TestReposDevcontainer_NotFound verifies GET .../devcontainer for an
+// unknown repo id returns 404, mirroring TestReposGet_Unknown.
+func TestReposDevcontainer_NotFound(t *testing.T) {
+	router, _ := setupReposRouter(t, t.TempDir())
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+uuid.NewString()+"/devcontainer", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
