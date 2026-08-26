@@ -281,12 +281,16 @@ func main() {
 	dispatcher.Publisher = hub
 	dispatcher.MaxDailyCostUSD = cfg.MaxDailyCostUSD
 	dispatcher.MaxMonthlyCostUSD = cfg.MaxMonthlyCostUSD
-	// Runtime resolves a repo's runtime_image (see docs/agents.md and
+	// runtimeManager resolves a repo's runtime_image (see docs/agents.md and
 	// runtime-images.md) into a running docker container per repo. Always
 	// constructed — EnsureRunning is only ever called for a repo that has
 	// runtime_image set (see dispatcher.go's startRun), so this is a no-op
-	// for every repo/deployment not opting in.
-	dispatcher.Runtime = &agent.RuntimeManager{MCPServerPath: cfg.MCPBinary}
+	// for every repo/deployment not opting in. Shared (not re-constructed)
+	// with the worktree sweeper below: its per-repo mutex only serializes
+	// EnsureRunning against the sweeper's container reap pass if both read
+	// the same instance.
+	runtimeManager := &agent.RuntimeManager{MCPServerPath: cfg.MCPBinary}
+	dispatcher.Runtime = runtimeManager
 
 	// Shares the dispatcher's own collaborators (queries, pool, rate-limit
 	// registry, and the dispatcher itself for the global cost-ceiling status)
@@ -430,7 +434,7 @@ func main() {
 	// .ate-worktrees/ disk usage by live tasks rather than by all tasks ever
 	// created, catching both archive-time teardown misses and crash orphans.
 	// See internal/worktreesweep and docs/backup.md.
-	worktreeSweeper := worktreesweep.New(termQ, cfg.WorktreeSweepInterval)
+	worktreeSweeper := worktreesweep.New(termQ, cfg.WorktreeSweepInterval, runtimeManager)
 	slog.Info("worktree sweeper starting", "interval", cfg.WorktreeSweepInterval)
 
 	go pool.Start(ctx)

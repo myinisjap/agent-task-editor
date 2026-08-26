@@ -10,12 +10,25 @@ import (
 // TestNew_WiresIntervalAndQueries verifies the trivial constructor stores
 // what it's given.
 func TestNew_WiresIntervalAndQueries(t *testing.T) {
-	s := New(nil, 5*time.Minute)
+	rt := &agent.RuntimeManager{}
+	s := New(nil, 5*time.Minute, rt)
 	if s == nil {
 		t.Fatal("expected New to return a non-nil Sweeper")
 	}
 	if s.interval != 5*time.Minute {
 		t.Errorf("expected interval 5m, got %v", s.interval)
+	}
+	// Guards the production-wiring bug this replaces: main.go used to build
+	// the sweeper with no Runtime, leaving it nil and causing
+	// reconcileContainers to treat every managed container as belonging to
+	// a repo with no runtime source (see shouldReapContainer), reaping
+	// healthy containers on the first tick. Runtime being a required
+	// constructor param (rather than a field assigned separately) means the
+	// compiler — not this test — is what actually prevents a future
+	// regression at the main.go call site; this test only proves New itself
+	// wires the argument through.
+	if s.Runtime != rt {
+		t.Error("expected New to wire the given RuntimeManager onto Sweeper.Runtime")
 	}
 }
 
@@ -47,12 +60,15 @@ func TestCurrentInterval(t *testing.T) {
 // containers (see internal/agent/runtime.go): a container survives only
 // while its repo still exists AND its ate.image label matches that repo's
 // current (non-empty) runtime_image. Anything else — repo deleted, image
-// stale, or the repo's runtime_image cleared back to empty — is reaped.
+// stale, or the repo's runtime_image cleared back to empty — is reaped,
+// UNLESS the repo has a task with an in-flight run, which always wins (see
+// TestShouldReapContainer_SkipsReposWithActiveRun for that case).
 func TestShouldReapContainer(t *testing.T) {
 	states := map[string]repoRuntimeState{
 		"repo-current": {Image: "ghcr.io/example/runtime:2"},
 		"repo-cleared": {}, // runtime_image was unset after this container was created
 	}
+	noActiveRuns := map[string]struct{}{}
 
 	cases := []struct {
 		name string
@@ -83,8 +99,45 @@ func TestShouldReapContainer(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldReapContainer(tc.c, states); got != tc.want {
+			if got := shouldReapContainer(tc.c, states, noActiveRuns); got != tc.want {
 				t.Errorf("shouldReapContainer(%+v) = %v, want %v", tc.c, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestShouldReapContainer_SkipsReposWithActiveRun is the regression guard for
+// the sweeper racing an in-flight run (EnsureRunning resolves the container
+// name at startRun, well before the provider actually `docker exec`s into
+// it — pool enqueue, prompt building, and MCP prep happen in between). A
+// repo with an active run must never be reaped this tick, even when its
+// image is stale or its repo is (implausibly) reported gone — removing the
+// reposWithActiveRun check in shouldReapContainer would flip every case here
+// to "reap" and fail this test.
+func TestShouldReapContainer_SkipsReposWithActiveRun(t *testing.T) {
+	states := map[string]repoRuntimeState{
+		"repo-active": {Image: "ghcr.io/example/runtime:2"},
+	}
+	activeRuns := map[string]struct{}{"repo-active": {}}
+
+	cases := []struct {
+		name string
+		c    agent.ManagedContainer
+	}{
+		{
+			name: "image matches but repo has an active run: keep anyway",
+			c:    agent.ManagedContainer{Name: "n1", RepoID: "repo-active", Image: "ghcr.io/example/runtime:2"},
+		},
+		{
+			name: "image is stale but repo has an active run: keep anyway",
+			c:    agent.ManagedContainer{Name: "n2", RepoID: "repo-active", Image: "ghcr.io/example/runtime:1"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldReapContainer(tc.c, states, activeRuns); got != false {
+				t.Errorf("shouldReapContainer(%+v) = %v, want false (in-flight run must block reaping)", tc.c, got)
 			}
 		})
 	}

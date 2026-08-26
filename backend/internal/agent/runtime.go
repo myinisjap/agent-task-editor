@@ -154,9 +154,36 @@ func (m *RuntimeManager) EnsureRunning(ctx context.Context, repoID, repoPath, im
 		PidsLimit:     m.PidsLimit,
 	})
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
+		if isNameConflictError(out) {
+			// Another EnsureRunning call for this same repo+name won the race
+			// between our inspect above and this docker run (e.g. a stale
+			// container was removed and recreated concurrently, or the two
+			// happened close enough together that "rm -f" hadn't finished
+			// propagating). Re-inspect and reuse rather than failing the run —
+			// failing here would escalate a healthy task to waiting_human for
+			// what is really just lock contention resolving itself. The
+			// per-repo mutex above prevents this within one process, but not
+			// across a `docker rm -f` issued by something else (e.g. a manual
+			// `docker rm`, or the sweeper acting between our lock release and
+			// docker actually finishing the removal).
+			existingImage, running, inspectErr := m.inspectExisting(ctx, name)
+			if inspectErr == nil && running && existingImage == image {
+				return name, nil
+			}
+			return "", fmt.Errorf("runtime: docker run failed: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
 		return "", fmt.Errorf("runtime: docker run failed: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return name, nil
+}
+
+// isNameConflictError reports whether a `docker run` failure's combined
+// output is Docker's container-name-conflict message (e.g. `Conflict. The
+// container name "/ate-runtime-<id>" is already in use by container
+// "<hash>"`) — i.e. someone else won the race to create this container
+// between our inspect and this run, rather than a real failure.
+func isNameConflictError(out []byte) bool {
+	return bytes.Contains(out, []byte("is already in use"))
 }
 
 // inspectExisting looks up a container by name via `docker ps -a --filter
@@ -171,7 +198,15 @@ func (m *RuntimeManager) inspectExisting(ctx context.Context, name string) (imag
 	if err != nil {
 		return "", false, err
 	}
-	line := strings.TrimSpace(string(out))
+	return parseInspectOutput(string(out))
+}
+
+// parseInspectOutput parses `docker ps`'s `{{.Label "ate.image"}}\t{{.State}}`
+// output (see inspectExisting) into the image label and running state. Pure
+// string handling, factored out so it's table-testable without a Docker
+// daemon. Returns ("", false, nil) for empty output (no matching container).
+func parseInspectOutput(out string) (image string, running bool, err error) {
+	line := strings.TrimSpace(out)
 	if line == "" {
 		return "", false, nil
 	}
@@ -311,13 +346,4 @@ type ManagedContainer struct {
 	Name   string
 	RepoID string
 	Image  string
-}
-
-// dockerAvailable reports whether the docker CLI is on PATH — used to skip
-// EnsureRunning's daemon-dependent tests in environments without Docker
-// (mirrors testing.Short() guards elsewhere in this codebase for
-// daemon-dependent tests).
-func dockerAvailable() bool {
-	_, err := exec.LookPath("docker")
-	return err == nil
 }

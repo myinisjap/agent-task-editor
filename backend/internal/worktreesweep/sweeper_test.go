@@ -112,7 +112,7 @@ func TestRunOnce_ReclaimsArchivedTaskWorktree(t *testing.T) {
 	liveWt := addWorktree(t, repoPath, liveID)
 	archivedWt := addWorktree(t, repoPath, archivedID)
 
-	s := worktreesweep.New(q, time.Hour)
+	s := worktreesweep.New(q, time.Hour, nil)
 	if err := s.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRunOnce_KeepsChatSessionWorktree(t *testing.T) {
 	orphanID := uuid.NewString()
 	orphanWt := addWorktree(t, repoPath, orphanID) // no task/session owns this id
 
-	s := worktreesweep.New(q, time.Hour)
+	s := worktreesweep.New(q, time.Hour, nil)
 	if err := s.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestRunOnce_RemovesCrashOrphanedDirNotRegisteredAsWorktree(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	s := worktreesweep.New(q, time.Hour)
+	s := worktreesweep.New(q, time.Hour, nil)
 	if err := s.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestRunOnce_NoDeletionOnListError(t *testing.T) {
 	}
 	q := gen.New(db.SQL()) // queries against a closed DB will error
 
-	s := worktreesweep.New(q, time.Hour)
+	s := worktreesweep.New(q, time.Hour, nil)
 	if err := s.RunOnce(context.Background()); err == nil {
 		t.Fatal("expected an error from a closed DB, got nil")
 	}
@@ -230,7 +230,7 @@ func TestSweeper_Run_ReturnsOnContextCancel(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
 
-	s := worktreesweep.New(q, time.Hour)
+	s := worktreesweep.New(q, time.Hour, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

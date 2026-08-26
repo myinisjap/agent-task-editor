@@ -47,16 +47,25 @@ var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 type Sweeper struct {
 	q        *gen.Queries
 	interval time.Duration
-	// Runtime is currently unused by reconcileContainers, which compares
-	// each repo's runtime_image directly against the ate.image label without
-	// needing RuntimeManager. Kept for future runtime-container
-	// reconciliation needs.
+	// Runtime must be the SAME *agent.RuntimeManager instance passed to
+	// Dispatcher.Runtime (see cmd/server/main.go), not a second one — its
+	// per-repo mutex only actually serializes EnsureRunning against
+	// reconcileContainers if both call sites share one instance. Currently
+	// used only as a nil-check guard (reconcileContainers itself compares
+	// each repo's runtime_image directly against the ate.image label, no
+	// RuntimeManager method calls needed); kept as a required constructor
+	// param so a future reconcileContainers change that does need it can't
+	// silently run against a nil Runtime the way this field's prior
+	// optional-field form did (see issue: sweeper reaped healthy containers
+	// because nothing ever set it).
 	Runtime *agent.RuntimeManager
 }
 
-// New creates a Sweeper that reconciles worktrees every interval.
-func New(q *gen.Queries, interval time.Duration) *Sweeper {
-	return &Sweeper{q: q, interval: interval}
+// New creates a Sweeper that reconciles worktrees every interval. runtime
+// must be the same instance as the dispatcher's RuntimeManager — see the
+// Sweeper.Runtime doc comment.
+func New(q *gen.Queries, interval time.Duration, runtime *agent.RuntimeManager) *Sweeper {
+	return &Sweeper{q: q, interval: interval, Runtime: runtime}
 }
 
 func (s *Sweeper) currentInterval() time.Duration {
@@ -107,7 +116,16 @@ func (s *Sweeper) RunOnce(ctx context.Context) error {
 	// ids are server-generated UUIDs, so one global keep-set (rather than
 	// per-repo) is safe — no cross-repo collision risk.
 	keep := make(map[string]struct{}, len(tasks)+len(sessions))
+	// reposWithActiveRun collects every repo id with at least one task whose
+	// active_agent_run_id is non-nil (set by the dispatcher, cleared only on
+	// label transition or run completion — see AGENTS.md's Architecture
+	// Decision Notes). Used by reconcileContainers to avoid reaping a
+	// container mid-run: see that function's doc comment.
+	reposWithActiveRun := make(map[string]struct{})
 	for _, t := range tasks {
+		if t.ActiveAgentRunID != nil {
+			reposWithActiveRun[t.RepoID] = struct{}{}
+		}
 		if t.Archived != 0 {
 			continue // archived tasks are exactly what this sweeper reclaims
 		}
@@ -121,7 +139,7 @@ func (s *Sweeper) RunOnce(ctx context.Context) error {
 		s.reconcileRepo(ctx, repo.Path, keep)
 	}
 
-	s.reconcileContainers(ctx, repos)
+	s.reconcileContainers(ctx, repos, reposWithActiveRun)
 	return nil
 }
 
@@ -157,11 +175,21 @@ func (s *Sweeper) resolveRepoRuntimeState(repos []gen.Repo) map[string]repoRunti
 // leave running stale until the next dispatch happens to land on that repo
 // (image changed).
 //
+// reposWithActiveRun (built by RunOnce from the same task list used for the
+// worktree keep-set) also protects a container whose repo has a task
+// currently locked on a run: EnsureRunning resolves the container name at
+// startRun, well before the provider actually `docker exec`s into it (pool
+// enqueue, prompt building, and MCP prep all happen in between — minutes
+// under queue backpressure). Reaping the container in that window kills an
+// in-flight run with a raw "No such container" error. A repo with an active
+// run is skipped entirely this tick even if its image is otherwise stale;
+// it gets reaped on a later tick once the repo goes idle.
+//
 // Best-effort and non-fatal like the rest of this package: docker not being
 // installed/reachable is the common case for anyone not using per-repo
 // runtime containers at all, so a ListManagedContainers error here is logged
 // at Warn (not Error) and simply skips this pass for the tick.
-func (s *Sweeper) reconcileContainers(ctx context.Context, repos []gen.Repo) {
+func (s *Sweeper) reconcileContainers(ctx context.Context, repos []gen.Repo, reposWithActiveRun map[string]struct{}) {
 	containers, err := agent.ListManagedContainers(ctx)
 	if err != nil {
 		slog.Warn("worktreesweep: list runtime containers (skipping container reap this tick)", "err", err)
@@ -174,7 +202,7 @@ func (s *Sweeper) reconcileContainers(ctx context.Context, repos []gen.Repo) {
 	states := s.resolveRepoRuntimeState(repos)
 
 	for _, c := range containers {
-		if !shouldReapContainer(c, states) {
+		if !shouldReapContainer(c, states, reposWithActiveRun) {
 			continue
 		}
 		if err := agent.RemoveContainer(ctx, c.Name); err != nil {
@@ -188,13 +216,27 @@ func (s *Sweeper) reconcileContainers(ctx context.Context, repos []gen.Repo) {
 
 // shouldReapContainer is the pure keep-vs-reap decision for one managed
 // container, factored out of reconcileContainers so it's unit-testable
-// without a Docker daemon. A container is kept only when its repo still
-// exists AND its Image label matches that repo's current, non-empty
-// expected Image. Anything else — repo gone, image stale, or the repo's
-// current expected image cleared back to empty — is reaped. This enforces
-// the non-negotiable "empty runtime_image behaves as before" rule for
+// without a Docker daemon.
+//
+// A container with an in-flight run (its repo has a task with a non-nil
+// active_agent_run_id) is always kept, regardless of image staleness or the
+// repo even still existing: EnsureRunning resolves the container name at
+// startRun, well before the provider actually `docker exec`s into it (pool
+// enqueue, prompt building, and MCP prep all happen in between — minutes
+// under queue backpressure). Reaping the container in that window kills an
+// in-flight run with a raw "No such container" error. It gets reaped on a
+// later tick once the repo goes idle.
+//
+// Otherwise, a container is kept only when its repo still exists AND its
+// Image label matches that repo's current, non-empty expected Image.
+// Anything else — repo gone, image stale, or the repo's current expected
+// image cleared back to empty — is reaped. This enforces the
+// non-negotiable "empty runtime_image behaves as before" rule for
 // containers left running from before the field was cleared.
-func shouldReapContainer(c agent.ManagedContainer, states map[string]repoRuntimeState) bool {
+func shouldReapContainer(c agent.ManagedContainer, states map[string]repoRuntimeState, reposWithActiveRun map[string]struct{}) bool {
+	if _, active := reposWithActiveRun[c.RepoID]; active {
+		return false
+	}
 	state, repoExists := states[c.RepoID]
 	if !repoExists {
 		return true
