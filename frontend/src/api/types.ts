@@ -3140,7 +3140,6 @@ export interface paths {
                         issue_sync_gone_label?: string;
                         issue_comment_sync_enabled?: boolean;
                         runtime_image?: string;
-                        devcontainer_json?: string;
                     };
                 };
             };
@@ -3153,13 +3152,6 @@ export interface paths {
                         "application/json": components["schemas"]["Repo"];
                     };
                 };
-                /** @description devcontainer_json does not parse as a JSON object */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
                 /** @description Repo not found */
                 404: {
                     headers: {
@@ -3169,60 +3161,6 @@ export interface paths {
                 };
             };
         };
-        trace?: never;
-    };
-    "/repos/{id}/devcontainer": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get a repo's effective devcontainer configuration
-         * @description Resolves and returns the devcontainer.json that would actually be used to build this repo's runtime container, applying the same precedence the dispatcher uses: an explicit runtime_image always wins (source "image_ref", no effective_json); otherwise a .devcontainer/devcontainer.json committed in the repo beats the UI-authored devcontainer_json stored on the repo; if neither is present, source is "none". Lets the UI warn the user when their saved devcontainer_json is being ignored because the repo ships its own file.
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            /** @enum {string} */
-                            source: "image_ref" | "repo_file" | "db" | "none";
-                            /** @description The fully-resolved devcontainer.json (mounts/hardening contract merged in). Empty when source is "image_ref" (no devcontainer build happens at all) or "none". */
-                            effective_json: string;
-                            /** @description True when the repo has its own committed .devcontainer/devcontainer.json, regardless of which source ultimately wins. */
-                            repo_file_present: boolean;
-                        };
-                    };
-                };
-                /** @description Repo not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/repos/{id}/tree": {
@@ -4622,8 +4560,6 @@ export interface components {
             max_concurrent_runs?: number | null;
             /** @description Optional container image to run this repo's agent CLIs in instead of in-process on the backend host. Empty string (the default) means run in-process — today's behavior, unchanged. */
             runtime_image?: string;
-            /** @description Optional devcontainer.json (UI-authored) used to build this repo's runtime container when runtime_image is empty. Must parse as a JSON object; rejected with 400 at write time otherwise. Empty string (the default) means "not configured". Ignored entirely when the repo has its own committed .devcontainer/devcontainer.json — see GET /repos/{id}/devcontainer to check which source currently wins. Ignored entirely when runtime_image is set (runtime_image always wins). */
-            devcontainer_json?: string;
             /** Format: date-time */
             created_at: string;
         };

@@ -388,22 +388,15 @@ export const api = {
   repos: {
     list: () => listAllPages<Repo>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number; runtime_image?: string; devcontainer_json?: string }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number; runtime_image?: string }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
     // max_concurrent_runs: omit the key to leave it unchanged, or pass null to
     // clear it back to "use the global default" — the backend distinguishes
     // an omitted field from an explicit null (see ReposHandler.Update).
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null; runtime_image?: string; devcontainer_json?: string }) =>
-
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null; runtime_image?: string }) =>
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
-    // Effective devcontainer config the dispatcher would actually use for
-    // this repo, and which source won (image_ref / repo_file / db / none).
-    // Lets the UI warn when a committed .devcontainer/devcontainer.json
-    // overrides the repo's saved devcontainer_json.
-    devcontainer: (id: string) =>
-      request<{ source: 'image_ref' | 'repo_file' | 'db' | 'none'; effective_json: string; repo_file_present: boolean }>(`/repos/${id}/devcontainer`),
   },
   templates: {
     list: () => request<TaskTemplate[]>('/templates'),

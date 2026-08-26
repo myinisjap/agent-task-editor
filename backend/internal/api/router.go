@@ -35,7 +35,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
 	providersH := handlers.NewProviderConfigsHandler(q)
-	reposH := handlers.NewReposHandler(q, repoBaseDir, hub, mcpBinary)
+	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
@@ -279,7 +279,6 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Patch("/repos/{id}", reposH.Update)
 			r.Delete("/repos/{id}", reposH.Delete)
 			r.Get("/repos/{id}/tree", reposH.Tree)
-			r.Get("/repos/{id}/devcontainer", reposH.Devcontainer)
 
 			// Dashboard
 			r.Get("/dashboard", dashH.Get)

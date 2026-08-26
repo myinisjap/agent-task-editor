@@ -1,10 +1,8 @@
-// ReposPage tests focus on the "Runtime environment" picker: switching
-// between None / Image ref / Dev container, the language picker writing
-// into the raw devcontainer.json `features` block, the round-trip rule
-// (picker edits must not clobber hand-written keys), invalid-JSON handling,
-// and the repo-file-wins warning sourced from GET /repos/{id}/devcontainer.
+// ReposPage tests focus on the "Runtime image" field: setting it on create,
+// clearing/updating it on an existing repo via PATCH, and making sure an
+// unrelated edit doesn't clobber the stored value.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ReposPage from './ReposPage'
 import type { Repo, Workflow } from '../api/client'
@@ -13,7 +11,6 @@ const listMock = vi.fn()
 const createMock = vi.fn()
 const updateMock = vi.fn()
 const deleteMock = vi.fn()
-const devcontainerMock = vi.fn()
 const workflowsListMock = vi.fn()
 
 vi.mock('../api/client', async () => {
@@ -28,7 +25,6 @@ vi.mock('../api/client', async () => {
         create: (...args: unknown[]) => createMock(...args),
         update: (...args: unknown[]) => updateMock(...args),
         delete: (...args: unknown[]) => deleteMock(...args),
-        devcontainer: (...args: unknown[]) => devcontainerMock(...args),
       },
       workflows: { ...actual.api.workflows, list: (...args: unknown[]) => workflowsListMock(...args) },
     },
@@ -64,135 +60,74 @@ beforeEach(() => {
   createMock.mockReset()
   updateMock.mockReset()
   deleteMock.mockReset()
-  devcontainerMock.mockReset().mockResolvedValue({ source: 'db', effective_json: '', repo_file_present: false })
 })
 
-async function openEditForm() {
-  render(<ReposPage />)
-  await screen.findByText('acme/widgets')
-  await userEvent.click(screen.getByText('Edit'))
-  await waitFor(() => expect(devcontainerMock).toHaveBeenCalled())
-}
+describe('ReposPage runtime image field', () => {
+  it('sets runtime_image on create', async () => {
+    createMock.mockResolvedValue(repo({ id: 'repo-2', name: 'acme/other', runtime_image: 'ghcr.io/example/runtime:1' }))
 
-describe('ReposPage runtime environment picker', () => {
-  it('defaults to "None" and can switch to Image ref and Dev container', async () => {
-    await openEditForm()
+    render(<ReposPage />)
+    await screen.findByText('acme/widgets')
 
-    const noneRadio = screen.getByLabelText(/None — run in the backend container/)
-    expect(noneRadio).toBeChecked()
+    await userEvent.click(screen.getByText('+ Add Repo'))
+    await userEvent.type(screen.getByPlaceholderText('org/repo'), 'acme/other')
+    await userEvent.type(screen.getByPlaceholderText('Leave blank to auto-clone via Remote URL'), '/tmp/other')
+    await userEvent.type(screen.getByPlaceholderText('ghcr.io/example/runtime:latest'), 'ghcr.io/example/runtime:1')
 
-    const imageInput = screen.getByPlaceholderText('ghcr.io/me/img:1')
-    await userEvent.type(imageInput, 'ghcr.io/me/img:1')
-    // Typing into the image field selects that mode.
-    expect(screen.getByLabelText(/Image ref:/)).toBeChecked()
+    await userEvent.click(screen.getByText('Add Repo'))
 
-    await userEvent.click(screen.getByLabelText(/Dev container/))
-    expect(screen.getByLabelText(/Dev container/)).toBeChecked()
-    expect(screen.getByText('Languages')).toBeInTheDocument()
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    const body = createMock.mock.calls[0][0]
+    expect(body.runtime_image).toBe('ghcr.io/example/runtime:1')
   })
 
-  it('adding a language via the picker writes the right features entry, and editing the version updates it', async () => {
-    await openEditForm()
-    await userEvent.click(screen.getByLabelText(/Dev container/))
-
-    const addSelect = screen.getByDisplayValue('+ add language')
-    await userEvent.selectOptions(addSelect, 'go')
-
-    const versionInput = screen.getByPlaceholderText('version (e.g. 1.26)')
-    await userEvent.type(versionInput, '1.26')
-
-    await userEvent.click(screen.getByText('Save'))
-
-    await waitFor(() => expect(updateMock).toHaveBeenCalled())
-    const body = updateMock.mock.calls[0][1]
-    const parsed = JSON.parse(body.devcontainer_json)
-    expect(parsed.features['ghcr.io/devcontainers/features/go:1']).toEqual({ version: '1.26' })
-  })
-
-  it('round-trips JSON to picker and back, preserving unmodelled keys untouched', async () => {
-    const seeded = repo({
-      devcontainer_json: JSON.stringify({
-        features: {
-          'ghcr.io/devcontainers/features/python:1': { version: '3.12' },
-        },
-        postCreateCommand: 'echo hello',
-        mounts: ['source=foo,target=/foo,type=bind'],
-      }),
-    })
+  it('sets and clears runtime_image on an existing repo via PATCH', async () => {
+    const seeded = repo({ runtime_image: 'ghcr.io/example/runtime:1' })
     listMock.mockResolvedValue([seeded])
+    updateMock.mockResolvedValue({ ...seeded, runtime_image: 'ghcr.io/example/runtime:2' })
 
     render(<ReposPage />)
     await screen.findByText('acme/widgets')
     await userEvent.click(screen.getByText('Edit'))
-    await waitFor(() => expect(devcontainerMock).toHaveBeenCalled())
 
-    // Dev container mode should already be selected since devcontainer_json is set.
-    expect(screen.getByLabelText(/Dev container/)).toBeChecked()
-    // Picker shows the seeded language.
-    expect(screen.getByDisplayValue('3.12')).toBeInTheDocument()
+    const imageInput = screen.getByPlaceholderText('ghcr.io/example/runtime:latest') as HTMLInputElement
+    expect(imageInput.value).toBe('ghcr.io/example/runtime:1')
 
-    // Edit the version through the picker.
-    const versionInput = screen.getByDisplayValue('3.12')
-    await userEvent.clear(versionInput)
-    await userEvent.type(versionInput, '3.13')
-
+    await userEvent.clear(imageInput)
+    await userEvent.type(imageInput, 'ghcr.io/example/runtime:2')
     await userEvent.click(screen.getByText('Save'))
 
     await waitFor(() => expect(updateMock).toHaveBeenCalled())
-    const body = updateMock.mock.calls[0][1]
-    const parsed = JSON.parse(body.devcontainer_json)
-    expect(parsed.features['ghcr.io/devcontainers/features/python:1']).toEqual({ version: '3.13' })
-    // Unmodelled keys survive untouched.
-    expect(parsed.postCreateCommand).toBe('echo hello')
-    expect(parsed.mounts).toEqual(['source=foo,target=/foo,type=bind'])
+    expect(updateMock.mock.calls[0][1].runtime_image).toBe('ghcr.io/example/runtime:2')
+
+    // Clearing the field sends an empty string, not an omitted key — matches
+    // runtime_image's *string preserve-if-omitted vs. explicit-clear contract.
+    updateMock.mockClear()
+    await userEvent.click(screen.getByText('Edit'))
+    const imageInput2 = screen.getByPlaceholderText('ghcr.io/example/runtime:latest')
+    await userEvent.clear(imageInput2)
+    await userEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(updateMock).toHaveBeenCalled())
+    expect(updateMock.mock.calls[0][1].runtime_image).toBe('')
   })
 
-  it('surfaces invalid JSON typed into the raw editor as an error instead of crashing or saving', async () => {
+  it('preserves runtime_image when saving an unrelated field edit', async () => {
+    const seeded = repo({ runtime_image: 'ghcr.io/example/runtime:1' })
+    listMock.mockResolvedValue([seeded])
+    updateMock.mockResolvedValue(seeded)
+
     render(<ReposPage />)
     await screen.findByText('acme/widgets')
     await userEvent.click(screen.getByText('Edit'))
-    await waitFor(() => expect(devcontainerMock).toHaveBeenCalled())
-    await userEvent.click(screen.getByLabelText(/Dev container/))
-    await userEvent.click(screen.getByText(/Advanced: edit raw devcontainer.json/))
 
-    const textarea = screen.getByLabelText('Raw devcontainer.json') as HTMLTextAreaElement
-    await userEvent.clear(textarea)
-    await userEvent.type(textarea, '{{ not valid json')
-
-    // The editor renders inline near the textarea as soon as the JSON fails to parse.
-    await waitFor(() => {
-      const errorParagraph = textarea.parentElement?.querySelector('p.text-red-400')
-      expect(errorParagraph).not.toBeNull()
-      expect(errorParagraph?.textContent).not.toBe('')
-    })
-
+    // Touch an unrelated field (name) and save without touching runtime image.
+    const nameInputs = screen.getAllByDisplayValue('acme/widgets')
+    const nameInput = nameInputs[nameInputs.length - 1]
+    await userEvent.type(nameInput, '-renamed')
     await userEvent.click(screen.getByText('Save'))
-    expect(updateMock).not.toHaveBeenCalled()
-  })
 
-  it('shows the repo-file-wins warning when the effective config endpoint reports repo_file_present', async () => {
-    devcontainerMock.mockResolvedValue({ source: 'repo_file', effective_json: '{}', repo_file_present: true })
-    await openEditForm()
-    await userEvent.click(screen.getByLabelText(/Dev container/))
-
-    expect(
-      screen.getByText(/This repo ships \.devcontainer\/devcontainer\.json/),
-    ).toBeInTheDocument()
-  })
-
-  it('does not lose typed devcontainer JSON when switching to None and back', async () => {
-    await openEditForm()
-    await userEvent.click(screen.getByLabelText(/Dev container/))
-    await userEvent.click(screen.getByText(/Advanced: edit raw devcontainer.json/))
-
-    const textarea = screen.getByLabelText('Raw devcontainer.json')
-    await userEvent.clear(textarea)
-    await userEvent.type(textarea, '{{"postCreateCommand":"echo hi"}}')
-
-    await userEvent.click(screen.getByLabelText(/None — run in the backend container/))
-    await userEvent.click(screen.getByLabelText(/Dev container/))
-
-    const restoredTextarea = await screen.findByLabelText('Raw devcontainer.json')
-    expect(within(restoredTextarea.closest('div') as HTMLElement).getByDisplayValue(/echo hi/)).toBeInTheDocument()
+    await waitFor(() => expect(updateMock).toHaveBeenCalled())
+    expect(updateMock.mock.calls[0][1].runtime_image).toBe('ghcr.io/example/runtime:1')
   })
 })

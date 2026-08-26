@@ -44,20 +44,14 @@ func TestCurrentInterval(t *testing.T) {
 }
 
 // TestShouldReapContainer covers the keep-vs-reap decision for runtime
-// containers (see internal/agent/runtime.go): an explicit-image container
-// (empty DevcontainerHash label) survives only while its repo still exists
-// AND its ate.image label matches that repo's current (non-empty)
-// runtime_image; a devcontainer container (non-empty DevcontainerHash label)
-// survives only while its repo still exists AND its ate.dcjson label matches
-// that repo's current (non-empty) expected hash. Anything else — repo
-// deleted, image/hash stale, or the repo's runtime_image/devcontainer config
-// cleared back to empty — is reaped.
+// containers (see internal/agent/runtime.go): a container survives only
+// while its repo still exists AND its ate.image label matches that repo's
+// current (non-empty) runtime_image. Anything else — repo deleted, image
+// stale, or the repo's runtime_image cleared back to empty — is reaped.
 func TestShouldReapContainer(t *testing.T) {
 	states := map[string]repoRuntimeState{
-		"repo-current":    {Image: "ghcr.io/example/runtime:2"},
-		"repo-cleared":    {}, // runtime_image was unset after this container was created
-		"repo-dc-current": {DevcontainerHash: "hash-b"},
-		"repo-dc-cleared": {}, // devcontainer config was removed after this container was created
+		"repo-current": {Image: "ghcr.io/example/runtime:2"},
+		"repo-cleared": {}, // runtime_image was unset after this container was created
 	}
 
 	cases := []struct {
@@ -83,26 +77,6 @@ func TestShouldReapContainer(t *testing.T) {
 		{
 			name: "repo exists but runtime_image was cleared: reap",
 			c:    agent.ManagedContainer{Name: "n4", RepoID: "repo-cleared", Image: "ghcr.io/example/runtime:2"},
-			want: true,
-		},
-		{
-			name: "devcontainer container: repo exists and hash matches: keep",
-			c:    agent.ManagedContainer{Name: "n5", RepoID: "repo-dc-current", DevcontainerHash: "hash-b"},
-			want: false,
-		},
-		{
-			name: "devcontainer container: repo exists but hash is stale: reap",
-			c:    agent.ManagedContainer{Name: "n6", RepoID: "repo-dc-current", DevcontainerHash: "hash-a"},
-			want: true,
-		},
-		{
-			name: "devcontainer container: repo no longer exists: reap",
-			c:    agent.ManagedContainer{Name: "n7", RepoID: "repo-deleted", DevcontainerHash: "hash-b"},
-			want: true,
-		},
-		{
-			name: "devcontainer container: repo exists but devcontainer config was cleared: reap",
-			c:    agent.ManagedContainer{Name: "n8", RepoID: "repo-dc-cleared", DevcontainerHash: "hash-b"},
 			want: true,
 		},
 	}

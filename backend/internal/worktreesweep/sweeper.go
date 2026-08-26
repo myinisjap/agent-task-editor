@@ -47,14 +47,10 @@ var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 type Sweeper struct {
 	q        *gen.Queries
 	interval time.Duration
-	// Runtime resolves the mount/hardening contract needed to compute a
-	// repo's *expected* devcontainer content hash (see
-	// agent.RuntimeManager.ExpectedDevcontainerHash), for comparing against
-	// a live container's ate.dcjson label in reconcileContainers. Optional —
-	// nil degrades to never expecting a devcontainer-hash match (a container
-	// with a non-empty DevcontainerHash label is then always treated as
-	// stale), which only matters for deployments using the devcontainer
-	// path without this wired up.
+	// Runtime is currently unused by reconcileContainers, which compares
+	// each repo's runtime_image directly against the ate.image label without
+	// needing RuntimeManager. Kept for future runtime-container
+	// reconciliation needs.
 	Runtime *agent.RuntimeManager
 }
 
@@ -131,63 +127,35 @@ func (s *Sweeper) RunOnce(ctx context.Context) error {
 
 // repoRuntimeState is a repo's current expected runtime-container identity,
 // used by shouldReapContainer to decide whether a live container still
-// matches what that repo would produce today. Exactly one of Image /
-// DevcontainerHash is expected to be non-empty for any repo actually using a
-// runtime container — see resolveRepoRuntimeState.
+// matches what that repo would produce today.
 type repoRuntimeState struct {
-	Image            string
-	DevcontainerHash string
+	Image string
 }
 
 // resolveRepoRuntimeState computes each repo's current expected runtime
-// identity: an explicit RuntimeImage wins (mirrors dispatcher.go's
-// resolution order); otherwise, if Runtime is configured, a repo-committed
-// devcontainer.json or DB-stored DevcontainerJson (in that order — see
-// agent.ResolveDevcontainerSource) is hashed via
-// agent.RuntimeManager.ExpectedDevcontainerHash. A repo with neither source,
-// or with Runtime unconfigured, gets the zero value — any container found
-// for it is therefore always reaped, which is correct: no source means no
-// container should exist for that repo at all.
+// identity: an explicit RuntimeImage (mirrors dispatcher.go's resolution
+// order). A repo with no RuntimeImage set gets the zero value — any
+// container found for it is therefore always reaped, which is correct: no
+// source means no container should exist for that repo at all.
 func (s *Sweeper) resolveRepoRuntimeState(repos []gen.Repo) map[string]repoRuntimeState {
 	states := make(map[string]repoRuntimeState, len(repos))
 	for _, r := range repos {
-		if r.RuntimeImage != "" {
-			states[r.ID] = repoRuntimeState{Image: r.RuntimeImage}
-			continue
-		}
-		if s.Runtime == nil {
-			states[r.ID] = repoRuntimeState{}
-			continue
-		}
-		repoFileJSON, err := agent.ReadRepoDevcontainerFile(r.Path)
-		if err != nil {
-			slog.Warn("worktreesweep: read repo devcontainer.json (treating as absent for this tick)", "repo_id", r.ID, "err", err)
-			repoFileJSON = ""
-		}
-		_, rawJSON := agent.ResolveDevcontainerSource(repoFileJSON, r.DevcontainerJson)
-		hash, err := s.Runtime.ExpectedDevcontainerHash(r.Path, rawJSON)
-		if err != nil {
-			slog.Warn("worktreesweep: compute expected devcontainer hash (treating as absent for this tick)", "repo_id", r.ID, "err", err)
-			hash = ""
-		}
-		states[r.ID] = repoRuntimeState{DevcontainerHash: hash}
+		states[r.ID] = repoRuntimeState{Image: r.RuntimeImage}
 	}
 	return states
 }
 
 // reconcileContainers removes every ate.repo_id-labeled runtime container
-// (see internal/agent/runtime.go) whose repo no longer exists, whose
-// ate.image label no longer matches that repo's current runtime_image, or
-// whose ate.dcjson label no longer matches that repo's current effective
-// devcontainer config — mirroring reconcileRepo's job for worktree
-// directories, but for the per-repo containers RuntimeManager.EnsureRunning
-// / EnsureDevcontainerRunning create. A container is left alone (not reaped)
-// when its repo still exists and its label still matches — the dispatcher's
-// EnsureRunning/EnsureDevcontainerRunning path itself handles recreating a
+// (see internal/agent/runtime.go) whose repo no longer exists, or whose
+// ate.image label no longer matches that repo's current runtime_image —
+// mirroring reconcileRepo's job for worktree directories, but for the
+// per-repo containers RuntimeManager.EnsureRunning creates. A container is
+// left alone (not reaped) when its repo still exists and its label still
+// matches — the dispatcher's EnsureRunning path itself handles recreating a
 // container in that case, on its own next-dispatch path; this sweep only
 // cleans up what dispatch will never revisit (repo gone) or would otherwise
 // leave running stale until the next dispatch happens to land on that repo
-// (image or devcontainer config changed).
+// (image changed).
 //
 // Best-effort and non-fatal like the rest of this package: docker not being
 // installed/reachable is the common case for anyone not using per-repo
@@ -221,25 +189,15 @@ func (s *Sweeper) reconcileContainers(ctx context.Context, repos []gen.Repo) {
 // shouldReapContainer is the pure keep-vs-reap decision for one managed
 // container, factored out of reconcileContainers so it's unit-testable
 // without a Docker daemon. A container is kept only when its repo still
-// exists AND either:
-//   - it's an explicit-image container (empty DevcontainerHash label) whose
-//     Image label matches that repo's current, non-empty expected Image; or
-//   - it's a devcontainer container (non-empty DevcontainerHash label)
-//     whose label matches that repo's current, non-empty expected
-//     DevcontainerHash.
-//
-// Anything else — repo gone, image/hash stale, or the repo's current
-// expected state cleared back to empty — is reaped. This enforces the
-// non-negotiable "empty runtime_image/devcontainer config behaves as
-// before" rule from runtime-images.md for containers left running from
-// before the field was cleared.
+// exists AND its Image label matches that repo's current, non-empty
+// expected Image. Anything else — repo gone, image stale, or the repo's
+// current expected image cleared back to empty — is reaped. This enforces
+// the non-negotiable "empty runtime_image behaves as before" rule for
+// containers left running from before the field was cleared.
 func shouldReapContainer(c agent.ManagedContainer, states map[string]repoRuntimeState) bool {
 	state, repoExists := states[c.RepoID]
 	if !repoExists {
 		return true
-	}
-	if c.DevcontainerHash != "" {
-		return !(state.DevcontainerHash != "" && state.DevcontainerHash == c.DevcontainerHash)
 	}
 	return !(state.Image != "" && state.Image == c.Image)
 }

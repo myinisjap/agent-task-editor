@@ -278,14 +278,13 @@ func RemoveContainer(ctx context.Context, name string) error {
 	return nil
 }
 
-// ListManagedContainers returns the name and ate.image/ate.repo_id/ate.dcjson
-// labels of every container this package created (i.e. carrying
-// containerLabelRepo), for worktreesweep's reaping pass to compare against
-// the live repo set.
+// ListManagedContainers returns the name and ate.image/ate.repo_id labels of
+// every container this package created (i.e. carrying containerLabelRepo),
+// for worktreesweep's reaping pass to compare against the live repo set.
 func ListManagedContainers(ctx context.Context) ([]ManagedContainer, error) {
 	out, err := exec.CommandContext(ctx, "docker", "ps", "-a",
 		"--filter", "label="+containerLabelRepo,
-		"--format", "{{.Names}}\t{{.Label \""+containerLabelRepo+"\"}}\t{{.Label \""+containerLabelImage+"\"}}\t{{.Label \""+devcontainerLabel+"\"}}").Output()
+		"--format", "{{.Names}}\t{{.Label \""+containerLabelRepo+"\"}}\t{{.Label \""+containerLabelImage+"\"}}").Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps: %w", err)
 	}
@@ -294,16 +293,13 @@ func ListManagedContainers(ctx context.Context) ([]ManagedContainer, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 4)
+		parts := strings.SplitN(line, "\t", 3)
 		if len(parts) < 2 {
 			continue
 		}
 		c := ManagedContainer{Name: parts[0], RepoID: parts[1]}
 		if len(parts) > 2 {
 			c.Image = parts[2]
-		}
-		if len(parts) > 3 {
-			c.DevcontainerHash = parts[3]
 		}
 		containers = append(containers, c)
 	}
@@ -315,10 +311,6 @@ type ManagedContainer struct {
 	Name   string
 	RepoID string
 	Image  string
-	// DevcontainerHash is the container's ate.dcjson label value, if any —
-	// set only for containers created via EnsureDevcontainerRunning
-	// (devcontainer.go), empty for explicit-runtime_image containers.
-	DevcontainerHash string
 }
 
 // dockerAvailable reports whether the docker CLI is on PATH — used to skip

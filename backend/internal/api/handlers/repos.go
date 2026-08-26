@@ -16,7 +16,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -40,15 +39,10 @@ type ReposHandler struct {
 	q           *gen.Queries
 	repoBaseDir string // host-side base dir; paths under it are rewritten to /repos inside the container
 	pub         RepoEventPublisher
-	// runtime resolves a repo's effective devcontainer.json for the
-	// GET /repos/{id}/devcontainer endpoint, reusing the exact same
-	// resolution/merge logic the dispatcher uses (internal/agent/devcontainer.go)
-	// rather than duplicating it here.
-	runtime *agent.RuntimeManager
 }
 
-func NewReposHandler(q *gen.Queries, repoBaseDir string, pub RepoEventPublisher, mcpServerPath string) *ReposHandler {
-	return &ReposHandler{q: q, repoBaseDir: repoBaseDir, pub: pub, runtime: &agent.RuntimeManager{MCPServerPath: mcpServerPath}}
+func NewReposHandler(q *gen.Queries, repoBaseDir string, pub RepoEventPublisher) *ReposHandler {
+	return &ReposHandler{q: q, repoBaseDir: repoBaseDir, pub: pub}
 }
 
 // List returns a page of repos, newest first. Query parameters:
@@ -106,36 +100,6 @@ type createRepoBody struct {
 	// CLIs in instead of in-process on the backend host. Empty (the default)
 	// means run in-process — today's behavior, unchanged.
 	RuntimeImage string `json:"runtime_image"`
-	// DevcontainerJson is an optional UI-authored devcontainer.json used to
-	// build this repo's runtime container when RuntimeImage is empty. Empty
-	// (the default) means "not configured". Validated in Create/Update to be
-	// either "" or a parseable JSON object — see validateDevcontainerJSON.
-	DevcontainerJson string `json:"devcontainer_json"`
-}
-
-// validateDevcontainerJSON enforces the write-time trust-boundary check: an
-// empty string is always valid ("not configured"); anything else must parse
-// as a JSON object. It deliberately does not validate the devcontainer.json
-// schema itself (mounts, features, etc.) — that's the devcontainer CLI's
-// job, and duplicating it here would drift. Writes the 400 response and
-// returns ok=false on a parse failure or non-object JSON (e.g. an array or
-// bare string), naming the parse problem so the failure is visible at save
-// time rather than surfacing later inside a container the user can't see.
-func validateDevcontainerJSON(w http.ResponseWriter, raw string) (ok bool) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return true
-	}
-	var v any
-	if err := json.Unmarshal([]byte(trimmed), &v); err != nil {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("devcontainer_json is not valid JSON: %v", err))
-		return false
-	}
-	if _, ok := v.(map[string]any); !ok {
-		Err(w, http.StatusBadRequest, "devcontainer_json must be a JSON object")
-		return false
-	}
-	return true
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -221,10 +185,6 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !validateDevcontainerJSON(w, body.DevcontainerJson) {
-		return
-	}
-
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -242,7 +202,6 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeImage:                  strings.TrimSpace(body.RuntimeImage),
-		DevcontainerJson:              strings.TrimSpace(body.DevcontainerJson),
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -540,10 +499,6 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// RuntimeImage: optional container image; omitted preserves the
 		// existing value (see runtimeImage merge below).
 		RuntimeImage *string `json:"runtime_image"`
-		// DevcontainerJson: optional devcontainer.json; omitted preserves the
-		// existing value (see devcontainerJSON merge below), matching
-		// RuntimeImage's *string preserve-if-omitted pattern.
-		DevcontainerJson *string `json:"devcontainer_json"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -687,14 +642,6 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		runtimeImage = strings.TrimSpace(*body.RuntimeImage)
 	}
 
-	devcontainerJSON := existing.DevcontainerJson
-	if body.DevcontainerJson != nil {
-		devcontainerJSON = strings.TrimSpace(*body.DevcontainerJson)
-		if !validateDevcontainerJSON(w, devcontainerJSON) {
-			return
-		}
-	}
-
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -766,7 +713,6 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeImage:                  runtimeImage,
-		DevcontainerJson:              devcontainerJSON,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -827,55 +773,6 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		files = []string{}
 	}
 	JSON(w, http.StatusOK, map[string]any{"ref": ref, "files": files})
-}
-
-// devcontainerConfigResponse is GET /repos/{id}/devcontainer's response body
-// — see openapi.yaml's schema.
-type devcontainerConfigResponse struct {
-	Source          string `json:"source"`
-	EffectiveJSON   string `json:"effective_json"`
-	RepoFilePresent bool   `json:"repo_file_present"`
-}
-
-// Devcontainer resolves and returns the devcontainer.json that would
-// actually be used to build this repo's runtime container, applying the
-// exact same precedence the dispatcher uses (see dispatcher.go's startRun):
-// an explicit runtime_image always wins (source "image_ref", no build at
-// all); otherwise a .devcontainer/devcontainer.json committed in the repo
-// beats the DB-stored devcontainer_json; if neither is present, source is
-// "none". Reuses agent.ResolveDevcontainerSource/EffectiveDevcontainerJSON
-// rather than re-deriving the precedence logic here.
-func (h *ReposHandler) Devcontainer(w http.ResponseWriter, r *http.Request) {
-	repo, err := h.q.GetRepo(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		Err(w, http.StatusNotFound, "repo not found")
-		return
-	}
-
-	repoFileJSON, rfErr := agent.ReadRepoDevcontainerFile(repo.Path)
-	if rfErr != nil {
-		middleware.LoggerFromContext(r.Context()).Warn("devcontainer: read repo file (falling back to DB-stored config)", "repo_id", repo.ID, "err", rfErr)
-	}
-	repoFilePresent := repoFileJSON != ""
-
-	if repo.RuntimeImage != "" {
-		JSON(w, http.StatusOK, devcontainerConfigResponse{Source: "image_ref", RepoFilePresent: repoFilePresent})
-		return
-	}
-
-	sourceStr, rawJSON := agent.ResolveDevcontainerSourceName(repoFileJSON, repo.DevcontainerJson)
-
-	effective, err := h.runtime.EffectiveDevcontainerJSON(repo.Path, rawJSON)
-	if err != nil {
-		Err(w, http.StatusInternalServerError, fmt.Sprintf("failed to resolve effective devcontainer.json: %v", err))
-		return
-	}
-
-	JSON(w, http.StatusOK, devcontainerConfigResponse{
-		Source:          sourceStr,
-		EffectiveJSON:   effective,
-		RepoFilePresent: repoFilePresent,
-	})
 }
 
 // setClaudeTrust marks the given repo path as trust-dialog-accepted in ~/.claude.json
