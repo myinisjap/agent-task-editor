@@ -3029,6 +3029,71 @@ paths:
                       that runtime_languages selections are ignored.
         "404": { description: Repo not found }
 
+  /repos/{id}/detect-languages:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Suggest a repo's runtime_languages
+      description: >
+        Scans the repo's manifest files (go.mod, package.json, etc. — see
+        docs/runtime-containers.md) for language/version evidence, falling
+        back to a one-shot claude CLI call only when the scan finds nothing
+        or finds evidence it can't confidently version (e.g. a range or a
+        manifest present with no version). Detection is suggestions only:
+        this endpoint never writes repos.runtime_languages — only a
+        subsequent PATCH /repos/{id} from the user persists anything. A
+        failed or unavailable LLM fallback (no provider configured, no
+        auth, timeout, malformed output) degrades to the scan's own result
+        rather than failing the request.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          enum: [go, node, python, rust, java, ruby]
+                        version:
+                          type: string
+                          description: >
+                            Empty string when the language was detected but
+                            no version could be determined — the user must
+                            pick one.
+                        source:
+                          type: string
+                          description: >
+                            Where the suggestion came from, e.g. "go.mod",
+                            "frontend/.nvmrc", or "claude" for an
+                            LLM-fallback guess — shown in the UI so the user
+                            can judge it.
+                        ambiguous:
+                          type: boolean
+                          description: >
+                            True when the source was a range or multiple
+                            candidates, or when the manifest was present but
+                            declared no version — Version (if set) is only a
+                            best guess and needs a decision, not a default.
+                      required: [id, version, source, ambiguous]
+                  used_llm:
+                    type: boolean
+                    description: >
+                      True if any suggestion came from the claude CLI
+                      fallback rather than the manifest scan alone. The UI
+                      shows a "suggested by Claude — please confirm" notice
+                      when true.
+                required: [suggestions, used_llm]
+        "404": { description: Repo not found }
+
   /repos/{id}/tree:
     get:
       summary: Get repo file tree

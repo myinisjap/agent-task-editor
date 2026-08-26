@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -45,10 +46,23 @@ type ReposHandler struct {
 	// nil is handled gracefully — the endpoint still reports source and
 	// repo_file_present, just without a generated preview.
 	runtime *agent.RuntimeManager
+	// llmDetector is DetectLanguages' fallback path (see
+	// agent.DetectLanguagesWithFallback), only ever invoked when the manifest
+	// scan leaves a gap. Defaults to the real claude-CLI-backed
+	// implementation; overridable via SetLLMDetector for tests, same pattern
+	// as TasksHandler.SetWriteback.
+	llmDetector agent.LLMDetector
 }
 
 func NewReposHandler(q *gen.Queries, repoBaseDir string, pub RepoEventPublisher, runtime *agent.RuntimeManager) *ReposHandler {
-	return &ReposHandler{q: q, repoBaseDir: repoBaseDir, pub: pub, runtime: runtime}
+	return &ReposHandler{q: q, repoBaseDir: repoBaseDir, pub: pub, runtime: runtime, llmDetector: &providers.ClaudeLanguageDetector{}}
+}
+
+// SetLLMDetector overrides the handler's language-detection LLM fallback.
+// Exported only for tests that need to stub it out rather than shell out to
+// a real claude CLI.
+func (h *ReposHandler) SetLLMDetector(d agent.LLMDetector) {
+	h.llmDetector = d
 }
 
 // repoResponse is the wire representation of a repo: it embeds gen.Repo but
@@ -907,6 +921,47 @@ func (h *ReposHandler) Devcontainer(w http.ResponseWriter, r *http.Request) {
 		"source":            source,
 		"effective_json":    effectiveJSON,
 		"repo_file_present": repoFilePresent,
+	})
+}
+
+// detectLanguagesSuggestion is the wire shape of a suggested language,
+// mirroring agent.LanguageSuggestion's fields under the API's snake_case
+// convention.
+type detectLanguagesSuggestion struct {
+	ID        string `json:"id"`
+	Version   string `json:"version"`
+	Source    string `json:"source"`
+	Ambiguous bool   `json:"ambiguous"`
+}
+
+// DetectLanguages suggests a repo's runtime_languages by scanning its
+// manifest files (agent.DetectLanguages) and, only when that scan leaves a
+// gap (nothing found, or a suggestion marked ambiguous), falling back to a
+// one-shot claude CLI call (see agent.DetectLanguagesWithFallback). This
+// endpoint is suggestions only: it never writes runtime_languages — only a
+// subsequent PATCH /repos/{id} from the user (after reviewing the
+// suggestions in the UI) persists anything.
+func (h *ReposHandler) DetectLanguages(w http.ResponseWriter, r *http.Request) {
+	repo, err := h.q.GetRepo(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "repo not found")
+		return
+	}
+
+	suggestions, usedLLM, err := agent.DetectLanguagesWithFallback(r.Context(), repo.Path, h.llmDetector)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, fmt.Sprintf("failed to detect languages: %v", err))
+		return
+	}
+
+	out := make([]detectLanguagesSuggestion, 0, len(suggestions))
+	for _, s := range suggestions {
+		out = append(out, detectLanguagesSuggestion{ID: s.ID, Version: s.Version, Source: s.Source, Ambiguous: s.Ambiguous})
+	}
+
+	JSON(w, http.StatusOK, map[string]any{
+		"suggestions": out,
+		"used_llm":    usedLLM,
 	})
 }
 
