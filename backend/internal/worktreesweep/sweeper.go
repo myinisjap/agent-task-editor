@@ -241,7 +241,7 @@ func shouldReapContainer(c agent.ManagedContainer, states map[string]repoRuntime
 	if !repoExists {
 		return true
 	}
-	return !(state.Image != "" && state.Image == c.Image)
+	return state.Image == "" || state.Image != c.Image
 }
 
 // reconcileRepo removes every entry under repoPath/.ate-worktrees that isn't

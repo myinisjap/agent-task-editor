@@ -106,8 +106,12 @@ func TestBuildDockerRunArgs_NoCredentialMountsWhenHostHomeEmpty(t *testing.T) {
 // --- EnsureRunning / containerName ---
 
 func TestContainerName_DeterministicPerRepo(t *testing.T) {
-	if containerName("abc") != containerName("abc") {
-		t.Error("containerName should be deterministic for the same repo id")
+	// The name is the only handle EnsureRunning hands back to the dispatcher,
+	// and the sweeper reaps by it — so it has to be stable for a repo across
+	// calls and never collide between repos. Asserting against a literal
+	// rather than a second call, which would be a tautology.
+	if got, want := containerName("abc"), "ate-runtime-abc"; got != want {
+		t.Errorf("containerName(%q) = %q, want %q", "abc", got, want)
 	}
 	if containerName("abc") == containerName("xyz") {
 		t.Error("containerName should differ across repos")
