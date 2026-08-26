@@ -3,6 +3,13 @@ import { api, type Repo, type Workflow } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { ReposHelp } from '../components/shared/pageHelp'
+import RuntimeEnvironmentEditor, {
+  BLANK_RUNTIME_ENV,
+  fromRepo as runtimeEnvFromRepo,
+  toApiFields as runtimeEnvToApiFields,
+  validateRuntimeEnvironment,
+  type RuntimeEnvironmentValue,
+} from '../components/shared/RuntimeEnvironmentEditor'
 
 type IssueSyncUpdatePolicy = 'gate' | 'always' | 'never'
 type IssueSyncGoneAction = 'flag' | 'archive' | 'move'
@@ -24,6 +31,7 @@ type EditForm = {
   // Empty string = no repo-specific cap (falls back to the global
   // MAX_WORKERS). Kept as a string so the input can be blank rather than 0.
   max_concurrent_runs: string
+  runtimeEnv: RuntimeEnvironmentValue
 }
 
 const BLANK_FORM: EditForm = {
@@ -41,6 +49,7 @@ const BLANK_FORM: EditForm = {
   issue_sync_gone_label: '',
   issue_comment_sync_enabled: false,
   max_concurrent_runs: '',
+  runtimeEnv: { ...BLANK_RUNTIME_ENV },
 }
 
 export default function ReposPage() {
@@ -58,6 +67,9 @@ export default function ReposPage() {
   const [editForm, setEditForm] = useState<EditForm>({ ...BLANK_FORM })
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
+  // Whether the repo being edited ships its own .devcontainer/devcontainer.json
+  // (which wins over the UI-authored config) — from GET /repos/{id}/devcontainer.
+  const [editRepoFilePresent, setEditRepoFilePresent] = useState(false)
 
   useEffect(() => {
     Promise.all([api.repos.list(), api.workflows.list()])
@@ -101,6 +113,11 @@ export default function ReposPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
+    const runtimeError = validateRuntimeEnvironment(form.runtimeEnv)
+    if (runtimeError) {
+      setError(runtimeError)
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -119,6 +136,7 @@ export default function ReposPage() {
         issue_sync_gone_label: form.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: form.issue_comment_sync_enabled,
         max_concurrent_runs: form.max_concurrent_runs.trim() ? Number(form.max_concurrent_runs) : undefined,
+        ...runtimeEnvToApiFields(form.runtimeEnv),
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -147,19 +165,30 @@ export default function ReposPage() {
       issue_sync_gone_label: repo.issue_sync_gone_label ?? '',
       issue_comment_sync_enabled: !!repo.issue_comment_sync_enabled,
       max_concurrent_runs: repo.max_concurrent_runs != null ? String(repo.max_concurrent_runs) : '',
+      runtimeEnv: runtimeEnvFromRepo(repo),
     })
     setEditError('')
+    setEditRepoFilePresent(false)
+    api.repos.devcontainer(repo.id)
+      .then((res) => setEditRepoFilePresent(res.repo_file_present))
+      .catch(() => setEditRepoFilePresent(false))
   }
 
   function cancelEdit() {
     setEditingId(null)
     setEditForm({ ...BLANK_FORM })
     setEditError('')
+    setEditRepoFilePresent(false)
   }
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault()
     if (!editingId) return
+    const runtimeError = validateRuntimeEnvironment(editForm.runtimeEnv)
+    if (runtimeError) {
+      setEditError(runtimeError)
+      return
+    }
     setEditSaving(true)
     setEditError('')
     try {
@@ -178,6 +207,7 @@ export default function ReposPage() {
         issue_sync_gone_label: editForm.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: editForm.issue_comment_sync_enabled,
         max_concurrent_runs: editForm.max_concurrent_runs.trim() ? Number(editForm.max_concurrent_runs) : null,
+        ...runtimeEnvToApiFields(editForm.runtimeEnv),
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -416,6 +446,14 @@ export default function ReposPage() {
                 onChange={(e) => setForm((f) => ({ ...f, max_concurrent_runs: e.target.value }))}
                 placeholder="unset"
                 className={`${inputCls} max-w-[10rem]`}
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <RuntimeEnvironmentEditor
+                value={form.runtimeEnv}
+                onChange={(runtimeEnv) => setForm((f) => ({ ...f, runtimeEnv }))}
+                inputCls={inputCls}
               />
             </div>
           </div>
@@ -696,6 +734,15 @@ export default function ReposPage() {
                         onChange={(e) => setEditForm((f) => ({ ...f, max_concurrent_runs: e.target.value }))}
                         placeholder="unset"
                         className={`${inputCls} max-w-[10rem]`}
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <RuntimeEnvironmentEditor
+                        value={editForm.runtimeEnv}
+                        onChange={(runtimeEnv) => setEditForm((f) => ({ ...f, runtimeEnv }))}
+                        repoFilePresent={editRepoFilePresent}
+                        inputCls={inputCls}
                       />
                     </div>
                   </div>
