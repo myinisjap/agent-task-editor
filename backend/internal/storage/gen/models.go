@@ -150,6 +150,7 @@ type Repo struct {
 	MaxConcurrentRuns             *int64    `json:"max_concurrent_runs"`
 	IssueWritebackLabel           string    `json:"issue_writeback_label"`
 	RuntimeImage                  string    `json:"runtime_image"`
+	RuntimeLanguages              string    `json:"runtime_languages"`
 }
 
 type Task struct {

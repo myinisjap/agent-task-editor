@@ -49,15 +49,17 @@ type Sweeper struct {
 	interval time.Duration
 	// Runtime must be the SAME *agent.RuntimeManager instance passed to
 	// Dispatcher.Runtime (see cmd/server/main.go), not a second one — its
-	// per-repo mutex only actually serializes EnsureRunning against
-	// reconcileContainers if both call sites share one instance. Currently
-	// used only as a nil-check guard (reconcileContainers itself compares
-	// each repo's runtime_image directly against the ate.image label, no
-	// RuntimeManager method calls needed); kept as a required constructor
-	// param so a future reconcileContainers change that does need it can't
-	// silently run against a nil Runtime the way this field's prior
-	// optional-field form did (see issue: sweeper reaped healthy containers
-	// because nothing ever set it).
+	// per-repo mutex only actually serializes EnsureRunning/
+	// EnsureDevcontainerRunning against reconcileContainers if both call
+	// sites share one instance. Used by resolveRepoRuntimeState to compute
+	// each repo's expected devcontainer hash (ExpectedDevcontainerHash /
+	// ExpectedDevcontainerHashFromFile) for repos with no explicit
+	// runtime_image; a nil Runtime degrades those repos to the zero state
+	// (any devcontainer-labeled container found for them is then always
+	// reaped). Required constructor param so a future change can't silently
+	// run against a nil Runtime the way this field's prior optional-field
+	// form did (see issue: sweeper reaped healthy containers because nothing
+	// ever set it).
 	Runtime *agent.RuntimeManager
 }
 
@@ -145,35 +147,74 @@ func (s *Sweeper) RunOnce(ctx context.Context) error {
 
 // repoRuntimeState is a repo's current expected runtime-container identity,
 // used by shouldReapContainer to decide whether a live container still
-// matches what that repo would produce today.
+// matches what that repo would produce today. Exactly one of Image /
+// DevcontainerHash is expected to be non-empty for any repo actually using a
+// runtime container — see resolveRepoRuntimeState.
 type repoRuntimeState struct {
-	Image string
+	Image            string
+	DevcontainerHash string
 }
 
 // resolveRepoRuntimeState computes each repo's current expected runtime
-// identity: an explicit RuntimeImage (mirrors dispatcher.go's resolution
-// order). A repo with no RuntimeImage set gets the zero value — any
-// container found for it is therefore always reaped, which is correct: no
-// source means no container should exist for that repo at all.
+// identity: an explicit RuntimeImage wins (mirrors dispatcher.go's
+// resolution order); otherwise, if Runtime is configured, a repo-committed
+// devcontainer.json or repos.runtime_languages (in that order — see
+// dispatcher.go's startRun) is hashed via
+// agent.RuntimeManager.ExpectedDevcontainerHashFromFile /
+// ExpectedDevcontainerHash. A repo with neither source, or with Runtime
+// unconfigured, gets the zero value — any container found for it is
+// therefore always reaped, which is correct: no source means no container
+// should exist for that repo at all.
 func (s *Sweeper) resolveRepoRuntimeState(repos []gen.Repo) map[string]repoRuntimeState {
 	states := make(map[string]repoRuntimeState, len(repos))
 	for _, r := range repos {
-		states[r.ID] = repoRuntimeState{Image: r.RuntimeImage}
+		if r.RuntimeImage != "" {
+			states[r.ID] = repoRuntimeState{Image: r.RuntimeImage}
+			continue
+		}
+		if s.Runtime == nil {
+			states[r.ID] = repoRuntimeState{}
+			continue
+		}
+		repoFileJSON, err := agent.ReadRepoDevcontainerFile(r.Path)
+		if err != nil {
+			slog.Warn("worktreesweep: read repo devcontainer.json (treating as absent for this tick)", "repo_id", r.ID, "err", err)
+			repoFileJSON = ""
+		}
+		if repoFileJSON != "" {
+			states[r.ID] = repoRuntimeState{DevcontainerHash: s.Runtime.ExpectedDevcontainerHashFromFile(repoFileJSON)}
+			continue
+		}
+		langs, err := agent.ParseRuntimeLanguages(r.RuntimeLanguages)
+		if err != nil {
+			slog.Warn("worktreesweep: parse runtime_languages (treating as absent for this tick)", "repo_id", r.ID, "err", err)
+			states[r.ID] = repoRuntimeState{}
+			continue
+		}
+		hash, err := s.Runtime.ExpectedDevcontainerHash(r.Path, langs)
+		if err != nil {
+			slog.Warn("worktreesweep: compute expected devcontainer hash (treating as absent for this tick)", "repo_id", r.ID, "err", err)
+			hash = ""
+		}
+		states[r.ID] = repoRuntimeState{DevcontainerHash: hash}
 	}
 	return states
 }
 
 // reconcileContainers removes every ate.repo_id-labeled runtime container
-// (see internal/agent/runtime.go) whose repo no longer exists, or whose
-// ate.image label no longer matches that repo's current runtime_image —
-// mirroring reconcileRepo's job for worktree directories, but for the
-// per-repo containers RuntimeManager.EnsureRunning creates. A container is
-// left alone (not reaped) when its repo still exists and its label still
-// matches — the dispatcher's EnsureRunning path itself handles recreating a
-// container in that case, on its own next-dispatch path; this sweep only
-// cleans up what dispatch will never revisit (repo gone) or would otherwise
-// leave running stale until the next dispatch happens to land on that repo
-// (image changed).
+// (see internal/agent/runtime.go) whose repo no longer exists, whose
+// ate.image label no longer matches that repo's current runtime_image, or
+// whose ate.dcjson label no longer matches that repo's current generated
+// devcontainer config — mirroring reconcileRepo's job for worktree
+// directories, but for the per-repo containers RuntimeManager.EnsureRunning
+// / EnsureDevcontainerRunning / EnsureDevcontainerRunningFromFile create. A
+// container is left alone (not reaped) when its repo still exists and its
+// label still matches — the dispatcher's EnsureRunning/EnsureDevcontainer*
+// path itself handles recreating a container in that case, on its own
+// next-dispatch path; this sweep only cleans up what dispatch will never
+// revisit (repo gone) or would otherwise leave running stale until the next
+// dispatch happens to land on that repo (image or devcontainer config
+// changed).
 //
 // reposWithActiveRun (built by RunOnce from the same task list used for the
 // worktree keep-set) also protects a container whose repo has a task
@@ -227,12 +268,17 @@ func (s *Sweeper) reconcileContainers(ctx context.Context, repos []gen.Repo, rep
 // in-flight run with a raw "No such container" error. It gets reaped on a
 // later tick once the repo goes idle.
 //
-// Otherwise, a container is kept only when its repo still exists AND its
-// Image label matches that repo's current, non-empty expected Image.
-// Anything else — repo gone, image stale, or the repo's current expected
-// image cleared back to empty — is reaped. This enforces the
-// non-negotiable "empty runtime_image behaves as before" rule for
-// containers left running from before the field was cleared.
+// Otherwise, a container is kept only when its repo still exists AND either:
+//   - it's an explicit-image container (empty DevcontainerHash label) whose
+//     Image label matches that repo's current, non-empty expected Image; or
+//   - it's a devcontainer container (non-empty DevcontainerHash label)
+//     whose label matches that repo's current, non-empty expected
+//     DevcontainerHash.
+//
+// Anything else — repo gone, image/hash stale, or the repo's current
+// expected state cleared back to empty — is reaped. This enforces the
+// non-negotiable "empty runtime_image/runtime_languages behaves as before"
+// rule for containers left running from before the field was cleared.
 func shouldReapContainer(c agent.ManagedContainer, states map[string]repoRuntimeState, reposWithActiveRun map[string]struct{}) bool {
 	if _, active := reposWithActiveRun[c.RepoID]; active {
 		return false
@@ -240,6 +286,9 @@ func shouldReapContainer(c agent.ManagedContainer, states map[string]repoRuntime
 	state, repoExists := states[c.RepoID]
 	if !repoExists {
 		return true
+	}
+	if c.DevcontainerHash != "" {
+		return state.DevcontainerHash == "" || state.DevcontainerHash != c.DevcontainerHash
 	}
 	return state.Image == "" || state.Image != c.Image
 }

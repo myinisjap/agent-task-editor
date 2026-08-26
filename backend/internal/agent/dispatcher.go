@@ -792,16 +792,19 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
 	}
 
-	// Resolution order (see runtime-images.md): an explicit RuntimeImage set
-	// means "docker run that image"; empty means "run in-process" —
-	// runtimeContainer stays "" and spawn() (providers/cli.go) takes its
-	// zero-value branch, identical to today's behavior. A repo with
-	// RuntimeImage set but no Dispatcher.Runtime configured, or a Docker
-	// failure while ensuring the container, is a permanent-until-fixed
-	// config/infra problem — same class as the nil-provider case above — so
-	// it escalates the same way rather than silently falling back to
-	// in-process (which would run the agent CLI against a language
-	// toolchain/credentials it was never meant to use).
+	// Resolution order (see docs/runtime-containers.md): an explicit
+	// RuntimeImage always wins and skips the devcontainer path entirely;
+	// otherwise a repo-committed .devcontainer/devcontainer.json beats
+	// repos.runtime_languages (the picker); empty RuntimeImage and no
+	// devcontainer source means "run in-process" — runtimeContainer stays ""
+	// and spawn() (providers/cli.go) takes its zero-value branch, identical
+	// to today's behavior. A repo with a runtime source configured but no
+	// Dispatcher.Runtime configured, or a Docker/devcontainer-CLI failure
+	// while ensuring the container, is a permanent-until-fixed config/infra
+	// problem — same class as the nil-provider case above — so it escalates
+	// the same way rather than silently falling back to in-process (which
+	// would run the agent CLI against a language toolchain/credentials it
+	// was never meant to use).
 	var runtimeContainer string
 	if repo.RuntimeImage != "" {
 		var rtErr error
@@ -815,6 +818,46 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			log.Error("dispatcher: failed to ensure runtime container", "repo_id", repo.ID, "err", rtErr)
 			d.escalateStartRunFailure(ctx, log, t, runID, msg, "runtime-unavailable")
 			return "", fmt.Errorf("%w: %v", ErrRuntimeUnavailable, rtErr)
+		}
+	} else {
+		repoFileJSON, rfErr := ReadRepoDevcontainerFile(repo.Path)
+		if rfErr != nil {
+			log.Warn("dispatcher: read repo devcontainer.json (falling back to runtime_languages)", "repo_id", repo.ID, "err", rfErr)
+		}
+		switch {
+		case repoFileJSON != "":
+			var rtErr error
+			if d.Runtime == nil {
+				rtErr = fmt.Errorf("repo %s has a committed devcontainer.json but no RuntimeManager is configured", repo.ID)
+			} else {
+				runtimeContainer, rtErr = d.Runtime.EnsureDevcontainerRunningFromFile(ctx, repo.ID, repo.Path, repoFileJSON)
+			}
+			if rtErr != nil {
+				msg := fmt.Sprintf("devcontainer build failed: %v", rtErr)
+				log.Error("dispatcher: failed to ensure devcontainer runtime from repo file", "repo_id", repo.ID, "err", rtErr)
+				d.escalateStartRunFailure(ctx, log, t, runID, msg, "runtime-unavailable")
+				return "", fmt.Errorf("%w: %v", ErrRuntimeUnavailable, rtErr)
+			}
+		case repo.RuntimeLanguages != "":
+			langs, perr := ParseRuntimeLanguages(repo.RuntimeLanguages)
+			if perr != nil {
+				msg := fmt.Sprintf("invalid runtime_languages: %v", perr)
+				log.Error("dispatcher: invalid runtime_languages", "repo_id", repo.ID, "err", perr)
+				d.escalateStartRunFailure(ctx, log, t, runID, msg, "runtime-unavailable")
+				return "", fmt.Errorf("%w: %v", ErrRuntimeUnavailable, perr)
+			}
+			var rtErr error
+			if d.Runtime == nil {
+				rtErr = fmt.Errorf("repo %s has runtime_languages set but no RuntimeManager is configured", repo.ID)
+			} else {
+				runtimeContainer, rtErr = d.Runtime.EnsureDevcontainerRunning(ctx, repo.ID, repo.Path, langs)
+			}
+			if rtErr != nil {
+				msg := fmt.Sprintf("devcontainer build failed: %v", rtErr)
+				log.Error("dispatcher: failed to ensure devcontainer runtime", "repo_id", repo.ID, "err", rtErr)
+				d.escalateStartRunFailure(ctx, log, t, runID, msg, "runtime-unavailable")
+				return "", fmt.Errorf("%w: %v", ErrRuntimeUnavailable, rtErr)
+			}
 		}
 	}
 

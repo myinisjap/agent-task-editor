@@ -54,6 +54,20 @@ RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl 
 ARG CLAUDE_CLI_VERSION=2.1.223
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}
 
+# devcontainer CLI — builds a repo's runtime container from a generated
+# devcontainer.json (see docs/runtime-containers.md and
+# internal/agent/devcontainer.go). Installed unconditionally rather than
+# behind a build arg like the codex/qwen CLIs below, because a repo
+# configured for the devcontainer path (a repo-committed devcontainer.json,
+# or repos.runtime_languages) fails at dispatch time (escalating the task to
+# waiting_human) if the binary is missing, and that config lives in the
+# database rather than in the image build — so there is no build-time signal
+# that would tell an operator to opt in.
+#
+# Pinned for the same reproducibility reason as CLAUDE_CLI_VERSION above.
+ARG DEVCONTAINER_CLI_VERSION=0.88.0
+RUN npm install -g @devcontainers/cli@${DEVCONTAINER_CLI_VERSION}
+
 # Codex CLI (codex_cli provider) and Qwen CLI (qwen_code provider) are NOT
 # installed by default — unlike claude above, both are gated behind build
 # args (default false) so the default image doesn't grow for users who
