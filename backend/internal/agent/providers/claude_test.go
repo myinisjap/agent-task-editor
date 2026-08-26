@@ -976,6 +976,57 @@ func TestBuildClaudeArgs_NoImageFlag(t *testing.T) {
 	}
 }
 
+// TestBuildClaudeArgs_PromptIsFlagNotPositional locks in that the prompt is
+// always emitted as the VALUE of a "-p" flag, never as a trailing positional
+// argument. This is load-bearing, not stylistic: the claude CLI parses
+// "--mcp-config <file>" by consuming the next token as its value regardless
+// of what follows. If the prompt were ever moved after --mcp-config (or
+// otherwise made positional), the CLI would absorb the prompt text as a
+// SECOND --mcp-config value and fail with "MCP config file not found: <the
+// prompt text>" — silently breaking the task-editor MCP sidecar (and with it
+// signal_complete/request_human) for every run. This was hit for real while
+// spiking per-repo runtime containers (see docs/runtime-containers.md). If
+// this test fails, whatever change you just made almost certainly breaks MCP
+// tool calls — put the prompt back behind "-p" instead of relaxing this test.
+func TestBuildClaudeArgs_PromptIsFlagNotPositional(t *testing.T) {
+	mcpCfg := &MCPRunConfig{ConfigFile: "/tmp/ate-mcp-test.json"}
+	args, err := buildClaudeArgs(agent.RunInput{
+		Task:        agent.Task{Title: "t"},
+		AgentConfig: agent.AgentConfig{},
+	}, true, mcpCfg)
+	if err != nil {
+		t.Fatalf("buildClaudeArgs: %v", err)
+	}
+
+	pIdx := -1
+	for i, a := range args {
+		if a == "-p" {
+			pIdx = i
+			break
+		}
+	}
+	if pIdx < 0 {
+		t.Fatalf("expected a \"-p\" flag in args, got %v", args)
+	}
+	if pIdx+1 >= len(args) {
+		t.Fatalf("\"-p\" has no following value in args: %v", args)
+	}
+	prompt := args[pIdx+1]
+	if prompt == "" || !strings.Contains(prompt, "Task: t") {
+		t.Fatalf("expected the prompt as the value immediately after \"-p\", got %q (args=%v)", prompt, args)
+	}
+
+	// The prompt must never be the trailing arg. If it were positional, the
+	// CLI's arg parser would attribute it to whatever flag precedes it
+	// (--mcp-config here) instead of treating it as the task prompt.
+	if args[len(args)-1] == prompt {
+		t.Fatalf("prompt appears as a trailing positional argument, not as a flag value: %v", args)
+	}
+	if got := findFlagValue(args, "--mcp-config"); got != mcpCfg.ConfigFile {
+		t.Fatalf("expected --mcp-config %q, got %q (args=%v) — a positional prompt after --mcp-config would be absorbed as this value instead", mcpCfg.ConfigFile, got, args)
+	}
+}
+
 // TestBuildClaudeSettingsJSON_FallbackNoInventory verifies that a selected
 // plugin is explicitly enabled even when it isn't present in the discovered
 // inventory (or discovery finds nothing at all). HOME is pointed at an empty

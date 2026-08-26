@@ -15,8 +15,18 @@ ARG VERSION=dev
 # Build all binaries — mcp-server is the signal_complete/request_human sidecar;
 # mcp-board is the standing board MCP server wired into chat sessions (and
 # usable standalone from a chat client). See docs/board-mcp.md.
+#
+# mcp-server is built with CGO_ENABLED=0 (static binary): it's bind-mounted
+# by absolute path into arbitrary per-repo runtime containers (see
+# docs/runtime-containers.md), whose base image is not under this project's
+# control. A cgo/glibc-dynamic binary runs fine on Debian/Ubuntu-based images
+# but fails outright on an Alpine/musl one — a common devcontainer base.
+# Static linking makes it base-image-agnostic. cmd/server keeps cgo (default)
+# because it links mattn/go-sqlite3, which requires it; it always runs inside
+# this Dockerfile's own image, never inside a runtime container, so the
+# portability concern doesn't apply to it.
 RUN go build -ldflags "-X main.Version=${VERSION}" -o bin/server ./cmd/server && \
-    go build -o bin/mcp-server ./cmd/mcp-server && \
+    CGO_ENABLED=0 go build -o bin/mcp-server ./cmd/mcp-server && \
     go build -o bin/mcp-board ./cmd/mcp-board
 
 # Use node:26-alpine as the runtime so the claude CLI is available
