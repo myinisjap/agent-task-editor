@@ -42,6 +42,27 @@ func TestParseRuntimeLanguages_MalformedJSON(t *testing.T) {
 	}
 }
 
+// TestParseRuntimeLanguages_RejectsDuplicateIDs guards a silent-data-loss
+// path: GenerateDevcontainerJSON keys features by feature ref, so two entries
+// with the same id collapse to whichever came last. Before this rejection,
+// picking Go 1.26 and Go 1.21 saved with a 200, redisplayed both rows in the
+// UI, and built a container with only 1.21 — the user's build failing against
+// a version the UI said was configured, with no error anywhere.
+func TestParseRuntimeLanguages_RejectsDuplicateIDs(t *testing.T) {
+	langs, err := ParseRuntimeLanguages(`[{"id":"go","version":"1.26"},{"id":"go","version":"1.21"}]`)
+	if err == nil {
+		t.Fatalf("duplicate id accepted, got %d langs; want an error", len(langs))
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error %q should name the problem as a duplicate", err)
+	}
+	// Distinct ids must still be accepted — the check is per-id, not a
+	// blanket ban on multiple languages.
+	if _, err := ParseRuntimeLanguages(`[{"id":"go","version":"1.26"},{"id":"python","version":"3.12"}]`); err != nil {
+		t.Errorf("distinct ids rejected: %v", err)
+	}
+}
+
 // TestParseRuntimeLanguages_RejectsInjectionShapedInputs is the core security
 // test: an id or version crafted to look like a Docker flag or shell command
 // must be rejected outright (400 at the handler layer), never silently

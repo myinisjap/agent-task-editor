@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -97,10 +96,20 @@ func ParseRuntimeLanguages(raw string) ([]RuntimeLanguage, error) {
 	if err := json.Unmarshal([]byte(raw), &langs); err != nil {
 		return nil, fmt.Errorf("parse runtime_languages: %w", err)
 	}
+	// features is keyed by feature ref, so two entries with the same id
+	// collapse to whichever came last — silently dropping a version the UI
+	// still displays, which is exactly the "generated config doesn't match
+	// what the caller believes was configured" failure this function's
+	// contract rules out. Reject instead.
+	seen := make(map[string]struct{}, len(langs))
 	for _, l := range langs {
 		if _, ok := runtimeLanguageAllowlist[l.ID]; !ok {
 			return nil, fmt.Errorf("unknown runtime language id %q", l.ID)
 		}
+		if _, dup := seen[l.ID]; dup {
+			return nil, fmt.Errorf("duplicate runtime language id %q", l.ID)
+		}
+		seen[l.ID] = struct{}{}
 		if l.Version == "" {
 			return nil, fmt.Errorf("runtime language %q: version is required", l.ID)
 		}
@@ -226,15 +235,12 @@ func GenerateDevcontainerJSON(langs []RuntimeLanguage, contract injectedContract
 // helper makes that guarantee explicit rather than relying on stdlib
 // implementation detail without a test locking it in).
 func marshalSorted(cfg map[string]any) (string, error) {
-	keys := make([]string, 0, len(cfg))
-	for k := range cfg {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	// encoding/json marshals map[string]any with sorted keys already; this
-	// round-trip through a plain Marshal is sufficient given that guarantee,
-	// but ranging keys in sorted order above documents/enforces the
-	// assumption rather than leaving it implicit.
+	// encoding/json marshals map[string]any with its keys sorted, so a plain
+	// Marshal is already deterministic — the guarantee comes from the stdlib,
+	// not from anything this function does. TestHashDevcontainerJSON_SameInputSameHash
+	// is what actually locks it in; if that ever breaks, marshal an explicit
+	// sorted key list here rather than reintroducing a sort whose result is
+	// discarded.
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		return "", err

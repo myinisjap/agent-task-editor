@@ -47,11 +47,20 @@ var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 type Sweeper struct {
 	q        *gen.Queries
 	interval time.Duration
-	// Runtime must be the SAME *agent.RuntimeManager instance passed to
-	// Dispatcher.Runtime (see cmd/server/main.go), not a second one — its
-	// per-repo mutex only actually serializes EnsureRunning/
-	// EnsureDevcontainerRunning against reconcileContainers if both call
-	// sites share one instance. Used by resolveRepoRuntimeState to compute
+	// Runtime should be the SAME *agent.RuntimeManager instance passed to
+	// Dispatcher.Runtime (see cmd/server/main.go) so both sides compute
+	// identical expected hashes from identical configuration.
+	//
+	// Note what does NOT protect this: reconcileContainers never takes
+	// RuntimeManager's per-repo mutex (lockFor is only called from
+	// EnsureRunning/EnsureDevcontainerRunning*, all inside the agent
+	// package), so sharing the instance buys hash consistency, not mutual
+	// exclusion. What actually keeps the sweeper from reaping a container
+	// out from under a starting run is the reposWithActiveRun guard in
+	// shouldReapContainer: the dispatcher commits active_agent_run_id
+	// (persistRunRow) before it ensures a container, so any repo mid-dispatch
+	// is already excluded. Don't add a call path here assuming a lock covers
+	// it. Used by resolveRepoRuntimeState to compute
 	// each repo's expected devcontainer hash (ExpectedDevcontainerHash /
 	// ExpectedDevcontainerHashFromFile) for repos with no explicit
 	// runtime_image; a nil Runtime degrades those repos to the zero state

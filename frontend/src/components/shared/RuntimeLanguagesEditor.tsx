@@ -58,7 +58,13 @@ export default function RuntimeLanguagesEditor({ value, onChange }: {
             onChange={(e) => update(i, { id: e.target.value as RuntimeLanguage['id'] })}
             className={inputCls}
           >
-            {LANGUAGE_IDS.map((id) => (
+            {/* Hide ids already used by another row: two rows with the same
+                id would collapse into one feature server-side, so the backend
+                rejects the save. Filtering here makes that unreachable rather
+                than surfacing a 400 the user has to decode. */}
+            {LANGUAGE_IDS.filter(
+              (id) => id === lang.id || !value.some((other, j) => j !== i && other.id === id),
+            ).map((id) => (
               <option key={id} value={id}>{LANGUAGE_LABELS[id]}</option>
             ))}
           </select>
