@@ -94,6 +94,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 
 - **Backend code gen:** `cd backend && go generate ./...` (runs sqlc after editing `.sql` files)
 - **Tests:** `cd backend && go test ./...`
+- **Lint:** `cd backend && golangci-lint run` — CI gates on this (Backend (Go) job) with `staticcheck` enabled, so `go build` + `go vet` + `go test` passing locally is *not* enough to get a green build. Config lives in `backend/.golangci.yml`. Use the version CI pins in `.github/workflows/ci.yml` (currently v2.12.2), since findings differ between releases: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`. It catches things `go vet` doesn't — e.g. `SA4000` (a test comparing an expression to itself, which can never fail) and `QF1001` (a negated compound that reads more clearly De Morgan'd).
 - **Frontend types:** `frontend/src/api/types.ts` is generated from the root `openapi.yaml`. When changing the API, edit `openapi.yaml`, then run `cd frontend && npm run gen:api` to regenerate the types and commit the result. Don't hand-edit `types.ts` — CI's "Check generated API types are up to date" step fails on any drift between the spec and the committed types.
 - **Migrations:** add numbered files to `backend/internal/storage/migrations/`; they run automatically on startup
 - **Changelog:** always add an entry under `## [Unreleased]` in `CHANGELOG.md` for any user-facing change (features, fixes, security, breaking changes). This file drives the GitHub Release notes, so keep it current with every PR.
