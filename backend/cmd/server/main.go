@@ -281,6 +281,12 @@ func main() {
 	dispatcher.Publisher = hub
 	dispatcher.MaxDailyCostUSD = cfg.MaxDailyCostUSD
 	dispatcher.MaxMonthlyCostUSD = cfg.MaxMonthlyCostUSD
+	// Runtime resolves a repo's runtime_image (see docs/agents.md and
+	// runtime-images.md) into a running docker container per repo. Always
+	// constructed — EnsureRunning is only ever called for a repo that has
+	// runtime_image set (see dispatcher.go's startRun), so this is a no-op
+	// for every repo/deployment not opting in.
+	dispatcher.Runtime = &agent.RuntimeManager{MCPServerPath: cfg.MCPBinary}
 
 	// Shares the dispatcher's own collaborators (queries, pool, rate-limit
 	// registry, and the dispatcher itself for the global cost-ceiling status)

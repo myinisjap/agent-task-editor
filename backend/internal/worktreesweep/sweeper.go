@@ -115,7 +115,67 @@ func (s *Sweeper) RunOnce(ctx context.Context) error {
 	for _, repo := range repos {
 		s.reconcileRepo(ctx, repo.Path, keep)
 	}
+
+	s.reconcileContainers(ctx, repos)
 	return nil
+}
+
+// reconcileContainers removes every ate.repo_id-labeled runtime container
+// (see internal/agent/runtime.go) whose repo no longer exists, or whose
+// ate.image label no longer matches that repo's current runtime_image —
+// mirroring reconcileRepo's job for worktree directories, but for the
+// per-repo containers RuntimeManager.EnsureRunning creates. A container is
+// left alone (not reaped) when its repo still exists and its image label
+// still matches — EnsureRunning itself handles recreating a container in
+// that case, on its own next-dispatch path; this sweep only cleans up what
+// dispatch will never revisit (repo gone) or would otherwise leave running
+// stale until the next dispatch happens to land on that repo (image
+// changed).
+//
+// Best-effort and non-fatal like the rest of this package: docker not being
+// installed/reachable is the common case for anyone not using per-repo
+// runtime images at all, so a ListManagedContainers error here is logged at
+// Warn (not Error) and simply skips this pass for the tick.
+func (s *Sweeper) reconcileContainers(ctx context.Context, repos []gen.Repo) {
+	containers, err := agent.ListManagedContainers(ctx)
+	if err != nil {
+		slog.Warn("worktreesweep: list runtime containers (skipping container reap this tick)", "err", err)
+		return
+	}
+	if len(containers) == 0 {
+		return
+	}
+
+	imageByRepoID := make(map[string]string, len(repos))
+	for _, r := range repos {
+		imageByRepoID[r.ID] = r.RuntimeImage
+	}
+
+	for _, c := range containers {
+		if !shouldReapContainer(c, imageByRepoID) {
+			continue
+		}
+		if err := agent.RemoveContainer(ctx, c.Name); err != nil {
+			slog.Warn("worktreesweep: failed to remove stale runtime container", "container", c.Name, "repo_id", c.RepoID, "err", err)
+			continue
+		}
+		_, repoExists := imageByRepoID[c.RepoID]
+		slog.Info("worktreesweep: reaped runtime container", "container", c.Name, "repo_id", c.RepoID, "repo_still_exists", repoExists)
+	}
+}
+
+// shouldReapContainer is the pure keep-vs-reap decision for one managed
+// container, factored out of reconcileContainers so it's unit-testable
+// without a Docker daemon. A container is kept only when its repo still
+// exists AND its ate.image label matches that repo's current
+// runtime_image AND that image is non-empty (a repo that had runtime_image
+// cleared back to "" should have its container reaped too — see the
+// non-negotiable "empty runtime_image behaves as before" rule in
+// runtime-images.md, which this sweep enforces for containers left running
+// from before the field was cleared).
+func shouldReapContainer(c agent.ManagedContainer, imageByRepoID map[string]string) bool {
+	currentImage, repoExists := imageByRepoID[c.RepoID]
+	return !(repoExists && currentImage == c.Image && currentImage != "")
 }
 
 // reconcileRepo removes every entry under repoPath/.ate-worktrees that isn't

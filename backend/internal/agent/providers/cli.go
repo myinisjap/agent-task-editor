@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 )
 
 // runtimeSpec describes where a provider CLI should execute. Zero value =
@@ -15,6 +17,41 @@ import (
 // a follow-up change — see runtime-images.md.
 type runtimeSpec struct {
 	Container string // docker container name/id; empty = run in-process
+}
+
+// containerEnvOverrides replaces PATH and HOME in env when running inside a
+// runtime container (rt.Container != ""), instead of letting the backend's
+// own PATH/HOME (already present in env — see commonBaseEnvKeys) leak
+// through via `docker exec -e`.
+//
+// This is the fix for the env problem carried over from T1: `docker exec -e
+// K=V` layers the passed vars *on top of* the container image's own env, so
+// whatever value env already carries for PATH/HOME wins over the image's own
+// — and the backend's values are wrong in a different image. A backend PATH
+// (e.g. distro package paths) may not resolve the CLI binary inside the
+// runtime image at all, and HOME=/home/node (or whatever the backend
+// container uses) won't match a devcontainer-style image, whose non-root
+// user is conventionally "vscode" — so mounted credentials
+// (RuntimeManager's credentialDirs, bind-mounted at
+// agent.RuntimeContainerHome) would land under a HOME the CLI never reads
+// from.
+//
+// Decision: set HOME explicitly to agent.RuntimeContainerHome (verified
+// end-to-end in runtime-images.md's spike 2 — CLI auth, MCP sidecar
+// round-trip, all passed with HOME=/home/vscode) and drop PATH entirely
+// (removed, not set to a guessed value) so the image's own PATH takes over
+// unmodified — its own toolchain locations are unknowable at the backend's
+// call site, but the image is guaranteed to have a working PATH for its own
+// installed CLI, since that's what makes it a usable runtime image at all.
+func containerEnvOverrides(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") || strings.HasPrefix(kv, "HOME=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "HOME="+agent.RuntimeContainerHome)
 }
 
 // spawn constructs the *exec.Cmd for a provider CLI invocation, either
@@ -30,6 +67,7 @@ func spawn(ctx context.Context, rt runtimeSpec, workdir, bin string, args, env [
 		cmd.Env = env
 		return cmd
 	}
+	env = containerEnvOverrides(env)
 	da := []string{"exec", "-i", "-w", workdir}
 	for _, e := range env {
 		da = append(da, "-e", e)

@@ -42,6 +42,10 @@ type Dispatcher struct {
 	// when a sweep-dispatch is skipped for budget-exhaustion, mirroring how
 	// Pool.handleTransientFailure publishes the same event on escalation.
 	Publisher Publisher
+	// Runtime resolves a repo's runtime_image into a running container name
+	// (see runtime.go). Optional — nil (or a repo with no runtime_image set)
+	// means every run stays in-process, exactly as before this feature.
+	Runtime *RuntimeManager
 	// MaxDailyCostUSD/MaxMonthlyCostUSD mirror config.Config's global spend
 	// ceiling settings (see checkGlobalCostBudget). 0 means unlimited for
 	// that period; set once at startup from config, never mutated after.
@@ -658,6 +662,11 @@ var (
 	// unrecognized, so ProviderFactory returned nil and the run could not be
 	// dispatched.
 	ErrProviderUnavailable = errors.New("agent config's provider is disabled or unknown")
+	// ErrRuntimeUnavailable means the repo's runtime_image container could
+	// not be ensured running (no RuntimeManager configured, or
+	// RuntimeManager.EnsureRunning itself failed), so the run could not be
+	// dispatched.
+	ErrRuntimeUnavailable = errors.New("repo's runtime container is unavailable")
 )
 
 // DispatchReply starts a new run for a task whose active run is waiting_human,
@@ -775,52 +784,38 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		// The provider is disabled (deprecated write-path rejection doesn't
 		// apply retroactively to rows already in the DB, but the factory
 		// still has no runner for it) or the provider string is otherwise
-		// unrecognized. This is a permanent, config-level problem, not a
-		// transient one, so it must NOT clear the task's active-run lock:
-		// ListAgentPickupTasks only re-selects a task once active_agent_run_id
-		// is NULL, and this failure happens before any real provider work runs
-		// (unlike a normal "failed" terminal run, which is naturally
-		// rate-limited by however long the real attempt took). Clearing the
-		// lock here let the 15ms-interval sweep immediately re-dispatch the
-		// same task, hot-looping runs every tick until a human intervened —
-		// caught by TestE2E_NilProviderFailsRunCleanly flaking under -race as
-		// multiple same-second-resolution created_at rows raced for "first".
-		// Instead, escalate straight to waiting_human (same shape as
-		// checkCostBudget's exhausted-budget escalation) so the task stays
-		// locked on this run until a human fixes the config and replies.
+		// unrecognized. See escalateStartRunFailure's doc comment for why
+		// this escalates to waiting_human instead of clearing the lock.
 		msg := fmt.Sprintf("agent config's provider is disabled or unknown: %q", agentCfg.Provider)
 		log.Error("dispatcher: no runner for provider", "provider", agentCfg.Provider)
-		if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-			Status: "waiting_human",
-			Notes:  &msg,
-			ID:     runID,
-		}); err != nil {
-			log.Warn("dispatcher: mark nil-provider run waiting_human", "err", err)
-		}
-		// persistRunRow (above) already set BOTH current_agent_run_id and
-		// active_agent_run_id to this phantom run before the provider was
-		// resolved. This run has no logs and no feedback, so — same reasoning
-		// as escalateCostBudget — restore current_agent_run_id to the prior
-		// real run (t.CurrentAgentRunID, captured before persistRunRow ran) so
-		// WS replay and the next dispatch's feedback lookup don't hit this
-		// phantom row. active_agent_run_id is deliberately left pointing at
-		// runID: it still needs to hold the re-dispatch lock until a human
-		// fixes the config. See issue #344.
-		if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-			CurrentAgentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
-			ActiveAgentRunID:  &runID,
-			ID:                t.ID,
-		}); err != nil {
-			log.Warn("dispatcher: restore current_agent_run_id after nil-provider escalation", "err", err)
-		}
-		if d.Publisher != nil {
-			d.Publisher.Publish("task.needs_human", map[string]any{
-				"task_id": t.ID,
-				"run_id":  runID,
-				"message": msg,
-			})
-		}
+		d.escalateStartRunFailure(ctx, log, t, runID, msg, "nil-provider")
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
+	}
+
+	// Empty RuntimeImage means "run in-process" — runtimeContainer stays ""
+	// and spawn() (providers/cli.go) takes its zero-value branch, identical
+	// to today's behavior. Only a non-empty RuntimeImage calls out to
+	// EnsureRunning to resolve (creating if needed) the actual running
+	// container name. A repo with RuntimeImage set but no Dispatcher.Runtime
+	// configured, or a Docker-level failure inside EnsureRunning itself, is a
+	// permanent-until-fixed config/infra problem — same class as the
+	// nil-provider case above — so it escalates the same way rather than
+	// silently falling back to in-process (which would run the agent CLI
+	// against a language toolchain/credentials it was never meant to use).
+	var runtimeContainer string
+	if repo.RuntimeImage != "" {
+		var rtErr error
+		if d.Runtime == nil {
+			rtErr = fmt.Errorf("repo %s has runtime_image set but no RuntimeManager is configured", repo.ID)
+		} else {
+			runtimeContainer, rtErr = d.Runtime.EnsureRunning(ctx, repo.ID, repo.Path, repo.RuntimeImage)
+		}
+		if rtErr != nil {
+			msg := fmt.Sprintf("runtime container unavailable: %v", rtErr)
+			log.Error("dispatcher: failed to ensure runtime container", "repo_id", repo.ID, "err", rtErr)
+			d.escalateStartRunFailure(ctx, log, t, runID, msg, "runtime-unavailable")
+			return "", fmt.Errorf("%w: %v", ErrRuntimeUnavailable, rtErr)
+		}
 	}
 
 	// If this is a parent with subtasks that conflicted on merge-back, hand the
@@ -869,7 +864,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			CostBudgetUSD:      costBudgetUSD,
 			CostSpentUSD:       costSpentUSD,
 			CostWarnRatio:      d.resolveCostWarnRatio(ctx),
-			RuntimeContainer:   repo.RuntimeImage,
+			RuntimeContainer:   runtimeContainer,
 		},
 	})
 	if !enqueued {
@@ -891,6 +886,62 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	metrics.DispatchedRunsTotal.Inc()
 	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", agentCfg.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled, "resume_session", resumeSessionID != "", "human_reply", opts.humanReply != nil)
 	return runID, nil
+}
+
+// escalateStartRunFailure marks a just-persisted phantom run row (see
+// persistRunRow, called earlier in startRun) waiting_human and restores
+// current_agent_run_id to the task's prior real run, for every startRun
+// failure mode that happens *after* persistRunRow but represents a
+// permanent, config-level problem rather than a transient one — currently
+// the nil-provider case (ProviderFactory returned nil) and the
+// runtime-container case (repo.RuntimeImage set but unresolvable).
+//
+// This must NOT clear the task's active-run lock: ListAgentPickupTasks only
+// re-selects a task once active_agent_run_id is NULL, and both failure modes
+// happen before any real provider work runs (unlike a normal "failed"
+// terminal run, which is naturally rate-limited by however long the real
+// attempt took). Clearing the lock would let the 5s-interval sweep
+// immediately re-dispatch the same task, hot-looping runs every tick until a
+// human intervened — caught by TestE2E_NilProviderFailsRunCleanly flaking
+// under -race as multiple same-second-resolution created_at rows raced for
+// "first". Instead, escalate straight to waiting_human (same shape as
+// checkCostBudget's exhausted-budget escalation) so the task stays locked on
+// this run until a human fixes the config and replies.
+//
+// logTag is used only in the warning logs below, to distinguish which
+// failure mode a given warning came from.
+func (d *Dispatcher) escalateStartRunFailure(ctx context.Context, log *slog.Logger, t gen.Task, runID, msg, logTag string) {
+	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status: "waiting_human",
+		Notes:  &msg,
+		ID:     runID,
+	}); err != nil {
+		log.Warn("dispatcher: mark run waiting_human after startRun failure", "reason", logTag, "err", err)
+	}
+	// persistRunRow (in startRun, above) already set BOTH
+	// current_agent_run_id and active_agent_run_id to this phantom run
+	// before the failure was detected. This run has no logs and no
+	// feedback, so — same reasoning as escalateCostBudget — restore
+	// current_agent_run_id to the prior real run (t.CurrentAgentRunID,
+	// captured before persistRunRow ran) so WS replay and the next
+	// dispatch's feedback lookup don't hit this phantom row.
+	// active_agent_run_id is deliberately left pointing at runID: it still
+	// needs to hold the re-dispatch lock until a human fixes the underlying
+	// problem. See issue #344.
+	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
+		ActiveAgentRunID:  &runID,
+		ID:                t.ID,
+	}); err != nil {
+		log.Warn("dispatcher: restore current_agent_run_id after startRun failure escalation", "reason", logTag, "err", err)
+	}
+	if d.Publisher != nil {
+		d.Publisher.Publish("task.needs_human", map[string]any{
+			"task_id": t.ID,
+			"run_id":  runID,
+			"message": msg,
+		})
+	}
 }
 
 // ensureWorktree returns the task's working directory, provisioning a git

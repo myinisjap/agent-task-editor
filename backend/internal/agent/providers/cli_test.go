@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 )
 
 // --- sanitizeArgs (cli.go) ---
@@ -127,7 +129,11 @@ func TestMergeEnv_EmptyExtra(t *testing.T) {
 // binary directly (workdir via cmd.Dir, env via cmd.Env), non-empty Container
 // wraps it in `docker exec` with the env passed as -e flags and the workdir
 // via -w, since docker exec has no equivalent to cmd.Dir/cmd.Env for a
-// process already running in another container.
+// process already running in another container. The container branch also
+// drops any PATH/HOME already in env and appends a fixed
+// HOME=<agent.RuntimeContainerHome> — see containerEnvOverrides's doc comment
+// for why (the backend's own PATH/HOME are meaningless inside a different
+// image).
 func TestSpawn_TableTest(t *testing.T) {
 	env := []string{"FOO=bar", "BAZ=qux"}
 
@@ -151,7 +157,7 @@ func TestSpawn_TableTest(t *testing.T) {
 			name:     "set container wraps in docker exec",
 			rt:       runtimeSpec{Container: "ate-repo-1"},
 			wantPath: "docker",
-			wantArgs: []string{"docker", "exec", "-i", "-w", "/repo/path", "-e", "FOO=bar", "-e", "BAZ=qux", "ate-repo-1", "mybin", "-p", "hello"},
+			wantArgs: []string{"docker", "exec", "-i", "-w", "/repo/path", "-e", "FOO=bar", "-e", "BAZ=qux", "-e", "HOME=" + agent.RuntimeContainerHome, "ate-repo-1", "mybin", "-p", "hello"},
 			wantDir:  "",  // docker exec runs from the backend's own cwd; -w sets the *container's* workdir instead
 			wantEnv:  nil, // env travels as -e flags in Args, not cmd.Env, since docker exec doesn't inherit the caller's env into the target container
 		},
@@ -180,6 +186,58 @@ func TestSpawn_TableTest(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSpawn_ContainerOverridesBackendPathAndHome is the regression guard for
+// the T1-carried-over env problem (runtime-images.md's T3 section): a
+// backend PATH/HOME baked into env by commonBaseEnvKeys must never reach a
+// runtime container as-is, since both are meaningless in a different image
+// (a backend PATH may not resolve the CLI there; HOME=/home/node won't match
+// the container's actual user, so mounted credentials land somewhere the CLI
+// never reads from). Confirms the backend's own PATH/HOME are both absent
+// from the docker-exec argv and HOME is instead pinned to
+// agent.RuntimeContainerHome, the value spike 2 verified end-to-end.
+func TestSpawn_ContainerOverridesBackendPathAndHome(t *testing.T) {
+	backendEnv := []string{"PATH=/usr/local/bin:/usr/bin", "HOME=/home/backend-user", "OTHER=kept"}
+
+	cmd := spawn(context.Background(), runtimeSpec{Container: "ate-repo-1"}, "/repo/path", "mybin", nil, backendEnv)
+
+	for _, arg := range cmd.Args {
+		if strings.HasPrefix(arg, "PATH=") {
+			t.Fatalf("backend PATH leaked into container exec: %v", cmd.Args)
+		}
+		if arg == "-e" {
+			continue
+		}
+		if strings.HasPrefix(arg, "HOME=") && arg != "HOME="+agent.RuntimeContainerHome {
+			t.Fatalf("HOME was not overridden to agent.RuntimeContainerHome: got %q in %v", arg, cmd.Args)
+		}
+	}
+
+	wantHomeFlag := "HOME=" + agent.RuntimeContainerHome
+	found := false
+	for _, arg := range cmd.Args {
+		if arg == wantHomeFlag {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected %q in argv, got %v", wantHomeFlag, cmd.Args)
+	}
+	assertContains(t, argsAfterFlag(cmd.Args, "-e"), "OTHER=kept")
+}
+
+// argsAfterFlag collects every value immediately following an occurrence of
+// flag in args — used to pull the "-e K=V" values back out of docker exec's
+// argv for assertion.
+func argsAfterFlag(args []string, flag string) []string {
+	var out []string
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			out = append(out, args[i+1])
+		}
+	}
+	return out
 }
 
 // --- allowlistEnv / per-provider allowlists (cli.go, #321) ---
