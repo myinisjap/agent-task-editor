@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react'
-import { api, type Repo, type Workflow } from '../api/client'
+import { api, type Repo, type RuntimeLanguage, type Workflow } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { ReposHelp } from '../components/shared/pageHelp'
+import RuntimeLanguagesEditor from '../components/shared/RuntimeLanguagesEditor'
 
 type IssueSyncUpdatePolicy = 'gate' | 'always' | 'never'
 type IssueSyncGoneAction = 'flag' | 'archive' | 'move'
+
+// Which of the three mutually-exclusive runtime sources is currently
+// selected. Kept separate from runtime_image/runtime_languages so switching
+// modes never discards what the user already typed into the other mode
+// within the same editing session — only the active mode's value is sent on
+// save (the other is cleared, since the backend resolution order treats
+// them as exclusive: image_ref wins outright, then a repo-committed file,
+// then runtime_languages).
+type RuntimeMode = 'none' | 'image' | 'languages'
 
 type EditForm = {
   name: string
@@ -24,9 +34,11 @@ type EditForm = {
   // Empty string = no repo-specific cap (falls back to the global
   // MAX_WORKERS). Kept as a string so the input can be blank rather than 0.
   max_concurrent_runs: string
+  runtime_mode: RuntimeMode
   // Optional container image to run this repo's agent CLIs in instead of
   // in-process on the backend host. Empty = run in-process (unchanged).
   runtime_image: string
+  runtime_languages: RuntimeLanguage[]
 }
 
 const BLANK_FORM: EditForm = {
@@ -44,7 +56,9 @@ const BLANK_FORM: EditForm = {
   issue_sync_gone_label: '',
   issue_comment_sync_enabled: false,
   max_concurrent_runs: '',
+  runtime_mode: 'none',
   runtime_image: '',
+  runtime_languages: [],
 }
 
 export default function ReposPage() {
@@ -62,6 +76,10 @@ export default function ReposPage() {
   const [editForm, setEditForm] = useState<EditForm>({ ...BLANK_FORM })
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
+  // True when the repo being edited has a committed
+  // .devcontainer/devcontainer.json, which shadows runtime_languages — shown
+  // as an inline warning next to the Languages mode.
+  const [editRepoFilePresent, setEditRepoFilePresent] = useState(false)
 
   useEffect(() => {
     Promise.all([api.repos.list(), api.workflows.list()])
@@ -123,7 +141,8 @@ export default function ReposPage() {
         issue_sync_gone_label: form.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: form.issue_comment_sync_enabled,
         max_concurrent_runs: form.max_concurrent_runs.trim() ? Number(form.max_concurrent_runs) : undefined,
-        runtime_image: form.runtime_image.trim(),
+        runtime_image: form.runtime_mode === 'image' ? form.runtime_image.trim() : '',
+        runtime_languages: form.runtime_mode === 'languages' ? form.runtime_languages : [],
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -137,6 +156,7 @@ export default function ReposPage() {
 
   function startEdit(repo: Repo) {
     setEditingId(repo.id)
+    const runtimeLanguages = repo.runtime_languages ?? []
     setEditForm({
       name: repo.name,
       path: repo.path,
@@ -152,15 +172,22 @@ export default function ReposPage() {
       issue_sync_gone_label: repo.issue_sync_gone_label ?? '',
       issue_comment_sync_enabled: !!repo.issue_comment_sync_enabled,
       max_concurrent_runs: repo.max_concurrent_runs != null ? String(repo.max_concurrent_runs) : '',
+      runtime_mode: repo.runtime_image ? 'image' : runtimeLanguages.length > 0 ? 'languages' : 'none',
       runtime_image: repo.runtime_image ?? '',
+      runtime_languages: runtimeLanguages,
     })
     setEditError('')
+    setEditRepoFilePresent(false)
+    api.repos.devcontainer(repo.id)
+      .then((d) => setEditRepoFilePresent(!!d.repo_file_present))
+      .catch(() => setEditRepoFilePresent(false))
   }
 
   function cancelEdit() {
     setEditingId(null)
     setEditForm({ ...BLANK_FORM })
     setEditError('')
+    setEditRepoFilePresent(false)
   }
 
   async function handleUpdate(e: React.FormEvent) {
@@ -184,7 +211,8 @@ export default function ReposPage() {
         issue_sync_gone_label: editForm.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: editForm.issue_comment_sync_enabled,
         max_concurrent_runs: editForm.max_concurrent_runs.trim() ? Number(editForm.max_concurrent_runs) : null,
-        runtime_image: editForm.runtime_image.trim(),
+        runtime_image: editForm.runtime_mode === 'image' ? editForm.runtime_image.trim() : '',
+        runtime_languages: editForm.runtime_mode === 'languages' ? editForm.runtime_languages : [],
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -426,16 +454,63 @@ export default function ReposPage() {
               />
             </div>
 
-            <div className="flex flex-col gap-1.5 sm:col-span-2">
+            <div className="flex flex-col gap-2 sm:col-span-2">
               <label className="text-xs font-medium text-slate-400">
-                Runtime image <span className="text-slate-600">(optional — blank runs in-process on the backend host)</span>
+                Runtime environment <span className="text-slate-600">(optional — where this repo's agent CLIs run)</span>
               </label>
-              <input
-                value={form.runtime_image}
-                onChange={(e) => setForm((f) => ({ ...f, runtime_image: e.target.value }))}
-                placeholder="ghcr.io/example/runtime:latest"
-                className={inputCls}
-              />
+
+              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="runtime_mode"
+                  checked={form.runtime_mode === 'none'}
+                  onChange={() => setForm((f) => ({ ...f, runtime_mode: 'none' }))}
+                  className="accent-indigo-500"
+                />
+                None — run in the backend container
+              </label>
+
+              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="runtime_mode"
+                  checked={form.runtime_mode === 'image'}
+                  onChange={() => setForm((f) => ({ ...f, runtime_mode: 'image' }))}
+                  className="accent-indigo-500"
+                />
+                Image ref
+              </label>
+              {form.runtime_mode === 'image' && (
+                <input
+                  value={form.runtime_image}
+                  onChange={(e) => setForm((f) => ({ ...f, runtime_image: e.target.value }))}
+                  placeholder="ghcr.io/example/runtime:latest"
+                  className={`${inputCls} ml-6`}
+                />
+              )}
+
+              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="runtime_mode"
+                  checked={form.runtime_mode === 'languages'}
+                  onChange={() => setForm((f) => ({ ...f, runtime_mode: 'languages' }))}
+                  className="accent-indigo-500"
+                />
+                Languages
+              </label>
+              {form.runtime_mode === 'languages' && (
+                <div className="ml-6">
+                  <RuntimeLanguagesEditor
+                    value={form.runtime_languages}
+                    onChange={(next) => setForm((f) => ({ ...f, runtime_languages: next }))}
+                  />
+                </div>
+              )}
+              <p className="text-xs text-slate-600">
+                No raw devcontainer.json editor by design — a committed repo needing more can ship its own{' '}
+                <code className="bg-slate-800 rounded px-1 font-mono">.devcontainer/devcontainer.json</code>.
+              </p>
             </div>
           </div>
 
@@ -718,16 +793,68 @@ export default function ReposPage() {
                       />
                     </div>
 
-                    <div className="flex flex-col gap-1.5 sm:col-span-2">
+                    <div className="flex flex-col gap-2 sm:col-span-2">
                       <label className="text-xs font-medium text-slate-400">
-                        Runtime image <span className="text-slate-600">(optional — blank runs in-process on the backend host)</span>
+                        Runtime environment <span className="text-slate-600">(optional — where this repo's agent CLIs run)</span>
                       </label>
-                      <input
-                        value={editForm.runtime_image}
-                        onChange={(e) => setEditForm((f) => ({ ...f, runtime_image: e.target.value }))}
-                        placeholder="ghcr.io/example/runtime:latest"
-                        className={inputCls}
-                      />
+
+                      <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={`edit_runtime_mode_${repo.id}`}
+                          checked={editForm.runtime_mode === 'none'}
+                          onChange={() => setEditForm((f) => ({ ...f, runtime_mode: 'none' }))}
+                          className="accent-indigo-500"
+                        />
+                        None — run in the backend container
+                      </label>
+
+                      <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={`edit_runtime_mode_${repo.id}`}
+                          checked={editForm.runtime_mode === 'image'}
+                          onChange={() => setEditForm((f) => ({ ...f, runtime_mode: 'image' }))}
+                          className="accent-indigo-500"
+                        />
+                        Image ref
+                      </label>
+                      {editForm.runtime_mode === 'image' && (
+                        <input
+                          value={editForm.runtime_image}
+                          onChange={(e) => setEditForm((f) => ({ ...f, runtime_image: e.target.value }))}
+                          placeholder="ghcr.io/example/runtime:latest"
+                          className={`${inputCls} ml-6`}
+                        />
+                      )}
+
+                      <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={`edit_runtime_mode_${repo.id}`}
+                          checked={editForm.runtime_mode === 'languages'}
+                          onChange={() => setEditForm((f) => ({ ...f, runtime_mode: 'languages' }))}
+                          className="accent-indigo-500"
+                        />
+                        Languages
+                      </label>
+                      {editForm.runtime_mode === 'languages' && (
+                        <div className="ml-6 flex flex-col gap-2">
+                          <RuntimeLanguagesEditor
+                            value={editForm.runtime_languages}
+                            onChange={(next) => setEditForm((f) => ({ ...f, runtime_languages: next }))}
+                          />
+                          {editRepoFilePresent && (
+                            <p className="text-xs text-amber-400">
+                              ⚠ this repo ships .devcontainer/devcontainer.json — selections ignored
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      <p className="text-xs text-slate-600">
+                        No raw devcontainer.json editor by design — a committed repo needing more can ship its own{' '}
+                        <code className="bg-slate-800 rounded px-1 font-mono">.devcontainer/devcontainer.json</code>.
+                      </p>
                     </div>
                   </div>
 
