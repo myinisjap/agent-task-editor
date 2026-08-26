@@ -253,6 +253,15 @@ func normalizeVersion(raw string) (string, bool) {
 		v = trimmed
 		stripped = true
 	}
+	// rbenv/chruby write ".ruby-version" as "ruby-3.3.0" about as often as a
+	// bare "3.3.0"; the devcontainer ruby feature wants the bare version, and
+	// "ruby-3.3.0" would pass ParseRuntimeLanguages (it's charset-legal) and
+	// then fail at build time — the worst place to find out. Mirrors the
+	// "python-" strip runtime.txt already does.
+	if after, ok := strings.CutPrefix(v, "ruby-"); ok {
+		v = after
+		stripped = true
+	}
 	if strings.HasPrefix(v, "v") && len(v) > 1 && v[1] >= '0' && v[1] <= '9' {
 		v = v[1:]
 		stripped = true

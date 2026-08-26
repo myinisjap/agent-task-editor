@@ -109,6 +109,27 @@ func TestDetectLanguages_Ruby(t *testing.T) {
 	}
 }
 
+// TestDetectLanguages_RubyStripsToolPrefix covers the form rbenv and chruby
+// actually write. "ruby-3.3.0" is charset-legal, so ParseRuntimeLanguages
+// accepts it and the failure surfaces only when the devcontainer feature
+// rejects the version at build time — minutes later, far from the cause.
+func TestDetectLanguages_RubyStripsToolPrefix(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".ruby-version", "ruby-3.3.0\n")
+
+	suggestions, err := DetectLanguages(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s, ok := byID(suggestions)["ruby"]
+	if !ok {
+		t.Fatalf("expected a ruby suggestion, got %+v", suggestions)
+	}
+	if s.Version != "3.3.0" {
+		t.Errorf("got version %q, want the bare %q", s.Version, "3.3.0")
+	}
+}
+
 func TestDetectLanguages_Java(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "pom.xml", `<project>
