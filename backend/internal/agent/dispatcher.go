@@ -792,16 +792,19 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
 	}
 
-	// Empty RuntimeImage means "run in-process" — runtimeContainer stays ""
-	// and spawn() (providers/cli.go) takes its zero-value branch, identical
-	// to today's behavior. Only a non-empty RuntimeImage calls out to
-	// EnsureRunning to resolve (creating if needed) the actual running
-	// container name. A repo with RuntimeImage set but no Dispatcher.Runtime
-	// configured, or a Docker-level failure inside EnsureRunning itself, is a
-	// permanent-until-fixed config/infra problem — same class as the
-	// nil-provider case above — so it escalates the same way rather than
-	// silently falling back to in-process (which would run the agent CLI
-	// against a language toolchain/credentials it was never meant to use).
+	// Resolution order (see runtime-images.md): an explicit RuntimeImage
+	// always wins and skips the devcontainer path entirely; otherwise a
+	// repo-committed .devcontainer/devcontainer.json beats the DB-stored
+	// DevcontainerJson; empty RuntimeImage and no devcontainer source means
+	// "run in-process" — runtimeContainer stays "" and spawn()
+	// (providers/cli.go) takes its zero-value branch, identical to today's
+	// behavior. A repo with a runtime source configured but no
+	// Dispatcher.Runtime configured, or a Docker/devcontainer-CLI failure
+	// while ensuring the container, is a permanent-until-fixed config/infra
+	// problem — same class as the nil-provider case above — so it escalates
+	// the same way rather than silently falling back to in-process (which
+	// would run the agent CLI against a language toolchain/credentials it
+	// was never meant to use).
 	var runtimeContainer string
 	if repo.RuntimeImage != "" {
 		var rtErr error
@@ -815,6 +818,25 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			log.Error("dispatcher: failed to ensure runtime container", "repo_id", repo.ID, "err", rtErr)
 			d.escalateStartRunFailure(ctx, log, t, runID, msg, "runtime-unavailable")
 			return "", fmt.Errorf("%w: %v", ErrRuntimeUnavailable, rtErr)
+		}
+	} else {
+		repoFileJSON, rfErr := ReadRepoDevcontainerFile(repo.Path)
+		if rfErr != nil {
+			log.Warn("dispatcher: read repo devcontainer.json (falling back to DB-stored config)", "repo_id", repo.ID, "err", rfErr)
+		}
+		if source, rawJSON := ResolveDevcontainerSource(repoFileJSON, repo.DevcontainerJson); source != devcontainerNone {
+			var rtErr error
+			if d.Runtime == nil {
+				rtErr = fmt.Errorf("repo %s has a devcontainer config but no RuntimeManager is configured", repo.ID)
+			} else {
+				runtimeContainer, rtErr = d.Runtime.EnsureDevcontainerRunning(ctx, repo.ID, repo.Path, rawJSON)
+			}
+			if rtErr != nil {
+				msg := fmt.Sprintf("devcontainer build failed: %v", rtErr)
+				log.Error("dispatcher: failed to ensure devcontainer runtime", "repo_id", repo.ID, "err", rtErr)
+				d.escalateStartRunFailure(ctx, log, t, runID, msg, "runtime-unavailable")
+				return "", fmt.Errorf("%w: %v", ErrRuntimeUnavailable, rtErr)
+			}
 		}
 	}
 

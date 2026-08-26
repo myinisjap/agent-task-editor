@@ -24,13 +24,13 @@ SELECT * FROM repos WHERE id = ?;
 SELECT * FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC;
 
 -- name: CreateRepo :one
-INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_image)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_image, devcontainer_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateRepo :one
 UPDATE repos
-SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?, pr_review_auto_transition_enabled = ?, issue_sync_update_policy = ?, issue_sync_gone_action = ?, issue_sync_gone_label = ?, issue_comment_sync_enabled = ?, max_concurrent_runs = ?, issue_writeback_label = ?, runtime_image = ?
+SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?, pr_review_auto_transition_enabled = ?, issue_sync_update_policy = ?, issue_sync_gone_action = ?, issue_sync_gone_label = ?, issue_comment_sync_enabled = ?, max_concurrent_runs = ?, issue_writeback_label = ?, runtime_image = ?, devcontainer_json = ?
 WHERE id = ?
 RETURNING *;
 

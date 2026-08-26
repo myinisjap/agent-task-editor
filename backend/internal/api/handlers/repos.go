@@ -202,6 +202,10 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeImage:                  strings.TrimSpace(body.RuntimeImage),
+		// DevcontainerJson is not yet exposed on the API surface (see T6 in
+		// runtime-images.md's round-2 plan) — every repo is created with the
+		// DB default until that lands.
+		DevcontainerJson: "",
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -713,6 +717,10 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeImage:                  runtimeImage,
+		// DevcontainerJson is not yet exposed on the API surface (see T6 in
+		// runtime-images.md's round-2 plan) — preserve the existing stored
+		// value rather than clobbering it on every update.
+		DevcontainerJson: existing.DevcontainerJson,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
