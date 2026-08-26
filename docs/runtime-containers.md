@@ -327,17 +327,24 @@ binary from [`@devcontainers/cli`](https://www.npmjs.com/package/@devcontainers/
 `internal/agent/devcontainer.go` runs `devcontainer up` directly via
 `exec.Command`, no wrapper script in between.
 
-**As of this writing, `@devcontainers/cli` is not installed in
-`backend/Dockerfile`.** The image installs Node (needed for the `claude` CLI)
-and Go (copied from the builder stage), but there is no `npm install -g
-@devcontainers/cli` step. Node being present is necessary but not sufficient
-— the `devcontainer` binary itself still has to be on `PATH` inside the
-backend container for sources 2 and 3 to work at all. Until that install step
-is added, a repo with only `runtime_image` set (source 1) is unaffected, but
-resolving to a devcontainer.json (source 2 or 3) will fail at build time —
-correctly escalating to `waiting_human` per the section above, rather than
-silently running in-process — because the `devcontainer` binary won't be
-found.
+`backend/Dockerfile` installs it globally, pinned via the
+`DEVCONTAINER_CLI_VERSION` build arg (0.88.0), for the same reproducibility
+reason `CLAUDE_CLI_VERSION` is pinned: a breaking CLI release shouldn't turn a
+green build into a broken published image.
+
+Unlike the codex and qwen CLIs — which are gated behind `INSTALL_*_CLI` build
+args so the default image stays small — the devcontainer CLI is installed
+unconditionally. A repo's runtime configuration lives in the database, not in
+the image build, so there is no build-time signal that would tell an operator
+to opt in; a repo configured for the devcontainer path would simply fail at
+dispatch time (escalating to `waiting_human`) on an image built without it.
+
+**If you run the backend outside this Dockerfile** — a bare `go run`, or a
+custom image — the `devcontainer` binary must be on `PATH` for sources 2 and 3
+to work. Node alone is not sufficient. Without it, `runtime_image` (source 1)
+still works, and a repo resolving to a devcontainer.json fails at build time,
+correctly escalating to `waiting_human` per the section above rather than
+silently running in-process.
 
 ## The UI
 
