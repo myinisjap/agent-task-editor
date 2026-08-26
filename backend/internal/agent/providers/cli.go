@@ -1,12 +1,42 @@
 package providers
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// runtimeSpec describes where a provider CLI should execute. Zero value =
+// in-process, which is today's behavior. Wired up from RunInput.Runtime in
+// a follow-up change — see runtime-images.md.
+type runtimeSpec struct {
+	Container string // docker container name/id; empty = run in-process
+}
+
+// spawn constructs the *exec.Cmd for a provider CLI invocation, either
+// in-process (rt.Container == "") or inside an already-running docker
+// container via `docker exec`. Callers still own Start()/stdio piping/stream
+// parsing — spawn only builds the command.
+//
+// ponytail: empty Container = exec directly, exactly as today.
+func spawn(ctx context.Context, rt runtimeSpec, workdir, bin string, args, env []string) *exec.Cmd {
+	if rt.Container == "" {
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Dir = workdir
+		cmd.Env = env
+		return cmd
+	}
+	da := []string{"exec", "-i", "-w", workdir}
+	for _, e := range env {
+		da = append(da, "-e", e)
+	}
+	da = append(da, rt.Container, bin)
+	return exec.CommandContext(ctx, "docker", append(da, args...)...)
+}
 
 // sanitizeArgs strips NUL bytes from each CLI argument. A NUL byte anywhere
 // in an argv element makes the Linux execve syscall fail with EINVAL

@@ -96,6 +96,10 @@ type createRepoBody struct {
 	// (nil/omitted = no repo-specific cap; the dispatcher falls back to the
 	// global MAX_WORKERS). See resolveMaxConcurrentRuns.
 	MaxConcurrentRuns *int64 `json:"max_concurrent_runs"`
+	// RuntimeImage is an optional container image to run this repo's agent
+	// CLIs in instead of in-process on the backend host. Empty (the default)
+	// means run in-process — today's behavior, unchanged.
+	RuntimeImage string `json:"runtime_image"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +201,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueSyncGoneLabel:            issueSyncGoneLabel,
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
+		RuntimeImage:                  strings.TrimSpace(body.RuntimeImage),
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -491,6 +496,9 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// `null`). The two are disambiguated below via maxConcurrentRunsSet,
 		// which checks for key presence in the raw JSON object instead.
 		MaxConcurrentRuns *int64 `json:"max_concurrent_runs"`
+		// RuntimeImage: optional container image; omitted preserves the
+		// existing value (see runtimeImage merge below).
+		RuntimeImage *string `json:"runtime_image"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -629,6 +637,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		maxConcurrentRuns = resolved
 	}
 
+	runtimeImage := existing.RuntimeImage
+	if body.RuntimeImage != nil {
+		runtimeImage = strings.TrimSpace(*body.RuntimeImage)
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -699,6 +712,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncGoneLabel:            issueSyncGoneLabel,
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
+		RuntimeImage:                  runtimeImage,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

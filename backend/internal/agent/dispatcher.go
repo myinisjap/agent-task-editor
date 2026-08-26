@@ -869,6 +869,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			CostBudgetUSD:      costBudgetUSD,
 			CostSpentUSD:       costSpentUSD,
 			CostWarnRatio:      d.resolveCostWarnRatio(ctx),
+			RuntimeContainer:   repo.RuntimeImage,
 		},
 	})
 	if !enqueued {

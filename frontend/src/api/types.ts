@@ -3139,6 +3139,7 @@ export interface paths {
                         issue_sync_gone_action?: "flag" | "archive" | "move";
                         issue_sync_gone_label?: string;
                         issue_comment_sync_enabled?: boolean;
+                        runtime_image?: string;
                     };
                 };
             };
@@ -4557,6 +4558,8 @@ export interface components {
             clone_error?: string;
             /** @description Optional cap on the number of agent runs the dispatcher will keep in flight against this repo at once. null (the default) means "no repo-specific cap" — the dispatcher falls back to the server's global MAX_WORKERS limit, preserving pre-existing behavior. A repo saturated with eligible tasks is skipped by the dispatcher once its in-flight run count reaches this limit (or the global fallback), leaving worker slots free for other repos. See GET /dashboard's repo_concurrency for live in-use vs. limit. */
             max_concurrent_runs?: number | null;
+            /** @description Optional container image to run this repo's agent CLIs in instead of in-process on the backend host. Empty string (the default) means run in-process — today's behavior, unchanged. */
+            runtime_image?: string;
             /** Format: date-time */
             created_at: string;
         };

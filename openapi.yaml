@@ -829,6 +829,12 @@ components:
             dispatcher once its in-flight run count reaches this limit (or
             the global fallback), leaving worker slots free for other repos.
             See GET /dashboard's repo_concurrency for live in-use vs. limit.
+        runtime_image:
+          type: string
+          description: >
+            Optional container image to run this repo's agent CLIs in instead
+            of in-process on the backend host. Empty string (the default)
+            means run in-process — today's behavior, unchanged.
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
 
@@ -2919,6 +2925,7 @@ paths:
                   enum: [flag, archive, move]
                 issue_sync_gone_label: { type: string }
                 issue_comment_sync_enabled: { type: boolean }
+                runtime_image: { type: string }
       responses:
         "200":
           content:

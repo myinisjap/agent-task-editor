@@ -1,8 +1,10 @@
 package providers
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -116,6 +118,67 @@ func TestMergeEnv_EmptyExtra(t *testing.T) {
 	out := mergeEnv(base, nil)
 	if len(out) != 1 || out[0] != "A=1" {
 		t.Errorf("mergeEnv(base, nil) = %v, want %v", out, base)
+	}
+}
+
+// --- spawn (cli.go) ---
+
+// TestSpawn_TableTest covers both branches of spawn: empty Container runs the
+// binary directly (workdir via cmd.Dir, env via cmd.Env), non-empty Container
+// wraps it in `docker exec` with the env passed as -e flags and the workdir
+// via -w, since docker exec has no equivalent to cmd.Dir/cmd.Env for a
+// process already running in another container.
+func TestSpawn_TableTest(t *testing.T) {
+	env := []string{"FOO=bar", "BAZ=qux"}
+
+	tests := []struct {
+		name     string
+		rt       runtimeSpec
+		wantPath string
+		wantArgs []string
+		wantDir  string
+		wantEnv  []string
+	}{
+		{
+			name:     "empty container runs binary directly",
+			rt:       runtimeSpec{},
+			wantPath: "mybin",
+			wantArgs: []string{"mybin", "-p", "hello"},
+			wantDir:  "/repo/path",
+			wantEnv:  env,
+		},
+		{
+			name:     "set container wraps in docker exec",
+			rt:       runtimeSpec{Container: "ate-repo-1"},
+			wantPath: "docker",
+			wantArgs: []string{"docker", "exec", "-i", "-w", "/repo/path", "-e", "FOO=bar", "-e", "BAZ=qux", "ate-repo-1", "mybin", "-p", "hello"},
+			wantDir:  "",  // docker exec runs from the backend's own cwd; -w sets the *container's* workdir instead
+			wantEnv:  nil, // env travels as -e flags in Args, not cmd.Env, since docker exec doesn't inherit the caller's env into the target container
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := spawn(context.Background(), tt.rt, "/repo/path", "mybin", []string{"-p", "hello"}, env)
+
+			if !strings.HasSuffix(cmd.Path, tt.wantPath) && cmd.Path != tt.wantPath {
+				// exec.CommandContext resolves bare names via LookPath, which may
+				// return an absolute path (e.g. "/usr/bin/docker") or the bare
+				// name unchanged if not found on PATH in the test environment.
+				if filepath.Base(cmd.Path) != tt.wantPath {
+					t.Errorf("cmd.Path = %q, want basename %q", cmd.Path, tt.wantPath)
+				}
+			}
+			if !reflect.DeepEqual(cmd.Args, tt.wantArgs) {
+				t.Errorf("cmd.Args = %v, want %v", cmd.Args, tt.wantArgs)
+			}
+			if cmd.Dir != tt.wantDir {
+				t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, tt.wantDir)
+			}
+			if !reflect.DeepEqual(cmd.Env, tt.wantEnv) {
+				t.Errorf("cmd.Env = %v, want %v", cmd.Env, tt.wantEnv)
+			}
+		})
 	}
 }
 

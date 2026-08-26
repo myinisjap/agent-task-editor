@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -223,13 +222,12 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
-	cmd.Dir = input.RepoPath
 	env := mergeEnv(allowlistEnv(codexEnvAllowlist), input.AgentConfig.Env)
 	if codexHome != nil {
 		env = append(env, "CODEX_HOME="+codexHome.HomeDir)
 	}
-	cmd.Env = env
+	// Empty RuntimeContainer = in-process, identical to today's direct exec.
+	cmd := spawn(runCtx, runtimeSpec{Container: input.RuntimeContainer}, input.RepoPath, r.binary(), sanitizeArgs(args), env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

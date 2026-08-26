@@ -6,7 +6,6 @@ package providers
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"sync"
 	"time"
@@ -141,16 +140,16 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
-	cmd.Dir = input.RepoPath
 	// QWEN_CODE_SUPPRESS_YOLO_WARNING keeps the headless yolo warning out of
 	// stderr logs. NO_UPDATE_NOTIFIER disables the update-notifier package's
 	// background version check (any value in env disables it — see
 	// update-notifier's source) — same self-update-drift concern as claude's
 	// DISABLE_AUTOUPDATER, since QWEN_CLI_VERSION is pinned in
 	// backend/Dockerfile.
-	cmd.Env = mergeEnv(allowlistEnv(qwenEnvAllowlist), input.AgentConfig.Env)
-	cmd.Env = append(cmd.Env, "QWEN_CODE_SUPPRESS_YOLO_WARNING=1", "NO_UPDATE_NOTIFIER=1")
+	env := mergeEnv(allowlistEnv(qwenEnvAllowlist), input.AgentConfig.Env)
+	env = append(env, "QWEN_CODE_SUPPRESS_YOLO_WARNING=1", "NO_UPDATE_NOTIFIER=1")
+	// Empty RuntimeContainer = in-process, identical to today's direct exec.
+	cmd := spawn(runCtx, runtimeSpec{Container: input.RuntimeContainer}, input.RepoPath, r.binary(), sanitizeArgs(args), env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

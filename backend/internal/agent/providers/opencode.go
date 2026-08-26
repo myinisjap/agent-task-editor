@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -42,9 +41,9 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
-	cmd.Dir = input.RepoPath
-	cmd.Env = mergeEnv(allowlistEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
+	env := mergeEnv(allowlistEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
+	// Empty RuntimeContainer = in-process, identical to today's direct exec.
+	cmd := spawn(runCtx, runtimeSpec{Container: input.RuntimeContainer}, input.RepoPath, r.binary(), sanitizeArgs(args), env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

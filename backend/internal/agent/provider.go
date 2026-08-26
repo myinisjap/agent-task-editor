@@ -139,6 +139,11 @@ type RunInput struct {
 	// hard kill at 1.0. 0 or CostBudgetUSD<=0 disables the warning. Defaults
 	// to 0.8 (see dispatcher.defaultCostWarnRatio).
 	CostWarnRatio float64
+	// RuntimeContainer is the name/id of a running container the provider CLI
+	// should execute in (via `docker exec`) instead of in-process on the
+	// backend host. Empty (the default) means run in-process — today's
+	// behavior, unchanged.
+	RuntimeContainer string
 }
 
 // TransitionHint describes an available transition for the MCP sidecar.
