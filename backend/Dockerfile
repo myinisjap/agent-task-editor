@@ -37,7 +37,13 @@ ARG INSECURE_SKIP_SSL_VERIFY=false
 # su-exec drops privileges in the entrypoint; shadow provides usermod/groupmod
 # for the runtime PUID/PGID remap (see entrypoint.sh).
 # ripgrep (rg) backs the anthropic/llm providers' native `search` tool.
-RUN apk add --no-cache ca-certificates git github-cli bash build-base su-exec shadow ripgrep
+# docker-cli is the `docker` binary itself — needed by internal/agent/runtime.go
+# to manage per-repo runtime containers (docker run/exec/ps/rm) when a repo sets
+# runtime_image. It only works if /var/run/docker.sock is also bind-mounted in
+# (see docker-compose.yml and docs/runtime-containers.md); without the socket,
+# the binary is present but every call fails and the affected repo's runs
+# escalate to waiting_human, same as if docker-cli weren't installed at all.
+RUN apk add --no-cache ca-certificates git github-cli bash build-base su-exec shadow ripgrep docker-cli
 RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl false; fi
 # Install Claude Code CLI globally so 'claude' is on PATH
 #

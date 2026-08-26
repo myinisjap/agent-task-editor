@@ -42,4 +42,21 @@ chown -R node:node /data /app /home/node/go /home/node/.cache 2>/dev/null || tru
 chown node:node /home/node/qwen-home 2>/dev/null || true
 chown node:node /home/node /home/node/.gitconfig 2>/dev/null || true
 
+# If the Docker socket is bind-mounted (per-repo runtime containers, see
+# docs/runtime-containers.md), join 'node' to whatever group owns it on the
+# host. The socket's gid varies per host/distro (Docker Desktop, different
+# distros' package managers all pick different values) so it can't be baked
+# in at build time — read it from the mounted socket itself instead. `docker`
+# is a fixed group name inside this image; -o allows reusing that name even
+# if its gid collides with one already present (e.g. a host gid that matches
+# an existing image group).
+if [ -S /var/run/docker.sock ]; then
+  sock_gid=$(stat -c '%g' /var/run/docker.sock)
+  if ! getent group "$sock_gid" >/dev/null 2>&1; then
+    groupadd -o -g "$sock_gid" docker
+  fi
+  sock_group=$(getent group "$sock_gid" | cut -d: -f1)
+  usermod -aG "$sock_group" node
+fi
+
 exec su-exec node:node "$@"

@@ -274,7 +274,7 @@ Then register repos using paths under `/repos` in the UI (or via the API), and s
 
 Agent `Bash`/`run_bash` tool calls execute *inside the backend container*, against your bind-mounted repos (see [Mounting Repositories](#mounting-repositories) above). That means any compiler, runtime, or build tool an agent needs to build, lint, or test a repo must be installed in `backend/Dockerfile`'s final runtime image — not just available on your host machine.
 
-This is the whole story only when a repo's `runtime_image` is unset (the default). If a repo sets `runtime_image`, its agent CLI runs inside that image's own container instead, and it needs the toolchain, not the backend image — see [Per-Repo Runtime Containers](runtime-containers.md).
+This is the whole story only when a repo's `runtime_image` is unset (the default). If a repo sets `runtime_image`, its agent CLI runs inside that image's own container instead, and it needs the toolchain, not the backend image — this requires the Docker socket mounted into the backend container (on by default in both compose files) — see [Per-Repo Runtime Containers](runtime-containers.md).
 
 > **Note:** `frontend/Dockerfile` only builds and serves Agent Task Editor's own UI in production. It is not involved in running agent commands against your repos, so it doesn't need any of this.
 

@@ -115,6 +115,16 @@ services:
       - BACKUP_KEEP=${BACKUP_KEEP:-7}
     volumes:
       - db_data:/data
+      # Docker socket — required for per-repo runtime containers (a repo's
+      # optional `runtime_image` field; see docs/runtime-containers.md).
+      # entrypoint.sh adds the 'node' user to whatever group owns this socket
+      # at startup, so no host-specific gid needs configuring here. Only
+      # affects repos that set `runtime_image`; leaving it unset (the default)
+      # never touches Docker at all. NOTE: this grants the backend
+      # container root-equivalent access to the Docker host — see
+      # docs/runtime-containers.md's "Docker socket requirement" section
+      # before enabling this in a multi-tenant or untrusted-repo setup.
+      - /var/run/docker.sock:/var/run/docker.sock
       # Claude Max auth — run 'claude login' on your host machine first,
       # then this mount shares that session with the container.
       - ${HOME}/.claude:/home/node/.claude
