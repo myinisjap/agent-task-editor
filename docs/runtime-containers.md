@@ -8,21 +8,198 @@ That means every repo shares one toolchain — whatever's installed in
 versions of the same language can't both be served by one backend image.
 
 A repo can opt out of that shared toolchain: its agent CLI runs inside its own
-long-lived container instead, built from an image you choose directly.
+long-lived container instead, either built from an image you choose directly,
+or generated from a picked list of languages.
 
 ## Resolution order
 
-Each repo resolves to exactly one of these, checked in order:
+Each repo resolves to exactly one of these, checked in order (`dispatcher.go`'s
+`startRun`):
 
-1. **`repos.runtime_image`** — an explicit image ref. No build. This is the
-   escape hatch.
-2. **None** (the default) — run in-process in the backend container, exactly
+1. **`repos.runtime_image`** — an explicit image ref → `docker run`. Wins
+   outright over everything below; no devcontainer path is even considered.
+2. **A repo-committed `.devcontainer/devcontainer.json`** (`ReadRepoDevcontainerFile`)
+   → `devcontainer up`. Repo-committed content is code the agent already runs
+   against — checked out and executed on every run the same as any other file
+   in the repo — so it is treated as **not a new trust boundary**, unlike a
+   UI-authored config would be. It is still never merged with anything the
+   backend generates: the file is passed to `devcontainer up` completely
+   unmodified, so a repo relying on this must declare its own mounts if it
+   needs this codebase's own mounts (MCP sidecar, credential dirs).
+3. **`repos.runtime_languages`** — the language picker's list → a
+   backend-generated `devcontainer.json` → `devcontainer up`. See "The
+   language picker" below.
+4. **None** (the default) — run in-process in the backend container, exactly
    as before this feature existed.
+
+A repo with a runtime source configured (2 or 3) but no `RuntimeManager`
+wired up, or a Docker/`devcontainer` CLI failure while ensuring the
+container, escalates the run to `waiting_human` — it never silently falls
+back to in-process, since that would run the agent CLI against a toolchain
+and credential set it was never meant to use. Same behavior `runtime_image`
+already had (see "When the container can't start" below).
+
+## The language picker
+
+Instead of hand-rolling a `runtime_image`, a repo can select from a fixed,
+backend-defined list of languages and versions. The backend generates the
+entire `devcontainer.json` for you — there is no free-form JSON field.
+
+Six languages are supported today (`runtimeLanguageAllowlist` in
+`internal/agent/devcontainer.go`), each mapped to a
+[devcontainer feature](https://containers.dev/features) reference:
+
+| id | Feature ref |
+|---|---|
+| `go` | `ghcr.io/devcontainers/features/go:1` |
+| `node` | `ghcr.io/devcontainers/features/node:2` |
+| `python` | `ghcr.io/devcontainers/features/python:1` |
+| `rust` | `ghcr.io/devcontainers/features/rust:1` |
+| `java` | `ghcr.io/devcontainers/features/java:1` |
+| `ruby` | `ghcr.io/devcontainers/features/ruby:2` |
+
+It's a plain table, not a plugin system — adding a language is one entry plus
+a matching addition to the frontend's `LANGUAGE_IDS` list.
+
+**Version is free text**, not a dropdown of known-good versions: version
+lists for a feature go stale, and a stale dropdown fails invisibly (it looks
+like a valid choice right up until the feature install fails at container
+build time). You type whatever version string the feature accepts (e.g.
+`1.26`, `20`, `3.12`) — it's validated only for shape
+(`^[A-Za-z0-9][A-Za-z0-9._-]*$`, max 32 chars), not against any list of
+versions that actually exist.
+
+### Setting it via the UI
+
+On the Repos page, "Runtime environment" is a three-way choice for both
+creating and editing a repo: **None**, **Image ref** (the plain-text
+`runtime_image` field), or **Languages** (`RuntimeLanguagesEditor` — a
+repeatable list of allowlisted-id dropdown + free-text-version rows, add/remove
+per row). Switching between modes doesn't discard whatever you'd already
+typed into another mode within the same edit session. When editing a repo
+that ships a committed `.devcontainer/devcontainer.json`, the Languages panel
+shows an inline warning that the repo file wins and the selections below are
+ignored (via `GET /repos/{id}/devcontainer` — see below). There is
+deliberately no raw devcontainer.json editor in this UI — see "The security
+property" below for why.
+
+### Setting it via the API
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/repos/<repo_id> \
+  -H "Content-Type: application/json" \
+  -d '{"runtime_languages": [{"id": "go", "version": "1.26"}, {"id": "node", "version": "20"}]}'
+```
+
+`runtime_languages` is a typed array of `{id, version}` objects on the `Repo`
+schema (`openapi.yaml`), not a free-form string — the same pointer/omit
+convention as `runtime_image` applies: omitting the field on a `PATCH`
+preserves the stored value, `[]` clears it. An unknown `id` or a `version`
+that fails the shape check is rejected with `400`, naming the offending
+id/version, and nothing is persisted for that request.
+
+`GET /repos/{id}/devcontainer` reports which of the four sources currently
+governs the repo (`{"source": "image_ref" | "repo_file" | "languages" | "none",
+"effective_json": "...", "repo_file_present": bool}`) — read-only, it never
+starts a container. `effective_json` is always generated or repo-committed
+output, safe to return as-is: it never contains a user-authored string beyond
+the already-validated language ids/versions.
+
+## The security property
+
+**No user-authored string ever reaches a Docker `runArgs` flag or a `mounts`
+entry.** This is the reason there is no raw devcontainer.json editor
+anywhere in this feature, and it's worth stating plainly because an earlier
+version of this UI got it wrong.
+
+That earlier version accepted a user-supplied `devcontainer.json` directly —
+a full JSON blob including its own `runArgs` and `mounts` arrays — and
+**merged** those into the backend's own generated arrays (appending, to
+preserve whatever the user had written) rather than replacing them. Because
+the merge happened before this codebase's own hardening flags were appended,
+a config containing `"runArgs": ["--privileged"]` survived right alongside
+`--cap-drop=ALL` — Docker doesn't let a later `--cap-drop` retract an earlier
+`--privileged`, so the container ran fully privileged regardless of flag
+order. The practical effect: anyone who could `PATCH` a repo's config could
+turn "can edit a repo's settings" into "can run as root on the Docker host."
+A security review caught this and the whole path was deleted.
+
+The current design closes that hole at the source, not by trying to sanitize
+the JSON more carefully: **the backend generates the entire devcontainer.json
+itself**, from a fixed allowlist, and there is no step anywhere that parses
+or folds in a user-authored JSON document.
+
+- Users select a language id from a **fixed allowlist** — an id not in the
+  table is a `400`, never silently dropped or passed through.
+- A version string is checked against a narrow regex
+  (`^[A-Za-z0-9][A-Za-z0-9._-]*$`, max 32 chars) — anything else is a `400`.
+- `GenerateDevcontainerJSON` builds `image`, `features`, `mounts`, `runArgs`,
+  `workspaceMount`, and `workspaceFolder` from these validated inputs plus
+  this codebase's own fixed mount/hardening contract. `mounts` and `runArgs`
+  are **set**, not merged — there is no user input in scope at that point to
+  merge with, so there is nothing an id or version string could inject into
+  either array. The only place a version string ends up is as the `"version"`
+  value inside a `features/<ref>` JSON object.
+- There is no raw-JSON escape hatch in the UI or the API for the generated
+  path. A repo that needs more control than "pick languages and versions"
+  has two options, both of which stay outside this trust boundary
+  intentionally: commit a `.devcontainer/devcontainer.json` to the repo
+  itself (already code the agent runs against, not a new surface — see
+  resolution order step 2 above), or set `runtime_image` to a prebuilt image.
+
+If a future change reintroduces a user-supplied JSON blob anywhere in this
+path, it must re-derive this analysis first — that repeat mistake is exactly
+what this section exists to prevent.
+
+## Caching and the rebuild trigger
+
+Every generated (or repo-committed) `devcontainer.json` is hashed
+(`HashDevcontainerJSON`, sha256) and passed to `devcontainer up` as
+`--id-label ate.dcjson=<hash>`, alongside `--id-label ate.repo_id=<repo_id>`.
+The `devcontainer` CLI uses those two labels for double duty: they both tag
+the container it creates *and* are what it queries against to decide whether
+an existing container can be reused.
+
+- **Unchanged config** (same repo, same hash) — the CLI finds a container
+  already carrying both labels and reuses it as-is. Verified ~1s warm.
+- **Changed config** (a language added/removed, a version bumped, or the
+  repo's committed file edited) — no container carries the new hash, so the
+  CLI builds a fresh one. Verified ~2min cold for a single feature.
+
+A now-stale container from a prior config is left running rather than
+removed at build time — `worktreesweep`'s reaping pass (the same one that
+already handles `runtime_image` staleness) is what cleans it up once the
+repo goes idle; see "Reaping stale and orphaned containers" below.
+
+The hash is a pure function of the language list (or the repo file's raw
+bytes) alone — it does **not** depend on which provider credential
+directories happen to exist on the host at generation time. All of
+`credentialDirs` are mounted unconditionally into a generated config, unlike
+the explicit-`runtime_image` path below which skips a mount for a
+nonexistent source dir. This avoids a real bug from an earlier iteration: if
+the hash depended on host `os.Stat` results, the same language list could
+hash differently between the dispatcher and the sweeper (or across hosts),
+causing spurious rebuilds and reap/keep disagreements.
+
+## The `@devcontainers/cli` requirement
+
+Resolution order steps 2 and 3 both shell out to the `devcontainer` CLI
+(`devcontainer up ...`), so it must be installed in the backend image.
+`backend/Dockerfile` installs `@devcontainers/cli` globally via npm, pinned
+to a fixed version (`DEVCONTAINER_CLI_VERSION`, currently `0.88.0`) for the
+same reproducibility reason the `claude` CLI version is pinned — two builds
+of the same git tag should produce the same agent runtime. Unlike the
+optional `codex`/`qwen` CLIs, it's installed **unconditionally**, not behind
+a build arg: a repo configured for step 2 or 3 fails at dispatch time
+(escalating to `waiting_human`) if the binary is missing, and that
+configuration lives in the database rather than in the image build — there's
+no build-time signal that would tell an operator to opt in, the way there is
+for the optional provider CLIs.
 
 ## Requirements
 
-Two things must be true for `runtime_image` to actually work, on top of
-setting the field itself:
+Two things must be true for `runtime_image` (or the devcontainer paths above)
+to actually work, on top of setting the relevant field:
 
 1. **The `docker` CLI must be on the backend image's `PATH`.** `backend/Dockerfile`
    installs it via `apk add docker-cli`.
@@ -31,12 +208,14 @@ setting the field itself:
    and `docker-compose.release.yml` mount it into the `backend` service by
    default.
 
-If either is missing, every task on a repo with `runtime_image` set escalates
-to `waiting_human` with an error like `exec: "docker": executable file not
-found in $PATH` or a permission/connection error talking to the socket — see
-"When the container can't start" below. Read the socket section before relying
-on this in production: mounting it grants the backend host-root-equivalent
-access (see "The Docker socket requirement, stated honestly" below).
+If either is missing, every task on a repo with `runtime_image` set (or
+resolving to a repo-committed devcontainer file or `runtime_languages`)
+escalates to `waiting_human` with an error like `exec: "docker": executable
+file not found in $PATH` or a permission/connection error talking to the
+socket — see "When the container can't start" below. Read the socket section
+before relying on this in production: mounting it grants the backend
+host-root-equivalent access (see "The Docker socket requirement, stated
+honestly" below).
 
 ### The socket permission problem, and how it's solved
 
@@ -53,7 +232,8 @@ present, it reads the socket's actual gid with `stat`, creates (or reuses) a
 group with that gid inside the container, and adds `node` to it. This adapts
 automatically to whatever gid the socket has on the host — no `DOCKER_GID` env
 var or manual group setup needed. If the socket isn't mounted at all (the
-common case for anyone not using `runtime_image`), this step is a no-op.
+common case for anyone not using a per-repo runtime container at all), this
+step is a no-op.
 
 This has been verified end-to-end: with the socket mounted per the compose
 files above, `docker exec -u node <backend container> docker ps` succeeds and
@@ -244,6 +424,12 @@ containers, alongside its existing worktree-directory cleanup:
   repo's current `runtime_image` (including a repo that had `runtime_image`
   cleared back to empty — the sweep enforces "empty means in-process" even for
   containers left running from before the field was cleared).
+- The same applies to a devcontainer-CLI-managed container's `ate.dcjson`
+  label: the sweep recomputes each repo's currently-expected hash (from its
+  repo-committed file or its `runtime_languages`, mirroring the dispatcher's
+  own resolution order) and reaps any container whose label no longer
+  matches — a language added/removed/changed, or the repo falling back to a
+  different source entirely.
 - **A container is skipped this tick — never reaped — if its repo has a task
   with a non-terminal, in-flight run** (a non-nil `active_agent_run_id`).
   `EnsureRunning` resolves the container name well before the provider
@@ -262,10 +448,18 @@ mid-creation by one path while the other is starting it.
 
 - `internal/agent/runtime.go` — `RuntimeManager`, container lifecycle,
   `buildDockerRunArgs`.
-- `internal/agent/dispatcher.go` — resolves `runtime_image` before `startRun`
-  and escalates to `waiting_human` on failure.
+- `internal/agent/devcontainer.go` — the language allowlist, `ParseRuntimeLanguages`,
+  `GenerateDevcontainerJSON`, `EnsureDevcontainerRunning`/`EnsureDevcontainerRunningFromFile`.
+- `internal/agent/dispatcher.go` — resolves the four runtime sources before
+  `startRun` and escalates to `waiting_human` on failure.
 - `internal/worktreesweep/sweeper.go` — reaping stale/orphaned runtime
-  containers, skipping repos with an in-flight run.
+  containers (both `ate.image` and `ate.dcjson`), skipping repos with an
+  in-flight run.
+- `internal/api/handlers/repos.go` — `resolveRuntimeLanguages` validation,
+  `GET /repos/{id}/devcontainer`.
+- `frontend/src/components/shared/RuntimeLanguagesEditor.tsx`,
+  `frontend/src/pages/ReposPage.tsx` — the Repos page's three-way runtime
+  picker.
 - `internal/agent/providers/cli.go` — `spawn()`, `containerEnvOverrides`.
 - `backend/entrypoint.sh` — the Docker-socket-gid join described above.
 - [Supported Languages & Extending the Toolchain](getting-started.md#supported-languages--extending-the-toolchain) —
