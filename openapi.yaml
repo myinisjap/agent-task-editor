@@ -835,8 +835,40 @@ components:
             Optional container image to run this repo's agent CLIs in instead
             of in-process on the backend host. Empty string (the default)
             means run in-process — today's behavior, unchanged.
+        runtime_languages:
+          type: array
+          items: { $ref: "#/components/schemas/RuntimeLanguage" }
+          description: >
+            Optional language list for a generated devcontainer.json runtime,
+            used only when runtime_image is empty and the repo has no
+            committed .devcontainer/devcontainer.json (see GET
+            /repos/{id}/devcontainer and docs/runtime-containers.md). Each
+            entry's id must be one of the allowlisted language ids; there is
+            no free-form JSON escape hatch by design — see
+            docs/runtime-containers.md for why. Empty array (the default)
+            means "not configured".
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
+
+    RuntimeLanguage:
+      type: object
+      description: >
+        One language selection for a repo's generated devcontainer runtime.
+        Both fields are validated server-side against a fixed allowlist —
+        an unknown id or a version containing characters outside
+        `[A-Za-z0-9._-]` (max 32 chars) is rejected with 400.
+      properties:
+        id:
+          type: string
+          enum: [go, node, python, rust, java, ruby]
+        version:
+          type: string
+          description: >
+            Version string passed to the language's devcontainer feature
+            (e.g. "1.26", "20", "3.12"). Free text, not a fixed enum, but
+            constrained server-side to `^[A-Za-z0-9][A-Za-z0-9._-]*$`, max
+            32 chars.
+      required: [id, version]
 
     ReviewComment:
       type: object
@@ -2926,16 +2958,76 @@ paths:
                 issue_sync_gone_label: { type: string }
                 issue_comment_sync_enabled: { type: boolean }
                 runtime_image: { type: string }
+                runtime_languages:
+                  type: array
+                  items: { $ref: "#/components/schemas/RuntimeLanguage" }
+                  description: >
+                    Omitted preserves the repo's existing value. An empty
+                    array clears it back to "not configured". Any entry with
+                    an unknown id or invalid version is rejected with 400
+                    and nothing is persisted.
       responses:
         "200":
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Repo" }
+        "400": { description: Invalid runtime_languages entry (unknown id or invalid version) }
         "404": { description: Repo not found }
     delete:
       summary: Remove a repo
       responses:
         "204": { description: Removed }
+
+  /repos/{id}/devcontainer:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a repo's effective devcontainer configuration
+      description: >
+        Reports which of the four runtime sources (see
+        docs/runtime-containers.md) currently governs this repo's agent
+        runtime, and the effective devcontainer.json that source resolves
+        to. Used by the UI to warn when a repo ships a committed
+        .devcontainer/devcontainer.json that shadows its runtime_languages
+        selection.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source:
+                    type: string
+                    enum: [image_ref, repo_file, languages, none]
+                    description: >
+                      Which resolution-order source is currently effective:
+                      'image_ref' (runtime_image set, wins outright),
+                      'repo_file' (a committed .devcontainer/devcontainer.json,
+                      only reachable when runtime_image is empty),
+                      'languages' (runtime_languages, only reachable when
+                      both of the above are empty/absent), or 'none' (run
+                      in-process — today's behavior).
+                  effective_json:
+                    type: string
+                    description: >
+                      The devcontainer.json this repo's runtime would
+                      currently build from — the repo-committed file
+                      verbatim for 'repo_file', or generated output for
+                      'languages'. Empty string for 'image_ref' (no
+                      devcontainer.json is used at all) and 'none'.
+                  repo_file_present:
+                    type: boolean
+                    description: >
+                      True if the repo has a committed
+                      .devcontainer/devcontainer.json, regardless of whether
+                      it is actually the effective source (it is shadowed
+                      when runtime_image is set). The UI uses this to warn
+                      that runtime_languages selections are ignored.
+        "404": { description: Repo not found }
 
   /repos/{id}/tree:
     get:

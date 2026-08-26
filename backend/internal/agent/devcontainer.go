@@ -347,6 +347,20 @@ func (m *RuntimeManager) ExpectedDevcontainerHash(repoPath string, langs []Runti
 	return HashDevcontainerJSON(generated), nil
 }
 
+// GeneratedDevcontainerJSON exposes buildGeneratedDevcontainerJSON for
+// callers outside this package (the /repos/{id}/devcontainer handler) that
+// need the actual effective_json, not just its hash — reusing the same
+// resolution/generation logic EnsureDevcontainerRunning and
+// ExpectedDevcontainerHash already use rather than re-deriving it. Returns
+// "" for an empty langs, same "nothing configured" convention as
+// ExpectedDevcontainerHash.
+func (m *RuntimeManager) GeneratedDevcontainerJSON(repoPath string, langs []RuntimeLanguage) (string, error) {
+	if len(langs) == 0 {
+		return "", nil
+	}
+	return m.buildGeneratedDevcontainerJSON(repoPath, langs)
+}
+
 // ExpectedDevcontainerHashFromFile is ExpectedDevcontainerHash's sibling for
 // a repo-committed devcontainer.json (resolution order step 2): the hash of
 // rawJSON, completely unmodified — see EnsureDevcontainerRunningFromFile.

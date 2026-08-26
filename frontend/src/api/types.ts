@@ -3140,6 +3140,8 @@ export interface paths {
                         issue_sync_gone_label?: string;
                         issue_comment_sync_enabled?: boolean;
                         runtime_image?: string;
+                        /** @description Omitted preserves the repo's existing value. An empty array clears it back to "not configured". Any entry with an unknown id or invalid version is rejected with 400 and nothing is persisted. */
+                        runtime_languages?: components["schemas"]["RuntimeLanguage"][];
                     };
                 };
             };
@@ -3152,6 +3154,13 @@ export interface paths {
                         "application/json": components["schemas"]["Repo"];
                     };
                 };
+                /** @description Invalid runtime_languages entry (unknown id or invalid version) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
                 /** @description Repo not found */
                 404: {
                     headers: {
@@ -3161,6 +3170,65 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/repos/{id}/devcontainer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a repo's effective devcontainer configuration
+         * @description Reports which of the four runtime sources (see docs/runtime-containers.md) currently governs this repo's agent runtime, and the effective devcontainer.json that source resolves to. Used by the UI to warn when a repo ships a committed .devcontainer/devcontainer.json that shadows its runtime_languages selection.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /**
+                             * @description Which resolution-order source is currently effective: 'image_ref' (runtime_image set, wins outright), 'repo_file' (a committed .devcontainer/devcontainer.json, only reachable when runtime_image is empty), 'languages' (runtime_languages, only reachable when both of the above are empty/absent), or 'none' (run in-process — today's behavior).
+                             * @enum {string}
+                             */
+                            source?: "image_ref" | "repo_file" | "languages" | "none";
+                            /** @description The devcontainer.json this repo's runtime would currently build from — the repo-committed file verbatim for 'repo_file', or generated output for 'languages'. Empty string for 'image_ref' (no devcontainer.json is used at all) and 'none'. */
+                            effective_json?: string;
+                            /** @description True if the repo has a committed .devcontainer/devcontainer.json, regardless of whether it is actually the effective source (it is shadowed when runtime_image is set). The UI uses this to warn that runtime_languages selections are ignored. */
+                            repo_file_present?: boolean;
+                        };
+                    };
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/repos/{id}/tree": {
@@ -4560,8 +4628,17 @@ export interface components {
             max_concurrent_runs?: number | null;
             /** @description Optional container image to run this repo's agent CLIs in instead of in-process on the backend host. Empty string (the default) means run in-process — today's behavior, unchanged. */
             runtime_image?: string;
+            /** @description Optional language list for a generated devcontainer.json runtime, used only when runtime_image is empty and the repo has no committed .devcontainer/devcontainer.json (see GET /repos/{id}/devcontainer and docs/runtime-containers.md). Each entry's id must be one of the allowlisted language ids; there is no free-form JSON escape hatch by design — see docs/runtime-containers.md for why. Empty array (the default) means "not configured". */
+            runtime_languages?: components["schemas"]["RuntimeLanguage"][];
             /** Format: date-time */
             created_at: string;
+        };
+        /** @description One language selection for a repo's generated devcontainer runtime. Both fields are validated server-side against a fixed allowlist — an unknown id or a version containing characters outside `[A-Za-z0-9._-]` (max 32 chars) is rejected with 400. */
+        RuntimeLanguage: {
+            /** @enum {string} */
+            id: "go" | "node" | "python" | "rust" | "java" | "ruby";
+            /** @description Version string passed to the language's devcontainer feature (e.g. "1.26", "20", "3.12"). Free text, not a fixed enum, but constrained server-side to `^[A-Za-z0-9][A-Za-z0-9._-]*$`, max 32 chars. */
+            version: string;
         };
         /** @description A persistent, file/line-anchored inline review comment on a task's diff. Open comments are injected into every agent run's prompt until resolved (by an agent via the MCP resolve_comment tool, or by a human). */
         ReviewComment: {

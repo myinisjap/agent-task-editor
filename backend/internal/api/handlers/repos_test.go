@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -26,7 +28,7 @@ func setupReposRouter(t *testing.T, repoBaseDir string) (http.Handler, *gen.Quer
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, repoBaseDir, nil)
+	h := handlers.NewReposHandler(q, repoBaseDir, nil, nil)
 
 	r := chi.NewRouter()
 	r.Post("/repos", h.Create)
@@ -466,7 +468,7 @@ func TestReposUpdate_IssueSyncRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, nil)
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -574,7 +576,7 @@ func TestReposUpdate_IssueWritebackRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, nil)
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -634,7 +636,7 @@ func TestReposUpdate_IssueWritebackLabelRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, nil)
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -733,7 +735,7 @@ func TestReposUpdate_PrReviewAutoTransitionRoundTrip(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, nil)
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -1010,7 +1012,7 @@ func TestReposUpdate_IssueSyncPolicyFieldsRoundTripAndSurviveUnrelatedPatch(t *t
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, nil)
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -1092,7 +1094,7 @@ func TestReposUpdate_InvalidIssueSyncPolicyFieldsRejected(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, nil)
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -1187,7 +1189,7 @@ func TestReposUpdate_MaxConcurrentRunsOmittedVsNullVsSet(t *testing.T) {
 	base := t.TempDir()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewReposHandler(q, base, nil)
+	h := handlers.NewReposHandler(q, base, nil, nil)
 	router := chi.NewRouter()
 	router.Post("/repos", h.Create)
 	router.Patch("/repos/{id}", h.Update)
@@ -1522,5 +1524,360 @@ func TestReposCreate_AsyncCloneFailure_MarksRepoError(t *testing.T) {
 	}
 	if repo.CloneError == "" {
 		t.Errorf("expected a non-empty clone_error message")
+	}
+}
+
+// TestReposCreateUpdate_RuntimeLanguagesRoundTrip verifies a valid language
+// list round-trips through Create and then Update (see resolveRuntimeLanguages).
+func TestReposCreateUpdate_RuntimeLanguagesRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name": "myrepo",
+		"path": repoDir,
+		"runtime_languages": []map[string]any{
+			{"id": "go", "version": "1.26"},
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&repo); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	id := repo["id"].(string)
+	langs, _ := repo["runtime_languages"].([]any)
+	if len(langs) != 1 {
+		t.Fatalf("runtime_languages after create = %v, want 1 entry", repo["runtime_languages"])
+	}
+
+	// Update with a different list.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{
+		"runtime_languages": []map[string]any{
+			{"id": "python", "version": "3.12"},
+			{"id": "node", "version": "20"},
+		},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	stored, err := q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get repo: %v", err)
+	}
+	parsed, err := agent.ParseRuntimeLanguages(stored.RuntimeLanguages)
+	if err != nil {
+		t.Fatalf("stored runtime_languages failed to parse: %v", err)
+	}
+	if len(parsed) != 2 || parsed[0].ID != "python" || parsed[1].ID != "node" {
+		t.Errorf("stored runtime_languages after update = %+v, want [python node]", parsed)
+	}
+}
+
+// TestReposCreate_RuntimeLanguagesUnknownID verifies an unknown language id
+// is rejected with 400 (including an injection-shaped id) and the repo is
+// not created at all.
+func TestReposCreate_RuntimeLanguagesUnknownID(t *testing.T) {
+	base := t.TempDir()
+	router, q := setupReposRouter(t, base)
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	cases := []string{"cobol", "--privileged"}
+	for _, id := range cases {
+		t.Run(id, func(t *testing.T) {
+			w := postJSON(t, router, "/repos", map[string]any{
+				"name": "myrepo-" + id,
+				"path": repoDir,
+				"runtime_languages": []map[string]any{
+					{"id": id, "version": "1.0"},
+				},
+			})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+			repos, err := q.ListRepos(context.Background())
+			if err != nil {
+				t.Fatalf("list repos: %v", err)
+			}
+			if len(repos) != 0 {
+				t.Fatalf("expected no repo persisted after rejected create, got %d", len(repos))
+			}
+		})
+	}
+}
+
+// TestReposCreate_RuntimeLanguagesBadVersion verifies a version string
+// failing the allowlist regex is rejected with 400 (including a shell
+// injection-shaped version) and nothing is persisted.
+func TestReposCreate_RuntimeLanguagesBadVersion(t *testing.T) {
+	base := t.TempDir()
+	router, q := setupReposRouter(t, base)
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	cases := []string{"; rm -rf /", "1.0 && echo pwned", ""}
+	for i, version := range cases {
+		t.Run(version, func(t *testing.T) {
+			w := postJSON(t, router, "/repos", map[string]any{
+				"name": fmt.Sprintf("myrepo-%d", i),
+				"path": repoDir,
+				"runtime_languages": []map[string]any{
+					{"id": "go", "version": version},
+				},
+			})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+			repos, err := q.ListRepos(context.Background())
+			if err != nil {
+				t.Fatalf("list repos: %v", err)
+			}
+			if len(repos) != 0 {
+				t.Fatalf("expected no repo persisted after rejected create, got %d", len(repos))
+			}
+		})
+	}
+}
+
+// TestReposUpdate_RuntimeLanguagesRejectedPatchDoesNotPersist verifies a
+// PATCH with an invalid runtime_languages entry is rejected with 400 and
+// leaves the repo's previously stored value untouched.
+func TestReposUpdate_RuntimeLanguagesRejectedPatchDoesNotPersist(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name": "myrepo",
+		"path": repoDir,
+		"runtime_languages": []map[string]any{
+			{"id": "go", "version": "1.26"},
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{
+		"runtime_languages": []map[string]any{
+			{"id": "--privileged", "version": "1.0"},
+		},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	stored, err := q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get repo: %v", err)
+	}
+	parsed, err := agent.ParseRuntimeLanguages(stored.RuntimeLanguages)
+	if err != nil {
+		t.Fatalf("stored runtime_languages failed to parse: %v", err)
+	}
+	if len(parsed) != 1 || parsed[0].ID != "go" {
+		t.Errorf("stored runtime_languages after rejected patch = %+v, want unchanged [go]", parsed)
+	}
+}
+
+// TestReposUpdate_RuntimeLanguagesOmittedPreservesStoredValue is the
+// silent-data-loss regression test: a PATCH that doesn't mention
+// runtime_languages at all must leave the stored value untouched, the same
+// contract as runtime_image and max_concurrent_runs.
+func TestReposUpdate_RuntimeLanguagesOmittedPreservesStoredValue(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name": "myrepo",
+		"path": repoDir,
+		"runtime_languages": []map[string]any{
+			{"id": "rust", "version": "1.80"},
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	// PATCH an unrelated field only — runtime_languages must survive.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	stored, err := q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get repo: %v", err)
+	}
+	parsed, err := agent.ParseRuntimeLanguages(stored.RuntimeLanguages)
+	if err != nil {
+		t.Fatalf("stored runtime_languages failed to parse: %v", err)
+	}
+	if len(parsed) != 1 || parsed[0].ID != "rust" || parsed[0].Version != "1.80" {
+		t.Errorf("stored runtime_languages after unrelated patch = %+v, want unchanged [rust 1.80]", parsed)
+	}
+
+	// An explicit empty array DOES clear it (distinct from omission).
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"runtime_languages": []map[string]any{}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear patch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	stored, err = q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get repo: %v", err)
+	}
+	if stored.RuntimeLanguages != "" {
+		t.Errorf("runtime_languages after explicit empty-array patch = %q, want cleared to empty string", stored.RuntimeLanguages)
+	}
+}
+
+// TestReposDevcontainer_SourcePrecedence covers the four resolution-order
+// cases GET /repos/{id}/devcontainer must report, mirroring dispatcher.go's
+// precedence exactly: an explicit runtime_image wins outright (even with a
+// repo-committed devcontainer.json present and languages configured); else a
+// repo-committed .devcontainer/devcontainer.json beats runtime_languages;
+// else runtime_languages is used; else "none".
+func TestReposDevcontainer_SourcePrecedence(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	runtime := &agent.RuntimeManager{}
+	h := handlers.NewReposHandler(q, base, nil, runtime)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+	router.Get("/repos/{id}/devcontainer", h.Devcontainer)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	getDevcontainer := func() map[string]any {
+		req := httptest.NewRequest(http.MethodGet, "/repos/"+id+"/devcontainer", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("devcontainer: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var got map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+			t.Fatalf("decode devcontainer response: %v", err)
+		}
+		return got
+	}
+
+	// Case 1: nothing configured -> "none".
+	got := getDevcontainer()
+	if got["source"] != "none" {
+		t.Errorf("source = %v, want none", got["source"])
+	}
+	if got["repo_file_present"] != false {
+		t.Errorf("repo_file_present = %v, want false", got["repo_file_present"])
+	}
+
+	// Case 2: runtime_languages set -> "languages", with generated effective_json.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{
+		"runtime_languages": []map[string]any{{"id": "go", "version": "1.26"}},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch languages: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	got = getDevcontainer()
+	if got["source"] != "languages" {
+		t.Errorf("source = %v, want languages", got["source"])
+	}
+	if ej, _ := got["effective_json"].(string); ej == "" {
+		t.Errorf("effective_json empty for languages source, want generated JSON")
+	}
+
+	// Case 3: a repo-committed devcontainer.json beats runtime_languages.
+	dcDir := filepath.Join(repoDir, ".devcontainer")
+	if err := os.MkdirAll(dcDir, 0o755); err != nil {
+		t.Fatalf("mkdir .devcontainer: %v", err)
+	}
+	repoFileContent := `{"image":"custom:1"}`
+	if err := os.WriteFile(filepath.Join(dcDir, "devcontainer.json"), []byte(repoFileContent), 0o644); err != nil {
+		t.Fatalf("write devcontainer.json: %v", err)
+	}
+	got = getDevcontainer()
+	if got["source"] != "repo_file" {
+		t.Errorf("source = %v, want repo_file", got["source"])
+	}
+	if got["repo_file_present"] != true {
+		t.Errorf("repo_file_present = %v, want true", got["repo_file_present"])
+	}
+	if ej, _ := got["effective_json"].(string); ej != repoFileContent {
+		t.Errorf("effective_json = %q, want repo-committed content %q verbatim", ej, repoFileContent)
+	}
+
+	// Case 4: runtime_image always wins outright, even with both of the above present.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"runtime_image": "ghcr.io/me/img:1"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch runtime_image: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	got = getDevcontainer()
+	if got["source"] != "image_ref" {
+		t.Errorf("source = %v, want image_ref", got["source"])
+	}
+	// repo_file_present still reports true (it's shadowed, not absent).
+	if got["repo_file_present"] != true {
+		t.Errorf("repo_file_present = %v, want true (shadowed but still present)", got["repo_file_present"])
+	}
+}
+
+// TestReposDevcontainer_NotFound verifies the 404 for an unknown repo id.
+func TestReposDevcontainer_NotFound(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil, &agent.RuntimeManager{})
+	router := chi.NewRouter()
+	router.Get("/repos/{id}/devcontainer", h.Devcontainer)
+
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+uuid.NewString()+"/devcontainer", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }

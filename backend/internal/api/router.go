@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -26,7 +27,7 @@ import (
 // Version var. maxWorkers is the global MAX_WORKERS setting (informational
 // only here) — the dashboard uses it as the effective per-repo concurrency
 // limit fallback for repos with no repos.max_concurrent_runs override.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness, blockReasons handlers.BlockReasonResolver) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness, blockReasons handlers.BlockReasonResolver, runtimeManager *agent.RuntimeManager) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher, blockReasons)
@@ -35,7 +36,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
 	agentsH := handlers.NewAgentsHandler(q)
 	providersH := handlers.NewProviderConfigsHandler(q)
-	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
+	reposH := handlers.NewReposHandler(q, repoBaseDir, hub, runtimeManager)
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
@@ -279,6 +280,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Patch("/repos/{id}", reposH.Update)
 			r.Delete("/repos/{id}", reposH.Delete)
 			r.Get("/repos/{id}/tree", reposH.Tree)
+			r.Get("/repos/{id}/devcontainer", reposH.Devcontainer)
 
 			// Dashboard
 			r.Get("/dashboard", dashH.Get)

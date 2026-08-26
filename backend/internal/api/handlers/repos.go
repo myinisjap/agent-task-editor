@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -39,10 +40,41 @@ type ReposHandler struct {
 	q           *gen.Queries
 	repoBaseDir string // host-side base dir; paths under it are rewritten to /repos inside the container
 	pub         RepoEventPublisher
+	// runtime is used only by Devcontainer to generate the effective_json
+	// preview for a runtime_languages selection (see GeneratedDevcontainerJSON).
+	// nil is handled gracefully — the endpoint still reports source and
+	// repo_file_present, just without a generated preview.
+	runtime *agent.RuntimeManager
 }
 
-func NewReposHandler(q *gen.Queries, repoBaseDir string, pub RepoEventPublisher) *ReposHandler {
-	return &ReposHandler{q: q, repoBaseDir: repoBaseDir, pub: pub}
+func NewReposHandler(q *gen.Queries, repoBaseDir string, pub RepoEventPublisher, runtime *agent.RuntimeManager) *ReposHandler {
+	return &ReposHandler{q: q, repoBaseDir: repoBaseDir, pub: pub, runtime: runtime}
+}
+
+// repoResponse is the wire representation of a repo: it embeds gen.Repo but
+// shadows RuntimeLanguages, decoding the JSON-encoded column into a real
+// array so API clients get a typed {id,version}[] instead of a
+// JSON-string-within-JSON (same pattern as intakeRuleResponse for
+// match_labels/match_author_assoc). A stored value is always valid JSON
+// (resolveRuntimeLanguages validates before every write), so a parse error
+// here can only mean a row written before validation existed; that decodes
+// to an empty list rather than failing the whole response.
+type repoResponse struct {
+	gen.Repo
+	RuntimeLanguages []agent.RuntimeLanguage `json:"runtime_languages"`
+}
+
+func toRepoResponse(r gen.Repo) repoResponse {
+	langs, _ := agent.ParseRuntimeLanguages(r.RuntimeLanguages)
+	return repoResponse{Repo: r, RuntimeLanguages: langs}
+}
+
+func toRepoResponses(repos []gen.Repo) []repoResponse {
+	out := make([]repoResponse, len(repos))
+	for i, r := range repos {
+		out[i] = toRepoResponse(r)
+	}
+	return out
 }
 
 // List returns a page of repos, newest first. Query parameters:
@@ -65,7 +97,7 @@ func (h *ReposHandler) List(w http.ResponseWriter, r *http.Request) {
 		repos = repos[:limit]
 		w.Header().Set("X-Next-Cursor", repos[len(repos)-1].ID)
 	}
-	JSON(w, http.StatusOK, repos)
+	JSON(w, http.StatusOK, toRepoResponses(repos))
 }
 
 func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +106,7 @@ func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "repo not found")
 		return
 	}
-	JSON(w, http.StatusOK, repo)
+	JSON(w, http.StatusOK, toRepoResponse(repo))
 }
 
 // createRepoBody is the decoded request payload for ReposHandler.Create.
@@ -100,6 +132,11 @@ type createRepoBody struct {
 	// CLIs in instead of in-process on the backend host. Empty (the default)
 	// means run in-process — today's behavior, unchanged.
 	RuntimeImage string `json:"runtime_image"`
+	// RuntimeLanguages is an optional language list for a generated
+	// devcontainer.json runtime (see internal/agent/devcontainer.go).
+	// Validated against the fixed allowlist by resolveRuntimeLanguages;
+	// empty/omitted means "not configured".
+	RuntimeLanguages []agent.RuntimeLanguage `json:"runtime_languages"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +222,11 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	runtimeLanguages, ok := resolveRuntimeLanguages(w, body.RuntimeLanguages)
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -202,6 +244,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeImage:                  strings.TrimSpace(body.RuntimeImage),
+		RuntimeLanguages:              runtimeLanguages,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -213,7 +256,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	} else {
 		setClaudeTrust(r.Context(), body.Path)
 	}
-	JSON(w, http.StatusCreated, repo)
+	JSON(w, http.StatusCreated, toRepoResponse(repo))
 }
 
 // resolveCloneDestination validates the auto-clone inputs and derives the clone
@@ -369,6 +412,31 @@ func resolveMaxConcurrentRuns(w http.ResponseWriter, v *int64) (resolved *int64,
 	return v, true
 }
 
+// resolveRuntimeLanguages validates langs against the fixed allowlist via
+// agent.ParseRuntimeLanguages — the same strict rules the dispatcher applies
+// at run time — and returns the JSON to persist in repos.runtime_languages.
+// nil/empty langs is valid (returns "", true: "not configured"). Any unknown
+// id or invalid version is a 400 naming the offending id/version, matching
+// ParseRuntimeLanguages' error text, and nothing is persisted for that
+// request. This is the only place API input becomes runtime_languages —
+// deliberately just a marshal + re-validate, never a passthrough of
+// arbitrary JSON (see the SECURITY comment in internal/agent/devcontainer.go).
+func resolveRuntimeLanguages(w http.ResponseWriter, langs []agent.RuntimeLanguage) (resolved string, ok bool) {
+	if len(langs) == 0 {
+		return "", true
+	}
+	raw, err := json.Marshal(langs)
+	if err != nil {
+		Err(w, http.StatusBadRequest, "invalid runtime_languages")
+		return "", false
+	}
+	if _, err := agent.ParseRuntimeLanguages(string(raw)); err != nil {
+		Err(w, http.StatusBadRequest, err.Error())
+		return "", false
+	}
+	return string(raw), true
+}
+
 // startAsyncClone marks the freshly-created repo row 'cloning' and kicks off the
 // background clone. Runs in the background so a slow clone of a large repo doesn't
 // exceed the server's WriteTimeout and get cut off mid-clone. The UI shows a
@@ -499,6 +567,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// RuntimeImage: optional container image; omitted preserves the
 		// existing value (see runtimeImage merge below).
 		RuntimeImage *string `json:"runtime_image"`
+		// RuntimeLanguages: a nil pointer means the field was omitted from
+		// the request body — preserve the existing value. A non-nil pointer
+		// (including one pointing at an empty slice, i.e. "runtime_languages":
+		// []) means "replace", validated below (see runtimeLanguages merge).
+		RuntimeLanguages *[]agent.RuntimeLanguage `json:"runtime_languages"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -642,6 +715,15 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		runtimeImage = strings.TrimSpace(*body.RuntimeImage)
 	}
 
+	runtimeLanguages := existing.RuntimeLanguages
+	if body.RuntimeLanguages != nil {
+		resolved, ok := resolveRuntimeLanguages(w, *body.RuntimeLanguages)
+		if !ok {
+			return
+		}
+		runtimeLanguages = resolved
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -713,13 +795,14 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeImage:                  runtimeImage,
+		RuntimeLanguages:              runtimeLanguages,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	setClaudeTrust(r.Context(), path)
-	JSON(w, http.StatusOK, repo)
+	JSON(w, http.StatusOK, toRepoResponse(repo))
 }
 
 // Delete removes a repo. Returns 404 if the repo doesn't exist and 409 (with
@@ -773,6 +856,58 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		files = []string{}
 	}
 	JSON(w, http.StatusOK, map[string]any{"ref": ref, "files": files})
+}
+
+// Devcontainer reports which runtime source currently governs this repo's
+// agent runtime and the devcontainer.json it resolves to, mirroring
+// dispatcher.go's resolution order exactly (image_ref wins outright; else a
+// repo-committed .devcontainer/devcontainer.json beats runtime_languages;
+// else none). This is read-only reporting for the UI's "your language
+// selections are ignored" warning — it never starts a container.
+func (h *ReposHandler) Devcontainer(w http.ResponseWriter, r *http.Request) {
+	repo, err := h.q.GetRepo(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "repo not found")
+		return
+	}
+
+	repoFileJSON, rfErr := agent.ReadRepoDevcontainerFile(repo.Path)
+	if rfErr != nil {
+		middleware.LoggerFromContext(r.Context()).Warn("devcontainer: read repo file", "repo_id", repo.ID, "err", rfErr)
+	}
+	repoFilePresent := repoFileJSON != ""
+
+	var source, effectiveJSON string
+	switch {
+	case repo.RuntimeImage != "":
+		source = "image_ref"
+	case repoFilePresent:
+		source = "repo_file"
+		effectiveJSON = repoFileJSON
+	case repo.RuntimeLanguages != "":
+		langs, perr := agent.ParseRuntimeLanguages(repo.RuntimeLanguages)
+		if perr != nil {
+			Err(w, http.StatusInternalServerError, fmt.Sprintf("stored runtime_languages is invalid: %v", perr))
+			return
+		}
+		source = "languages"
+		if h.runtime != nil {
+			generated, gerr := h.runtime.GeneratedDevcontainerJSON(repo.Path, langs)
+			if gerr != nil {
+				Err(w, http.StatusInternalServerError, fmt.Sprintf("failed to generate devcontainer.json: %v", gerr))
+				return
+			}
+			effectiveJSON = generated
+		}
+	default:
+		source = "none"
+	}
+
+	JSON(w, http.StatusOK, map[string]any{
+		"source":            source,
+		"effective_json":    effectiveJSON,
+		"repo_file_present": repoFilePresent,
+	})
 }
 
 // setClaudeTrust marks the given repo path as trust-dialog-accepted in ~/.claude.json
