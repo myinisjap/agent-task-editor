@@ -11,7 +11,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [workflows.md](workflows.md) | Workflow state machine: labels, transitions, approve/reject |
 | [agents.md](agents.md) | Agent configs, providers, dispatcher, worker pool, prompt construction |
 | [providers/](providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code`, plus the deprecated `anthropic`/`llm` (credentials, MCP support, limitations) |
-| [runtime-containers.md](runtime-containers.md) | Per-repo `runtime_image`: running a repo's agent CLI in its own container instead of the backend container |
+| [runtime-containers.md](runtime-containers.md) | Per-repo runtime containers: an explicit `runtime_image`, or a devcontainer.json (repo-committed or UI-authored) built via `@devcontainers/cli` — running a repo's agent CLI in its own container instead of the backend container |
 | [mcp-tools.md](mcp-tools.md) | MCP sidecar tool reference (for `claude`, `qwen_code`, and `codex_cli` providers) |
 | [board-mcp.md](board-mcp.md) | Standalone MCP server for creating board tickets from a chat client (e.g. Claude Desktop) |
 | [task-sources.md](task-sources.md) | Importing GitHub Issues as tasks |
