@@ -402,6 +402,11 @@ export const api = {
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
     devcontainer: (id: string) =>
       request<{ source?: 'image_ref' | 'repo_file' | 'languages' | 'none'; effective_json?: string; repo_file_present?: boolean }>(`/repos/${id}/devcontainer`),
+    detectLanguages: (id: string) =>
+      request<{ suggestions: { id: RuntimeLanguage['id']; version: string; source: string; ambiguous: boolean }[]; used_llm: boolean }>(
+        `/repos/${id}/detect-languages`,
+        { method: 'POST' },
+      ),
   },
   templates: {
     list: () => request<TaskTemplate[]>('/templates'),

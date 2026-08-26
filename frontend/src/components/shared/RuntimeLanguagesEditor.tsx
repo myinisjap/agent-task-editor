@@ -26,9 +26,15 @@ const inputCls =
  * way: state stays `[{id, version}]`, nothing here should grow a blob to
  * round-trip.
  */
-export default function RuntimeLanguagesEditor({ value, onChange }: {
+// Per-row detection metadata, keyed by language id (rows are already unique
+// by id). UI-only — never part of the saved RuntimeLanguage[] payload, so it
+// lives in a separate prop rather than growing the row shape.
+export type LanguageDetectionMeta = Record<string, { source: string; ambiguous: boolean }>
+
+export default function RuntimeLanguagesEditor({ value, onChange, detection }: {
   value: RuntimeLanguage[]
   onChange: (next: RuntimeLanguage[]) => void
+  detection?: LanguageDetectionMeta
 }) {
   function update(index: number, patch: Partial<RuntimeLanguage>) {
     onChange(value.map((lang, i) => (i === index ? { ...lang, ...patch } : lang)))
@@ -51,39 +57,51 @@ export default function RuntimeLanguagesEditor({ value, onChange }: {
 
   return (
     <div className="flex flex-col gap-2">
-      {value.map((lang, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <select
-            value={lang.id}
-            onChange={(e) => update(i, { id: e.target.value as RuntimeLanguage['id'] })}
-            className={inputCls}
-          >
-            {/* Hide ids already used by another row: two rows with the same
-                id would collapse into one feature server-side, so the backend
-                rejects the save. Filtering here makes that unreachable rather
-                than surfacing a 400 the user has to decode. */}
-            {LANGUAGE_IDS.filter(
-              (id) => id === lang.id || !value.some((other, j) => j !== i && other.id === id),
-            ).map((id) => (
-              <option key={id} value={id}>{LANGUAGE_LABELS[id]}</option>
-            ))}
-          </select>
-          <input
-            value={lang.version}
-            onChange={(e) => update(i, { version: e.target.value })}
-            placeholder="version"
-            className={`${inputCls} w-28`}
-          />
-          <button
-            type="button"
-            onClick={() => remove(i)}
-            aria-label={`Remove ${LANGUAGE_LABELS[lang.id]}`}
-            className="text-slate-500 hover:text-red-400 transition-colors px-1"
-          >
-            ✕
-          </button>
-        </div>
-      ))}
+      {value.map((lang, i) => {
+        const meta = detection?.[lang.id]
+        return (
+          <div key={i} className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <select
+                value={lang.id}
+                onChange={(e) => update(i, { id: e.target.value as RuntimeLanguage['id'] })}
+                className={inputCls}
+              >
+                {/* Hide ids already used by another row: two rows with the same
+                    id would collapse into one feature server-side, so the backend
+                    rejects the save. Filtering here makes that unreachable rather
+                    than surfacing a 400 the user has to decode. */}
+                {LANGUAGE_IDS.filter(
+                  (id) => id === lang.id || !value.some((other, j) => j !== i && other.id === id),
+                ).map((id) => (
+                  <option key={id} value={id}>{LANGUAGE_LABELS[id]}</option>
+                ))}
+              </select>
+              <input
+                value={lang.version}
+                onChange={(e) => update(i, { version: e.target.value })}
+                placeholder="version"
+                className={`${inputCls} w-28`}
+              />
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                aria-label={`Remove ${LANGUAGE_LABELS[lang.id]}`}
+                className="text-slate-500 hover:text-red-400 transition-colors px-1"
+              >
+                ✕
+              </button>
+            </div>
+            {meta && (
+              <p className={`text-xs pl-1 ${meta.ambiguous ? 'text-amber-400' : 'text-slate-500'}`}>
+                from {meta.source}
+                {meta.ambiguous && ' — needs confirmation'}
+                {!lang.version && ' — no version detected, pick one'}
+              </p>
+            )}
+          </div>
+        )
+      })}
       <button
         type="button"
         onClick={add}

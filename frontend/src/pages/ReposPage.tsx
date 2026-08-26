@@ -3,7 +3,7 @@ import { api, type Repo, type RuntimeLanguage, type Workflow } from '../api/clie
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { ReposHelp } from '../components/shared/pageHelp'
-import RuntimeLanguagesEditor from '../components/shared/RuntimeLanguagesEditor'
+import RuntimeLanguagesEditor, { type LanguageDetectionMeta } from '../components/shared/RuntimeLanguagesEditor'
 
 type IssueSyncUpdatePolicy = 'gate' | 'always' | 'never'
 type IssueSyncGoneAction = 'flag' | 'archive' | 'move'
@@ -80,6 +80,12 @@ export default function ReposPage() {
   // .devcontainer/devcontainer.json, which shadows runtime_languages — shown
   // as an inline warning next to the Languages mode.
   const [editRepoFilePresent, setEditRepoFilePresent] = useState(false)
+  // "Detect from repo" state — fills editForm.runtime_languages but never
+  // saves anything itself; only a subsequent Save persists it.
+  const [detecting, setDetecting] = useState(false)
+  const [detectError, setDetectError] = useState('')
+  const [detectUsedLlm, setDetectUsedLlm] = useState(false)
+  const [detectionMeta, setDetectionMeta] = useState<LanguageDetectionMeta>({})
 
   useEffect(() => {
     Promise.all([api.repos.list(), api.workflows.list()])
@@ -178,6 +184,9 @@ export default function ReposPage() {
     })
     setEditError('')
     setEditRepoFilePresent(false)
+    setDetectError('')
+    setDetectUsedLlm(false)
+    setDetectionMeta({})
     api.repos.devcontainer(repo.id)
       .then((d) => setEditRepoFilePresent(!!d.repo_file_present))
       .catch(() => setEditRepoFilePresent(false))
@@ -188,6 +197,37 @@ export default function ReposPage() {
     setEditForm({ ...BLANK_FORM })
     setEditError('')
     setEditRepoFilePresent(false)
+    setDetectError('')
+    setDetectUsedLlm(false)
+    setDetectionMeta({})
+  }
+
+  async function handleDetect() {
+    if (!editingId) return
+    setDetecting(true)
+    setDetectError('')
+    try {
+      const { suggestions, used_llm } = await api.repos.detectLanguages(editingId)
+      setDetectUsedLlm(used_llm)
+      setDetectionMeta((prev) => {
+        const next = { ...prev }
+        for (const s of suggestions) next[s.id] = { source: s.source, ambiguous: s.ambiguous }
+        return next
+      })
+      // A detected id replaces any existing row for that id (a fresh scan of
+      // the repo is more likely correct than a stale hand-entered row), and
+      // never produces a duplicate — the backend rejects duplicate ids.
+      setEditForm((f) => {
+        const detectedIds = new Set(suggestions.map((s) => s.id))
+        const kept = f.runtime_languages.filter((l) => !detectedIds.has(l.id))
+        const detected = suggestions.map((s) => ({ id: s.id, version: s.version }))
+        return { ...f, runtime_languages: [...kept, ...detected] }
+      })
+    } catch (e) {
+      setDetectError(String(e))
+    } finally {
+      setDetecting(false)
+    }
   }
 
   async function handleUpdate(e: React.FormEvent) {
@@ -840,9 +880,26 @@ export default function ReposPage() {
                       </label>
                       {editForm.runtime_mode === 'languages' && (
                         <div className="ml-6 flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={handleDetect}
+                              disabled={detecting}
+                              className="self-start text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {detecting ? 'Detecting…' : 'Detect from repo'}
+                            </button>
+                          </div>
+                          {detectError && (
+                            <p className="text-xs text-red-400">{detectError}</p>
+                          )}
+                          {detectUsedLlm && (
+                            <p className="text-xs text-amber-400">suggested by Claude — please confirm</p>
+                          )}
                           <RuntimeLanguagesEditor
                             value={editForm.runtime_languages}
                             onChange={(next) => setEditForm((f) => ({ ...f, runtime_languages: next }))}
+                            detection={detectionMeta}
                           />
                           {editRepoFilePresent && (
                             <p className="text-xs text-amber-400">

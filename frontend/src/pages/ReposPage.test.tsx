@@ -12,6 +12,7 @@ const createMock = vi.fn()
 const updateMock = vi.fn()
 const deleteMock = vi.fn()
 const devcontainerMock = vi.fn()
+const detectLanguagesMock = vi.fn()
 const workflowsListMock = vi.fn()
 
 vi.mock('../api/client', async () => {
@@ -27,6 +28,7 @@ vi.mock('../api/client', async () => {
         update: (...args: unknown[]) => updateMock(...args),
         delete: (...args: unknown[]) => deleteMock(...args),
         devcontainer: (...args: unknown[]) => devcontainerMock(...args),
+        detectLanguages: (...args: unknown[]) => detectLanguagesMock(...args),
       },
       workflows: { ...actual.api.workflows, list: (...args: unknown[]) => workflowsListMock(...args) },
     },
@@ -63,6 +65,7 @@ beforeEach(() => {
   updateMock.mockReset()
   deleteMock.mockReset()
   devcontainerMock.mockReset().mockResolvedValue({ source: 'none', effective_json: '', repo_file_present: false })
+  detectLanguagesMock.mockReset()
 })
 
 describe('ReposPage runtime environment picker — create form', () => {
@@ -265,5 +268,113 @@ describe('ReposPage runtime environment picker — edit form', () => {
     await waitFor(() => expect(updateMock).toHaveBeenCalled())
     expect(updateMock.mock.calls[0][1].runtime_image).toBe('')
     expect(updateMock.mock.calls[0][1].runtime_languages).toEqual([])
+  })
+})
+
+describe('ReposPage — Detect from repo', () => {
+  async function openLanguagesEdit(seeded: Repo) {
+    listMock.mockResolvedValue([seeded])
+    render(<ReposPage />)
+    await screen.findByText('acme/widgets')
+    await userEvent.click(screen.getByText('Edit'))
+    await waitFor(() => expect(devcontainerMock).toHaveBeenCalled())
+    await userEvent.click(screen.getByText('Languages'))
+  }
+
+  it('clicking Detect populates rows from the response and shows source', async () => {
+    detectLanguagesMock.mockResolvedValue({
+      suggestions: [{ id: 'go', version: '1.26', source: 'go.mod', ambiguous: false }],
+      used_llm: false,
+    })
+    await openLanguagesEdit(repo())
+
+    await userEvent.click(screen.getByText('Detect from repo'))
+
+    await waitFor(() => expect(detectLanguagesMock).toHaveBeenCalledWith('repo-1'))
+    const versionInput = await screen.findByPlaceholderText('version') as HTMLInputElement
+    expect(versionInput.value).toBe('1.26')
+    await screen.findByText(/from go\.mod/)
+  })
+
+  it('flags ambiguous and empty-version rows visibly', async () => {
+    detectLanguagesMock.mockResolvedValue({
+      suggestions: [{ id: 'rust', version: '', source: 'Cargo.toml', ambiguous: true }],
+      used_llm: false,
+    })
+    await openLanguagesEdit(repo())
+
+    await userEvent.click(screen.getByText('Detect from repo'))
+
+    await screen.findByText(/needs confirmation/)
+    await screen.findByText(/no version detected, pick one/)
+  })
+
+  it('shows the used_llm notice when true and not when false', async () => {
+    detectLanguagesMock.mockResolvedValue({
+      suggestions: [{ id: 'go', version: '1.26', source: 'claude', ambiguous: false }],
+      used_llm: true,
+    })
+    await openLanguagesEdit(repo())
+
+    await userEvent.click(screen.getByText('Detect from repo'))
+
+    await screen.findByText('suggested by Claude — please confirm')
+  })
+
+  it('does not show the used_llm notice when false', async () => {
+    detectLanguagesMock.mockResolvedValue({
+      suggestions: [{ id: 'go', version: '1.26', source: 'go.mod', ambiguous: false }],
+      used_llm: false,
+    })
+    await openLanguagesEdit(repo())
+
+    await userEvent.click(screen.getByText('Detect from repo'))
+
+    await waitFor(() => expect(detectLanguagesMock).toHaveBeenCalled())
+    expect(screen.queryByText('suggested by Claude — please confirm')).toBeNull()
+  })
+
+  it('a failed detect request shows an inline error and does not clear the form', async () => {
+    detectLanguagesMock.mockRejectedValue(new Error('scan failed: permission denied'))
+    const seeded = repo({ runtime_languages: [{ id: 'python', version: '3.12' }] })
+    await openLanguagesEdit(seeded)
+
+    const versionInput = screen.getByPlaceholderText('version') as HTMLInputElement
+    expect(versionInput.value).toBe('3.12')
+
+    await userEvent.click(screen.getByText('Detect from repo'))
+
+    await screen.findByText('Error: scan failed: permission denied')
+    // Existing row survives the failed detect.
+    expect((screen.getByPlaceholderText('version') as HTMLInputElement).value).toBe('3.12')
+  })
+
+  it('nothing is persisted until Save — Detect alone does not PATCH', async () => {
+    detectLanguagesMock.mockResolvedValue({
+      suggestions: [{ id: 'go', version: '1.26', source: 'go.mod', ambiguous: false }],
+      used_llm: false,
+    })
+    await openLanguagesEdit(repo())
+
+    await userEvent.click(screen.getByText('Detect from repo'))
+
+    await waitFor(() => expect(detectLanguagesMock).toHaveBeenCalled())
+    expect(updateMock).not.toHaveBeenCalled()
+  })
+
+  it('detecting an id the user already has replaces that row instead of duplicating it', async () => {
+    detectLanguagesMock.mockResolvedValue({
+      suggestions: [{ id: 'python', version: '3.13', source: 'pyproject.toml', ambiguous: false }],
+      used_llm: false,
+    })
+    const seeded = repo({ runtime_languages: [{ id: 'python', version: '3.10' }] })
+    await openLanguagesEdit(seeded)
+
+    await userEvent.click(screen.getByText('Detect from repo'))
+
+    await waitFor(() => expect(detectLanguagesMock).toHaveBeenCalled())
+    const versionInputs = screen.getAllByPlaceholderText('version') as HTMLInputElement[]
+    expect(versionInputs).toHaveLength(1)
+    expect(versionInputs[0].value).toBe('3.13')
   })
 })
