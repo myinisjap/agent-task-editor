@@ -150,8 +150,13 @@ type injectedContract struct {
 	// location on the host, where the Docker daemon resolves bind sources.
 	MCPServerPath     string
 	HostMCPBindSource string
-	// HostHome is the host-side home backing the credential mounts.
+	// HostHome is the host-side home backing the credential mounts — the
+	// bind *source*, resolved by the daemon on the host.
 	HostHome string
+	// LocalHome is where this process can stat those same dirs to decide
+	// whether they exist. Equal to HostHome when the backend isn't
+	// containerized; empty means "probe HostHome directly".
+	LocalHome string
 }
 
 // GenerateDevcontainerJSON builds a complete devcontainer.json from langs
@@ -210,6 +215,16 @@ func GenerateDevcontainerJSON(langs []RuntimeLanguage, contract injectedContract
 	if contract.HostHome != "" {
 		for _, dir := range credentialDirs {
 			src := filepath.Join(contract.HostHome, dir)
+			// Existence is checked against LocalHome — the path this process
+			// can actually stat — while src (the host path) is what the
+			// daemon resolves. When the backend is containerized these
+			// differ: compose mounts ${HOME}/.claude at /home/node/.claude,
+			// so statting the host path from in here always fails and would
+			// silently drop every credential mount.
+			probe := src
+			if contract.LocalHome != "" {
+				probe = filepath.Join(contract.LocalHome, dir)
+			}
 			// Only mount what exists. `docker run` refuses a bind whose
 			// source is missing outright ("bind source path does not
 			// exist") — it auto-creates for volumes, not binds — so an
@@ -217,7 +232,7 @@ func GenerateDevcontainerJSON(langs []RuntimeLanguage, contract injectedContract
 			// that doesn't use every provider. See hashableDevcontainerJSON
 			// for how the cache key stays stable despite this being
 			// host-dependent.
-			if _, err := os.Stat(src); err != nil {
+			if _, err := os.Stat(probe); err != nil {
 				continue
 			}
 			dst := RuntimeContainerHome + "/" + dir
@@ -434,6 +449,7 @@ func (m *RuntimeManager) buildGeneratedDevcontainerJSON(repoPath string, langs [
 		MCPServerPath:     m.MCPServerPath,
 		HostMCPBindSource: m.bindMCPServerPath(),
 		HostHome:          m.bindHome(homeDir),
+		LocalHome:         homeDir,
 	})
 }
 

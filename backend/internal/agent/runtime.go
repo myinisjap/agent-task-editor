@@ -114,9 +114,20 @@ func (m *RuntimeManager) bindHome(ownHome string) string {
 // bindMCPServerPath is bindHome's counterpart for the sidecar binary. The
 // mount *target* stays m.MCPServerPath, since the generated MCP config
 // references the sidecar by the path the agent CLI will see.
+//
+// Returns "" — omit the mount — when the backend is containerized but no
+// host path was configured. Falling back to MCPServerPath there would emit a
+// source only this container can see (/app/mcp-server is baked into the
+// image), which the daemon rejects, failing the whole build rather than just
+// losing MCP tools. HostHome is the signal for "containerized": compose sets
+// it alongside HOST_MCP_SERVER_PATH, and a bare-metal backend sets neither,
+// where its own path genuinely is a host path.
 func (m *RuntimeManager) bindMCPServerPath() string {
 	if m.HostMCPServerPath != "" {
 		return m.HostMCPServerPath
+	}
+	if m.HostHome != "" {
+		return "" // containerized, no host path for the sidecar
 	}
 	return m.MCPServerPath
 }
@@ -280,9 +291,13 @@ type dockerRunSpec struct {
 	// skips the sidecar mount.
 	HostMCPBindSource string
 	// HostHome is the host-side home directory backing the credentialDirs
-	// mounts (RuntimeManager.HostHome, falling back to the process's own
-	// home). Empty skips credential mounting entirely.
-	HostHome  string
+	// mounts — the bind source, resolved by the daemon on the host. Empty
+	// skips credential mounting entirely.
+	HostHome string
+	// LocalHome is where this process can stat those dirs to decide whether
+	// they exist; it differs from HostHome when the backend is itself
+	// containerized. Empty means probe HostHome directly.
+	LocalHome string
 	PidsLimit int
 }
 
@@ -338,7 +353,14 @@ func buildDockerRunArgs(spec dockerRunSpec) []string {
 	if spec.HostHome != "" {
 		for _, dir := range credentialDirs {
 			src := filepath.Join(spec.HostHome, dir)
-			if _, err := os.Stat(src); err != nil {
+			// Probe where this process can actually see the dir; src is the
+			// host path the daemon resolves. These differ when the backend is
+			// containerized (see dockerRunSpec.LocalHome).
+			probe := src
+			if spec.LocalHome != "" {
+				probe = filepath.Join(spec.LocalHome, dir)
+			}
+			if _, err := os.Stat(probe); err != nil {
 				continue // not configured on this host — see doc comment above
 			}
 			dst := RuntimeContainerHome + "/" + dir
