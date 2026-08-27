@@ -15,6 +15,20 @@ set -e
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 
+# docker-compose defines the SSL/TLS override vars unconditionally, so when
+# SSL_CA_CERT_PATH / INSECURE_SKIP_SSL_VERIFY are unset they arrive here as
+# EMPTY STRINGS, not absent. Most tools shrug that off, but not all: an empty
+# SSL_CERT_FILE makes mise (rustls) load zero CA certs and fail every HTTPS
+# download, and git treats a set-but-empty GIT_SSL_NO_VERIFY as true. The
+# compose comments say "active only when non-empty" — enforce that here, once,
+# for the server and every subprocess it spawns.
+for _v in SSL_CERT_FILE SSL_CERT_DIR GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS \
+          GIT_SSL_NO_VERIFY NPM_CONFIG_STRICT_SSL NODE_TLS_REJECT_UNAUTHORIZED; do
+  if [ -z "$(printenv "$_v")" ]; then
+    unset "$_v"
+  fi
+done
+
 # If we're not root, someone pinned the runtime user (e.g. compose `user:`);
 # nothing to remap — just run.
 if [ "$(id -u)" != "0" ]; then

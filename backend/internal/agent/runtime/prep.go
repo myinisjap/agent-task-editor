@@ -76,7 +76,14 @@ func UvCacheDir() string {
 // non-interactive dispatcher context.
 func miseEnv() []string {
 	env := []string{"MISE_YES=1"}
-	for _, k := range []string{"PATH", "HOME"} {
+	// Proxy and CA-trust vars must reach mise/uv or cold toolchain downloads
+	// fail behind corporate proxies (SSL_CA_CERT_PATH / HTTP_PROXY setups).
+	// The v != "" guard also drops set-but-empty values, which mise treats as
+	// an explicit empty CA override and fails on (see entrypoint.sh).
+	for _, k := range []string{"PATH", "HOME",
+		"SSL_CERT_FILE", "SSL_CERT_DIR",
+		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+		"http_proxy", "https_proxy", "no_proxy"} {
 		if v := os.Getenv(k); v != "" {
 			env = append(env, k+"="+v)
 		}

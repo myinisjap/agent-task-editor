@@ -189,3 +189,28 @@ func TestVenvMatchesVersion_MissingConfig(t *testing.T) {
 		t.Error("expected false for a venv dir with no pyvenv.cfg")
 	}
 }
+
+func TestMiseEnv_PassesProxyAndCAVars_SkipsEmpty(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://proxy:3128")
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/custom-ca.pem")
+	t.Setenv("NO_PROXY", "") // set-but-empty must be dropped, not forwarded
+
+	env := miseEnv()
+	got := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	if got["HTTPS_PROXY"] != "http://proxy:3128" {
+		t.Errorf("HTTPS_PROXY not passed through: %q", got["HTTPS_PROXY"])
+	}
+	if got["SSL_CERT_FILE"] != "/etc/ssl/custom-ca.pem" {
+		t.Errorf("SSL_CERT_FILE not passed through: %q", got["SSL_CERT_FILE"])
+	}
+	if _, ok := got["NO_PROXY"]; ok {
+		t.Error("empty NO_PROXY must not be forwarded (mise treats set-but-empty CA/proxy vars as explicit overrides)")
+	}
+	if got["MISE_YES"] != "1" {
+		t.Error("MISE_YES=1 missing")
+	}
+}
