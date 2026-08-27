@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -24,16 +25,67 @@ const InstallTimeout = 10 * time.Minute
 // run's error text with a full download log.
 const outputTailBytes = 2048
 
-// miseEnv returns the environment for mise subprocess calls: the current
-// process's PATH and HOME (so mise resolves its own binary and finds its
-// data dir under $HOME), plus MISE_YES=1 to suppress any interactive
-// confirmation prompt in a non-interactive dispatcher context.
+// MiseDataDir returns the mise data dir mise subprocess calls should use: the
+// backend's own MISE_DATA_DIR env var if set (a compose named volume in
+// production — see backend/Dockerfile's ENV MISE_DATA_DIR), otherwise mise's
+// own default of $HOME/.local/share/mise. Exported so providers.applyRuntime
+// can inject the exact same value into a provider's `mise x` child env
+// (allowlistEnv strips the backend's own ENV, so without this the child
+// process could resolve a *different* data dir than the one prep just
+// installed into) — this is "the same resolution prep.go uses" the two
+// callers must never drift apart on.
+func MiseDataDir() string {
+	if v := os.Getenv("MISE_DATA_DIR"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".local", "share", "mise")
+}
+
+// UvCacheDir returns the shared uv package cache directory mise/uv
+// subprocess calls should use: the backend's own UV_CACHE_DIR env var if set
+// (a compose named volume in production — see backend/Dockerfile's ENV
+// UV_CACHE_DIR), otherwise uv's own default of $HOME/.cache/uv. Exported so
+// providers.applyRuntime can inject the exact same value a provider's `mise
+// x` child env — without this, prep's `uv venv` call and the agent run's own
+// `pip install`/`uv pip install` could use two different caches (allowlistEnv
+// strips the backend's own ENV, including any operator-set UV_CACHE_DIR
+// override, from the child env). Returns "" if $HOME can't be resolved
+// (matches os.UserHomeDir's failure mode); callers must skip emitting the
+// env var entirely on "" rather than set a bogus empty-valued UV_CACHE_DIR=.
+func UvCacheDir() string {
+	if v := os.Getenv("UV_CACHE_DIR"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".cache", "uv")
+}
+
+// miseEnv returns the environment for mise/uv subprocess calls at prep time:
+// the current process's PATH and HOME (so mise resolves its own binary and
+// finds its data dir under $HOME), MISE_DATA_DIR (see MiseDataDir),
+// UV_CACHE_DIR (see UvCacheDir — shared with the agent run's own env so a
+// python pin's prep and run never disagree on which cache to use), and
+// MISE_YES=1 to suppress any interactive confirmation prompt in a
+// non-interactive dispatcher context.
 func miseEnv() []string {
 	env := []string{"MISE_YES=1"}
-	for _, k := range []string{"PATH", "HOME", "MISE_DATA_DIR"} {
+	for _, k := range []string{"PATH", "HOME"} {
 		if v := os.Getenv(k); v != "" {
 			env = append(env, k+"="+v)
 		}
+	}
+	if dir := MiseDataDir(); dir != "" {
+		env = append(env, "MISE_DATA_DIR="+dir)
+	}
+	if dir := UvCacheDir(); dir != "" {
+		env = append(env, "UV_CACHE_DIR="+dir)
 	}
 	return env
 }
@@ -63,16 +115,38 @@ func Install(ctx context.Context, pins []Pin) error {
 	return nil
 }
 
+// pyvenvVersionPattern matches pyvenv.cfg's interpreter-version line, for
+// detecting whether an existing .venv already matches the current python pin
+// (see venvMatchesVersion). Different uv versions have written this under
+// different keys — `version = X.Y.Z` (older uv, mirroring CPython's own venv
+// module) and `version_info = X.Y.Z` (newer uv) have both been observed —
+// so this matches either.
+var pyvenvVersionPattern = regexp.MustCompile(`(?m)^version(?:_info)?\s*=\s*(\S+)`)
+
 // EnsureVenv creates worktreeDir/.venv via `uv venv --python <pythonPath>`
-// for a python pin, skipping the uv call entirely if .venv already exists
-// (a re-run on the same worktree, e.g. a feedback loop, reuses it). pythonPath
-// is the interpreter mise installed for the pinned version (see
-// ResolvePythonPath).
-func EnsureVenv(ctx context.Context, worktreeDir, pythonPath string) error {
+// for a python pin. If a .venv already exists, its recorded interpreter
+// version (pyvenv.cfg's `version =` line) is compared against pinVersion: a
+// match reuses the existing venv (skips the uv call — a re-run on the same
+// worktree, e.g. a feedback loop, is fast); a mismatch (or an unreadable/
+// missing pyvenv.cfg) removes the stale venv and recreates it from the
+// pinned interpreter, so bumping the repo's python pin can never silently
+// leave a re-run on the old interpreter.
+func EnsureVenv(ctx context.Context, worktreeDir, pythonPath, pinVersion string) error {
 	venvDir := filepath.Join(worktreeDir, ".venv")
 	if fi, err := os.Stat(venvDir); err == nil && fi.IsDir() {
-		return nil
+		if venvMatchesVersion(venvDir, pinVersion) {
+			return nil
+		}
+		if err := os.RemoveAll(venvDir); err != nil {
+			return fmt.Errorf("remove stale .venv (python pin changed): %w", err)
+		}
 	}
+
+	// Keep .venv out of `git status`/`git add -A` in this worktree — see
+	// excludeVenv's doc comment. Best-effort: a failure here must not block
+	// venv creation (worst case the venv shows up as untracked, same as
+	// before this fix).
+	excludeVenv(worktreeDir)
 
 	ctx, cancel := context.WithTimeout(ctx, InstallTimeout)
 	defer cancel()
@@ -84,6 +158,69 @@ func EnsureVenv(ctx context.Context, worktreeDir, pythonPath string) error {
 		return fmt.Errorf("uv venv failed: %w: %s", err, tail(out, outputTailBytes))
 	}
 	return nil
+}
+
+// venvMatchesVersion reports whether venvDir/pyvenv.cfg records the given
+// interpreter version. Missing/unreadable/unparseable pyvenv.cfg is treated
+// as a mismatch (recreate) rather than a match (reuse) — fail closed toward
+// the correct toolchain rather than silently keeping a possibly-stale one.
+func venvMatchesVersion(venvDir, pinVersion string) bool {
+	data, err := os.ReadFile(filepath.Join(venvDir, "pyvenv.cfg"))
+	if err != nil {
+		return false
+	}
+	m := pyvenvVersionPattern.FindSubmatch(data)
+	if m == nil {
+		return false
+	}
+	got := strings.TrimSpace(string(m[1]))
+	// pyvenv.cfg records the resolved interpreter's full version
+	// (e.g. "3.11.7"), which may be more specific than the repo's pin
+	// (e.g. "3.11"). A match on either the exact string or as a prefix
+	// (pin is a version-family prefix of the resolved version) counts as
+	// "still the pinned toolchain" — only a genuine change (a different
+	// major.minor, or an unrelated string) triggers a recreate.
+	return got == pinVersion || strings.HasPrefix(got, pinVersion+".")
+}
+
+// excludeVenv appends ".venv/" to the git exclude file that actually governs
+// `git status`/`git add -A` for worktreeDir. For a linked worktree (the
+// normal case — every task worktree is one), that is the *common* repo's
+// info/exclude ($GIT_COMMON_DIR/info/exclude), NOT a per-worktree
+// info/exclude under .git/worktrees/<id>/info/ — verified against a real
+// linked worktree: unlike per-worktree files (HEAD, index, ...), info/
+// exclude is not one of the files git links per-worktree, so `git rev-parse
+// --git-path info/exclude` resolves through the worktree's commondir link to
+// the main repo's .git/info/exclude, and that is the file git status
+// actually reads; writing to a hand-built .git/worktrees/<id>/info/exclude
+// path (which does exist on disk) has no effect. Asking git for the path
+// (rather than hardcoding one) is what worktree.go's excludeWorktreeDir does
+// too, just via a literal filepath.Join since the main-repo path is already
+// known there; this package only ever has worktreeDir, so it asks git
+// instead. Best-effort: any failure (git not on PATH, unreadable/unwritable
+// file) leaves the venv visible to git status rather than blocking venv
+// creation.
+func excludeVenv(worktreeDir string) {
+	out, err := exec.Command("git", "-C", worktreeDir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude").Output()
+	if err != nil {
+		return
+	}
+	excludePath := strings.TrimSpace(string(out))
+	if excludePath == "" {
+		return
+	}
+	if data, rerr := os.ReadFile(excludePath); rerr == nil && strings.Contains(string(data), ".venv/") {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(excludePath), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	_, _ = f.WriteString("\n.venv/\n")
 }
 
 // ResolvePythonPath shells out to `mise where python@<version>` to find the
@@ -126,7 +263,7 @@ func Prep(ctx context.Context, pins []Pin, worktreeDir string) error {
 		if err != nil {
 			return err
 		}
-		return EnsureVenv(ctx, worktreeDir, pythonPath)
+		return EnsureVenv(ctx, worktreeDir, pythonPath, p.Version)
 	}
 	return nil
 }

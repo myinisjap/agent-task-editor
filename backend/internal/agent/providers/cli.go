@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 )
 
 // sanitizeArgs strips NUL bytes from each CLI argument. A NUL byte anywhere
@@ -280,6 +281,16 @@ func (d *rawDump) Close() {
 // x args, and env instead gets `<worktree>/.venv/bin` prepended to PATH
 // (so `python`/`pip` resolve to the venv's wrapped interpreter) plus
 // UV_CACHE_DIR pointing at the shared uv cache.
+//
+// The child's env is built via allowlistEnv (see EnvAllowlistFor), which
+// strips the backend's own ENV — including MISE_DATA_DIR, so without
+// injecting it here `mise x` could resolve a *different* data dir than the
+// one runtime.Prep just installed into — and there is no allowlist entry for
+// MISE_YES/MISE_TRUSTED_CONFIG_PATHS at all, so a repo that ships its own
+// mise.toml would otherwise hit mise's untrusted-config confirmation prompt
+// in this non-TTY child and fail outright. All three are always injected
+// whenever pins are present (not just for a python pin), since any pinned
+// repo can ship a mise.toml.
 func applyRuntime(spec *agent.RuntimeSpec, binary string, args []string, env []string) (string, []string, []string) {
 	if spec == nil || len(spec.Pins) == 0 {
 		return binary, args, env
@@ -298,11 +309,20 @@ func applyRuntime(spec *agent.RuntimeSpec, binary string, args []string, env []s
 	miseArgs = append(miseArgs, "--", binary)
 	miseArgs = append(miseArgs, args...)
 
-	newEnv := env
+	newEnv := append([]string(nil), env...)
+	newEnv = append(newEnv, "MISE_YES=1")
+	if dir := runtime.MiseDataDir(); dir != "" {
+		newEnv = append(newEnv, "MISE_DATA_DIR="+dir)
+	}
+	if spec.WorktreeDir != "" {
+		newEnv = append(newEnv, "MISE_TRUSTED_CONFIG_PATHS="+spec.WorktreeDir)
+	}
 	if hasPython && spec.WorktreeDir != "" {
 		venvBin := filepath.Join(spec.WorktreeDir, ".venv", "bin")
-		newEnv = prependPath(env, venvBin)
-		newEnv = append(newEnv, "UV_CACHE_DIR="+uvCacheDir())
+		newEnv = prependPath(newEnv, venvBin)
+		if dir := runtime.UvCacheDir(); dir != "" {
+			newEnv = append(newEnv, "UV_CACHE_DIR="+dir)
+		}
 	}
 
 	return "mise", miseArgs, newEnv
@@ -327,19 +347,4 @@ func prependPath(env []string, dir string) []string {
 		out = append(out, "PATH="+dir)
 	}
 	return out
-}
-
-// uvCacheDir returns the shared uv package cache directory (a named compose
-// volume in production; see docker-compose.yml). Mirrors MISE_DATA_DIR's
-// role for mise — both let concurrent/sequential worktrees on the same host
-// reuse already-downloaded packages instead of a cold re-download per task.
-func uvCacheDir() string {
-	if v := os.Getenv("UV_CACHE_DIR"); v != "" {
-		return v
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".cache", "uv")
 }

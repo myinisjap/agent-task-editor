@@ -35,6 +35,13 @@ RUN go build -ldflags "-X main.Version=${VERSION}" -o bin/server ./cmd/server &&
 # usermod/groupmod (the `passwd` package, present by default) and bash, so
 # neither needs a separate install like alpine's `shadow` package did.
 FROM node:26-bookworm-slim
+# Set by buildx to the target platform's arch (amd64/arm64) — used below to
+# pick the right gh/mise release asset for the image being built (e.g. `docker
+# buildx build --platform linux/arm64`, or the native arch on an arm64 host
+# such as Apple Silicon under dev.sh). Must be declared with ARG in every
+# stage that references it; a plain `docker build` (no buildx) still sets it
+# correctly to the host arch.
+ARG TARGETARCH
 # Set to "true" to disable SSL verification for git/npm/Node.js (corporate TLS proxies).
 # Pass via: INSECURE_SKIP_SSL_VERIFY=true docker compose build
 ARG INSECURE_SKIP_SSL_VERIFY=false
@@ -51,18 +58,26 @@ RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl 
 # choose) or GitHub's official apt repo (an extra signing-key/repo-add step
 # for one binary) — same reproducibility rationale as CLAUDE_CLI_VERSION
 # below: two builds of the same tag must produce the same agent runtime.
+# gh's release asset names TARGETARCH verbatim (linux_amd64 / linux_arm64).
 ARG GH_CLI_VERSION=2.63.2
-RUN curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_amd64.tar.gz" \
-      | tar -xz -C /usr/local --strip-components=1 "gh_${GH_CLI_VERSION}_linux_amd64/bin/gh"
+RUN curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_${TARGETARCH}.tar.gz" \
+      | tar -xz -C /usr/local --strip-components=1 "gh_${GH_CLI_VERSION}_linux_${TARGETARCH}/bin/gh"
 
 # mise (per-repo language runtime manager): pinned release tarball, same
 # reproducibility reason as gh above. Uses the musl-static build rather than
 # ghcr.io/jdx/mise's glibc binary — that image is rebuilt against whatever
 # glibc its CI runner ships (2.38/2.39), newer than bookworm's 2.36, and
 # fails with "GLIBC_2.38 not found" at runtime (confirmed by testing);
-# musl-static has no libc dependency, so it runs unchanged on any base.
+# musl-static has no libc dependency, so it runs unchanged on any base. mise's
+# release assets name amd64 "x64" (not "amd64") but arm64 "arm64" verbatim —
+# an asymmetric mapping unlike gh's, so TARGETARCH needs translating first.
 ARG MISE_VERSION=2026.8.14
-RUN curl -fsSL "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-x64-musl.tar.gz" \
+RUN case "$TARGETARCH" in \
+      amd64) MISE_ARCH=x64 ;; \
+      arm64) MISE_ARCH=arm64 ;; \
+      *) echo "unsupported TARGETARCH for mise: $TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${MISE_ARCH}-musl.tar.gz" \
       | tar -xz -C /tmp && mv /tmp/mise/bin/mise /usr/local/bin/mise && rm -rf /tmp/mise
 
 # uv (Python venv/package manager, used for the python pin — see

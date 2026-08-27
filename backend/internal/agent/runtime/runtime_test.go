@@ -1,6 +1,62 @@
 package runtime
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// TestMiseDataDir_RespectsEnvOverride verifies MiseDataDir prefers an
+// explicit MISE_DATA_DIR env var (the operator override / the value
+// backend/Dockerfile sets) over the $HOME-derived default.
+func TestMiseDataDir_RespectsEnvOverride(t *testing.T) {
+	t.Setenv("MISE_DATA_DIR", "/custom/mise-data")
+	if got := MiseDataDir(); got != "/custom/mise-data" {
+		t.Errorf("MiseDataDir() = %q, want %q", got, "/custom/mise-data")
+	}
+}
+
+// TestMiseDataDir_FallsBackToHomeDefault verifies MiseDataDir falls back to
+// $HOME/.local/share/mise (mise's own default) when MISE_DATA_DIR is unset —
+// and, critically, never returns an empty string in that case (so callers
+// never emit a bogus MISE_DATA_DIR= entry).
+func TestMiseDataDir_FallsBackToHomeDefault(t *testing.T) {
+	t.Setenv("MISE_DATA_DIR", "")
+	t.Setenv("HOME", "/home/testuser")
+	got := MiseDataDir()
+	if got == "" {
+		t.Fatal("MiseDataDir() returned empty string with a valid HOME set")
+	}
+	if !strings.HasSuffix(got, "/.local/share/mise") {
+		t.Errorf("MiseDataDir() = %q, want it to end with /.local/share/mise", got)
+	}
+}
+
+// TestUvCacheDir_RespectsEnvOverride mirrors TestMiseDataDir_RespectsEnvOverride
+// for UV_CACHE_DIR — finding 6's fix: prep's uv venv and the agent run's own
+// env must never silently diverge on which cache dir to use.
+func TestUvCacheDir_RespectsEnvOverride(t *testing.T) {
+	t.Setenv("UV_CACHE_DIR", "/custom/uv-cache")
+	if got := UvCacheDir(); got != "/custom/uv-cache" {
+		t.Errorf("UvCacheDir() = %q, want %q", got, "/custom/uv-cache")
+	}
+}
+
+// TestUvCacheDir_FallsBackToHomeDefault verifies UvCacheDir falls back to
+// $HOME/.cache/uv when UV_CACHE_DIR is unset, and never returns "" with a
+// valid HOME — the empty-string case is reserved for an unresolvable HOME
+// (os.UserHomeDir failure), and callers must skip emitting the env var
+// entirely rather than set a bogus empty-valued UV_CACHE_DIR=.
+func TestUvCacheDir_FallsBackToHomeDefault(t *testing.T) {
+	t.Setenv("UV_CACHE_DIR", "")
+	t.Setenv("HOME", "/home/testuser")
+	got := UvCacheDir()
+	if got == "" {
+		t.Fatal("UvCacheDir() returned empty string with a valid HOME set")
+	}
+	if !strings.HasSuffix(got, "/.cache/uv") {
+		t.Errorf("UvCacheDir() = %q, want it to end with /.cache/uv", got)
+	}
+}
 
 func TestParsePins_Empty(t *testing.T) {
 	pins, err := ParsePins("")

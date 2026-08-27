@@ -399,8 +399,45 @@ func TestApplyRuntime_WrapsWithMiseXInDeterministicOrder(t *testing.T) {
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
 	}
-	if !reflect.DeepEqual(gotEnv, env) {
-		t.Errorf("env changed with no python pin: got %v, want unchanged %v", gotEnv, env)
+	// Original entries survive untouched; MISE_YES/MISE_DATA_DIR get appended
+	// (see TestApplyRuntime_InjectsMiseEnv) even with no python pin, since any
+	// pinned repo — not just a python one — can ship its own mise.toml.
+	if len(gotEnv) < len(env) || !reflect.DeepEqual(gotEnv[:len(env)], env) {
+		t.Errorf("env = %v, want it to start with unchanged %v", gotEnv, env)
+	}
+}
+
+// TestApplyRuntime_InjectsMiseEnv verifies applyRuntime injects
+// MISE_YES=1, MISE_DATA_DIR, and MISE_TRUSTED_CONFIG_PATHS into the child
+// env whenever pins are present — this is finding 5's fix: allowlistEnv
+// strips the backend's own ENV (including any MISE_DATA_DIR override) before
+// a provider's child env is built, and there was no allowlist entry for
+// MISE_YES/MISE_TRUSTED_CONFIG_PATHS at all, so a repo shipping its own
+// mise.toml would hit mise's untrusted-config prompt in this non-TTY child
+// and fail.
+func TestApplyRuntime_InjectsMiseEnv(t *testing.T) {
+	t.Setenv("MISE_DATA_DIR", "/data/mise")
+
+	spec := &agent.RuntimeSpec{
+		Pins:        []runtime.Pin{{ID: "go", Version: "1.21"}},
+		WorktreeDir: "/repo/.ate-worktrees/t1",
+	}
+	_, _, gotEnv := applyRuntime(spec, "claude", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+
+	want := map[string]string{
+		"MISE_YES":                  "1",
+		"MISE_DATA_DIR":             "/data/mise",
+		"MISE_TRUSTED_CONFIG_PATHS": "/repo/.ate-worktrees/t1",
+	}
+	got := map[string]string{}
+	for _, kv := range gotEnv {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	for k, wantV := range want {
+		if got[k] != wantV {
+			t.Errorf("env[%s] = %q, want %q (full env: %v)", k, got[k], wantV, gotEnv)
+		}
 	}
 }
 
