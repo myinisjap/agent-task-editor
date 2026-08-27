@@ -55,14 +55,6 @@ type SubtaskEnv struct {
 	MaxSubtasks int64
 }
 
-// Prepare creates temp files for one agent run and returns the config.
-// transitions is the list of agent-available transitions from the task's current label.
-// reviewComments is the list of open inline diff review comments on the task,
-// passed so the sidecar's resolve_comment tool can validate comment IDs.
-// extraServers, if non-nil, is merged into the mcpServers map as raw JSON entries
-// (e.g. user-selected Claude MCP servers read from ~/.claude.json). A server named
-// "task-editor" in extraServers is ignored to avoid colliding with the sidecar entry.
-// The caller must call Cleanup when the run ends.
 // ExchangeDir is where the per-run MCP config and RESULT_FILE are written.
 //
 // Defaults to os.TempDir(), which is correct whenever the agent CLI runs in
@@ -75,6 +67,15 @@ type SubtaskEnv struct {
 // config path that doesn't exist on its side, and the runner would read back
 // a RESULT_FILE nothing ever wrote.
 var ExchangeDir = os.TempDir()
+
+// Prepare creates temp files for one agent run and returns the config.
+// transitions is the list of agent-available transitions from the task's current label.
+// reviewComments is the list of open inline diff review comments on the task,
+// passed so the sidecar's resolve_comment tool can validate comment IDs.
+// extraServers, if non-nil, is merged into the mcpServers map as raw JSON entries
+// (e.g. user-selected Claude MCP servers read from ~/.claude.json). A server named
+// "task-editor" in extraServers is ignored to avoid colliding with the sidecar entry.
+// The caller must call Cleanup when the run ends.
 
 func (m *MCPManager) Prepare(runID string, transitions []agent.TransitionHint, reviewComments []agent.ReviewComment, extraServers map[string]json.RawMessage, subtasks *SubtaskEnv) (*MCPRunConfig, error) {
 	dir := ExchangeDir
