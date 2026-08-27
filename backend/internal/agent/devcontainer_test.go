@@ -507,3 +507,43 @@ func TestDevcontainerConfigPath_BasenameIsDevcontainerJSON(t *testing.T) {
 		t.Errorf("two repos share a config dir (%q) — the id must be in the directory", filepath.Dir(path))
 	}
 }
+
+// TestDevcontainerEnv_DoesNotInheritRootHome guards the second production
+// failure of this feature. entrypoint.sh drops root to `node` via su-exec,
+// which leaves HOME=/root behind while the process runs as uid 1000. The
+// devcontainer CLI shells out to docker, docker tries to read
+// /root/.docker/config.json, gets EACCES, and prints a warning to stderr —
+// and the CLI treats any stderr from its container lookup as a hard failure:
+//
+//	Error: Command failed: docker ps -q -a --filter label=ate.repo_id=...
+//
+// with nothing explaining why. So the subprocess env must set HOME itself
+// rather than inheriting it.
+func TestDevcontainerEnv_DoesNotInheritRootHome(t *testing.T) {
+	t.Setenv("HOME", "/root")
+
+	var home string
+	for _, kv := range devcontainerEnv() {
+		if after, ok := strings.CutPrefix(kv, "HOME="); ok {
+			home = after
+		}
+	}
+	if home == "" {
+		t.Fatal("devcontainerEnv must set HOME explicitly; inheriting it breaks docker config loading")
+	}
+	if home == "/root" {
+		t.Errorf("HOME=%q — docker cannot read /root/.docker as the non-root runtime user", home)
+	}
+}
+
+// TestDevcontainerEnv_PassesPath covers the other half: the CLI resolves
+// `docker` by name, so a subprocess env without PATH cannot find it at all.
+func TestDevcontainerEnv_PassesPath(t *testing.T) {
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin")
+	for _, kv := range devcontainerEnv() {
+		if kv == "PATH=/usr/local/bin:/usr/bin" {
+			return
+		}
+	}
+	t.Error("devcontainerEnv must pass PATH through; the CLI resolves docker by name")
+}

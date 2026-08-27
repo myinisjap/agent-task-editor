@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -281,13 +282,54 @@ type devcontainerUpResult struct {
 // left for worktreesweep's reaping pass rather than removed here, since
 // EnsureRunning's stale-container handling follows the same
 // build-then-reap-later split.
+// devcontainerEnv is the environment for the `devcontainer` CLI subprocess.
+//
+// It cannot simply inherit the backend's: entrypoint.sh drops root to `node`
+// via su-exec, which does not reset HOME, so the server process runs as uid
+// 1000 while HOME still points at /root. The CLI shells out to `docker`,
+// which then tries to read /root/.docker/config.json, gets EACCES, and prints
+// a warning to stderr — and the CLI treats *any* stderr from its container
+// lookup as a failed command:
+//
+//	Error: Command failed: docker ps -q -a --filter label=ate.repo_id=...
+//
+// with no underlying error to explain it. Point HOME at the account the
+// process actually runs as so docker reads a config it can open.
+//
+// PATH is passed through because the CLI resolves `docker` by name.
+func devcontainerEnv() []string {
+	home := "/home/node"
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		home = u.HomeDir
+	}
+	env := []string{"HOME=" + home}
+	if p := os.Getenv("PATH"); p != "" {
+		env = append(env, "PATH="+p)
+	}
+	// The CLI is Node; keep the proxy/TLS vars an operator may have set for a
+	// corporate network (see SSL_CA_CERT_PATH in AGENTS.md).
+	for _, k := range []string{
+		"NODE_EXTRA_CA_CERTS", "NODE_TLS_REJECT_UNAUTHORIZED",
+		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+		"http_proxy", "https_proxy", "no_proxy",
+		"DOCKER_HOST", "DOCKER_CONFIG",
+	} {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
+}
+
 func runDevcontainerUp(ctx context.Context, repoPath, configPath, repoID, hash string) (string, error) {
-	out, err := exec.CommandContext(ctx, "devcontainer", "up",
+	cmd := exec.CommandContext(ctx, "devcontainer", "up",
 		"--workspace-folder", repoPath,
 		"--config", configPath,
 		"--id-label", containerLabelRepo+"="+repoID,
 		"--id-label", devcontainerLabel+"="+hash,
-	).Output()
+	)
+	cmd.Env = devcontainerEnv()
+	out, err := cmd.Output()
 	if err != nil {
 		msg := string(out)
 		if ee, ok := err.(*exec.ExitError); ok {
