@@ -485,3 +485,25 @@ func stringSliceField(v any) []string {
 	}
 	return out
 }
+
+// TestDevcontainerConfigPath_BasenameIsDevcontainerJSON guards the constraint
+// that took this feature down in production: the devcontainer CLI validates
+// the config file's *basename*, not just its contents, and rejects anything
+// that isn't "devcontainer.json" or ".devcontainer.json" —
+//
+//	Error: Filename must be devcontainer.json or .devcontainer.json
+//	(/tmp/ate-devcontainer-<uuid>.json)
+//
+// The JSON itself was valid, so nothing upstream caught it. Per-repo
+// uniqueness therefore has to live in the containing directory.
+func TestDevcontainerConfigPath_BasenameIsDevcontainerJSON(t *testing.T) {
+	path := devcontainerConfigPath("577271bc-e2d7-4882-88ff-0a1c19af4aee")
+	if got := filepath.Base(path); got != "devcontainer.json" {
+		t.Errorf("basename is %q; the CLI only accepts devcontainer.json or .devcontainer.json", got)
+	}
+	// Uniqueness must still hold, or two repos would race on one config.
+	other := devcontainerConfigPath("a-different-repo-id")
+	if filepath.Dir(path) == filepath.Dir(other) {
+		t.Errorf("two repos share a config dir (%q) — the id must be in the directory", filepath.Dir(path))
+	}
+}

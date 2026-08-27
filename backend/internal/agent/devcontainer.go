@@ -315,7 +315,13 @@ func runDevcontainerUp(ctx context.Context, repoPath, configPath, repoID, hash s
 // calls for different repos never collide, and re-running for the same repo
 // simply overwrites the previous file (the CLI reads it fresh each call).
 func devcontainerConfigPath(repoID string) string {
-	return filepath.Join(os.TempDir(), "ate-devcontainer-"+repoID+".json")
+	// The CLI validates the config's *basename*, not just its contents:
+	// anything other than "devcontainer.json" or ".devcontainer.json" is
+	// rejected outright ("Filename must be devcontainer.json or
+	// .devcontainer.json"). So the per-repo uniqueness has to live in a
+	// containing directory rather than in the filename — an
+	// "ate-devcontainer-<id>.json" temp file parses fine and still fails.
+	return filepath.Join(os.TempDir(), "ate-devcontainer-"+repoID, "devcontainer.json")
 }
 
 // buildGeneratedDevcontainerJSON is the shared core of
@@ -408,6 +414,9 @@ func (m *RuntimeManager) EnsureDevcontainerRunning(ctx context.Context, repoID, 
 	hash := HashDevcontainerJSON(generated)
 
 	configPath := devcontainerConfigPath(repoID)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		return "", fmt.Errorf("create devcontainer config dir: %w", err)
+	}
 	if err := os.WriteFile(configPath, []byte(generated), 0o600); err != nil {
 		return "", fmt.Errorf("devcontainer: write generated config: %w", err)
 	}
@@ -433,6 +442,9 @@ func (m *RuntimeManager) EnsureDevcontainerRunningFromFile(ctx context.Context, 
 	hash := HashDevcontainerJSON(rawJSON)
 
 	configPath := devcontainerConfigPath(repoID)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		return "", fmt.Errorf("create devcontainer config dir: %w", err)
+	}
 	if err := os.WriteFile(configPath, []byte(rawJSON), 0o600); err != nil {
 		return "", fmt.Errorf("devcontainer: write repo-file config: %w", err)
 	}
