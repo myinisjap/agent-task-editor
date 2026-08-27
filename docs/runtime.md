@@ -49,22 +49,34 @@ section:
 
 ## What happens on a task run
 
-For a repo with pins configured, before the provider CLI is invoked the
-dispatcher:
+For a repo with pins configured, before the provider CLI is invoked:
 
 1. Runs `mise install <id>@<version> ...` for every non-Python pin (10-minute
    timeout).
 2. If a `python` pin is present, resolves the installed interpreter's path
    via `mise where python@<version>` and creates a per-task-worktree
-   virtualenv with `uv venv --python <path> <worktree>/.venv` (skipped if
-   `.venv` already exists in that worktree). Python is handled outside
-   `mise x` deliberately — `mise x`'s `PATH` prepend would shadow the venv,
-   so instead the spawn prepends `<worktree>/.venv/bin` to the child
-   process's `PATH`, and `python`/`pip` resolve to the venv's own pinned
-   interpreter.
+   virtualenv with `uv venv --python <path> <worktree>/.venv` — reused as-is
+   on a later run against the same worktree *unless* the venv's recorded
+   interpreter version (`pyvenv.cfg`) no longer matches the repo's current
+   python pin, in which case the stale venv is removed and recreated from
+   the new pin (so bumping the pin can never silently leave a re-run on the
+   old interpreter). `.venv` is excluded from `git status`/`git add -A` for
+   that worktree, so it never leaks into the task's branch even for a repo
+   that doesn't already gitignore it. Python is handled outside `mise x`
+   deliberately — `mise x`'s `PATH` prepend would shadow the venv, so
+   instead the spawn prepends `<worktree>/.venv/bin` to the child process's
+   `PATH`, and `python`/`pip` resolve to the venv's own pinned interpreter.
 3. Spawns the provider CLI wrapped as `mise x go@1.21 node@22 -- <binary>
    <args...>` (non-Python pins only — Python is excluded from the `mise x`
    argument list per the previous step).
+
+This prep step runs in the run's own background goroutine, not on the
+dispatcher's sweep loop or an HTTP request — a cold install can take minutes,
+and running it synchronously there would freeze dispatch for every other task
+(or get killed by an HTTP request timeout). The dispatcher only *validates*
+a repo's pins synchronously (cheap — no `mise`/`uv` involved); the actual
+install/venv work always happens after the run has already been handed to a
+worker.
 
 ### Fail-closed behavior
 
@@ -75,6 +87,28 @@ includes the tail of `mise`'s stderr, so the actual failure (bad version,
 network issue, disk full, etc.) is visible on the run without digging into
 container logs. Fix the pin (or the underlying issue) and move the task
 back to an agent-triggerable state to retry.
+
+## Chat sessions
+
+Interactive chat sessions (the Chat page) apply the same repo pins as task
+runs, so a chat session and a task run against the same repo see the same
+toolchain: non-Python pins wrap the session's CLI with `mise x`, and a
+Python pin gets a venv on `PATH`. Two differences from a task run:
+
+- The Python venv is **not** created inside the chat session's worktree —
+  that worktree persists across reconnects and is a live checkout a human
+  is actively looking at, so dropping a build artifact there (even one
+  excluded from git) is a worse experience than for a short-lived task
+  worktree. Instead it lives outside any repo checkout, keyed by repo id, and
+  is reused across every chat session against that repo (recreated on a pin
+  version change, same as a task worktree's venv).
+- A `node` pin does **not** wrap the chat CLI's own launch. Whether pinning
+  node should also run the provider CLI itself (a Node.js program) under
+  that pinned node is a separate, still-open design question that applies to
+  task runs too — until it's resolved, node pins are inert for chat.
+- Prep (mise install / venv resolve) runs once per session start, not on
+  every reconnect — reattaching to an already-running session never re-runs
+  it.
 
 ## Cache volumes
 

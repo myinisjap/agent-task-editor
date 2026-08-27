@@ -69,7 +69,7 @@ describe('ReposPage — Agent runtime section', () => {
 
     await userEvent.click(screen.getByText('+ Add Repo'))
     expect(screen.getByText('Agent runtime')).toBeInTheDocument()
-    expect(screen.getByText(/Tasks on this repo run with these toolchains/)).toBeInTheDocument()
+    expect(screen.getByText(/Tasks and chat sessions on this repo run with these toolchains/)).toBeInTheDocument()
 
     await userEvent.click(screen.getByText('+ Add language'))
     const versionInput = screen.getByPlaceholderText('e.g. 1.21')

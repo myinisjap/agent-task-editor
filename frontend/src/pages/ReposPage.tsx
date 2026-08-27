@@ -333,8 +333,8 @@ export default function ReposPage() {
           )}
         </div>
         <span className="text-xs text-slate-600">
-          Tasks on this repo run with these toolchains. If installation fails, tasks escalate to Waiting for
-          human. Empty = current behavior (no pinned toolchain).
+          Tasks and chat sessions on this repo run with these toolchains. If installation fails, tasks escalate to
+          Waiting for human. Empty = current behavior (no pinned toolchain).
         </span>
 
         {detectNote && <p className="text-xs text-slate-500">{detectNote}</p>}
