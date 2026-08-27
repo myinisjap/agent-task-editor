@@ -42,6 +42,15 @@ section:
   the pre-filled rows and click Save yourself. Symlinked manifest files are
   skipped (a repo can't point `.nvmrc` somewhere outside itself to smuggle
   in an unintended suggestion).
+
+  The list above is exhaustive: detection only reads files whose entire
+  purpose is to pin a version. It does **not** infer a language from
+  `package.json` (including `engines.node`), `pyproject.toml`, `Gemfile`,
+  `pom.xml`, or Dockerfiles — those either don't name a concrete version or
+  name a range (`>=20`) that can't be turned into a pin without guessing.
+  So a node project with no `.nvmrc`/`.node-version` detects nothing for
+  node: add one of those files to the repo, or just type the version in
+  manually.
 - Leave the section empty and nothing changes: a repo with no pins spawns
   agent runs exactly as before this feature existed — the dispatcher only
   touches `mise`/`uv` when the repo has at least one saved pin.
