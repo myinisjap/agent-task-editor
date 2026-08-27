@@ -70,6 +70,21 @@ For a repo with pins configured, before the provider CLI is invoked:
    <args...>` (non-Python pins only — Python is excluded from the `mise x`
    argument list per the previous step).
 
+A `node` pin gets one more adjustment before that spawn: `mise x`'s `PATH`
+prepend puts the pinned node ahead of the image's own node for the whole
+child process — but the claude and qwen CLIs are themselves node scripts
+(`#!/usr/bin/env node`), so without this they'd run (and likely crash) on
+the pinned node instead of the version they were built against. The CLI's
+binary is checked (its actual shebang, not assumed from the provider) and,
+if it's a node script, the spawn becomes `mise x ... -- <system node>
+<CLI's absolute path> <args...>` — the CLI process itself always runs on the
+app's bundled node, while `node`/`npm`/`npx` invoked by the agent's own Bash
+tool still resolve through `mise x`'s `PATH` to the pinned version. codex
+(Rust) and opencode (Go) are native binaries, unaffected either way. If the
+system node or the CLI's own path can't be resolved, the run fails closed
+(escalates like any other spawn failure) rather than ever launching on the
+wrong interpreter.
+
 This prep step runs in the run's own background goroutine, not on the
 dispatcher's sweep loop or an HTTP request — a cold install can take minutes,
 and running it synchronously there would freeze dispatch for every other task
@@ -102,10 +117,10 @@ Python pin gets a venv on `PATH`. Two differences from a task run:
   worktree. Instead it lives outside any repo checkout, keyed by repo id, and
   is reused across every chat session against that repo (recreated on a pin
   version change, same as a task worktree's venv).
-- A `node` pin does **not** wrap the chat CLI's own launch. Whether pinning
-  node should also run the provider CLI itself (a Node.js program) under
-  that pinned node is a separate, still-open design question that applies to
-  task runs too — until it's resolved, node pins are inert for chat.
+- A `node` pin gets the same explicit-interpreter treatment as a task run:
+  the chat CLI's own binary runs on the app's bundled node, never the pinned
+  one, so it can't crash from running on a version it wasn't built against —
+  while node/npm/npx inside the agent's Bash tool resolve to the pin.
 - Prep (mise install / venv resolve) runs once per session start, not on
   every reconnect — reattaching to an already-running session never re-runs
   it.

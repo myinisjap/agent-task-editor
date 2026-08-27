@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -283,11 +284,17 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	// can't import providers back). A python pin instead prepends the
 	// chat-specific venv's bin/ to PATH (see prepareChatRuntime / chatVenvDir
 	// — never <repoPath>/.venv: that would live inside the user's own
-	// checkout across reconnects). node pins are deliberately excluded here
-	// (see prepareChatRuntime's doc comment) — a design decision on running
-	// the provider CLI itself under a pinned node is still pending, so this
-	// intentionally doesn't touch the CLI's own runtime.
-	name, args, runtimeEnv, venvBin := applyChatRuntime(pins, repoID, name, args)
+	// checkout across reconnects). A node pin gets the explicit-interpreter
+	// rewrite (see applyChatRuntime's doc comment) so claude/qwen's own CLI
+	// process still runs on the image's bundled node even while node/npm/npx
+	// inside the agent's Bash tool resolve to the pin.
+	name, args, runtimeEnv, venvBin, err := applyChatRuntime(pins, repoID, name, args)
+	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, fmt.Errorf("apply chat runtime: %w", err)
+	}
 
 	cmd := exec.Command(name, args...)
 	cmd.Dir = repoPath // ← run the CLI in the selected repo's worktree
@@ -448,15 +455,6 @@ func (m *TerminalManager) reapIdleOnce() {
 	}
 }
 
-// chatNodeExcluded documents finding 9's interaction with the still-pending
-// node-pin design decision (whether pinning node should also run the
-// provider CLI itself, which is a Node program, under that pinned node):
-// until that's resolved, a node pin never wraps the chat CLI's own launch —
-// dropped from applyChatRuntime's mise x args exactly like python is
-// dropped for its own separate reason. Chat's non-python, non-node pins
-// (go/rust/ruby/java) still wrap normally.
-const chatNodeExcluded = "node"
-
 // prepareChatRuntime installs a chat session's repo runtime pins (mise
 // install) and, for a python pin, ensures the chat-specific venv exists —
 // the interactive-session counterpart to the dispatcher's runtime prep
@@ -508,33 +506,61 @@ func chatVenvDir(repoID string) string {
 }
 
 // applyChatRuntime wraps a chat session's launch command with `mise x` for
-// any non-python, non-node pins (see chatNodeExcluded), mirroring
-// providers.applyRuntime's shape for headless task runs. A nil/empty pins
-// slice returns name/args unchanged and no extra env/venv dir. Returns the
-// extra env entries to append (MISE_YES/MISE_DATA_DIR/
-// MISE_TRUSTED_CONFIG_PATHS whenever pins are present, plus UV_CACHE_DIR for
-// a python pin) and, only for a python pin, the venv's bin/ dir — the caller
-// prepends that to cmd.Env's actual PATH (via prependChatPath) rather than
-// this function guessing at the base PATH itself.
-func applyChatRuntime(pins []runtime.Pin, repoID, name string, args []string) (string, []string, []string, string) {
+// any non-python pins, mirroring providers.applyRuntime's shape for headless
+// task runs. A nil/empty pins slice returns name/args unchanged and no extra
+// env/venv dir. Returns the extra env entries to append (MISE_YES/
+// MISE_DATA_DIR/MISE_TRUSTED_CONFIG_PATHS whenever pins are present, plus
+// UV_CACHE_DIR for a python pin) and, only for a python pin, the venv's
+// bin/ dir — the caller prepends that to cmd.Env's actual PATH (via
+// prependChatPath) rather than this function guessing at the base PATH
+// itself.
+//
+// A node pin gets the same explicit-interpreter treatment as
+// providers.applyRuntime (duplicated here rather than shared — providers
+// imports agent, so this package can't import providers back): when name
+// resolves to a node script (claude/qwen — see isChatNodeScript), the
+// launch becomes `mise x node@<pin> ... -- <systemNode> <absName> <args...>`
+// so the CLI process itself always runs on the image's own bundled node,
+// never the pinned one, while node/npm/npx inside the agent's Bash tool
+// still resolve through mise x's PATH to the pin. codex/opencode are native
+// binaries and spawn unwrapped, as before. Fails closed: if a node pin is
+// present, name is a node script, but the system node or name's own
+// absolute path can't be resolved, this returns an error — the caller must
+// treat it as a launch failure rather than ever spawning on the wrong
+// interpreter.
+func applyChatRuntime(pins []runtime.Pin, repoID, name string, args []string) (string, []string, []string, string, error) {
 	if len(pins) == 0 {
-		return name, args, nil, ""
+		return name, args, nil, "", nil
 	}
 
 	miseArgs := make([]string, 0, len(pins)+2+len(args))
 	miseArgs = append(miseArgs, "x")
-	hasPython := false
+	hasPython, hasNode := false, false
 	for _, p := range pins {
 		switch p.ID {
 		case "python":
 			hasPython = true
 			continue
-		case chatNodeExcluded:
-			continue
+		case "node":
+			hasNode = true
 		}
 		miseArgs = append(miseArgs, p.ID+"@"+p.Version)
 	}
-	miseArgs = append(miseArgs, "--", name)
+
+	miseArgs = append(miseArgs, "--")
+	if hasNode {
+		nodePath, namePath, err := explicitInterpreterForChatNodeScript(name)
+		if err != nil {
+			return "", nil, nil, "", fmt.Errorf("resolve system interpreter for node-pinned CLI %q: %w", name, err)
+		}
+		if nodePath != "" {
+			miseArgs = append(miseArgs, nodePath, namePath)
+		} else {
+			miseArgs = append(miseArgs, name)
+		}
+	} else {
+		miseArgs = append(miseArgs, name)
+	}
 	miseArgs = append(miseArgs, args...)
 
 	env := []string{"MISE_YES=1"}
@@ -552,7 +578,67 @@ func applyChatRuntime(pins []runtime.Pin, repoID, name string, args []string) (s
 		}
 	}
 
-	return "mise", miseArgs, env, venvBin
+	return "mise", miseArgs, env, venvBin, nil
+}
+
+// explicitInterpreterForChatNodeScript mirrors
+// providers.explicitInterpreterForNodeScript (duplicated for the same
+// import-direction reason as applyChatRuntime): resolves name via
+// exec.LookPath, and if it's a node script (see isChatNodeScript) returns
+// the system node's absolute path plus name's own absolute path as the two
+// argv elements that must replace it. Returns nodePath == "" (nil error) for
+// a native binary — spawn unwrapped, as before.
+func explicitInterpreterForChatNodeScript(name string) (nodePath, namePath string, err error) {
+	namePath, err = exec.LookPath(name)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %q: %w", name, err)
+	}
+	isScript, err := isChatNodeScript(namePath)
+	if err != nil {
+		return "", "", fmt.Errorf("inspect %q: %w", namePath, err)
+	}
+	if !isScript {
+		return "", "", nil
+	}
+	nodePath, err = exec.LookPath("node")
+	if err != nil {
+		return "", "", fmt.Errorf("resolve system node: %w", err)
+	}
+	return nodePath, namePath, nil
+}
+
+// isChatNodeScript mirrors providers.isNodeScript: reads path's first line
+// and reports whether its shebang references node, either
+// `#!/usr/bin/env node` (npm's standard global-install wrapper) or a
+// shebang path ending in "/node". A native binary (codex, opencode) has no
+// text shebang at all, so this returns false for those, never true by
+// assumption.
+func isChatNodeScript(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 4096), 4096)
+	if !sc.Scan() {
+		return false, sc.Err()
+	}
+	line := sc.Text()
+	if !strings.HasPrefix(line, "#!") {
+		return false, nil
+	}
+	shebang := strings.TrimSpace(strings.TrimPrefix(line, "#!"))
+	fields := strings.Fields(shebang)
+	if len(fields) == 0 {
+		return false, nil
+	}
+	interp := fields[0]
+	if filepath.Base(interp) == "env" && len(fields) > 1 {
+		interp = fields[1]
+	}
+	return filepath.Base(interp) == "node", nil
 }
 
 // prependChatPath returns a copy of env with dir prepended to the PATH entry

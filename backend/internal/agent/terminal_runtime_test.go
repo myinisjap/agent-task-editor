@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +21,10 @@ import (
 // chat sessions on an unconfigured repo: no pins means the launch command and
 // env are returned completely unchanged, with no venv dir.
 func TestApplyChatRuntime_NoPinsIsPassthrough(t *testing.T) {
-	name, args, env, venvBin := applyChatRuntime(nil, "repo-1", "claude", []string{"--model", "sonnet"})
+	name, args, env, venvBin, err := applyChatRuntime(nil, "repo-1", "claude", []string{"--model", "sonnet"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if name != "claude" {
 		t.Errorf("name = %q, want unchanged %q", name, "claude")
 	}
@@ -37,14 +42,23 @@ func TestApplyChatRuntime_NoPinsIsPassthrough(t *testing.T) {
 // TestApplyChatRuntime_WrapsWithMiseX verifies a non-python, non-node pin
 // wraps the chat launch command with `mise x` and injects the mise-related
 // env vars (mirroring providers.applyRuntime's shape for headless runs).
+// Uses a native-binary fixture (not "claude") so this stays focused on
+// mise-wrapping, without also exercising the node-script rewrite (see the
+// node-pin tests below for that).
 func TestApplyChatRuntime_WrapsWithMiseX(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNativeChatBinary(t, dir, "codex")
+
 	pins := []runtime.Pin{{ID: "go", Version: "1.21"}}
-	name, args, env, venvBin := applyChatRuntime(pins, "repo-1", "claude", []string{"--model", "sonnet"})
+	name, args, env, venvBin, err := applyChatRuntime(pins, "repo-1", cliPath, []string{"--model", "sonnet"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if name != "mise" {
 		t.Fatalf("name = %q, want mise", name)
 	}
-	wantArgs := []string{"x", "go@1.21", "--", "claude", "--model", "sonnet"}
+	wantArgs := []string{"x", "go@1.21", "--", cliPath, "--model", "sonnet"}
 	if strings.Join(args, " ") != strings.Join(wantArgs, " ") {
 		t.Errorf("args = %v, want %v", args, wantArgs)
 	}
@@ -76,33 +90,16 @@ func TestApplyChatRuntime_WrapsWithMiseX(t *testing.T) {
 	}
 }
 
-// TestApplyChatRuntime_NodeExcludedFromMiseXArgs verifies a node pin never
-// appears in the mise x argv for a chat session — finding 9's documented
-// interaction with the still-pending "does a node pin also run the provider
-// CLI itself under pinned node" design decision. Until that's resolved, node
-// is dropped here the same way python is dropped for its own reason.
-func TestApplyChatRuntime_NodeExcludedFromMiseXArgs(t *testing.T) {
-	pins := []runtime.Pin{{ID: "go", Version: "1.21"}, {ID: "node", Version: "22"}}
-	_, args, _, _ := applyChatRuntime(pins, "repo-1", "claude", nil)
-
-	for _, a := range args {
-		if strings.Contains(a, "node") {
-			t.Errorf("node must not appear in chat mise x argv, got args %v", args)
-		}
-	}
-	wantArgs := []string{"x", "go@1.21", "--", "claude"}
-	if strings.Join(args, " ") != strings.Join(wantArgs, " ") {
-		t.Errorf("args = %v, want %v", args, wantArgs)
-	}
-}
-
 // TestApplyChatRuntime_PythonOnlyStillWrapsWithMiseXAndReturnsVenvBin
 // verifies a python-only pin list still routes through mise x (consistent
 // with providers.applyRuntime's TestApplyRuntime_PythonOnlyStillWrapsWithMiseX)
 // and returns the venv bin dir for the caller to prepend to PATH.
 func TestApplyChatRuntime_PythonOnlyStillWrapsWithMiseXAndReturnsVenvBin(t *testing.T) {
 	pins := []runtime.Pin{{ID: "python", Version: "3.12"}}
-	name, args, env, venvBin := applyChatRuntime(pins, "repo-1", "claude", []string{"--model", "sonnet"})
+	name, args, env, venvBin, err := applyChatRuntime(pins, "repo-1", "claude", []string{"--model", "sonnet"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if name != "mise" {
 		t.Fatalf("name = %q, want mise", name)
@@ -128,6 +125,121 @@ func TestApplyChatRuntime_PythonOnlyStillWrapsWithMiseXAndReturnsVenvBin(t *test
 	}
 	if !sawUVCache {
 		t.Errorf("expected UV_CACHE_DIR in env for a python pin, got %v", env)
+	}
+}
+
+// --- applyChatRuntime: node pin explicit-interpreter fix ---
+
+func writeFixtureNodeChatScript(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/usr/bin/env node\nrequire('./cli.js')\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeFixtureNativeChatBinary(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := []byte{0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01, 0x00}
+	if err := os.WriteFile(path, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestIsChatNodeScript_Detection mirrors providers.TestIsNodeScript_* —
+// duplicated logic, same behavior: a node script is detected by shebang,
+// never assumed; a native binary is never misdetected.
+func TestIsChatNodeScript_Detection(t *testing.T) {
+	dir := t.TempDir()
+
+	script := writeFixtureNodeChatScript(t, dir, "claude")
+	got, err := isChatNodeScript(script)
+	if err != nil || !got {
+		t.Errorf("isChatNodeScript(%q) = (%v, %v), want (true, nil)", script, got, err)
+	}
+
+	native := writeFixtureNativeChatBinary(t, dir, "codex")
+	got, err = isChatNodeScript(native)
+	if err != nil || got {
+		t.Errorf("isChatNodeScript(%q) = (%v, %v), want (false, nil)", native, got, err)
+	}
+}
+
+// TestApplyChatRuntime_NodePin_RewritesNodeScriptToExplicitInterpreter is
+// finding 9's follow-up fix: a node pin whose chat CLI resolves to a node
+// script must spawn as `mise x node@<pin> -- <systemNode> <absCLIPath>
+// <args...>`, not `mise x node@<pin> -- <cli> <args...>` (which would run
+// the CLI itself, and crash it, on the pinned node).
+func TestApplyChatRuntime_NodePin_RewritesNodeScriptToExplicitInterpreter(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNodeChatScript(t, dir, "claude")
+	sysNode := writeFixtureNativeChatBinary(t, dir, "node") // stand-in system node
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	pins := []runtime.Pin{{ID: "node", Version: "22"}}
+	name, args, _, _, err := applyChatRuntime(pins, "repo-1", cliPath, []string{"--model", "sonnet"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if name != "mise" {
+		t.Fatalf("name = %q, want mise", name)
+	}
+	wantArgs := []string{"x", "node@22", "--", sysNode, cliPath, "--model", "sonnet"}
+	if strings.Join(args, " ") != strings.Join(wantArgs, " ") {
+		t.Errorf("args = %v, want %v", args, wantArgs)
+	}
+}
+
+// TestApplyChatRuntime_NodePin_NativeBinaryUnwrapped verifies a node pin
+// does NOT rewrite the spawn for a native-binary chat CLI (codex, opencode).
+func TestApplyChatRuntime_NodePin_NativeBinaryUnwrapped(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNativeChatBinary(t, dir, "codex")
+
+	pins := []runtime.Pin{{ID: "node", Version: "22"}}
+	name, args, _, _, err := applyChatRuntime(pins, "repo-1", cliPath, []string{"exec"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if name != "mise" {
+		t.Fatalf("name = %q, want mise", name)
+	}
+	wantArgs := []string{"x", "node@22", "--", cliPath, "exec"}
+	if strings.Join(args, " ") != strings.Join(wantArgs, " ") {
+		t.Errorf("args = %v, want %v", args, wantArgs)
+	}
+}
+
+// TestApplyChatRuntime_NodePin_FailsClosedWhenCLIUnresolvable verifies a
+// node pin with an unresolvable CLI name returns an error rather than
+// falling back to an unwrapped/guessed spawn.
+func TestApplyChatRuntime_NodePin_FailsClosedWhenCLIUnresolvable(t *testing.T) {
+	pins := []runtime.Pin{{ID: "node", Version: "22"}}
+	_, _, _, _, err := applyChatRuntime(pins, "repo-1", "definitely-not-a-real-binary-xyz", []string{"-p"})
+	if err == nil {
+		t.Fatal("expected an error when the CLI binary can't be resolved for a node-pinned chat session")
+	}
+}
+
+// TestApplyChatRuntime_NodePin_FailsClosedWhenSystemNodeUnresolvable
+// verifies a node pin whose CLI IS a node script, but the system `node`
+// itself can't be resolved, fails closed.
+func TestApplyChatRuntime_NodePin_FailsClosedWhenSystemNodeUnresolvable(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNodeChatScript(t, dir, "claude")
+
+	t.Setenv("PATH", dir) // no "node" binary on PATH
+
+	pins := []runtime.Pin{{ID: "node", Version: "22"}}
+	_, _, _, _, err := applyChatRuntime(pins, "repo-1", cliPath, []string{"-p"})
+	if err == nil {
+		t.Fatal("expected an error when system node can't be resolved for a node-script chat CLI")
 	}
 }
 

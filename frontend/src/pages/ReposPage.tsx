@@ -334,7 +334,9 @@ export default function ReposPage() {
         </div>
         <span className="text-xs text-slate-600">
           Tasks and chat sessions on this repo run with these toolchains. If installation fails, tasks escalate to
-          Waiting for human. Empty = current behavior (no pinned toolchain).
+          Waiting for human. Empty = current behavior (no pinned toolchain). The agent CLI itself always runs on the
+          app&apos;s bundled Node.js — a node pin applies to the agent&apos;s own commands (e.g. its Bash tool), not
+          the CLI process.
         </span>
 
         {detectNote && <p className="text-xs text-slate-500">{detectNote}</p>}
