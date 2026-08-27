@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -307,6 +308,84 @@ func TestDetectLanguages_PriorityOrder(t *testing.T) {
 // exempt, since the UI is expected to require the user to pick a version for
 // those before save — ParseRuntimeLanguages itself rejects empty versions by
 // contract.
+// TestDetectLanguages_SkipsSymlinkedManifests guards a read-side
+// exfiltration path: os.Open follows symlinks and Stat reports the target, so
+// a repo committing `.nvmrc -> ~/.aws/credentials` would have that file read
+// in-process by the backend (which has broad filesystem access, no container
+// isolation) and, on the ambiguous path, packed into the prompt sent to the
+// model. Distinct from the write-side property devcontainer.go documents.
+func TestDetectLanguages_SkipsSymlinkedManifests(t *testing.T) {
+	secretDir := t.TempDir()
+	secret := filepath.Join(secretDir, "secrets.txt")
+	if err := os.WriteFile(secret, []byte("SECRET-TOKEN-abcdef\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(secret, filepath.Join(dir, ".nvmrc")); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	// A real manifest alongside it must still be detected — refusing the
+	// symlink is a skip, not a scan failure.
+	writeFile(t, dir, "go.mod", "module example.com/foo\n\ngo 1.26\n")
+
+	suggestions, err := DetectLanguages(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, s := range suggestions {
+		if s.ID == "node" {
+			t.Errorf("symlinked .nvmrc was read: %+v", s)
+		}
+		if strings.Contains(s.Version, "SECRET") {
+			t.Errorf("host file contents leaked into a suggestion: %+v", s)
+		}
+	}
+	if _, ok := byID(suggestions)["go"]; !ok {
+		t.Errorf("real manifest missed after skipping the symlink: %+v", suggestions)
+	}
+}
+
+// TestDetectLanguages_UnusableVersionsDegradeToPresence covers shapes that
+// are not ranges — so nothing upstream strips or flags them — but are still
+// unusable as a devcontainer feature version. Without normalizeVersion's
+// final charset gate these reached the UI looking like confident exact
+// versions (Ambiguous=false, no warning rendered), failed as an opaque 400
+// when the user hit Save, and suppressed the LLM fallback that exists to
+// answer exactly these cases, because the scan looked complete.
+//
+// The correct outcome is presence-without-version: the UI renders "no
+// version detected, pick one" and needsLLMFallback treats it as a gap.
+func TestDetectLanguages_UnusableVersionsDegradeToPresence(t *testing.T) {
+	cases := []struct {
+		name, file, content, wantID string
+	}{
+		{"nvmrc lts alias", ".nvmrc", "lts/hydrogen\n", "node"},
+		{"unresolved pom property", "pom.xml", `<project><properties><java.version>${java.version}</java.version></properties></project>`, "java"},
+		{"engines wildcard", "package.json", `{"engines":{"node":"*"}}`, "node"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, tc.file, tc.content)
+
+			suggestions, err := DetectLanguages(dir)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			s, ok := byID(suggestions)[tc.wantID]
+			if !ok {
+				t.Fatalf("expected a %s suggestion (presence still counts), got %+v", tc.wantID, suggestions)
+			}
+			if s.Version != "" {
+				t.Errorf("version %q should have degraded to empty — it does not survive ParseRuntimeLanguages", s.Version)
+			}
+			if !s.Ambiguous {
+				t.Error("Ambiguous must be true so the UI warns and the LLM fallback engages")
+			}
+		})
+	}
+}
+
 func TestDetectLanguages_AllSuggestionsSurviveParseRuntimeLanguages(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "go.mod", "module example.com/foo\n\ngo 1.26\n")

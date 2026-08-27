@@ -202,6 +202,21 @@ func scanDirs(repoPath string) ([]string, error) {
 // presence (a touch'd Cargo.toml) — extractors handle empty content as "no
 // version found" rather than "no match".
 func readManifestCapped(path string) (string, bool) {
+	// Refuse a manifest that is itself a symlink. os.Open follows links and
+	// f.Stat() reports the target, so the IsDir guard below sees nothing
+	// unusual: a repo committing `.nvmrc -> /etc/hostname` (or -> ~/.aws/
+	// credentials) would have that file's contents read here and, on the
+	// ambiguous path, packed into the prompt sent to the model by
+	// buildLLMDetectInput. This runs in-process in the backend, which has
+	// broad filesystem access and no container isolation — so this is a
+	// read-side exfiltration path, distinct from the write-side "no user
+	// string becomes a Docker flag" property devcontainer.go documents.
+	// A manifest that is a symlink is rare enough in real repos that
+	// refusing outright costs nothing.
+	if li, err := os.Lstat(path); err != nil || li.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return "", false
@@ -272,6 +287,23 @@ func normalizeVersion(raw string) (string, bool) {
 	if idx := strings.IndexAny(v, " \t,|"); idx >= 0 {
 		v = v[:idx]
 		stripped = true
+	}
+	// Final gate: whatever survived must be something ParseRuntimeLanguages
+	// will accept, or it isn't a usable suggestion. Values like
+	// "lts/hydrogen" (.nvmrc), "${java.version}" (an unresolved pom.xml
+	// property reference), and "*" (engines.node) are not ranges, so nothing
+	// above strips or flags them — they'd reach the UI looking like confident
+	// exact versions, render with no warning, and fail as an opaque 400 when
+	// the user hits Save. Worse, a confident-looking scan suppresses the LLM
+	// fallback that exists to answer exactly these cases.
+	//
+	// Degrade to presence-without-version instead: the UI already renders
+	// that as "no version detected, pick one", and needsLLMFallback treats it
+	// as a gap worth spending a call on. One guard here covers every current
+	// extractor and any added later, which three per-extractor patches would
+	// not.
+	if v != "" && (len(v) > runtimeLanguageVersionMaxLen || !runtimeLanguageVersionRe.MatchString(v)) {
+		return "", true
 	}
 	return v, stripped
 }

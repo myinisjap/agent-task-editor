@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Repo, type RuntimeLanguage, type Workflow } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
@@ -73,6 +73,11 @@ export default function ReposPage() {
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null)
+  // Mirrors editingId for async callbacks: handleDetect's continuation closes
+  // over the editingId from the render it started in, which is stale by the
+  // time a slow detect resolves.
+  const editingIdRef = useRef<string | null>(null)
+  editingIdRef.current = editingId
   const [editForm, setEditForm] = useState<EditForm>({ ...BLANK_FORM })
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
@@ -187,6 +192,10 @@ export default function ReposPage() {
     setDetectError('')
     setDetectUsedLlm(false)
     setDetectionMeta({})
+    // A detect still in flight for the previously-open repo bails on its
+    // staleness check rather than clearing this, so reset it here — otherwise
+    // the button stays stuck on "Detecting…" for the next repo opened.
+    setDetecting(false)
     api.repos.devcontainer(repo.id)
       .then((d) => setEditRepoFilePresent(!!d.repo_file_present))
       .catch(() => setEditRepoFilePresent(false))
@@ -200,14 +209,34 @@ export default function ReposPage() {
     setDetectError('')
     setDetectUsedLlm(false)
     setDetectionMeta({})
+    // A detect still in flight for the previously-open repo bails on its
+    // staleness check rather than clearing this, so reset it here — otherwise
+    // the button stays stuck on "Detecting…" for the next repo opened.
+    setDetecting(false)
   }
 
   async function handleDetect() {
     if (!editingId) return
+    // Capture the repo this run belongs to. Detection can take up to a minute
+    // when it falls back to the model, and nothing cancels it if the user
+    // clicks Edit on a different row meanwhile — startEdit just swaps
+    // editingId and resets the form. Without this check the earlier repo's
+    // results land in the newly-opened repo's form, labelled with source
+    // files from a repo that was never scanned, and a confirming Save would
+    // persist them to the wrong repo.
+    //
+    // Not covered by a test: every observable trace of a stale run (the
+    // populated rows, the used_llm notice) is also cleared by the startEdit /
+    // cancelEdit that creates the staleness, so an assertion after the fact
+    // can't distinguish "guard worked" from "state was reset anyway". Verify
+    // by inspection instead — every set* below the await must sit behind the
+    // staleness check.
+    const target = editingId
     setDetecting(true)
     setDetectError('')
     try {
-      const { suggestions, used_llm } = await api.repos.detectLanguages(editingId)
+      const { suggestions, used_llm } = await api.repos.detectLanguages(target)
+      if (editingIdRef.current !== target) return
       setDetectUsedLlm(used_llm)
       setDetectionMeta((prev) => {
         const next = { ...prev }
@@ -224,9 +253,10 @@ export default function ReposPage() {
         return { ...f, runtime_languages: [...kept, ...detected] }
       })
     } catch (e) {
+      if (editingIdRef.current !== target) return
       setDetectError(String(e))
     } finally {
-      setDetecting(false)
+      if (editingIdRef.current === target) setDetecting(false)
     }
   }
 
