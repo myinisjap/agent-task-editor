@@ -140,7 +140,15 @@ func TestReadRepoDevcontainerFile_Present(t *testing.T) {
 // all credential dirs) and the hardening runArgs, plus a features entry per
 // requested language.
 func TestGenerateDevcontainerJSON_FullMountContract(t *testing.T) {
-	home := t.TempDir() // no credential dirs created — mounts must still appear (see the bug-fix test below)
+	home := t.TempDir()
+	// Credential mounts are emitted only for dirs that exist (docker run
+	// rejects a bind with a missing source), so create them to assert the
+	// full contract here.
+	for _, d := range credentialDirs {
+		if err := os.MkdirAll(filepath.Join(home, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	out, err := GenerateDevcontainerJSON(
 		[]RuntimeLanguage{{ID: "go", Version: "1.26"}, {ID: "python", Version: "3.12"}},
@@ -372,11 +380,15 @@ func TestHashDevcontainerJSON_IndependentOfHostCredentialDirState(t *testing.T) 
 	}
 }
 
-func TestGenerateDevcontainerJSON_MountsAllCredentialDirsUnconditionally(t *testing.T) {
-	// No directories created under home at all — every credentialDirs entry
-	// must still appear in mounts (see the bug-fix doc comment on
-	// GenerateDevcontainerJSON).
-	home := t.TempDir()
+// TestGenerateDevcontainerJSON_OmitsAbsentCredentialDirs pins the corrected
+// behavior. This test previously asserted the opposite — that all four dirs
+// were mounted unconditionally, to keep the cache key host-independent — and
+// that over-correction broke every build on a host without all four providers
+// ("bind source path does not exist"). Host-independence of the *hash* is now
+// achieved by stripping these entries before hashing instead; see
+// TestHashDevcontainerJSON_IgnoresCredentialMounts.
+func TestGenerateDevcontainerJSON_OmitsAbsentCredentialDirs(t *testing.T) {
+	home := t.TempDir() // no credential dirs created
 	out, err := GenerateDevcontainerJSON(nil, injectedContract{RepoPath: "/repo", HostHome: home})
 	if err != nil {
 		t.Fatal(err)
@@ -387,9 +399,8 @@ func TestGenerateDevcontainerJSON_MountsAllCredentialDirsUnconditionally(t *test
 	}
 	mounts := stringSliceField(cfg["mounts"])
 	for _, dir := range credentialDirs {
-		want := "source=" + filepath.Join(home, dir) + ",target=" + RuntimeContainerHome + "/" + dir + ",type=bind"
-		if !containsSubstring(mounts, want) {
-			t.Errorf("expected unconditional credential mount %q in %v", want, mounts)
+		if containsSubstring(mounts, filepath.Join(home, dir)) {
+			t.Errorf("mounted absent credential dir %q; docker run rejects a bind with no source: %v", dir, mounts)
 		}
 	}
 }
@@ -546,4 +557,75 @@ func TestDevcontainerEnv_PassesPath(t *testing.T) {
 		}
 	}
 	t.Error("devcontainerEnv must pass PATH through; the CLI resolves docker by name")
+}
+
+// TestGenerateDevcontainerJSON_SkipsMissingCredentialDirs guards the third
+// production failure of this feature. Mounting all of credentialDirs
+// unconditionally (an over-correction while fixing the cache key) made every
+// build fail on any host not using all four providers:
+//
+//	docker: Error response from daemon: invalid mount config for type
+//	"bind": bind source path does not exist: /home/node/.codex
+//
+// Docker auto-creates a missing source for volumes, not for binds.
+func TestGenerateDevcontainerJSON_SkipsMissingCredentialDirs(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := GenerateDevcontainerJSON(
+		[]RuntimeLanguage{{ID: "go", Version: "1.26"}},
+		injectedContract{RepoPath: "/repo", HostHome: home},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	mounts := stringSliceField(cfg["mounts"])
+
+	if !containsSubstring(mounts, filepath.Join(home, ".claude")) {
+		t.Errorf("existing credential dir was not mounted: %v", mounts)
+	}
+	for _, missing := range []string{".codex", ".qwen"} {
+		if containsSubstring(mounts, filepath.Join(home, missing)) {
+			t.Errorf("mounted %s, which does not exist — docker run will reject it: %v", missing, mounts)
+		}
+	}
+}
+
+// TestHashDevcontainerJSON_IgnoresCredentialMounts is the other half: the
+// mount list is necessarily host-dependent now, so the hash must not be, or
+// configuring a new provider would silently force a rebuild and could leave
+// the sweeper and dispatcher disagreeing about a repo's expected hash.
+func TestHashDevcontainerJSON_IgnoresCredentialMounts(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	langs := []RuntimeLanguage{{ID: "go", Version: "1.26"}}
+	contract := injectedContract{RepoPath: "/repo", HostHome: home}
+
+	before, err := GenerateDevcontainerJSON(langs, contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an operator running a codex session, creating ~/.codex.
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	after, err := GenerateDevcontainerJSON(langs, contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if before == after {
+		t.Fatal("expected the mount list to change; the test is not exercising the property")
+	}
+	if HashDevcontainerJSON(before) != HashDevcontainerJSON(after) {
+		t.Error("hash changed when a credential dir appeared — an unrelated rebuild, and sweeper/dispatcher hash disagreement")
+	}
 }

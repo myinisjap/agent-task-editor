@@ -168,17 +168,14 @@ type injectedContract struct {
 //     providers/mcp.go).
 //   - the MCP sidecar binary, read-only, at its own absolute path (the
 //     generated MCP config JSON references it by absolute path).
-//   - each of credentialDirs, read-write, from HostHome/<dir> to
-//     RuntimeContainerHome/<dir> — mounted unconditionally (not gated on
-//     os.Stat, unlike buildDockerRunArgs) so the generated JSON, and
-//     therefore its hash, is a pure function of the language list alone,
-//     never of which credential dirs happen to exist on the host. A missing
-//     source dir on the host is still absent inside the container after
-//     Docker creates the mountpoint; that's the same "provider not
-//     configured" signal a caller would see either way, just without also
-//     making the cache key unstable across hosts/time (previously fixed
-//     rebuilds/hash disagreement between sweeper and dispatcher — see
-//     runtime-images.md review finding 6, MEDIUM).
+//   - each of credentialDirs that exists on the host, read-write, from
+//     HostHome/<dir> to RuntimeContainerHome/<dir>. Gated on os.Stat like
+//     buildDockerRunArgs: `docker run` refuses a bind mount whose source is
+//     missing, so listing all four breaks every deployment that doesn't use
+//     every provider. The resulting host-dependence is handled at the other
+//     end — HashDevcontainerJSON strips these entries before hashing, so the
+//     cache key stays a pure function of the language list (see
+//     hashableDevcontainerJSON).
 //   - runArgs carrying this codebase's hardening flags
 //     (--security-opt=no-new-privileges, --cap-drop=ALL) — the only
 //     runArgs/mounts entries that exist, since nothing is merged in.
@@ -208,6 +205,16 @@ func GenerateDevcontainerJSON(langs []RuntimeLanguage, contract injectedContract
 	if contract.HostHome != "" {
 		for _, dir := range credentialDirs {
 			src := filepath.Join(contract.HostHome, dir)
+			// Only mount what exists. `docker run` refuses a bind whose
+			// source is missing outright ("bind source path does not
+			// exist") — it auto-creates for volumes, not binds — so an
+			// unconditional list fails the whole build on any deployment
+			// that doesn't use every provider. See hashableDevcontainerJSON
+			// for how the cache key stays stable despite this being
+			// host-dependent.
+			if _, err := os.Stat(src); err != nil {
+				continue
+			}
 			dst := RuntimeContainerHome + "/" + dir
 			mounts = append(mounts, fmt.Sprintf("source=%s,target=%s,type=bind", src, dst))
 		}
@@ -253,8 +260,49 @@ func marshalSorted(cfg map[string]any) (string, error) {
 // as both the cache key (stored on the container as the devcontainerLabel
 // label) and the input to deciding whether a rebuild is needed.
 func HashDevcontainerJSON(effectiveJSON string) string {
-	sum := sha256.Sum256([]byte(effectiveJSON))
+	sum := sha256.Sum256([]byte(hashableDevcontainerJSON(effectiveJSON)))
 	return hex.EncodeToString(sum[:])
+}
+
+// hashableDevcontainerJSON strips credential mounts before hashing.
+//
+// Those mounts are necessarily host-dependent — a bind whose source doesn't
+// exist fails `docker run`, so the mount list can only contain the credential
+// dirs actually present. But that makes the raw JSON a function of host state
+// as well as configuration: creating ~/.codex (say, by running a codex chat
+// once) would change the hash and force a full rebuild of a container whose
+// configuration nobody touched, and could leave the sweeper and the
+// dispatcher computing different hashes for the same repo at the same moment.
+//
+// Hashing the config with those entries removed keeps the cache key a pure
+// function of the language list and repo path, while the built container
+// still gets whatever credentials exist. A container built before a provider
+// was configured keeps running without that provider's mount until something
+// else invalidates it — the acceptable half of this trade, and the reason
+// this strips rather than reordering the two concerns.
+func hashableDevcontainerJSON(effectiveJSON string) string {
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(effectiveJSON), &cfg); err != nil {
+		return effectiveJSON // not ours to interpret (repo-committed file) — hash verbatim
+	}
+	mounts, ok := cfg["mounts"].([]any)
+	if !ok {
+		return effectiveJSON
+	}
+	kept := make([]any, 0, len(mounts))
+	for _, m := range mounts {
+		s, _ := m.(string)
+		if strings.Contains(s, ",target="+RuntimeContainerHome+"/") {
+			continue // a credential mount; presence varies by host
+		}
+		kept = append(kept, m)
+	}
+	cfg["mounts"] = kept
+	out, err := marshalSorted(cfg)
+	if err != nil {
+		return effectiveJSON
+	}
+	return out
 }
 
 // devcontainerUpResult is the subset of `devcontainer up`'s JSON stdout this
