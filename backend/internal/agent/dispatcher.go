@@ -752,7 +752,13 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", err
 	}
 
-	runtimeSpec, err := d.prepareRuntime(ctx, repo, workDir)
+	// Resolving pins is pure JSON parsing (no I/O), so it's cheap enough to do
+	// synchronously here — unlike the actual toolchain prep (mise install /
+	// uv venv), which the pool now runs from the run's own goroutine (see
+	// Pool.prepareRuntime) so a slow/cold install can never block the
+	// single-threaded sweep loop or a DispatchReply request. A malformed
+	// stored config is still caught here, before the job is ever submitted.
+	runtimeSpec, err := d.resolveRuntimeSpec(repo, workDir)
 	if err != nil {
 		return "", d.escalateRuntimePrepFailure(ctx, t, runID, err, log)
 	}
@@ -904,36 +910,33 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	return runID, nil
 }
 
-// prepareRuntime resolves and prepares the repo's pinned toolchains (repos.
-// runtime_languages) for this run, ahead of the provider being invoked. A
-// repo with no runtime configured (the column empty) returns (nil, nil) —
-// this is the §4.1 byte-identical guarantee: prepareRuntime must not run
-// mise/uv or touch the worktree at all in that case, so every downstream
-// caller (providers.applyRuntime) sees the same nil RuntimeSpec it always
-// has and spawns exactly as before this feature existed.
+// resolveRuntimeSpec parses and validates the repo's pinned toolchains
+// (repos.runtime_languages) into a RuntimeSpec, ahead of the job being
+// submitted to the pool. A repo with no runtime configured (the column
+// empty) returns (nil, nil) — this is the §4.1 byte-identical guarantee: no
+// I/O happens in that case, so every downstream caller (providers.
+// applyRuntime) sees the same nil RuntimeSpec it always has and spawns
+// exactly as before this feature existed.
 //
-// When pins are configured, runtime.Prep installs every pin via `mise
-// install` and, for a python pin, creates worktreeDir/.venv from the
-// mise-installed interpreter (skipped if .venv already exists — a re-run on
-// the same worktree reuses it). Any failure here is returned as-is; the
-// caller (startRun) is responsible for escalating to waiting_human rather
-// than falling back to a plain spawn (see escalateRuntimePrepFailure).
-func (d *Dispatcher) prepareRuntime(ctx context.Context, repo gen.Repo, worktreeDir string) (*RuntimeSpec, error) {
+// This is deliberately pure (JSON parse + regex validation only, via
+// runtime.ParsePins) — it does NOT install anything. The actual toolchain
+// prep (`mise install`, and for a python pin `uv venv`) is comparatively
+// slow (a cold install can take minutes) and runs later, from the pool's
+// per-run goroutine (see Pool.prepareRuntime), so it can never block the
+// dispatcher's single-threaded sweep loop or a DispatchReply request running
+// under an HTTP request context. Any failure here (e.g. corrupt stored
+// config — persisted config should already be valid since the API validates
+// on write, but this defends against a bad direct DB edit) is returned as-is;
+// the caller (startRun) escalates to waiting_human the same way a later prep
+// failure does (see escalateRuntimePrepFailure).
+func (d *Dispatcher) resolveRuntimeSpec(repo gen.Repo, worktreeDir string) (*RuntimeSpec, error) {
 	pins, err := runtime.ParsePins(repo.RuntimeLanguages)
 	if err != nil {
-		// Persisted config should already be valid (the API validates on
-		// write), but treat corrupt/invalid stored config the same as any
-		// other prep failure rather than crashing the sweep.
 		return nil, fmt.Errorf("parse repo runtime_languages: %w", err)
 	}
 	if len(pins) == 0 {
 		return nil, nil
 	}
-
-	if err := runtime.Prep(ctx, pins, worktreeDir); err != nil {
-		return nil, err
-	}
-
 	return &RuntimeSpec{Pins: pins, WorktreeDir: worktreeDir}, nil
 }
 

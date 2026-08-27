@@ -12,10 +12,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
+
+// runtimePrep is the seam Pool.prepareRuntime calls to install a repo's
+// pinned toolchains (mise install / uv venv). A package-level var (mirroring
+// worktree.go's gitRunner) so tests can substitute a fake that doesn't
+// require mise/uv on PATH, e.g. to verify the sweep/dispatch path never
+// blocks on a slow real install.
+var runtimePrep = runtime.Prep
 
 // Publisher broadcasts events to connected WebSocket clients.
 type Publisher interface {
@@ -219,6 +227,18 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		return
 	}
 
+	// Prepare the repo's pinned toolchains (mise install / uv venv), if any,
+	// here — in this run's own goroutine, under runCtx (the run's lifecycle
+	// context: cancellable via Cancel, torn down on pool shutdown, but never
+	// an HTTP request context) rather than synchronously in the dispatcher's
+	// startRun. A cold install can take minutes; running it in the sweep loop
+	// or under DispatchReply's request context would freeze all dispatch or
+	// get killed by request-context cancellation. See runtime.Prep's own
+	// 10-minute timeout for the failure bound.
+	if !p.prepareRuntime(ctx, job, log, startedAt) {
+		return
+	}
+
 	result, err := p.executeProvider(ctx, job)
 
 	// A human-requested stop short-circuits all outcome handling: the run is
@@ -332,6 +352,57 @@ func (p *Pool) startRun(ctx context.Context, job Job, log *slog.Logger, startedA
 			"run_id":     job.RunID,
 			"agent_name": job.Input.AgentConfig.Name,
 		})
+	}
+	return true
+}
+
+// prepareRuntime installs the repo's pinned toolchains (job.Input.Runtime,
+// resolved but NOT yet installed by the dispatcher — see
+// Dispatcher.resolveRuntimeSpec) before the provider is invoked. No-op,
+// returning true immediately, when the run has no runtime spec (the §4.1
+// byte-identical case) — this never shells out to mise/uv for a repo with no
+// runtime_languages configured.
+//
+// On prep failure, this mirrors handleMaxTurnsExhausted's escalation shape:
+// the run row already exists and was already marked started (by
+// p.startRun above) and already holds the task's active-run lock (set by the
+// dispatcher's persistRunRow before the job was ever submitted), so — unlike
+// the dispatcher's phantom-run escalation for a resolveRuntimeSpec parse
+// failure — there is no lock/current-run bookkeeping to redo here: marking
+// this real run waiting_human and leaving the lock exactly where it is
+// already satisfies the fail-closed contract (PRD §4.6). Returns false if
+// prep failed (run() must return without invoking the provider).
+func (p *Pool) prepareRuntime(ctx context.Context, job Job, log *slog.Logger, startedAt time.Time) bool {
+	spec := job.Input.Runtime
+	if spec == nil || len(spec.Pins) == 0 {
+		return true
+	}
+
+	if err := runtimePrep(ctx, spec.Pins, spec.WorktreeDir); err != nil {
+		msg := fmt.Sprintf("agent runtime prep failed: %v", err)
+		log.Error("pool: runtime prep failed", "err", err)
+		if _, serr := p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
+			Status: "waiting_human",
+			Notes:  &msg,
+			ID:     job.RunID,
+		}); serr != nil {
+			log.Warn("pool: mark runtime-prep-failed run waiting_human", "err", serr)
+		}
+		metrics.RunTerminalTotal.WithLabelValues("waiting_human").Inc()
+		metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
+		if p.pub != nil {
+			p.pub.Publish("task.needs_human", map[string]any{
+				"task_id": job.Input.Task.ID,
+				"run_id":  job.RunID,
+				"message": msg,
+			})
+			p.pub.Publish("task.agent_done", map[string]any{
+				"task_id": job.Input.Task.ID,
+				"run_id":  job.RunID,
+				"status":  "waiting_human",
+			})
+		}
+		return false
 	}
 	return true
 }

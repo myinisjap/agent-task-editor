@@ -41,16 +41,18 @@ func newRuntimeTestDispatcher(t *testing.T) (*Dispatcher, *gen.Queries) {
 	return d, q
 }
 
-// TestPrepareRuntime_EmptyColumnIsPassthrough is the §4.1 byte-identical
+// TestResolveRuntimeSpec_EmptyColumnIsPassthrough is the §4.1 byte-identical
 // regression guard: a repo whose runtime_languages column is empty (the
 // default, and the overwhelmingly common case today) must get back a nil
-// RuntimeSpec and no error — prepareRuntime must never shell out to mise/uv
-// in this case.
-func TestPrepareRuntime_EmptyColumnIsPassthrough(t *testing.T) {
+// RuntimeSpec and no error — resolveRuntimeSpec must never shell out to
+// mise/uv in this case (it never shells out to anything; see
+// TestResolveRuntimeSpec_NeverPerformsIO below for the actual-prep move to
+// the pool).
+func TestResolveRuntimeSpec_EmptyColumnIsPassthrough(t *testing.T) {
 	d, _ := newRuntimeTestDispatcher(t)
 	repo := gen.Repo{ID: "repo-1", RuntimeLanguages: ""}
 
-	spec, err := d.prepareRuntime(context.Background(), repo, "/tmp/worktree")
+	spec, err := d.resolveRuntimeSpec(repo, "/tmp/worktree")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,16 +61,15 @@ func TestPrepareRuntime_EmptyColumnIsPassthrough(t *testing.T) {
 	}
 }
 
-// TestPrepareRuntime_InvalidStoredConfigErrors verifies a corrupt/invalid
+// TestResolveRuntimeSpec_InvalidStoredConfigErrors verifies a corrupt/invalid
 // stored runtime_languages value (should never happen via the validated API
 // write path, but defends against a bad direct DB edit) is reported as an
-// error rather than silently ignored or causing a panic — and, critically,
-// never reaches runtime.Prep (no mise/uv exec attempted).
-func TestPrepareRuntime_InvalidStoredConfigErrors(t *testing.T) {
+// error rather than silently ignored or causing a panic.
+func TestResolveRuntimeSpec_InvalidStoredConfigErrors(t *testing.T) {
 	d, _ := newRuntimeTestDispatcher(t)
 	repo := gen.Repo{ID: "repo-1", RuntimeLanguages: `[{"id":"php","version":"8.3"}]`}
 
-	spec, err := d.prepareRuntime(context.Background(), repo, "/tmp/worktree")
+	spec, err := d.resolveRuntimeSpec(repo, "/tmp/worktree")
 	if err == nil {
 		t.Fatal("expected error for invalid stored runtime_languages, got nil")
 	}
@@ -77,20 +78,24 @@ func TestPrepareRuntime_InvalidStoredConfigErrors(t *testing.T) {
 	}
 }
 
-// TestPrepareRuntime_PrepFailurePropagates verifies a valid pin whose
-// toolchain prep fails (here: no `mise` binary on PATH in the test
-// environment, the same failure shape as a broken container image) returns
-// an error rather than a usable RuntimeSpec.
-func TestPrepareRuntime_PrepFailurePropagates(t *testing.T) {
+// TestResolveRuntimeSpec_NeverPerformsIO verifies a valid pin resolves to a
+// usable (but NOT-yet-installed) RuntimeSpec without shelling out to mise/uv
+// — resolveRuntimeSpec is pure JSON parsing, called synchronously from the
+// dispatcher's sweep/DispatchReply path, so it must never block on I/O
+// (that's the whole point of moving actual toolchain prep to the pool's
+// per-run goroutine; see Pool.prepareRuntime / pool_runtime_test.go). If this
+// function shelled out to `mise`, this test would fail or hang in any
+// environment without mise on PATH (e.g. this CI job).
+func TestResolveRuntimeSpec_NeverPerformsIO(t *testing.T) {
 	d, _ := newRuntimeTestDispatcher(t)
 	repo := gen.Repo{ID: "repo-1", RuntimeLanguages: `[{"id":"go","version":"1.21"}]`}
 
-	spec, err := d.prepareRuntime(context.Background(), repo, t.TempDir())
-	if err == nil {
-		t.Fatal("expected error when mise is unavailable, got nil")
+	spec, err := d.resolveRuntimeSpec(repo, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error (resolveRuntimeSpec must not touch mise/uv): %v", err)
 	}
-	if spec != nil {
-		t.Fatalf("expected nil RuntimeSpec on prep failure, got %+v", spec)
+	if spec == nil || len(spec.Pins) != 1 || spec.Pins[0].ID != "go" || spec.Pins[0].Version != "1.21" {
+		t.Fatalf("unexpected spec: %+v", spec)
 	}
 }
 
