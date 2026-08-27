@@ -36,10 +36,12 @@ fi
 # Own the paths the server and agents write to. Bind-mounted repos and the
 # host-provided auth dirs (.claude, .claude.json, .config/gh) are deliberately
 # left alone — they're already owned by the host user that PUID should match.
-chown -R node:node /data /app /home/node/go /home/node/.cache 2>/dev/null || true
+# /home/node/.cache covers uv's cache (UV_CACHE_DIR=.cache/uv); /home/node/.local
+# covers mise's data dir (MISE_DATA_DIR=.local/share/mise) — see docs/runtime.md.
+chown -R node:node /data /app /home/node/go /home/node/.cache /home/node/.local 2>/dev/null || true
 # QWEN_HOME dir is auto-created root-owned by the settings.json bind mount; qwen
 # writes siblings (output-language.md, logs) there, so it must be node-writable.
 chown node:node /home/node/qwen-home 2>/dev/null || true
 chown node:node /home/node /home/node/.gitconfig 2>/dev/null || true
 
-exec su-exec node:node "$@"
+exec gosu node:node "$@"

@@ -100,6 +100,11 @@ services:
       # - BACKUP_KEEP=7
     volumes:
       - db_data:/data
+      # Per-repo agent toolchains via mise/uv (see docs/runtime.md). Named
+      # volumes rather than a bind mount since these are content/version-
+      # addressed caches shared across all repos, not per-repo state.
+      - mise-data:/home/node/.local/share/mise
+      - uv-cache:/home/node/.cache/uv
       # Claude Max auth — run 'claude login' on your host machine first,
       # then this mount shares that session with the container.
       - ${HOME}/.claude:/home/node/.claude
@@ -133,3 +138,5 @@ services:
 
 volumes:
   db_data:
+  mise-data:
+  uv-cache:
