@@ -26,9 +26,11 @@ section:
 
 - Add a row per language: pick the language from the dropdown, type the
   version (e.g. `1.21`, `22`, `3.12`).
-- **Detect from repo** scans the repo's root directory (not worktrees, and
-  not recursively) for well-known manifest files and pre-fills suggested
-  rows:
+- **Detect from repo** scans the repo's root directory plus its immediate
+  subdirectories (one level deep, so monorepos like `backend/go.mod` work;
+  never worktrees, dot-dirs, `node_modules`, or `vendor`) for well-known
+  manifest files and pre-fills suggested rows — a root manifest wins over a
+  subdirectory one for the same language:
   - `go.mod` → `go` (from the `go` directive)
   - `.nvmrc` / `.node-version` → `node`
   - `.python-version` → `python`

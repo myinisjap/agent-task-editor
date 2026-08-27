@@ -68,13 +68,17 @@ var manifestRules = []manifestRule{
 
 // Detect scans repoRoot (the repo's main clone path, never a task worktree)
 // for well-known toolchain manifest files and returns a suggested pin for
-// each one found. This is a pure manifest scan — no LLM fallback, no
-// filesystem writes. Every suggestion is validated the same way a
-// human-submitted pin would be (ParsePins' allowlist + version regex); a
-// manifest whose extracted version fails validation is silently dropped
-// rather than surfaced as a bad suggestion. A symlinked manifest is skipped
-// (os.Lstat before read) so Detect never follows a symlink planted in the
-// repo out to an arbitrary filesystem path.
+// each one found. The root is scanned first, then each immediate
+// subdirectory — one level deep only, no recursion — because monorepos keep
+// their manifests in subdirectories (backend/go.mod, frontend/.nvmrc). A
+// root finding wins per language; subdirectories are visited in os.ReadDir's
+// sorted order so results are deterministic. This is a pure manifest scan —
+// no LLM fallback, no filesystem writes. Every suggestion is validated the
+// same way a human-submitted pin would be (ParsePins' allowlist + version
+// regex); a manifest whose extracted version fails validation is silently
+// dropped rather than surfaced as a bad suggestion. A symlinked manifest or
+// directory is skipped (os.Lstat semantics) so Detect never follows a
+// symlink planted in the repo out to an arbitrary filesystem path.
 func Detect(repoRoot string) []Suggestion {
 	var out []Suggestion
 	// rust-toolchain vs rust-toolchain.toml both map to "rust" — only the
@@ -82,11 +86,39 @@ func Detect(repoRoot string) []Suggestion {
 	// itself prefers the plain file.
 	seenLang := map[string]bool{}
 
+	scanManifestDir(repoRoot, "", seenLang, &out)
+
+	entries, err := os.ReadDir(repoRoot)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		// IsDir() is false for symlinks (ReadDir lstats each entry), so a
+		// symlinked directory is never followed.
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Dot-dirs (.git, .venv, …) and dependency trees aren't places a
+		// repo declares its own toolchain.
+		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
+			continue
+		}
+		scanManifestDir(filepath.Join(repoRoot, name), name+"/", seenLang, &out)
+	}
+
+	return out
+}
+
+// scanManifestDir applies manifestRules to one directory, appending a
+// suggestion per newly seen language. sourcePrefix ("" for the repo root,
+// "backend/" for a subdirectory) qualifies the Source shown in the UI.
+func scanManifestDir(dir, sourcePrefix string, seenLang map[string]bool, out *[]Suggestion) {
 	for _, rule := range manifestRules {
 		if seenLang[rule.lang] {
 			continue
 		}
-		path := filepath.Join(repoRoot, rule.file)
+		path := filepath.Join(dir, rule.file)
 
 		fi, err := os.Lstat(path)
 		if err != nil {
@@ -119,9 +151,7 @@ func Detect(repoRoot string) []Suggestion {
 			continue
 		}
 
-		out = append(out, Suggestion{ID: rule.lang, Version: version, Source: rule.file})
+		*out = append(*out, Suggestion{ID: rule.lang, Version: version, Source: sourcePrefix + rule.file})
 		seenLang[rule.lang] = true
 	}
-
-	return out
 }

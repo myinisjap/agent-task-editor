@@ -129,3 +129,88 @@ func TestDetect_Deterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestDetect_SubdirectoryManifest(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "backend"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "backend"), "go.mod", "module example.com/foo\n\ngo 1.26\n")
+
+	got := Detect(dir)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 suggestion, got %+v", got)
+	}
+	if got[0] != (Suggestion{ID: "go", Version: "1.26", Source: "backend/go.mod"}) {
+		t.Errorf("got %+v", got[0])
+	}
+}
+
+func TestDetect_RootWinsOverSubdirectory(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module example.com/root\n\ngo 1.21\n")
+	if err := os.Mkdir(filepath.Join(dir, "svc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "svc"), "go.mod", "module example.com/svc\n\ngo 1.26\n")
+
+	got := Detect(dir)
+	if len(got) != 1 || got[0].Version != "1.21" || got[0].Source != "go.mod" {
+		t.Errorf("root manifest should win, got %+v", got)
+	}
+}
+
+func TestDetect_SkipsDotAndDependencyDirs(t *testing.T) {
+	dir := t.TempDir()
+	for _, sub := range []string{".hidden", "node_modules", "vendor"} {
+		if err := os.Mkdir(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(dir, sub), ".nvmrc", "22\n")
+	}
+
+	if got := Detect(dir); len(got) != 0 {
+		t.Errorf("manifests in dot/dependency dirs must be ignored, got %+v", got)
+	}
+}
+
+func TestDetect_SkipsSymlinkedSubdirectory(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, outside, "go.mod", "module example.com/outside\n\ngo 1.26\n")
+	if err := os.Symlink(outside, filepath.Join(dir, "linked")); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+
+	if got := Detect(dir); len(got) != 0 {
+		t.Errorf("symlinked subdirectory must not be followed, got %+v", got)
+	}
+}
+
+func TestDetect_TwoSubdirsDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	for _, sub := range []string{"api", "web"} {
+		if err := os.Mkdir(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(dir, "api"), "go.mod", "module example.com/api\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(dir, "web"), ".nvmrc", "22\n")
+	// Same language in a later-sorted dir: first sorted dir wins.
+	writeFile(t, filepath.Join(dir, "web"), "go.mod", "module example.com/web\n\ngo 1.21\n")
+
+	got := Detect(dir)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 suggestions, got %+v", got)
+	}
+	byID := map[string]Suggestion{}
+	for _, s := range got {
+		byID[s.ID] = s
+	}
+	if byID["go"].Source != "api/go.mod" || byID["go"].Version != "1.26" {
+		t.Errorf("go should come from api/ (sorted first), got %+v", byID["go"])
+	}
+	if byID["node"].Source != "web/.nvmrc" || byID["node"].Version != "22" {
+		t.Errorf("node suggestion wrong: %+v", byID["node"])
+	}
+}
