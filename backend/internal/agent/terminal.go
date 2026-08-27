@@ -8,11 +8,15 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/creack/pty"
 	"nhooyr.io/websocket"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 )
 
 // ChatMCPProvisioner builds the per-provider CLI wiring that exposes extra MCP
@@ -123,10 +127,32 @@ var ErrTooManySessions = errors.New("too many concurrent terminal sessions")
 // before — i.e. after a process exit or backend restart); it's ignored when the
 // process is already live (in-uptime reconnect just reattaches).
 //
+// repoID/pins carry the session's repo runtime pins (repos.runtime_languages,
+// already parsed by the caller via runtime.ParsePins) so the interactive CLI
+// sees the same toolchain a headless task run on this repo would (see
+// prepareChatRuntime). Both are ignored (no-op) once the session's process is
+// already running — pins can't be changed on a live session without
+// restarting it, matching how a headless run's pins are fixed at dispatch.
+//
 // Only one connection may be attached at a time; a second attach to the same
 // session takes over output (the previous writer is dropped).
-func (m *TerminalManager) Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, conn *websocket.Conn) error {
-	s, err := m.ensure(sessionID, repoPath, provider, model, resume)
+func (m *TerminalManager) Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, repoID string, pins []runtime.Pin, conn *websocket.Conn) error {
+	// Prep runs BEFORE ensure() and its manager-wide lock — mise install / uv
+	// venv can take real time (cold installs), and ensure() holds m.mu for
+	// its whole body, so running prep inside it (or under the lock at all)
+	// would block every other session's Attach/Stop for as long as prep
+	// takes. Only needed for a session that isn't already running (an
+	// already-live process keeps whatever toolchain it started with); skip
+	// pins entirely otherwise so a reattach never re-runs mise/uv.
+	if !m.isRunning(sessionID) {
+		if err := prepareChatRuntime(ctx, repoID, pins); err != nil {
+			return fmt.Errorf("chat runtime prep failed: %w", err)
+		}
+	} else {
+		pins = nil
+	}
+
+	s, err := m.ensure(sessionID, repoPath, provider, model, resume, repoID, pins)
 	if err != nil {
 		return err
 	}
@@ -201,10 +227,23 @@ func (m *TerminalManager) Attach(ctx context.Context, sessionID, repoPath, provi
 	}
 }
 
+// isRunning reports whether sessionID already has a live process, without
+// starting one — used by Attach to decide whether runtime pins need
+// (re-)preparing before ensure() is called.
+func (m *TerminalManager) isRunning(sessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.sessions[sessionID]
+	return ok
+}
+
 // ensure returns the running session, starting it if not present. When it must
 // start the process, resume asks the CLI to continue its most recent session in
-// this cwd (see Attach).
-func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, resume bool) (*ptySession, error) {
+// this cwd (see Attach). pins (already prepared by Attach via
+// prepareChatRuntime before this is called) wraps the launch command with
+// `mise x` exactly like providers.applyRuntime does for headless task runs —
+// see applyChatRuntime.
+func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, resume bool, repoID string, pins []runtime.Pin) (*ptySession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s, ok := m.sessions[sessionID]; ok {
@@ -237,6 +276,18 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 			cleanup = cl
 		}
 	}
+
+	// Wrap with `mise x` for any non-python pins, exactly like
+	// providers.applyRuntime does for headless task runs (mirrored here
+	// rather than shared, since providers imports agent and this package
+	// can't import providers back). A python pin instead prepends the
+	// chat-specific venv's bin/ to PATH (see prepareChatRuntime / chatVenvDir
+	// — never <repoPath>/.venv: that would live inside the user's own
+	// checkout across reconnects). node pins are deliberately excluded here
+	// (see prepareChatRuntime's doc comment) — a design decision on running
+	// the provider CLI itself under a pinned node is still pending, so this
+	// intentionally doesn't touch the CLI's own runtime.
+	name, args, runtimeEnv, venvBin := applyChatRuntime(pins, repoID, name, args)
 
 	cmd := exec.Command(name, args...)
 	cmd.Dir = repoPath // ← run the CLI in the selected repo's worktree
@@ -274,6 +325,10 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 		cmd.Env = append(cmd.Env, "NO_UPDATE_NOTIFIER=1")
 	}
 	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = append(cmd.Env, runtimeEnv...)
+	if venvBin != "" {
+		cmd.Env = prependChatPath(cmd.Env, venvBin)
+	}
 
 	tty, err := pty.Start(cmd)
 	if err != nil {
@@ -391,6 +446,134 @@ func (m *TerminalManager) reapIdleOnce() {
 		slog.Info("terminal: reaping idle session", "session_id", id, "idle_timeout", m.IdleTimeout)
 		m.Stop(id)
 	}
+}
+
+// chatNodeExcluded documents finding 9's interaction with the still-pending
+// node-pin design decision (whether pinning node should also run the
+// provider CLI itself, which is a Node program, under that pinned node):
+// until that's resolved, a node pin never wraps the chat CLI's own launch —
+// dropped from applyChatRuntime's mise x args exactly like python is
+// dropped for its own separate reason. Chat's non-python, non-node pins
+// (go/rust/ruby/java) still wrap normally.
+const chatNodeExcluded = "node"
+
+// prepareChatRuntime installs a chat session's repo runtime pins (mise
+// install) and, for a python pin, ensures the chat-specific venv exists —
+// the interactive-session counterpart to the dispatcher's runtime prep
+// (Dispatcher.prepareRuntime / Pool.prepareRuntime) for headless task runs.
+// No-op for an unconfigured repo (nil/empty pins) or an empty repoID —
+// mirrors the byte-identical guarantee: a repo with no runtime_languages
+// pins never shells out to mise/uv for its chat sessions either.
+//
+// Unlike a task run, this deliberately does NOT create <repoPath>/.venv:
+// repoPath here is the session's own worktree, which persists across
+// reconnects and is the user's live checkout to poke around in — dropping a
+// build artifact there (even one excluded from git) is a worse experience
+// than for a short-lived, throwaway task worktree. Instead the venv lives
+// outside any repo checkout, keyed by repo id + python version (see
+// chatVenvDir), so multiple chat sessions against the same repo/version
+// reuse one venv the same way task runs reuse the shared uv cache.
+func prepareChatRuntime(ctx context.Context, repoID string, pins []runtime.Pin) error {
+	if repoID == "" || len(pins) == 0 {
+		return nil
+	}
+
+	if err := runtime.Install(ctx, pins); err != nil {
+		return err
+	}
+
+	for _, p := range pins {
+		if p.ID != "python" {
+			continue
+		}
+		pythonPath, err := runtime.ResolvePythonPath(ctx, p.Version)
+		if err != nil {
+			return err
+		}
+		return runtime.EnsureVenv(ctx, chatVenvDir(repoID), pythonPath, p.Version)
+	}
+	return nil
+}
+
+// chatVenvDir returns the base directory whose .venv subdirectory
+// prepareChatRuntime creates/reuses for a repo's chat sessions — a sibling
+// of mise's own data dir (same shared volume in production, so it persists
+// across container restarts) rather than anywhere inside a repo checkout.
+// Keyed by repo id only (not python version): EnsureVenv's own
+// recreate-on-mismatch logic (see runtime.EnsureVenv) already handles a
+// version-pin change by rebuilding the venv in place, so a second directory
+// per version isn't needed.
+func chatVenvDir(repoID string) string {
+	return filepath.Join(filepath.Dir(runtime.MiseDataDir()), "chat-venvs", repoID)
+}
+
+// applyChatRuntime wraps a chat session's launch command with `mise x` for
+// any non-python, non-node pins (see chatNodeExcluded), mirroring
+// providers.applyRuntime's shape for headless task runs. A nil/empty pins
+// slice returns name/args unchanged and no extra env/venv dir. Returns the
+// extra env entries to append (MISE_YES/MISE_DATA_DIR/
+// MISE_TRUSTED_CONFIG_PATHS whenever pins are present, plus UV_CACHE_DIR for
+// a python pin) and, only for a python pin, the venv's bin/ dir — the caller
+// prepends that to cmd.Env's actual PATH (via prependChatPath) rather than
+// this function guessing at the base PATH itself.
+func applyChatRuntime(pins []runtime.Pin, repoID, name string, args []string) (string, []string, []string, string) {
+	if len(pins) == 0 {
+		return name, args, nil, ""
+	}
+
+	miseArgs := make([]string, 0, len(pins)+2+len(args))
+	miseArgs = append(miseArgs, "x")
+	hasPython := false
+	for _, p := range pins {
+		switch p.ID {
+		case "python":
+			hasPython = true
+			continue
+		case chatNodeExcluded:
+			continue
+		}
+		miseArgs = append(miseArgs, p.ID+"@"+p.Version)
+	}
+	miseArgs = append(miseArgs, "--", name)
+	miseArgs = append(miseArgs, args...)
+
+	env := []string{"MISE_YES=1"}
+	if dir := runtime.MiseDataDir(); dir != "" {
+		env = append(env, "MISE_DATA_DIR="+dir)
+	}
+	venvDir := chatVenvDir(repoID)
+	env = append(env, "MISE_TRUSTED_CONFIG_PATHS="+venvDir)
+
+	var venvBin string
+	if hasPython {
+		venvBin = filepath.Join(venvDir, ".venv", "bin")
+		if dir := runtime.UvCacheDir(); dir != "" {
+			env = append(env, "UV_CACHE_DIR="+dir)
+		}
+	}
+
+	return "mise", miseArgs, env, venvBin
+}
+
+// prependChatPath returns a copy of env with dir prepended to the PATH entry
+// (added fresh if env has none) — mirrors providers/cli.go's prependPath,
+// duplicated rather than shared for the same import-direction reason as
+// applyChatRuntime.
+func prependChatPath(env []string, dir string) []string {
+	out := make([]string, len(env))
+	found := false
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			out[i] = "PATH=" + dir + string(os.PathListSeparator) + strings.TrimPrefix(kv, "PATH=")
+			found = true
+			continue
+		}
+		out[i] = kv
+	}
+	if !found {
+		out = append(out, "PATH="+dir)
+	}
+	return out
 }
 
 // appendScrollback appends to the ring, trimming to scrollbackCap. Caller holds s.mu.

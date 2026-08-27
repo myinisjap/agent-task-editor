@@ -10,15 +10,19 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
 // Terminal runs interactive chat sessions in a PTY. Implemented by
 // agent.TerminalManager; may be nil where no manager is wired, in which case the
-// terminal endpoint reports the feature unavailable.
+// terminal endpoint reports the feature unavailable. pins carries the
+// session's repo runtime pins (already parsed by the caller via
+// runtime.ParsePins) so the interactive CLI gets the same toolchain a
+// headless task run on this repo would — see agent.TerminalManager.Attach.
 type Terminal interface {
-	Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, conn *websocket.Conn) error
+	Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, repoID string, pins []runtime.Pin, conn *websocket.Conn) error
 	Stop(sessionID string)
 }
 
@@ -163,6 +167,17 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same validated column, same parser as the dispatcher's runtime prep —
+	// see agent.TerminalManager.Attach for what happens with these pins.
+	// Persisted config is already validated on write, so a parse error here
+	// would mean a bad direct DB edit; treat it as a request failure rather
+	// than silently dropping the pins and spawning unwrapped.
+	pins, err := runtime.ParsePins(repo.RuntimeLanguages)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "invalid repo runtime_languages")
+		return
+	}
+
 	// An existing worktree means this session has launched a terminal before, so
 	// ask the CLI to continue its most recent session in that worktree's cwd
 	// (each session has its own worktree, so "most recent in cwd" is this
@@ -201,7 +216,7 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	if err := h.term.Attach(r.Context(), id, workDir, pc.Provider, pc.Model, resume, conn); err != nil {
+	if err := h.term.Attach(r.Context(), id, workDir, pc.Provider, pc.Model, resume, repo.ID, pins, conn); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, err.Error())
 	}
 }
