@@ -350,7 +350,10 @@ func TestApplyRuntime_NilSpecIsPassthrough(t *testing.T) {
 	args := []string{"-p", "do the thing"}
 	env := []string{"PATH=/usr/bin", "HOME=/home/node"}
 
-	gotBinary, gotArgs, gotEnv := applyRuntime(nil, "claude", args, env)
+	gotBinary, gotArgs, gotEnv, err := applyRuntime(nil, "claude", args, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if gotBinary != "claude" {
 		t.Errorf("binary = %q, want %q", gotBinary, "claude")
@@ -371,7 +374,10 @@ func TestApplyRuntime_EmptyPinsIsPassthrough(t *testing.T) {
 	env := []string{"PATH=/usr/bin"}
 	spec := &agent.RuntimeSpec{Pins: nil, WorktreeDir: "/repo/.ate-worktrees/t1"}
 
-	gotBinary, gotArgs, gotEnv := applyRuntime(spec, "codex", args, env)
+	gotBinary, gotArgs, gotEnv, err := applyRuntime(spec, "codex", args, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if gotBinary != "codex" || !reflect.DeepEqual(gotArgs, args) || !reflect.DeepEqual(gotEnv, env) {
 		t.Errorf("got (%q, %v, %v), want passthrough of (%q, %v, %v)", gotBinary, gotArgs, gotEnv, "codex", args, env)
@@ -380,22 +386,28 @@ func TestApplyRuntime_EmptyPinsIsPassthrough(t *testing.T) {
 
 // TestApplyRuntime_WrapsWithMiseXInDeterministicOrder verifies non-python
 // pins are wrapped as `mise x <id>@<version>... -- <binary> <args...>` in
-// the same order as RuntimeSpec.Pins.
+// the same order as RuntimeSpec.Pins. Uses a native-binary fixture (not
+// "claude") so this stays focused on pin/arg ordering without also
+// exercising the node-script rewrite (see TestApplyRuntime_NodePin* below for
+// that) — go+rust here, no node pin.
 func TestApplyRuntime_WrapsWithMiseXInDeterministicOrder(t *testing.T) {
 	spec := &agent.RuntimeSpec{
 		Pins: []runtime.Pin{
 			{ID: "go", Version: "1.21"},
-			{ID: "node", Version: "22"},
+			{ID: "rust", Version: "1.75"},
 		},
 	}
 	env := []string{"PATH=/usr/bin"}
 
-	gotBinary, gotArgs, gotEnv := applyRuntime(spec, "claude", []string{"-p", "hi"}, env)
+	gotBinary, gotArgs, gotEnv, err := applyRuntime(spec, "codex", []string{"-p", "hi"}, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if gotBinary != "mise" {
 		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
 	}
-	wantArgs := []string{"x", "go@1.21", "node@22", "--", "claude", "-p", "hi"}
+	wantArgs := []string{"x", "go@1.21", "rust@1.75", "--", "codex", "-p", "hi"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
 	}
@@ -422,7 +434,10 @@ func TestApplyRuntime_InjectsMiseEnv(t *testing.T) {
 		Pins:        []runtime.Pin{{ID: "go", Version: "1.21"}},
 		WorktreeDir: "/repo/.ate-worktrees/t1",
 	}
-	_, _, gotEnv := applyRuntime(spec, "claude", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	_, _, gotEnv, err := applyRuntime(spec, "claude", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	want := map[string]string{
 		"MISE_YES":                  "1",
@@ -454,7 +469,10 @@ func TestApplyRuntime_PythonExcludedFromMiseXArgs(t *testing.T) {
 	}
 	env := []string{"PATH=/usr/bin", "HOME=/home/node"}
 
-	gotBinary, gotArgs, gotEnv := applyRuntime(spec, "claude", []string{"-p", "hi"}, env)
+	gotBinary, gotArgs, gotEnv, err := applyRuntime(spec, "claude", []string{"-p", "hi"}, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if gotBinary != "mise" {
 		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
@@ -495,7 +513,10 @@ func TestApplyRuntime_PythonOnlyStillWrapsWithMiseX(t *testing.T) {
 		WorktreeDir: "/repo/.ate-worktrees/t1",
 	}
 
-	gotBinary, gotArgs, _ := applyRuntime(spec, "claude", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	gotBinary, gotArgs, _, err := applyRuntime(spec, "claude", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if gotBinary != "mise" {
 		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
@@ -503,5 +524,202 @@ func TestApplyRuntime_PythonOnlyStillWrapsWithMiseX(t *testing.T) {
 	wantArgs := []string{"x", "--", "claude", "-p", "hi"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+// --- node pin: explicit-interpreter fix (isNodeScript / explicitInterpreterForNodeScript / applyRuntime) ---
+
+// writeFixtureScript writes a node-script-shebang fixture (mimicking npm's
+// global-install wrapper for claude/qwen) to dir/name, executable.
+func writeFixtureNodeScript(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := "#!/usr/bin/env node\nrequire('./cli.js')\n"
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeFixtureNativeBinary writes a fixture with no shebang at all (a stand-in
+// for codex's Rust / opencode's Go native binaries — arbitrary non-text bytes
+// as the first line, executable).
+func writeFixtureNativeBinary(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := []byte{0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}
+	if err := os.WriteFile(path, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeFixtureDirectNodeShebang writes a fixture with a direct (non-env)
+// shebang path ending in /node, e.g. "#!/usr/local/bin/node".
+func writeFixtureDirectNodeShebang(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := "#!/usr/local/bin/node\nconsole.log('hi')\n"
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestIsNodeScript_EnvNodeShebang(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixtureNodeScript(t, dir, "claude")
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected #!/usr/bin/env node to be detected as a node script")
+	}
+}
+
+func TestIsNodeScript_DirectNodePathShebang(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixtureDirectNodeShebang(t, dir, "claude")
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected a shebang path ending in /node to be detected as a node script")
+	}
+}
+
+// TestIsNodeScript_NativeBinaryIsNotDetected is the "checked, not assumed"
+// regression guard: a native binary (codex/opencode's actual shape — no text
+// shebang) must never be misdetected as a node script.
+func TestIsNodeScript_NativeBinaryIsNotDetected(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixtureNativeBinary(t, dir, "codex")
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Error("expected a native binary (no shebang) to not be detected as a node script")
+	}
+}
+
+func TestIsNodeScript_OtherShebangIsNotNode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Error("expected a #!/bin/sh shebang to not be detected as a node script")
+	}
+}
+
+// TestApplyRuntime_NodePin_RewritesNodeScriptToExplicitInterpreter is the
+// core regression guard for the explicit-interpreter fix: a node pin whose
+// CLI resolves to a node script must spawn as
+// `mise x node@<pin> -- <systemNode> <absCLIPath> <args...>`, not
+// `mise x node@<pin> -- <cli> <args...>` (which would run the CLI itself on
+// the pinned node and crash it).
+func TestApplyRuntime_NodePin_RewritesNodeScriptToExplicitInterpreter(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNodeScript(t, dir, "claude")
+	sysNode := writeFixtureNativeBinary(t, dir, "node") // stand-in system node; just needs to be resolvable+executable
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "node", Version: "22"}}}
+	gotBinary, gotArgs, _, err := applyRuntime(spec, cliPath, []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "node@22", "--", sysNode, cliPath, "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+// TestApplyRuntime_NodePin_NativeBinaryUnwrapped verifies a node pin does NOT
+// rewrite the spawn for a native-binary provider (codex, opencode) — those
+// aren't node scripts, so mise x's PATH prepend never touches how the CLI
+// process itself resolves its interpreter, and the previous plain-binary
+// spawn is preserved.
+func TestApplyRuntime_NodePin_NativeBinaryUnwrapped(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNativeBinary(t, dir, "codex")
+
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "node", Version: "22"}}}
+	gotBinary, gotArgs, _, err := applyRuntime(spec, cliPath, []string{"exec", "--json"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "node@22", "--", cliPath, "exec", "--json"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+// TestApplyRuntime_NoNodePin_NeverInspectsBinary verifies the passthrough/
+// non-node-pin paths never call exec.LookPath on binary at all — a
+// non-existent bare binary name must not error just because there's no node
+// pin driving the shim check.
+func TestApplyRuntime_NoNodePin_NeverInspectsBinary(t *testing.T) {
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "go", Version: "1.21"}}}
+	gotBinary, gotArgs, _, err := applyRuntime(spec, "definitely-not-a-real-binary-xyz", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "go@1.21", "--", "definitely-not-a-real-binary-xyz", "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+// TestApplyRuntime_NodePin_FailsClosedWhenCLIUnresolvable verifies a node
+// pin with a CLI binary that can't be resolved at all (exec.LookPath fails)
+// returns an error rather than falling back to an unwrapped/guessed spawn —
+// never launch on the wrong interpreter, per the fail-closed requirement.
+func TestApplyRuntime_NodePin_FailsClosedWhenCLIUnresolvable(t *testing.T) {
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "node", Version: "22"}}}
+	_, _, _, err := applyRuntime(spec, "definitely-not-a-real-binary-xyz", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err == nil {
+		t.Fatal("expected an error when the CLI binary can't be resolved for a node-pinned run")
+	}
+}
+
+// TestApplyRuntime_NodePin_FailsClosedWhenSystemNodeUnresolvable verifies a
+// node pin whose CLI IS a node script, but the system `node` itself can't be
+// resolved (e.g. a broken image), fails closed rather than spawning the CLI
+// directly (which would silently skip the whole point of pinning node).
+func TestApplyRuntime_NodePin_FailsClosedWhenSystemNodeUnresolvable(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNodeScript(t, dir, "claude")
+
+	// PATH has no "node" binary at all — only the fixture dir's "claude" and
+	// whatever coreutils are needed to exec.LookPath cliPath itself (an
+	// absolute path, so PATH isn't consulted to find cliPath — only to find
+	// "node").
+	t.Setenv("PATH", dir)
+
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "node", Version: "22"}}}
+	_, _, _, err := applyRuntime(spec, cliPath, []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err == nil {
+		t.Fatal("expected an error when system node can't be resolved for a node-script CLI")
 	}
 }

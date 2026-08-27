@@ -43,7 +43,10 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	defer cancel()
 
 	env := mergeEnv(allowlistEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
-	runBinary, runArgs, env := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	if err != nil {
+		return agent.Result{Status: "failed"}, err
+	}
 	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
 	cmd.Env = env

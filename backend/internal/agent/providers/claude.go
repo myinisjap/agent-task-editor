@@ -243,7 +243,10 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	// DISABLE_AUTOUPDATER in the backend's own env.
 	env = append(env, "DISABLE_AUTOUPDATER=1")
 
-	runBinary, runArgs, env := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	if err != nil {
+		return agent.Result{Status: "failed"}, info, err
+	}
 	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
 	cmd.Env = env

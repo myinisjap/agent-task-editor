@@ -150,7 +150,10 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	env := mergeEnv(allowlistEnv(qwenEnvAllowlist), input.AgentConfig.Env)
 	env = append(env, "QWEN_CODE_SUPPRESS_YOLO_WARNING=1", "NO_UPDATE_NOTIFIER=1")
 
-	runBinary, runArgs, env := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	if err != nil {
+		return agent.Result{Status: "failed"}, err
+	}
 	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
 	cmd.Env = env
