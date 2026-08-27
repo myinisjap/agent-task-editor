@@ -59,6 +59,19 @@ services:
       - PGID=${PGID:-1000}
       # Path to the MCP sidecar binary built into the image
       - MCP_SERVER_PATH=/app/mcp-server
+      # Host-side paths for the per-repo runtime containers (runtime_image /
+      # runtime_languages). Those containers are siblings started through the
+      # mounted docker.sock, so the daemon resolves their bind sources on the
+      # HOST — a path that only exists inside this container fails with "bind
+      # source path does not exist". HOME here is /home/node, but the
+      # credentials actually live at ${HOME} on the host (see the .claude
+      # mounts below), so pass that through explicitly.
+      #
+      # HOST_MCP_SERVER_PATH is deliberately unset: mcp-server is baked into
+      # this image at /app/mcp-server and has no host path, so its mount is
+      # omitted and MCP tools are unavailable inside runtime containers. Set
+      # it only if you bind-mount the sidecar from the host.
+      - HOST_HOME=${HOME}
       # Path to the board MCP binary; enables the create-task tools in chat sessions
       - MCP_BOARD_PATH=/app/mcp-board
       # Optional: set API_TOKEN to require a Bearer token on all API requests

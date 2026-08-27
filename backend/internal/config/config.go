@@ -28,8 +28,18 @@ type Config struct {
 	// independent of APIToken. Empty (the default) leaves /metrics
 	// unauthenticated, matching most Prometheus scrape setups that can't
 	// easily carry a different token than other tooling.
-	MetricsToken       string        `yaml:"metrics_token"`
-	MCPBinary          string        `yaml:"mcp_server_path"`
+	MetricsToken string `yaml:"metrics_token"`
+	MCPBinary    string `yaml:"mcp_server_path"`
+	// HostHome / HostMCPBinary are the host-side paths backing this
+	// process's home directory and MCPBinary, for deployments where the
+	// backend itself runs in a container. Bind mounts for the per-repo
+	// runtime containers are resolved by the Docker daemon on the host, so a
+	// path that only exists inside this container fails with "bind source
+	// path does not exist" (see agent.RuntimeManager.HostHome). Empty when
+	// the backend runs directly on the host, where its paths already are
+	// host paths.
+	HostHome           string        `yaml:"host_home"`
+	HostMCPBinary      string        `yaml:"host_mcp_server_path"`
 	MCPBoardBinary     string        `yaml:"mcp_board_path"`
 	LLMBaseURL         string        `yaml:"llm_base_url"`
 	LLMAPIKey          string        `yaml:"llm_api_key"`
@@ -190,6 +200,12 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MCP_SERVER_PATH"); v != "" {
 		cfg.MCPBinary = v
+	}
+	if v := os.Getenv("HOST_HOME"); v != "" {
+		cfg.HostHome = v
+	}
+	if v := os.Getenv("HOST_MCP_SERVER_PATH"); v != "" {
+		cfg.HostMCPBinary = v
 	}
 	if v := os.Getenv("MCP_BOARD_PATH"); v != "" {
 		cfg.MCPBoardBinary = v

@@ -66,6 +66,27 @@ type RuntimeManager struct {
 	// generated MCP config JSON, so it must exist at that same path inside
 	// the container.
 	MCPServerPath string
+
+	// HostHome and HostMCPServerPath are the *host* locations backing this
+	// process's own home directory and MCPServerPath.
+	//
+	// Every bind mount this package emits is resolved by the Docker daemon on
+	// the host, not inside this container — so a source path that is only
+	// valid in here fails with "bind source path does not exist". Compose
+	// mounts ${HOME}/.claude at /home/node/.claude, so the backend's own view
+	// of its credentials is a path the daemon cannot see; likewise the
+	// sidecar at /app/mcp-server. When these are set (HOST_HOME /
+	// HOST_MCP_SERVER_PATH, wired in docker-compose.yml) they are used as the
+	// bind *source*, while the target stays the in-container path the agent
+	// CLI expects. Empty means the backend is not itself containerized, in
+	// which case its own paths already are host paths.
+	//
+	// The repo path needs no such treatment: it is bind-mounted at the same
+	// path on both sides (see docker-compose.yml's REPO_BASE_DIR), which is
+	// also what makes git worktrees resolve.
+	HostHome          string
+	HostMCPServerPath string
+
 	// PidsLimit caps the container's total process count
 	// (--pids-limit). 0 uses dockerDefaultPidsLimit.
 	PidsLimit int
@@ -79,6 +100,26 @@ type RuntimeManager struct {
 // (CLI + Bash + language toolchains) while still bounding a runaway fork
 // bomb.
 const dockerDefaultPidsLimit = 512
+
+// bindHome returns the path to use as the *source* of a credential bind
+// mount: the host location when this backend is containerized, else its own
+// home. See the HostHome field comment.
+func (m *RuntimeManager) bindHome(ownHome string) string {
+	if m.HostHome != "" {
+		return m.HostHome
+	}
+	return ownHome
+}
+
+// bindMCPServerPath is bindHome's counterpart for the sidecar binary. The
+// mount *target* stays m.MCPServerPath, since the generated MCP config
+// references the sidecar by the path the agent CLI will see.
+func (m *RuntimeManager) bindMCPServerPath() string {
+	if m.HostMCPServerPath != "" {
+		return m.HostMCPServerPath
+	}
+	return m.MCPServerPath
+}
 
 // lockFor returns the per-repo mutex, creating it on first use.
 func (m *RuntimeManager) lockFor(repoID string) *sync.Mutex {
@@ -145,13 +186,14 @@ func (m *RuntimeManager) EnsureRunning(ctx context.Context, repoID, repoPath, im
 	}
 
 	args := buildDockerRunArgs(dockerRunSpec{
-		Name:          name,
-		Image:         image,
-		RepoID:        repoID,
-		RepoPath:      repoPath,
-		MCPServerPath: m.MCPServerPath,
-		HostHome:      homeDir,
-		PidsLimit:     m.PidsLimit,
+		Name:              name,
+		Image:             image,
+		RepoID:            repoID,
+		RepoPath:          repoPath,
+		MCPServerPath:     m.MCPServerPath,
+		HostMCPBindSource: m.bindMCPServerPath(),
+		HostHome:          m.bindHome(homeDir),
+		PidsLimit:         m.PidsLimit,
 	})
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		if isNameConflictError(out) {
@@ -225,14 +267,21 @@ func parseInspectOutput(out string) (image string, running bool, err error) {
 // RuntimeManager so the argv construction is unit-testable without a Docker
 // daemon.
 type dockerRunSpec struct {
-	Name          string
-	Image         string
-	RepoID        string
-	RepoPath      string
+	Name     string
+	Image    string
+	RepoID   string
+	RepoPath string
+	// MCPServerPath is the mount *target* for the sidecar — the path the
+	// agent CLI inside the container will invoke it by.
 	MCPServerPath string
-	// HostHome is the backend process's own home directory (os.UserHomeDir),
-	// used as the source side of the credentialDirs mounts below. Empty
-	// skips credential mounting entirely (see EnsureRunning).
+	// HostMCPBindSource is the mount *source* for the sidecar: its location
+	// on the host, which is where the Docker daemon resolves bind sources.
+	// Equal to MCPServerPath when the backend isn't containerized. Empty
+	// skips the sidecar mount.
+	HostMCPBindSource string
+	// HostHome is the host-side home directory backing the credentialDirs
+	// mounts (RuntimeManager.HostHome, falling back to the process's own
+	// home). Empty skips credential mounting entirely.
 	HostHome  string
 	PidsLimit int
 }
@@ -282,8 +331,9 @@ func buildDockerRunArgs(spec dockerRunSpec) []string {
 		"-v", spec.RepoPath + ":" + spec.RepoPath,
 		"-v", "/tmp:/tmp",
 	}
-	if spec.MCPServerPath != "" {
-		args = append(args, "-v", spec.MCPServerPath+":"+spec.MCPServerPath+":ro")
+	if spec.HostMCPBindSource != "" && spec.MCPServerPath != "" {
+		// source is the host path, target is what the agent CLI invokes.
+		args = append(args, "-v", spec.HostMCPBindSource+":"+spec.MCPServerPath+":ro")
 	}
 	if spec.HostHome != "" {
 		for _, dir := range credentialDirs {

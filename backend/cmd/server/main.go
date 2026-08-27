@@ -289,7 +289,11 @@ func main() {
 	// with the worktree sweeper below: its per-repo mutex only serializes
 	// EnsureRunning against the sweeper's container reap pass if both read
 	// the same instance.
-	runtimeManager := &agent.RuntimeManager{MCPServerPath: cfg.MCPBinary}
+	runtimeManager := &agent.RuntimeManager{
+		MCPServerPath:     cfg.MCPBinary,
+		HostHome:          cfg.HostHome,
+		HostMCPServerPath: cfg.HostMCPBinary,
+	}
 	dispatcher.Runtime = runtimeManager
 
 	// Shares the dispatcher's own collaborators (queries, pool, rate-limit

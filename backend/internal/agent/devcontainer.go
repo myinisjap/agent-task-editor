@@ -144,9 +144,14 @@ func ReadRepoDevcontainerFile(repoPath string) (string, error) {
 // devcontainer build carries, regardless of which language list produced
 // it — see GenerateDevcontainerJSON.
 type injectedContract struct {
-	RepoPath      string
-	MCPServerPath string
-	HostHome      string
+	RepoPath string
+	// MCPServerPath is the mount target — the path the agent CLI inside the
+	// container invokes the sidecar by. HostMCPBindSource is the source: its
+	// location on the host, where the Docker daemon resolves bind sources.
+	MCPServerPath     string
+	HostMCPBindSource string
+	// HostHome is the host-side home backing the credential mounts.
+	HostHome string
 }
 
 // GenerateDevcontainerJSON builds a complete devcontainer.json from langs
@@ -197,9 +202,9 @@ func GenerateDevcontainerJSON(langs []RuntimeLanguage, contract injectedContract
 	mounts := []string{
 		"source=/tmp,target=/tmp,type=bind",
 	}
-	if contract.MCPServerPath != "" {
+	if contract.MCPServerPath != "" && contract.HostMCPBindSource != "" {
 		mounts = append(mounts, fmt.Sprintf(
-			"source=%s,target=%s,type=bind,readonly", contract.MCPServerPath, contract.MCPServerPath,
+			"source=%s,target=%s,type=bind,readonly", contract.HostMCPBindSource, contract.MCPServerPath,
 		))
 	}
 	if contract.HostHome != "" {
@@ -425,9 +430,10 @@ func (m *RuntimeManager) buildGeneratedDevcontainerJSON(repoPath string, langs [
 		homeDir = "" // see EnsureRunning's identical degrade-gracefully rationale
 	}
 	return GenerateDevcontainerJSON(langs, injectedContract{
-		RepoPath:      repoPath,
-		MCPServerPath: m.MCPServerPath,
-		HostHome:      homeDir,
+		RepoPath:          repoPath,
+		MCPServerPath:     m.MCPServerPath,
+		HostMCPBindSource: m.bindMCPServerPath(),
+		HostHome:          m.bindHome(homeDir),
 	})
 }
 

@@ -153,9 +153,10 @@ func TestGenerateDevcontainerJSON_FullMountContract(t *testing.T) {
 	out, err := GenerateDevcontainerJSON(
 		[]RuntimeLanguage{{ID: "go", Version: "1.26"}, {ID: "python", Version: "3.12"}},
 		injectedContract{
-			RepoPath:      "/data/repos/myrepo",
-			MCPServerPath: "/opt/ate/mcp-server",
-			HostHome:      home,
+			RepoPath:          "/data/repos/myrepo",
+			MCPServerPath:     "/opt/ate/mcp-server",
+			HostMCPBindSource: "/opt/ate/mcp-server",
+			HostHome:          home,
 		},
 	)
 	if err != nil {
@@ -627,5 +628,70 @@ func TestHashDevcontainerJSON_IgnoresCredentialMounts(t *testing.T) {
 	}
 	if HashDevcontainerJSON(before) != HashDevcontainerJSON(after) {
 		t.Error("hash changed when a credential dir appeared — an unrelated rebuild, and sweeper/dispatcher hash disagreement")
+	}
+}
+
+// TestGenerateDevcontainerJSON_UsesHostPathsForBindSources guards the fourth
+// production failure of this feature, and the one the previous three were
+// symptoms of: bind sources are resolved by the Docker daemon on the HOST,
+// not inside the backend container. Compose mounts ${HOME}/.claude at
+// /home/node/.claude, so emitting the backend's own view of that path gives
+// the daemon something it cannot see:
+//
+//	docker: Error response from daemon: invalid mount config for type
+//	"bind": bind source path does not exist: /home/node/.claude
+//
+// The mount target must stay the in-container path the agent CLI expects.
+func TestGenerateDevcontainerJSON_UsesHostPathsForBindSources(t *testing.T) {
+	hostHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(hostHome, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := GenerateDevcontainerJSON(nil, injectedContract{
+		RepoPath:          "/repo",
+		MCPServerPath:     "/app/mcp-server",
+		HostMCPBindSource: "/opt/host/mcp-server",
+		HostHome:          hostHome,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	mounts := stringSliceField(cfg["mounts"])
+
+	wantCred := "source=" + filepath.Join(hostHome, ".claude") +
+		",target=" + RuntimeContainerHome + "/.claude,type=bind"
+	if !containsSubstring(mounts, wantCred) {
+		t.Errorf("credential mount should use the host source: want %q in %v", wantCred, mounts)
+	}
+	wantMCP := "source=/opt/host/mcp-server,target=/app/mcp-server,type=bind,readonly"
+	if !containsSubstring(mounts, wantMCP) {
+		t.Errorf("sidecar mount should bind host source to container target: want %q in %v", wantMCP, mounts)
+	}
+}
+
+// TestGenerateDevcontainerJSON_OmitsSidecarWithoutHostPath covers the
+// containerized default: mcp-server is baked into the backend image at
+// /app/mcp-server with no host path, so the mount must be omitted rather than
+// emitted with a source the daemon will reject and fail the whole build.
+func TestGenerateDevcontainerJSON_OmitsSidecarWithoutHostPath(t *testing.T) {
+	out, err := GenerateDevcontainerJSON(nil, injectedContract{
+		RepoPath:      "/repo",
+		MCPServerPath: "/app/mcp-server",
+		// HostMCPBindSource deliberately empty
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(out), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if containsSubstring(stringSliceField(cfg["mounts"]), "mcp-server") {
+		t.Errorf("sidecar mounted without a host source: %v", cfg["mounts"])
 	}
 }

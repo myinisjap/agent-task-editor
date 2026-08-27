@@ -39,11 +39,12 @@ func TestBuildDockerRunArgs_NoMCPNoHome(t *testing.T) {
 
 func TestBuildDockerRunArgs_WithMCPServerPath(t *testing.T) {
 	args := buildDockerRunArgs(dockerRunSpec{
-		Name:          "ate-runtime-repo1",
-		Image:         "img",
-		RepoID:        "repo1",
-		RepoPath:      "/repo",
-		MCPServerPath: "/opt/ate/mcp-server",
+		Name:              "ate-runtime-repo1",
+		Image:             "img",
+		RepoID:            "repo1",
+		RepoPath:          "/repo",
+		MCPServerPath:     "/opt/ate/mcp-server",
+		HostMCPBindSource: "/opt/ate/mcp-server",
 	})
 
 	joined := strings.Join(args, " ")
