@@ -151,3 +151,30 @@ func TestParsePins_RejectsEmptyVersion(t *testing.T) {
 		t.Fatal("expected error for empty version, got nil")
 	}
 }
+
+// TestParsePins_RejectsDuplicateLanguage verifies two pins for the same
+// language id are rejected — ambiguous config (which version wins?) that
+// every writer of runtime_languages routes through ParsePins, so this is the
+// single enforcement point (the frontend form separately blocks it
+// client-side, but a direct API write must still be caught here).
+func TestParsePins_RejectsDuplicateLanguage(t *testing.T) {
+	_, err := ParsePins(`[{"id":"go","version":"1.21"},{"id":"go","version":"1.22"}]`)
+	if err == nil {
+		t.Fatal("expected error for duplicate language id, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error = %v, want it to mention 'duplicate'", err)
+	}
+}
+
+// TestParsePins_AllowsMultipleDistinctLanguages is the non-regression
+// counterpart to the duplicate check above: distinct language ids are fine.
+func TestParsePins_AllowsMultipleDistinctLanguages(t *testing.T) {
+	pins, err := ParsePins(`[{"id":"go","version":"1.21"},{"id":"node","version":"22"}]`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pins) != 2 {
+		t.Fatalf("expected 2 pins, got %d", len(pins))
+	}
+}

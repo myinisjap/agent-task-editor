@@ -41,9 +41,15 @@ var versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
 // An empty string returns (nil, nil) — the zero value callers must treat as
 // "no runtime configured, take the exact pre-feature code path" (see the
 // package doc comment). A non-empty value must be a JSON array of
-// {"id":..., "version":...} objects; every id must be in allowedLanguages and
-// every version must match versionPattern, or ParsePins returns an error and
-// callers must not proceed with a partial/best-effort spec.
+// {"id":..., "version":...} objects; every id must be in allowedLanguages,
+// every version must match versionPattern, and no language id may repeat
+// (two pins for the same language is ambiguous config — which one wins?),
+// or ParsePins returns an error and callers must not proceed with a
+// partial/best-effort spec. Every writer of runtime_languages routes through
+// this function, so this is the single place that enforces "at most one pin
+// per language" — the frontend form separately blocks the same case
+// client-side (ReposPage.tsx's validateRuntimeRows) with matching error
+// copy, but a direct API write bypasses that and must still be rejected here.
 func ParsePins(jsonStr string) ([]Pin, error) {
 	if jsonStr == "" {
 		return nil, nil
@@ -54,6 +60,7 @@ func ParsePins(jsonStr string) ([]Pin, error) {
 		return nil, fmt.Errorf("runtime_languages: invalid JSON: %w", err)
 	}
 
+	seen := make(map[string]bool, len(pins))
 	for _, p := range pins {
 		if !allowedLanguages[p.ID] {
 			return nil, fmt.Errorf("runtime_languages: unsupported language %q", p.ID)
@@ -61,6 +68,10 @@ func ParsePins(jsonStr string) ([]Pin, error) {
 		if !versionPattern.MatchString(p.Version) {
 			return nil, fmt.Errorf("runtime_languages: invalid version %q for %q", p.Version, p.ID)
 		}
+		if seen[p.ID] {
+			return nil, fmt.Errorf("runtime_languages: duplicate runtime language: %s", p.ID)
+		}
+		seen[p.ID] = true
 	}
 
 	return pins, nil

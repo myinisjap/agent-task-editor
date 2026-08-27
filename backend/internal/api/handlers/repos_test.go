@@ -1626,6 +1626,30 @@ func TestReposCreate_InvalidRuntimeLanguagesRejected(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("unsafe version: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
+
+	// Duplicate language ids are ambiguous config (which version wins?) and
+	// must be rejected the same way the frontend form blocks them
+	// client-side (ReposPage.tsx's validateRuntimeRows) — see
+	// runtime.ParsePins' duplicate check. Needs a real repo path (unlike the
+	// two cases above, whose 400 could otherwise come from path validation
+	// running first) so the assertion below actually exercises the
+	// duplicate-language message.
+	repoDir3 := filepath.Join(base, "myrepo3")
+	initBareGitRepo(t, repoDir3)
+	w = postJSON(t, router, "/repos", map[string]any{
+		"name": "myrepo3",
+		"path": repoDir3,
+		"runtime_languages": []map[string]string{
+			{"id": "go", "version": "1.21"},
+			{"id": "go", "version": "1.22"},
+		},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("duplicate language: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "duplicate") {
+		t.Errorf("duplicate language: expected error message to mention 'duplicate', got %s", w.Body.String())
+	}
 }
 
 // TestReposUpdate_RuntimeLanguagesRoundTrip verifies PATCH can set pins, an
