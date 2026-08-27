@@ -190,3 +190,34 @@ var (
 		Buckets: prometheus.DefBuckets,
 	})
 )
+
+// Outbound notification (internal/notify) metrics.
+var (
+	// NotifyDeliveredTotal counts outbound webhook notifications successfully
+	// delivered (2xx response).
+	NotifyDeliveredTotal = factory.NewCounter(prometheus.CounterOpts{
+		Name: "ate_notify_delivered_total",
+		Help: "Total number of outbound webhook notifications successfully delivered.",
+	})
+
+	// NotifyFailedTotal counts outbound webhook notifications that exhausted
+	// their retry attempts without a successful delivery.
+	NotifyFailedTotal = factory.NewCounter(prometheus.CounterOpts{
+		Name: "ate_notify_failed_total",
+		Help: "Total number of outbound webhook notifications that failed after exhausting retries.",
+	})
+
+	// NotifySuppressedTotal counts events that matched a trigger condition
+	// but were suppressed by the debounce window.
+	NotifySuppressedTotal = factory.NewCounter(prometheus.CounterOpts{
+		Name: "ate_notify_suppressed_total",
+		Help: "Total number of outbound notifications suppressed by the debounce window.",
+	})
+
+	// NotifyDroppedTotal counts events dropped because the notifier's
+	// internal queue was full.
+	NotifyDroppedTotal = factory.NewCounter(prometheus.CounterOpts{
+		Name: "ate_notify_dropped_total",
+		Help: "Total number of outbound notification events dropped because the internal queue was full.",
+	})
+)

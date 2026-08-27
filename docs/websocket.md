@@ -64,6 +64,10 @@ The frontend also treats this event as a possible "needs human" signal: if
 `to` is a non-terminal label whose only outgoing transitions (per the active
 workflow) are `human`-triggered, or that has `agent_ignore` set, it fires an
 opt-in browser notification (see [Client-Side Behaviour](#client-side-behaviour)).
+The backend applies the equivalent rule (`workflow.IsHumanGateLabel`, the Go
+twin of the frontend's `isHumanGateLabel`) to fan this out to the optional
+outbound webhook when `NOTIFY_WEBHOOK_URL` is set (see
+[Outbound Webhook](#outbound-webhook)) — reason `human_gate`.
 
 ### `task.updated`
 A lightweight "something about this task changed, refetch it" signal. Fired
@@ -123,7 +127,9 @@ watchdog — see `docs/agents.md#cost-budgets`) or retry-budget exhaustion (see
 ```
 
 The frontend surfaces this as an opt-in browser notification (see
-[Client-Side Behaviour](#client-side-behaviour)).
+[Client-Side Behaviour](#client-side-behaviour)). Also fans out to the
+optional outbound webhook when `NOTIFY_WEBHOOK_URL` is set (see
+[Outbound Webhook](#outbound-webhook)) — reason `needs_human`.
 
 ### `task.cost_warning`
 A task's cumulative recorded cost crossed the configurable early-warning
@@ -151,7 +157,9 @@ once per run (watchdog) or once per task until the budget changes
 
 The board shows a "💰 Budget warning" badge on the task card and Task Detail
 shows a banner while a warning is outstanding for a task; both clear on the
-task's next label change.
+task's next label change. Also fans out to the optional outbound webhook
+when `NOTIFY_WEBHOOK_URL` is set (see [Outbound Webhook](#outbound-webhook))
+— reason `cost_warning`.
 
 ### `system.cost_budget_tripped`
 The server's global daily or monthly spend ceiling (`MAX_DAILY_COST_USD` /
@@ -182,6 +190,10 @@ tripped, every otherwise-eligible task's read-time `block_reason` reports
 `cost_budget_global` (see `docs/api.md`'s Task fields table), and both
 `GET /readyz` and `GET /api/v1/health/providers` surface the current
 tripped state so it's visible without needing to catch this one-shot event.
+Also fans out to the optional outbound webhook when `NOTIFY_WEBHOOK_URL` is
+set (see [Outbound Webhook](#outbound-webhook)) — reason
+`cost_budget_tripped`; unlike the other three trigger events this one has no
+`task_id`, so the payload omits every task-scoped field.
 
 ### `task.review_comments_changed`
 Fired after a completed run applies `resolve_comment` resolutions from the
@@ -400,8 +412,77 @@ The frontend `WSClient` (`frontend/src/api/ws.ts`) handles:
 - **Ticket fetch** — if `VITE_API_TOKEN` is set, `connect()` first `POST`s `/api/v1/ws-ticket` (Bearer-authed) and opens the socket with the returned `?ticket=`; if that fetch fails it falls through and connects without a ticket (the server 401s and the reconnect loop retries)
 - **"Needs human" notifications** — `useHumanNeededNotifications` (`frontend/src/lib/useHumanNeededNotifications.ts`) is mounted once at the app root and listens on this same connection for `task.needs_human` and human-gate `task.label_changed` events, showing a browser `Notification` for each (opt-in, off by default; see the sidebar toggle and `frontend/src/stores/notifications.ts`). This is a Notifications-API-only implementation — there is no server-side Web Push, VAPID keys, or subscription storage, so notifications only fire while a tab/PWA is open.
 
+## Outbound Webhook
+
+The browser notification above only fires while a tab is open on a device
+that granted permission — nothing notifies you if you're away entirely. The
+server can optionally POST the same class of "needs a human" signal to an
+external URL instead, e.g. a Slack/Discord/ntfy webhook relay. See
+`internal/notify` and [getting-started.md#notifications](getting-started.md#notifications)
+for configuration (`NOTIFY_WEBHOOK_URL`, `NOTIFY_BASE_URL`,
+`NOTIFY_DEBOUNCE`). Disabled by default.
+
+**Trigger events.** Exactly four of the WS events above fan out; everything
+else is ignored:
+
+| WS event | `reason` | Notes |
+|---|---|---|
+| `task.needs_human` | `needs_human` | Always fires. |
+| `task.label_changed` | `human_gate` | Only when `to` is a human-gate label per `workflow.IsHumanGateLabel` (same rule as the frontend's browser notification) — a non-gate label change never fires. |
+| `task.cost_warning` | `cost_warning` | |
+| `system.cost_budget_tripped` | `cost_budget_tripped` | No task — task fields are omitted from the payload. |
+
+**Payload.** A single JSON object, `POST`ed with `Content-Type:
+application/json`:
+
+```json
+{
+  "event": "task.needs_human",
+  "reason": "needs_human",
+  "task_id": "uuid",
+  "task_title": "Fix the flaky test",
+  "label": "review-plan",
+  "run_id": "uuid",
+  "message": "Please review the schema changes.",
+  "url": "http://host:8080/tasks/uuid",
+  "timestamp": "2026-08-27T12:00:00Z"
+}
+```
+
+Optional fields (`label`, `run_id`, `message`, `url`) are omitted entirely
+when empty rather than sent as `""`. `url` is only present when
+`NOTIFY_BASE_URL` is configured — it is never guessed (e.g. from
+`localhost`), since a link that only resolves on the server box is worse
+than no link.
+
+**Double-firing note.** A task moving onto a human-gate label and the agent
+publishing `task.needs_human` for the same run can happen within moments of
+each other (e.g. a cost-budget escalation both locks the task on a phantom
+`waiting_human` run *and* the workflow may already be sitting on a gate
+label). These are deliberately **not** collapsed into one notification: the
+debounce key is `reason:task_id` (system events key on `reason` alone), so
+`needs_human` and `human_gate` for the same task are treated as distinct —
+they carry genuinely different messages (why the agent stopped, vs. which
+label the task is now on) and both are allowed through.
+
+**Debounce.** A duplicate `reason:task_id` key seen again within
+`NOTIFY_DEBOUNCE` (default 5 minutes) of the first sighting is suppressed —
+no HTTP call is made for it at all.
+
+**Retry policy.** Up to 3 attempts total, with 1s then 4s backoff between
+them. Retried on a network error, `5xx`, or `429`. Any other `4xx` (e.g. a
+`400` from a malformed target) is **not** retried. Shutdown cancels an
+in-flight wait immediately rather than delaying the process's 10s shutdown
+budget.
+
 ## Hub Architecture
 
-The server-side hub broadcasts to all connected clients that are subscribed to the relevant task. Events published by the pool (agent logs, status changes) and the workflow engine (label changes) flow through a single in-process channel. Each client has a 256-message send buffer; slow clients that fill their buffer have their connection dropped gracefully.
+The server-side hub broadcasts to all connected browser clients that are subscribed to the relevant task. Events published by the pool (agent logs, status changes) and the workflow engine (label changes) flow through a single in-process channel. Each client has a 256-message send buffer; slow clients that fill their buffer have their connection dropped gracefully.
 
 `agent.log` events with a `task_id` are only delivered to clients subscribed to that task. All other events (label changes, agent started/done, rate limited, etc.) are broadcast to all connected clients.
+
+When `NOTIFY_WEBHOOK_URL` is set, the same event stream also reaches a
+second, non-WebSocket subscriber: `internal/notify.Notifier`, wired in
+alongside the hub via a small fan-out publisher (`notify.MultiPublisher`) so
+every event producer's `Publish` call reaches both without either knowing
+about the other. See [Outbound Webhook](#outbound-webhook) above.

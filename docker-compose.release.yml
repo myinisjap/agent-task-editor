@@ -98,6 +98,11 @@ services:
       # - BACKUP_DIR=/data/backups
       # - BACKUP_INTERVAL=24h
       # - BACKUP_KEEP=7
+      # Optional: outbound webhook notification when a task needs a human
+      # (task.needs_human, a human-gate label, cost warnings/trips). Treat
+      # NOTIFY_WEBHOOK_URL as a secret. See docs/websocket.md#outbound-webhook.
+      # - NOTIFY_WEBHOOK_URL=https://example.com/webhook/...
+      # - NOTIFY_BASE_URL=https://ate.example.com
     volumes:
       - db_data:/data
       # Claude Max auth — run 'claude login' on your host machine first,

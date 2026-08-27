@@ -116,6 +116,28 @@ type Config struct {
 	// checked independently — either cap tripping halts dispatch globally.
 	// 0 (the default) means unlimited.
 	MaxMonthlyCostUSD float64 `yaml:"max_monthly_cost_usd"`
+
+	// NotifyWebhookURL, if set, enables the outbound webhook notifier (see
+	// internal/notify): a JSON POST fires whenever a task needs a human
+	// (task.needs_human, arrival at a human-gate label, task.cost_warning,
+	// system.cost_budget_tripped). Empty (the default) disables it entirely
+	// — this must never default to a nonzero value, since it is operator
+	// infrastructure (a Slack/Discord/ntfy endpoint, etc.) that doesn't
+	// exist until configured. Treat this value as a secret: many webhook
+	// URLs (e.g. Slack incoming webhooks) embed an auth token in the path,
+	// and it is never logged in full (see internal/notify/deliver.go).
+	NotifyWebhookURL string `yaml:"notify_webhook_url"`
+	// NotifyBaseURL, if set, is used to build a deep link to the task detail
+	// page (<base>/tasks/<id>) included in each notification payload. Empty
+	// (the default) omits the link entirely rather than guessing a
+	// server-local address that wouldn't work for whoever receives the
+	// notification.
+	NotifyBaseURL string `yaml:"notify_base_url"`
+	// NotifyDebounce is the minimum time between two outbound notifications
+	// sharing the same dedupe key (reason+task_id), suppressing a retry
+	// storm from spamming the webhook. Only meaningful when
+	// NotifyWebhookURL is set.
+	NotifyDebounce time.Duration `yaml:"notify_debounce"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -137,6 +159,7 @@ func Defaults() Config {
 		ChatMaxSessions:       0,
 		ChatIdleTimeout:       0,
 		GitTimeout:            120 * time.Second,
+		NotifyDebounce:        5 * time.Minute,
 	}
 }
 
@@ -320,6 +343,19 @@ func Load(path string) (Config, error) {
 			cfg.MaxMonthlyCostUSD = f
 		} else {
 			slog.Warn("invalid MAX_MONTHLY_COST_USD; using default", "value", v, "default", cfg.MaxMonthlyCostUSD)
+		}
+	}
+	if v := os.Getenv("NOTIFY_WEBHOOK_URL"); v != "" {
+		cfg.NotifyWebhookURL = v
+	}
+	if v := os.Getenv("NOTIFY_BASE_URL"); v != "" {
+		cfg.NotifyBaseURL = v
+	}
+	if v := os.Getenv("NOTIFY_DEBOUNCE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.NotifyDebounce = d
+		} else {
+			slog.Warn("invalid NOTIFY_DEBOUNCE; using default", "value", v, "default", cfg.NotifyDebounce)
 		}
 	}
 

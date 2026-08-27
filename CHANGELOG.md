@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Outbound webhook notifications when a task needs a human** — set `NOTIFY_WEBHOOK_URL` to POST a JSON payload whenever a task hits `task.needs_human`, arrives on a human-gate label (e.g. `review-plan`), crosses the cost-warning threshold, or the global cost budget trips. Disabled by default; debounced (`NOTIFY_DEBOUNCE`, default 5m) so a retry storm doesn't spam the endpoint, and includes a deep link to the task when `NOTIFY_BASE_URL` is set. See `docs/websocket.md#outbound-webhook` and `docs/getting-started.md#notifications`.
 - **`SSL_CA_CERT_PATH`** — trust a specific corporate CA `.pem` file instead of disabling TLS verification entirely. Safer alternative to `INSECURE_SKIP_SSL_VERIFY`; bind-mounted into the backend container and wired into git/npm/Node via `GIT_SSL_CAINFO`/`NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`, so it applies to task runs and chat sessions alike. Supported by `dev.sh`, `run.sh`, and both compose files.
 
 ### Fixed

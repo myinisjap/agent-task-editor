@@ -340,3 +340,52 @@ func (e *Engine) AgentPickupLabels(ctx context.Context, workflowID string) ([]st
 	}
 	return out, nil
 }
+
+// IsHumanGateLabel reports whether labelName is a "human gate" within the
+// workflow described by labels/transitions: a label a task can be sitting on
+// where nothing but a human can move it forward. This is the Go twin of
+// frontend/src/lib/humanGate.ts's isHumanGateLabel — keep the two in sync;
+// see that file's doc comment for the rationale behind each rule.
+//
+// Rules:
+//   - A terminal label (IsTerminal) is never a gate — the task is done, not
+//     stuck waiting on a person.
+//   - A label with AgentIgnore set is always a gate: the dispatcher will
+//     never pick up a task sitting on it, regardless of what transitions
+//     exist.
+//   - Otherwise, the label is a gate only if it has at least one outgoing
+//     transition and every outgoing transition has TriggerType "human" (no
+//     agent/both edge the dispatcher could take on its own). A label with
+//     zero outgoing transitions is a dead end, not a human gate.
+//
+// Returns false if labelName does not exist in labels.
+func IsHumanGateLabel(labels []gen.WorkflowLabel, transitions []gen.WorkflowTransition, labelName string) bool {
+	var label *gen.WorkflowLabel
+	for i := range labels {
+		if labels[i].Name == labelName {
+			label = &labels[i]
+			break
+		}
+	}
+	if label == nil {
+		return false
+	}
+	if label.IsTerminal != 0 {
+		return false
+	}
+	if label.AgentIgnore != 0 {
+		return true
+	}
+
+	found := false
+	for _, t := range transitions {
+		if t.FromLabel != labelName {
+			continue
+		}
+		found = true
+		if t.TriggerType != "human" {
+			return false
+		}
+	}
+	return found
+}
