@@ -3,8 +3,12 @@ package providers
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 )
 
 // --- sanitizeArgs (cli.go) ---
@@ -334,5 +338,133 @@ func TestOpenRawDump_WritesToConfiguredDir(t *testing.T) {
 	want := "{\"type\":\"result\"}\n{\"type\":\"done\"}\n"
 	if string(data) != want {
 		t.Errorf("raw dump content = %q, want %q", string(data), want)
+	}
+}
+
+// --- applyRuntime (cli.go) ---
+
+// TestApplyRuntime_NilSpecIsPassthrough is the §4.1 byte-identical guarantee:
+// a repo with no runtime configured (nil RuntimeSpec) must get back exactly
+// the binary/args/env it was given, untouched.
+func TestApplyRuntime_NilSpecIsPassthrough(t *testing.T) {
+	args := []string{"-p", "do the thing"}
+	env := []string{"PATH=/usr/bin", "HOME=/home/node"}
+
+	gotBinary, gotArgs, gotEnv := applyRuntime(nil, "claude", args, env)
+
+	if gotBinary != "claude" {
+		t.Errorf("binary = %q, want %q", gotBinary, "claude")
+	}
+	if !reflect.DeepEqual(gotArgs, args) {
+		t.Errorf("args = %v, want %v", gotArgs, args)
+	}
+	if !reflect.DeepEqual(gotEnv, env) {
+		t.Errorf("env = %v, want %v", gotEnv, env)
+	}
+}
+
+// TestApplyRuntime_EmptyPinsIsPassthrough covers a non-nil spec with zero
+// pins (e.g. ParsePins("") never actually produces this, but a defensive
+// caller might construct one) — same byte-identical guarantee as nil.
+func TestApplyRuntime_EmptyPinsIsPassthrough(t *testing.T) {
+	args := []string{"exec", "--json"}
+	env := []string{"PATH=/usr/bin"}
+	spec := &agent.RuntimeSpec{Pins: nil, WorktreeDir: "/repo/.ate-worktrees/t1"}
+
+	gotBinary, gotArgs, gotEnv := applyRuntime(spec, "codex", args, env)
+
+	if gotBinary != "codex" || !reflect.DeepEqual(gotArgs, args) || !reflect.DeepEqual(gotEnv, env) {
+		t.Errorf("got (%q, %v, %v), want passthrough of (%q, %v, %v)", gotBinary, gotArgs, gotEnv, "codex", args, env)
+	}
+}
+
+// TestApplyRuntime_WrapsWithMiseXInDeterministicOrder verifies non-python
+// pins are wrapped as `mise x <id>@<version>... -- <binary> <args...>` in
+// the same order as RuntimeSpec.Pins.
+func TestApplyRuntime_WrapsWithMiseXInDeterministicOrder(t *testing.T) {
+	spec := &agent.RuntimeSpec{
+		Pins: []runtime.Pin{
+			{ID: "go", Version: "1.21"},
+			{ID: "node", Version: "22"},
+		},
+	}
+	env := []string{"PATH=/usr/bin"}
+
+	gotBinary, gotArgs, gotEnv := applyRuntime(spec, "claude", []string{"-p", "hi"}, env)
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "go@1.21", "node@22", "--", "claude", "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+	if !reflect.DeepEqual(gotEnv, env) {
+		t.Errorf("env changed with no python pin: got %v, want unchanged %v", gotEnv, env)
+	}
+}
+
+// TestApplyRuntime_PythonExcludedFromMiseXArgs verifies a python pin never
+// appears in the `mise x` argv (it would shadow the venv's PATH prepend) but
+// still triggers the venv PATH prepend + UV_CACHE_DIR in env.
+func TestApplyRuntime_PythonExcludedFromMiseXArgs(t *testing.T) {
+	spec := &agent.RuntimeSpec{
+		Pins: []runtime.Pin{
+			{ID: "go", Version: "1.21"},
+			{ID: "python", Version: "3.12"},
+		},
+		WorktreeDir: "/repo/.ate-worktrees/t1",
+	}
+	env := []string{"PATH=/usr/bin", "HOME=/home/node"}
+
+	gotBinary, gotArgs, gotEnv := applyRuntime(spec, "claude", []string{"-p", "hi"}, env)
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	for _, a := range gotArgs {
+		if strings.Contains(a, "python") {
+			t.Errorf("python must not appear in mise x argv, got args %v", gotArgs)
+		}
+	}
+	wantArgs := []string{"x", "go@1.21", "--", "claude", "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+
+	wantPathPrefix := "PATH=" + filepath.Join("/repo/.ate-worktrees/t1", ".venv", "bin") + string(os.PathListSeparator) + "/usr/bin"
+	if gotEnv[0] != wantPathPrefix {
+		t.Errorf("PATH entry = %q, want %q", gotEnv[0], wantPathPrefix)
+	}
+	sawUVCacheDir := false
+	for _, kv := range gotEnv {
+		if strings.HasPrefix(kv, "UV_CACHE_DIR=") {
+			sawUVCacheDir = true
+		}
+	}
+	if !sawUVCacheDir {
+		t.Errorf("expected UV_CACHE_DIR in env when python is pinned, got %v", gotEnv)
+	}
+}
+
+// TestApplyRuntime_PythonOnlyStillWrapsWithMiseX verifies a python-only pin
+// list still routes the spawn through `mise x` (with no non-python pins in
+// its argv) rather than falling back to a plain spawn — mise x with no
+// installs is a documented no-op passthrough, and this keeps the venv PATH
+// prepend wired through the same code path as the mixed-pin case.
+func TestApplyRuntime_PythonOnlyStillWrapsWithMiseX(t *testing.T) {
+	spec := &agent.RuntimeSpec{
+		Pins:        []runtime.Pin{{ID: "python", Version: "3.12"}},
+		WorktreeDir: "/repo/.ate-worktrees/t1",
+	}
+
+	gotBinary, gotArgs, _ := applyRuntime(spec, "claude", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "--", "claude", "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
 	}
 }

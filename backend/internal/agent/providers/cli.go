@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 )
 
 // sanitizeArgs strips NUL bytes from each CLI argument. A NUL byte anywhere
@@ -259,4 +261,85 @@ func (d *rawDump) Close() {
 		return
 	}
 	_ = d.f.Close()
+}
+
+// applyRuntime wraps a provider's spawn command with `mise x` when the task's
+// repo has toolchain pins configured (agent.RuntimeSpec, set by the
+// dispatcher's runtime-prep step). A nil or pin-less spec returns binary,
+// args, and env completely unchanged — this is the §4.1 byte-identical
+// guarantee: a repo with no runtime_languages configured must spawn exactly
+// as it did before this feature existed.
+//
+// When pins are present, the returned command is
+// `mise x <id>@<version>... -- <binary> <args...>`, one pin per language in
+// the order given (RuntimeSpec.Pins is built from ParsePins' JSON-array
+// order, so this is deterministic for a given repo config). python is
+// deliberately never passed to `mise x`: mise x's PATH prepend for python
+// would shadow the per-worktree venv runtime prep creates instead (see
+// dispatcher's runtime-prep step) — so a python pin is skipped in the mise
+// x args, and env instead gets `<worktree>/.venv/bin` prepended to PATH
+// (so `python`/`pip` resolve to the venv's wrapped interpreter) plus
+// UV_CACHE_DIR pointing at the shared uv cache.
+func applyRuntime(spec *agent.RuntimeSpec, binary string, args []string, env []string) (string, []string, []string) {
+	if spec == nil || len(spec.Pins) == 0 {
+		return binary, args, env
+	}
+
+	miseArgs := make([]string, 0, len(spec.Pins)+2+len(args))
+	miseArgs = append(miseArgs, "x")
+	hasPython := false
+	for _, p := range spec.Pins {
+		if p.ID == "python" {
+			hasPython = true
+			continue
+		}
+		miseArgs = append(miseArgs, fmt.Sprintf("%s@%s", p.ID, p.Version))
+	}
+	miseArgs = append(miseArgs, "--", binary)
+	miseArgs = append(miseArgs, args...)
+
+	newEnv := env
+	if hasPython && spec.WorktreeDir != "" {
+		venvBin := filepath.Join(spec.WorktreeDir, ".venv", "bin")
+		newEnv = prependPath(env, venvBin)
+		newEnv = append(newEnv, "UV_CACHE_DIR="+uvCacheDir())
+	}
+
+	return "mise", miseArgs, newEnv
+}
+
+// prependPath returns a copy of env with dir prepended to the PATH entry
+// (added fresh if env has none). Providers build env via allowlistEnv, which
+// always includes PATH (see commonBaseEnvKeys), so the "no PATH key found"
+// branch is a defensive fallback, not the expected case.
+func prependPath(env []string, dir string) []string {
+	out := make([]string, len(env))
+	found := false
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			out[i] = "PATH=" + dir + string(os.PathListSeparator) + strings.TrimPrefix(kv, "PATH=")
+			found = true
+			continue
+		}
+		out[i] = kv
+	}
+	if !found {
+		out = append(out, "PATH="+dir)
+	}
+	return out
+}
+
+// uvCacheDir returns the shared uv package cache directory (a named compose
+// volume in production; see docker-compose.yml). Mirrors MISE_DATA_DIR's
+// role for mise — both let concurrent/sequential worktrees on the same host
+// reuse already-downloaded packages instead of a cold re-download per task.
+func uvCacheDir() string {
+	if v := os.Getenv("UV_CACHE_DIR"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".cache", "uv")
 }

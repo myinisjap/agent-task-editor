@@ -42,9 +42,11 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
+	env := mergeEnv(allowlistEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
+	runBinary, runArgs, env := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
-	cmd.Env = mergeEnv(allowlistEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
+	cmd.Env = env
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

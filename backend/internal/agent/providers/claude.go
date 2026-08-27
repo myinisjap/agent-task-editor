@@ -231,8 +231,6 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
-	cmd.Dir = input.RepoPath
 	env := mergeEnv(allowlistEnv(claudeEnvAllowlist), input.AgentConfig.Env)
 	if tok := ClaudeOAuthAccessToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
@@ -244,6 +242,10 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	// regardless. Appended last so it always wins over any operator-set
 	// DISABLE_AUTOUPDATER in the backend's own env.
 	env = append(env, "DISABLE_AUTOUPDATER=1")
+
+	runBinary, runArgs, env := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
+	cmd.Dir = input.RepoPath
 	cmd.Env = env
 
 	stdout, err := cmd.StdoutPipe()
