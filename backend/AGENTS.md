@@ -103,10 +103,11 @@ go tool cover -func=coverage.filtered.out | tail -1
 
 ## Container Toolchain
 
-`Dockerfile`'s final stage (`FROM node:26-alpine`) is what executes agent `Bash`/`run_bash` commands against bind-mounted repos in production — not just this project's own build. It currently includes:
+`Dockerfile`'s final stage (`FROM node:26-bookworm-slim`) is what executes agent `Bash`/`run_bash` commands against bind-mounted repos in production — not just this project's own build. It currently includes:
 
-- **Go 1.26**, copied from this same Dockerfile's `golang:1.26-alpine` builder stage (`COPY --from=builder /usr/local/go /usr/local/go`) so the Go version agents see always matches what builds `bin/server`/`bin/mcp-server`. `GOPATH`/`GOCACHE`/`GOMODCACHE` point at writable dirs under `/home/node`.
+- **Go 1.26**, copied from this same Dockerfile's `golang:1.26-bookworm` builder stage (`COPY --from=builder /usr/local/go /usr/local/go`) so the Go version agents see always matches what builds `bin/server`/`bin/mcp-server`. `GOPATH`/`GOCACHE`/`GOMODCACHE` point at writable dirs under `/home/node`.
 - **Node 26 / npm**, inherited from the base image — covers Vite/React/TS repos (`npm ci`, `npm run build`, `npm test`).
-- **`build-base`** (gcc/g++/make/musl-dev) for cgo (this backend's `mattn/go-sqlite3` dependency) and native npm addon compilation.
+- **`build-essential`** (gcc/g++/make/libc-dev) for cgo (this backend's `mattn/go-sqlite3` dependency) and native npm addon compilation.
+- **`mise` / `uv`**, pinned prebuilt binaries backing the per-repo runtime pin feature (`internal/agent/runtime/`) — see `../docs/runtime.md`.
 
-To add another language for agents to use, edit the *final* stage of `Dockerfile` (not the builder stage — that only compiles this repo's own Go binaries) and rebuild with `docker compose build backend`. See `../docs/getting-started.md#supported-languages--extending-the-toolchain` for the full guide and Alpine/glibc caveats.
+To add another language for *every* agent to use regardless of repo, edit the *final* stage of `Dockerfile` (not the builder stage — that only compiles this repo's own Go binaries) and rebuild with `docker compose build backend`. See `../docs/getting-started.md#supported-languages--extending-the-toolchain` for the full guide. For a single repo needing a specific version, prefer a runtime pin (`../docs/runtime.md`) over editing the image.

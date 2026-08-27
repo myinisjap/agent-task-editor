@@ -280,27 +280,33 @@ Agent `Bash`/`run_bash` tool calls execute *inside the backend container*, again
 
 The backend image (`backend/Dockerfile`) ships with:
 
-- **Go 1.26** — the same toolchain version used to build this project's own `server`/`mcp-server` binaries, copied from the Dockerfile's `golang:1.26-alpine` builder stage into the final image (rather than installed via `apk`) so the agent-visible `go version` always matches exactly. `GOPATH`/`GOCACHE`/`GOMODCACHE` are set to writable locations under `/home/node` for the non-root `node` user.
-- **Node.js 26 / npm** — inherited from the `node:26-alpine` base image. Covers Vite, React, TypeScript projects and their usual workflows out of the box: `npm ci`, `npm run build`, `npm test`, `npx vitest`, etc.
-- **`build-base`** (gcc, g++, make, musl-dev) — needed for `cgo` builds (this repo's own backend depends on `mattn/go-sqlite3`, which is cgo) and for any npm packages with native addons that need `node-gyp` compilation.
-- **`git`, `bash`, `github-cli` (`gh`)** — for cloning, diffing, committing, and interacting with GitHub from inside agent runs.
+- **Go 1.26** — the same toolchain version used to build this project's own `server`/`mcp-server` binaries, copied from the Dockerfile's `golang:1.26-bookworm` builder stage into the final image (rather than installed via `apt`) so the agent-visible `go version` always matches exactly. `GOPATH`/`GOCACHE`/`GOMODCACHE` are set to writable locations under `/home/node` for the non-root `node` user.
+- **Node.js 26 / npm** — inherited from the `node:26-bookworm-slim` base image. Covers Vite, React, TypeScript projects and their usual workflows out of the box: `npm ci`, `npm run build`, `npm test`, `npx vitest`, etc.
+- **`build-essential`** (gcc, g++, make, libc-dev) — needed for `cgo` builds (this repo's own backend depends on `mattn/go-sqlite3`, which is cgo) and for any npm packages with native addons that need `node-gyp` compilation.
+- **`git`, `bash`, `gh`** — for cloning, diffing, committing, and interacting with GitHub from inside agent runs.
+- **`mise` and `uv`** — power the per-repo language version pinning feature (see [runtime.md](runtime.md)): a repo can pin `go`/`node`/`python`/`rust`/`ruby`/`java` versions independent of what's baked into the image, installed on demand before each agent run.
 
-### Adding more languages/compilers
+### Per-repo toolchain versions vs. editing the image
 
-To give agents the ability to build/test repos in another language, edit the **final stage** of `backend/Dockerfile` (the `FROM node:26-alpine` stage — don't touch the builder stage, which only compiles this project's own Go binaries) and add one of:
+Before editing the Dockerfile, check whether [runtime.md](runtime.md) already covers your need: if a repo just needs a *different version* of `go`, `node`, `python`, `rust`, `ruby`, or `java` than the image's baseline, pin it on that repo's Repos page config instead of rebuilding the image — `mise`/`uv` install it on demand per task, with no image rebuild and no effect on other repos.
 
-- **Alpine packages**, e.g.:
+Editing the Dockerfile is for adding a *new* language/tool to the image baseline (one not in the mise-pinnable list above, or a tool every repo should have without per-repo configuration).
+
+### Adding more languages/compilers to the image
+
+To give agents the ability to build/test repos in another language, edit the **final stage** of `backend/Dockerfile` (the `FROM node:26-bookworm-slim` stage — don't touch the builder stage, which only compiles this project's own Go binaries) and add one of:
+
+- **Debian packages**, e.g.:
   ```dockerfile
-  RUN apk add --no-cache python3 py3-pip   # Python
-  RUN apk add --no-cache openjdk17         # Java
-  RUN apk add --no-cache ruby ruby-dev     # Ruby
-  RUN apk add --no-cache rustup            # Rust (then `rustup-init -y` as the node user)
+  RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip && rm -rf /var/lib/apt/lists/*   # Python
+  RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jdk && rm -rf /var/lib/apt/lists/*        # Java
+  RUN apt-get update && apt-get install -y --no-install-recommends ruby ruby-dev && rm -rf /var/lib/apt/lists/*         # Ruby
   ```
 - **Multi-stage `COPY --from=`**, the same technique used for Go above — pull a toolchain from an upstream image without bloating the final image with its own build dependencies:
   ```dockerfile
-  FROM rust:1-alpine AS rust-builder
+  FROM rust:1-bookworm AS rust-builder
   ...
-  FROM node:26-alpine
+  FROM node:26-bookworm-slim
   COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
   COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
   ENV PATH="/usr/local/cargo/bin:${PATH}"
@@ -314,9 +320,9 @@ docker compose build backend
 ./dev.sh restart
 ```
 
-**Caveat — Alpine vs glibc:** Alpine uses `musl libc`, not `glibc`. Some toolchains/prebuilt binaries (certain Rust crates, precompiled CLI tools, some Python wheels) expect `glibc` and may fail to run or compile. Workarounds include installing `gcompat` (`apk add --no-cache gcompat`) for partial compatibility, or building from source instead of using a prebuilt glibc binary. If a toolchain is fundamentally incompatible with Alpine, consider whether it's worth switching `backend/Dockerfile`'s final stage to a Debian/Ubuntu-based Node image instead — this is a larger change with broader image-size and security tradeoffs, not something to do for a one-off need.
+**A note on the switch from Alpine:** the image used to be Alpine-based (`node:26-alpine`, `musl libc`), which meant some prebuilt binaries (certain Rust crates, precompiled CLI tools, some Python wheels expecting `glibc`) needed workarounds or wouldn't run at all. The image moved to `node:26-bookworm-slim` (Debian, `glibc`) specifically so `mise`'s prebuilt python/ruby/java toolchains work — see [runtime.md](runtime.md). That also removes the Alpine/glibc caveat for anything you add to the image yourself: Debian packages and most prebuilt Linux binaries work without the `gcompat` workaround Alpine used to need.
 
-Remember to make sure any new tool's cache/config directories are writable by the `node` user. The container runs as `node`, which `backend/entrypoint.sh` remaps to your host `PUID`/`PGID` at startup and `chown`s the state dirs (`/data`, `/app`, the Go caches under `/home/node`) accordingly. If your tool writes elsewhere under `/home/node`, add it to that `chown` list — otherwise agents will hit permission errors the first time they invoke the tool.
+Remember to make sure any new tool's cache/config directories are writable by the `node` user. The container runs as `node`, which `backend/entrypoint.sh` remaps to your host `PUID`/`PGID` at startup and `chown`s the state dirs (`/data`, `/app`, the Go caches, `mise`/`uv`'s caches under `/home/node`) accordingly. If your tool writes elsewhere under `/home/node`, add it to that `chown` list — otherwise agents will hit permission errors the first time they invoke the tool.
 
 ## Local Development
 
