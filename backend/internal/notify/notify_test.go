@@ -98,10 +98,12 @@ func TestNotifier_NeedsHuman_DeliversOnePOSTWithExpectedBody(t *testing.T) {
 	task := createTestTask(t, q, "work", wfID)
 
 	var received atomic.Int32
-	var lastBody map[string]any
+	var lastBody atomic.Pointer[map[string]any]
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := make(map[string]any)
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		lastBody.Store(&body)
 		received.Add(1)
-		_ = json.NewDecoder(r.Body).Decode(&lastBody)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -117,23 +119,24 @@ func TestNotifier_NeedsHuman_DeliversOnePOSTWithExpectedBody(t *testing.T) {
 
 	waitFor(t, func() bool { return received.Load() == 1 })
 
-	if lastBody["event"] != "task.needs_human" {
-		t.Errorf("event = %v, want task.needs_human", lastBody["event"])
+	body := lastBody.Load()
+	if (*body)["event"] != "task.needs_human" {
+		t.Errorf("event = %v, want task.needs_human", (*body)["event"])
 	}
-	if lastBody["reason"] != "needs_human" {
-		t.Errorf("reason = %v, want needs_human", lastBody["reason"])
+	if (*body)["reason"] != "needs_human" {
+		t.Errorf("reason = %v, want needs_human", (*body)["reason"])
 	}
-	if lastBody["task_id"] != task.ID {
-		t.Errorf("task_id = %v, want %v", lastBody["task_id"], task.ID)
+	if (*body)["task_id"] != task.ID {
+		t.Errorf("task_id = %v, want %v", (*body)["task_id"], task.ID)
 	}
-	if lastBody["task_title"] != "Notify me" {
-		t.Errorf("task_title = %v, want %q", lastBody["task_title"], "Notify me")
+	if (*body)["task_title"] != "Notify me" {
+		t.Errorf("task_title = %v, want %q", (*body)["task_title"], "Notify me")
 	}
-	if lastBody["url"] != "http://example.com/tasks/"+task.ID {
-		t.Errorf("url = %v, want deep link", lastBody["url"])
+	if (*body)["url"] != "http://example.com/tasks/"+task.ID {
+		t.Errorf("url = %v, want deep link", (*body)["url"])
 	}
-	if lastBody["message"] != "please look at this" {
-		t.Errorf("message = %v", lastBody["message"])
+	if (*body)["message"] != "please look at this" {
+		t.Errorf("message = %v", (*body)["message"])
 	}
 }
 
