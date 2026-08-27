@@ -29,7 +29,6 @@ func TestBuildDockerRunArgs_NoMCPNoHome(t *testing.T) {
 		"--cap-drop", "ALL",
 		"--pids-limit", "512",
 		"-v", "/data/repos/repo1:/data/repos/repo1",
-		"-v", "/tmp:/tmp",
 		"ghcr.io/example/runtime:1", "sleep", "infinity",
 	}
 	if !reflect.DeepEqual(args, want) {

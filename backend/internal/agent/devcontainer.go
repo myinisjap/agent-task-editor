@@ -50,9 +50,29 @@ const devcontainerFilePath = ".devcontainer/devcontainer.json"
 // the actual language toolchains on top of it.
 const devcontainerBaseImage = "mcr.microsoft.com/devcontainers/base:ubuntu"
 
-// claudeCodeFeatureRef installs the `claude` CLI into every generated runtime
-// container. See GenerateDevcontainerJSON for why it is not optional.
-const claudeCodeFeatureRef = "ghcr.io/anthropics/devcontainer-features/claude-code:1"
+// agentCLIFeatures installs the provider CLIs into every generated runtime
+// container. See GenerateDevcontainerJSON for why they are not optional.
+//
+// Keyed by feature ref because that is how devcontainer.json keys features —
+// which is also why the npm-package entries use different version suffixes of
+// the same feature: identical refs would collide into one map key and only
+// the last would install. The suffixes are equivalent (1 and 1.0.4 resolve to
+// the same feature), and this is verified by a real build, not assumed.
+//
+// Versions match backend/Dockerfile's pins so a run behaves the same whether
+// it executes in-process or in a runtime container. opencode is absent for
+// the same reason it is absent from the Dockerfile: it is not installed for
+// in-process runs either, so a repo using it needs a committed
+// .devcontainer/devcontainer.json or an explicit runtime_image.
+var agentCLIFeatures = map[string]any{
+	"ghcr.io/anthropics/devcontainer-features/claude-code:1": map[string]any{},
+	"ghcr.io/devcontainers-extra/features/npm-package:1": map[string]any{
+		"package": "@openai/codex", "version": "0.146.1",
+	},
+	"ghcr.io/devcontainers-extra/features/npm-package:1.0.4": map[string]any{
+		"package": "@qwen-code/qwen-code", "version": "0.21.6",
+	},
+}
 
 // runtimeLanguageAllowlist maps a user-selectable language id to its
 // devcontainer feature reference. A table, not a plugin system — adding a
@@ -207,14 +227,18 @@ func GenerateDevcontainerJSON(langs []RuntimeLanguage, contract injectedContract
 	// no CLI, so without this a run gets the repo's toolchain and then
 	// immediately fails to start the agent.
 	//
-	// Pinned to the feature's major (`:1`) like the language features above.
-	// Note that pins the installer, not the CLI it fetches — the version
-	// inside a runtime container can drift from CLAUDE_CLI_VERSION in
-	// backend/Dockerfile, which governs in-process runs. Acceptable while
-	// this is opt-in per repo; if the drift matters, publish a base image
-	// with the CLI baked in and generate against that instead.
-	features := map[string]any{
-		claudeCodeFeatureRef: map[string]any{},
+	// Agent configs are matched by label, not scoped per repo, so one repo's
+	// tasks can hit different providers at different workflow stages — and
+	// the container is cached per repo, not per provider. Installing only the
+	// provider for the current run would rebuild on every stage change, so
+	// install them all.
+	//
+	// The claude-code feature pins its installer, not the CLI it fetches, so
+	// that one version can drift from CLAUDE_CLI_VERSION. If that matters,
+	// publish a base image with the CLIs baked in and generate against it.
+	features := map[string]any{}
+	for ref, opts := range agentCLIFeatures {
+		features[ref] = opts
 	}
 	for _, l := range langs {
 		ref, ok := runtimeLanguageAllowlist[l.ID]

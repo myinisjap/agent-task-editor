@@ -157,6 +157,7 @@ func TestGenerateDevcontainerJSON_FullMountContract(t *testing.T) {
 			MCPServerPath:     "/opt/ate/mcp-server",
 			HostMCPBindSource: "/opt/ate/mcp-server",
 			HostHome:          home,
+			ExchangeDir:       "/exchange",
 		},
 	)
 	if err != nil {
@@ -190,8 +191,8 @@ func TestGenerateDevcontainerJSON_FullMountContract(t *testing.T) {
 	}
 
 	mounts := stringSliceField(cfg["mounts"])
-	if !containsSubstring(mounts, "source=/tmp,target=/tmp,type=bind") {
-		t.Errorf("expected /tmp mount in %v", mounts)
+	if !containsSubstring(mounts, "source=/exchange,target=/exchange,type=bind") {
+		t.Errorf("expected the same-path exchange-dir mount in %v", mounts)
 	}
 	if !containsSubstring(mounts, "source=/opt/ate/mcp-server,target=/opt/ate/mcp-server,type=bind,readonly") {
 		t.Errorf("expected read-only MCP sidecar mount in %v", mounts)
@@ -271,9 +272,17 @@ func TestGenerateDevcontainerJSON_EmptyLanguagesStillInjectsContract(t *testing.
 	if got := cfg["workspaceFolder"]; got != "/repo" {
 		t.Errorf("workspaceFolder = %v", got)
 	}
+	// features is never empty: the agent CLIs are installed regardless of
+	// language selection (see agentCLIFeatures). Assert only that no
+	// *language* feature leaked in.
 	features, ok := cfg["features"].(map[string]any)
-	if !ok || len(features) != 0 {
-		t.Errorf("expected empty features map, got %v", cfg["features"])
+	if !ok {
+		t.Fatalf("expected a features map, got %v", cfg["features"])
+	}
+	for _, ref := range runtimeLanguageAllowlist {
+		if _, present := features[ref]; present {
+			t.Errorf("language feature %q present for an empty language list: %v", ref, features)
+		}
 	}
 }
 
@@ -716,8 +725,10 @@ func TestGenerateDevcontainerJSON_AlwaysInstallsAgentCLI(t *testing.T) {
 		if !ok {
 			t.Fatalf("features missing entirely: %v", cfg)
 		}
-		if _, ok := features[claudeCodeFeatureRef]; !ok {
-			t.Errorf("agent CLI feature absent for langs=%v; the container cannot run the agent: %v", langs, features)
+		for ref := range agentCLIFeatures {
+			if _, ok := features[ref]; !ok {
+				t.Errorf("agent CLI feature %q absent for langs=%v; a repo whose workflow routes to that provider cannot run: %v", ref, langs, features)
+			}
 		}
 	}
 }
