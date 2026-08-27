@@ -40,6 +40,14 @@ chown -R node:node /data /app /home/node/go /home/node/.cache 2>/dev/null || tru
 # QWEN_HOME dir is auto-created root-owned by the settings.json bind mount; qwen
 # writes siblings (output-language.md, logs) there, so it must be node-writable.
 chown node:node /home/node/qwen-home 2>/dev/null || true
+# ATE_RUNTIME_DIR is bind-mounted from the host; Docker creates a missing
+# source root-owned, so the server (running as node) can't stage the
+# mcp-server sidecar into it or write the MCP handoff files there. Same
+# situation as qwen-home above.
+if [ -n "${ATE_RUNTIME_DIR:-}" ]; then
+  mkdir -p "$ATE_RUNTIME_DIR" 2>/dev/null || true
+  chown node:node "$ATE_RUNTIME_DIR" 2>/dev/null || true
+fi
 chown node:node /home/node /home/node/.gitconfig 2>/dev/null || true
 
 # If the Docker socket is bind-mounted (per-repo runtime containers, see
