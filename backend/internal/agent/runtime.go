@@ -87,6 +87,13 @@ type RuntimeManager struct {
 	HostHome          string
 	HostMCPServerPath string
 
+	// ExchangeDir is bind-mounted into every runtime container at the same
+	// path on both sides, carrying the MCP config + RESULT_FILE handoff
+	// (providers.ExchangeDir). Set from ATE_RUNTIME_DIR. Empty omits the
+	// mount, which costs the run every MCP tool — see the sidecar note on
+	// HostMCPServerPath.
+	ExchangeDir string
+
 	// PidsLimit caps the container's total process count
 	// (--pids-limit). 0 uses dockerDefaultPidsLimit.
 	PidsLimit int
@@ -298,7 +305,11 @@ type dockerRunSpec struct {
 	// they exist; it differs from HostHome when the backend is itself
 	// containerized. Empty means probe HostHome directly.
 	LocalHome string
-	PidsLimit int
+	// ExchangeDir carries the MCP config + RESULT_FILE handoff, bound at the
+	// same path on both sides (providers.ExchangeDir). Empty omits it, which
+	// costs the run every MCP tool.
+	ExchangeDir string
+	PidsLimit   int
 }
 
 // buildDockerRunArgs constructs the `docker run` argv that starts a repo's
@@ -344,7 +355,10 @@ func buildDockerRunArgs(spec dockerRunSpec) []string {
 		"--cap-drop", "ALL",
 		"--pids-limit", fmt.Sprintf("%d", pidsLimit),
 		"-v", spec.RepoPath + ":" + spec.RepoPath,
-		"-v", "/tmp:/tmp",
+	}
+	if spec.ExchangeDir != "" {
+		// Same-path: see dockerRunSpec.ExchangeDir.
+		args = append(args, "-v", spec.ExchangeDir+":"+spec.ExchangeDir)
 	}
 	if spec.HostMCPBindSource != "" && spec.MCPServerPath != "" {
 		// source is the host path, target is what the agent CLI invokes.

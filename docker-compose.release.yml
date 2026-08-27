@@ -60,12 +60,12 @@ services:
       # source path does not exist". HOME here is /home/node, but the
       # credentials actually live at ${HOME} on the host (see the .claude
       # mounts below), so pass that through explicitly.
-      #
-      # HOST_MCP_SERVER_PATH is deliberately unset: mcp-server is baked into
-      # this image at /app/mcp-server and has no host path, so its mount is
-      # omitted and MCP tools are unavailable inside runtime containers. Set
-      # it only if you bind-mount the sidecar from the host.
       - HOST_HOME=${HOME}
+      # Same path on host and in-container (see the volume below), so the
+      # sidecar copy entrypoint.sh makes here is reachable by the daemon when
+      # a runtime container bind-mounts it.
+      - ATE_RUNTIME_DIR=${ATE_RUNTIME_DIR:-/tmp/ate-runtime}
+      - HOST_MCP_SERVER_PATH=${ATE_RUNTIME_DIR:-/tmp/ate-runtime}/mcp-server
       # Path to the board MCP binary; enables the create-task tools in chat sessions
       - MCP_BOARD_PATH=/app/mcp-board
       # Optional: set API_TOKEN to require a Bearer token on all API requests
@@ -137,6 +137,15 @@ services:
       - ${SSL_CA_CERT_PATH:-/dev/null}:/etc/ssl/custom-ca.pem:ro
       # Repos directory — mounted at the same path so host paths work as-is.
       - ${REPO_BASE_DIR:-/tmp/repos}:${REPO_BASE_DIR:-/tmp/repos}
+      # Runtime-container exchange dir, mounted at the same path on both
+      # sides for the same reason REPO_BASE_DIR is. Per-repo runtime
+      # containers are siblings started through docker.sock, so anything they
+      # bind-mount must exist on the HOST at the path we name. This is where
+      # entrypoint.sh copies the mcp-server sidecar (baked into this image,
+      # otherwise invisible to the daemon) and where the MCP config +
+      # RESULT_FILE handoff lives — the container's own /tmp is not shared
+      # with the host, so it cannot serve either purpose.
+      - ${ATE_RUNTIME_DIR:-/tmp/ate-runtime}:${ATE_RUNTIME_DIR:-/tmp/ate-runtime}
 
   frontend:
     image: ghcr.io/myinisjap/agent-task-editor-frontend:${ATE_VERSION:-latest}

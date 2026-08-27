@@ -157,6 +157,10 @@ type injectedContract struct {
 	// whether they exist. Equal to HostHome when the backend isn't
 	// containerized; empty means "probe HostHome directly".
 	LocalHome string
+	// ExchangeDir carries the MCP config + RESULT_FILE handoff, bound at the
+	// same path on both sides (providers.ExchangeDir). Empty omits it, which
+	// costs the run every MCP tool.
+	ExchangeDir string
 }
 
 // GenerateDevcontainerJSON builds a complete devcontainer.json from langs
@@ -204,8 +208,15 @@ func GenerateDevcontainerJSON(langs []RuntimeLanguage, contract injectedContract
 		features[ref] = map[string]any{"version": l.Version}
 	}
 
-	mounts := []string{
-		"source=/tmp,target=/tmp,type=bind",
+	mounts := []string{}
+	if contract.ExchangeDir != "" {
+		// Same path on both sides: the sidecar is launched inside the
+		// container with a config path this process wrote, and this process
+		// reads back the RESULT_FILE the sidecar wrote. Both only work if the
+		// directory resolves identically on the host and in the container.
+		mounts = append(mounts, fmt.Sprintf(
+			"source=%s,target=%s,type=bind", contract.ExchangeDir, contract.ExchangeDir,
+		))
 	}
 	if contract.MCPServerPath != "" && contract.HostMCPBindSource != "" {
 		mounts = append(mounts, fmt.Sprintf(
@@ -450,6 +461,7 @@ func (m *RuntimeManager) buildGeneratedDevcontainerJSON(repoPath string, langs [
 		HostMCPBindSource: m.bindMCPServerPath(),
 		HostHome:          m.bindHome(homeDir),
 		LocalHome:         homeDir,
+		ExchangeDir:       m.ExchangeDir,
 	})
 }
 

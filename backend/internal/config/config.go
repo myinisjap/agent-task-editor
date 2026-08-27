@@ -38,8 +38,14 @@ type Config struct {
 	// path does not exist" (see agent.RuntimeManager.HostHome). Empty when
 	// the backend runs directly on the host, where its paths already are
 	// host paths.
-	HostHome           string        `yaml:"host_home"`
-	HostMCPBinary      string        `yaml:"host_mcp_server_path"`
+	HostHome      string `yaml:"host_home"`
+	HostMCPBinary string `yaml:"host_mcp_server_path"`
+	// RuntimeDir is a directory mounted at the same path on the host and in
+	// this container (ATE_RUNTIME_DIR). It carries the MCP config +
+	// RESULT_FILE handoff into per-repo runtime containers, and holds the
+	// host-visible copy of the mcp-server sidecar. Empty disables both,
+	// leaving runtime containers without MCP tools.
+	RuntimeDir         string        `yaml:"runtime_dir"`
 	MCPBoardBinary     string        `yaml:"mcp_board_path"`
 	LLMBaseURL         string        `yaml:"llm_base_url"`
 	LLMAPIKey          string        `yaml:"llm_api_key"`
@@ -206,6 +212,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("HOST_MCP_SERVER_PATH"); v != "" {
 		cfg.HostMCPBinary = v
+	}
+	if v := os.Getenv("ATE_RUNTIME_DIR"); v != "" {
+		cfg.RuntimeDir = v
 	}
 	if v := os.Getenv("MCP_BOARD_PATH"); v != "" {
 		cfg.MCPBoardBinary = v

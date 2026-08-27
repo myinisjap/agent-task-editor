@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -289,10 +291,33 @@ func main() {
 	// with the worktree sweeper below: its per-repo mutex only serializes
 	// EnsureRunning against the sweeper's container reap pass if both read
 	// the same instance.
+	// The MCP handoff files and the sidecar binary must live somewhere the
+	// Docker daemon can bind-mount by the same absolute path on the host and
+	// inside this container: runtime containers are siblings, and this
+	// container's own /tmp is not shared with the host. When ATE_RUNTIME_DIR
+	// is set (docker-compose mounts it same-path), point the handoff there
+	// and stage a copy of the sidecar in it — the binary is baked into this
+	// image at /app/mcp-server, which the daemon cannot see.
+	//
+	// Without this, runs in a runtime container lose every MCP tool:
+	// signal_complete degrades to the OUTCOME: text fallback, but
+	// request_human, update_task_notes, get_task_transitions and
+	// resolve_comment have no fallback at all — an agent that should ask a
+	// question would silently guess instead.
+	if cfg.RuntimeDir != "" {
+		providers.ExchangeDir = cfg.RuntimeDir
+		if cfg.MCPBinary != "" && cfg.HostMCPBinary != "" {
+			if err := stageSidecar(cfg.MCPBinary, cfg.HostMCPBinary); err != nil {
+				slog.Error("failed to stage mcp-server for runtime containers; runs in a runtime container will have no MCP tools", "err", err)
+			}
+		}
+	}
+
 	runtimeManager := &agent.RuntimeManager{
 		MCPServerPath:     cfg.MCPBinary,
 		HostHome:          cfg.HostHome,
 		HostMCPServerPath: cfg.HostMCPBinary,
+		ExchangeDir:       cfg.RuntimeDir,
 	}
 	dispatcher.Runtime = runtimeManager
 
@@ -524,4 +549,36 @@ func runOutput(name string, args ...string) string {
 		return ""
 	}
 	return string(out)
+}
+
+// stageSidecar copies the mcp-server binary to dst, which lives in the
+// same-path runtime exchange directory so the Docker daemon can bind-mount it
+// into per-repo runtime containers. The binary is baked into this image and
+// otherwise has no host-visible path. Rewritten on every start so an upgraded
+// image never leaves a stale sidecar behind.
+func stageSidecar(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create runtime dir: %w", err)
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open sidecar: %w", err)
+	}
+	defer func() { _ = in.Close() }()
+
+	// Write to a temp name and rename, so a concurrent runtime container
+	// never bind-mounts a half-written binary.
+	tmp := dst + ".tmp"
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return fmt.Errorf("create staged sidecar: %w", err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("copy sidecar: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close staged sidecar: %w", err)
+	}
+	return os.Rename(tmp, dst)
 }

@@ -63,8 +63,24 @@ type SubtaskEnv struct {
 // (e.g. user-selected Claude MCP servers read from ~/.claude.json). A server named
 // "task-editor" in extraServers is ignored to avoid colliding with the sidecar entry.
 // The caller must call Cleanup when the run ends.
+// ExchangeDir is where the per-run MCP config and RESULT_FILE are written.
+//
+// Defaults to os.TempDir(), which is correct whenever the agent CLI runs in
+// this same process/container. It must be overridden (ATE_RUNTIME_DIR) when
+// runs execute in per-repo runtime containers: those are siblings started
+// through docker.sock, so the handoff files have to live somewhere the
+// Docker daemon can bind-mount by the *same absolute path* on the host and
+// inside the container. This container's own /tmp is not shared with the
+// host and so cannot serve that purpose — the sidecar would be handed a
+// config path that doesn't exist on its side, and the runner would read back
+// a RESULT_FILE nothing ever wrote.
+var ExchangeDir = os.TempDir()
+
 func (m *MCPManager) Prepare(runID string, transitions []agent.TransitionHint, reviewComments []agent.ReviewComment, extraServers map[string]json.RawMessage, subtasks *SubtaskEnv) (*MCPRunConfig, error) {
-	dir := os.TempDir()
+	dir := ExchangeDir
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create mcp exchange dir: %w", err)
+	}
 
 	resultFile := filepath.Join(dir, fmt.Sprintf("ate-result-%s.json", runID))
 	configFile := filepath.Join(dir, fmt.Sprintf("ate-mcp-%s.json", runID))
