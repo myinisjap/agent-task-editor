@@ -1524,3 +1524,240 @@ func TestReposCreate_AsyncCloneFailure_MarksRepoError(t *testing.T) {
 		t.Errorf("expected a non-empty clone_error message")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Runtime pins (mise toolchains)
+// ---------------------------------------------------------------------------
+
+// TestReposCreate_RuntimeLanguagesRoundTrip verifies valid pins are accepted,
+// stored, and returned in the wire {id, version} shape.
+func TestReposCreate_RuntimeLanguagesRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	router, q := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name": "myrepo",
+		"path": repoDir,
+		"runtime_languages": []map[string]string{
+			{"id": "go", "version": "1.21"},
+			{"id": "node", "version": "22"},
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&repo); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// runtime_languages is stored (and returned) as the serialized JSON
+	// string, matching the DB column type.
+	respPins, ok := repo["runtime_languages"].(string)
+	if !ok || !strings.Contains(respPins, `"go"`) || !strings.Contains(respPins, `"node"`) {
+		t.Fatalf("expected runtime_languages in response to contain both pins, got %v", repo["runtime_languages"])
+	}
+
+	// Verify what's actually stored in the DB is the same JSON.
+	id := repo["id"].(string)
+	stored, err := q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get repo: %v", err)
+	}
+	if !strings.Contains(stored.RuntimeLanguages, `"go"`) || !strings.Contains(stored.RuntimeLanguages, `"node"`) {
+		t.Errorf("stored runtime_languages = %q, want it to contain both pins", stored.RuntimeLanguages)
+	}
+}
+
+// TestReposCreate_EmptyRuntimeLanguagesDefaultsToUnconfigured verifies a repo
+// created without runtime_languages stores "" — the documented "spawn
+// exactly as before this feature existed" sentinel.
+func TestReposCreate_EmptyRuntimeLanguagesDefaultsToUnconfigured(t *testing.T) {
+	base := t.TempDir()
+	router, q := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	stored, err := q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get repo: %v", err)
+	}
+	if stored.RuntimeLanguages != "" {
+		t.Errorf("runtime_languages = %q, want empty string", stored.RuntimeLanguages)
+	}
+}
+
+// TestReposCreate_InvalidRuntimeLanguagesRejected verifies an unsupported
+// language id and an unsafe version string (argv-injection shaped) are both
+// rejected with 400, since these strings become argv elements passed to
+// mise/uv subprocesses.
+func TestReposCreate_InvalidRuntimeLanguagesRejected(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":              "myrepo",
+		"path":              repoDir,
+		"runtime_languages": []map[string]string{{"id": "php", "version": "8.3"}},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("unsupported language: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = postJSON(t, router, "/repos", map[string]any{
+		"name":              "myrepo2",
+		"path":              filepath.Join(base, "myrepo2"),
+		"runtime_languages": []map[string]string{{"id": "go", "version": "--danger"}},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("unsafe version: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestReposUpdate_RuntimeLanguagesRoundTrip verifies PATCH can set pins, an
+// unrelated PATCH preserves them, and an explicit empty array clears them
+// back to unconfigured.
+func TestReposUpdate_RuntimeLanguagesRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	// Set pins.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{
+		"runtime_languages": []map[string]string{{"id": "python", "version": "3.12"}},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch set: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	stored, err := q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stored.RuntimeLanguages, `"python"`) {
+		t.Fatalf("runtime_languages after set = %q", stored.RuntimeLanguages)
+	}
+
+	// Unrelated PATCH must not clear the pins.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch unrelated: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	stored, err = q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stored.RuntimeLanguages, `"python"`) {
+		t.Errorf("runtime_languages after unrelated patch = %q, want pins preserved", stored.RuntimeLanguages)
+	}
+
+	// Explicit empty array clears back to unconfigured.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"runtime_languages": []map[string]string{}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch clear: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	stored, err = q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RuntimeLanguages != "" {
+		t.Errorf("runtime_languages after clear = %q, want empty", stored.RuntimeLanguages)
+	}
+}
+
+// TestReposDetect_ScansManifestsAndSkipsSymlinks verifies POST
+// /repos/{id}/runtime/detect returns suggestions for real manifest files
+// found at the repo root, skips a symlinked manifest, and never writes
+// anything back to the repo's saved config.
+func TestReposDetect_ScansManifestsAndSkipsSymlinks(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Post("/repos/{id}/runtime/detect", h.Detect)
+
+	repoDir := filepath.Join(base, "myrepo")
+	initBareGitRepo(t, repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "go.mod"), []byte("module x\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Symlinked .nvmrc must be skipped.
+	realNvmrc := filepath.Join(repoDir, "real-nvmrc")
+	if err := os.WriteFile(realNvmrc, []byte("20\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realNvmrc, filepath.Join(repoDir, ".nvmrc")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+
+	req := httptest.NewRequest(http.MethodPost, "/repos/"+id+"/runtime/detect", nil)
+	rw := httptest.NewRecorder()
+	router.ServeHTTP(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("detect: expected 200, got %d: %s", rw.Code, rw.Body.String())
+	}
+
+	var body struct {
+		Suggestions []struct {
+			ID      string `json:"id"`
+			Version string `json:"version"`
+			Source  string `json:"source"`
+		} `json:"suggestions"`
+	}
+	if err := json.NewDecoder(rw.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Suggestions) != 1 {
+		t.Fatalf("expected 1 suggestion (go.mod only, symlinked .nvmrc skipped), got %+v", body.Suggestions)
+	}
+	if body.Suggestions[0].ID != "go" || body.Suggestions[0].Version != "1.22" || body.Suggestions[0].Source != "go.mod" {
+		t.Errorf("suggestion = %+v", body.Suggestions[0])
+	}
+
+	// Detect must never write to the repo's saved config.
+	stored, err := q.GetRepo(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RuntimeLanguages != "" {
+		t.Errorf("detect must not write config, but runtime_languages = %q", stored.RuntimeLanguages)
+	}
+}
