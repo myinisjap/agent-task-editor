@@ -50,6 +50,10 @@ const devcontainerFilePath = ".devcontainer/devcontainer.json"
 // the actual language toolchains on top of it.
 const devcontainerBaseImage = "mcr.microsoft.com/devcontainers/base:ubuntu"
 
+// claudeCodeFeatureRef installs the `claude` CLI into every generated runtime
+// container. See GenerateDevcontainerJSON for why it is not optional.
+const claudeCodeFeatureRef = "ghcr.io/anthropics/devcontainer-features/claude-code:1"
+
 // runtimeLanguageAllowlist maps a user-selectable language id to its
 // devcontainer feature reference. A table, not a plugin system — adding a
 // language is one entry. This IS the injection boundary: an id not present
@@ -197,7 +201,21 @@ type injectedContract struct {
 // Deterministic key order (via marshalSorted) so HashDevcontainerJSON is a
 // stable cache key across process restarts for the same language list.
 func GenerateDevcontainerJSON(langs []RuntimeLanguage, contract injectedContract) (string, error) {
-	features := map[string]any{}
+	// The agent CLI has to exist inside the container we're about to exec
+	// into: providers/cli.go's spawn() runs `docker exec <container> claude
+	// …`, resolved on that container's PATH. The devcontainer base image has
+	// no CLI, so without this a run gets the repo's toolchain and then
+	// immediately fails to start the agent.
+	//
+	// Pinned to the feature's major (`:1`) like the language features above.
+	// Note that pins the installer, not the CLI it fetches — the version
+	// inside a runtime container can drift from CLAUDE_CLI_VERSION in
+	// backend/Dockerfile, which governs in-process runs. Acceptable while
+	// this is opt-in per repo; if the drift matters, publish a base image
+	// with the CLI baked in and generate against that instead.
+	features := map[string]any{
+		claudeCodeFeatureRef: map[string]any{},
+	}
 	for _, l := range langs {
 		ref, ok := runtimeLanguageAllowlist[l.ID]
 		if !ok {

@@ -695,3 +695,29 @@ func TestGenerateDevcontainerJSON_OmitsSidecarWithoutHostPath(t *testing.T) {
 		t.Errorf("sidecar mounted without a host source: %v", cfg["mounts"])
 	}
 }
+
+// TestGenerateDevcontainerJSON_AlwaysInstallsAgentCLI covers the gap that
+// made the whole feature inert: spawn() runs `docker exec <container> claude`
+// against the container's PATH, and the devcontainer base image has no agent
+// CLI. Without this feature a run gets the repo's toolchain and then fails to
+// start the agent at all.
+func TestGenerateDevcontainerJSON_AlwaysInstallsAgentCLI(t *testing.T) {
+	// Even with no languages selected — the CLI is not optional.
+	for _, langs := range [][]RuntimeLanguage{nil, {{ID: "go", Version: "1.26"}}} {
+		out, err := GenerateDevcontainerJSON(langs, injectedContract{RepoPath: "/repo"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(out), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		features, ok := cfg["features"].(map[string]any)
+		if !ok {
+			t.Fatalf("features missing entirely: %v", cfg)
+		}
+		if _, ok := features[claudeCodeFeatureRef]; !ok {
+			t.Errorf("agent CLI feature absent for langs=%v; the container cannot run the agent: %v", langs, features)
+		}
+	}
+}
