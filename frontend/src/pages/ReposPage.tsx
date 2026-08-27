@@ -1,11 +1,48 @@
 import { useEffect, useState } from 'react'
-import { api, type Repo, type Workflow } from '../api/client'
+import { api, type Repo, type RuntimeLanguagePin, type Workflow } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { ReposHelp } from '../components/shared/pageHelp'
 
 type IssueSyncUpdatePolicy = 'gate' | 'always' | 'never'
 type IssueSyncGoneAction = 'flag' | 'archive' | 'move'
+
+// Mirrors the backend allowlist (backend/internal/agent/runtime/runtime.go).
+const RUNTIME_LANGUAGE_IDS = ['go', 'node', 'python', 'rust', 'ruby', 'java'] as const
+type RuntimeLanguageId = (typeof RUNTIME_LANGUAGE_IDS)[number]
+
+// Mirrors the backend version regex (^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$).
+const RUNTIME_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/
+
+// A form row for one runtime language pin. `source` is set only when the row
+// was pre-filled by "Detect from repo", to show the hint (e.g. "from go.mod").
+type RuntimeRow = { id: RuntimeLanguageId; version: string; source?: string }
+
+function parseRuntimeLanguages(json: string | undefined): RuntimeRow[] {
+  if (!json) return []
+  try {
+    const parsed = JSON.parse(json) as RuntimeLanguagePin[]
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((p): p is RuntimeLanguagePin => !!p && RUNTIME_LANGUAGE_IDS.includes(p.id as RuntimeLanguageId))
+      .map((p) => ({ id: p.id as RuntimeLanguageId, version: p.version }))
+  } catch {
+    return []
+  }
+}
+
+/** Returns null if every row is valid, else a human-readable error. */
+function validateRuntimeRows(rows: RuntimeRow[]): string | null {
+  const seen = new Set<string>()
+  for (const row of rows) {
+    if (seen.has(row.id)) return `Duplicate runtime language: ${row.id}`
+    seen.add(row.id)
+    if (!RUNTIME_VERSION_RE.test(row.version)) {
+      return `Invalid version for ${row.id}: "${row.version}"`
+    }
+  }
+  return null
+}
 
 type EditForm = {
   name: string
@@ -24,6 +61,7 @@ type EditForm = {
   // Empty string = no repo-specific cap (falls back to the global
   // MAX_WORKERS). Kept as a string so the input can be blank rather than 0.
   max_concurrent_runs: string
+  runtimeRows: RuntimeRow[]
 }
 
 const BLANK_FORM: EditForm = {
@@ -41,6 +79,7 @@ const BLANK_FORM: EditForm = {
   issue_sync_gone_label: '',
   issue_comment_sync_enabled: false,
   max_concurrent_runs: '',
+  runtimeRows: [],
 }
 
 export default function ReposPage() {
@@ -58,6 +97,8 @@ export default function ReposPage() {
   const [editForm, setEditForm] = useState<EditForm>({ ...BLANK_FORM })
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
+  const [editDetecting, setEditDetecting] = useState(false)
+  const [editDetectNote, setEditDetectNote] = useState('')
 
   useEffect(() => {
     Promise.all([api.repos.list(), api.workflows.list()])
@@ -101,6 +142,11 @@ export default function ReposPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
+    const runtimeError = validateRuntimeRows(form.runtimeRows)
+    if (runtimeError) {
+      setError(runtimeError)
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -119,6 +165,7 @@ export default function ReposPage() {
         issue_sync_gone_label: form.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: form.issue_comment_sync_enabled,
         max_concurrent_runs: form.max_concurrent_runs.trim() ? Number(form.max_concurrent_runs) : undefined,
+        runtime_languages: form.runtimeRows.map(({ id, version }) => ({ id, version })),
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -147,19 +194,27 @@ export default function ReposPage() {
       issue_sync_gone_label: repo.issue_sync_gone_label ?? '',
       issue_comment_sync_enabled: !!repo.issue_comment_sync_enabled,
       max_concurrent_runs: repo.max_concurrent_runs != null ? String(repo.max_concurrent_runs) : '',
+      runtimeRows: parseRuntimeLanguages(repo.runtime_languages),
     })
     setEditError('')
+    setEditDetectNote('')
   }
 
   function cancelEdit() {
     setEditingId(null)
     setEditForm({ ...BLANK_FORM })
     setEditError('')
+    setEditDetectNote('')
   }
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault()
     if (!editingId) return
+    const runtimeError = validateRuntimeRows(editForm.runtimeRows)
+    if (runtimeError) {
+      setEditError(runtimeError)
+      return
+    }
     setEditSaving(true)
     setEditError('')
     try {
@@ -178,6 +233,7 @@ export default function ReposPage() {
         issue_sync_gone_label: editForm.issue_sync_gone_label.trim(),
         issue_comment_sync_enabled: editForm.issue_comment_sync_enabled,
         max_concurrent_runs: editForm.max_concurrent_runs.trim() ? Number(editForm.max_concurrent_runs) : null,
+        runtime_languages: editForm.runtimeRows.map(({ id, version }) => ({ id, version })),
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -185,6 +241,58 @@ export default function ReposPage() {
       setEditError(String(e))
     } finally {
       setEditSaving(false)
+    }
+  }
+
+  // ----- Runtime row helpers (shared by both the create and edit forms) -----
+
+  function addRuntimeRow(setter: React.Dispatch<React.SetStateAction<EditForm>>) {
+    setter((f) => {
+      const used = new Set(f.runtimeRows.map((r) => r.id))
+      const next = RUNTIME_LANGUAGE_IDS.find((id) => !used.has(id))
+      if (!next) return f
+      return { ...f, runtimeRows: [...f.runtimeRows, { id: next, version: '' }] }
+    })
+  }
+
+  function removeRuntimeRow(setter: React.Dispatch<React.SetStateAction<EditForm>>, index: number) {
+    setter((f) => ({ ...f, runtimeRows: f.runtimeRows.filter((_, i) => i !== index) }))
+  }
+
+  function updateRuntimeRow(
+    setter: React.Dispatch<React.SetStateAction<EditForm>>,
+    index: number,
+    patch: Partial<RuntimeRow>,
+  ) {
+    setter((f) => ({
+      ...f,
+      runtimeRows: f.runtimeRows.map((row, i) => (i === index ? { ...row, ...patch, source: undefined } : row)),
+    }))
+  }
+
+  async function detectRuntime(
+    repoId: string,
+    setter: React.Dispatch<React.SetStateAction<EditForm>>,
+    setDetectingFlag: React.Dispatch<React.SetStateAction<boolean>>,
+    setNote: React.Dispatch<React.SetStateAction<string>>,
+  ) {
+    setDetectingFlag(true)
+    setNote('')
+    try {
+      const { suggestions } = await api.repos.detectRuntime(repoId)
+      if (!suggestions || suggestions.length === 0) {
+        setNote('Nothing detected.')
+        return
+      }
+      setter((f) => ({
+        ...f,
+        runtimeRows: suggestions.map((s) => ({ id: s.id as RuntimeLanguageId, version: s.version, source: s.source })),
+      }))
+      setNote('')
+    } catch (e) {
+      setNote(`Detection failed: ${String(e)}`)
+    } finally {
+      setDetectingFlag(false)
     }
   }
 
@@ -196,6 +304,84 @@ export default function ReposPage() {
 
   const inputCls =
     'bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500'
+
+  // Renders the "Agent runtime" section shared by the create and edit forms.
+  // `repoId`/`onDetect` are omitted on the create form since detection needs
+  // an already-saved repo (it scans the repo's path on disk).
+  function renderRuntimeSection(opts: {
+    rows: RuntimeRow[]
+    setter: React.Dispatch<React.SetStateAction<EditForm>>
+    detecting?: boolean
+    detectNote?: string
+    onDetect?: () => void
+  }) {
+    const { rows, setter, detecting = false, detectNote = '', onDetect } = opts
+    const rowError = validateRuntimeRows(rows)
+    return (
+      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-slate-800 pt-4">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium text-slate-400">Agent runtime</label>
+          {onDetect && (
+            <button
+              type="button"
+              onClick={onDetect}
+              disabled={detecting}
+              className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
+            >
+              {detecting ? 'Detecting…' : 'Detect from repo'}
+            </button>
+          )}
+        </div>
+        <span className="text-xs text-slate-600">
+          Tasks on this repo run with these toolchains. If installation fails, tasks escalate to Waiting for
+          human. Empty = current behavior (no pinned toolchain).
+        </span>
+
+        {detectNote && <p className="text-xs text-slate-500">{detectNote}</p>}
+
+        {rows.map((row, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <select
+              value={row.id}
+              onChange={(e) => updateRuntimeRow(setter, i, { id: e.target.value as RuntimeLanguageId })}
+              className={inputCls}
+            >
+              {RUNTIME_LANGUAGE_IDS.map((id) => (
+                <option key={id} value={id} disabled={rows.some((r, j) => r.id === id && j !== i)}>
+                  {id}
+                </option>
+              ))}
+            </select>
+            <input
+              value={row.version}
+              onChange={(e) => updateRuntimeRow(setter, i, { version: e.target.value })}
+              placeholder="e.g. 1.21"
+              className={`${inputCls} max-w-[8rem]`}
+            />
+            {row.source && <span className="text-xs text-slate-600">from {row.source}</span>}
+            <button
+              type="button"
+              onClick={() => removeRuntimeRow(setter, i)}
+              className="text-xs text-slate-600 hover:text-red-400 transition-colors"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+
+        {rowError && <p className="text-xs text-red-400">{rowError}</p>}
+
+        <button
+          type="button"
+          onClick={() => addRuntimeRow(setter)}
+          disabled={rows.length >= RUNTIME_LANGUAGE_IDS.length}
+          className="self-start text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          + Add language
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 max-w-3xl">
@@ -418,6 +604,11 @@ export default function ReposPage() {
                 className={`${inputCls} max-w-[10rem]`}
               />
             </div>
+
+            {renderRuntimeSection({
+              rows: form.runtimeRows,
+              setter: setForm,
+            })}
           </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -698,6 +889,14 @@ export default function ReposPage() {
                         className={`${inputCls} max-w-[10rem]`}
                       />
                     </div>
+
+                    {renderRuntimeSection({
+                      rows: editForm.runtimeRows,
+                      setter: setEditForm,
+                      detecting: editDetecting,
+                      detectNote: editDetectNote,
+                      onDetect: () => detectRuntime(repo.id, setEditForm, setEditDetecting, setEditDetectNote),
+                    })}
                   </div>
 
                   {editError && <p className="text-xs text-red-400">{editError}</p>}
