@@ -110,6 +110,20 @@ func buildClaudeArgs(input agent.RunInput, sidecarEnabled bool, mcpCfg *MCPRunCo
 	if v, ok := claudeEffort(input.AgentConfig.Effort); ok {
 		args = append(args, "--effort", v)
 	}
+	// PermissionMode is an explicit per-agent-config choice; empty (unset)
+	// omits the flag entirely, leaving the claude CLI's own default
+	// ("auto", a cloud safety classifier) in place — byte-identical to the
+	// spawn args before this field existed. See AgentConfig.PermissionMode.
+	// NOTE: permissions.deny (commandDenylist, above) is still enforced even
+	// under "bypassPermissions" — verified empirically against a live claude
+	// binary (v2.1.238): a denylisted Bash command was refused
+	// (permission_denied event, populated permission_denials) despite
+	// --permission-mode bypassPermissions. bypassPermissions only skips the
+	// interactive *approval* prompt; it does not override an explicit deny
+	// rule.
+	if input.AgentConfig.PermissionMode != "" {
+		args = append(args, "--permission-mode", input.AgentConfig.PermissionMode)
+	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
 	}

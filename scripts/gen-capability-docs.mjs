@@ -40,6 +40,7 @@ const ROWS = [
   ['sessionResume', 'Session resume'],
   ['subtasks', 'Subtasks (`create_subtask`)'],
   ['effort', 'Effort (reasoning level)'],
+  ['permissionMode', 'Permission mode'],
 ]
 
 function cell(entry) {

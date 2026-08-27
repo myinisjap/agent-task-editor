@@ -4495,6 +4495,11 @@ export interface components {
              * @enum {string}
              */
             effort: "" | "low" | "medium" | "high" | "xhigh" | "max";
+            /**
+             * @description Optional Claude CLI permission mode for headless task runs. Empty string (default) omits the --permission-mode flag entirely, leaving the claude CLI's own default ("auto" — a cloud safety classifier) in place, matching pre-existing behavior. "default" requires interactive approval for every tool call (impractical for headless runs unless a hook auto-approves). "auto" explicitly selects the same classifier as the CLI default, which can transiently deny safe commands when the classifier is unavailable. "acceptEdits" auto-approves file edits but still gates other tools. "bypassPermissions" skips approval prompts entirely for this run. Claude-provider only; other providers ignore it (codex_cli and qwen_code always run in their own always-bypass modes regardless of this field). permission_mode does not affect command_denylist enforcement — permissions.deny is honored even under bypassPermissions (verified empirically). See docs/agents.md#permission-mode and docs/providers/claude.md.
+             * @enum {string}
+             */
+            permission_mode: "" | "default" | "auto" | "acceptEdits" | "bypassPermissions";
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

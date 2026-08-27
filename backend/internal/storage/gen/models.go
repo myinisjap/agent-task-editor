@@ -32,6 +32,7 @@ type AgentConfig struct {
 	Priority          int64     `json:"priority"`
 	ProviderConfigID  string    `json:"provider_config_id"`
 	Effort            string    `json:"effort"`
+	PermissionMode    string    `json:"permission_mode"`
 }
 
 type AgentLog struct {

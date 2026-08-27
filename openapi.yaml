@@ -665,6 +665,27 @@ components:
             model_reasoning_effort config override (xhigh/max clamp down to
             high, since codex has no higher tier). Ignored by qwen_code,
             opencode, anthropic, and llm. See docs/agents.md#effort.
+        permission_mode:
+          type: string
+          enum: ["", default, auto, acceptEdits, bypassPermissions]
+          description: >
+            Optional Claude CLI permission mode for headless task runs.
+            Empty string (default) omits the --permission-mode flag
+            entirely, leaving the claude CLI's own default ("auto" — a
+            cloud safety classifier) in place, matching pre-existing
+            behavior. "default" requires interactive approval for every
+            tool call (impractical for headless runs unless a hook
+            auto-approves). "auto" explicitly selects the same classifier
+            as the CLI default, which can transiently deny safe commands
+            when the classifier is unavailable. "acceptEdits"
+            auto-approves file edits but still gates other tools.
+            "bypassPermissions" skips approval prompts entirely for this
+            run. Claude-provider only; other providers ignore it (codex_cli
+            and qwen_code always run in their own always-bypass modes
+            regardless of this field). permission_mode does not affect
+            command_denylist enforcement — permissions.deny is honored even
+            under bypassPermissions (verified empirically). See
+            docs/agents.md#permission-mode and docs/providers/claude.md.
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
       required:
@@ -682,6 +703,7 @@ components:
         - retry_backoff_secs
         - max_cost_usd
         - effort
+        - permission_mode
         - created_at
         - updated_at
 

@@ -25,6 +25,7 @@ export type Capability =
   | 'sessionResume'
   | 'subtasks'
   | 'effort'
+  | 'permissionMode'
 
 export type Support = 'full' | 'partial' | 'none'
 
@@ -80,6 +81,10 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'full',
       note: 'Passed as --effort. Supports low/medium/high/xhigh/max. Not all models support effort levels, and higher levels may be restricted by your Anthropic organization — either case degrades silently (the CLI only warns), so verify against the agent run logs.',
     },
+    permissionMode: {
+      support: 'full',
+      note: 'Passed as --permission-mode. Leave as Default (unset) to keep today\'s behavior (no flag — the CLI\'s own "auto" classifier). command_denylist is still enforced even under bypassPermissions (verified empirically).',
+    },
   },
   qwen_code: {
     taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
@@ -106,6 +111,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
     effort: { support: 'none', note: 'No reasoning-effort flag on the qwen CLI — the field is ignored for this provider.' },
+    permissionMode: { support: 'none', note: 'qwen_code always runs in --approval-mode yolo (full auto-approve) — always full bypass, not configurable per agent config.' },
   },
   codex_cli: {
     taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
@@ -141,6 +147,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'partial',
       note: 'Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high.',
     },
+    permissionMode: { support: 'none', note: 'codex_cli always runs with --dangerously-bypass-approvals-and-sandbox — always full bypass, not configurable per agent config.' },
   },
   anthropic: {
     taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
@@ -155,6 +162,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
     effort: { support: 'none', note: 'Not implemented for this provider.' },
+    permissionMode: { support: 'none', note: 'Not applicable — this provider has no claude-CLI-style permission mode concept.' },
   },
   llm: {
     taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
@@ -169,6 +177,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
     effort: { support: 'none', note: 'Not implemented for this provider.' },
+    permissionMode: { support: 'none', note: 'Not applicable — this provider has no claude-CLI-style permission mode concept.' },
   },
   opencode: {
     taskEditorTools: {
@@ -195,6 +204,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     sessionResume: { support: 'full', note: 'sessionID + --session.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
     effort: { support: 'none', note: 'No reasoning-effort flag on the opencode CLI — the field is ignored for this provider.' },
+    permissionMode: { support: 'none', note: 'No permission-mode flag on the opencode CLI — the field is ignored for this provider.' },
   },
 }
 
