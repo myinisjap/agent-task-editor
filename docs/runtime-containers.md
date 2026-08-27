@@ -151,6 +151,152 @@ If a future change reintroduces a user-supplied JSON blob anywhere in this
 path, it must re-derive this analysis first — that repeat mistake is exactly
 what this section exists to prevent.
 
+## Detecting a repo's languages
+
+Picking a repo's `runtime_languages` by hand means knowing offhand which
+versions its manifests declare. `POST /repos/{id}/detect-languages` suggests
+them instead — but **it only ever fills the picker; it never writes
+`repos.runtime_languages` itself.** Nothing is persisted until the user
+reviews the suggestions in the UI and hits Save on a subsequent
+`PATCH /repos/{id}`. There is no auto-detection on repo registration or
+anywhere else — the endpoint only runs when the user clicks "Detect from
+repo" in the Languages mode of the runtime picker.
+
+### The three layers
+
+1. **Manifest scan** (`agent.DetectLanguages`, `internal/agent/detectlang.go`)
+   — no LLM, no network, deterministic, and it runs on every detect request.
+   For the common case (an exact `go.mod` version, a pinned `.nvmrc`) it's
+   also more accurate than an LLM guess, since these files don't need
+   interpreting.
+2. **Claude fallback** (`agent.DetectLanguagesWithFallback`,
+   `internal/agent/detectlang_llm.go`), invoked **only when the scan leaves a
+   gap** — zero suggestions, or any suggestion flagged `Ambiguous`. A clean,
+   fully-versioned scan result never reaches the model: `needsLLMFallback`
+   short-circuits before any LLM call is made, so a repo with a normal
+   `go.mod` and a pinned `.nvmrc` spends nothing and waits nothing.
+3. **Human confirms**, always. The response is suggestions; a row is only
+   ever written to the repo's `runtime_languages` when the user hits Save.
+
+### What each language is detected from
+
+The scanner checks the repo root plus one level of subdirectories (to catch
+a monorepo layout, e.g. a `frontend/` dir), skipping `.git`, `node_modules`,
+`vendor`, `target`, and `.ate-worktrees`. Per language, files are checked in
+this priority order — first match wins, and presence without a parseable
+version still counts as a suggestion (flagged `Ambiguous`, with an empty
+version the user must fill in):
+
+| id | files, in priority order | notes |
+|---|---|---|
+| go | `go.mod` (`^go (\d+\.\d+)`) | exact version only; no fallback file |
+| node | `.nvmrc`, then `package.json`'s `engines.node` | a range (e.g. `>=18 <21`) or a non-version token (`lts/hydrogen`, `*`) is flagged ambiguous |
+| python | `.python-version`, then `pyproject.toml`'s `requires-python`, then `runtime.txt` (Heroku-style `python-3.12.1`) | a range is flagged ambiguous |
+| rust | `rust-toolchain.toml`'s `channel`, then `rust-toolchain`, then `Cargo.toml`'s `rust-version` | `stable`/`beta`/`nightly` count as ambiguous presence, not a version |
+| ruby | `.ruby-version` (rbenv/chruby's `ruby-3.3.0` prefix is stripped), then `Gemfile`'s `ruby "..."` directive | |
+| java | `pom.xml`'s `maven.compiler.release` or `java.version` property, then `.sdkmanrc`'s `java=` line | an unresolved `${java.version}` property, or an sdkman identifier like `17.0.2-tem`, degrades to ambiguous presence rather than a bogus exact version |
+
+A file that exists but doesn't parse (malformed XML, an unreadable manifest)
+is skipped for that one language — it never fails the rest of the scan. Each
+suggestion's `source` field is the actual path found (e.g. `go.mod`, or
+`frontend/.nvmrc` for a monorepo subdirectory), shown in the UI so the user
+can judge it directly rather than trust a black box.
+
+### Suggestions reflect what the repo declares, not everything it needs
+
+This is the main way a suggestion can mislead if read too quickly: detection
+only ever reports what a manifest *says*, not everything the repo actually
+needs to build and run. **A Go backend with a React frontend but no
+`.nvmrc`/`package.json` `engines.node` field will suggest only `go` — it
+won't infer Node just because a `frontend/` directory with `.tsx` files
+exists.** The scanner (and, above it, the LLM fallback) has no notion of
+"this project probably also needs X"; it reports evidence, not inference
+beyond what's written down. Review the suggestions against what the repo
+actually requires before saving, not just against what's shown.
+
+### Ambiguous and no-version suggestions
+
+A suggestion is `ambiguous: true` when the scan found evidence of a language
+but couldn't pin an exact version — a range (`>=18 <21`), a non-version
+channel name (`stable`), an unresolvable placeholder (`${java.version}`), or
+simply a manifest present with no version field at all (e.g. an empty
+`Cargo.toml`). The UI (`RuntimeLanguagesEditor`) renders these rows with a
+visible "— needs confirmation" note next to their source, and additionally
+"— no version detected, pick one" when the version is empty. Nothing about
+an ambiguous suggestion is auto-resolved; the user must type or confirm a
+version themselves before Save will accept it.
+
+### `POST /repos/{id}/detect-languages`
+
+```bash
+curl -X POST http://localhost:8080/api/v1/repos/<repo_id>/detect-languages
+```
+
+Response:
+
+```json
+{
+  "suggestions": [
+    { "id": "go", "version": "1.26", "source": "go.mod", "ambiguous": false },
+    { "id": "node", "version": "", "source": "frontend/package.json", "ambiguous": true }
+  ],
+  "used_llm": false
+}
+```
+
+`used_llm` is `true` only when the Claude fallback ran *and* produced at
+least one guess that survived validation — a scan-only result, or a fallback
+that ran but was discarded (see below), both report `false`. The "Detect
+from repo" button surfaces `used_llm: true` as an inline "suggested by
+Claude — please confirm" note, so the user knows when a value came from a
+model rather than a manifest. Detecting an id the form already has replaces
+that row rather than duplicating it; a detect that fails is a non-blocking
+inline error, and the form is left exactly as the user had it.
+
+### The security posture
+
+Detection output is treated as **untrusted input**, whether it came from the
+manifest scanner or from Claude:
+
+- Every suggestion — scanner or LLM — must pass `ParseRuntimeLanguages`
+  (the same validation any other `runtime_languages` write goes through)
+  before it can be returned to the client. An unknown id or a version
+  outside the allowed charset/length is rejected, never sanitized.
+- The Claude fallback's output is JSON-only by prompt constraint, parsed
+  strictly into a typed `{id, version}` struct, then run through
+  `ParseRuntimeLanguages`. **A single invalid entry drops the whole batch** —
+  a hostile or malformed guess (e.g. an id like `--privileged` that isn't in
+  the six-value allowlist) doesn't get partially accepted by picking out the
+  "good" entries; the caller just falls back to the scan's own result.
+- **Symlinked manifests are skipped outright**, not followed. `os.Open`
+  follows symlinks and `Stat` reports the target, so without this guard a
+  repo committing `.nvmrc -> ~/.aws/credentials` would have that file's
+  contents read in-process by the backend (which has broad filesystem access
+  and no container isolation) and, on the ambiguous path, packed into the
+  prompt sent to the model — a read-side exfiltration path distinct from the
+  write-side "no user string becomes a Docker flag" property described
+  below. `readManifestCapped` refuses any path whose `Lstat` reports a
+  symlink before ever opening it.
+- The Claude fallback is invoked one-shot (`--print --output-format json`,
+  `--max-turns 1`, a 60s timeout), fed only the manifest contents the scanner
+  already found (capped) plus a shallow directory listing — never the whole
+  repo. If no provider is configured/authenticated, the call errors and the
+  endpoint silently degrades to the scan result (`used_llm: false`); it never
+  fails the request.
+
+### Known limitation: no rate limit on the LLM-spending route
+
+`POST /repos/{id}/detect-languages` is the only detection endpoint that can
+invoke the `claude` CLI, at up to 60 seconds and one real Claude API call per
+request when the scan is ambiguous. It has no rate limit of its own — it
+requires the same bearer-token auth as every other `/api/v1` route, but
+nothing caps how many times an authenticated caller can trigger it back to
+back. In this project's single-user, self-hosted deployment model that's
+cost exposure rather than a privilege boundary (anyone who can call this
+route can already do anything else the API allows), but it is a real gap:
+scripting repeated calls to this route runs up API spend with no backend
+throttle to stop it.
+
 ## Caching and the rebuild trigger
 
 Every generated (or repo-committed) `devcontainer.json` is hashed
@@ -456,10 +602,18 @@ mid-creation by one path while the other is starting it.
   containers (both `ate.image` and `ate.dcjson`), skipping repos with an
   in-flight run.
 - `internal/api/handlers/repos.go` — `resolveRuntimeLanguages` validation,
-  `GET /repos/{id}/devcontainer`.
+  `GET /repos/{id}/devcontainer`, `DetectLanguages` (`POST
+  /repos/{id}/detect-languages`).
+- `internal/agent/detectlang.go` — the manifest scanner (`DetectLanguages`),
+  per-language extractors, symlink skip.
+- `internal/agent/detectlang_llm.go` — the Claude fallback gate
+  (`needsLLMFallback`), `DetectLanguagesWithFallback`, LLM output validation
+  and merge.
+- `internal/agent/providers/claude_detectlang.go` — the one-shot `claude
+  --print` detection call.
 - `frontend/src/components/shared/RuntimeLanguagesEditor.tsx`,
   `frontend/src/pages/ReposPage.tsx` — the Repos page's three-way runtime
-  picker.
+  picker and its "Detect from repo" button.
 - `internal/agent/providers/cli.go` — `spawn()`, `containerEnvOverrides`.
 - `backend/entrypoint.sh` — the Docker-socket-gid join described above.
 - [Supported Languages & Extending the Toolchain](getting-started.md#supported-languages--extending-the-toolchain) —
