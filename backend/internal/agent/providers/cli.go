@@ -316,8 +316,9 @@ func applyRuntime(spec *agent.RuntimeSpec, binary string, args []string, env []s
 		return binary, args, env, nil
 	}
 
-	miseArgs := make([]string, 0, len(spec.Pins)+2+len(args))
-	miseArgs = append(miseArgs, "x")
+	// No computed capacity: len arithmetic in an allocation trips CodeQL's
+	// go/allocation-size-overflow, and the slice is tiny (≤6 pins) anyway.
+	miseArgs := []string{"x"}
 	hasPython, hasNode := false, false
 	for _, p := range spec.Pins {
 		switch p.ID {
