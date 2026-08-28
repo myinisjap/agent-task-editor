@@ -110,8 +110,10 @@ export default function UsagePage() {
               </div>
             </div>
             <p className="text-xs text-slate-500 mt-3">
-              Estimated cost, computed from a token-based pricing table for anthropic/llm providers; the claude
-              CLI reports its own authoritative cost (which may be $0 under a Claude Max subscription).
+              claude and opencode report their own authoritative cost (which may be $0 under a
+              subscription plan); codex_cli (and the deprecated anthropic/llm providers) are
+              estimated from a token-based pricing table; qwen_code reports tokens but no cost, so
+              it always shows $0 here.
             </p>
           </div>
 
