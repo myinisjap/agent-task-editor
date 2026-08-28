@@ -20,6 +20,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
+	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
 	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -448,6 +449,7 @@ func main() {
 	slog.Info("worktree sweeper starting", "interval", cfg.WorktreeSweepInterval)
 
 	go pool.Start(ctx)
+	go memguard.New(pool).Run(ctx)
 	go dispatcher.Run(ctx)
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)

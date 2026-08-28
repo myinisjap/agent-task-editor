@@ -790,6 +790,41 @@ func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
 	}
 }
 
+// TestPool_OldestRunID verifies the memguard watchdog's victim-selection
+// query: "" when nothing is running, and the in-flight run's ID once one is
+// registered.
+func TestPool_OldestRunID(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	if got := pool.OldestRunID(); got != "" {
+		t.Fatalf("expected no oldest run before any job starts, got %q", got)
+	}
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	startPool(t, pool)
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProvider{}))
+	waitForStatus(t, q, runID, "running")
+
+	if got := pool.OldestRunID(); got != runID {
+		t.Errorf("expected oldest run %q, got %q", runID, got)
+	}
+
+	if !pool.Cancel(runID) {
+		t.Fatal("expected Cancel to find the active run")
+	}
+	waitForStatus(t, q, runID, "cancelled")
+
+	if got := pool.OldestRunID(); got != "" {
+		t.Errorf("expected no oldest run after cancel, got %q", got)
+	}
+}
+
 // TestPool_Cancel_PreservesUsage verifies that a cancelled run which had
 // already accrued usage before the human stopped it persists that usage
 // (including the cost_unknown flag, bool→int64 round-tripped) on the
