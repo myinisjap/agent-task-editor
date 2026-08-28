@@ -50,6 +50,7 @@ export default function AgentConfigForm({
   const labelTransitionsCap = getCapability(providerStr, 'labelTransitions')
   const maxTurnsCap = getCapability(providerStr, 'maxTurns')
   const effortCap = getCapability(providerStr, 'effort')
+  const permissionModeCap = getCapability(providerStr, 'permissionMode')
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -175,6 +176,41 @@ export default function AgentConfigForm({
             </p>
           )}
         </Field>
+
+        {providerStr === 'claude' && (
+          <Field label="Permission mode" hint="Claude only. Default (unset) matches today's behavior: no --permission-mode flag, so the CLI's own default ('auto') applies.">
+            <select
+              value={form.permission_mode ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, permission_mode: e.target.value as FormState['permission_mode'] }))}
+              className="input"
+            >
+              <option value="">Default (unset — CLI's own default)</option>
+              <option value="default">default — approve every tool call interactively</option>
+              <option value="auto">auto — cloud safety classifier (same as CLI default)</option>
+              <option value="acceptEdits">acceptEdits — auto-approve file edits only</option>
+              <option value="bypassPermissions">bypassPermissions — skip approval prompts entirely</option>
+            </select>
+            {form.permission_mode === 'auto' && (
+              <p className="mt-1 text-xs text-amber-400">
+                ⚠️ This mode depends on a cloud safety classifier, which can transiently deny harmless commands
+                when the classifier is unavailable.
+              </p>
+            )}
+            {form.permission_mode === 'bypassPermissions' && (
+              <p className="mt-1 text-xs text-amber-400">
+                ⚠️ This mode skips approval prompts entirely for this agent&apos;s runs.
+                {(() => { try { return JSON.parse(form.command_denylist ?? '[]').length > 0 } catch { return false } })() && (
+                  <> Your command_denylist is still enforced under this mode (verified empirically) — it is not bypassed.</>
+                )}
+              </p>
+            )}
+            {form.permission_mode && providerStr && permissionModeCap.support !== 'full' && (
+              <p className="mt-1 text-xs text-amber-400">
+                ⚠️ {permissionModeCap.note ?? `Permission mode is not supported for the ${providerStr} provider — this setting will be ignored.`}
+              </p>
+            )}
+          </Field>
+        )}
 
         <Field label="Max retries" hint="Auto-retries for transient errors (rate limits, network blips). 0 disables auto-retry.">
           <input

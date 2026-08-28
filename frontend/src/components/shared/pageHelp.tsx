@@ -344,6 +344,24 @@ export function AgentsHelp() {
           reviewer, etc.) instead of building one from scratch.
         </p>
       </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Permission mode (claude)</h3>
+        <p>
+          Controls which <code className="bg-slate-800 rounded px-1 font-mono">--permission-mode</code>{' '}
+          the claude CLI runs under for this agent's task runs. Leaving it unset keeps the CLI's own
+          default (currently <code className="bg-slate-800 rounded px-1 font-mono">auto</code>) — a
+          cloud safety classifier that can transiently deny harmless commands (e.g.{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">gofmt</code>) when that classifier is
+          unavailable. <code className="bg-slate-800 rounded px-1 font-mono">bypassPermissions</code>{' '}
+          skips approval prompts entirely, which is useful for unattended runs.
+        </p>
+        <p>
+          The command denylist stays enforced in every mode, including{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">bypassPermissions</code> — verified
+          against a live claude CLI, a denylisted command is still refused even with approval prompts
+          bypassed.
+        </p>
+      </section>
     </>
   )
 }

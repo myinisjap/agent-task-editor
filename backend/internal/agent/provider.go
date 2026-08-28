@@ -287,6 +287,14 @@ type AgentConfig struct {
 	// override, with xhigh/max clamped down to high). Other providers
 	// ignore it. See providers/effort.go.
 	Effort string
+	// PermissionMode is the optional Claude CLI permission mode for headless
+	// task runs. Empty means unset: no --permission-mode flag is passed, so
+	// the claude CLI falls back to its own default ("auto" — a cloud safety
+	// classifier). Valid values are "", "default", "auto", "acceptEdits",
+	// "bypassPermissions" — enforced at the API layer (see handlers/agents.go).
+	// Claude-provider only; other providers ignore it (codex_cli and
+	// qwen_code always run in their own always-bypass modes regardless).
+	PermissionMode string
 }
 
 // Provider is the interface all agent backends must satisfy.

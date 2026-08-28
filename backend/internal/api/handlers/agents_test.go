@@ -660,6 +660,151 @@ func TestAgentsUpdate_Effort_RoundTrip(t *testing.T) {
 	}
 }
 
+// ---------- PermissionMode ----------
+
+// TestAgentsCreate_PermissionMode_DefaultEmpty verifies a new config defaults
+// to an unset ("") permission mode when the field is omitted.
+func TestAgentsCreate_PermissionMode_DefaultEmpty(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-permission-mode-default",
+		"provider_config_id": pcID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var cfg agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if cfg.PermissionMode != "" {
+		t.Errorf("expected permission_mode to default to \"\", got %q", cfg.PermissionMode)
+	}
+}
+
+// TestAgentsCreate_PermissionMode_RoundTrip verifies every valid permission
+// mode value is persisted and returned as-is.
+func TestAgentsCreate_PermissionMode_RoundTrip(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	for _, mode := range []string{"default", "auto", "acceptEdits", "bypassPermissions"} {
+		w := postJSON(t, router, "/agents", map[string]any{
+			"name":               "claude-permission-mode-" + mode,
+			"provider_config_id": pcID,
+			"permission_mode":    mode,
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("permission_mode=%s: expected 201, got %d: %s", mode, w.Code, w.Body.String())
+		}
+		var cfg agentConfigResponse
+		if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if cfg.PermissionMode != mode {
+			t.Errorf("expected permission_mode=%s, got %q", mode, cfg.PermissionMode)
+		}
+	}
+}
+
+// TestAgentsCreate_PermissionMode_RejectsInvalid verifies the API rejects an
+// unrecognized permission_mode value on create.
+func TestAgentsCreate_PermissionMode_RejectsInvalid(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-permission-mode-invalid",
+		"provider_config_id": pcID,
+		"permission_mode":    "bogus",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid permission_mode, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentsUpdate_PermissionMode_RejectsInvalid verifies the API rejects an
+// unrecognized permission_mode value on update.
+func TestAgentsUpdate_PermissionMode_RejectsInvalid(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-permission-mode-update-invalid",
+		"provider_config_id": pcID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
+		"permission_mode":    "bogus",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid permission_mode, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentsUpdate_PermissionMode_RoundTrip verifies updating permission_mode
+// persists, and omitting it on a subsequent update preserves the existing
+// value.
+func TestAgentsUpdate_PermissionMode_RoundTrip(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name":               "claude-permission-mode-update",
+		"provider_config_id": pcID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
+		"permission_mode":    "bypassPermissions",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.PermissionMode != "bypassPermissions" {
+		t.Errorf("expected permission_mode=bypassPermissions, got %q", updated.PermissionMode)
+	}
+
+	// Omitting the field on a subsequent update should preserve it.
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name":               created.Name,
+		"provider_config_id": created.ProviderConfigID,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var preserved agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&preserved); err != nil {
+		t.Fatalf("decode second update response: %v", err)
+	}
+	if preserved.PermissionMode != "bypassPermissions" {
+		t.Errorf("expected permission_mode to stay bypassPermissions, got %q", preserved.PermissionMode)
+	}
+}
+
 // ---------- Get / Delete / labelConflict ----------
 
 func TestAgentsGet_OK(t *testing.T) {

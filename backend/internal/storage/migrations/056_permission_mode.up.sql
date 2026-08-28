@@ -1,0 +1,11 @@
+-- Optional per-agent-config Claude permission mode, controlling how the
+-- headless claude CLI approves tool calls. Empty string means "unset": no
+-- --permission-mode flag is passed, matching today's behavior (the CLI's own
+-- default, "auto" — a cloud safety classifier). See docs/providers/claude.md
+-- and docs/agents.md#permission-mode for the per-value explanation.
+--
+-- Numbered 056 (not 055): 055_repo_runtime belongs to the unmerged
+-- runtime-mise branch. The gap is deliberate — golang-migrate tolerates
+-- non-contiguous version numbers — and runtime-mise should merge before this
+-- migration to keep the sequence contiguous in practice.
+ALTER TABLE agent_configs ADD COLUMN permission_mode TEXT NOT NULL DEFAULT '';
