@@ -637,3 +637,64 @@ func TestLoad_InvalidYAML_ReturnsError(t *testing.T) {
 		t.Error("expected error for invalid YAML, got nil")
 	}
 }
+
+func TestDefaults_NotifyDisabledByDefault(t *testing.T) {
+	cfg := config.Defaults()
+	if cfg.NotifyWebhookURL != "" {
+		t.Errorf("NotifyWebhookURL must default to empty (disabled), got %q", cfg.NotifyWebhookURL)
+	}
+	if cfg.NotifyBaseURL != "" {
+		t.Errorf("NotifyBaseURL must default to empty, got %q", cfg.NotifyBaseURL)
+	}
+	if cfg.NotifyDebounce != 5*time.Minute {
+		t.Errorf("expected default NotifyDebounce of 5m, got %v", cfg.NotifyDebounce)
+	}
+}
+
+func TestLoad_NotifyWebhookURLEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("NOTIFY_WEBHOOK_URL", "https://example.com/webhook/abc123")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.NotifyWebhookURL != "https://example.com/webhook/abc123" {
+		t.Errorf("expected NotifyWebhookURL to be set from env, got %q", cfg.NotifyWebhookURL)
+	}
+}
+
+func TestLoad_NotifyBaseURLEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("NOTIFY_BASE_URL", "https://ate.example.com")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.NotifyBaseURL != "https://ate.example.com" {
+		t.Errorf("expected NotifyBaseURL to be set from env, got %q", cfg.NotifyBaseURL)
+	}
+}
+
+func TestLoad_NotifyDebounceEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("NOTIFY_DEBOUNCE", "10m")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.NotifyDebounce != 10*time.Minute {
+		t.Errorf("expected notify debounce 10m, got %v", cfg.NotifyDebounce)
+	}
+}
+
+func TestLoad_InvalidNotifyDebounce_UsesDefault(t *testing.T) {
+	t.Setenv("NOTIFY_DEBOUNCE", "not-a-duration")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.NotifyDebounce != config.Defaults().NotifyDebounce {
+		t.Errorf("expected default notify debounce on invalid input, got %v", cfg.NotifyDebounce)
+	}
+}

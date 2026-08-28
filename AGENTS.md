@@ -45,6 +45,7 @@ agent-task-editor/
 │       ├── intake/           # Intake routing rules: match->apply engine shared by tasksource + schedule; leaf package, no deps beyond storage/gen
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
+│       ├── notify/           # Optional outbound webhook when a task needs a human (NOTIFY_WEBHOOK_URL)
 │       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
 │       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues today, via `forge.Forge`)

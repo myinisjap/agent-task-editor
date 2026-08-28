@@ -4,6 +4,10 @@ import type { Workflow, WorkflowLabel } from '../api/client'
  * Returns true when `labelName` is a "human gate" within `workflow`: a label
  * a task can be sitting on where nothing but a human can move it forward.
  *
+ * Go twin: backend/internal/workflow.IsHumanGateLabel — keep the two in
+ * sync; it's used by the outbound webhook notifier (internal/notify) to
+ * decide whether a task.label_changed event should fire a notification.
+ *
  * Rules:
  *  - A terminal label (`is_terminal`) is never a gate — the task is done, not
  *    stuck waiting on a person.

@@ -20,6 +20,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
+	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
 	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -125,13 +126,32 @@ func main() {
 	// WebSocket hub — satisfies workflow.Publisher and agent.Publisher
 	hub := ws.NewHub()
 
-	// Shared workflow engine with WS publisher
-	engine := workflow.New(db.SQL(), hub)
+	// Outbound webhook notifier (see internal/notify): POSTs a JSON payload
+	// whenever a task needs a human (task.needs_human, arrival at a
+	// human-gate label, task.cost_warning, system.cost_budget_tripped).
+	// notify.New is nil-safe/no-op when NotifyWebhookURL is empty (the
+	// default), so this is always constructed and always started; disabling
+	// notifications is purely a matter of leaving NOTIFY_WEBHOOK_URL unset.
+	termQ := gen.New(db.SQL())
+	notifier := notify.New(cfg.NotifyWebhookURL, cfg.NotifyBaseURL, cfg.NotifyDebounce, termQ)
+
+	// pub fans every WS event out to both the hub and the outbound
+	// notifier. Every event producer below (workflow.Engine, agent.Pool,
+	// agent.Dispatcher, ghsync.Syncer, tasksource.Importer,
+	// schedule.Scheduler) takes its own named single-method Publisher
+	// interface with an identical method set, all satisfied by this one
+	// concrete *notify.MultiPublisher value. api.NewRouter and the
+	// WS-specific handlers still take the concrete *ws.Hub directly (ticket
+	// issuing/consuming, per-client broadcast), so hub itself is passed
+	// there unchanged.
+	pub := notify.FanOut(hub, notifier)
+
+	// Shared workflow engine with the fan-out publisher
+	engine := workflow.New(db.SQL(), pub)
 
 	// Subtask coordinator: owns child→parent branch merge-back and parent
 	// auto-advance (Mechanism 2). Git identity is filled in once resolved below.
-	termQ := gen.New(db.SQL())
-	subtaskCoord := agent.NewSubtaskCoordinator(termQ, engine, hub, "", "")
+	subtaskCoord := agent.NewSubtaskCoordinator(termQ, engine, pub, "", "")
 
 	// On reaching a terminal label: for a subtask, merge its branch back into the
 	// parent's branch (see SubtaskCoordinator). For an ordinary task, push the
@@ -262,7 +282,7 @@ func main() {
 		maxWorkers = 5
 	}
 	rateLimits := agent.NewRateLimitRegistry()
-	pool := agent.NewPool(maxWorkers, db.SQL(), engine, hub)
+	pool := agent.NewPool(maxWorkers, db.SQL(), engine, pub)
 	pool.RateLimits = rateLimits
 	// Register gh as git's credential helper for github.com so push/fetch over
 	// HTTPS authenticate with GITHUB_TOKEN/gh auth instead of failing with
@@ -278,7 +298,7 @@ func main() {
 	dispatcher.RateLimits = rateLimits
 	dispatcher.SetUploadDir(uploadDir)
 	dispatcher.Subtasks = subtaskCoord
-	dispatcher.Publisher = hub
+	dispatcher.Publisher = pub
 	dispatcher.MaxDailyCostUSD = cfg.MaxDailyCostUSD
 	dispatcher.MaxMonthlyCostUSD = cfg.MaxMonthlyCostUSD
 
@@ -341,7 +361,7 @@ func main() {
 	// review feedback / failed GHA checks (see internal/ghsync/pr_review.go);
 	// engine is passed through so a repo can opt into auto-transitioning a
 	// task back to its failure-path label when new feedback arrives.
-	ghSyncer := ghsync.New(db.SQL(), hub, cfg.GitHubSyncInterval, engine)
+	ghSyncer := ghsync.New(db.SQL(), pub, cfg.GitHubSyncInterval, engine)
 	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 
 	// Issue import: polls repos with issue sync enabled, creates tasks from
@@ -359,13 +379,13 @@ func main() {
 	// inert (AppliesTo never matches) unless GITEA_HOST is configured — see
 	// internal/forge/gitea's package doc — so this is a no-op behavior change
 	// for anyone not running a self-hosted Gitea.
-	issueImporter := tasksource.NewWithEngineMulti(db.SQL(), hub, cfg.IssueSyncInterval,
+	issueImporter := tasksource.NewWithEngineMulti(db.SQL(), pub, cfg.IssueSyncInterval,
 		[]tasksource.Source{tasksource.GitHubIssues{}, tasksource.GiteaIssues{}}, engine)
 	slog.Info("issue import enabled", "interval", cfg.IssueSyncInterval)
 
 	// Recurring task schedules: fires task_templates on a cron expression
 	// against a repo, deduped by an open task from a prior firing.
-	taskScheduler := schedule.New(db.SQL(), hub, cfg.ScheduleInterval)
+	taskScheduler := schedule.New(db.SQL(), pub, cfg.ScheduleInterval)
 	slog.Info("task schedule sweep enabled", "interval", cfg.ScheduleInterval)
 
 	// Automatic local backups: optional. When BACKUP_DIR is set, periodically
@@ -437,6 +457,9 @@ func main() {
 	}
 	go logPruner.Run(ctx)
 	go worktreeSweeper.Run(ctx)
+	// No-op immediately when NOTIFY_WEBHOOK_URL is unset — notifier.Run
+	// returns as soon as it observes the disabled Notifier.
+	go notifier.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}

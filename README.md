@@ -40,6 +40,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 - **Installable as a PWA** — add the board to your phone's home screen for quick access
 - **Browser notifications when a human is needed** — opt-in (off by default; enable from the sidebar); fires whenever an agent calls the `request_human` MCP tool, or a task lands on a label only a human can move it out of, driven by the existing WebSocket event stream, no extra backend or push infrastructure required
+- **Outbound webhook notifications when a human is needed** — optional `NOTIFY_WEBHOOK_URL` POSTs the same class of signal (plus cost-budget warnings/trips) to an external URL, e.g. a Slack/Discord/ntfy relay, so you don't need a tab open — see [docs/websocket.md#outbound-webhook](docs/websocket.md#outbound-webhook)
 
 See [docs/overview.md](docs/overview.md) for the full concepts and architecture reference.
 
@@ -233,6 +234,7 @@ interfaces — only do this alongside `API_TOKEN` and `CORS_ORIGINS` above.
 | `MAX_WORKERS` | `5` | Maximum number of concurrent agent runs |
 | `MAX_DAILY_COST_USD` | `0` (unlimited) | Global cap on total recorded spend per UTC calendar day, across every task/provider; once reached, the dispatcher stops starting new runs system-wide until the next UTC day — see [docs/agents.md#global-cost-ceiling](docs/agents.md#global-cost-ceiling) |
 | `MAX_MONTHLY_COST_USD` | `0` (unlimited) | Same as above, per UTC calendar month |
+| `NOTIFY_WEBHOOK_URL` | _(empty, disabled)_ | Target URL for outbound "task needs a human" notifications — see [docs/websocket.md#outbound-webhook](docs/websocket.md#outbound-webhook) |
 
 See [docs/getting-started.md](docs/getting-started.md) for the full variable reference.
 

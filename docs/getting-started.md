@@ -102,6 +102,16 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `MAX_DAILY_COST_USD` | `0` (unlimited) | Global cap on total recorded agent spend for the current UTC calendar day, across every task/provider/agent config. Once reached, the dispatcher stops starting new runs system-wide (in-flight runs finish normally) until the next UTC day. Distinct from the per-task `max_cost_usd` budget — see [agents.md#global-cost-ceiling](agents.md#global-cost-ceiling). |
 | `MAX_MONTHLY_COST_USD` | `0` (unlimited) | Same as above, for the current UTC calendar month. |
 
+### Notifications
+
+Outbound webhook notifications when a task needs a human — see [websocket.md#outbound-webhook](websocket.md#outbound-webhook) for the full trigger list, JSON payload schema, debounce, and retry behavior.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NOTIFY_WEBHOOK_URL` | _(empty, disabled)_ | Target URL for outbound task-needs-human notifications (generic JSON POST — pair with something like a webhook relay for Slack/Discord/ntfy). Treat this as a **secret**: many webhook URLs (e.g. Slack incoming webhooks) embed an auth token in the path, and it is never logged in full by the server. |
+| `NOTIFY_BASE_URL` | _(empty)_ | Base URL used to build a deep link (`<base>/tasks/<id>`) in each notification payload. **Required for a working link** — without it, the payload simply omits the `url` field rather than guessing a server-local address that wouldn't resolve for whoever receives the notification. |
+| `NOTIFY_DEBOUNCE` | `5m` | Minimum time between two notifications sharing the same task+reason, so a retry storm doesn't spam the webhook. Only meaningful when `NOTIFY_WEBHOOK_URL` is set. |
+
 ### Repository Access
 
 | Variable | Default | Description |

@@ -1193,6 +1193,12 @@ In addition to the standard Go runtime/process collectors (`go_*`,
 - `ate_tasksource_sweep_duration_seconds` (histogram) — GitHub issue-import sweep duration.
 - `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`, `issue_label_add`, `issue_comment`, `issue_close`), an early warning signal for GitHub API rate limiting.
 
+**Outbound notifications** (see [websocket.md#outbound-webhook](websocket.md#outbound-webhook); all zero/no-op when `NOTIFY_WEBHOOK_URL` is unset)
+- `ate_notify_delivered_total` (counter) — webhook notifications successfully delivered.
+- `ate_notify_failed_total` (counter) — webhook notifications that failed after exhausting retries.
+- `ate_notify_suppressed_total` (counter) — notifications suppressed by the debounce window.
+- `ate_notify_dropped_total` (counter) — events dropped because the internal delivery queue was full.
+
 ---
 
 ## Backup
