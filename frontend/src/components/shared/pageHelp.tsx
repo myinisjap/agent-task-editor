@@ -430,6 +430,28 @@ export function ReposHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Agent runtime (toolchain pins)</h3>
+        <p>
+          The <strong>Agent runtime</strong> section pins the language versions agent runs use for
+          this repo (go, node, python, rust, ruby, java), installed on demand via{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">mise</code> and cached across repos.
+          Leave it empty and nothing changes — runs use the server image's built-in toolchain
+          exactly as before. If a pinned toolchain can't be installed, the task escalates to{' '}
+          <em>Waiting for human</em> instead of silently running on the wrong version.
+        </p>
+        <p>
+          <strong>Detect from repo</strong> (edit form only) scans the repo root and its immediate
+          subdirectories for version-pin files (<code className="bg-slate-800 rounded px-1 font-mono">go.mod</code>,{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">.nvmrc</code>,{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">.python-version</code>, …) and
+          pre-fills suggestions — it never saves on its own. It only reads dedicated version-pin
+          files, so a node project without an{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">.nvmrc</code>/<code className="bg-slate-800 rounded px-1 font-mono">.node-version</code>{' '}
+          detects nothing for node: add one, or type the version manually. Pins apply to task runs
+          and chat sessions alike; the agent CLI itself always runs on the app's bundled Node.js.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">GitHub integration</h3>
         <p>
           Set a <code className="bg-slate-800 rounded px-1 font-mono">remote_url</code> pointing at

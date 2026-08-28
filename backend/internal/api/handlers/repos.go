@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -96,6 +97,11 @@ type createRepoBody struct {
 	// (nil/omitted = no repo-specific cap; the dispatcher falls back to the
 	// global MAX_WORKERS). See resolveMaxConcurrentRuns.
 	MaxConcurrentRuns *int64 `json:"max_concurrent_runs"`
+	// RuntimeLanguages is the repo's per-language toolchain pins (see
+	// runtime.ParsePins). Omitted/empty = unconfigured, preserving today's
+	// spawn behavior exactly (§4.1 byte-identical). Validated and
+	// re-serialized to JSON for storage by resolveRuntimeLanguages.
+	RuntimeLanguages []runtime.Pin `json:"runtime_languages"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +187,11 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	runtimeLanguages, ok := resolveRuntimeLanguages(w, body.RuntimeLanguages)
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -197,6 +208,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueSyncGoneLabel:            issueSyncGoneLabel,
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
+		RuntimeLanguages:              runtimeLanguages,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -207,6 +219,9 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.startAsyncClone(r, &repo, remoteURL, body.Path)
 	} else {
 		setClaudeTrust(r.Context(), body.Path)
+	}
+	if runtimeLanguages != "" {
+		h.prewarmRuntime(repo.ID, repo.Path, runtimeLanguages)
 	}
 	JSON(w, http.StatusCreated, repo)
 }
@@ -364,6 +379,30 @@ func resolveMaxConcurrentRuns(w http.ResponseWriter, v *int64) (resolved *int64,
 	return v, true
 }
 
+// resolveRuntimeLanguages validates the wire-shape runtime_languages pins
+// (each against runtime.ParsePins' language allowlist + version regex, via a
+// round-trip through JSON so both API and DB share one validator) and
+// re-serializes them to the JSON string the repos.runtime_languages column
+// stores. A nil/empty slice resolves to "" — the documented "unconfigured"
+// value that keeps a repo's agent spawns byte-identical to before this
+// feature (§4.1). Writes the 400 response and returns ok=false on the first
+// invalid pin.
+func resolveRuntimeLanguages(w http.ResponseWriter, pins []runtime.Pin) (resolved string, ok bool) {
+	if len(pins) == 0 {
+		return "", true
+	}
+	encoded, err := json.Marshal(pins)
+	if err != nil {
+		Err(w, http.StatusBadRequest, "invalid runtime_languages")
+		return "", false
+	}
+	if _, err := runtime.ParsePins(string(encoded)); err != nil {
+		Err(w, http.StatusBadRequest, err.Error())
+		return "", false
+	}
+	return string(encoded), true
+}
+
 // startAsyncClone marks the freshly-created repo row 'cloning' and kicks off the
 // background clone. Runs in the background so a slow clone of a large repo doesn't
 // exceed the server's WriteTimeout and get cut off mid-clone. The UI shows a
@@ -436,6 +475,31 @@ func (h *ReposHandler) publishRepoEvent(event, repoID, status, errMsg string) {
 	})
 }
 
+// prewarmRuntime fires a background `mise install` for a repo's newly
+// saved/changed runtime pins, so the first task dispatched against this repo
+// doesn't pay the cold-download cost inline (see runtime.Prep — this calls
+// it with an empty worktreeDir since no task worktree exists yet at
+// repo-save time; a python pin's venv creation happens per-worktree in the
+// dispatcher's own prep step instead). Best-effort: failure here only means
+// the first real run's prep step does the same work synchronously instead of
+// having it already warm — it does not block the repo save response or fail
+// the request.
+func (h *ReposHandler) prewarmRuntime(repoID, repoPath, runtimeLanguagesJSON string) {
+	pins, err := runtime.ParsePins(runtimeLanguagesJSON)
+	if err != nil || len(pins) == 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), runtime.InstallTimeout)
+		defer cancel()
+		if err := runtime.Prep(ctx, pins, ""); err != nil {
+			slog.Warn("repo runtime pre-warm failed", "repo_id", repoID, "repo_path", repoPath, "err", err)
+			return
+		}
+		slog.Info("repo runtime pre-warm completed", "repo_id", repoID)
+	}()
+}
+
 // withinBaseDir reports whether path is base itself or nested under it, after
 // resolving symlinks on both (falling back to a lexical clean when a path can't
 // be resolved — e.g. it doesn't exist yet). Shared by Create and Update so the
@@ -491,6 +555,12 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// `null`). The two are disambiguated below via maxConcurrentRunsSet,
 		// which checks for key presence in the raw JSON object instead.
 		MaxConcurrentRuns *int64 `json:"max_concurrent_runs"`
+		// RuntimeLanguages: presence in the request (checked below via
+		// rawFields, same pattern as max_concurrent_runs) distinguishes
+		// "omitted, leave untouched" from "provided, replace" — an empty
+		// array is a valid, meaningful value (clears the pins back to
+		// unconfigured), so it can't reuse a nil-means-omitted convention.
+		RuntimeLanguages []runtime.Pin `json:"runtime_languages"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -504,8 +574,10 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// means "set/replace the cap"; absence means "leave existing untouched".
 	var rawFields map[string]json.RawMessage
 	maxConcurrentRunsSet := false
+	runtimeLanguagesSet := false
 	if err := json.Unmarshal(bodyBytes, &rawFields); err == nil {
 		_, maxConcurrentRunsSet = rawFields["max_concurrent_runs"]
+		_, runtimeLanguagesSet = rawFields["runtime_languages"]
 	}
 
 	// Merge: use provided value or fall back to existing.
@@ -629,6 +701,21 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		maxConcurrentRuns = resolved
 	}
 
+	// runtime_languages: see the runtimeLanguagesSet doc comment above.
+	// Field absent preserves the existing pins; field present (even as an
+	// empty array) replaces them — an empty array is how a saved config gets
+	// cleared back to "unconfigured".
+	runtimeLanguages := existing.RuntimeLanguages
+	runtimeChanged := false
+	if runtimeLanguagesSet {
+		resolved, ok := resolveRuntimeLanguages(w, body.RuntimeLanguages)
+		if !ok {
+			return
+		}
+		runtimeChanged = resolved != runtimeLanguages
+		runtimeLanguages = resolved
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -699,12 +786,16 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncGoneLabel:            issueSyncGoneLabel,
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
+		RuntimeLanguages:              runtimeLanguages,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	setClaudeTrust(r.Context(), path)
+	if runtimeChanged && runtimeLanguages != "" {
+		h.prewarmRuntime(repo.ID, repo.Path, runtimeLanguages)
+	}
 	JSON(w, http.StatusOK, repo)
 }
 
@@ -759,6 +850,24 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		files = []string{}
 	}
 	JSON(w, http.StatusOK, map[string]any{"ref": ref, "files": files})
+}
+
+// Detect scans a repo's root directory (never a task worktree) for
+// well-known toolchain manifest files and returns suggested runtime pins.
+// Detection NEVER writes to the repo's saved config — the UI pre-fills the
+// runtime form with these suggestions and the human still has to save
+// explicitly.
+func (h *ReposHandler) Detect(w http.ResponseWriter, r *http.Request) {
+	repo, err := h.q.GetRepo(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		Err(w, http.StatusNotFound, "repo not found")
+		return
+	}
+	suggestions := runtime.Detect(repo.Path)
+	if suggestions == nil {
+		suggestions = []runtime.Suggestion{}
+	}
+	JSON(w, http.StatusOK, map[string]any{"suggestions": suggestions})
 }
 
 // setClaudeTrust marks the given repo path as trust-dialog-accepted in ~/.claude.json

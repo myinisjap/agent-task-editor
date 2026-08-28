@@ -279,6 +279,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Patch("/repos/{id}", reposH.Update)
 			r.Delete("/repos/{id}", reposH.Delete)
 			r.Get("/repos/{id}/tree", reposH.Tree)
+			r.Post("/repos/{id}/runtime/detect", reposH.Detect)
 
 			// Dashboard
 			r.Get("/dashboard", dashH.Get)

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
@@ -158,7 +159,7 @@ func TestChatTerminal_KnownSession_ProvisionFailure_ReturnsInternalError(t *test
 // only need to exercise the auth gate ahead of it, never real PTY attach.
 type fakeTerminal struct{}
 
-func (f *fakeTerminal) Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, conn *websocket.Conn) error {
+func (f *fakeTerminal) Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, repoID string, pins []runtime.Pin, conn *websocket.Conn) error {
 	return nil
 }
 
