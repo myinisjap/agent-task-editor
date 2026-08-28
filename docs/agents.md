@@ -190,7 +190,7 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 | Provider | Usage source | Notes |
 |---|---|---|
 | `claude` | CLI's own `result` stream-json message (`usage` + `total_cost_usd`) | Authoritative — the CLI itself knows whether you're on a Claude Max subscription (often `$0`) or metered API billing, so `cost_usd` is used as-is, not estimated. |
-| `qwen_code` | Same `result` envelope parsing as `claude` (`classifyStreamJSON`) | Same authoritative behavior as `claude`, assuming the qwen CLI's stream-json output stays compatible. |
+| `qwen_code` | Same `result` envelope parsing as `claude` (`classifyStreamJSON`) | Token counts are authoritative, but the Qwen Code CLI reports **no cost figure at all** — `cost_usd` is left at `0` for this provider (not estimated, not flagged `cost_unknown`). See [providers/qwen_code.md](providers/qwen_code.md#cost--usage-reporting). |
 | `anthropic` | Messages API `usage` field, summed across every turn of the agentic loop | `cost_usd` is *estimated* by multiplying tokens by a USD-per-1M-token price. A model's price comes from the user-editable `model_pricing` table (`GET`/`PUT /api/v1/settings/pricing`, see below) if present, otherwise from a small hardcoded fallback map (`internal/agent/providers/pricing.go`). A model in neither is left at `cost_usd = 0` and the run is flagged `cost_unknown = true` rather than silently reported as free. |
 | `llm` | OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`), summed across every turn | Same estimation approach and pricing table as `anthropic`. |
 | `opencode` | CLI's `step_finish` event (`part.cost` + `part.tokens.{input,output}`) | Authoritative — `cost` is reported directly by the CLI, not estimated. `step_finish` fires per step, not once per run; the runner takes the *last* step_finish's values (assumed cumulative-to-date, mirroring opencode's own session-level SQLite schema) rather than summing across steps. See [providers/opencode.md](providers/opencode.md#cost--usage-reporting). |
@@ -210,10 +210,13 @@ match, then longest model-ID-prefix match); a model matching neither has
 `agent_runs.cost_unknown` set to `1` for that run (surfaced in the run
 history UI as "cost unknown") instead of silently showing `$0`, so a stale
 or missing price is visible rather than mistaken for a genuinely free run.
-`claude`/`qwen_code`/`opencode` never set `cost_unknown` — their CLI-reported
-cost (including a legitimate `$0` under a Claude Max subscription) is always
-authoritative. `codex_cli` prices its captured tokens the same way as
-`anthropic`/`llm` and can set `cost_unknown` for an unpriced model.
+`claude`/`opencode` never set `cost_unknown` — their CLI-reported cost
+(including a legitimate `$0` under a subscription plan) is always
+authoritative. `qwen_code` also never sets `cost_unknown`, but for the
+opposite reason: the CLI reports no cost figure at all, so `cost_usd` is
+just left at `0` rather than estimated or flagged. `codex_cli` prices its
+captured tokens the same way as `anthropic`/`llm` and can set
+`cost_unknown` for an unpriced model.
 
 The Dashboard shows an aggregate total (tokens + cost) across all runs in a terminal state (`completed`/`failed`/`waiting_human`), plus a per-provider breakdown (via `provider_configs.provider`, joined `agent_runs.agent_config_id` → `agent_configs` → `agent_configs.provider_config_id` → `provider_configs`). The aggregate total query does not join on `agent_configs`, so it includes every terminal run regardless of its config. The per-provider breakdown *does* join on `agent_configs`/`provider_configs`, so runs whose agent config was later deleted (`agent_config_id` is set `NULL` on delete) are excluded from that breakdown, since they can no longer be attributed to a provider — a known limitation.
 

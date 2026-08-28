@@ -14,6 +14,9 @@ import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
 import NewTaskModal from '../components/board/NewTaskModal'
+import HelpModal from '../components/shared/HelpModal'
+import HelpButton from '../components/shared/HelpButton'
+import { TaskDetailHelp } from '../components/shared/pageHelp'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -30,6 +33,7 @@ export default function TaskDetailPage() {
   const [actionPending, setActionPending] = useState(false)
   const [creatingPR, setCreatingPR] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [showHelp, setShowHelp] = useState(false)
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [editingTask, setEditingTask] = useState(false)
   const [editTitle, setEditTitle] = useState('')
@@ -413,7 +417,7 @@ export default function TaskDetailPage() {
   return (
     <div className="flex h-full overflow-hidden flex-col">
       {/* Tab bar */}
-      <div className="shrink-0 flex items-center border-b border-slate-800 px-4 pt-3 w-full overflow-x-hidden">
+      <div className="shrink-0 flex items-center gap-2 border-b border-slate-800 px-4 pt-3 w-full overflow-x-hidden">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -427,7 +431,14 @@ export default function TaskDetailPage() {
             {t.label}
           </button>
         ))}
+        <HelpButton onClick={() => setShowHelp(true)} title="About this task" />
       </div>
+
+      {showHelp && (
+        <HelpModal title="About Task Detail" onClose={() => setShowHelp(false)}>
+          <TaskDetailHelp />
+        </HelpModal>
+      )}
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">

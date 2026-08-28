@@ -30,7 +30,7 @@ func terminalTestHandler(t *testing.T, m *TerminalManager, sessionID, repoDir st
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, conn)
+		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, "", nil, conn)
 	}
 }
 
@@ -177,7 +177,7 @@ func TestTerminalManager_ChatMCPInjectsEnv(t *testing.T) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, conn)
+		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, "", nil, conn)
 	}))
 	defer srv.Close()
 
@@ -242,7 +242,7 @@ func TestTerminalManager_EnvAllowlistScopesSubprocessEnv(t *testing.T) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, conn)
+		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, "", nil, conn)
 	}))
 	defer srv.Close()
 
@@ -293,7 +293,7 @@ func TestTerminalManager_MaxSessionsCapsNewSessionsOnly(t *testing.T) {
 	repoDir := t.TempDir()
 
 	// First session starts fine (0 < cap 1).
-	s1, err := m.ensure("sess-1", repoDir, "claude", "", false)
+	s1, err := m.ensure("sess-1", repoDir, "claude", "", false, "", nil)
 	if err != nil {
 		t.Fatalf("first session should start under the cap: %v", err)
 	}
@@ -303,13 +303,13 @@ func TestTerminalManager_MaxSessionsCapsNewSessionsOnly(t *testing.T) {
 	}
 
 	// A second, *new* session is refused: starting it would exceed the cap.
-	if _, err := m.ensure("sess-2", repoDir, "claude", "", false); !errors.Is(err, ErrTooManySessions) {
+	if _, err := m.ensure("sess-2", repoDir, "claude", "", false, "", nil); !errors.Is(err, ErrTooManySessions) {
 		t.Fatalf("expected ErrTooManySessions for a new session over the cap, got %v", err)
 	}
 
 	// Reattaching to the *existing* session (sess-1) must still succeed even
 	// though the manager is at capacity.
-	if _, err := m.ensure("sess-1", repoDir, "claude", "", false); err != nil {
+	if _, err := m.ensure("sess-1", repoDir, "claude", "", false, "", nil); err != nil {
 		t.Fatalf("reattach to an existing session must never be refused by the cap: %v", err)
 	}
 }
@@ -327,11 +327,11 @@ func TestTerminalManager_ReapIdleOnceStopsDetachedSessionsPastTimeout(t *testing
 
 	repoDir := t.TempDir()
 
-	idle, err := m.ensure("idle-sess", repoDir, "claude", "", false)
+	idle, err := m.ensure("idle-sess", repoDir, "claude", "", false, "", nil)
 	if err != nil {
 		t.Fatalf("ensure idle-sess: %v", err)
 	}
-	fresh, err := m.ensure("fresh-sess", repoDir, "claude", "", false)
+	fresh, err := m.ensure("fresh-sess", repoDir, "claude", "", false, "", nil)
 	if err != nil {
 		t.Fatalf("ensure fresh-sess: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestTerminalManager_ReapIdleOnceDisabledByDefault(t *testing.T) {
 	t.Cleanup(func() { buildTerminalCommand = orig })
 
 	repoDir := t.TempDir()
-	s, err := m.ensure("never-idle", repoDir, "claude", "", false)
+	s, err := m.ensure("never-idle", repoDir, "claude", "", false, "", nil)
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestTerminalManager_OutputPumpDeleteIsOwnerScoped(t *testing.T) {
 	repoDir := t.TempDir()
 	const sessionID = "owner-scoped-sess"
 
-	oldSession, err := m.ensure(sessionID, repoDir, "claude", "", false)
+	oldSession, err := m.ensure(sessionID, repoDir, "claude", "", false, "", nil)
 	if err != nil {
 		t.Fatalf("ensure (old): %v", err)
 	}
@@ -428,7 +428,7 @@ func TestTerminalManager_OutputPumpDeleteIsOwnerScoped(t *testing.T) {
 	// delete before we insert the new session under the same id.
 	time.Sleep(20 * time.Millisecond)
 
-	newSession, err := m.ensure(sessionID, repoDir, "claude", "", false)
+	newSession, err := m.ensure(sessionID, repoDir, "claude", "", false, "", nil)
 	if err != nil {
 		t.Fatalf("ensure (new): %v", err)
 	}
@@ -481,7 +481,7 @@ func TestTerminalManager_AttachUnblocksOnProcessExit(t *testing.T) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, conn)
+		_ = m.Attach(r.Context(), sessionID, repoDir, "claude", "", false, "", nil, conn)
 		close(attachReturned)
 	}))
 	defer srv.Close()

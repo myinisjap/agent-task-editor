@@ -3139,6 +3139,8 @@ export interface paths {
                         issue_sync_gone_action?: "flag" | "archive" | "move";
                         issue_sync_gone_label?: string;
                         issue_comment_sync_enabled?: boolean;
+                        /** @description Replaces the repo's toolchain pins. Omit the field to leave existing pins untouched; pass an empty array to clear them back to unconfigured. */
+                        runtime_languages?: components["schemas"]["RuntimeLanguagePin"][];
                     };
                 };
             };
@@ -3198,6 +3200,58 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{id}/runtime/detect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Detect suggested toolchain pins from the repo's manifest files
+         * @description Scans the repo's root directory (never a task worktree) for well-known toolchain manifest files (go.mod, .nvmrc/.node-version, .python-version, rust-toolchain(.toml), .ruby-version, .java-version) and returns a suggested pin for each one found. A symlinked manifest is skipped and reads are capped at 64KB. Detection NEVER writes to the repo's saved runtime_languages — the UI pre-fills the runtime form with these suggestions and a human must still save explicitly. No LLM fallback; manifest scan only.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            suggestions?: (components["schemas"]["RuntimeLanguagePin"] & {
+                                /** @description The manifest file this suggestion was read from, e.g. "go.mod". */
+                                source: string;
+                            })[];
+                        };
+                    };
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -4562,8 +4616,17 @@ export interface components {
             clone_error?: string;
             /** @description Optional cap on the number of agent runs the dispatcher will keep in flight against this repo at once. null (the default) means "no repo-specific cap" — the dispatcher falls back to the server's global MAX_WORKERS limit, preserving pre-existing behavior. A repo saturated with eligible tasks is skipped by the dispatcher once its in-flight run count reaches this limit (or the global fallback), leaving worker slots free for other repos. See GET /dashboard's repo_concurrency for live in-use vs. limit. */
             max_concurrent_runs?: number | null;
+            /** @description Serialized JSON array of this repo's agent toolchain pins (see RuntimeLanguagePin) — stored and returned as a JSON string, not a structured array, matching the DB column. Empty string (the default) means unconfigured: tasks on this repo spawn their agent CLI exactly as they did before this feature existed. When non-empty, the dispatcher runs `mise install` for every pin before invoking the provider and wraps the CLI command with `mise x`; a python pin instead gets a per-worktree virtualenv on PATH. Prep failure escalates the task to waiting_human — it never falls back to a plain spawn. See docs/runtime.md. */
+            runtime_languages?: string;
             /** Format: date-time */
             created_at: string;
+        };
+        /** @description One toolchain pin in a repo's runtime_languages array (the wire shape used by POST /repos, PATCH /repos/{id}, and the runtime/detect suggestions — the DB column itself stores this array serialized to JSON text). */
+        RuntimeLanguagePin: {
+            /** @enum {string} */
+            id: "go" | "node" | "python" | "rust" | "ruby" | "java";
+            /** @description A mise-installable version string, e.g. "1.21", "22", "3.12". Validated server-side against ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ (no "@", no spaces, no leading "-") since it becomes an argv element passed to mise/uv subprocesses. */
+            version: string;
         };
         /** @description A persistent, file/line-anchored inline review comment on a task's diff. Open comments are injected into every agent run's prompt until resolved (by an agent via the MCP resolve_comment tool, or by a human). */
         ReviewComment: {

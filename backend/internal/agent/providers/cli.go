@@ -1,11 +1,16 @@
 package providers
 
 import (
+	"bufio"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 )
 
 // sanitizeArgs strips NUL bytes from each CLI argument. A NUL byte anywhere
@@ -259,4 +264,194 @@ func (d *rawDump) Close() {
 		return
 	}
 	_ = d.f.Close()
+}
+
+// applyRuntime wraps a provider's spawn command with `mise x` when the task's
+// repo has toolchain pins configured (agent.RuntimeSpec, set by the
+// dispatcher's runtime-prep step). A nil or pin-less spec returns binary,
+// args, and env completely unchanged — this is the §4.1 byte-identical
+// guarantee: a repo with no runtime_languages configured must spawn exactly
+// as it did before this feature existed.
+//
+// When pins are present, the returned command is
+// `mise x <id>@<version>... -- <binary> <args...>`, one pin per language in
+// the order given (RuntimeSpec.Pins is built from ParsePins' JSON-array
+// order, so this is deterministic for a given repo config). python is
+// deliberately never passed to `mise x`: mise x's PATH prepend for python
+// would shadow the per-worktree venv runtime prep creates instead (see
+// dispatcher's runtime-prep step) — so a python pin is skipped in the mise
+// x args, and env instead gets `<worktree>/.venv/bin` prepended to PATH
+// (so `python`/`pip` resolve to the venv's wrapped interpreter) plus
+// UV_CACHE_DIR pointing at the shared uv cache.
+//
+// A node pin gets special handling too, for a different reason than python:
+// `mise x node@<pin> -- <binary> ...` puts the pinned node first on PATH for
+// the whole child process tree — and claude/qwen's CLI binaries are
+// themselves node scripts (`#!/usr/bin/env node`), so the CLI process itself
+// would run (and likely crash) on the pinned node instead of the image's own
+// bundled one. codex (Rust) and opencode (Go) are native binaries and
+// unaffected. So: when a node pin is present and binary resolves to a node
+// script (see isNodeScript), the spawn becomes
+// `mise x <pins> -- <systemNode> <absoluteBinaryPath> <args...>` — the CLI
+// process itself runs explicitly on the backend's own bundled node (resolved
+// via exec.LookPath BEFORE any PATH manipulation below), while any node/npm/
+// npx the agent's Bash tool invokes still resolves through mise x's PATH to
+// the pinned version. Fails closed: if a node pin is present, binary is a
+// node script, but the system node or the binary's own absolute path can't
+// be resolved, this returns an error rather than ever launching the CLI on
+// the wrong interpreter — callers must propagate it as a spawn failure
+// (never fall back to the unwrapped command).
+//
+// The child's env is built via allowlistEnv (see EnvAllowlistFor), which
+// strips the backend's own ENV — including MISE_DATA_DIR, so without
+// injecting it here `mise x` could resolve a *different* data dir than the
+// one runtime.Prep just installed into — and there is no allowlist entry for
+// MISE_YES/MISE_TRUSTED_CONFIG_PATHS at all, so a repo that ships its own
+// mise.toml would otherwise hit mise's untrusted-config confirmation prompt
+// in this non-TTY child and fail outright. All three are always injected
+// whenever pins are present (not just for a python pin), since any pinned
+// repo can ship a mise.toml.
+func applyRuntime(spec *agent.RuntimeSpec, binary string, args []string, env []string) (string, []string, []string, error) {
+	if spec == nil || len(spec.Pins) == 0 {
+		return binary, args, env, nil
+	}
+
+	// No computed capacity: len arithmetic in an allocation trips CodeQL's
+	// go/allocation-size-overflow, and the slice is tiny (≤6 pins) anyway.
+	miseArgs := []string{"x"}
+	hasPython, hasNode := false, false
+	for _, p := range spec.Pins {
+		switch p.ID {
+		case "python":
+			hasPython = true
+			continue
+		case "node":
+			hasNode = true
+		}
+		miseArgs = append(miseArgs, fmt.Sprintf("%s@%s", p.ID, p.Version))
+	}
+
+	// A node pin whose CLI is a node script must run explicitly on the
+	// system's own node — see the doc comment above.
+	miseArgs = append(miseArgs, "--")
+	if hasNode {
+		nodePath, binPath, err := explicitInterpreterForNodeScript(binary)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("resolve system interpreter for node-pinned CLI %q: %w", binary, err)
+		}
+		if nodePath != "" {
+			miseArgs = append(miseArgs, nodePath, binPath)
+		} else {
+			miseArgs = append(miseArgs, binary)
+		}
+	} else {
+		miseArgs = append(miseArgs, binary)
+	}
+	miseArgs = append(miseArgs, args...)
+
+	newEnv := append([]string(nil), env...)
+	newEnv = append(newEnv, "MISE_YES=1")
+	if dir := runtime.MiseDataDir(); dir != "" {
+		newEnv = append(newEnv, "MISE_DATA_DIR="+dir)
+	}
+	if spec.WorktreeDir != "" {
+		newEnv = append(newEnv, "MISE_TRUSTED_CONFIG_PATHS="+spec.WorktreeDir)
+	}
+	if hasPython && spec.WorktreeDir != "" {
+		venvBin := filepath.Join(spec.WorktreeDir, ".venv", "bin")
+		newEnv = prependPath(newEnv, venvBin)
+		if dir := runtime.UvCacheDir(); dir != "" {
+			newEnv = append(newEnv, "UV_CACHE_DIR="+dir)
+		}
+	}
+
+	return "mise", miseArgs, newEnv, nil
+}
+
+// explicitInterpreterForNodeScript checks whether binary resolves to a node
+// script (see isNodeScript) and, if so, returns the two argv elements that
+// must replace it so it runs on the system's own node rather than whatever
+// mise x puts first on PATH: the system node's absolute path (nodePath), and
+// the script's own absolute path (binPath) — the caller places them as
+// consecutive argv elements: `<nodePath> <binPath> <args...>`. Returns
+// nodePath == "" (with a nil error) — not an error — for a native binary
+// (codex, opencode): those spawn unwrapped, as before. Both exec.LookPath
+// calls resolve against the current process's own PATH/env, which the caller
+// (applyRuntime) invokes before building the mise-x-wrapped child env, so
+// this always resolves the image's bundled node/binary, never a pinned one.
+func explicitInterpreterForNodeScript(binary string) (nodePath, binPath string, err error) {
+	binPath, err = exec.LookPath(binary)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %q: %w", binary, err)
+	}
+	isScript, err := isNodeScript(binPath)
+	if err != nil {
+		return "", "", fmt.Errorf("inspect %q: %w", binPath, err)
+	}
+	if !isScript {
+		return "", "", nil
+	}
+	nodePath, err = exec.LookPath("node")
+	if err != nil {
+		return "", "", fmt.Errorf("resolve system node: %w", err)
+	}
+	return nodePath, binPath, nil
+}
+
+// isNodeScript reports whether the file at path is a node script — detected
+// by its shebang line, not assumed from the provider: reads the first line
+// and checks it references node, either as `#!/usr/bin/env node` (npm's
+// standard global-install wrapper, what claude/qwen use) or a shebang path
+// ending in "/node" (e.g. `#!/usr/local/bin/node`). A native binary (codex's
+// Rust build, opencode's Go build) has no text shebang at all — its first
+// line is binary/ELF data — so this returns false for those, never true by
+// assumption.
+func isNodeScript(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 4096), 4096)
+	if !sc.Scan() {
+		return false, sc.Err()
+	}
+	line := sc.Text()
+	if !strings.HasPrefix(line, "#!") {
+		return false, nil
+	}
+	shebang := strings.TrimSpace(strings.TrimPrefix(line, "#!"))
+	fields := strings.Fields(shebang)
+	if len(fields) == 0 {
+		return false, nil
+	}
+	interp := fields[0]
+	// `#!/usr/bin/env node [args...]` — env's own target is the second field.
+	if filepath.Base(interp) == "env" && len(fields) > 1 {
+		interp = fields[1]
+	}
+	return filepath.Base(interp) == "node", nil
+}
+
+// prependPath returns a copy of env with dir prepended to the PATH entry
+// (added fresh if env has none). Providers build env via allowlistEnv, which
+// always includes PATH (see commonBaseEnvKeys), so the "no PATH key found"
+// branch is a defensive fallback, not the expected case.
+func prependPath(env []string, dir string) []string {
+	out := make([]string, len(env))
+	found := false
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			out[i] = "PATH=" + dir + string(os.PathListSeparator) + strings.TrimPrefix(kv, "PATH=")
+			found = true
+			continue
+		}
+		out[i] = kv
+	}
+	if !found {
+		out = append(out, "PATH="+dir)
+	}
+	return out
 }

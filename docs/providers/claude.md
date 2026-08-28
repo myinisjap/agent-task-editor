@@ -296,11 +296,11 @@ backoff. If no reset clue can be parsed, `ErrRateLimit.ResetAt` is left zero
 and the pool falls back to `BlockWithBackoff` as before.
 
 `claude_reset.go` blank-imports `time/tzdata` to embed the IANA time zone
-database into the compiled binary — the production container
-(`node:26-alpine`) does not ship `/usr/share/zoneinfo`, so without this
-`time.LoadLocation("America/Chicago")` would fail there and reset-time
-parsing would silently degrade to backoff-only in production while working
-fine in local dev.
+database into the compiled binary, so `time.LoadLocation("America/Chicago")`
+doesn't depend on the container image shipping `/usr/share/zoneinfo` (it
+didn't on the old `node:26-alpine` base; the current `node:26-bookworm-slim`
+base happens to include it, but the embedded import means reset-time parsing
+doesn't silently degrade to backoff-only if that ever changes again).
 
 ## Dashboard: Live Claude Usage Widget
 

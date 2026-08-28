@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -658,6 +659,11 @@ var (
 	// unrecognized, so ProviderFactory returned nil and the run could not be
 	// dispatched.
 	ErrProviderUnavailable = errors.New("agent config's provider is disabled or unknown")
+	// ErrRuntimePrepFailed means the repo's pinned toolchains (repos.
+	// runtime_languages) failed to install/prepare (mise install or, for a
+	// python pin, uv venv) before the provider could be invoked. See
+	// prepareRuntime.
+	ErrRuntimePrepFailed = errors.New("runtime toolchain prep failed")
 )
 
 // DispatchReply starts a new run for a task whose active run is waiting_human,
@@ -744,6 +750,17 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 
 	if err := d.persistRunRow(ctx, t, matched, runID, feedback); err != nil {
 		return "", err
+	}
+
+	// Resolving pins is pure JSON parsing (no I/O), so it's cheap enough to do
+	// synchronously here — unlike the actual toolchain prep (mise install /
+	// uv venv), which the pool now runs from the run's own goroutine (see
+	// Pool.prepareRuntime) so a slow/cold install can never block the
+	// single-threaded sweep loop or a DispatchReply request. A malformed
+	// stored config is still caught here, before the job is ever submitted.
+	runtimeSpec, err := d.resolveRuntimeSpec(repo, workDir)
+	if err != nil {
+		return "", d.escalateRuntimePrepFailure(ctx, t, runID, err, log)
 	}
 
 	// Record the human's reply at the top of the new run's log so the
@@ -869,6 +886,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			CostBudgetUSD:      costBudgetUSD,
 			CostSpentUSD:       costSpentUSD,
 			CostWarnRatio:      d.resolveCostWarnRatio(ctx),
+			Runtime:            runtimeSpec,
 		},
 	})
 	if !enqueued {
@@ -890,6 +908,75 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	metrics.DispatchedRunsTotal.Inc()
 	log.Info("dispatcher: agent dispatched", "label", t.Label, "agent", matched.Name, "provider", agentCfg.Provider, "agent_id", matched.ID, "agent_enabled", matched.Enabled, "resume_session", resumeSessionID != "", "human_reply", opts.humanReply != nil)
 	return runID, nil
+}
+
+// resolveRuntimeSpec parses and validates the repo's pinned toolchains
+// (repos.runtime_languages) into a RuntimeSpec, ahead of the job being
+// submitted to the pool. A repo with no runtime configured (the column
+// empty) returns (nil, nil) — this is the §4.1 byte-identical guarantee: no
+// I/O happens in that case, so every downstream caller (providers.
+// applyRuntime) sees the same nil RuntimeSpec it always has and spawns
+// exactly as before this feature existed.
+//
+// This is deliberately pure (JSON parse + regex validation only, via
+// runtime.ParsePins) — it does NOT install anything. The actual toolchain
+// prep (`mise install`, and for a python pin `uv venv`) is comparatively
+// slow (a cold install can take minutes) and runs later, from the pool's
+// per-run goroutine (see Pool.prepareRuntime), so it can never block the
+// dispatcher's single-threaded sweep loop or a DispatchReply request running
+// under an HTTP request context. Any failure here (e.g. corrupt stored
+// config — persisted config should already be valid since the API validates
+// on write, but this defends against a bad direct DB edit) is returned as-is;
+// the caller (startRun) escalates to waiting_human the same way a later prep
+// failure does (see escalateRuntimePrepFailure).
+func (d *Dispatcher) resolveRuntimeSpec(repo gen.Repo, worktreeDir string) (*RuntimeSpec, error) {
+	pins, err := runtime.ParsePins(repo.RuntimeLanguages)
+	if err != nil {
+		return nil, fmt.Errorf("parse repo runtime_languages: %w", err)
+	}
+	if len(pins) == 0 {
+		return nil, nil
+	}
+	return &RuntimeSpec{Pins: pins, WorktreeDir: worktreeDir}, nil
+}
+
+// escalateRuntimePrepFailure marks the given run waiting_human after
+// prepareRuntime failed, with prepErr's message recorded as the run's notes
+// (mise's own combined-output tail, capped by runtime.Prep, is embedded in
+// prepErr so a human sees the real toolchain failure, not just "prep
+// failed"). Mirrors startRun's nil-provider escalation immediately below:
+// persistRunRow already pointed both current_agent_run_id and
+// active_agent_run_id at this phantom run, so current_agent_run_id is
+// restored to the task's prior real run (this run has no logs/feedback of
+// its own) while active_agent_run_id is deliberately left locked on runID
+// until a human intervenes — re-dispatch must never fall back to a plain,
+// unprepared spawn. Returns ErrRuntimePrepFailed (wrapping prepErr) for
+// startRun to propagate.
+func (d *Dispatcher) escalateRuntimePrepFailure(ctx context.Context, t gen.Task, runID string, prepErr error, log *slog.Logger) error {
+	msg := fmt.Sprintf("agent runtime prep failed: %v", prepErr)
+	log.Error("dispatcher: runtime prep failed", "err", prepErr)
+	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status: "waiting_human",
+		Notes:  &msg,
+		ID:     runID,
+	}); err != nil {
+		log.Warn("dispatcher: mark runtime-prep-failed run waiting_human", "err", err)
+	}
+	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
+		ActiveAgentRunID:  &runID,
+		ID:                t.ID,
+	}); err != nil {
+		log.Warn("dispatcher: restore current_agent_run_id after runtime-prep escalation", "err", err)
+	}
+	if d.Publisher != nil {
+		d.Publisher.Publish("task.needs_human", map[string]any{
+			"task_id": t.ID,
+			"run_id":  runID,
+			"message": msg,
+		})
+	}
+	return fmt.Errorf("%w: %v", ErrRuntimePrepFailed, prepErr)
 }
 
 // ensureWorktree returns the task's working directory, provisioning a git
