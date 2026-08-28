@@ -2,16 +2,41 @@ package providers
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 )
+
+// newCLICommand builds the exec.Cmd for a provider's CLI subprocess. The CLI
+// (claude/codex/qwen/opencode) commonly spawns its own children — e.g. a
+// Bash-tool `npm run test` — which in turn spawn grandchildren (Node worker
+// threads, git, gh, mcp-server...). exec.CommandContext by default only
+// signals the direct child on cancel/timeout, leaving that whole subtree
+// orphaned and still consuming CPU/memory (observed: 20+ leftover node/git
+// processes pegging the container at 99% mem / 1700% CPU after a timed-out
+// run). Setpgid puts the child in its own process group; Cancel/WaitDelay
+// then kill the entire group (negative pid) with SIGKILL so a timeout,
+// manual Pool.Cancel, or the memory watchdog reliably reaps every descendant.
+func newCLICommand(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	// Cancel is best-effort (e.g. the process already exited); give Wait a
+	// bounded grace period afterward instead of blocking forever.
+	cmd.WaitDelay = 5 * time.Second
+	return cmd
+}
 
 // sanitizeArgs strips NUL bytes from each CLI argument. A NUL byte anywhere
 // in an argv element makes the Linux execve syscall fail with EINVAL
