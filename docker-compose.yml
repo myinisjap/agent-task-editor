@@ -38,7 +38,9 @@ services:
       # /readyz (not /healthz) so Docker actually detects a wedged backend —
       # it checks DB connectivity and dispatch-loop liveness, not just that
       # the HTTP server is up. See docs/api.md.
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/readyz"]
+      # curl, not wget: the bookworm-slim backend image ships curl (wget was a
+      # busybox built-in on the old alpine base and no longer exists).
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/readyz"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -120,6 +122,11 @@ services:
       - NOTIFY_BASE_URL=${NOTIFY_BASE_URL:-}
     volumes:
       - db_data:/data
+      # Per-repo agent toolchains via mise/uv (see docs/runtime.md). Named
+      # volumes rather than a bind mount since these are content/version-
+      # addressed caches shared across all repos, not per-repo state.
+      - mise-data:/home/node/.local/share/mise
+      - uv-cache:/home/node/.cache/uv
       # Claude Max auth — run 'claude login' on your host machine first,
       # then this mount shares that session with the container.
       - ${HOME}/.claude:/home/node/.claude
@@ -161,3 +168,5 @@ services:
 
 volumes:
   db_data:
+  mise-data:
+  uv-cache:

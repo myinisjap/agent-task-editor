@@ -10,9 +10,9 @@ import (
 )
 
 const createAgentConfig = `-- name: CreateAgentConfig :one
-INSERT INTO agent_configs (id, name, provider_config_id, system_prompt, labels, max_tokens, timeout_secs, max_turns, enabled_plugins, enabled_mcp_servers, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, effort)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort
+INSERT INTO agent_configs (id, name, provider_config_id, system_prompt, labels, max_tokens, timeout_secs, max_turns, enabled_plugins, enabled_mcp_servers, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, effort, permission_mode)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort, permission_mode
 `
 
 type CreateAgentConfigParams struct {
@@ -36,6 +36,7 @@ type CreateAgentConfigParams struct {
 	MaxCostUsd        float64 `json:"max_cost_usd"`
 	Priority          int64   `json:"priority"`
 	Effort            string  `json:"effort"`
+	PermissionMode    string  `json:"permission_mode"`
 }
 
 func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigParams) (AgentConfig, error) {
@@ -60,6 +61,7 @@ func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigPa
 		arg.MaxCostUsd,
 		arg.Priority,
 		arg.Effort,
+		arg.PermissionMode,
 	)
 	var i AgentConfig
 	err := row.Scan(
@@ -86,6 +88,7 @@ func (q *Queries) CreateAgentConfig(ctx context.Context, arg CreateAgentConfigPa
 		&i.Priority,
 		&i.ProviderConfigID,
 		&i.Effort,
+		&i.PermissionMode,
 	)
 	return i, err
 }
@@ -100,7 +103,7 @@ func (q *Queries) DeleteAgentConfig(ctx context.Context, id string) error {
 }
 
 const getAgentConfig = `-- name: GetAgentConfig :one
-SELECT id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort FROM agent_configs WHERE id = ?
+SELECT id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort, permission_mode FROM agent_configs WHERE id = ?
 `
 
 func (q *Queries) GetAgentConfig(ctx context.Context, id string) (AgentConfig, error) {
@@ -130,12 +133,13 @@ func (q *Queries) GetAgentConfig(ctx context.Context, id string) (AgentConfig, e
 		&i.Priority,
 		&i.ProviderConfigID,
 		&i.Effort,
+		&i.PermissionMode,
 	)
 	return i, err
 }
 
 const listAgentConfigs = `-- name: ListAgentConfigs :many
-SELECT id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort FROM agent_configs WHERE enabled = 1 ORDER BY priority ASC, created_at DESC
+SELECT id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort, permission_mode FROM agent_configs WHERE enabled = 1 ORDER BY priority ASC, created_at DESC
 `
 
 func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
@@ -171,6 +175,7 @@ func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
 			&i.Priority,
 			&i.ProviderConfigID,
 			&i.Effort,
+			&i.PermissionMode,
 		); err != nil {
 			return nil, err
 		}
@@ -186,7 +191,7 @@ func (q *Queries) ListAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
 }
 
 const listAllAgentConfigs = `-- name: ListAllAgentConfigs :many
-SELECT id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort FROM agent_configs ORDER BY created_at DESC
+SELECT id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort, permission_mode FROM agent_configs ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error) {
@@ -222,6 +227,7 @@ func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error
 			&i.Priority,
 			&i.ProviderConfigID,
 			&i.Effort,
+			&i.PermissionMode,
 		); err != nil {
 			return nil, err
 		}
@@ -237,7 +243,7 @@ func (q *Queries) ListAllAgentConfigs(ctx context.Context) ([]AgentConfig, error
 }
 
 const listAllAgentConfigsPage = `-- name: ListAllAgentConfigsPage :many
-SELECT a.id, a.name, a.system_prompt, a.labels, a.max_tokens, a.timeout_secs, a.created_at, a.updated_at, a.enabled, a.enabled_plugins, a.enabled_mcp_servers, a.max_turns, a.command_allowlist, a.command_denylist, a.max_retries, a.retry_backoff_secs, a.resume_sessions, a.subtasks_enabled, a.max_subtasks, a.max_cost_usd, a.priority, a.provider_config_id, a.effort FROM agent_configs a
+SELECT a.id, a.name, a.system_prompt, a.labels, a.max_tokens, a.timeout_secs, a.created_at, a.updated_at, a.enabled, a.enabled_plugins, a.enabled_mcp_servers, a.max_turns, a.command_allowlist, a.command_denylist, a.max_retries, a.retry_backoff_secs, a.resume_sessions, a.subtasks_enabled, a.max_subtasks, a.max_cost_usd, a.priority, a.provider_config_id, a.effort, a.permission_mode FROM agent_configs a
 WHERE (
     ?1 = ''
     OR a.created_at < (SELECT created_at FROM agent_configs WHERE id = ?1)
@@ -292,6 +298,7 @@ func (q *Queries) ListAllAgentConfigsPage(ctx context.Context, arg ListAllAgentC
 			&i.Priority,
 			&i.ProviderConfigID,
 			&i.Effort,
+			&i.PermissionMode,
 		); err != nil {
 			return nil, err
 		}
@@ -313,10 +320,10 @@ SET name = ?, provider_config_id = ?, system_prompt = ?, labels = ?,
     command_allowlist = ?, command_denylist = ?,
     max_retries = ?, retry_backoff_secs = ?, resume_sessions = ?,
     subtasks_enabled = ?, max_subtasks = ?, max_cost_usd = ?, priority = ?,
-    effort = ?,
+    effort = ?, permission_mode = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort
+RETURNING id, name, system_prompt, labels, max_tokens, timeout_secs, created_at, updated_at, enabled, enabled_plugins, enabled_mcp_servers, max_turns, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, provider_config_id, effort, permission_mode
 `
 
 type UpdateAgentConfigParams struct {
@@ -340,6 +347,7 @@ type UpdateAgentConfigParams struct {
 	MaxCostUsd        float64 `json:"max_cost_usd"`
 	Priority          int64   `json:"priority"`
 	Effort            string  `json:"effort"`
+	PermissionMode    string  `json:"permission_mode"`
 	ID                string  `json:"id"`
 }
 
@@ -365,6 +373,7 @@ func (q *Queries) UpdateAgentConfig(ctx context.Context, arg UpdateAgentConfigPa
 		arg.MaxCostUsd,
 		arg.Priority,
 		arg.Effort,
+		arg.PermissionMode,
 		arg.ID,
 	)
 	var i AgentConfig
@@ -392,6 +401,7 @@ func (q *Queries) UpdateAgentConfig(ctx context.Context, arg UpdateAgentConfigPa
 		&i.Priority,
 		&i.ProviderConfigID,
 		&i.Effort,
+		&i.PermissionMode,
 	)
 	return i, err
 }

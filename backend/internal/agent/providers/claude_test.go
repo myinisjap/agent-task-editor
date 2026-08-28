@@ -1211,3 +1211,53 @@ func TestBuildClaudeArgs_Effort(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildClaudeArgs_PermissionMode verifies that AgentConfig.PermissionMode
+// is passed through as claude's --permission-mode flag when set, and that
+// leaving it unset produces byte-identical args to before the field existed
+// (no --permission-mode flag at all, letting the CLI's own default apply).
+func TestBuildClaudeArgs_PermissionMode(t *testing.T) {
+	t.Run("unset is byte-identical to no permission mode support", func(t *testing.T) {
+		input := agent.RunInput{
+			Task:        agent.Task{Title: "t"},
+			AgentConfig: agent.AgentConfig{},
+		}
+		withEmpty, err := buildClaudeArgs(input, false, nil)
+		if err != nil {
+			t.Fatalf("buildClaudeArgs: %v", err)
+		}
+		input.AgentConfig.PermissionMode = ""
+		withExplicitEmpty, err := buildClaudeArgs(input, false, nil)
+		if err != nil {
+			t.Fatalf("buildClaudeArgs: %v", err)
+		}
+		if len(withEmpty) != len(withExplicitEmpty) {
+			t.Fatalf("expected identical args, got %v vs %v", withEmpty, withExplicitEmpty)
+		}
+		for i := range withEmpty {
+			if withEmpty[i] != withExplicitEmpty[i] {
+				t.Fatalf("expected identical args, got %v vs %v", withEmpty, withExplicitEmpty)
+			}
+		}
+		for _, a := range withEmpty {
+			if a == "--permission-mode" {
+				t.Fatalf("expected no --permission-mode flag when unset, got args=%v", withEmpty)
+			}
+		}
+	})
+
+	for _, mode := range []string{"default", "auto", "acceptEdits", "bypassPermissions"} {
+		t.Run(mode, func(t *testing.T) {
+			args, err := buildClaudeArgs(agent.RunInput{
+				Task:        agent.Task{Title: "t"},
+				AgentConfig: agent.AgentConfig{PermissionMode: mode},
+			}, false, nil)
+			if err != nil {
+				t.Fatalf("buildClaudeArgs: %v", err)
+			}
+			if got := findFlagValue(args, "--permission-mode"); got != mode {
+				t.Fatalf("expected --permission-mode %q, got %q (args=%v)", mode, got, args)
+			}
+		})
+	}
+}

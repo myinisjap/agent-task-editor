@@ -109,6 +109,7 @@ _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capab
 | Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
 | Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |
 | Effort (reasoning level) | ✅ Passed as --effort. Supports low/medium/high/xhigh/max. Not all models support effort levels, and higher levels may be restricted by your Anthropic organization — either case degrades silently (the CLI only warns), so verify against the agent run logs. | ❌ No reasoning-effort flag on the qwen CLI — the field is ignored for this provider. | ⚠️ Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high. | ❌ Not implemented for this provider. | ❌ Not implemented for this provider. | ❌ No reasoning-effort flag on the opencode CLI — the field is ignored for this provider. |
+| Permission mode | ✅ Passed as --permission-mode. Leave as Default (unset) to keep today's behavior (no flag — the CLI's own "auto" classifier). command_denylist is still enforced even under bypassPermissions (verified empirically). | ❌ qwen_code always runs in --approval-mode yolo (full auto-approve) — always full bypass, not configurable per agent config. | ❌ codex_cli always runs with --dangerously-bypass-approvals-and-sandbox — always full bypass, not configurable per agent config. | ❌ Not applicable — this provider has no claude-CLI-style permission mode concept. | ❌ Not applicable — this provider has no claude-CLI-style permission mode concept. | ❌ No permission-mode flag on the opencode CLI — the field is ignored for this provider. |
 
 <!-- END capability-matrix (generated) -->
 
@@ -189,7 +190,7 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 | Provider | Usage source | Notes |
 |---|---|---|
 | `claude` | CLI's own `result` stream-json message (`usage` + `total_cost_usd`) | Authoritative — the CLI itself knows whether you're on a Claude Max subscription (often `$0`) or metered API billing, so `cost_usd` is used as-is, not estimated. |
-| `qwen_code` | Same `result` envelope parsing as `claude` (`classifyStreamJSON`) | Same authoritative behavior as `claude`, assuming the qwen CLI's stream-json output stays compatible. |
+| `qwen_code` | Same `result` envelope parsing as `claude` (`classifyStreamJSON`) | Token counts are authoritative, but the Qwen Code CLI reports **no cost figure at all** — `cost_usd` is left at `0` for this provider (not estimated, not flagged `cost_unknown`). See [providers/qwen_code.md](providers/qwen_code.md#cost--usage-reporting). |
 | `anthropic` | Messages API `usage` field, summed across every turn of the agentic loop | `cost_usd` is *estimated* by multiplying tokens by a USD-per-1M-token price. A model's price comes from the user-editable `model_pricing` table (`GET`/`PUT /api/v1/settings/pricing`, see below) if present, otherwise from a small hardcoded fallback map (`internal/agent/providers/pricing.go`). A model in neither is left at `cost_usd = 0` and the run is flagged `cost_unknown = true` rather than silently reported as free. |
 | `llm` | OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`), summed across every turn | Same estimation approach and pricing table as `anthropic`. |
 | `opencode` | CLI's `step_finish` event (`part.cost` + `part.tokens.{input,output}`) | Authoritative — `cost` is reported directly by the CLI, not estimated. `step_finish` fires per step, not once per run; the runner takes the *last* step_finish's values (assumed cumulative-to-date, mirroring opencode's own session-level SQLite schema) rather than summing across steps. See [providers/opencode.md](providers/opencode.md#cost--usage-reporting). |
@@ -209,10 +210,13 @@ match, then longest model-ID-prefix match); a model matching neither has
 `agent_runs.cost_unknown` set to `1` for that run (surfaced in the run
 history UI as "cost unknown") instead of silently showing `$0`, so a stale
 or missing price is visible rather than mistaken for a genuinely free run.
-`claude`/`qwen_code`/`opencode` never set `cost_unknown` — their CLI-reported
-cost (including a legitimate `$0` under a Claude Max subscription) is always
-authoritative. `codex_cli` prices its captured tokens the same way as
-`anthropic`/`llm` and can set `cost_unknown` for an unpriced model.
+`claude`/`opencode` never set `cost_unknown` — their CLI-reported cost
+(including a legitimate `$0` under a subscription plan) is always
+authoritative. `qwen_code` also never sets `cost_unknown`, but for the
+opposite reason: the CLI reports no cost figure at all, so `cost_usd` is
+just left at `0` rather than estimated or flagged. `codex_cli` prices its
+captured tokens the same way as `anthropic`/`llm` and can set
+`cost_unknown` for an unpriced model.
 
 The Dashboard shows an aggregate total (tokens + cost) across all runs in a terminal state (`completed`/`failed`/`waiting_human`), plus a per-provider breakdown (via `provider_configs.provider`, joined `agent_runs.agent_config_id` → `agent_configs` → `agent_configs.provider_config_id` → `provider_configs`). The aggregate total query does not join on `agent_configs`, so it includes every terminal run regardless of its config. The per-provider breakdown *does* join on `agent_configs`/`provider_configs`, so runs whose agent config was later deleted (`agent_config_id` is set `NULL` on delete) are excluded from that breakdown, since they can no longer be attributed to a provider — a known limitation.
 
@@ -535,6 +539,46 @@ An agent config with both a high `effort` and a tight `max_cost_usd` may
 trip the mid-run cost watchdog (or the pre-dispatch budget guard) sooner
 than expected; consider raising the budget alongside the effort level, or
 leaving `effort` unset for cost-sensitive configs.
+
+## Permission Mode
+
+`permission_mode` is an optional per-agent-config Claude CLI permission
+mode: `""` (default/unset), `default`, `auto`, `acceptEdits`, or
+`bypassPermissions`. Claude-provider only — other providers ignore it (see
+the [Capability Matrix](#capability-matrix) above; `codex_cli` and
+`qwen_code` always run in their own always-bypass modes regardless of this
+field).
+
+**Why this exists.** Headless `claude` task runs previously passed no
+`--permission-mode` at all, so the CLI fell back to its own default —
+`auto`, a cloud safety classifier that can transiently deny harmless
+commands (e.g. `gofmt`) with `Classifier unavailable`. `permission_mode`
+makes that choice an explicit, per-agent-config setting instead of an
+implicit CLI default.
+
+- **`""` (unset) — today's behavior, unchanged.** No `--permission-mode`
+  flag is passed; byte-identical to every spawn before this field existed.
+  The CLI's own default (`auto`) applies.
+- **`default`** — every tool call requires interactive approval. Not
+  practical for headless runs (no human present to approve) unless
+  something else in the pipeline auto-approves.
+- **`auto`** — explicitly selects the same cloud safety classifier as the
+  CLI's own default. Can transiently deny safe commands when the
+  classifier is unavailable.
+- **`acceptEdits`** — auto-approves file edits (Edit/Write) but still gates
+  other tool calls (e.g. Bash) behind approval.
+- **`bypassPermissions`** — skips approval prompts entirely for this
+  agent's runs.
+
+**Deny rules still apply under `bypassPermissions`.** Verified empirically
+against a live `claude` binary (v2.1.238): a `command_denylist` entry
+(translated to `permissions.deny`, see [Command Allowlist /
+Denylist](#command-allowlist--denylist) below) still refused a matching
+Bash command (`permission_denied` event, populated `permission_denials`)
+even with `--permission-mode bypassPermissions` set. `bypassPermissions`
+only skips the interactive *approval* prompt — it does not override an
+explicit deny rule. See `docs/providers/claude.md` for the spawn-site code
+comment recording this finding.
 
 ## Task Priority
 

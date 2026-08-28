@@ -57,6 +57,8 @@ sql:
       - "internal/storage/migrations/052_pr_review_state_cursors.up.sql"
       - "internal/storage/migrations/053_effort.up.sql"
       - "internal/storage/migrations/054_agent_run_turns.up.sql"
+      - "internal/storage/migrations/055_repo_runtime.up.sql"
+      - "internal/storage/migrations/056_permission_mode.up.sql"
     gen:
       go:
         package: "gen"

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -8,11 +9,15 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/creack/pty"
 	"nhooyr.io/websocket"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 )
 
 // ChatMCPProvisioner builds the per-provider CLI wiring that exposes extra MCP
@@ -123,10 +128,32 @@ var ErrTooManySessions = errors.New("too many concurrent terminal sessions")
 // before — i.e. after a process exit or backend restart); it's ignored when the
 // process is already live (in-uptime reconnect just reattaches).
 //
+// repoID/pins carry the session's repo runtime pins (repos.runtime_languages,
+// already parsed by the caller via runtime.ParsePins) so the interactive CLI
+// sees the same toolchain a headless task run on this repo would (see
+// prepareChatRuntime). Both are ignored (no-op) once the session's process is
+// already running — pins can't be changed on a live session without
+// restarting it, matching how a headless run's pins are fixed at dispatch.
+//
 // Only one connection may be attached at a time; a second attach to the same
 // session takes over output (the previous writer is dropped).
-func (m *TerminalManager) Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, conn *websocket.Conn) error {
-	s, err := m.ensure(sessionID, repoPath, provider, model, resume)
+func (m *TerminalManager) Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, repoID string, pins []runtime.Pin, conn *websocket.Conn) error {
+	// Prep runs BEFORE ensure() and its manager-wide lock — mise install / uv
+	// venv can take real time (cold installs), and ensure() holds m.mu for
+	// its whole body, so running prep inside it (or under the lock at all)
+	// would block every other session's Attach/Stop for as long as prep
+	// takes. Only needed for a session that isn't already running (an
+	// already-live process keeps whatever toolchain it started with); skip
+	// pins entirely otherwise so a reattach never re-runs mise/uv.
+	if !m.isRunning(sessionID) {
+		if err := prepareChatRuntime(ctx, repoID, pins); err != nil {
+			return fmt.Errorf("chat runtime prep failed: %w", err)
+		}
+	} else {
+		pins = nil
+	}
+
+	s, err := m.ensure(sessionID, repoPath, provider, model, resume, repoID, pins)
 	if err != nil {
 		return err
 	}
@@ -201,10 +228,23 @@ func (m *TerminalManager) Attach(ctx context.Context, sessionID, repoPath, provi
 	}
 }
 
+// isRunning reports whether sessionID already has a live process, without
+// starting one — used by Attach to decide whether runtime pins need
+// (re-)preparing before ensure() is called.
+func (m *TerminalManager) isRunning(sessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.sessions[sessionID]
+	return ok
+}
+
 // ensure returns the running session, starting it if not present. When it must
 // start the process, resume asks the CLI to continue its most recent session in
-// this cwd (see Attach).
-func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, resume bool) (*ptySession, error) {
+// this cwd (see Attach). pins (already prepared by Attach via
+// prepareChatRuntime before this is called) wraps the launch command with
+// `mise x` exactly like providers.applyRuntime does for headless task runs —
+// see applyChatRuntime.
+func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, resume bool, repoID string, pins []runtime.Pin) (*ptySession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s, ok := m.sessions[sessionID]; ok {
@@ -236,6 +276,24 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 			extraEnv = mcpEnv
 			cleanup = cl
 		}
+	}
+
+	// Wrap with `mise x` for any non-python pins, exactly like
+	// providers.applyRuntime does for headless task runs (mirrored here
+	// rather than shared, since providers imports agent and this package
+	// can't import providers back). A python pin instead prepends the
+	// chat-specific venv's bin/ to PATH (see prepareChatRuntime / chatVenvDir
+	// — never <repoPath>/.venv: that would live inside the user's own
+	// checkout across reconnects). A node pin gets the explicit-interpreter
+	// rewrite (see applyChatRuntime's doc comment) so claude/qwen's own CLI
+	// process still runs on the image's bundled node even while node/npm/npx
+	// inside the agent's Bash tool resolve to the pin.
+	name, args, runtimeEnv, venvBin, err := applyChatRuntime(pins, repoID, name, args)
+	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, fmt.Errorf("apply chat runtime: %w", err)
 	}
 
 	cmd := exec.Command(name, args...)
@@ -274,6 +332,10 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 		cmd.Env = append(cmd.Env, "NO_UPDATE_NOTIFIER=1")
 	}
 	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = append(cmd.Env, runtimeEnv...)
+	if venvBin != "" {
+		cmd.Env = prependChatPath(cmd.Env, venvBin)
+	}
 
 	tty, err := pty.Start(cmd)
 	if err != nil {
@@ -391,6 +453,213 @@ func (m *TerminalManager) reapIdleOnce() {
 		slog.Info("terminal: reaping idle session", "session_id", id, "idle_timeout", m.IdleTimeout)
 		m.Stop(id)
 	}
+}
+
+// prepareChatRuntime installs a chat session's repo runtime pins (mise
+// install) and, for a python pin, ensures the chat-specific venv exists —
+// the interactive-session counterpart to the dispatcher's runtime prep
+// (Dispatcher.prepareRuntime / Pool.prepareRuntime) for headless task runs.
+// No-op for an unconfigured repo (nil/empty pins) or an empty repoID —
+// mirrors the byte-identical guarantee: a repo with no runtime_languages
+// pins never shells out to mise/uv for its chat sessions either.
+//
+// Unlike a task run, this deliberately does NOT create <repoPath>/.venv:
+// repoPath here is the session's own worktree, which persists across
+// reconnects and is the user's live checkout to poke around in — dropping a
+// build artifact there (even one excluded from git) is a worse experience
+// than for a short-lived, throwaway task worktree. Instead the venv lives
+// outside any repo checkout, keyed by repo id + python version (see
+// chatVenvDir), so multiple chat sessions against the same repo/version
+// reuse one venv the same way task runs reuse the shared uv cache.
+func prepareChatRuntime(ctx context.Context, repoID string, pins []runtime.Pin) error {
+	if repoID == "" || len(pins) == 0 {
+		return nil
+	}
+
+	if err := runtime.Install(ctx, pins); err != nil {
+		return err
+	}
+
+	for _, p := range pins {
+		if p.ID != "python" {
+			continue
+		}
+		pythonPath, err := runtime.ResolvePythonPath(ctx, p.Version)
+		if err != nil {
+			return err
+		}
+		return runtime.EnsureVenv(ctx, chatVenvDir(repoID), pythonPath, p.Version)
+	}
+	return nil
+}
+
+// chatVenvDir returns the base directory whose .venv subdirectory
+// prepareChatRuntime creates/reuses for a repo's chat sessions — a sibling
+// of mise's own data dir (same shared volume in production, so it persists
+// across container restarts) rather than anywhere inside a repo checkout.
+// Keyed by repo id only (not python version): EnsureVenv's own
+// recreate-on-mismatch logic (see runtime.EnsureVenv) already handles a
+// version-pin change by rebuilding the venv in place, so a second directory
+// per version isn't needed.
+func chatVenvDir(repoID string) string {
+	return filepath.Join(filepath.Dir(runtime.MiseDataDir()), "chat-venvs", repoID)
+}
+
+// applyChatRuntime wraps a chat session's launch command with `mise x` for
+// any non-python pins, mirroring providers.applyRuntime's shape for headless
+// task runs. A nil/empty pins slice returns name/args unchanged and no extra
+// env/venv dir. Returns the extra env entries to append (MISE_YES/
+// MISE_DATA_DIR/MISE_TRUSTED_CONFIG_PATHS whenever pins are present, plus
+// UV_CACHE_DIR for a python pin) and, only for a python pin, the venv's
+// bin/ dir — the caller prepends that to cmd.Env's actual PATH (via
+// prependChatPath) rather than this function guessing at the base PATH
+// itself.
+//
+// A node pin gets the same explicit-interpreter treatment as
+// providers.applyRuntime (duplicated here rather than shared — providers
+// imports agent, so this package can't import providers back): when name
+// resolves to a node script (claude/qwen — see isChatNodeScript), the
+// launch becomes `mise x node@<pin> ... -- <systemNode> <absName> <args...>`
+// so the CLI process itself always runs on the image's own bundled node,
+// never the pinned one, while node/npm/npx inside the agent's Bash tool
+// still resolve through mise x's PATH to the pin. codex/opencode are native
+// binaries and spawn unwrapped, as before. Fails closed: if a node pin is
+// present, name is a node script, but the system node or name's own
+// absolute path can't be resolved, this returns an error — the caller must
+// treat it as a launch failure rather than ever spawning on the wrong
+// interpreter.
+func applyChatRuntime(pins []runtime.Pin, repoID, name string, args []string) (string, []string, []string, string, error) {
+	if len(pins) == 0 {
+		return name, args, nil, "", nil
+	}
+
+	miseArgs := make([]string, 0, len(pins)+2+len(args))
+	miseArgs = append(miseArgs, "x")
+	hasPython, hasNode := false, false
+	for _, p := range pins {
+		switch p.ID {
+		case "python":
+			hasPython = true
+			continue
+		case "node":
+			hasNode = true
+		}
+		miseArgs = append(miseArgs, p.ID+"@"+p.Version)
+	}
+
+	miseArgs = append(miseArgs, "--")
+	if hasNode {
+		nodePath, namePath, err := explicitInterpreterForChatNodeScript(name)
+		if err != nil {
+			return "", nil, nil, "", fmt.Errorf("resolve system interpreter for node-pinned CLI %q: %w", name, err)
+		}
+		if nodePath != "" {
+			miseArgs = append(miseArgs, nodePath, namePath)
+		} else {
+			miseArgs = append(miseArgs, name)
+		}
+	} else {
+		miseArgs = append(miseArgs, name)
+	}
+	miseArgs = append(miseArgs, args...)
+
+	env := []string{"MISE_YES=1"}
+	if dir := runtime.MiseDataDir(); dir != "" {
+		env = append(env, "MISE_DATA_DIR="+dir)
+	}
+	venvDir := chatVenvDir(repoID)
+	env = append(env, "MISE_TRUSTED_CONFIG_PATHS="+venvDir)
+
+	var venvBin string
+	if hasPython {
+		venvBin = filepath.Join(venvDir, ".venv", "bin")
+		if dir := runtime.UvCacheDir(); dir != "" {
+			env = append(env, "UV_CACHE_DIR="+dir)
+		}
+	}
+
+	return "mise", miseArgs, env, venvBin, nil
+}
+
+// explicitInterpreterForChatNodeScript mirrors
+// providers.explicitInterpreterForNodeScript (duplicated for the same
+// import-direction reason as applyChatRuntime): resolves name via
+// exec.LookPath, and if it's a node script (see isChatNodeScript) returns
+// the system node's absolute path plus name's own absolute path as the two
+// argv elements that must replace it. Returns nodePath == "" (nil error) for
+// a native binary — spawn unwrapped, as before.
+func explicitInterpreterForChatNodeScript(name string) (nodePath, namePath string, err error) {
+	namePath, err = exec.LookPath(name)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %q: %w", name, err)
+	}
+	isScript, err := isChatNodeScript(namePath)
+	if err != nil {
+		return "", "", fmt.Errorf("inspect %q: %w", namePath, err)
+	}
+	if !isScript {
+		return "", "", nil
+	}
+	nodePath, err = exec.LookPath("node")
+	if err != nil {
+		return "", "", fmt.Errorf("resolve system node: %w", err)
+	}
+	return nodePath, namePath, nil
+}
+
+// isChatNodeScript mirrors providers.isNodeScript: reads path's first line
+// and reports whether its shebang references node, either
+// `#!/usr/bin/env node` (npm's standard global-install wrapper) or a
+// shebang path ending in "/node". A native binary (codex, opencode) has no
+// text shebang at all, so this returns false for those, never true by
+// assumption.
+func isChatNodeScript(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 4096), 4096)
+	if !sc.Scan() {
+		return false, sc.Err()
+	}
+	line := sc.Text()
+	if !strings.HasPrefix(line, "#!") {
+		return false, nil
+	}
+	shebang := strings.TrimSpace(strings.TrimPrefix(line, "#!"))
+	fields := strings.Fields(shebang)
+	if len(fields) == 0 {
+		return false, nil
+	}
+	interp := fields[0]
+	if filepath.Base(interp) == "env" && len(fields) > 1 {
+		interp = fields[1]
+	}
+	return filepath.Base(interp) == "node", nil
+}
+
+// prependChatPath returns a copy of env with dir prepended to the PATH entry
+// (added fresh if env has none) — mirrors providers/cli.go's prependPath,
+// duplicated rather than shared for the same import-direction reason as
+// applyChatRuntime.
+func prependChatPath(env []string, dir string) []string {
+	out := make([]string, len(env))
+	found := false
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			out[i] = "PATH=" + dir + string(os.PathListSeparator) + strings.TrimPrefix(kv, "PATH=")
+			found = true
+			continue
+		}
+		out[i] = kv
+	}
+	if !found {
+		out = append(out, "PATH="+dir)
+	}
+	return out
 }
 
 // appendScrollback appends to the ring, trimming to scrollbackCap. Caller holds s.mu.

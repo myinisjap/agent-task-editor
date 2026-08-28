@@ -177,6 +177,39 @@ process), so it is somewhat more robust than the generic `run_bash` string-match
 enforcement used by the `anthropic`/`llm` providers — but it is still glob-pattern
 matching on the command string, not a sandbox.
 
+## Permission Mode
+
+`permission_mode` (agent config field, empty by default) is passed as the
+claude CLI's `--permission-mode <value>` flag when non-empty, appended in
+`buildClaudeArgs` right after `--effort`. Empty (`""`) omits the flag
+entirely — byte-identical to every claude spawn before this field existed —
+leaving the CLI's own default (`auto`, a cloud safety classifier) in place.
+
+Accepted values: `""`, `default`, `auto`, `acceptEdits`, `bypassPermissions`
+(validated at the API layer; anything else is rejected with 400). See
+[docs/agents.md#permission-mode](../agents.md#permission-mode) for what each
+value does and why this field exists (the `auto` classifier's `Classifier
+unavailable` false-denials on plain commands like `gofmt`).
+
+**`command_denylist` is still enforced under `bypassPermissions`.** Verified
+empirically against a live `claude` binary (v2.1.238) in a scratch
+repository: `claude -p 'run: echo test-marker' --settings
+'{"permissions":{"deny":["Bash(echo:*)"]}}' --permission-mode
+bypassPermissions --allowedTools Bash --max-turns 2 --output-format
+stream-json` produced a `"type":"system","subtype":"permission_denied"`
+event and a populated `permission_denials` array in the terminal result —
+the Bash call was refused despite `bypassPermissions`. `bypassPermissions`
+skips the interactive *approval* prompt; it does not override an explicit
+`permissions.deny` rule. This is why the frontend does not warn that
+`bypassPermissions` disables the denylist — it doesn't.
+
+This provider-specific flag is not applied to the interactive chat/terminal
+spawn (`internal/agent/terminal.go`'s `terminalCommand`): that path takes
+only `provider, model, resume` and has no `AgentConfig` in scope. Left as-is
+deliberately — chat sessions are interactive (a human is present at the
+terminal to approve tool calls), so there is no "classifier denies a
+harmless command with nobody around to retry it" failure mode to fix there.
+
 ## Image Attachments
 
 **Not visually supported, but available as files.** The `claude` CLI has no
@@ -263,11 +296,11 @@ backoff. If no reset clue can be parsed, `ErrRateLimit.ResetAt` is left zero
 and the pool falls back to `BlockWithBackoff` as before.
 
 `claude_reset.go` blank-imports `time/tzdata` to embed the IANA time zone
-database into the compiled binary — the production container
-(`node:26-alpine`) does not ship `/usr/share/zoneinfo`, so without this
-`time.LoadLocation("America/Chicago")` would fail there and reset-time
-parsing would silently degrade to backoff-only in production while working
-fine in local dev.
+database into the compiled binary, so `time.LoadLocation("America/Chicago")`
+doesn't depend on the container image shipping `/usr/share/zoneinfo` (it
+didn't on the old `node:26-alpine` base; the current `node:26-bookworm-slim`
+base happens to include it, but the embedded import means reset-time parsing
+doesn't silently degrade to backoff-only if that ever changes again).
 
 ## Dashboard: Live Claude Usage Widget
 

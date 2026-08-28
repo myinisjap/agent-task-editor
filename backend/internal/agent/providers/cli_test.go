@@ -3,8 +3,12 @@ package providers
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 )
 
 // --- sanitizeArgs (cli.go) ---
@@ -334,5 +338,388 @@ func TestOpenRawDump_WritesToConfiguredDir(t *testing.T) {
 	want := "{\"type\":\"result\"}\n{\"type\":\"done\"}\n"
 	if string(data) != want {
 		t.Errorf("raw dump content = %q, want %q", string(data), want)
+	}
+}
+
+// --- applyRuntime (cli.go) ---
+
+// TestApplyRuntime_NilSpecIsPassthrough is the §4.1 byte-identical guarantee:
+// a repo with no runtime configured (nil RuntimeSpec) must get back exactly
+// the binary/args/env it was given, untouched.
+func TestApplyRuntime_NilSpecIsPassthrough(t *testing.T) {
+	args := []string{"-p", "do the thing"}
+	env := []string{"PATH=/usr/bin", "HOME=/home/node"}
+
+	gotBinary, gotArgs, gotEnv, err := applyRuntime(nil, "claude", args, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "claude" {
+		t.Errorf("binary = %q, want %q", gotBinary, "claude")
+	}
+	if !reflect.DeepEqual(gotArgs, args) {
+		t.Errorf("args = %v, want %v", gotArgs, args)
+	}
+	if !reflect.DeepEqual(gotEnv, env) {
+		t.Errorf("env = %v, want %v", gotEnv, env)
+	}
+}
+
+// TestApplyRuntime_EmptyPinsIsPassthrough covers a non-nil spec with zero
+// pins (e.g. ParsePins("") never actually produces this, but a defensive
+// caller might construct one) — same byte-identical guarantee as nil.
+func TestApplyRuntime_EmptyPinsIsPassthrough(t *testing.T) {
+	args := []string{"exec", "--json"}
+	env := []string{"PATH=/usr/bin"}
+	spec := &agent.RuntimeSpec{Pins: nil, WorktreeDir: "/repo/.ate-worktrees/t1"}
+
+	gotBinary, gotArgs, gotEnv, err := applyRuntime(spec, "codex", args, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "codex" || !reflect.DeepEqual(gotArgs, args) || !reflect.DeepEqual(gotEnv, env) {
+		t.Errorf("got (%q, %v, %v), want passthrough of (%q, %v, %v)", gotBinary, gotArgs, gotEnv, "codex", args, env)
+	}
+}
+
+// TestApplyRuntime_WrapsWithMiseXInDeterministicOrder verifies non-python
+// pins are wrapped as `mise x <id>@<version>... -- <binary> <args...>` in
+// the same order as RuntimeSpec.Pins. Uses a native-binary fixture (not
+// "claude") so this stays focused on pin/arg ordering without also
+// exercising the node-script rewrite (see TestApplyRuntime_NodePin* below for
+// that) — go+rust here, no node pin.
+func TestApplyRuntime_WrapsWithMiseXInDeterministicOrder(t *testing.T) {
+	spec := &agent.RuntimeSpec{
+		Pins: []runtime.Pin{
+			{ID: "go", Version: "1.21"},
+			{ID: "rust", Version: "1.75"},
+		},
+	}
+	env := []string{"PATH=/usr/bin"}
+
+	gotBinary, gotArgs, gotEnv, err := applyRuntime(spec, "codex", []string{"-p", "hi"}, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "go@1.21", "rust@1.75", "--", "codex", "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+	// Original entries survive untouched; MISE_YES/MISE_DATA_DIR get appended
+	// (see TestApplyRuntime_InjectsMiseEnv) even with no python pin, since any
+	// pinned repo — not just a python one — can ship its own mise.toml.
+	if len(gotEnv) < len(env) || !reflect.DeepEqual(gotEnv[:len(env)], env) {
+		t.Errorf("env = %v, want it to start with unchanged %v", gotEnv, env)
+	}
+}
+
+// TestApplyRuntime_InjectsMiseEnv verifies applyRuntime injects
+// MISE_YES=1, MISE_DATA_DIR, and MISE_TRUSTED_CONFIG_PATHS into the child
+// env whenever pins are present — this is finding 5's fix: allowlistEnv
+// strips the backend's own ENV (including any MISE_DATA_DIR override) before
+// a provider's child env is built, and there was no allowlist entry for
+// MISE_YES/MISE_TRUSTED_CONFIG_PATHS at all, so a repo shipping its own
+// mise.toml would hit mise's untrusted-config prompt in this non-TTY child
+// and fail.
+func TestApplyRuntime_InjectsMiseEnv(t *testing.T) {
+	t.Setenv("MISE_DATA_DIR", "/data/mise")
+
+	spec := &agent.RuntimeSpec{
+		Pins:        []runtime.Pin{{ID: "go", Version: "1.21"}},
+		WorktreeDir: "/repo/.ate-worktrees/t1",
+	}
+	_, _, gotEnv, err := applyRuntime(spec, "claude", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := map[string]string{
+		"MISE_YES":                  "1",
+		"MISE_DATA_DIR":             "/data/mise",
+		"MISE_TRUSTED_CONFIG_PATHS": "/repo/.ate-worktrees/t1",
+	}
+	got := map[string]string{}
+	for _, kv := range gotEnv {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	for k, wantV := range want {
+		if got[k] != wantV {
+			t.Errorf("env[%s] = %q, want %q (full env: %v)", k, got[k], wantV, gotEnv)
+		}
+	}
+}
+
+// TestApplyRuntime_PythonExcludedFromMiseXArgs verifies a python pin never
+// appears in the `mise x` argv (it would shadow the venv's PATH prepend) but
+// still triggers the venv PATH prepend + UV_CACHE_DIR in env.
+func TestApplyRuntime_PythonExcludedFromMiseXArgs(t *testing.T) {
+	spec := &agent.RuntimeSpec{
+		Pins: []runtime.Pin{
+			{ID: "go", Version: "1.21"},
+			{ID: "python", Version: "3.12"},
+		},
+		WorktreeDir: "/repo/.ate-worktrees/t1",
+	}
+	env := []string{"PATH=/usr/bin", "HOME=/home/node"}
+
+	gotBinary, gotArgs, gotEnv, err := applyRuntime(spec, "claude", []string{"-p", "hi"}, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	for _, a := range gotArgs {
+		if strings.Contains(a, "python") {
+			t.Errorf("python must not appear in mise x argv, got args %v", gotArgs)
+		}
+	}
+	wantArgs := []string{"x", "go@1.21", "--", "claude", "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+
+	wantPathPrefix := "PATH=" + filepath.Join("/repo/.ate-worktrees/t1", ".venv", "bin") + string(os.PathListSeparator) + "/usr/bin"
+	if gotEnv[0] != wantPathPrefix {
+		t.Errorf("PATH entry = %q, want %q", gotEnv[0], wantPathPrefix)
+	}
+	sawUVCacheDir := false
+	for _, kv := range gotEnv {
+		if strings.HasPrefix(kv, "UV_CACHE_DIR=") {
+			sawUVCacheDir = true
+		}
+	}
+	if !sawUVCacheDir {
+		t.Errorf("expected UV_CACHE_DIR in env when python is pinned, got %v", gotEnv)
+	}
+}
+
+// TestApplyRuntime_PythonOnlyStillWrapsWithMiseX verifies a python-only pin
+// list still routes the spawn through `mise x` (with no non-python pins in
+// its argv) rather than falling back to a plain spawn — mise x with no
+// installs is a documented no-op passthrough, and this keeps the venv PATH
+// prepend wired through the same code path as the mixed-pin case.
+func TestApplyRuntime_PythonOnlyStillWrapsWithMiseX(t *testing.T) {
+	spec := &agent.RuntimeSpec{
+		Pins:        []runtime.Pin{{ID: "python", Version: "3.12"}},
+		WorktreeDir: "/repo/.ate-worktrees/t1",
+	}
+
+	gotBinary, gotArgs, _, err := applyRuntime(spec, "claude", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "--", "claude", "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+// --- node pin: explicit-interpreter fix (isNodeScript / explicitInterpreterForNodeScript / applyRuntime) ---
+
+// writeFixtureScript writes a node-script-shebang fixture (mimicking npm's
+// global-install wrapper for claude/qwen) to dir/name, executable.
+func writeFixtureNodeScript(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := "#!/usr/bin/env node\nrequire('./cli.js')\n"
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeFixtureNativeBinary writes a fixture with no shebang at all (a stand-in
+// for codex's Rust / opencode's Go native binaries — arbitrary non-text bytes
+// as the first line, executable).
+func writeFixtureNativeBinary(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := []byte{0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}
+	if err := os.WriteFile(path, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeFixtureDirectNodeShebang writes a fixture with a direct (non-env)
+// shebang path ending in /node, e.g. "#!/usr/local/bin/node".
+func writeFixtureDirectNodeShebang(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := "#!/usr/local/bin/node\nconsole.log('hi')\n"
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestIsNodeScript_EnvNodeShebang(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixtureNodeScript(t, dir, "claude")
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected #!/usr/bin/env node to be detected as a node script")
+	}
+}
+
+func TestIsNodeScript_DirectNodePathShebang(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixtureDirectNodeShebang(t, dir, "claude")
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected a shebang path ending in /node to be detected as a node script")
+	}
+}
+
+// TestIsNodeScript_NativeBinaryIsNotDetected is the "checked, not assumed"
+// regression guard: a native binary (codex/opencode's actual shape — no text
+// shebang) must never be misdetected as a node script.
+func TestIsNodeScript_NativeBinaryIsNotDetected(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixtureNativeBinary(t, dir, "codex")
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Error("expected a native binary (no shebang) to not be detected as a node script")
+	}
+}
+
+func TestIsNodeScript_OtherShebangIsNotNode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Error("expected a #!/bin/sh shebang to not be detected as a node script")
+	}
+}
+
+// TestApplyRuntime_NodePin_RewritesNodeScriptToExplicitInterpreter is the
+// core regression guard for the explicit-interpreter fix: a node pin whose
+// CLI resolves to a node script must spawn as
+// `mise x node@<pin> -- <systemNode> <absCLIPath> <args...>`, not
+// `mise x node@<pin> -- <cli> <args...>` (which would run the CLI itself on
+// the pinned node and crash it).
+func TestApplyRuntime_NodePin_RewritesNodeScriptToExplicitInterpreter(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNodeScript(t, dir, "claude")
+	sysNode := writeFixtureNativeBinary(t, dir, "node") // stand-in system node; just needs to be resolvable+executable
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "node", Version: "22"}}}
+	gotBinary, gotArgs, _, err := applyRuntime(spec, cliPath, []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "node@22", "--", sysNode, cliPath, "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+// TestApplyRuntime_NodePin_NativeBinaryUnwrapped verifies a node pin does NOT
+// rewrite the spawn for a native-binary provider (codex, opencode) — those
+// aren't node scripts, so mise x's PATH prepend never touches how the CLI
+// process itself resolves its interpreter, and the previous plain-binary
+// spawn is preserved.
+func TestApplyRuntime_NodePin_NativeBinaryUnwrapped(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNativeBinary(t, dir, "codex")
+
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "node", Version: "22"}}}
+	gotBinary, gotArgs, _, err := applyRuntime(spec, cliPath, []string{"exec", "--json"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "node@22", "--", cliPath, "exec", "--json"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+// TestApplyRuntime_NoNodePin_NeverInspectsBinary verifies the passthrough/
+// non-node-pin paths never call exec.LookPath on binary at all — a
+// non-existent bare binary name must not error just because there's no node
+// pin driving the shim check.
+func TestApplyRuntime_NoNodePin_NeverInspectsBinary(t *testing.T) {
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "go", Version: "1.21"}}}
+	gotBinary, gotArgs, _, err := applyRuntime(spec, "definitely-not-a-real-binary-xyz", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBinary != "mise" {
+		t.Fatalf("binary = %q, want %q", gotBinary, "mise")
+	}
+	wantArgs := []string{"x", "go@1.21", "--", "definitely-not-a-real-binary-xyz", "-p", "hi"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Errorf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+// TestApplyRuntime_NodePin_FailsClosedWhenCLIUnresolvable verifies a node
+// pin with a CLI binary that can't be resolved at all (exec.LookPath fails)
+// returns an error rather than falling back to an unwrapped/guessed spawn —
+// never launch on the wrong interpreter, per the fail-closed requirement.
+func TestApplyRuntime_NodePin_FailsClosedWhenCLIUnresolvable(t *testing.T) {
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "node", Version: "22"}}}
+	_, _, _, err := applyRuntime(spec, "definitely-not-a-real-binary-xyz", []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err == nil {
+		t.Fatal("expected an error when the CLI binary can't be resolved for a node-pinned run")
+	}
+}
+
+// TestApplyRuntime_NodePin_FailsClosedWhenSystemNodeUnresolvable verifies a
+// node pin whose CLI IS a node script, but the system `node` itself can't be
+// resolved (e.g. a broken image), fails closed rather than spawning the CLI
+// directly (which would silently skip the whole point of pinning node).
+func TestApplyRuntime_NodePin_FailsClosedWhenSystemNodeUnresolvable(t *testing.T) {
+	dir := t.TempDir()
+	cliPath := writeFixtureNodeScript(t, dir, "claude")
+
+	// PATH has no "node" binary at all — only the fixture dir's "claude" and
+	// whatever coreutils are needed to exec.LookPath cliPath itself (an
+	// absolute path, so PATH isn't consulted to find cliPath — only to find
+	// "node").
+	t.Setenv("PATH", dir)
+
+	spec := &agent.RuntimeSpec{Pins: []runtime.Pin{{ID: "node", Version: "22"}}}
+	_, _, _, err := applyRuntime(spec, cliPath, []string{"-p", "hi"}, []string{"PATH=/usr/bin"})
+	if err == nil {
+		t.Fatal("expected an error when system node can't be resolved for a node-script CLI")
 	}
 }

@@ -29,6 +29,17 @@ var validAgentConfigEffort = map[string]bool{
 	"max":    true,
 }
 
+// validAgentConfigPermissionMode is the set of values accepted for
+// AgentConfig.PermissionMode: "" (unset — no --permission-mode flag,
+// matching pre-existing behavior) plus the claude CLI's own named modes.
+var validAgentConfigPermissionMode = map[string]bool{
+	"":                  true,
+	"default":           true,
+	"auto":              true,
+	"acceptEdits":       true,
+	"bypassPermissions": true,
+}
+
 // validateAgentConfigNumeric enforces the non-negative bounds shared by Create
 // and Update on the optional numeric fields. It writes the 400 response and
 // returns false on the first violation.
@@ -212,6 +223,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxCostUsd        *float64  `json:"max_cost_usd"`
 		Priority          *int64    `json:"priority"`
 		Effort            *string   `json:"effort"`
+		PermissionMode    *string   `json:"permission_mode"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -230,6 +242,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Effort != nil && !validAgentConfigEffort[*body.Effort] {
 		Err(w, http.StatusBadRequest, "effort must be one of: (empty), low, medium, high, xhigh, max")
+		return
+	}
+	if body.PermissionMode != nil && !validAgentConfigPermissionMode[*body.PermissionMode] {
+		Err(w, http.StatusBadRequest, "permission_mode must be one of: (empty), default, auto, acceptEdits, bypassPermissions")
 		return
 	}
 	if body.Labels == "" {
@@ -288,6 +304,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.Effort != nil {
 		effort = *body.Effort
 	}
+	permissionMode := ""
+	if body.PermissionMode != nil {
+		permissionMode = *body.PermissionMode
+	}
 
 	conflict, err := h.labelConflict(r, body.Labels, "")
 	if err != nil {
@@ -322,6 +342,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MaxCostUsd:        maxCostUsd,
 		Priority:          priority,
 		Effort:            effort,
+		PermissionMode:    permissionMode,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -340,8 +361,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ResumeSessions:  cfg.ResumeSessions,
 			SubtasksEnabled: cfg.SubtasksEnabled, MaxSubtasks: cfg.MaxSubtasks,
 			MaxCostUsd: cfg.MaxCostUsd, Priority: cfg.Priority,
-			Effort:  cfg.Effort,
-			Enabled: 0, ID: cfg.ID,
+			Effort:         cfg.Effort,
+			PermissionMode: cfg.PermissionMode,
+			Enabled:        0, ID: cfg.ID,
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -377,6 +399,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MaxCostUsd        *float64  `json:"max_cost_usd"`
 		Priority          *int64    `json:"priority"`
 		Effort            *string   `json:"effort"`
+		PermissionMode    *string   `json:"permission_mode"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -393,6 +416,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Effort != nil && !validAgentConfigEffort[*body.Effort] {
 		Err(w, http.StatusBadRequest, "effort must be one of: (empty), low, medium, high, xhigh, max")
+		return
+	}
+	if body.PermissionMode != nil && !validAgentConfigPermissionMode[*body.PermissionMode] {
+		Err(w, http.StatusBadRequest, "permission_mode must be one of: (empty), default, auto, acceptEdits, bypassPermissions")
 		return
 	}
 
@@ -480,6 +507,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Effort != nil {
 		effort = *body.Effort
 	}
+	permissionMode := existing.PermissionMode
+	if body.PermissionMode != nil {
+		permissionMode = *body.PermissionMode
+	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
 		Name:              body.Name,
@@ -502,6 +533,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MaxCostUsd:        maxCostUsd,
 		Priority:          priority,
 		Effort:            effort,
+		PermissionMode:    permissionMode,
 		ID:                chi.URLParam(r, "id"),
 	})
 	if err != nil {

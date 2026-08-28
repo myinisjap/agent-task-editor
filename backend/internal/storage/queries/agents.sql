@@ -25,8 +25,8 @@ LIMIT ?2;
 SELECT * FROM agent_configs WHERE id = ?;
 
 -- name: CreateAgentConfig :one
-INSERT INTO agent_configs (id, name, provider_config_id, system_prompt, labels, max_tokens, timeout_secs, max_turns, enabled_plugins, enabled_mcp_servers, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, effort)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO agent_configs (id, name, provider_config_id, system_prompt, labels, max_tokens, timeout_secs, max_turns, enabled_plugins, enabled_mcp_servers, command_allowlist, command_denylist, max_retries, retry_backoff_secs, resume_sessions, subtasks_enabled, max_subtasks, max_cost_usd, priority, effort, permission_mode)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateAgentConfig :one
@@ -36,7 +36,7 @@ SET name = ?, provider_config_id = ?, system_prompt = ?, labels = ?,
     command_allowlist = ?, command_denylist = ?,
     max_retries = ?, retry_backoff_secs = ?, resume_sessions = ?,
     subtasks_enabled = ?, max_subtasks = ?, max_cost_usd = ?, priority = ?,
-    effort = ?,
+    effort = ?, permission_mode = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;

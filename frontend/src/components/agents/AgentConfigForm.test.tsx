@@ -22,6 +22,7 @@ function baseForm(overrides: Partial<FormState> = {}): FormState {
     priority: 0,
     max_cost_usd: 0,
     effort: '',
+    permission_mode: '',
     resume_sessions: true,
     subtasks_enabled: false,
     max_subtasks: 10,
@@ -119,5 +120,65 @@ describe('AgentConfigForm effort capability warning', () => {
     renderForm(form, [providerConfig('pc-qwen', 'qwen_code')])
 
     expect(screen.queryByText(/no reasoning-effort flag/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('AgentConfigForm permission mode field', () => {
+  it('renders the field for claude', () => {
+    const form = baseForm({ provider_config_id: 'pc-claude' })
+    renderForm(form, [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.getByText('Permission mode')).toBeInTheDocument()
+  })
+
+  it('is hidden for non-claude providers', () => {
+    const form = baseForm({ provider_config_id: 'pc-qwen' })
+    renderForm(form, [providerConfig('pc-qwen', 'qwen_code')])
+
+    expect(screen.queryByText('Permission mode')).not.toBeInTheDocument()
+  })
+
+  it('warns that auto depends on a cloud classifier', () => {
+    const form = baseForm({ provider_config_id: 'pc-claude', permission_mode: 'auto' })
+    renderForm(form, [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.getByText(/transiently deny harmless commands/i)).toBeInTheDocument()
+  })
+
+  it('warns that bypassPermissions skips approval prompts', () => {
+    const form = baseForm({ provider_config_id: 'pc-claude', permission_mode: 'bypassPermissions' })
+    renderForm(form, [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.getByText(/this mode skips approval prompts entirely/i)).toBeInTheDocument()
+  })
+
+  it('notes the denylist is still enforced under bypassPermissions when a denylist is set', () => {
+    const form = baseForm({
+      provider_config_id: 'pc-claude',
+      permission_mode: 'bypassPermissions',
+      command_denylist: '["rm -rf*"]',
+    })
+    renderForm(form, [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.getByText(/command_denylist is still enforced/i)).toBeInTheDocument()
+  })
+
+  it('does not mention the denylist under bypassPermissions when no denylist is set', () => {
+    const form = baseForm({
+      provider_config_id: 'pc-claude',
+      permission_mode: 'bypassPermissions',
+      command_denylist: '[]',
+    })
+    renderForm(form, [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.queryByText(/command_denylist is still enforced/i)).not.toBeInTheDocument()
+  })
+
+  it('does not warn when unset ("")', () => {
+    const form = baseForm({ provider_config_id: 'pc-claude', permission_mode: '' })
+    renderForm(form, [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.queryByText(/transiently deny harmless commands/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/this mode skips approval prompts entirely/i)).not.toBeInTheDocument()
   })
 })

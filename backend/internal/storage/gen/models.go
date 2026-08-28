@@ -32,6 +32,7 @@ type AgentConfig struct {
 	Priority          int64     `json:"priority"`
 	ProviderConfigID  string    `json:"provider_config_id"`
 	Effort            string    `json:"effort"`
+	PermissionMode    string    `json:"permission_mode"`
 }
 
 type AgentLog struct {
@@ -149,6 +150,7 @@ type Repo struct {
 	IssueCommentSyncEnabled       int64     `json:"issue_comment_sync_enabled"`
 	MaxConcurrentRuns             *int64    `json:"max_concurrent_runs"`
 	IssueWritebackLabel           string    `json:"issue_writeback_label"`
+	RuntimeLanguages              string    `json:"runtime_languages"`
 }
 
 type Task struct {

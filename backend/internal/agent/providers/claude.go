@@ -110,6 +110,20 @@ func buildClaudeArgs(input agent.RunInput, sidecarEnabled bool, mcpCfg *MCPRunCo
 	if v, ok := claudeEffort(input.AgentConfig.Effort); ok {
 		args = append(args, "--effort", v)
 	}
+	// PermissionMode is an explicit per-agent-config choice; empty (unset)
+	// omits the flag entirely, leaving the claude CLI's own default
+	// ("auto", a cloud safety classifier) in place — byte-identical to the
+	// spawn args before this field existed. See AgentConfig.PermissionMode.
+	// NOTE: permissions.deny (commandDenylist, above) is still enforced even
+	// under "bypassPermissions" — verified empirically against a live claude
+	// binary (v2.1.238): a denylisted Bash command was refused
+	// (permission_denied event, populated permission_denials) despite
+	// --permission-mode bypassPermissions. bypassPermissions only skips the
+	// interactive *approval* prompt; it does not override an explicit deny
+	// rule.
+	if input.AgentConfig.PermissionMode != "" {
+		args = append(args, "--permission-mode", input.AgentConfig.PermissionMode)
+	}
 	if mcpCfg != nil {
 		args = append(args, "--mcp-config", mcpCfg.ConfigFile)
 	}
@@ -231,8 +245,6 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
-	cmd.Dir = input.RepoPath
 	env := mergeEnv(allowlistEnv(claudeEnvAllowlist), input.AgentConfig.Env)
 	if tok := ClaudeOAuthAccessToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
@@ -244,6 +256,13 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	// regardless. Appended last so it always wins over any operator-set
 	// DISABLE_AUTOUPDATER in the backend's own env.
 	env = append(env, "DISABLE_AUTOUPDATER=1")
+
+	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	if err != nil {
+		return agent.Result{Status: "failed"}, info, err
+	}
+	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
+	cmd.Dir = input.RepoPath
 	cmd.Env = env
 
 	stdout, err := cmd.StdoutPipe()
