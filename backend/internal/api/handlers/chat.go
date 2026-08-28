@@ -104,7 +104,8 @@ func (h *ChatHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	var pc *gen.ProviderConfig
 	if p, perr := h.q.GetProviderConfig(r.Context(), sess.ProviderConfigID); perr == nil {
-		pc = &p
+		redacted := redactedProviderConfig(p)
+		pc = &redacted
 	}
 	JSON(w, http.StatusOK, map[string]any{"session": sess, "provider_config": pc})
 }

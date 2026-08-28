@@ -31,7 +31,20 @@ components:
           type: string
         env:
           type: string
-          description: JSON object of environment variables (e.g. API keys) merged into the provider CLI's environment
+          description: >
+            JSON object of environment variables (e.g. API keys) merged into the
+            provider CLI's environment. **Write-only.** Every read (GET/list, and
+            everywhere this schema is embedded — AgentConfig.provider_config,
+            ChatSession's provider_config) returns each key with its value
+            replaced by the literal string `"***"`; key names are preserved, real
+            values are never returned. On write (POST/PUT), a value of `"***"`
+            means "keep the currently stored value for that key"; any other value
+            (including `""`) overwrites it; a key present in the stored env but
+            omitted from the request body's `env` object is deleted. Omitting
+            `env` from the request body entirely (rather than sending an empty
+            object) means "leave env unchanged". This is response redaction only,
+            not encryption — values remain in cleartext in the underlying SQLite
+            database and in `GET /backup` snapshots.
         created_at:
           type: string
         updated_at:
@@ -558,7 +571,8 @@ components:
           description: >
             The resolved provider config for provider_config_id, embedded on
             responses for convenience so clients don't need a second fetch.
-            Absent from request bodies.
+            Absent from request bodies. Its `env` values are redacted (see
+            ProviderConfig.env) — this embed never carries real secret values.
         enabled:
           type: boolean
           description: >
@@ -2859,7 +2873,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ProviderConfig" }
-        "400": { description: Missing name/provider, or unknown provider }
+        "400": { description: Missing name/provider, unknown provider, or env is not a JSON object of string values }
 
   /provider-configs/{id}:
     parameters:
@@ -2879,13 +2893,17 @@ paths:
       summary: Update a provider config
       description: >
         Partial update — omitted fields (including model) keep their
-        existing values.
+        existing values. `env` follows its own merge rule when present and
+        non-empty (see ProviderConfig.env): a `"***"` value keeps the
+        existing stored value for that key, any other value overwrites, and
+        a key omitted from the `env` object is deleted. Omitting `env`
+        altogether (empty string / absent) leaves the whole env unchanged.
       responses:
         "200":
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ProviderConfig" }
-        "400": { description: Unknown provider }
+        "400": { description: Unknown provider, or env is not a JSON object of string values }
         "404": { description: Provider config not found }
     delete:
       summary: Delete a provider config
@@ -3472,7 +3490,10 @@ paths:
                   provider_config:
                     allOf:
                       - $ref: "#/components/schemas/ProviderConfig"
-                    description: Resolved provider config for the session's provider_config_id, embedded so the frontend doesn't need a second fetch.
+                    description: >
+                      Resolved provider config for the session's provider_config_id,
+                      embedded so the frontend doesn't need a second fetch. Its
+                      `env` values are redacted (see ProviderConfig.env).
         "404":
           description: Session not found
     delete:

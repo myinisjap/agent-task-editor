@@ -44,7 +44,11 @@ func (h *ProviderConfigsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if configs == nil {
 		configs = []gen.ProviderConfig{}
 	}
-	JSON(w, http.StatusOK, configs)
+	redacted := make([]gen.ProviderConfig, len(configs))
+	for i, c := range configs {
+		redacted[i] = redactedProviderConfig(c)
+	}
+	JSON(w, http.StatusOK, redacted)
 }
 
 func (h *ProviderConfigsHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +57,7 @@ func (h *ProviderConfigsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "provider config not found")
 		return
 	}
-	JSON(w, http.StatusOK, cfg)
+	JSON(w, http.StatusOK, redactedProviderConfig(cfg))
 }
 
 func (h *ProviderConfigsHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +86,17 @@ func (h *ProviderConfigsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	if body.Env == "" {
 		body.Env = "{}"
 	}
+	// mergeEnvJSON against an empty existing map both validates body.Env is a
+	// JSON object of string values (any other shape 400s) and strips any key
+	// whose value is the redacted sentinel (EnvRedactedValue) — a client that
+	// re-POSTs a previously-read (and thus redacted) config shouldn't end up
+	// persisting the literal "***" as a secret value.
+	mergedEnv, err := mergeEnvJSON(body.Env, "{}")
+	if err != nil {
+		Err(w, http.StatusBadRequest, "env must be a JSON object of string values")
+		return
+	}
+	body.Env = mergedEnv
 	cfg, err := h.q.CreateProviderConfig(r.Context(), gen.CreateProviderConfigParams{
 		ID:       uuid.NewString(),
 		Name:     body.Name,
@@ -93,7 +108,7 @@ func (h *ProviderConfigsHandler) Create(w http.ResponseWriter, r *http.Request) 
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusCreated, cfg)
+	JSON(w, http.StatusCreated, redactedProviderConfig(cfg))
 }
 
 func (h *ProviderConfigsHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +150,20 @@ func (h *ProviderConfigsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		body.Provider = existing.Provider
 	}
 	if body.Env == "" {
+		// Omitted env means "unchanged" — keep the existing stored value
+		// verbatim (do not run it through mergeEnvJSON; there's nothing to
+		// merge and existing.Env is already resolved, not redacted).
 		body.Env = existing.Env
+	} else {
+		// A key set to EnvRedactedValue ("***") means "keep the existing
+		// value for this key"; any other value overwrites; a key present in
+		// existing but omitted here is deleted. See provider_env.go.
+		merged, merr := mergeEnvJSON(body.Env, existing.Env)
+		if merr != nil {
+			Err(w, http.StatusBadRequest, "env must be a JSON object of string values")
+			return
+		}
+		body.Env = merged
 	}
 	if body.Model == "" {
 		body.Model = existing.Model
@@ -152,7 +180,7 @@ func (h *ProviderConfigsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, cfg)
+	JSON(w, http.StatusOK, redactedProviderConfig(cfg))
 }
 
 // Delete blocks deletion (409) if any agent config or chat session still

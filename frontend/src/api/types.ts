@@ -2916,7 +2916,7 @@ export interface paths {
         };
         /**
          * Update a provider config
-         * @description Partial update — omitted fields (including model) keep their existing values.
+         * @description Partial update — omitted fields (including model) keep their existing values. `env` follows its own merge rule when present and non-empty (see ProviderConfig.env): a `"***"` value keeps the existing stored value for that key, any other value overwrites, and a key omitted from the `env` object is deleted. Omitting `env` altogether (empty string / absent) leaves the whole env unchanged.
          */
         put: {
             parameters: {
@@ -4059,7 +4059,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             session?: components["schemas"]["ChatSession"];
-                            /** @description Resolved provider config for the session's provider_config_id, embedded so the frontend doesn't need a second fetch. */
+                            /** @description Resolved provider config for the session's provider_config_id, embedded so the frontend doesn't need a second fetch. Its `env` values are redacted (see ProviderConfig.env). */
                             provider_config?: components["schemas"]["ProviderConfig"];
                         };
                     };
@@ -4190,7 +4190,7 @@ export interface components {
              */
             provider: "claude" | "anthropic" | "llm" | "opencode" | "qwen_code" | "codex_cli";
             model: string;
-            /** @description JSON object of environment variables (e.g. API keys) merged into the provider CLI's environment */
+            /** @description JSON object of environment variables (e.g. API keys) merged into the provider CLI's environment. **Write-only.** Every read (GET/list, and everywhere this schema is embedded — AgentConfig.provider_config, ChatSession's provider_config) returns each key with its value replaced by the literal string `"***"`; key names are preserved, real values are never returned. On write (POST/PUT), a value of `"***"` means "keep the currently stored value for that key"; any other value (including `""`) overwrites it; a key present in the stored env but omitted from the request body's `env` object is deleted. Omitting `env` from the request body entirely (rather than sending an empty object) means "leave env unchanged". This is response redaction only, not encryption — values remain in cleartext in the underlying SQLite database and in `GET /backup` snapshots. */
             env: string;
             created_at: string;
             updated_at: string;
@@ -4509,7 +4509,7 @@ export interface components {
             name: string;
             /** @description References a ProviderConfig (provider/model/env), which is created and managed separately via /provider-configs and may be shared with other agent configs or chat sessions. */
             provider_config_id: string;
-            /** @description The resolved provider config for provider_config_id, embedded on responses for convenience so clients don't need a second fetch. Absent from request bodies. */
+            /** @description The resolved provider config for provider_config_id, embedded on responses for convenience so clients don't need a second fetch. Absent from request bodies. Its `env` values are redacted (see ProviderConfig.env) — this embed never carries real secret values. */
             readonly provider_config?: components["schemas"]["ProviderConfig"];
             /** @description Whether the dispatcher considers this config for its labels. Sent as a boolean on responses (the stored 0/1 is normalized); accepted as boolean or 0/1 on write. Absent from create request bodies (new configs start enabled unless a label conflict disables them). */
             enabled: boolean;

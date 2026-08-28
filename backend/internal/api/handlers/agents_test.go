@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -1031,5 +1032,84 @@ func TestAgentsGetModels_UnknownProvider(t *testing.T) {
 	router.ServeHTTP(rec, w)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// mkProviderConfigWithSecret seeds a claude provider config with a real
+// (non-empty) env value, for tests asserting the agent-config response's
+// embedded provider_config redacts it.
+func mkProviderConfigWithSecret(t *testing.T, q *gen.Queries) string {
+	t.Helper()
+	pc, err := q.CreateProviderConfig(context.Background(), gen.CreateProviderConfigParams{
+		ID:       uuid.NewString(),
+		Name:     "test-provider-with-secret",
+		Provider: "claude",
+		Model:    "sonnet",
+		Env:      `{"ANTHROPIC_API_KEY":"sk-agent-secret"}`,
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
+	return pc.ID
+}
+
+// TestAgentsGet_RedactsProviderConfigEnv verifies GET /agents/{id} never
+// leaks the embedded provider config's env secret, even though
+// agentConfigView embeds the full ProviderConfig for display purposes.
+func TestAgentsGet_RedactsProviderConfigEnv(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfigWithSecret(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name": "agent-with-secret", "provider_config_id": pcID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create agent config: %d %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/agents/"+created.ID, nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	body := w2.Body.String()
+	if strings.Contains(body, "sk-agent-secret") {
+		t.Errorf("expected embedded provider config env secret to be redacted, got body %q", body)
+	}
+	if !strings.Contains(body, "ANTHROPIC_API_KEY") {
+		t.Errorf("expected env key name to remain visible, got body %q", body)
+	}
+}
+
+// TestAgentsList_RedactsProviderConfigEnv is the list-endpoint analog of
+// TestAgentsGet_RedactsProviderConfigEnv.
+func TestAgentsList_RedactsProviderConfigEnv(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	pcID := mkProviderConfigWithSecret(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name": "agent-with-secret", "provider_config_id": pcID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create agent config: %d %s", w.Code, w.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/agents", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	body := w2.Body.String()
+	if strings.Contains(body, "sk-agent-secret") {
+		t.Errorf("expected embedded provider config env secret to be redacted, got body %q", body)
+	}
+	if !strings.Contains(body, "ANTHROPIC_API_KEY") {
+		t.Errorf("expected env key name to remain visible, got body %q", body)
 	}
 }

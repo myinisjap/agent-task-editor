@@ -339,6 +339,49 @@ func TestChat_Get_OK(t *testing.T) {
 	}
 }
 
+// TestChat_Get_RedactsProviderConfigEnv verifies GET /chat/sessions/{id}
+// never leaks the embedded provider config's env secret.
+func TestChat_Get_RedactsProviderConfigEnv(t *testing.T) {
+	router, q, _ := setupChatRouter(t, "", nil)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{
+		ID: repoID, Name: "chat-repo", Path: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	providerConfigID := uuid.NewString()
+	if _, err := q.CreateProviderConfig(context.Background(), gen.CreateProviderConfigParams{
+		ID:       providerConfigID,
+		Name:     "test-provider-with-secret",
+		Provider: "claude",
+		Model:    "sonnet",
+		Env:      `{"ANTHROPIC_API_KEY":"sk-chat-secret"}`,
+	}); err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
+	sess, err := q.CreateChatSession(context.Background(), gen.CreateChatSessionParams{
+		ID: uuid.NewString(), RepoID: repoID, ProviderConfigID: providerConfigID, Title: "chat",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/chat/"+sess.ID, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "sk-chat-secret") {
+		t.Errorf("expected embedded provider config env secret to be redacted, got body %q", body)
+	}
+	if !strings.Contains(body, "ANTHROPIC_API_KEY") {
+		t.Errorf("expected env key name to remain visible, got body %q", body)
+	}
+}
+
 func TestChat_Get_Unknown(t *testing.T) {
 	router, _, _ := setupChatRouter(t, "", nil)
 

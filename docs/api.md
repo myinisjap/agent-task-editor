@@ -689,8 +689,7 @@ Create an agent config.
 ```json
 {
   "name": "string",
-  "provider": "claude | anthropic | opencode | qwen_code | llm | ...",
-  "model": "string",
+  "provider_config_id": "string",
   "labels": ["label1", "label2"],
   "system_prompt": "string",
   "max_tokens": 0,
@@ -698,10 +697,15 @@ Create an agent config.
   "max_turns": 50,
   "max_retries": 3,
   "retry_backoff_secs": 30,
-  "max_cost_usd": 0,
-  "env": { "KEY": "value" }
+  "max_cost_usd": 0
 }
 ```
+
+`provider_config_id` references a [Provider Config](#provider-configs)
+(provider/model/env — created separately via `POST /provider-configs`) and is
+required. `provider`/`model`/`env` are no longer fields on the agent config
+itself; `GET`/list responses embed the resolved provider config as
+`provider_config` for convenience (see below).
 
 `max_retries`/`retry_backoff_secs` configure auto-retry for *transient*
 provider errors (rate limits, network blips, upstream 5xx) — see
@@ -753,6 +757,74 @@ providers have no equivalent.
   "mcp_servers": ["string"]
 }
 ```
+
+---
+
+## Provider Configs
+
+The provider/model/env (API key) triple, split out of Agent Config so it can
+be shared across multiple agent configs and chat sessions. See
+[agents.md#provider-configs](agents.md#provider-configs) for the full field
+reference.
+
+### `GET /provider-configs`
+List a page of provider configs, newest first (cursor-paginated on
+`(created_at, id)`; `limit` default 200, max 500 — see Pagination note
+above).
+
+### `POST /provider-configs`
+Create a provider config.
+
+```json
+{
+  "name": "string",
+  "provider": "claude | opencode | qwen_code | codex_cli | ...",
+  "model": "string",
+  "env": "{\"ANTHROPIC_API_KEY\":\"sk-...\"}"
+}
+```
+
+`env` is a JSON object *encoded as a string*, not a nested JSON object.
+
+### `GET /provider-configs/{id}`
+Get a single provider config.
+
+### `PUT /provider-configs/{id}`
+Partial update — omitted fields (including `model`) keep their existing
+values.
+
+### `DELETE /provider-configs/{id}`
+Delete a provider config. Blocked with `409` if any agent config or chat
+session still references it.
+
+### `env` is write-only
+
+`env` values are **never returned** by any of the endpoints above, nor by
+the `provider_config` embedded in `GET /agents`/`GET /agents/{id}` responses
+or a chat session's `GET /chat/sessions/{id}` response. Every read masks each
+value as the literal string `"***"`; key names are left visible so the UI can
+show what's configured.
+
+Writes resolve `env` against whatever is already stored, key by key:
+
+- A value of `"***"` means "keep the value already stored for this key" —
+  this is what makes it safe to fetch a config, edit an unrelated field, and
+  PUT the whole thing back without wiping secrets you never saw.
+- Any other value (including `""`) is an explicit overwrite.
+- A key present in the stored `env` but **omitted** from the `env` object you
+  send is deleted.
+- Omitting `env` from the request body altogether (as opposed to sending an
+  empty `{}`) means "leave the whole thing unchanged" — this is unrelated to
+  per-key deletion above and is the only way to leave every key untouched
+  without knowing what they currently are.
+
+A malformed `env` (not a JSON object of string values) is rejected with
+`400` on both `POST` and `PUT`.
+
+This is redaction in the API response only — `env` is still stored in
+cleartext in the SQLite database, and `GET /backup` (a raw DB snapshot)
+still contains real values. See
+[agents.md#environment-variable-security](agents.md#environment-variable-security).
 
 ---
 
