@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"sync"
 	"time"
@@ -261,7 +260,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	if err != nil {
 		return agent.Result{Status: "failed"}, info, err
 	}
-	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
+	cmd := newCLICommand(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
 	cmd.Env = env
 

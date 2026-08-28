@@ -68,6 +68,7 @@ type Pool struct {
 type runControl struct {
 	cancel    context.CancelFunc
 	cancelled atomic.Bool
+	startedAt time.Time
 }
 
 // NewPool creates a new pool. Call Start to begin accepting jobs.
@@ -104,11 +105,29 @@ func (p *Pool) Cancel(runID string) bool {
 
 // registerRun records the cancel handle for a run and returns its control block.
 func (p *Pool) registerRun(runID string, cancel context.CancelFunc) *runControl {
-	rc := &runControl{cancel: cancel}
+	rc := &runControl{cancel: cancel, startedAt: time.Now()}
 	p.mu.Lock()
 	p.running[runID] = rc
 	p.mu.Unlock()
 	return rc
+}
+
+// OldestRunID returns the run ID that has been in flight the longest, or ""
+// if nothing is running. Used by the memory watchdog to pick a victim when
+// container memory is critical — the oldest run is the best guess for a
+// stuck/runaway one, and killing it (rather than everything) keeps the blast
+// radius as small as possible.
+func (p *Pool) OldestRunID() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var oldestID string
+	var oldestAt time.Time
+	for id, rc := range p.running {
+		if oldestID == "" || rc.startedAt.Before(oldestAt) {
+			oldestID, oldestAt = id, rc.startedAt
+		}
+	}
+	return oldestID
 }
 
 // unregisterRun removes a run from the cancel registry once it has finished.

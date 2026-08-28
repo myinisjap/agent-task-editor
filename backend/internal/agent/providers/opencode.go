@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -47,7 +46,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	if err != nil {
 		return agent.Result{Status: "failed"}, err
 	}
-	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
+	cmd := newCLICommand(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
 	cmd.Env = env
 
