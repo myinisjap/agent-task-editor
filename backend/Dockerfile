@@ -96,7 +96,12 @@ ENV MISE_YES=1
 # a breaking CLI release can't turn a green docker-build into a broken
 # published image. Bump deliberately (Dependabot's docker ecosystem only
 # tracks FROM lines).
-ARG CLAUDE_CLI_VERSION=2.1.223
+# 2.1.223's auto-permission-mode classifier requests a model alias
+# (claude-sonnet-5[1m]) that stopped resolving server-side, so EVERY Bash
+# command needing classification is denied with "Classifier unavailable" —
+# verified empirically in-container (2.1.223: 100% denials; 2.1.238: none,
+# same account/network/env).
+ARG CLAUDE_CLI_VERSION=2.1.238
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}
 
 # Codex CLI (codex_cli provider) and Qwen CLI (qwen_code provider) are NOT
