@@ -157,7 +157,7 @@ case "$CMD" in
     ;;
   login)
     # Authenticate Claude CLI inside the running backend container. Run as the
-    # node user (the container's PID 1 drops to node via su-exec) so credentials
+    # node user (the container's PID 1 drops to node via gosu) so credentials
     # land in the mounted /home/node/.claude, not root's home.
     $COMPOSE exec --user node backend claude login
     ;;

@@ -7,6 +7,8 @@ package agent
 import (
 	"context"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 )
 
 // LogType classifies a single streamed log line.
@@ -139,6 +141,23 @@ type RunInput struct {
 	// hard kill at 1.0. 0 or CostBudgetUSD<=0 disables the warning. Defaults
 	// to 0.8 (see dispatcher.defaultCostWarnRatio).
 	CostWarnRatio float64
+	// Runtime is the repo's toolchain pins for this run, resolved and
+	// prepared (mise install + venv, if a python pin is present) by the
+	// dispatcher before the provider is invoked. Nil for a repo with no
+	// runtime_languages configured (the overwhelmingly common case today) —
+	// every provider's spawn must be byte-identical to before this field
+	// existed in that case. See providers.applyRuntime.
+	Runtime *RuntimeSpec
+}
+
+// RuntimeSpec carries a repo's resolved toolchain pins into a provider's
+// spawn (see providers.applyRuntime, which wraps the provider's command with
+// `mise x <pins...> -- <binary> <args...>`) and the worktree directory whose
+// per-task .venv (prepared during runtime prep, python pins only) needs its
+// bin/ prepended to PATH.
+type RuntimeSpec struct {
+	Pins        []runtime.Pin
+	WorktreeDir string
 }
 
 // TransitionHint describes an available transition for the MCP sidecar.

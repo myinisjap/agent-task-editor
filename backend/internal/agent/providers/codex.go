@@ -223,12 +223,17 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, r.binary(), sanitizeArgs(args)...)
-	cmd.Dir = input.RepoPath
 	env := mergeEnv(allowlistEnv(codexEnvAllowlist), input.AgentConfig.Env)
 	if codexHome != nil {
 		env = append(env, "CODEX_HOME="+codexHome.HomeDir)
 	}
+
+	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
+	if err != nil {
+		return agent.Result{Status: "failed"}, err
+	}
+	cmd := exec.CommandContext(runCtx, runBinary, runArgs...)
+	cmd.Dir = input.RepoPath
 	cmd.Env = env
 
 	stdout, err := cmd.StdoutPipe()

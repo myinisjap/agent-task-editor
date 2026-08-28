@@ -829,8 +829,41 @@ components:
             dispatcher once its in-flight run count reaches this limit (or
             the global fallback), leaving worker slots free for other repos.
             See GET /dashboard's repo_concurrency for live in-use vs. limit.
+        runtime_languages:
+          type: string
+          description: >
+            Serialized JSON array of this repo's agent toolchain pins (see
+            RuntimeLanguagePin) — stored and returned as a JSON string, not a
+            structured array, matching the DB column. Empty string (the
+            default) means unconfigured: tasks on this repo spawn their
+            agent CLI exactly as they did before this feature existed. When
+            non-empty, the dispatcher runs `mise install` for every pin
+            before invoking the provider and wraps the CLI command with
+            `mise x`; a python pin instead gets a per-worktree virtualenv on
+            PATH. Prep failure escalates the task to waiting_human — it
+            never falls back to a plain spawn. See docs/runtime.md.
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
+
+    RuntimeLanguagePin:
+      type: object
+      description: >
+        One toolchain pin in a repo's runtime_languages array (the wire
+        shape used by POST /repos, PATCH /repos/{id}, and the runtime/detect
+        suggestions — the DB column itself stores this array serialized to
+        JSON text).
+      properties:
+        id:
+          type: string
+          enum: [go, node, python, rust, ruby, java]
+        version:
+          type: string
+          description: >
+            A mise-installable version string, e.g. "1.21", "22", "3.12".
+            Validated server-side against ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$
+            (no "@", no spaces, no leading "-") since it becomes an argv
+            element passed to mise/uv subprocesses.
+      required: [id, version]
 
     ReviewComment:
       type: object
@@ -2919,6 +2952,13 @@ paths:
                   enum: [flag, archive, move]
                 issue_sync_gone_label: { type: string }
                 issue_comment_sync_enabled: { type: boolean }
+                runtime_languages:
+                  type: array
+                  items: { $ref: "#/components/schemas/RuntimeLanguagePin" }
+                  description: >
+                    Replaces the repo's toolchain pins. Omit the field to
+                    leave existing pins untouched; pass an empty array to
+                    clear them back to unconfigured.
       responses:
         "200":
           content:
@@ -2950,6 +2990,43 @@ paths:
                 properties:
                   ref:   { type: string }
                   files: { type: array, items: { type: string } }
+
+  /repos/{id}/runtime/detect:
+    post:
+      summary: Detect suggested toolchain pins from the repo's manifest files
+      description: >
+        Scans the repo's root directory (never a task worktree) for
+        well-known toolchain manifest files (go.mod, .nvmrc/.node-version,
+        .python-version, rust-toolchain(.toml), .ruby-version,
+        .java-version) and returns a suggested pin for each one found. A
+        symlinked manifest is skipped and reads are capped at 64KB.
+        Detection NEVER writes to the repo's saved runtime_languages — the
+        UI pre-fills the runtime form with these suggestions and a human
+        must still save explicitly. No LLM fallback; manifest scan only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/RuntimeLanguagePin"
+                        - type: object
+                          properties:
+                            source:
+                              type: string
+                              description: The manifest file this suggestion was read from, e.g. "go.mod".
+                          required: [source]
+        "404": { description: Repo not found }
 
   /dashboard:
     get:
