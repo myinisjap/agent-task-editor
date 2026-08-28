@@ -133,12 +133,29 @@ export function UsageHelp() {
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Cost estimates</h3>
         <p>
-          Per-provider and per-model cost breakdowns, estimated from recorded token usage. The{' '}
+          Per-provider and per-model cost breakdowns, sourced differently per provider. The{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code> CLIs report their
-          own authoritative cost; the <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>{' '}
-          and <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers are
-          estimated from the price table you configure on the <strong>Pricing</strong> page.
+          <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> CLIs report their
+          own authoritative cost (which may be legitimately $0 under a subscription plan). The{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider (and the
+          deprecated <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
+          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers) have no
+          cost figure of their own, so their tokens are priced from the table you configure on the{' '}
+          <strong>Pricing</strong> page instead. The{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code> CLI reports tokens
+          but no cost at all, so its runs always show $0 here. A run whose model isn't in the
+          pricing table is flagged "cost unknown" rather than silently shown as $0.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Global spend ceiling</h3>
+        <p>
+          If <code className="bg-slate-800 rounded px-1 font-mono">MAX_DAILY_COST_USD</code> and/or{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">MAX_MONTHLY_COST_USD</code> are set
+          on the server, this section shows spend-vs-cap bars and a burn-rate forecast for the
+          current day/month. Crossing a cap <strong>halts new dispatch</strong> — runs already in
+          flight are left to finish, but no new agent run will start until spend drops back under
+          the cap (or the window rolls over).
         </p>
       </section>
     </>
@@ -223,8 +240,10 @@ export function BoardHelp() {
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Filters &amp; bulk actions</h3>
         <p>
-          Use the search box and repo/type/git-state filters to narrow the board. Select multiple
-          cards (shift-click for a range) to pause, resume, archive, or move them together via the
+          Use the search box and repo/type/git-state filters to narrow the board. The 🗄{' '}
+          <strong>Archived</strong> toggle switches between the normal board and archived tasks.
+          Select multiple cards (shift-click for a range) to pause, resume, archive/unarchive
+          (unarchive only shows while the Archived toggle is on), or move them together via the
           bulk action bar.
         </p>
       </section>
@@ -295,6 +314,30 @@ export function AgentsHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Budgets, subtasks &amp; effort</h3>
+        <p>
+          <code className="bg-slate-800 rounded px-1 font-mono">max_cost_usd</code> sets a per-run
+          spending cap (pre-dispatch guard on every provider; a mid-run kill switch too, on
+          providers that support it — see the <strong>Pricing</strong> page's help). Enabling{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">subtasks_enabled</code> lets the
+          agent split its work into child tasks via the <code className="bg-slate-800 rounded px-1 font-mono">create_subtask</code>{' '}
+          MCP tool, up to <code className="bg-slate-800 rounded px-1 font-mono">max_subtasks</code>.{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">effort</code> is a reasoning-effort
+          hint that's silently ignored on providers that don't support it.
+        </p>
+        <p>
+          Support for all of these — plus turn limits and the command allow/deny lists — varies a
+          lot by provider (e.g. <code className="bg-slate-800 rounded px-1 font-mono">maxTurns</code>{' '}
+          isn't enforced at all on <code className="bg-slate-800 rounded px-1 font-mono">opencode</code>,
+          and the command <strong>allowlist doesn't effectively restrict</strong>{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">claude</code> — use the denylist
+          there instead). The form surfaces inline warnings when a setting won't do what you'd
+          expect for the selected provider; see the Capability Matrix in{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">docs/agents.md</code> for the full
+          picture.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Templates</h3>
         <p>
           Use "Templates" in the sidebar to start from a pre-filled config (planner, coder,
@@ -347,12 +390,20 @@ export function PricingHelp() {
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">What this configures</h3>
         <p>
-          USD price per 1M input/output tokens, used to estimate run cost for the{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code> and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers. The{' '}
+          USD price per 1M input/output tokens. It's the sole cost source for the{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider (and the
+          deprecated <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
+          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers), none of which
+          report their own cost. The{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code> CLIs report their
-          own authoritative cost and are unaffected by this table.
+          <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> CLIs report their
+          own authoritative final cost and never read this table for that. However,{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code> both use this table
+          for their <strong>mid-run cost watchdog</strong> — the kill switch that cancels a run once
+          projected spend crosses its budget. If their model isn't priced here, that watchdog is a
+          silent no-op (only the pre-dispatch guard still applies) even though the final reported
+          cost for <code className="bg-slate-800 rounded px-1 font-mono">claude</code> is unaffected.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
@@ -388,6 +439,15 @@ export function ReposHelp() {
           auth (<code className="bg-slate-800 rounded px-1 font-mono">gh auth login</code> or{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">GITHUB_TOKEN</code>) — check the{' '}
           <strong>Health</strong> page to confirm it's configured.
+        </p>
+        <p>
+          <code className="bg-slate-800 rounded px-1 font-mono">issue_writeback_enabled</code> posts
+          the task's status back as a comment on the source GitHub issue (under{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">issue_writeback_label</code> if set).{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">pr_review_auto_transition_enabled</code>{' '}
+          lets review comments left on an agent-opened PR auto-transition the task back for rework
+          instead of waiting for a human to move it. <code className="bg-slate-800 rounded px-1 font-mono">max_concurrent_runs</code>{' '}
+          caps how many agent runs this repo allows at once, regardless of how many tasks are ready.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
@@ -519,16 +579,74 @@ export function IntakeRulesHelp() {
   )
 }
 
+export function TaskDetailHelp() {
+  return (
+    <>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">The three tabs</h3>
+        <p>
+          <strong>Overview</strong> — title/description, metadata (label, type, branch, git
+          state, PR link, priority, cost budget), attachments, run history, label history,
+          subtasks, and dependencies. <strong>Logs</strong> — the live/replayed stream-json
+          output of a selected run, including its tool calls. <strong>Diff</strong> — the
+          in-flight or last run's file diff, with inline review comments.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Run history &amp; retries</h3>
+        <p>
+          Every dispatch of this task is its own <strong>run</strong>, shown oldest-first. A
+          failed or escalated run doesn't erase progress — the task's next run reuses context
+          (and, where the provider supports it, resumes the same provider-side session) rather
+          than starting cold. Click a run to view its logs.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Approve / Reject</h3>
+        <p>
+          Shown when the task is waiting on a human-triggered transition. <strong>Approve</strong>{' '}
+          moves the task forward on its <code className="bg-slate-800 rounded px-1 font-mono">success</code>{' '}
+          path. <strong>Reject</strong> requires a note explaining what's wrong and moves the task
+          on its <code className="bg-slate-800 rounded px-1 font-mono">failure</code> path — the
+          note is injected into the next run's prompt as feedback.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Diff review comments</h3>
+        <p>
+          Leave an inline comment on a line in the Diff tab to flag something for the agent. Open
+          comments are passed to the next run as context it's expected to address; resolving one
+          yourself (or having the agent resolve it via its tools) marks it done without waiting
+          for a new run.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Subtasks &amp; dependencies</h3>
+        <p>
+          If the assigned agent config has subtasks enabled, it can split this task into children
+          via the <code className="bg-slate-800 rounded px-1 font-mono">create_subtask</code> MCP
+          tool — shown in the Subtasks panel. Dependencies let a task declare it must wait on
+          another task reaching a terminal label before the dispatcher will pick it up.
+        </p>
+      </section>
+    </>
+  )
+}
+
 export function HealthHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">What this checks</h3>
         <p>
-          Readiness of each configured provider and supporting infrastructure — e.g. the Claude
-          CLI login, API keys, GitHub auth for PRs/issue sync, and the configured repo base
-          directory. Green means ready; yellow/red need attention before you run a task with that
-          provider.
+          Provider readiness — the <code className="bg-slate-800 rounded px-1 font-mono">claude</code>{' '}
+          and <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> CLI logins,
+          and the <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
+          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> API keys — plus
+          supporting infrastructure: GitHub auth for PRs/issue sync, the configured repo base
+          directory, the MCP sidecar the task-editor tools depend on, automatic local backups,
+          database size, and the app's own version/update-available status. Green means ready;
+          yellow/red need attention before you run a task with that provider.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">

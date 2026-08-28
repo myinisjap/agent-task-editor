@@ -21,11 +21,20 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **`SSL_CA_CERT_PATH`** — trust a specific corporate CA `.pem` file instead of disabling TLS verification entirely. Safer alternative to `INSECURE_SKIP_SSL_VERIFY`; bind-mounted into the backend container and wired into git/npm/Node via `GIT_SSL_CAINFO`/`NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`, so it applies to task runs and chat sessions alike. Supported by `dev.sh`, `run.sh`, and both compose files.
+- **"About Task Detail" help modal** on the Task Detail page (`?`/info button next to the tab bar) — the one page that didn't have one, covering the Overview/Logs/Diff tabs, run history, Approve/Reject, diff review comments, and subtasks/dependencies.
+
+### Changed
+- **Agent Config help modal** now covers `max_cost_usd`, `subtasks_enabled`/`max_subtasks`, and `effort`, and points at the Capability Matrix for how support varies by provider.
+- **Repos help modal** now covers `issue_writeback_enabled`/`issue_writeback_label`, `pr_review_auto_transition_enabled`, and `max_concurrent_runs`.
+- **Health help modal** now lists the non-provider system checks (MCP sidecar, automatic backups, database size, version/update-available), not just per-provider readiness.
+- **Board help modal** now mentions the 🗄 Archived toggle and the bulk unarchive action.
+- **Usage help modal** now documents the Global spend ceiling section (daily/monthly caps, burn-rate forecast, and that tripping the cap halts new dispatch without killing in-flight runs).
 
 ### Fixed
 - **CLI "update available" warnings in chat/task runs** — each provider CLI's version is pinned by a `*_CLI_VERSION` build arg in `backend/Dockerfile`, but their own update checks were still free to run and warn inside the container. Now suppressed per provider: claude (`DISABLE_AUTOUPDATER=1`, headless + chat), qwen_code (`NO_UPDATE_NOTIFIER=1`, headless + chat), codex_cli (`-c check_for_update=false`, chat only — its headless `exec` mode never showed the banner to begin with).
 - **`INSECURE_SKIP_SSL_VERIFY` / `SSL_CA_CERT_PATH` not reaching agent subprocesses** — `GIT_SSL_NO_VERIFY`, `NPM_CONFIG_STRICT_SSL`, `NODE_TLS_REJECT_UNAUTHORIZED`, and `GIT_SSL_CAINFO` were missing from the provider env allowlist (`backend/internal/agent/providers/cli.go`), so agent task runs and chat sessions never actually saw them even though they were set on the backend container — the SSL bypass/CA-trust silently only applied to the backend's own git/npm calls, not to what agents ran. Added to `commonBaseEnvKeys`.
 - **Chat terminal WebSocket under `./dev.sh dev`** — the Vite dev-server proxy was missing `ws: true` on the `/api` entry, so the interactive chat terminal's WebSocket (`/api/v1/chat/sessions/{id}/terminal`) silently never connected in local dev mode (blank terminal pane, no error); only worked when running behind Docker/nginx. `frontend/vite.config.ts` now enables WebSocket upgrades on `/api` as well as `/ws`.
+- **Usage/Pricing help modals and inline copy claimed `qwen_code` reports authoritative cost.** It doesn't — the Qwen Code CLI never reports a cost figure, so `cost_usd` stays `0` for that provider. Also fixed: `opencode` (authoritative, unmentioned) and `codex_cli` (estimated from the pricing table, unmentioned) were missing from the same copy in `UsagePage`/`PricingSettingsPage`/`pageHelp.tsx`, and the mid-run cost watchdog (which also reads the pricing table for `claude`/`qwen_code`) wasn't mentioned on the Pricing page at all. Corrected the same stale claim in `docs/agents.md` and `docs/api.md`.
 
 ## [0.16.0] - 2026-08-21
 

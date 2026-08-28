@@ -180,6 +180,18 @@ describe('TaskDetailPage tab switching', () => {
       expect(api.tasks.diff).toHaveBeenCalledWith('task-1')
     })
   })
+
+  it('clicking the help button opens the About Task Detail modal', async () => {
+    const user = userEvent.setup()
+    renderPage(task())
+
+    await screen.findByText('A detailed task')
+    expect(screen.queryByText('About Task Detail')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'About this task' }))
+
+    expect(await screen.findByText('About Task Detail')).toBeInTheDocument()
+  })
 })
 
 describe('TaskDetailPage WS-driven state updates', () => {

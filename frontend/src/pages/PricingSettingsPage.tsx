@@ -101,12 +101,14 @@ export default function PricingSettingsPage() {
         <HelpButton onClick={() => setShowHelp(true)} title="About model pricing" />
       </div>
       <p className="text-sm text-slate-400 mb-6">
-        USD price per 1M tokens used to estimate run cost for the <code className="text-slate-300">anthropic</code>{' '}
-        and <code className="text-slate-300">llm</code> providers (the <code className="text-slate-300">claude</code>{' '}
-        and <code className="text-slate-300">qwen_code</code> CLIs report their own authoritative cost and aren't
-        affected). A model with no row here falls back to an internal, approximate hardcoded table; a run whose model
-        matches neither is flagged "cost unknown" in its run history instead of silently showing $0. Changes take
-        effect on the very next run — no restart needed.
+        USD price per 1M tokens used to estimate run cost for the <code className="text-slate-300">codex_cli</code>{' '}
+        provider (and the deprecated <code className="text-slate-300">anthropic</code>/
+        <code className="text-slate-300">llm</code> providers), plus the mid-run cost watchdog on{' '}
+        <code className="text-slate-300">claude</code>/<code className="text-slate-300">qwen_code</code> — the{' '}
+        <code className="text-slate-300">claude</code> and <code className="text-slate-300">opencode</code> CLIs'
+        own final reported cost is authoritative and unaffected. A model with no row here falls back to an internal,
+        approximate hardcoded table; a run whose model matches neither is flagged "cost unknown" in its run history
+        instead of silently showing $0. Changes take effect on the very next run — no restart needed.
       </p>
 
       {showHelp && (
