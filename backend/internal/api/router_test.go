@@ -110,3 +110,76 @@ func TestMetricsEndpoint_GatedByMetricsToken(t *testing.T) {
 		t.Fatalf("expected 200 with correct token, got %d", w.Code)
 	}
 }
+
+// apiV1AuthProbePaths is a representative sample of routes mounted under
+// /api/v1 (inside the BearerAuth r.Group in NewRouter), used by the auth
+// tests below to assert the whole group is actually gated end to end rather
+// than trusting that each handler individually. GET /api/v1/backup is
+// included deliberately: it streams a full DB snapshot (secrets included —
+// see docs/backup.md), so proving it requires a token is the single most
+// important assertion in this file.
+var apiV1AuthProbePaths = []string{
+	"/api/v1/tasks",
+	"/api/v1/agents",
+	"/api/v1/provider-configs",
+	"/api/v1/backup",
+}
+
+// TestAPIv1_RequiresBearerToken verifies every route in apiV1AuthProbePaths
+// — including GET /api/v1/backup, a full-DB-dump endpoint — rejects requests
+// with no (or the wrong) bearer token with 401 when API_TOKEN is configured,
+// and does not reject them when the correct token is supplied. Only "not
+// 401" is asserted for the authorized case (rather than 200): some of these
+// routes may 404/produce other codes with the nil dependencies newTestRouter
+// wires up, but that's a different concern from auth — see newTestRouter's
+// doc comment on why /tasks, /agents, and /provider-configs are safe to
+// exercise here.
+func TestAPIv1_RequiresBearerToken(t *testing.T) {
+	r := newTestRouter(t, "api-secret", "")
+
+	for _, path := range apiV1AuthProbePaths {
+		t.Run("no token: "+path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401 with no token, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+
+		t.Run("wrong token: "+path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer wrong-secret")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401 with wrong token, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+
+		t.Run("correct token: "+path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer api-secret")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code == http.StatusUnauthorized {
+				t.Errorf("expected non-401 with correct token, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestAPIv1_OpenWhenNoTokenConfigured verifies the documented "no API_TOKEN
+// configured = open" behavior still holds for /api/v1 routes (matches
+// middleware.BearerAuth's contract: an empty configured token disables the
+// check entirely, rather than rejecting everything).
+func TestAPIv1_OpenWhenNoTokenConfigured(t *testing.T) {
+	r := newTestRouter(t, "", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code == http.StatusUnauthorized {
+		t.Errorf("expected /api/v1/agents to be reachable with no token configured, got 401: %s", w.Body.String())
+	}
+}

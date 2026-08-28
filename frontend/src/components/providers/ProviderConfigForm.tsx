@@ -59,6 +59,32 @@ export default function ProviderConfigForm({
   const isKnownDropdownProvider = PROVIDERS.includes(form.provider)
   const isDeprecated = DEPRECATED_PROVIDERS.has(form.provider)
 
+  // Env values the server returned as the redacted "***" sentinel (see
+  // provider_env.go) — the only thing we can safely show for a set-but-
+  // hidden secret is its key name, with an explicit way to remove it. Parse
+  // failures (a user mid-edit of the raw JSON textarea) just render no
+  // chips rather than erroring.
+  const maskedEnvKeys: string[] = (() => {
+    try {
+      const parsed = JSON.parse(form.env) as Record<string, unknown>
+      return Object.entries(parsed)
+        .filter(([, v]) => v === '***')
+        .map(([k]) => k)
+    } catch {
+      return []
+    }
+  })()
+
+  function removeEnvKey(key: string) {
+    try {
+      const parsed = JSON.parse(form.env) as Record<string, unknown>
+      delete parsed[key]
+      setForm((f) => ({ ...f, env: JSON.stringify(parsed) }))
+    } catch {
+      // form.env isn't valid JSON right now; nothing safe to do.
+    }
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-6">
@@ -127,6 +153,27 @@ export default function ProviderConfigForm({
         </Field>
 
         <Field label="Env vars (JSON object)" className="sm:col-span-2" hint="API keys and other environment variables merged into the provider CLI's environment.">
+          {maskedEnvKeys.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {maskedEnvKeys.map((key) => (
+                <span
+                  key={key}
+                  className="inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700"
+                >
+                  {key}
+                  <button
+                    type="button"
+                    onClick={() => removeEnvKey(key)}
+                    aria-label={`Remove ${key}`}
+                    title={`Remove ${key}`}
+                    className="text-slate-500 hover:text-red-400"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             value={form.env}
             onChange={(e) => setForm((f) => ({ ...f, env: e.target.value }))}
@@ -134,8 +181,11 @@ export default function ProviderConfigForm({
             className="input resize-none font-mono text-xs"
             placeholder='{"ANTHROPIC_API_KEY": "..."}'
           />
-          {selected && /"\*\*\*"/.test(form.env) && (
-            <p className="mt-1 text-xs text-slate-500">Keys showing *** are already set. Clear or replace the value to update; leave *** to keep existing.</p>
+          {selected && maskedEnvKeys.length > 0 && (
+            <p className="mt-1 text-xs text-slate-500">
+              Values shown as *** are set but hidden. Replace *** with a new value to update a key; delete the whole
+              key line (or click ✕ above) to remove it.
+            </p>
           )}
         </Field>
       </div>

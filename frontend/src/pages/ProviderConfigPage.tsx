@@ -50,23 +50,19 @@ export default function ProviderConfigPage() {
     setForm(EMPTY)
   }
 
-  function sanitizeEnv(envJson: string): string {
-    try {
-      const parsed = JSON.parse(envJson) as Record<string, string>
-      const clean: Record<string, string> = {}
-      for (const [k, v] of Object.entries(parsed)) {
-        if (v !== '***' && v !== '') clean[k] = v
-      }
-      return JSON.stringify(clean)
-    } catch {
-      return envJson
-    }
-  }
-
   async function handleSave() {
     setSaving(true)
     try {
-      const payload = { ...form, env: sanitizeEnv(form.env) }
+      // form.env is sent as-is. The server owns env's write-only merge
+      // semantics (see backend/internal/api/handlers/provider_env.go): a
+      // value of "***" means "keep the existing stored value for this
+      // key", any other value (including "") overwrites, and a key present
+      // on the server but omitted here is deleted. Stripping "***" entries
+      // client-side (as this used to do) would delete every key the user
+      // didn't touch — do not reintroduce that. A malformed env string is
+      // passed straight through too, so the server's 400 (rather than a
+      // silently-swallowed client-side parse failure) is what the user sees.
+      const payload = { ...form }
       if (selected) {
         await update(selected.id, payload)
       } else {

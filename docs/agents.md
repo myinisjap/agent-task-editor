@@ -47,7 +47,7 @@ and chat sessions rather than each owning its own copy.
 | `name` | Human-readable name |
 | `provider` | Provider string — see [Providers](#providers) below |
 | `model` | Model identifier (e.g. `claude-sonnet-4-6`, `gpt-4o`) |
-| `env` | JSON object of additional environment variables merged into the provider CLI/API process's environment |
+| `env` | JSON object of additional environment variables merged into the provider CLI/API process's environment. **Write-only over the API** — see [Environment Variable Security](#environment-variable-security) below: reads always mask every value as `"***"` (key names stay visible), and writes treat `"***"` as "keep the existing value", any other value as an overwrite, and an omitted key as a delete. |
 
 Both an agent config (`agent_configs.provider_config_id`) and a chat session
 (`chat_sessions.provider_config_id`) reference a provider config by id.
@@ -833,3 +833,24 @@ This scoping also covers the **interactive chat terminal** — the
 in `backend/internal/agent/terminal.go`). It has the same Bash access as a
 headless run, so it is launched with the same per-provider allowlist rather
 than the backend's full environment.
+
+**`env` values are write-only over the HTTP API.** `GET`/list responses for
+provider configs (`/api/v1/provider-configs`), and every place a provider
+config is embedded in another response (an agent config's `provider_config`,
+a chat session's `provider_config`), mask every `env` value as the literal
+string `"***"` — key names are preserved (useful for the UI to show what's
+configured), but real values never leave the server over these endpoints.
+Writing (`POST`/`PUT`) treats `"***"` as "keep the value already stored for
+that key," any other value (including `""`) as an explicit overwrite, and a
+key present in the stored env but omitted from the request's `env` object as
+a delete; omitting `env` from the request body entirely leaves the whole
+thing unchanged. This lets the Providers page round-trip a config (fetch,
+tweak one field, save) without ever having the real secret pass through the
+browser twice, and without accidentally wiping a secret it never displayed.
+
+This is **response redaction only, not encryption at rest.** `env` values are
+still stored in cleartext in the SQLite database file, and `GET
+/api/v1/backup` — a raw point-in-time snapshot of that database — still
+contains them in the clear by design (see [docs/backup.md](backup.md)). The
+DB file and any backups of it still need to be protected as if they held
+plaintext credentials, because they do.

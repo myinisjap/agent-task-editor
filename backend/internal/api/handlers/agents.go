@@ -93,7 +93,8 @@ func (h *AgentsHandler) labelConflict(r *http.Request, labelsJSON string, exclud
 // (clients that echo a GET response back into a PUT would otherwise send
 // bare 1/0, which fails strict bool decoding). It also embeds the resolved
 // ProviderConfig (provider/model/env) so clients can display/edit those
-// values without a second round-trip.
+// values without a second round-trip. ProviderConfig.Env is redacted (see
+// safeConfig) — values never leave the server via this view.
 type agentConfigView struct {
 	gen.AgentConfig
 	Enabled         bool                `json:"enabled"`
@@ -104,7 +105,12 @@ type agentConfigView struct {
 
 // safeConfig builds the response view for an agent config, looking up its
 // provider config (best-effort — if the lookup fails, provider_config is
-// simply omitted rather than failing the whole response).
+// simply omitted rather than failing the whole response). "safe" refers to
+// the embedded provider config's env values being redacted (see
+// redactedProviderConfig / provider_env.go) before they're ever serialized —
+// this is the only place agent-config responses touch env, so it's the
+// choke point that keeps GET /agents and GET /agents/{id} from leaking
+// secrets.
 func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentConfigView {
 	view := agentConfigView{
 		AgentConfig:     cfg,
@@ -114,7 +120,8 @@ func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentCo
 	}
 	if cfg.ProviderConfigID != "" {
 		if pc, err := h.q.GetProviderConfig(r.Context(), cfg.ProviderConfigID); err == nil {
-			view.ProviderConfig = &pc
+			redacted := redactedProviderConfig(pc)
+			view.ProviderConfig = &redacted
 		}
 	}
 	return view

@@ -97,6 +97,11 @@ func TestProviderConfigsCreate_RejectsOpenAIAlias(t *testing.T) {
 	}
 }
 
+// TestProviderConfigsCreate_RoundTrip verifies name/provider/model round-trip
+// on create. env is intentionally NOT expected to round-trip verbatim: it's
+// write-only (see provider_env.go), so the response masks the value while
+// keeping the key name — see TestProviderConfigsCreate_RedactsEnvValues and
+// TestProviderConfigsGet_RedactsEnvValues for the redaction behavior itself.
 func TestProviderConfigsCreate_RoundTrip(t *testing.T) {
 	router, _ := setupProvidersRouter(t)
 
@@ -116,8 +121,8 @@ func TestProviderConfigsCreate_RoundTrip(t *testing.T) {
 	if cfg.Name != "my-claude" || cfg.Provider != "claude" || cfg.Model != "sonnet" {
 		t.Errorf("unexpected config: %+v", cfg)
 	}
-	if cfg.Env != `{"ANTHROPIC_API_KEY":"sk-test"}` {
-		t.Errorf("expected env to round-trip, got %q", cfg.Env)
+	if cfg.Env != `{"ANTHROPIC_API_KEY":"***"}` {
+		t.Errorf("expected env value to be redacted in the response, got %q", cfg.Env)
 	}
 
 	// Defaults env to "{}" when omitted.
@@ -133,6 +138,195 @@ func TestProviderConfigsCreate_RoundTrip(t *testing.T) {
 	}
 	if cfg2.Env != "{}" {
 		t.Errorf("expected env to default to '{}', got %q", cfg2.Env)
+	}
+}
+
+// TestProviderConfigsGet_RedactsEnvValues verifies GET /provider-configs/{id}
+// never returns the secret value, even as a raw string in the response body,
+// while the key name remains visible for the UI.
+func TestProviderConfigsGet_RedactsEnvValues(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{
+		"name":     "secret-holder",
+		"provider": "claude",
+		"env":      `{"ANTHROPIC_API_KEY":"sk-test"}`,
+	})
+	var created gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/provider-configs/"+created.ID, nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	body := w2.Body.String()
+	if strings.Contains(body, "sk-test") {
+		t.Errorf("expected secret value to be redacted from GET response, got body %q", body)
+	}
+	if !strings.Contains(body, "ANTHROPIC_API_KEY") {
+		t.Errorf("expected env key name to remain visible, got body %q", body)
+	}
+}
+
+// TestProviderConfigsList_RedactsEnvValues is the list-endpoint analog of
+// TestProviderConfigsGet_RedactsEnvValues.
+func TestProviderConfigsList_RedactsEnvValues(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	postJSON(t, router, "/provider-configs", map[string]any{
+		"name":     "secret-holder",
+		"provider": "claude",
+		"env":      `{"ANTHROPIC_API_KEY":"sk-test"}`,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/provider-configs", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "sk-test") {
+		t.Errorf("expected secret value to be redacted from list response, got body %q", body)
+	}
+	if !strings.Contains(body, "ANTHROPIC_API_KEY") {
+		t.Errorf("expected env key name to remain visible, got body %q", body)
+	}
+}
+
+// TestProviderConfigsUpdate_PreservesRedactedSecret verifies that PUTting the
+// sentinel ("***") for a key — e.g. what a client gets back from re-reading
+// its own previous write, unmodified — preserves the real stored value
+// rather than persisting the literal sentinel. Checked directly against the
+// DB, since the HTTP response is (correctly) always redacted.
+func TestProviderConfigsUpdate_PreservesRedactedSecret(t *testing.T) {
+	router, q := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{
+		"name":     "keep-secret",
+		"provider": "claude",
+		"env":      `{"ANTHROPIC_API_KEY":"sk-test"}`,
+	})
+	var created gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/provider-configs/"+created.ID, map[string]any{
+		"name": "keep-secret-renamed",
+		"env":  `{"ANTHROPIC_API_KEY":"***"}`,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	stored, err := q.GetProviderConfig(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get provider config: %v", err)
+	}
+	if stored.Env != `{"ANTHROPIC_API_KEY":"sk-test"}` {
+		t.Errorf("expected stored secret to be preserved, got %q", stored.Env)
+	}
+}
+
+// TestProviderConfigsUpdate_ReplacesEnvValue verifies a genuinely new value
+// for an existing key overwrites the stored value.
+func TestProviderConfigsUpdate_ReplacesEnvValue(t *testing.T) {
+	router, q := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{
+		"name":     "replace-secret",
+		"provider": "claude",
+		"env":      `{"ANTHROPIC_API_KEY":"sk-test"}`,
+	})
+	var created gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/provider-configs/"+created.ID, map[string]any{
+		"env": `{"ANTHROPIC_API_KEY":"sk-new"}`,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	stored, err := q.GetProviderConfig(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get provider config: %v", err)
+	}
+	if stored.Env != `{"ANTHROPIC_API_KEY":"sk-new"}` {
+		t.Errorf("expected stored secret to be replaced, got %q", stored.Env)
+	}
+}
+
+// TestProviderConfigsUpdate_RemovesOmittedKey verifies that a key present in
+// the stored env but omitted from a non-empty incoming env is deleted (the
+// "clearing a key removes it" contract), while an entirely omitted env
+// (empty string) still means "unchanged".
+func TestProviderConfigsUpdate_RemovesOmittedKey(t *testing.T) {
+	router, q := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{
+		"name":     "two-keys",
+		"provider": "claude",
+		"env":      `{"ANTHROPIC_API_KEY":"sk-test","OTHER_KEY":"other-val"}`,
+	})
+	var created gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	// PUT with only one of the two keys: the omitted key is deleted.
+	w = putJSON(t, router, "/provider-configs/"+created.ID, map[string]any{
+		"env": `{"ANTHROPIC_API_KEY":"***"}`,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	stored, err := q.GetProviderConfig(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get provider config: %v", err)
+	}
+	if stored.Env != `{"ANTHROPIC_API_KEY":"sk-test"}` {
+		t.Errorf("expected OTHER_KEY to be removed and ANTHROPIC_API_KEY preserved, got %q", stored.Env)
+	}
+
+	// A subsequent PUT that omits env entirely (empty string) must leave it
+	// unchanged, not clear it.
+	w = putJSON(t, router, "/provider-configs/"+created.ID, map[string]any{
+		"name": "two-keys-renamed",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	stored, err = q.GetProviderConfig(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get provider config: %v", err)
+	}
+	if stored.Env != `{"ANTHROPIC_API_KEY":"sk-test"}` {
+		t.Errorf("expected env to remain unchanged when omitted from PUT body, got %q", stored.Env)
+	}
+}
+
+// TestProviderConfigsUpdate_RejectsMalformedEnv verifies a non-object env
+// value 400s rather than being silently accepted or wiping the stored env.
+func TestProviderConfigsUpdate_RejectsMalformedEnv(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+
+	w := postJSON(t, router, "/provider-configs", map[string]any{"name": "x", "provider": "claude"})
+	var created gen.ProviderConfig
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	w = putJSON(t, router, "/provider-configs/"+created.ID, map[string]any{"env": "not json"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed env, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
