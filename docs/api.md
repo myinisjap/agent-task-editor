@@ -103,6 +103,8 @@ Create a task. Accepts JSON body or `multipart/form-data` (for image attachments
 **Multipart form** (`Content-Type: multipart/form-data`):
 Same fields as form values, plus `attachments` (multiple file fields). Images are validated (max 10 MB each, image/* MIME type only) and stored in `UPLOAD_DIR`. Images wider or taller than 2000x2000px are downscaled on upload, preserving aspect ratio (GIF/WebP are re-encoded to PNG when resized); images that already fit, that declare a resolution above 4096x4096px, or that can't be decoded, are stored unchanged (the 4096x4096px decode ceiling protects against a small, highly-compressed file declaring an enormous pixel count).
 
+The stored filename is always `<uuid><ext>`, where `<ext>` is derived from the *sniffed* image MIME type (`image/png`→`.png`, `image/jpeg`→`.jpg`, `image/gif`→`.gif`, `image/webp`→`.webp`) — the client-supplied filename's extension is discarded and never written to disk (#142). Uploads whose sniffed type isn't one of these are rejected with 400, even if the client extension looked plausible.
+
 New tasks default to the `not_ready` label. Pass `label` to place a task
 directly on any column defined in the workflow (e.g. `work` to make it
 immediately agent-eligible). Because this is initial placement rather than a
@@ -639,7 +641,9 @@ whose value is the id to pass as `before` to load the previous page. This is the
 ## Uploads
 
 ### `GET /uploads/{task_id}/{filename}`
-Serve a task attachment image. Not auth-gated by default (images are referenced by opaque UUIDs). Used by the frontend to display attached images.
+Serve a task attachment image. Auth-gated like the rest of the API (sits inside the bearer-auth route group). Used by the frontend to display attached images.
+
+Responses set `X-Content-Type-Options: nosniff` and `Content-Disposition: inline; filename=""`. `Content-Type` is derived from the stored file extension, which itself is derived from the sniffed image MIME type at upload time rather than any client-supplied filename — see the `attachments` note below (#142).
 
 ---
 
