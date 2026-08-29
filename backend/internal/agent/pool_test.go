@@ -790,6 +790,62 @@ func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
 	}
 }
 
+// TestPool_CancelForResourceConstraint_LeavesTaskUnpausedWithReasonNote
+// verifies the memguard watchdog's cancel path is distinguishable from a
+// human-requested stop: the run's notes explain it was a resource
+// constraint (not "cancelled by user"), and the task is left unpaused so
+// it's re-dispatched normally instead of sitting stuck until a human
+// notices — a resource-constraint kill is not the task's fault.
+func TestPool_CancelForResourceConstraint_LeavesTaskUnpausedWithReasonNote(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	startPool(t, pool)
+
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProvider{}))
+
+	waitForStatus(t, q, runID, "running")
+	if !pool.CancelForResourceConstraint(runID) {
+		t.Fatal("expected CancelForResourceConstraint to find the active run")
+	}
+
+	waitForStatus(t, q, runID, "cancelled")
+
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.Paused != 0 {
+		t.Errorf("expected task to remain unpaused after a resource-constraint cancel, so it's re-dispatched normally")
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Errorf("expected active_agent_run_id cleared, got %q", *task.ActiveAgentRunID)
+	}
+
+	run, err := q.GetAgentRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get agent run: %v", err)
+	}
+	if run.Notes == nil || !strings.Contains(*run.Notes, "low on memory") {
+		t.Errorf("expected run notes to explain the resource constraint, got %v", run.Notes)
+	}
+	if run.Notes != nil && strings.Contains(*run.Notes, "cancelled by user") {
+		t.Errorf("expected run notes to NOT claim a user cancellation, got %q", *run.Notes)
+	}
+}
+
 // TestPool_OldestRunID verifies the memguard watchdog's victim-selection
 // query: "" when nothing is running, and the in-flight run's ID once one is
 // registered.

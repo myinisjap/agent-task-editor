@@ -62,12 +62,48 @@ type Pool struct {
 	running map[string]*runControl
 }
 
+// CancelReason distinguishes why a run was cancelled, so handleCancelled can
+// pick an accurate note and decide whether the task should be left paused
+// (a human deliberately stopped it — don't silently retry what they killed)
+// or left resumable (an infrastructure constraint stopped it — the task
+// itself did nothing wrong, so it should be eligible for re-dispatch like
+// any other transient failure).
+type CancelReason int
+
+const (
+	// CancelReasonUser is a human-requested stop via the API. Pauses the task.
+	CancelReasonUser CancelReason = iota
+	// CancelReasonResourceConstraint is memguard killing the run because
+	// container memory crossed its critical threshold — not the task's
+	// fault. Leaves the task unpaused so it's re-dispatched normally.
+	CancelReasonResourceConstraint
+)
+
+func (r CancelReason) note() string {
+	switch r {
+	case CancelReasonResourceConstraint:
+		return "Run stopped: container was low on memory (likely a runaway subprocess, e.g. a test run). Not a failure of this task — it will be retried."
+	default:
+		return "Run cancelled by user."
+	}
+}
+
+func (r CancelReason) String() string {
+	switch r {
+	case CancelReasonResourceConstraint:
+		return "resource_constraint"
+	default:
+		return "user"
+	}
+}
+
 // runControl carries the per-run cancellation handle plus a flag distinguishing
 // a human-requested stop from an incidental context cancellation (e.g. pool
 // shutdown), so the pool can mark the run "cancelled" rather than "failed".
 type runControl struct {
 	cancel    context.CancelFunc
 	cancelled atomic.Bool
+	reason    atomic.Int32
 	startedAt time.Time
 }
 
@@ -85,19 +121,30 @@ func NewPool(maxWorkers int, db *sql.DB, engine *workflow.Engine, pub Publisher)
 	}
 }
 
-// Cancel signals the in-flight run identified by runID to stop. It cancels the
-// run's context — CLI providers propagate this to their subprocess (they run
-// under exec.CommandContext) and HTTP providers abort their request — and marks
-// the run so the pool records it as "cancelled" when the provider returns.
-// Returns false if no such run is currently active (already finished, never
-// started, or running on a different server instance).
+// Cancel signals the in-flight run identified by runID to stop, as a
+// human-requested stop (see CancelReasonUser) — the task is left paused
+// afterward. Returns false if no such run is currently active (already
+// finished, never started, or running on a different server instance).
 func (p *Pool) Cancel(runID string) bool {
+	return p.cancelWithReason(runID, CancelReasonUser)
+}
+
+// CancelForResourceConstraint is like Cancel but marks the run as stopped by
+// an infrastructure constraint (see CancelReasonResourceConstraint) rather
+// than a human request — the task is left unpaused and eligible for normal
+// re-dispatch. Used by the memguard watchdog.
+func (p *Pool) CancelForResourceConstraint(runID string) bool {
+	return p.cancelWithReason(runID, CancelReasonResourceConstraint)
+}
+
+func (p *Pool) cancelWithReason(runID string, reason CancelReason) bool {
 	p.mu.Lock()
 	rc := p.running[runID]
 	p.mu.Unlock()
 	if rc == nil {
 		return false
 	}
+	rc.reason.Store(int32(reason))
 	rc.cancelled.Store(true)
 	rc.cancel()
 	return true
@@ -265,7 +312,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// re-dispatched. Checked before error classification because a cancelled
 	// provider typically returns a context/transient-looking error.
 	if rc.cancelled.Load() {
-		p.handleCancelled(job, result, startedAt)
+		p.handleCancelled(job, result, startedAt, CancelReason(rc.reason.Load()))
 		return
 	}
 
