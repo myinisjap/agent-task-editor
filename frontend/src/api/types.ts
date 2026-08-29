@@ -3511,7 +3511,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Download a task attachment file */
+        /**
+         * Download a task attachment file
+         * @description Serves a task attachment image. Responses always include X-Content-Type-Options: nosniff and Content-Disposition: inline; filename="" (#142). Content-Type is derived from the stored file extension, which is itself derived from the sniffed image MIME type at upload time rather than any client-supplied filename.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -3527,10 +3530,18 @@ export interface paths {
                 /** @description The attachment file */
                 200: {
                     headers: {
+                        /** @description Always set to prevent MIME-sniffing in the browser. */
+                        "X-Content-Type-Options"?: "nosniff";
+                        /** @description Always set to a non-attachment, filename-less inline disposition. */
+                        "Content-Disposition"?: string;
                         [name: string]: unknown;
                     };
                     content: {
                         "application/octet-stream": string;
+                        "image/png": string;
+                        "image/jpeg": string;
+                        "image/gif": string;
+                        "image/webp": string;
                     };
                 };
                 /** @description Invalid path component */
@@ -4218,7 +4229,7 @@ export interface components {
             current_agent_run_id?: string | null;
             active_agent_run_id?: string | null;
             agent_notes?: string;
-            /** @description Relative paths of files uploaded with the task (served under /uploads/). Emitted as an array; empty when the task has none. */
+            /** @description Relative paths of files uploaded with the task (served under /uploads/). Emitted as an array; empty when the task has none. The filename portion is always "<uuid><ext>", where <ext> is derived from the sniffed image MIME type at upload time (.png/.jpg/.gif/.webp) rather than the client-supplied filename's extension. */
             attachments?: string[];
             /** @description Per-task git branch (empty until first dispatch) */
             branch?: string;
