@@ -309,3 +309,78 @@ func TestSaveUploadedAttachments_HugeDeclaredDimensionsStoredAsIs(t *testing.T) 
 		t.Errorf("expected the huge-declared-dimension file to be stored unchanged, not decoded/re-encoded")
 	}
 }
+
+// TestSaveUploadedAttachments_IgnoresClientExtension verifies that a real
+// PNG uploaded with a misleading/dangerous client filename (".html") is
+// stored with the extension derived from the sniffed content type, not the
+// client-supplied name — the core regression test for #142.
+func TestSaveUploadedAttachments_IgnoresClientExtension(t *testing.T) {
+	dir := t.TempDir()
+	h := &TasksHandler{uploadDir: dir}
+	small := encodeTestPNG(t, 10, 10)
+	req := multipartUploadRequest(t, map[string][]byte{"evil.html": small})
+	w := httptest.NewRecorder()
+
+	paths, ok := h.saveUploadedAttachments(w, req, "task-1")
+	if !ok {
+		t.Fatalf("expected ok=true, response: %s", w.Body.String())
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected exactly one saved attachment, got %v", paths)
+	}
+	if filepath.Ext(paths[0]) != ".png" {
+		t.Errorf("expected stored extension .png (from sniff), got %q", paths[0])
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dir, "task-1"))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".html" {
+			t.Errorf("expected no .html file on disk, found %q", e.Name())
+		}
+	}
+}
+
+// TestSaveUploadedAttachments_NoExtensionFilenameGetsSniffedExt verifies
+// that a client filename with no extension at all gets the sniffed image
+// extension rather than falling back to ".bin" (the pre-#142 behavior).
+func TestSaveUploadedAttachments_NoExtensionFilenameGetsSniffedExt(t *testing.T) {
+	dir := t.TempDir()
+	h := &TasksHandler{uploadDir: dir}
+	small := encodeTestPNG(t, 10, 10)
+	req := multipartUploadRequest(t, map[string][]byte{"screenshot": small})
+	w := httptest.NewRecorder()
+
+	paths, ok := h.saveUploadedAttachments(w, req, "task-1")
+	if !ok {
+		t.Fatalf("expected ok=true, response: %s", w.Body.String())
+	}
+	if got := filepath.Ext(paths[0]); got != ".png" {
+		t.Errorf("expected .png extension (sniffed), got %q", got)
+	}
+}
+
+// tinyGIF is a minimal valid GIF89a header, enough for http.DetectContentType
+// to sniff "image/gif". Used to verify extension mapping for a non-PNG image
+// type together with a dangerous client-supplied filename.
+var tinyGIF = []byte("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x00\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b")
+
+// TestSaveUploadedAttachments_GIFStoredWithGifExtensionRegardlessOfClientName
+// verifies a GIF uploaded with a dangerous client extension (".php") is
+// stored with ".gif", derived from the sniff.
+func TestSaveUploadedAttachments_GIFStoredWithGifExtensionRegardlessOfClientName(t *testing.T) {
+	dir := t.TempDir()
+	h := &TasksHandler{uploadDir: dir}
+	req := multipartUploadRequest(t, map[string][]byte{"x.php": tinyGIF})
+	w := httptest.NewRecorder()
+
+	paths, ok := h.saveUploadedAttachments(w, req, "task-1")
+	if !ok {
+		t.Fatalf("expected ok=true, response: %s", w.Body.String())
+	}
+	if got := filepath.Ext(paths[0]); got != ".gif" {
+		t.Errorf("expected .gif extension (sniffed), got %q", got)
+	}
+}
