@@ -222,7 +222,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	env := mergeEnv(allowlistEnv(codexEnvAllowlist), input.AgentConfig.Env)
+	env := mergeEnv(providerBaseEnv(codexEnvAllowlist), input.AgentConfig.Env)
 	if codexHome != nil {
 		env = append(env, "CODEX_HOME="+codexHome.HomeDir)
 	}

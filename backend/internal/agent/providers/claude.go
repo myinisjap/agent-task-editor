@@ -244,7 +244,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	env := mergeEnv(allowlistEnv(claudeEnvAllowlist), input.AgentConfig.Env)
+	env := mergeEnv(providerBaseEnv(claudeEnvAllowlist), input.AgentConfig.Env)
 	if tok := ClaudeOAuthAccessToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
 	}

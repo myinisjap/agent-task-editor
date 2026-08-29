@@ -173,6 +173,33 @@ func TestAllowlistEnv_EveryProviderHasPathAndHome(t *testing.T) {
 	}
 }
 
+// TestProviderBaseEnv_IncludesTestPoolDefault verifies every provider's base
+// env carries the VITEST_MAX_WORKERS safety cap — the fix for a Bash-tool
+// `npm run test`/`vitest run --coverage` invocation fanning out to
+// os.cpus().length worker threads (the host's full core count inside this
+// container, unrelated to its memory ceiling) and exhausting the container.
+func TestProviderBaseEnv_IncludesTestPoolDefault(t *testing.T) {
+	for name, allow := range allProviderAllowlists {
+		t.Run(name, func(t *testing.T) {
+			assertContains(t, providerBaseEnv(allow), "VITEST_MAX_WORKERS=4")
+		})
+	}
+}
+
+// TestProviderBaseEnv_UserOverrideWins verifies a repo/agent config that
+// explicitly sets VITEST_MAX_WORKERS still wins over the built-in default —
+// mergeEnv appends AgentConfig.Env after providerBaseEnv, and os/exec.Cmd.Env
+// keeps the last occurrence of a duplicate key.
+func TestProviderBaseEnv_UserOverrideWins(t *testing.T) {
+	env := mergeEnv(providerBaseEnv(claudeEnvAllowlist), map[string]string{"VITEST_MAX_WORKERS": "8"})
+
+	assertContains(t, env, "VITEST_MAX_WORKERS=4")
+	assertContains(t, env, "VITEST_MAX_WORKERS=8")
+	if env[len(env)-1] != "VITEST_MAX_WORKERS=8" {
+		t.Fatalf("expected user override to be the last occurrence (os/exec keeps the last), got %v", env)
+	}
+}
+
 // TestAllowlistEnv_EveryProviderHasGitHubToken guards the credential-path
 // regression fixed alongside this test: agents authenticate their own git
 // push / gh calls via the container's `gh auth git-credential` helper, which
