@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -484,6 +487,54 @@ func TestTasks_Create_OmittedWorkflowID_Multipart_DefaultsToDefaultWorkflow(t *t
 	}
 	if task.WorkflowID != wfID {
 		t.Errorf("expected task to default to seeded Default workflow %q, got %q", wfID, task.WorkflowID)
+	}
+}
+
+// TestTasks_Create_Multipart_AttachmentExtensionDerivedFromSniff is an
+// end-to-end regression test for #142: an image uploaded via the
+// "attachments" multipart field under a dangerous client filename
+// (".html") must come back in the created task's attachments list with an
+// extension derived from the sniffed content type, not the client name.
+func TestTasks_Create_Multipart_AttachmentExtensionDerivedFromSniff(t *testing.T) {
+	r, _, wfID, repoID := setupTaskRouter(t)
+
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	var imgBuf bytes.Buffer
+	if err := png.Encode(&imgBuf, img); err != nil {
+		t.Fatalf("png.Encode: %v", err)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("title", "Task with polyglot attachment")
+	_ = mw.WriteField("repo_id", repoID)
+	_ = mw.WriteField("workflow_id", wfID)
+	fw, err := mw.CreateFormFile("attachments", "x.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(imgBuf.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	_ = mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var task apiTask
+	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if len(task.Attachments) != 1 {
+		t.Fatalf("expected exactly 1 attachment, got %v", task.Attachments)
+	}
+	if filepath.Ext(task.Attachments[0]) != ".png" {
+		t.Errorf("expected stored attachment to end in .png (from sniff), got %q", task.Attachments[0])
 	}
 }
 
