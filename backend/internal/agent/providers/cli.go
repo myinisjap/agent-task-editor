@@ -63,6 +63,29 @@ var dangerousEnvKeys = map[string]bool{
 	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
 }
 
+// defaultTestPoolEnv caps common JS test-runner worker/thread pools so a
+// single Bash-tool invocation (e.g. `npm run test`) can't fan out to
+// os.cpus().length workers — inside this container that reports the host's
+// full core count (no CPU cgroup limit is set), not anything scaled to the
+// container's actual memory ceiling, so an uncapped pool can spin up far
+// more concurrent worker processes than the container can hold (observed:
+// a Vitest run alone exhausted a 4GB container). Prepended to each
+// provider's base env, before mergeEnv appends the user's AgentConfig.Env —
+// os/exec.Cmd.Env keeps the last occurrence of a duplicate key, so a repo
+// or agent config that sets these explicitly still wins.
+var defaultTestPoolEnv = []string{
+	"VITEST_MAX_WORKERS=4", // Vitest 3+; ignored by anything not using Vitest
+}
+
+// providerBaseEnv is what every provider passes as mergeEnv's base: the
+// safety-net test-pool defaults (first, so a user override always wins),
+// then the provider's own allowlisted subset of the backend's environment.
+func providerBaseEnv(allowlist map[string]bool) []string {
+	base := make([]string, 0, len(defaultTestPoolEnv))
+	base = append(base, defaultTestPoolEnv...)
+	return append(base, allowlistEnv(allowlist)...)
+}
+
 func mergeEnv(base []string, extra map[string]string) []string {
 	out := make([]string, len(base))
 	copy(out, base)

@@ -146,7 +146,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	// update-notifier's source) — same self-update-drift concern as claude's
 	// DISABLE_AUTOUPDATER, since QWEN_CLI_VERSION is pinned in
 	// backend/Dockerfile.
-	env := mergeEnv(allowlistEnv(qwenEnvAllowlist), input.AgentConfig.Env)
+	env := mergeEnv(providerBaseEnv(qwenEnvAllowlist), input.AgentConfig.Env)
 	env = append(env, "QWEN_CODE_SUPPRESS_YOLO_WARNING=1", "NO_UPDATE_NOTIFIER=1")
 
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
