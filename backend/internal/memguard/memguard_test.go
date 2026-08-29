@@ -10,7 +10,7 @@ type fakePool struct {
 
 func (f *fakePool) OldestRunID() string { return f.oldestID }
 
-func (f *fakePool) Cancel(runID string) bool {
+func (f *fakePool) CancelForResourceConstraint(runID string) bool {
 	if f.cancelFail {
 		return false
 	}

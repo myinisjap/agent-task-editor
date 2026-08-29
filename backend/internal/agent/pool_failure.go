@@ -229,22 +229,26 @@ func (p *Pool) handleCostBudgetExceeded(ctx context.Context, job Job, result Res
 	log.Warn("pool: mid-run cost budget exceeded, escalating to waiting_human", "spent_usd", ce.SpentUSD, "budget_usd", ce.BudgetUSD)
 }
 
-// handleCancelled records a human-requested stop. It marks the run "cancelled"
-// with a note, resets the transient-retry budget (a cancel is not a failure),
-// pauses the task, and clears the active-run lock. Pausing — rather than only
-// clearing the lock — is deliberate: an unpaused task on an agent-triggerable
-// label would be re-dispatched on the very next sweep, restarting the run the
-// human just killed. Pausing leaves the task on its label for a human to resume
-// when ready. Uses context.Background throughout since the run's own context is
-// already cancelled. result carries any usage the provider accumulated before
-// the cancellation took effect, so that spend is persisted on the run row
-// rather than recorded as $0 — a cancelled run has still burned real tokens
-// and must count toward cost aggregates the same as any other terminal run.
-func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time) {
+// handleCancelled records a cancelled run (see CancelReason for why one might
+// happen). It marks the run "cancelled" with a reason-specific note, resets
+// the transient-retry budget (a cancel is not a failure), clears the
+// active-run lock, and — for CancelReasonUser only — pauses the task.
+// Pausing on a human stop is deliberate: an unpaused task on an
+// agent-triggerable label would be re-dispatched on the very next sweep,
+// restarting the run the human just killed; pausing leaves the task on its
+// label for a human to resume when ready. A resource-constraint kill is not
+// the task's fault, so it stays unpaused and is re-dispatched normally, the
+// same as any other transient failure. Uses context.Background throughout
+// since the run's own context is already cancelled. result carries any usage
+// the provider accumulated before the cancellation took effect, so that
+// spend is persisted on the run row rather than recorded as $0 — a cancelled
+// run has still burned real tokens and must count toward cost aggregates the
+// same as any other terminal run.
+func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reason CancelReason) {
 	bg := context.Background()
 	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
 
-	note := "Run cancelled by user."
+	note := reason.note()
 	costUnknown := int64(0)
 	if result.CostUnknown {
 		costUnknown = 1
@@ -268,8 +272,10 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time) {
 		log.Warn("pool: reset transient retry (cancel)", "err", err)
 	}
 
-	if _, err := p.q.SetTaskPaused(bg, gen.SetTaskPausedParams{Paused: 1, ID: job.Input.Task.ID}); err != nil {
-		log.Warn("pool: pause task after cancel", "err", err)
+	if reason == CancelReasonUser {
+		if _, err := p.q.SetTaskPaused(bg, gen.SetTaskPausedParams{Paused: 1, ID: job.Input.Task.ID}); err != nil {
+			log.Warn("pool: pause task after cancel", "err", err)
+		}
 	}
 	p.releaseLock(bg, job.Input.Task.ID, job.RunID)
 
@@ -292,7 +298,7 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time) {
 		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.ID, startedAt)
 	}
 
-	log.Info("pool: agent run cancelled by user")
+	log.Info("pool: agent run cancelled", "reason", reason)
 }
 
 // hasLoginError scans the last 20 log entries for an auth/login error signal.

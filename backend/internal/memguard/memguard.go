@@ -43,7 +43,7 @@ const (
 // rest of the backend.
 type canceller interface {
 	OldestRunID() string
-	Cancel(runID string) bool
+	CancelForResourceConstraint(runID string) bool
 }
 
 // Guard periodically checks container memory pressure and cancels the
@@ -111,7 +111,7 @@ func (g *Guard) cancelIfOverThreshold(current, max int64) {
 	slog.Warn("memguard: container memory critical, cancelling oldest run",
 		"component", "memguard", "run_id", runID, "mem_current", current, "mem_max", max, "ratio", ratio)
 	g.lastCancelAt = time.Now()
-	g.pool.Cancel(runID)
+	g.pool.CancelForResourceConstraint(runID)
 }
 
 // readUsage reads cgroup v2 memory.current/memory.max. Returns ok=false if
