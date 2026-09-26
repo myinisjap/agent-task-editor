@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -25,6 +26,11 @@ const (
 	refreshTTL = 30 * 24 * time.Hour
 	codeTTL    = 5 * time.Minute
 	pendingTTL = 10 * time.Minute
+
+	// maxPending caps in-flight sign-ins so unauthenticated /authorize calls
+	// can't grow memory without bound.
+	maxPending = 1000
+	maxState   = 1024
 
 	tokenAccess  = "access"
 	tokenRefresh = "refresh"
@@ -47,6 +53,10 @@ type claims struct {
 
 // pendingAuth is an /authorize request waiting for Google to redirect back.
 type pendingAuth struct {
+	// BrowserNonce is also set as a cookie on the browser that called
+	// /authorize; the callback must present it, so a Google link lifted from
+	// someone else's sign-in can't complete in a victim's browser.
+	BrowserNonce  string
 	ClientID      string
 	RedirectURI   string
 	State         string
@@ -223,17 +233,40 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := randomString()
+	if len(state) > maxState || !pkceChallenge.MatchString(q.Get("code_challenge")) {
+		fail("invalid_request", "state too long or malformed code_challenge")
+		return
+	}
+
+	key, nonce := randomString(), randomString()
 	s.mu.Lock()
 	s.prune()
-	s.pending[key] = pendingAuth{
-		ClientID:      q.Get("client_id"),
-		RedirectURI:   redirectURI,
-		State:         state,
-		CodeChallenge: q.Get("code_challenge"),
-		Expires:       s.now().Add(pendingTTL),
+	full := len(s.pending) >= maxPending
+	if !full {
+		s.pending[key] = pendingAuth{
+			BrowserNonce:  nonce,
+			ClientID:      q.Get("client_id"),
+			RedirectURI:   redirectURI,
+			State:         state,
+			CodeChallenge: q.Get("code_challenge"),
+			Expires:       s.now().Add(pendingTTL),
+		}
 	}
 	s.mu.Unlock()
+	if full {
+		fail("temporarily_unavailable", "too many sign-ins in progress; try again shortly")
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     nonceCookie(key),
+		Value:    nonce,
+		Path:     s.cookiePath(),
+		MaxAge:   int(pendingTTL.Seconds()),
+		HttpOnly: true,
+		Secure:   strings.HasPrefix(s.cfg.PublicURL, "https://"),
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	g := url.Values{
 		"client_id":     {s.cfg.GoogleClientID},
@@ -243,21 +276,46 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		"state":         {key},
 		"prompt":        {"select_account"},
 	}
-	http.Redirect(w, r, s.cfg.GoogleAuthURL+"?"+g.Encode(), http.StatusFound)
+	name := client.ClientName
+	if name == "" {
+		name = "An MCP client"
+	}
+	ru, _ := url.Parse(redirectURI)
+	consentPage(w, name, ru.Host, s.cfg.GoogleAuthURL+"?"+g.Encode())
+}
+
+// pkceChallenge matches an S256 challenge: base64url(SHA-256) is 43 chars.
+var pkceChallenge = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+
+// nonceCookie names the per-sign-in browser-binding cookie. Keying it by the
+// pending state lets several sign-ins run side by side.
+func nonceCookie(key string) string { return "ate_mcp_" + key[:16] }
+
+// cookiePath scopes the binding cookie to the OAuth routes.
+func (s *Server) cookiePath() string {
+	u, _ := url.Parse(s.cfg.PublicURL)
+	return strings.TrimRight(u.Path, "/") + "/oauth/"
 }
 
 // handleCallback finishes the Google sign-in, checks the email against the
 // allowlist and sends the client its authorization code.
 func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	key := q.Get("state")
 	s.mu.Lock()
-	p, ok := s.pending[q.Get("state")]
-	delete(s.pending, q.Get("state"))
+	p, ok := s.pending[key]
+	delete(s.pending, key)
 	s.mu.Unlock()
 	if !ok || s.now().After(p.Expires) {
 		errorPage(w, "This sign-in link expired. Start connecting again from your client.")
 		return
 	}
+	cookie, err := r.Cookie(nonceCookie(key))
+	if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(p.BrowserNonce)) != 1 {
+		errorPage(w, "This sign-in was started in a different browser. Start connecting again from your client.")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: cookie.Name, Path: s.cookiePath(), MaxAge: -1, HttpOnly: true})
 	fail := func(code, desc string) {
 		s.redirectWith(w, r, p.RedirectURI, url.Values{"error": {code}, "error_description": {desc}, "state": {p.State}})
 	}
@@ -483,8 +541,30 @@ func (s *Server) redirectWith(w http.ResponseWriter, r *http.Request, target str
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
-func errorPage(w http.ResponseWriter, msg string) {
+// consentPage asks the signed-in browser to confirm before sending it to
+// Google, naming the client and where the grant will be sent.
+func consentPage(w http.ResponseWriter, client, redirectHost, googleURL string) {
+	setPageHeaders(w)
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Task Editor</title>
+<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;line-height:1.5">
+<h1 style="font-size:1.25rem">Connect to Agent Task Editor?</h1>
+<p><strong>%s</strong> wants to read and manage your board: list and create tasks, read agent runs, and approve, reject, move or reply to tasks. Access will be sent to <strong>%s</strong>.</p>
+<p>Only continue if you just started connecting from that client.</p>
+<p><a href="%s" style="display:inline-block;padding:.6rem 1rem;background:#1a73e8;color:#fff;border-radius:6px;text-decoration:none">Continue with Google</a></p>
+</body>`, html.EscapeString(client), html.EscapeString(redirectHost), html.EscapeString(googleURL))
+}
+
+func setPageHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
+func errorPage(w http.ResponseWriter, msg string) {
+	setPageHeaders(w)
 	w.WriteHeader(http.StatusBadRequest)
 	_, _ = fmt.Fprintf(w, "<!doctype html><title>Agent Task Editor</title><p>%s</p>", html.EscapeString(msg))
 }

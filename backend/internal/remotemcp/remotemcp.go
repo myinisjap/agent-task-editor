@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -103,6 +104,9 @@ func New(cfg Config, api http.Handler) (*Server, error) {
 			allowed[e] = true
 		}
 	}
+	for i, h := range cfg.RedirectHosts {
+		cfg.RedirectHosts[i] = strings.ToLower(strings.TrimSpace(h))
+	}
 	if len(allowed) == 0 {
 		return nil, errors.New("MCP_ALLOWED_EMAILS is required when MCP_PUBLIC_URL is set")
 	}
@@ -147,6 +151,14 @@ func (s *Server) Wrap(next http.Handler) http.Handler {
 	own := middleware.Recover(middleware.Logger(mux))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// These routes are exposed without the reverse proxy's login wall, so
+		// refuse dot-segments outright rather than trust every proxy in front
+		// to normalize them before routing (e.g. /tasks/oauth/../api/...).
+		if strings.Contains(r.URL.Path, "/../") || strings.HasSuffix(r.URL.Path, "/..") ||
+			strings.Contains(r.URL.Path, "/./") || strings.Contains(r.URL.Path, "//") {
+			http.Error(w, "bad path", http.StatusBadRequest)
+			return
+		}
 		if _, pattern := mux.Handler(r); pattern != "" {
 			own.ServeHTTP(w, r)
 			return
@@ -283,6 +295,10 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) (rpcResponse, boo
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			resp.Error = &rpcError{Code: -32602, Message: "invalid params"}
+			break
+		}
+		if !slices.ContainsFunc(s.tools, func(t boardtools.Tool) bool { return t.Name == p.Name }) {
+			resp.Error = &rpcError{Code: -32602, Message: "unknown tool: " + p.Name}
 			break
 		}
 		c := &boardtools.Client{HTTP: inProcess{h: s.api, ctx: ctx}}

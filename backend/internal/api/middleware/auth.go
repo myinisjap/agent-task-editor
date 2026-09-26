@@ -16,9 +16,10 @@ const (
 
 // WithTrustedActor marks ctx as an in-process call that has already been
 // authenticated elsewhere (e.g. the remote MCP endpoint, which verifies its
-// own OAuth access tokens) and records actor as the caller. BearerAuth lets
-// such requests through without a bearer token. Context values can't be set by
-// a network client, so this can't be forged from outside the process.
+// own OAuth access tokens) and records actor as the caller. Every BearerAuth
+// instance (the API's and /metrics') lets such requests through without a
+// bearer token. Context values can't be set by a network client, so this
+// can't be forged from outside the process.
 func WithTrustedActor(ctx context.Context, actor string) context.Context {
 	return context.WithValue(ctx, trustedKey, actor)
 }

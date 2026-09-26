@@ -3,9 +3,11 @@ package remotemcp
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -98,15 +100,11 @@ func authorize(t *testing.T, h http.Handler, clientID, challenge string) *url.UR
 		"code_challenge": {challenge}, "code_challenge_method": {"S256"}, "state": {"client-state"},
 		"resource": {"https://board.example.com/tasks/mcp"},
 	}
-	rec := do(h, http.MethodGet, "/oauth/authorize?"+q.Encode(), "", "")
-	if rec.Code != http.StatusFound {
-		t.Fatalf("authorize: %d %s", rec.Code, rec.Body)
-	}
-	g, _ := url.Parse(rec.Header().Get("Location"))
+	g, cookie := consent(t, h, q)
 	if g.Host != "google.test" || g.Query().Get("redirect_uri") != "https://board.example.com/tasks/oauth/callback" {
 		t.Fatalf("unexpected Google redirect %s", g)
 	}
-	rec = do(h, http.MethodGet, "/oauth/callback?code=google-code&state="+url.QueryEscape(g.Query().Get("state")), "", "")
+	rec := do(h, http.MethodGet, "/oauth/callback?code=google-code&state="+url.QueryEscape(g.Query().Get("state")), "", "", "Cookie", cookie)
 	if rec.Code != http.StatusFound {
 		t.Fatalf("callback: %d %s", rec.Code, rec.Body)
 	}
@@ -115,6 +113,28 @@ func authorize(t *testing.T, h http.Handler, clientID, challenge string) *url.UR
 		t.Fatalf("unexpected client redirect %s", back)
 	}
 	return back
+}
+
+var continueLink = regexp.MustCompile(`href="([^"]+)"`)
+
+// consent calls /authorize and returns the consent page's Google link and the
+// browser-binding cookie it set (as a Cookie header value).
+func consent(t *testing.T, h http.Handler, q url.Values) (*url.URL, string) {
+	t.Helper()
+	rec := do(h, http.MethodGet, "/oauth/authorize?"+q.Encode(), "", "")
+	m := continueLink.FindStringSubmatch(rec.Body.String())
+	if rec.Code != http.StatusOK || m == nil {
+		t.Fatalf("authorize: %d %s", rec.Code, rec.Body)
+	}
+	if rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Error("consent page can be framed")
+	}
+	g, _ := url.Parse(html.UnescapeString(m[1]))
+	c := rec.Result().Cookies()
+	if len(c) != 1 || !c[0].HttpOnly || !c[0].Secure || c[0].Path != "/tasks/oauth/" {
+		t.Fatalf("binding cookie: %+v", c)
+	}
+	return g, c[0].Name + "=" + c[0].Value
 }
 
 func pkce(verifier string) string {
@@ -283,5 +303,94 @@ func TestAuthorizeRechecksRedirectHost(t *testing.T) {
 	rec := do(s2.Wrap(http.NotFoundHandler()), http.MethodGet, "/oauth/authorize?"+q.Encode(), "", "")
 	if rec.Code != http.StatusBadRequest || rec.Header().Get("Location") != "" {
 		t.Errorf("got %d, Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// A Google link lifted from someone else's /authorize can't be completed in a
+// browser that doesn't hold that sign-in's binding cookie.
+func TestCallbackRequiresBindingCookie(t *testing.T) {
+	email := allowedEmail
+	h, _ := newTestServer(t, &email)
+	clientID, _ := register(t, h, "https://claude.ai/api/mcp/auth_callback")
+	q := url.Values{"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"https://claude.ai/api/mcp/auth_callback"},
+		"code_challenge": {pkce("v")}, "code_challenge_method": {"S256"}, "state": {"s"}}
+	g, cookie := consent(t, h, q)
+	state := url.QueryEscape(g.Query().Get("state"))
+
+	rec := do(h, http.MethodGet, "/oauth/callback?code=google-code&state="+state, "", "")
+	if rec.Code != http.StatusBadRequest || rec.Header().Get("Location") != "" {
+		t.Fatalf("no cookie: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	// The failed attempt also burned the pending sign-in.
+	rec = do(h, http.MethodGet, "/oauth/callback?code=google-code&state="+state, "", "", "Cookie", cookie)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("replay after failure: %d", rec.Code)
+	}
+}
+
+func TestAuthorizeLimits(t *testing.T) {
+	email := allowedEmail
+	h, _ := newTestServer(t, &email)
+	clientID, _ := register(t, h, "https://claude.ai/api/mcp/auth_callback")
+	base := url.Values{"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"https://claude.ai/api/mcp/auth_callback"},
+		"code_challenge_method": {"S256"}}
+
+	for name, mod := range map[string]func(url.Values){
+		"short challenge": func(q url.Values) { q.Set("code_challenge", "abc") },
+		"long state": func(q url.Values) {
+			q.Set("code_challenge", pkce("v"))
+			q.Set("state", strings.Repeat("x", maxState+1))
+		},
+	} {
+		q := url.Values{}
+		for k, v := range base {
+			q[k] = v
+		}
+		mod(q)
+		rec := do(h, http.MethodGet, "/oauth/authorize?"+q.Encode(), "", "")
+		if loc, _ := url.Parse(rec.Header().Get("Location")); rec.Code != http.StatusFound || loc.Query().Get("error") != "invalid_request" {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+
+	q := url.Values{}
+	for k, v := range base {
+		q[k] = v
+	}
+	q.Set("code_challenge", pkce("v"))
+	for i := 0; i < maxPending; i++ {
+		if rec := do(h, http.MethodGet, "/oauth/authorize?"+q.Encode(), "", ""); rec.Code != http.StatusOK {
+			t.Fatalf("authorize %d: %d", i, rec.Code)
+		}
+	}
+	rec := do(h, http.MethodGet, "/oauth/authorize?"+q.Encode(), "", "")
+	if loc, _ := url.Parse(rec.Header().Get("Location")); loc == nil || loc.Query().Get("error") != "temporarily_unavailable" {
+		t.Errorf("over cap: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestDotSegmentsRejected(t *testing.T) {
+	email := allowedEmail
+	h, _ := newTestServer(t, &email)
+	for _, p := range []string{"/oauth/../api/v1/repos", "/.well-known/oauth-protected-resource/../../api/v1/repos"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.URL.Path = p
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: got %d", p, rec.Code)
+		}
+	}
+}
+
+func TestUnknownToolIsRPCError(t *testing.T) {
+	email := allowedEmail
+	h, _ := newTestServer(t, &email)
+	clientID, _ := register(t, h, "https://claude.ai/api/mcp/auth_callback")
+	back := authorize(t, h, clientID, pkce("v"))
+	tok, _ := token(h, url.Values{"grant_type": {"authorization_code"}, "client_id": {clientID}, "code": {back.Query().Get("code")}, "code_verifier": {"v"}})
+	rec := rpc(h, tok["access_token"].(string), `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_everything"}}`)
+	if !strings.Contains(rec.Body.String(), `"code":-32602`) {
+		t.Errorf("got %s", rec.Body)
 	}
 }

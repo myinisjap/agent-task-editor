@@ -176,10 +176,16 @@ deliberately not exposed.
    login wall in front (claude.ai calls them from its servers, not your
    browser): `/tasks/mcp`, `/tasks/oauth/*`,
    `/.well-known/oauth-protected-resource*` and
-   `/.well-known/oauth-authorization-server*`. The bundled nginx already
-   forwards them; `docker-compose.traefik.yml` adds a second Traefik router for
-   exactly these paths without the `forward-auth` middleware. The rest of the
-   UI stays behind forward-auth.
+   `/.well-known/oauth-authorization-server*`. The bundled nginx forwards them
+   to the backend. `docker-compose.traefik.yml` adds a second Traefik router
+   for exactly these paths, without the `forward-auth` middleware, that goes
+   straight to the backend (stripping `/tasks`) rather than through nginx, so
+   it can't reach any other part of the app. The rest of the UI stays behind
+   forward-auth. Keep `API_TOKEN` set anyway: it's what protects the API if a
+   proxy rule is ever wrong.
+
+   The two `/.well-known/` paths sit at the host root. If another app on the
+   same host serves its own OAuth metadata there, give this app its own host.
 4. **Connect.** In claude.ai → Settings → Connectors → *Add custom connector*,
    enter `<MCP_PUBLIC_URL>/mcp` and leave the OAuth fields empty (the connector
    registers itself). Sign in with an allowed Google account when prompted. In a
@@ -195,9 +201,16 @@ deliberately not exposed.
   refresh, so removing an address cuts it off. Rotating the Google client
   secret revokes every token at once.
 - Dynamic client registration only accepts https redirect URIs on
-  `MCP_REDIRECT_HOSTS` (default `claude.ai,claude.com`) or loopback, so nobody
-  can register their own redirect and trick you into approving it. PKCE (S256)
-  is required.
+  `MCP_REDIRECT_HOSTS` (default `claude.ai,claude.com`) or loopback, and the
+  host is re-checked on every redirect. PKCE (S256) is required.
+- Before sending you to Google, the server shows a consent page naming the
+  client and where access will be sent. Only continue if you just clicked
+  Connect yourself.
+- Each sign-in is bound to the browser that started it by a short-lived,
+  HttpOnly cookie, so a Google sign-in link someone else generated can't be
+  completed in your browser.
+- At most 1000 sign-ins can be in progress at once, which bounds the memory
+  anonymous callers can use.
 - Tool calls run in-process against the same REST handlers as the UI, so all
   the usual validation (allowed transitions, labels, run state) applies.
 - Sign-ins in progress and unredeemed codes are held in memory: a restart
@@ -230,6 +243,9 @@ on the backend itself:
 | `MCP_GOOGLE_CLIENT_SECRET` | ✅ | Google OAuth client secret (also seeds the token-signing key) |
 | `MCP_ALLOWED_EMAILS` | ✅ | Comma-separated Google accounts allowed to connect |
 | `MCP_REDIRECT_HOSTS` | — | Hosts OAuth clients may register https redirects on (default `claude.ai,claude.com`) |
+
+After connecting, you'll see the consent page once per sign-in; claude.ai
+refreshes tokens on its own after that.
 
 ## Security notes
 

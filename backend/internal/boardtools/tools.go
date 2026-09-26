@@ -616,5 +616,6 @@ func truncate(s string) string {
 	if len(s) <= maxResultBytes {
 		return s
 	}
-	return s[:maxResultBytes] + fmt.Sprintf("\n… [truncated, %d bytes total]", len(s))
+	// Cutting at a byte offset can split a UTF-8 sequence; drop the fragment.
+	return strings.ToValidUTF8(s[:maxResultBytes], "") + fmt.Sprintf("\n… [truncated, %d bytes total]", len(s))
 }
