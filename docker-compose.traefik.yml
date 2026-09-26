@@ -1,6 +1,23 @@
 services:
   backend:
     ports: !reset []
+    labels:
+      # Remote MCP endpoint for claude.ai (docs/board-mcp.md#remote-connector).
+      # claude.ai calls these from its own servers, so they can't sit behind
+      # forward-auth; the backend guards them with its own Google-backed OAuth.
+      # Routed straight to the backend (not through the frontend's nginx, which
+      # also serves the rest of the app) so this auth-free router can only ever
+      # reach the MCP/OAuth routes. /tasks is stripped because the backend
+      # serves them at /mcp and /oauth/*. Harmless when MCP_PUBLIC_URL is unset:
+      # the backend 404s them.
+      - traefik.enable=true
+      - traefik.http.routers.agent-task-editor-mcp.rule=Host(`${TRAEFIK_HOST}`) && (Path(`/tasks/mcp`) || PathPrefix(`/tasks/oauth/`) || PathPrefix(`/.well-known/oauth-protected-resource`) || PathPrefix(`/.well-known/oauth-authorization-server`))
+      - traefik.http.routers.agent-task-editor-mcp.entrypoints=websecure
+      - traefik.http.routers.agent-task-editor-mcp.tls.certresolver=le
+      - traefik.http.routers.agent-task-editor-mcp.middlewares=agent-task-editor-mcp-strip
+      - traefik.http.routers.agent-task-editor-mcp.service=agent-task-editor-backend
+      - traefik.http.middlewares.agent-task-editor-mcp-strip.stripprefix.prefixes=/tasks
+      - traefik.http.services.agent-task-editor-backend.loadbalancer.server.port=8080
 
   frontend:
     ports: !reset []

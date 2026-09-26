@@ -9,7 +9,20 @@ import (
 
 type ctxKey int
 
-const actorKey ctxKey = iota
+const (
+	actorKey ctxKey = iota
+	trustedKey
+)
+
+// WithTrustedActor marks ctx as an in-process call that has already been
+// authenticated elsewhere (e.g. the remote MCP endpoint, which verifies its
+// own OAuth access tokens) and records actor as the caller. Every BearerAuth
+// instance (the API's and /metrics') lets such requests through without a
+// bearer token. Context values can't be set by a network client, so this
+// can't be forged from outside the process.
+func WithTrustedActor(ctx context.Context, actor string) context.Context {
+	return context.WithValue(ctx, trustedKey, actor)
+}
 
 // ActorFromContext returns the resolved actor name for the request's bearer
 // token (see BearerAuth), or "" if unauthenticated/anonymous — i.e. the
@@ -35,9 +48,19 @@ func ActorFromContext(ctx context.Context) string {
 func BearerAuth(bearerToken string, namedTokens map[string]string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if bearerToken == "" && len(namedTokens) == 0 {
-			return next
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if actor, ok := r.Context().Value(trustedKey).(string); ok {
+					r = r.WithContext(context.WithValue(r.Context(), actorKey, actor))
+				}
+				next.ServeHTTP(w, r)
+			})
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if actor, ok := r.Context().Value(trustedKey).(string); ok {
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey, actor)))
+				return
+			}
+
 			auth := r.Header.Get("Authorization")
 			token := strings.TrimPrefix(auth, "Bearer ")
 
