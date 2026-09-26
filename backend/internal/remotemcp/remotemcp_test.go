@@ -261,3 +261,27 @@ func TestDisallowedEmail(t *testing.T) {
 		t.Errorf("stranger got %s", back)
 	}
 }
+
+// A client registered while a host was allowed can't be sent there once the
+// host is removed from the allowlist.
+func TestAuthorizeRechecksRedirectHost(t *testing.T) {
+	email := allowedEmail
+	g := fakeGoogle(t, &email)
+	t.Cleanup(g.Close)
+	cfg := Config{
+		PublicURL: "https://board.example.com/tasks", GoogleClientID: testClientID, GoogleClientSecret: "google-secret",
+		AllowedEmails: []string{allowedEmail}, RedirectHosts: []string{"claude.ai", "old.example"},
+		GoogleAuthURL: "https://google.test/auth", GoogleTokenURL: g.URL,
+	}
+	s1, _ := New(cfg, http.NotFoundHandler())
+	clientID, _ := register(t, s1.Wrap(http.NotFoundHandler()), "https://old.example/cb")
+
+	cfg.RedirectHosts = []string{"claude.ai"}
+	s2, _ := New(cfg, http.NotFoundHandler())
+	q := url.Values{"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"https://old.example/cb"},
+		"code_challenge": {"x"}, "code_challenge_method": {"S256"}}
+	rec := do(s2.Wrap(http.NotFoundHandler()), http.MethodGet, "/oauth/authorize?"+q.Encode(), "", "")
+	if rec.Code != http.StatusBadRequest || rec.Header().Get("Location") != "" {
+		t.Errorf("got %d, Location %q", rec.Code, rec.Header().Get("Location"))
+	}
+}

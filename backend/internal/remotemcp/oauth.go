@@ -201,14 +201,14 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if redirectURI == "" && len(client.RedirectURIs) == 1 {
 		redirectURI = client.RedirectURIs[0]
 	}
-	if !slices.Contains(client.RedirectURIs, redirectURI) {
+	if !slices.Contains(client.RedirectURIs, redirectURI) || !s.redirectAllowed(redirectURI) {
 		errorPage(w, "The redirect URI doesn't match the one this client registered.")
 		return
 	}
 	// From here on errors go back to the client, per RFC 6749 §4.1.2.1.
 	state := q.Get("state")
 	fail := func(code, desc string) {
-		redirectWith(w, r, redirectURI, url.Values{"error": {code}, "error_description": {desc}, "state": {state}})
+		s.redirectWith(w, r, redirectURI, url.Values{"error": {code}, "error_description": {desc}, "state": {state}})
 	}
 	if q.Get("response_type") != "code" {
 		fail("unsupported_response_type", "only response_type=code is supported")
@@ -259,7 +259,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fail := func(code, desc string) {
-		redirectWith(w, r, p.RedirectURI, url.Values{"error": {code}, "error_description": {desc}, "state": {p.State}})
+		s.redirectWith(w, r, p.RedirectURI, url.Values{"error": {code}, "error_description": {desc}, "state": {p.State}})
 	}
 	if e := q.Get("error"); e != "" {
 		fail("access_denied", "Google sign-in failed: "+e)
@@ -289,7 +289,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	slog.Info("remote MCP: authorized", "email", email)
-	redirectWith(w, r, p.RedirectURI, url.Values{"code": {code}, "state": {p.State}, "iss": {s.cfg.PublicURL}})
+	s.redirectWith(w, r, p.RedirectURI, url.Values{"code": {code}, "state": {p.State}, "iss": {s.cfg.PublicURL}})
 }
 
 // googleEmail exchanges a Google authorization code and returns the verified,
@@ -460,7 +460,15 @@ func oauthError(w http.ResponseWriter, status int, code, desc string) {
 	writeJSON(w, status, body)
 }
 
-func redirectWith(w http.ResponseWriter, r *http.Request, target string, params url.Values) {
+// redirectWith sends the browser back to a client's redirect URI with params
+// added. The target was matched against the client's registered URIs, but it
+// is re-checked against the allowed hosts here too, so narrowing
+// MCP_REDIRECT_HOSTS also covers clients registered before the change.
+func (s *Server) redirectWith(w http.ResponseWriter, r *http.Request, target string, params url.Values) {
+	if !s.redirectAllowed(target) {
+		errorPage(w, "The redirect URI is not allowed.")
+		return
+	}
 	for k, v := range params {
 		if len(v) == 0 || v[0] == "" {
 			delete(params, k)
