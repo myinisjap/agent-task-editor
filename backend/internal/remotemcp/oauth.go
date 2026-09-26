@@ -264,7 +264,7 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		Path:     s.cookiePath(),
 		MaxAge:   int(pendingTTL.Seconds()),
 		HttpOnly: true,
-		Secure:   strings.HasPrefix(s.cfg.PublicURL, "https://"),
+		Secure:   s.secureCookies(),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -291,6 +291,10 @@ var pkceChallenge = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 // pending state lets several sign-ins run side by side.
 func nonceCookie(key string) string { return "ate_mcp_" + key[:16] }
 
+// secureCookies is false only for a plain-http MCP_PUBLIC_URL (local testing),
+// where browsers would drop a Secure cookie.
+func (s *Server) secureCookies() bool { return strings.HasPrefix(s.cfg.PublicURL, "https://") }
+
 // cookiePath scopes the binding cookie to the OAuth routes.
 func (s *Server) cookiePath() string {
 	u, _ := url.Parse(s.cfg.PublicURL)
@@ -315,7 +319,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		errorPage(w, "This sign-in was started in a different browser. Start connecting again from your client.")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookie.Name, Path: s.cookiePath(), MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: cookie.Name, Path: s.cookiePath(), MaxAge: -1, HttpOnly: true, Secure: s.secureCookies(), SameSite: http.SameSiteLaxMode})
 	fail := func(code, desc string) {
 		s.redirectWith(w, r, p.RedirectURI, url.Values{"error": {code}, "error_description": {desc}, "state": {p.State}})
 	}
