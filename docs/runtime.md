@@ -14,10 +14,20 @@ install and switch to those versions before invoking the provider CLI.
 
 ## Supported languages
 
-Fixed allowlist: `go`, `node`, `python`, `rust`, `ruby`, `java`. Version
+Fixed allowlist: `go`, `node`, `python`, `rust`, `ruby`, `java`, `godot`. Version
 strings are validated against `^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$` (letters,
 digits, `.`, `_`, `-`; no `@`, no spaces, no leading `-`) both client- and
 server-side, since they end up as `mise install`/`mise x` argv elements.
+
+### Godot
+
+`godot` installs the official Godot engine release binary, the same one
+used for the editor, so an agent can run `godot --headless` to import a
+project, run a GDScript test suite (e.g. GUT or gdUnit4), or do a headless
+export. Versions are Godot's release tags: `4.3-stable`, `4.4.1-stable`,
+and so on. The binary only needs glibc, so it runs in the backend image
+without extra system packages. Export templates aren't installed; a task
+that exports a build needs them added separately.
 
 ## Configuring pins
 
@@ -37,6 +47,9 @@ section:
   - `rust-toolchain` / `rust-toolchain.toml` (`channel = "..."`) → `rust`
   - `.ruby-version` → `ruby`
   - `.java-version` → `java`
+  - `project.godot` → `godot` (Godot 4's engine version from
+    `config/features`, suggested as the release tag, e.g. `4.3-stable`;
+    Godot 3 projects don't record one, so type the version in manually)
 
   Detection only *suggests* — it never saves anything on its own. Review
   the pre-filled rows and click Save yourself. Symlinked manifest files are

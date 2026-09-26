@@ -27,6 +27,7 @@ var allowedLanguages = map[string]bool{
 	"rust":   true,
 	"ruby":   true,
 	"java":   true,
+	"godot":  true,
 }
 
 // versionPattern matches a safe mise version string: starts with an

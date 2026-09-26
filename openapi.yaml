@@ -895,7 +895,7 @@ components:
       properties:
         id:
           type: string
-          enum: [go, node, python, rust, ruby, java]
+          enum: [go, node, python, rust, ruby, java, godot]
         version:
           type: string
           description: >
@@ -3042,7 +3042,7 @@ paths:
         Scans the repo's root directory (never a task worktree) for
         well-known toolchain manifest files (go.mod, .nvmrc/.node-version,
         .python-version, rust-toolchain(.toml), .ruby-version,
-        .java-version) and returns a suggested pin for each one found. A
+        .java-version, project.godot) and returns a suggested pin for each one found. A
         symlinked manifest is skipped and reads are capped at 64KB.
         Detection NEVER writes to the repo's saved runtime_languages — the
         UI pre-fills the runtime form with these suggestions and a human

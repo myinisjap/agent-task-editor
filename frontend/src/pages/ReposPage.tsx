@@ -8,7 +8,7 @@ type IssueSyncUpdatePolicy = 'gate' | 'always' | 'never'
 type IssueSyncGoneAction = 'flag' | 'archive' | 'move'
 
 // Mirrors the backend allowlist (backend/internal/agent/runtime/runtime.go).
-const RUNTIME_LANGUAGE_IDS = ['go', 'node', 'python', 'rust', 'ruby', 'java'] as const
+const RUNTIME_LANGUAGE_IDS = ['go', 'node', 'python', 'rust', 'ruby', 'java', 'godot'] as const
 type RuntimeLanguageId = (typeof RUNTIME_LANGUAGE_IDS)[number]
 
 // Mirrors the backend version regex (^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$).
