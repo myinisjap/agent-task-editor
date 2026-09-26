@@ -11,6 +11,14 @@ services:
       - traefik.http.routers.agent-task-editor.tls.certresolver=le
       - traefik.http.routers.agent-task-editor.middlewares=forward-auth
       - traefik.http.services.agent-task-editor.loadbalancer.server.port=80
+      # Remote MCP endpoint for claude.ai (docs/board-mcp.md#remote-connector).
+      # claude.ai calls these from its own servers, so they can't sit behind
+      # forward-auth; the backend guards them with its own Google-backed OAuth.
+      # Harmless when MCP_PUBLIC_URL is unset: the backend 404s them.
+      - traefik.http.routers.agent-task-editor-mcp.rule=Host(`${TRAEFIK_HOST}`) && (Path(`/tasks/mcp`) || PathPrefix(`/tasks/oauth/`) || PathPrefix(`/.well-known/oauth-protected-resource`) || PathPrefix(`/.well-known/oauth-authorization-server`))
+      - traefik.http.routers.agent-task-editor-mcp.entrypoints=websecure
+      - traefik.http.routers.agent-task-editor-mcp.tls.certresolver=le
+      - traefik.http.routers.agent-task-editor-mcp.service=agent-task-editor
 
 networks:
   default:

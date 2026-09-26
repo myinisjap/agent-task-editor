@@ -22,6 +22,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
+	"github.com/myinisjap/agent-task-editor/backend/internal/remotemcp"
 	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -343,6 +344,25 @@ func main() {
 	}
 
 	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher, blockReasons)
+
+	// Remote MCP endpoint (claude.ai custom connectors etc.): board tools over
+	// streamable HTTP behind a Google-backed OAuth server. Off unless
+	// MCP_PUBLIC_URL is set; see docs/board-mcp.md.
+	if cfg.MCPPublicURL != "" {
+		remote, err := remotemcp.New(remotemcp.Config{
+			PublicURL:          cfg.MCPPublicURL,
+			GoogleClientID:     cfg.MCPGoogleClientID,
+			GoogleClientSecret: cfg.MCPGoogleClientSecret,
+			AllowedEmails:      cfg.MCPAllowedEmails,
+			RedirectHosts:      cfg.MCPRedirectHosts,
+		}, router)
+		if err != nil {
+			slog.Error("remote MCP config invalid", "err", err)
+			os.Exit(1)
+		}
+		router = remote.Wrap(router)
+		slog.Info("remote MCP endpoint enabled", "url", strings.TrimRight(cfg.MCPPublicURL, "/")+"/mcp", "allowed_emails", len(cfg.MCPAllowedEmails))
+	}
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),

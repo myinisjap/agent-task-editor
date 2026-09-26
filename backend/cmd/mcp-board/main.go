@@ -15,15 +15,15 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/boardtools"
 )
 
 type rpcRequest struct {
@@ -45,7 +45,8 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-// backend wraps the REST calls this server makes against the Task Editor API.
+// backend holds where and how this server reaches the Task Editor API; the
+// tools themselves live in internal/boardtools.
 type backend struct {
 	baseURL string
 	token   string
@@ -137,216 +138,16 @@ func serve(in io.Reader, out io.Writer, be *backend) {
 	}
 }
 
-// toolDefs is the fixed tool list this server advertises.
+// stdioTools is the fixed tool list this server advertises.
+var stdioTools = boardtools.Select(boardtools.StdioTools)
+
+// toolDefs is the tools/list payload.
 func toolDefs() []map[string]any {
-	return []map[string]any{
-		{
-			"name":        "list_repos",
-			"description": "List the repositories configured on the board. Use this to find the repo_id to pass to create_task.",
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
-		},
-		{
-			"name":        "list_workflows",
-			"description": "List the workflows configured on the board, including each workflow's label (column) names. Use this to discover which labels a task can be created on (e.g. \"work\").",
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
-		},
-		{
-			"name":        "create_task",
-			"description": "Create a ticket on the board. By default the ticket lands on the \"work\" column so an agent starts on it immediately; pass a different label to stage it elsewhere (e.g. \"not_ready\"). If workflow_id is omitted, the board's default workflow is used (the one named \"Default\", else the alphabetically-first workflow).",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"title":       map[string]any{"type": "string", "description": "Short title of the ticket"},
-					"description": map[string]any{"type": "string", "description": "What the ticket should accomplish (markdown supported)"},
-					"type":        map[string]any{"type": "string", "enum": []string{"feature", "bug", "chore", "spike"}, "description": "Task type (default feature)"},
-					"repo_id":     map[string]any{"type": "string", "description": "ID of the repo the ticket belongs to (from list_repos)"},
-					"workflow_id": map[string]any{"type": "string", "description": "Workflow ID (from list_workflows); defaults to the board's default workflow when omitted"},
-					"label":       map[string]any{"type": "string", "description": "Column the ticket starts on (default \"work\"). Must be a label in the workflow."},
-				},
-				"required": []string{"title", "repo_id"},
-			},
-		},
-	}
+	return boardtools.Defs(stdioTools)
 }
 
 // callTool dispatches one tool call and returns (text, isError).
 func (be *backend) callTool(name string, args json.RawMessage) (string, bool) {
-	switch name {
-	case "list_repos":
-		return be.listRepos()
-	case "list_workflows":
-		return be.listWorkflows()
-	case "create_task":
-		return be.createTask(args)
-	default:
-		return "unknown tool: " + name, true
-	}
-}
-
-func (be *backend) listRepos() (string, bool) {
-	var repos []struct {
-		ID          string  `json:"id"`
-		Name        string  `json:"name"`
-		WorkflowID  *string `json:"workflow_id"`
-		CloneStatus string  `json:"clone_status"`
-	}
-	if err := be.get("/api/v1/repos", &repos); err != nil {
-		return "failed to list repos: " + err.Error(), true
-	}
-	out := make([]map[string]any, 0, len(repos))
-	for _, r := range repos {
-		wf := ""
-		if r.WorkflowID != nil {
-			wf = *r.WorkflowID
-		}
-		out = append(out, map[string]any{
-			"id":           r.ID,
-			"name":         r.Name,
-			"workflow_id":  wf,
-			"clone_status": r.CloneStatus,
-		})
-	}
-	data, _ := json.Marshal(out)
-	return string(data), false
-}
-
-func (be *backend) listWorkflows() (string, bool) {
-	var wfs []struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Labels []struct {
-			Name string `json:"name"`
-		} `json:"labels"`
-	}
-	if err := be.get("/api/v1/workflows", &wfs); err != nil {
-		return "failed to list workflows: " + err.Error(), true
-	}
-	out := make([]map[string]any, 0, len(wfs))
-	for _, wf := range wfs {
-		names := make([]string, 0, len(wf.Labels))
-		for _, l := range wf.Labels {
-			names = append(names, l.Name)
-		}
-		out = append(out, map[string]any{
-			"id":     wf.ID,
-			"name":   wf.Name,
-			"labels": names,
-		})
-	}
-	data, _ := json.Marshal(out)
-	return string(data), false
-}
-
-func (be *backend) createTask(args json.RawMessage) (string, bool) {
-	var a struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Type        string `json:"type"`
-		RepoID      string `json:"repo_id"`
-		WorkflowID  string `json:"workflow_id"`
-		Label       string `json:"label"`
-	}
-	_ = json.Unmarshal(args, &a)
-	if a.Title == "" {
-		return "title is required", true
-	}
-	if a.RepoID == "" {
-		return "repo_id is required (call list_repos to find it)", true
-	}
-	if a.Label == "" {
-		a.Label = "work"
-	}
-
-	// workflow_id is optional: when omitted, the backend applies the board's
-	// default workflow (the one named "Default", else the alphabetically-first
-	// workflow).
-	payload := map[string]any{
-		"title":       a.Title,
-		"description": a.Description,
-		"type":        a.Type,
-		"repo_id":     a.RepoID,
-		"label":       a.Label,
-	}
-	if a.WorkflowID != "" {
-		payload["workflow_id"] = a.WorkflowID
-	}
-	var created struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
-	}
-	if status, err := be.post("/api/v1/tasks", payload, &created); err != nil {
-		return fmt.Sprintf("create_task failed (%d): %s", status, err.Error()), true
-	}
-	return fmt.Sprintf("Created task %s on label %q.", created.ID, created.Label), false
-}
-
-// --- REST helpers ---
-
-func (be *backend) get(path string, out any) error {
-	req, err := http.NewRequest(http.MethodGet, be.baseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	be.auth(req)
-	resp, err := be.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s -> %d: %s", path, resp.StatusCode, apiError(body))
-	}
-	if out != nil {
-		return json.Unmarshal(body, out)
-	}
-	return nil
-}
-
-// post sends a JSON body and returns the HTTP status alongside any error, so the
-// caller can surface the backend's status code to the agent.
-func (be *backend) post(path string, payload, out any) (int, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return 0, err
-	}
-	req, err := http.NewRequest(http.MethodPost, be.baseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	be.auth(req)
-	resp, err := be.client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("%s", apiError(body))
-	}
-	if out != nil {
-		if err := json.Unmarshal(body, out); err != nil {
-			return resp.StatusCode, err
-		}
-	}
-	return resp.StatusCode, nil
-}
-
-func (be *backend) auth(req *http.Request) {
-	if be.token != "" {
-		req.Header.Set("Authorization", "Bearer "+be.token)
-	}
-}
-
-// apiError pulls the {"error": "..."} message the backend returns, falling back
-// to the raw body.
-func apiError(body []byte) string {
-	var e struct {
-		Error string `json:"error"`
-	}
-	if json.Unmarshal(body, &e) == nil && e.Error != "" {
-		return e.Error
-	}
-	return strings.TrimSpace(string(body))
+	c := &boardtools.Client{BaseURL: be.baseURL, Token: be.token, HTTP: be.client}
+	return c.Call(stdioTools, name, args)
 }

@@ -27,3 +27,7 @@ When a request's token matches an entry in `namedTokens`, that name is stored in
 Note: the `/ws` WebSocket route does not resolve named actors — it only supports the single legacy `bearerToken`, checked via a single-use `?ticket=` (minted by the bearer-gated `POST /ws-ticket`) or, as a deprecated fallback, a constant-time compare against `?token=`, since browsers can't set request headers on a WS handshake and `ws.ServeWS`'s signature wasn't extended in this pass.
 
 The `/ws` route is mounted *outside* this middleware (see `router.go`) rather than bypassed via a request header — an earlier `Upgrade: websocket` header check let any route skip auth. WebSocket auth is handled by `ws.ServeWS` via the ticket-first flow (`?ticket=`), with a deprecated `?token=` query-param fallback, since browsers can't set request headers on a WS handshake. See `router.go` and `docs/websocket.md` for details.
+
+### `WithTrustedActor`
+
+`WithTrustedActor(ctx, actor)` marks a request context as already authenticated by an in-process caller. `BearerAuth` lets such requests through without a token and records `actor` for `ActorFromContext`. Only `internal/remotemcp` uses it: its `/mcp` endpoint verifies its own OAuth access tokens, then serves tool calls by invoking the router in-process as the signed-in email. Context values can't be set by a network client, so this is not reachable from outside the process.

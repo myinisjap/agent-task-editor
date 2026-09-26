@@ -120,6 +120,12 @@ services:
       # NOTIFY_WEBHOOK_URL as a secret. See docs/websocket.md#outbound-webhook.
       - NOTIFY_WEBHOOK_URL=${NOTIFY_WEBHOOK_URL:-}
       - NOTIFY_BASE_URL=${NOTIFY_BASE_URL:-}
+      # Optional: remote MCP endpoint for claude.ai custom connectors, signed in
+      # with Google. Off unless MCP_PUBLIC_URL is set. See docs/board-mcp.md#remote-connector.
+      - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
+      - MCP_GOOGLE_CLIENT_ID=${MCP_GOOGLE_CLIENT_ID:-}
+      - MCP_GOOGLE_CLIENT_SECRET=${MCP_GOOGLE_CLIENT_SECRET:-}
+      - MCP_ALLOWED_EMAILS=${MCP_ALLOWED_EMAILS:-}
     volumes:
       - db_data:/data
       # Per-repo agent toolchains via mise/uv (see docs/runtime.md). Named

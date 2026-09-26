@@ -207,3 +207,28 @@ func TestActorFromContext_NoValue_ReturnsEmpty(t *testing.T) {
 		t.Errorf("expected empty string for context with no actor set, got %q", got)
 	}
 }
+
+func TestBearerAuth_TrustedActorBypassesToken(t *testing.T) {
+	var got string
+	h := middleware.BearerAuth("secret", map[string]string{"bob": "bobtoken"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = middleware.ActorFromContext(r.Context())
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(middleware.WithTrustedActor(req.Context(), "owner@example.com"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || got != "owner@example.com" {
+		t.Fatalf("trusted request: status %d actor %q", rec.Code, got)
+	}
+
+	// No auth configured: the trusted actor is still recorded.
+	got = ""
+	open := middleware.BearerAuth("", nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = middleware.ActorFromContext(r.Context())
+	}))
+	open.ServeHTTP(httptest.NewRecorder(), req)
+	if got != "owner@example.com" {
+		t.Fatalf("open mode actor = %q", got)
+	}
+}

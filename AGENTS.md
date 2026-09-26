@@ -34,6 +34,7 @@ agent-task-editor/
 │   └── internal/
 │       ├── agent/            # Provider system, pool, dispatcher
 │       ├── api/              # Chi router, handlers, middleware
+│       ├── boardtools/       # Board MCP tools (list/create/approve/reply…) as REST wrappers; shared by cmd/mcp-board and remotemcp
 │       ├── backup/           # Optional rotated local `VACUUM INTO` snapshot scheduler (see docs/backup.md)
 │       ├── config/           # YAML + env var config
 │       ├── cronexpr/         # Minimal dependency-free 5-field cron evaluator used by task schedules
@@ -46,6 +47,7 @@ agent-task-editor/
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
 │       ├── notify/           # Optional outbound webhook when a task needs a human (NOTIFY_WEBHOOK_URL)
+│       ├── remotemcp/        # Remote MCP endpoint (/mcp, streamable HTTP) + Google-backed OAuth server for claude.ai connectors; off unless MCP_PUBLIC_URL is set
 │       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
 │       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues today, via `forge.Forge`)
@@ -86,6 +88,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `REPO_BASE_DIR` | _(none)_ | Restrict repo paths; empty = any path allowed (warns on startup) |
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
 | `MCP_BOARD_PATH` | _(none)_ | Path to mcp-board binary; enables the board tools (list_repos/list_workflows/create_task) inside chat sessions. See `docs/board-mcp.md` |
+| `MCP_PUBLIC_URL` | _(none)_ | Enables the remote MCP endpoint at `<url>/mcp` for claude.ai custom connectors; also needs `MCP_GOOGLE_CLIENT_ID`, `MCP_GOOGLE_CLIENT_SECRET`, `MCP_ALLOWED_EMAILS`. See `docs/board-mcp.md#remote-connector` |
 | `LLM_API_KEY` | _(none)_ | API key for the `anthropic` or `llm` providers. Both are **deprecated** — disabled for new/updated provider configs, may be removed in a future release; only relevant to existing configs still using them. |
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer (see `docs/task-sources.md`) |

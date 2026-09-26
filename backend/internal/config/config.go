@@ -138,6 +138,27 @@ type Config struct {
 	// storm from spamming the webhook. Only meaningful when
 	// NotifyWebhookURL is set.
 	NotifyDebounce time.Duration `yaml:"notify_debounce"`
+	// MCPPublicURL, if set, enables the remote MCP endpoint (internal/remotemcp)
+	// so a remote client such as a claude.ai custom connector can use the board
+	// tools. It is the externally reachable base URL the backend's /mcp and
+	// /oauth/* routes are served under (e.g. "https://example.com/tasks" behind
+	// the bundled nginx, or "https://ate.example.com" when the backend is
+	// exposed directly). Empty (the default) disables the endpoint entirely.
+	// Requires the MCPGoogle* and MCPAllowedEmails settings below.
+	MCPPublicURL string `yaml:"mcp_public_url"`
+	// MCPGoogleClientID/MCPGoogleClientSecret are the Google OAuth client the
+	// remote MCP endpoint signs users in with. Its authorized redirect URIs
+	// must include <MCPPublicURL>/oauth/callback.
+	MCPGoogleClientID     string `yaml:"mcp_google_client_id"`
+	MCPGoogleClientSecret string `yaml:"mcp_google_client_secret"`
+	// MCPAllowedEmails lists the Google accounts allowed to connect. Each
+	// connected user acts on the board under their email, recorded in
+	// task_label_history.actor_id like a named API token.
+	MCPAllowedEmails []string `yaml:"mcp_allowed_emails"`
+	// MCPRedirectHosts lists the hosts OAuth clients may register https
+	// redirect URIs on (loopback is always allowed). Defaults to claude.ai
+	// and claude.com.
+	MCPRedirectHosts []string `yaml:"mcp_redirect_hosts"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -160,6 +181,7 @@ func Defaults() Config {
 		ChatIdleTimeout:       0,
 		GitTimeout:            120 * time.Second,
 		NotifyDebounce:        5 * time.Minute,
+		MCPRedirectHosts:      []string{"claude.ai", "claude.com"},
 	}
 }
 
@@ -359,5 +381,32 @@ func Load(path string) (Config, error) {
 		}
 	}
 
+	if v := os.Getenv("MCP_PUBLIC_URL"); v != "" {
+		cfg.MCPPublicURL = v
+	}
+	if v := os.Getenv("MCP_GOOGLE_CLIENT_ID"); v != "" {
+		cfg.MCPGoogleClientID = v
+	}
+	if v := os.Getenv("MCP_GOOGLE_CLIENT_SECRET"); v != "" {
+		cfg.MCPGoogleClientSecret = v
+	}
+	if v := os.Getenv("MCP_ALLOWED_EMAILS"); v != "" {
+		cfg.MCPAllowedEmails = splitList(v)
+	}
+	if v := os.Getenv("MCP_REDIRECT_HOSTS"); v != "" {
+		cfg.MCPRedirectHosts = splitList(v)
+	}
+
 	return cfg, nil
+}
+
+// splitList parses a comma-separated env value, dropping blanks.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
