@@ -294,11 +294,11 @@ The backend image (`backend/Dockerfile`) ships with:
 - **Node.js 26 / npm** — inherited from the `node:26-bookworm-slim` base image. Covers Vite, React, TypeScript projects and their usual workflows out of the box: `npm ci`, `npm run build`, `npm test`, `npx vitest`, etc.
 - **`build-essential`** (gcc, g++, make, libc-dev) — needed for `cgo` builds (this repo's own backend depends on `mattn/go-sqlite3`, which is cgo) and for any npm packages with native addons that need `node-gyp` compilation.
 - **`git`, `bash`, `gh`** — for cloning, diffing, committing, and interacting with GitHub from inside agent runs.
-- **`mise` and `uv`** — power the per-repo language version pinning feature (see [runtime.md](runtime.md)): a repo can pin `go`/`node`/`python`/`rust`/`ruby`/`java` versions independent of what's baked into the image, installed on demand before each agent run.
+- **`mise` and `uv`** — power the per-repo language version pinning feature (see [runtime.md](runtime.md)): a repo can pin `go`/`node`/`python`/`rust`/`ruby`/`java`/`godot` versions independent of what's baked into the image, installed on demand before each agent run.
 
 ### Per-repo toolchain versions vs. editing the image
 
-Before editing the Dockerfile, check whether [runtime.md](runtime.md) already covers your need: if a repo just needs a *different version* of `go`, `node`, `python`, `rust`, `ruby`, or `java` than the image's baseline, pin it on that repo's Repos page config instead of rebuilding the image — `mise`/`uv` install it on demand per task, with no image rebuild and no effect on other repos.
+Before editing the Dockerfile, check whether [runtime.md](runtime.md) already covers your need: if a repo just needs a *different version* of `go`, `node`, `python`, `rust`, `ruby`, `java`, or `godot` than the image's baseline, pin it on that repo's Repos page config instead of rebuilding the image — `mise`/`uv` install it on demand per task, with no image rebuild and no effect on other repos.
 
 Editing the Dockerfile is for adding a *new* language/tool to the image baseline (one not in the mise-pinnable list above, or a tool every repo should have without per-repo configuration).
 

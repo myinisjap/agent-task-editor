@@ -3217,7 +3217,7 @@ export interface paths {
         put?: never;
         /**
          * Detect suggested toolchain pins from the repo's manifest files
-         * @description Scans the repo's root directory (never a task worktree) for well-known toolchain manifest files (go.mod, .nvmrc/.node-version, .python-version, rust-toolchain(.toml), .ruby-version, .java-version) and returns a suggested pin for each one found. A symlinked manifest is skipped and reads are capped at 64KB. Detection NEVER writes to the repo's saved runtime_languages — the UI pre-fills the runtime form with these suggestions and a human must still save explicitly. No LLM fallback; manifest scan only.
+         * @description Scans the repo's root directory (never a task worktree) for well-known toolchain manifest files (go.mod, .nvmrc/.node-version, .python-version, rust-toolchain(.toml), .ruby-version, .java-version, project.godot) and returns a suggested pin for each one found. A symlinked manifest is skipped and reads are capped at 64KB. Detection NEVER writes to the repo's saved runtime_languages — the UI pre-fills the runtime form with these suggestions and a human must still save explicitly. No LLM fallback; manifest scan only.
          */
         post: {
             parameters: {
@@ -4635,7 +4635,7 @@ export interface components {
         /** @description One toolchain pin in a repo's runtime_languages array (the wire shape used by POST /repos, PATCH /repos/{id}, and the runtime/detect suggestions — the DB column itself stores this array serialized to JSON text). */
         RuntimeLanguagePin: {
             /** @enum {string} */
-            id: "go" | "node" | "python" | "rust" | "ruby" | "java";
+            id: "go" | "node" | "python" | "rust" | "ruby" | "java" | "godot";
             /** @description A mise-installable version string, e.g. "1.21", "22", "3.12". Validated server-side against ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ (no "@", no spaces, no leading "-") since it becomes an argv element passed to mise/uv subprocesses. */
             version: string;
         };

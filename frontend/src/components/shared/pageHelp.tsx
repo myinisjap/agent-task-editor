@@ -451,7 +451,7 @@ export function ReposHelp() {
         <h3 className="text-slate-100 font-semibold">Agent runtime (toolchain pins)</h3>
         <p>
           The <strong>Agent runtime</strong> section pins the language versions agent runs use for
-          this repo (go, node, python, rust, ruby, java), installed on demand via{' '}
+          this repo (go, node, python, rust, ruby, java, godot), installed on demand via{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">mise</code> and cached across repos.
           Leave it empty and nothing changes — runs use the server image's built-in toolchain
           exactly as before. If a pinned toolchain can't be installed, the task escalates to{' '}

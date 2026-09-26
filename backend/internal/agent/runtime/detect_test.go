@@ -69,6 +69,27 @@ func TestDetect_RubyAndJava(t *testing.T) {
 	}
 }
 
+func TestDetect_GodotProject(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "project.godot", "config_version=5\n\n[application]\n\nconfig/name=\"Game\"\nconfig/features=PackedStringArray(\"4.3\", \"Forward Plus\")\n")
+
+	got := Detect(dir)
+	if len(got) != 1 || got[0] != (Suggestion{ID: "godot", Version: "4.3-stable", Source: "project.godot"}) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestDetect_GodotProjectWithoutVersion(t *testing.T) {
+	dir := t.TempDir()
+	// Godot 3 projects have no engine version in config/features.
+	writeFile(t, dir, "project.godot", "config_version=4\n\n[application]\n\nconfig/name=\"Game\"\n")
+
+	got := Detect(dir)
+	if len(got) != 0 {
+		t.Fatalf("expected no suggestions, got %+v", got)
+	}
+}
+
 func TestDetect_SkipsSymlinkedManifest(t *testing.T) {
 	dir := t.TempDir()
 	realTarget := filepath.Join(dir, "real-nvmrc")

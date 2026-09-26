@@ -29,6 +29,12 @@ var goModVersionPattern = regexp.MustCompile(`(?m)^go\s+(\S+)`)
 // rust-toolchain.toml file.
 var rustToolchainChannelPattern = regexp.MustCompile(`channel\s*=\s*"([^"]+)"`)
 
+// godotFeaturesVersionPattern extracts the engine version Godot 4 records as
+// the first entry of config/features in project.godot, e.g.
+// `config/features=PackedStringArray("4.3", "Forward Plus")`. Godot 3
+// projects don't record a version there, so they detect nothing.
+var godotFeaturesVersionPattern = regexp.MustCompile(`(?m)^config/features\s*=\s*PackedStringArray\(\s*"(\d+\.\d+(?:\.\d+)?)"`)
+
 // manifestRule describes one manifest file Detect looks for: its filename
 // (relative to the repo root), which language it maps to, and how to extract
 // the version string from its contents.
@@ -64,6 +70,15 @@ var manifestRules = []manifestRule{
 	}},
 	{file: ".ruby-version", lang: "ruby", extract: firstLineTrimmed},
 	{file: ".java-version", lang: "java", extract: firstLineTrimmed},
+	// mise installs godot from the engine's GitHub release tags, which are
+	// "<version>-stable" (e.g. "4.3-stable"), so suggest that exact tag.
+	{file: "project.godot", lang: "godot", extract: func(c string) (string, bool) {
+		m := godotFeaturesVersionPattern.FindStringSubmatch(c)
+		if m == nil {
+			return "", false
+		}
+		return m[1] + "-stable", true
+	}},
 }
 
 // Detect scans repoRoot (the repo's main clone path, never a task worktree)
