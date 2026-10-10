@@ -50,6 +50,12 @@ type taskResponse struct {
 	// simply next in line — see QueuePosition, a separate concern). Only the
 	// first reason the dispatcher would hit is reported, not the full set.
 	BlockReason *agent.BlockReason `json:"block_reason,omitempty"`
+	// ActiveRunStatus is the derived, read-time status of the run holding the
+	// task's re-dispatch lock (active_agent_run_id): pending, running or
+	// waiting_human. active_agent_run_id stays set for waiting_human runs by
+	// design, so clients use this to tell "agent working" from "needs a
+	// human". Omitted when the task has no active run.
+	ActiveRunStatus string `json:"active_run_status,omitempty"`
 	// MatchedRuleName is the display name of the intake rule referenced by
 	// MatchedRuleID (embedded via gen.Task), resolved at read time so the UI
 	// can show "Created by rule <name>" without a second round trip. Nil
@@ -236,6 +242,31 @@ func (h *TasksHandler) blockReasonMap(ctx context.Context, tasks []gen.Task) map
 func applyBlockReason(resp taskResponse, reasons map[string]*agent.BlockReason) taskResponse {
 	if reason, ok := reasons[resp.ID]; ok {
 		resp.BlockReason = reason
+	}
+	return resp
+}
+
+// activeRunStatusMap fetches the status of each given task's active agent run
+// in one query, keyed by task id. Tasks with no active run are absent.
+func (h *TasksHandler) activeRunStatusMap(ctx context.Context, ids []string) map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListActiveRunStatusesForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(rows))
+	for _, row := range rows {
+		m[row.TaskID] = row.Status
+	}
+	return m
+}
+
+// applyActiveRunStatus sets the derived active run status on a response.
+func applyActiveRunStatus(resp taskResponse, statuses map[string]string) taskResponse {
+	if s, ok := statuses[resp.ID]; ok {
+		resp.ActiveRunStatus = s
 	}
 	return resp
 }

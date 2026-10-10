@@ -156,6 +156,28 @@ describe('TaskCard running indicator (#249)', () => {
   })
 })
 
+describe('TaskCard needs-you badge', () => {
+  it('shows "Needs you" for a waiting_human active run when not running', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ active_agent_run_id: 'r1', active_run_status: 'waiting_human' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Needs you')).toBeInTheDocument()
+    expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
+  })
+
+  it('does not show "Needs you" for a running run or no active run', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ active_agent_run_id: 'r1', active_run_status: 'running' })} isRunning />
+        <TaskCard task={baseTask({ id: 'other' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('Needs you')).not.toBeInTheDocument()
+  })
+})
+
 // #353 — the block_reason badge surfaces why a pickup-eligible task isn't
 // dispatching, and takes precedence over the queue_position badge when both
 // are somehow present (block_reason is the "stuck" signal).

@@ -387,6 +387,14 @@ function TaskCard({
           {isRunning && (
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
           )}
+          {!isRunning && task.active_run_status === 'waiting_human' && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
+              title="The agent is waiting for a human to respond"
+            >
+              Needs you
+            </span>
+          )}
           {rateLimitedUntil && !isRunning && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"

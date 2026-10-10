@@ -308,7 +308,7 @@ describe('BoardPage running indicator (#249)', () => {
   })
 
   it('seeds the running dot from active_agent_run_id on load, without any WS event', async () => {
-    seedStores([task({ id: 'task-1', title: 'Task one', active_agent_run_id: 'run-9' })])
+    seedStores([task({ id: 'task-1', title: 'Task one', active_agent_run_id: 'run-9', active_run_status: 'running' })])
 
     render(
       <MemoryRouter>
@@ -317,6 +317,19 @@ describe('BoardPage running indicator (#249)', () => {
     )
 
     expect(await screen.findByTitle('Agent running')).toBeInTheDocument()
+  })
+
+  it('shows "Needs you" instead of the running dot for a waiting_human active run', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one', active_agent_run_id: 'run-9', active_run_status: 'waiting_human' })])
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Needs you')).toBeInTheDocument()
+    expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
   })
 
   it('clears the running dot when the WS connection drops', async () => {
@@ -533,7 +546,7 @@ describe('BoardPage cost rollup debounce (#350)', () => {
     costByTaskMock.mockReset().mockResolvedValue([])
     tasksListMock.mockReset()
     workflowsListMock.mockReset()
-    tasksGetMock.mockReset()
+    tasksGetMock.mockReset().mockResolvedValue(task({ id: 'task-1' }))
     wsOnHandler = null
   })
 

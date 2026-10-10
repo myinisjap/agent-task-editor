@@ -627,6 +627,55 @@ func (q *Queries) IncrementTaskFailureCount(ctx context.Context, id string) (int
 	return consecutive_failure_count, err
 }
 
+const listActiveRunStatusesForTasks = `-- name: ListActiveRunStatusesForTasks :many
+SELECT t.id AS task_id, r.status AS status
+FROM tasks t
+JOIN agent_runs r ON r.id = t.active_agent_run_id
+WHERE t.id IN (/*SLICE:task_ids*/?)
+`
+
+type ListActiveRunStatusesForTasksRow struct {
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
+}
+
+// Status of each given task's active agent run (the re-dispatch lock holder),
+// so list responses can tell a live pending/running run apart from a
+// waiting_human one without a query per task. Tasks with no active run, or
+// whose active run row is missing, are absent from the result.
+func (q *Queries) ListActiveRunStatusesForTasks(ctx context.Context, taskIds []string) ([]ListActiveRunStatusesForTasksRow, error) {
+	query := listActiveRunStatusesForTasks
+	var queryParams []interface{}
+	if len(taskIds) > 0 {
+		for _, v := range taskIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", strings.Repeat(",?", len(taskIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveRunStatusesForTasksRow
+	for rows.Next() {
+		var i ListActiveRunStatusesForTasksRow
+		if err := rows.Scan(&i.TaskID, &i.Status); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentPickupTasks = `-- name: ListAgentPickupTasks :many
 SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at, t.source, t.source_ref, t.archived, t.pr_url, t.parent_task_id, t.created_by_run_id, t.merge_status, t.max_cost_usd, t.priority, t.writeback_in_progress_sent, t.writeback_pr_commented, t.writeback_closed, t.source_state, t.source_state_at, t.pr_mergeable, t.cost_warned, t.matched_rule_id, t.consecutive_failure_count FROM tasks t
 WHERE t.label IN (

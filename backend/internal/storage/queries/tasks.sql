@@ -414,3 +414,13 @@ RETURNING consecutive_failure_count;
 UPDATE tasks
 SET consecutive_failure_count = 0
 WHERE id = ? AND consecutive_failure_count != 0;
+
+-- name: ListActiveRunStatusesForTasks :many
+-- Status of each given task's active agent run (the re-dispatch lock holder),
+-- so list responses can tell a live pending/running run apart from a
+-- waiting_human one without a query per task. Tasks with no active run, or
+-- whose active run row is missing, are absent from the result.
+SELECT t.id AS task_id, r.status AS status
+FROM tasks t
+JOIN agent_runs r ON r.id = t.active_agent_run_id
+WHERE t.id IN (sqlc.slice('task_ids'));

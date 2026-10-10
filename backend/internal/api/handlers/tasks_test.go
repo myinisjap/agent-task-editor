@@ -46,6 +46,7 @@ type apiTask struct {
 	QueuePosition     *int               `json:"queue_position"`
 	CumulativeCostUsd float64            `json:"cumulative_cost_usd"`
 	BlockReason       *agent.BlockReason `json:"block_reason"`
+	ActiveRunStatus   string             `json:"active_run_status"`
 }
 
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
@@ -2565,6 +2566,54 @@ func TestTasks_List_BlockReason(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected blocked task %q in list response", blockedTask.ID)
+	}
+}
+
+func TestTasks_List_ActiveRunStatus(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	want := map[string]string{}
+	for _, status := range []string{"running", "waiting_human"} {
+		taskID, runID := seedRunningRun(t, q, wfID, repoID, status)
+		if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+			CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+		}); err != nil {
+			t.Fatalf("set active run: %v", err)
+		}
+		want[taskID] = status
+	}
+	idle, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Idle", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	want[idle.ID] = ""
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got []apiTask
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	seen := 0
+	for _, tk := range got {
+		exp, ok := want[tk.ID]
+		if !ok {
+			continue
+		}
+		seen++
+		if tk.ActiveRunStatus != exp {
+			t.Errorf("task %s: active_run_status = %q, want %q", tk.ID, tk.ActiveRunStatus, exp)
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("saw %d of %d seeded tasks", seen, len(want))
 	}
 }
 
