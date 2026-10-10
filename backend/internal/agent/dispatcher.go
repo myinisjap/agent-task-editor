@@ -717,6 +717,10 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 		return "", ErrNoMatchingConfig
 	}
 
+	// A human reply is a human acting: give the task a fresh failure budget.
+	if err := d.q.ResetTaskFailureCount(ctx, taskID); err != nil {
+		slog.Warn("dispatcher: reset failure count on reply", "component", "dispatcher", "task_id", taskID, "err", err)
+	}
 	return d.startRun(ctx, t, *matched, runOptions{humanReply: &message})
 }
 

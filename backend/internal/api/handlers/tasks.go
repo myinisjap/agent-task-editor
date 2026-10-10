@@ -775,6 +775,11 @@ func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// An explicit human re-run starts with a fresh consecutive-failure budget.
+	if err := h.q.ResetTaskFailureCount(r.Context(), taskID); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

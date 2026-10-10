@@ -33,6 +33,18 @@ func (p *recordingPub) Publish(eventType string, _ map[string]any) {
 	p.events = append(p.events, eventType)
 }
 
+func (p *recordingPub) count(name string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, e := range p.events {
+		if e == name {
+			n++
+		}
+	}
+	return n
+}
+
 func (p *recordingPub) has(name string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -110,6 +122,8 @@ type e2eHarness struct {
 	pub    *recordingPub
 	repo   string // path to the temp git repo
 	cancel context.CancelFunc
+	// noRetries seeds the agent config with max_retries=0 (auto-retry disabled).
+	noRetries bool
 }
 
 // newE2EHarness stands up a seeded DB, a real git repo, and a running
@@ -280,9 +294,13 @@ func (h *e2eHarness) seedTaskOnReadyWithProvider(t *testing.T, wfID, provider st
 	}
 
 	pcID := h.createProviderConfig(t, provider, "none")
+	maxRetries := int64(1)
+	if h.noRetries {
+		maxRetries = 0
+	}
 	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
 		ID: uuid.NewString(), Name: "fake-agent", ProviderConfigID: pcID,
-		Labels: `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1,
+		Labels: `["ready"]`, MaxRetries: maxRetries, RetryBackoffSecs: 1,
 		ResumeSessions: resumeSessions,
 	}); err != nil {
 		t.Fatalf("create agent config: %v", err)

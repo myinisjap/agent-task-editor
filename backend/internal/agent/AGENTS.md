@@ -60,7 +60,7 @@ Providers stream log entries on `logCh` as they run. The pool drains this channe
 
 - `completed` — agent finished; `NextLabel` optionally specifies where to move the task
 - `failed` — something went wrong; task stays on current label. What happens next depends on *why* it failed:
-  - **Genuine failure** (the agent ran and the work itself failed, e.g. a plain `Result{Status:"failed"}` with no underlying transport/provider error): re-dispatch is immediate and unbounded, same as before this feature — the next 5s sweep picks the task straight back up.
+  - **Genuine failure** (the agent ran and the work itself failed, e.g. a plain `Result{Status:"failed"}` with no underlying transport/provider error): the dispatch lock is released and the next 5s sweep re-picks the task, but only up to `maxConsecutiveFailures` (3) times in a row: `tasks.consecutive_failure_count` is incremented in `persistRunResult` and, at the limit, the run is persisted as `waiting_human` with the lock kept. The counter is reset by a completed run, any label transition (`engine.Transition` SQL), `DispatchReply`, and the `Rerun` handler. Transient failures neither increment nor reset it, so alternating transient/genuine failures still escalate.
   - **Transient infra failure** (rate limit, network blip, upstream 5xx, ambiguous timeout — see "Retry Policy" below): auto-retried up to `AgentConfig.MaxRetries` times with exponential backoff, then escalated to `waiting_human` so a human doesn't have to guess whether it's quietly retrying or stuck.
 - `waiting_human` — agent called `request_human`, hit a login/auth error, or exhausted its transient-retry budget; `Message` surfaces to the UI
 - `cancelled` — a human stopped the run via `POST /tasks/{id}/runs/{run_id}/cancel` (see "Run Cancellation" below). Terminal; excluded from usage/dashboard aggregates.
@@ -143,7 +143,7 @@ govern automatic retries for **transient** provider errors only:
   `next_retry_at` is still in the future. Once the budget is exhausted the
   task escalates to `waiting_human` (and the counter resets, so a
   human-triggered re-dispatch starts a fresh budget). A successful run or a
-  genuine (non-transient) failure also resets the counter to 0.
+  genuine (non-transient) failure also resets the *transient* counter to 0 (the run executed, so infra is reachable); this cannot defeat escalation because the separate genuine-failure counter is not reset by transient failures. `max_retries = 0` escalates on the first transient failure (lock kept) rather than releasing the lock. A run that completes with no resolvable outcome is escalated once to `waiting_human` by `escalateNoOutcome` (lock kept, single `task.needs_human`).
 - **Complementary, not a replacement, for `RateLimitRegistry`**: a 429 both
   blocks the *whole agent config* for a backed-off period (existing
   behavior, unrelated to any specific task) **and** consumes that task's

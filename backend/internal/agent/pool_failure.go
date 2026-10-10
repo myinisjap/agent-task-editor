@@ -14,10 +14,10 @@ import (
 // handleTransientFailure marks the run failed and either schedules a bounded,
 // backed-off auto-retry of the task or — once the configured retry budget is
 // exhausted — escalates to waiting_human so a human isn't left guessing
-// whether the task is quietly retrying or stuck. Always clears the active
-// run slot so the dispatcher can re-pick the task once eligible (either on
-// the next sweep, if no retry budget was consumed, or once next_retry_at
-// elapses). result carries any usage the provider accumulated before the
+// whether the task is quietly retrying or stuck (max_retries=0 escalates
+// immediately). Clears the active run slot only when a retry was scheduled, so
+// the dispatcher re-picks the task once next_retry_at elapses; an escalation
+// keeps the lock until a human acts. result carries any usage the provider accumulated before the
 // transient/rate-limit error was raised, so that spend (tokens, cost_usd,
 // cost_unknown) is persisted on the run row rather than recorded as $0 — a
 // transient/rate-limited run has still burned real tokens and must count
@@ -52,23 +52,24 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Resul
 			slog.Warn("pool: set transient retry", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
 		}
 		slog.Info("pool: transient failure, scheduling auto-retry", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "attempt", newCount, "max_retries", maxRetries, "next_retry_at", nextRetryAt, "reason", reason)
-	} else if maxRetries > 0 {
-		// Budget exhausted — escalate to waiting_human rather than retrying forever.
+	} else {
+		// Budget exhausted — or auto-retry disabled (max_retries == 0), where the
+		// budget is exhausted from the start. Either way escalate to waiting_human
+		// rather than releasing the lock: a released lock is re-dispatched on the
+		// very next sweep, i.e. an unbounded retry loop with no backoff.
 		// Reset the counter so a human-triggered re-dispatch starts a fresh budget.
 		finalStatus = "waiting_human"
-		msg := fmt.Sprintf("Agent failed after %d transient retries (%s). Manual re-dispatch or intervention required.", count, reason)
+		var msg string
+		if maxRetries > 0 {
+			msg = fmt.Sprintf("Agent failed after %d transient retries (%s). Manual re-dispatch or intervention required.", count, reason)
+		} else {
+			msg = fmt.Sprintf("Agent hit a transient failure (%s) and auto-retry is disabled (max_retries=0). Manual re-dispatch or intervention required.", reason)
+		}
 		message = &msg
 		if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
 			slog.Warn("pool: reset transient retry (escalation)", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
 		}
 		slog.Warn("pool: transient retry budget exhausted, escalating to waiting_human", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "count", count, "max_retries", maxRetries)
-	} else {
-		// max_retries == 0 — auto-retry disabled for this config; behaves like
-		// today's plain failed-and-immediately-re-dispatchable behavior.
-		if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
-			slog.Warn("pool: reset transient retry (disabled)", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
-		}
-		slog.Info("pool: transient failure, auto-retry disabled (max_retries=0)", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "reason", reason)
 	}
 
 	costUnknown := int64(0)
@@ -118,6 +119,47 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Resul
 			"status":  finalStatus,
 		})
 	}
+}
+
+// maxConsecutiveFailures is how many genuine (non-transient) agent failures in a
+// row a task may accrue before the pool escalates it to waiting_human instead of
+// releasing the dispatch lock again. Without a cap every failure frees the lock
+// and the next 5s sweep re-runs the task, so a persistently failing task burns
+// runs (and money) indefinitely. The counter (tasks.consecutive_failure_count)
+// is reset by a completed run, any label transition, and a human reply/rerun.
+const maxConsecutiveFailures = 3
+
+// escalateNoOutcome handles a run that completed but reported no usable
+// outcome. It rewrites the run as waiting_human (preserving usage, as
+// escalateFailureLoop does), leaves the dispatch lock set so the task is not
+// re-dispatched, and publishes task.needs_human exactly once.
+func (p *Pool) escalateNoOutcome(ctx context.Context, job Job, result Result, log *slog.Logger) {
+	msg := "Agent finished without reporting an outcome (no signal_complete call or OUTCOME: line), so the task could not be advanced. Review the work and move the task manually or re-dispatch."
+	costUnknown := int64(0)
+	if result.CostUnknown {
+		costUnknown = 1
+	}
+	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status:       "waiting_human",
+		StoredInfo:   result.StoredInfo,
+		Notes:        &msg,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
+		ID:           job.RunID,
+	}); err != nil {
+		log.Warn("pool: no-outcome escalation: set run status", "err", err)
+	}
+	if p.pub != nil {
+		p.pub.Publish("task.needs_human", map[string]any{
+			"task_id": job.Input.Task.ID,
+			"run_id":  job.RunID,
+			"message": msg,
+		})
+	}
+	log.Warn("pool: run completed without a resolvable outcome, escalating to waiting_human")
 }
 
 // handleMaxTurnsExhausted marks the run waiting_human when the agent hit its
