@@ -232,16 +232,20 @@ AND NOT EXISTS (
 ORDER BY t.priority DESC, t.created_at ASC;
 
 -- name: CountActiveRunsByRepo :many
--- Per-repo in-flight run counts, used by the dispatcher to enforce
--- repos.max_concurrent_runs. A task counts as "in flight" for a repo while
--- it holds an active run lock (active_agent_run_id IS NOT NULL), the same
--- signal ListAgentPickupTasks already excludes on, so this is consistent
--- with "pickup-eligible" meaning "not already running".
-SELECT repo_id, COUNT(*) AS in_use
-FROM tasks
-WHERE active_agent_run_id IS NOT NULL
-  AND archived = 0
-GROUP BY repo_id;
+-- Per-repo worker-slot usage, used by the dispatcher to enforce
+-- repos.max_concurrent_runs (and by the block-reason resolver and Dashboard).
+-- Only a task whose active run lock points at a run that is actually executing
+-- or queued (status pending or running) consumes a slot. active_agent_run_id also
+-- stays set for waiting_human runs and for phantom escalation runs (cost
+-- budget, unknown provider, runtime prep failure) so they block re-dispatch,
+-- but those occupy no worker, so they must not count against capacity,
+-- otherwise enough tasks waiting on a human stall the whole repo.
+SELECT t.repo_id, COUNT(*) AS in_use
+FROM tasks t
+JOIN agent_runs ar ON ar.id = t.active_agent_run_id
+WHERE t.archived = 0
+  AND ar.status IN ('pending', 'running')
+GROUP BY t.repo_id;
 
 -- name: SetTaskTransientRetry :one
 UPDATE tasks

@@ -482,7 +482,8 @@ func daysRemainingInMonth(now time.Time) int {
 
 // repoConcurrency builds the per-repo worker-slot breakdown (see
 // repoConcurrencyRow) from the same in-flight-run signal the dispatcher uses
-// to enforce repos.max_concurrent_runs (CountActiveRunsByRepo). Only repos
+// to enforce repos.max_concurrent_runs (CountActiveRunsByRepo: pending or
+// running runs only; waiting_human locks hold no worker). Only repos
 // with at least one in-flight run are returned, sorted by in-use descending
 // so the busiest repos surface first.
 func (h *DashboardHandler) repoConcurrency(ctx context.Context) ([]repoConcurrencyRow, error) {

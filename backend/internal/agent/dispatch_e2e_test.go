@@ -1030,3 +1030,59 @@ func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
 		t.Errorf("expected current_agent_run_id to be restored to nil (no prior run existed), got %v", *task.CurrentAgentRunID)
 	}
 }
+
+// TestE2E_WaitingHumanLocksDoNotConsumeRepoSlots is the regression for the
+// stall where tasks parked on waiting_human (which keep active_agent_run_id
+// set to block re-dispatch) were counted as in-flight, so with no per-repo
+// limit (falling back to MAX_WORKERS=2) two human-blocked tasks starved every
+// other eligible task in the repo despite an idle pool.
+func TestE2E_WaitingHumanLocksDoNotConsumeRepoSlots(t *testing.T) {
+	msg := "need a human"
+	// Calls 0 and 1 park on waiting_human; call 2 (the third task, which can
+	// only be dispatched once the first two stop consuming slots) succeeds.
+	fp := &fakeProvider{steps: []fakeStep{
+		{result: Result{Status: "waiting_human", Message: &msg}},
+		{result: Result{Status: "waiting_human", Message: &msg}},
+		{result: Result{Status: "completed", Outcome: "success"}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	task1ID, task2ID := h.seedTwoTasksOnRepoWithLimit(t, wfID, nil)
+	t1, err := h.q.GetTask(context.Background(), task1ID)
+	if err != nil {
+		t.Fatalf("get task1: %v", err)
+	}
+	task3ID := uuid.NewString()
+	if _, err := h.q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: task3ID, Title: "task three", WorkflowID: wfID, RepoID: t1.RepoID, Label: "ready",
+	}); err != nil {
+		t.Fatalf("create task 3: %v", err)
+	}
+
+	// Exactly one of the three ends up transitioned to "next"; the other two
+	// stay locked on a waiting_human run.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		next, waiting := 0, 0
+		for _, id := range []string{task1ID, task2ID, task3ID} {
+			tk, err := h.q.GetTask(context.Background(), id)
+			if err != nil {
+				t.Fatalf("get task: %v", err)
+			}
+			if tk.Label == "next" {
+				next++
+			} else if tk.ActiveAgentRunID != nil {
+				if run, err := h.q.GetAgentRun(context.Background(), *tk.ActiveAgentRunID); err == nil && run.Status == "waiting_human" {
+					waiting++
+				}
+			}
+		}
+		if next == 1 && waiting == 2 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected 1 task dispatched past two waiting_human tasks, got next=%d waiting_human=%d", next, waiting)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

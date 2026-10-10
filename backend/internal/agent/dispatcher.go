@@ -174,8 +174,9 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 	}
 }
 
-// repoInUseCounts returns the current number of in-flight agent runs per
-// repo (see CountActiveRunsByRepo), keyed by repo_id.
+// repoInUseCounts returns the current number of pending/running agent runs
+// per repo (see CountActiveRunsByRepo), keyed by repo_id. Tasks locked on a
+// waiting_human run are deliberately excluded: they hold no worker.
 func (d *Dispatcher) repoInUseCounts(ctx context.Context) (map[string]int64, error) {
 	rows, err := d.q.CountActiveRunsByRepo(ctx)
 	if err != nil {
