@@ -267,6 +267,10 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	}
 
 	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
+		if errors.Is(err, ErrDispatchConflict) {
+			log.Debug("dispatcher: skipping, task changed since it was listed (lost dispatch claim)")
+			return
+		}
 		var transientErr transientErr
 		log.Error("dispatcher: start run", "err", err, "transient", errors.As(err, &transientErr))
 		return
@@ -665,6 +669,10 @@ var (
 	// python pin, uv venv) before the provider could be invoked. See
 	// prepareRuntime.
 	ErrRuntimePrepFailed = errors.New("runtime toolchain prep failed")
+	// ErrDispatchConflict means the task's dispatch lock or label changed
+	// between the dispatcher reading the task and claiming it (a concurrent
+	// reply/dispatch won, or a human moved the task), so no run was started.
+	ErrDispatchConflict = errors.New("task changed concurrently; dispatch lock was not acquired")
 )
 
 // DispatchReply starts a new run for a task whose active run is waiting_human,
@@ -1072,11 +1080,18 @@ func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched
 	return agentCfg, resumeSessionID, nil
 }
 
-// persistRunRow creates the run row and marks the task's active run in a single
-// transaction. These two writes must be atomic: if the run were created but the
-// task never pointed at it (a crash or error between the statements), an orphaned
-// 'pending' run would linger with nothing gating re-dispatch. Committing them
-// together means either both land or neither does.
+// persistRunRow creates the run row and claims the task's dispatch lock in a
+// single transaction. These two writes must be atomic: if the run were created
+// but the task never pointed at it (a crash or error between the statements), an
+// orphaned 'pending' run would linger with nothing gating re-dispatch.
+//
+// The claim is a compare-and-swap against the task state the caller read (t):
+// the task must still be on t.Label and its lock must still be exactly what t
+// saw (free for a sweep dispatch, held by the waiting run for a human reply).
+// If another dispatch/reply took the lock, or a human moved the task, in the
+// meantime, zero rows are affected, the transaction (including the just-created
+// run row) is rolled back, and ErrDispatchConflict is returned so the caller
+// does not start the run.
 func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, runID string, feedback *string) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1092,14 +1107,31 @@ func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.
 		_ = tx.Rollback()
 		return fmt.Errorf("create agent run: %w", err)
 	}
-	// Mark the task's active run so the next sweep skips it.
-	if err := tq.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-		CurrentAgentRunID: &runID,
-		ActiveAgentRunID:  &runID,
-		ID:                t.ID,
-	}); err != nil {
+	// Claim the task's active run so the next sweep skips it.
+	var claimed int64
+	if t.ActiveAgentRunID == nil {
+		claimed, err = tq.ClaimTaskActiveRunIfFree(ctx, gen.ClaimTaskActiveRunIfFreeParams{
+			CurrentAgentRunID: &runID,
+			ActiveAgentRunID:  &runID,
+			ID:                t.ID,
+			Label:             t.Label,
+		})
+	} else {
+		claimed, err = tq.ClaimTaskActiveRunIfHeldBy(ctx, gen.ClaimTaskActiveRunIfHeldByParams{
+			CurrentAgentRunID:  &runID,
+			ActiveAgentRunID:   &runID,
+			ID:                 t.ID,
+			Label:              t.Label,
+			ActiveAgentRunID_2: t.ActiveAgentRunID,
+		})
+	}
+	if err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("set task active run: %w", err)
+	}
+	if claimed == 0 {
+		_ = tx.Rollback()
+		return ErrDispatchConflict
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit run creation: %w", err)

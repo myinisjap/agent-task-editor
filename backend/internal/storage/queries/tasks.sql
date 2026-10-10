@@ -132,6 +132,25 @@ UPDATE tasks
 SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
+-- name: ClaimTaskActiveRunIfFree :execrows
+-- Compare-and-swap acquire of the dispatch lock for the sweep: succeeds only
+-- while the task is still on the label the caller read AND still has no active
+-- run. Zero rows affected means the race was lost (a human moved the task, or
+-- another dispatch took the lock first). Escalation bookkeeping uses
+-- SetTaskActiveRun / SetTaskActiveRunOnly instead, which are unconditional.
+UPDATE tasks
+SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND label = ? AND active_agent_run_id IS NULL;
+
+-- name: ClaimTaskActiveRunIfHeldBy :execrows
+-- Compare-and-swap hand-off of the dispatch lock for a human reply: succeeds
+-- only while the task is still on the label the caller read AND the lock is
+-- still held by the waiting run being replied to. Zero rows affected means the
+-- race was lost (a concurrent reply already moved the lock, or the task moved).
+UPDATE tasks
+SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND label = ? AND active_agent_run_id = ?;
+
 -- name: SetTaskActiveRunOnly :exec
 -- Sets ONLY active_agent_run_id, leaving current_agent_run_id pointing at the
 -- last real run. Used by the dispatcher's phantom waiting_human escalations
