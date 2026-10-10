@@ -204,6 +204,21 @@ func waitForStatus(t *testing.T, q *gen.Queries, runID, want string) {
 	t.Errorf("timed out waiting for run %s to reach status %q; current: %q", runID, want, run.Status)
 }
 
+// waitForActiveRunCleared polls until the task's dispatch lock
+// (active_agent_run_id) is released or times out.
+func waitForActiveRunCleared(t *testing.T, q *gen.Queries, taskID string) {
+	t.Helper()
+	deadline := time.Now().Add(pollDeadline)
+	for time.Now().Before(deadline) {
+		task, err := q.GetTask(context.Background(), taskID)
+		if err == nil && task.ActiveAgentRunID == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("timed out waiting for task %s active_agent_run_id to clear", taskID)
+}
+
 // waitForLabel polls until the task has the expected label or times out.
 // The run row flips to "completed" before the pool resolves the outcome and
 // transitions the label, so callers must wait on the label itself rather
@@ -822,6 +837,9 @@ func TestPool_CancelForResourceConstraint_LeavesTaskUnpausedWithReasonNote(t *te
 	}
 
 	waitForStatus(t, q, runID, "cancelled")
+	// The run row flips to "cancelled" before the pool releases the dispatch
+	// lock, so wait for the lock itself rather than racing that cleanup.
+	waitForActiveRunCleared(t, q, taskID)
 
 	task, err := q.GetTask(context.Background(), taskID)
 	if err != nil {
