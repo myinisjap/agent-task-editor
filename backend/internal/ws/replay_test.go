@@ -97,7 +97,7 @@ func seedTaskWithLogs(t *testing.T, q *gen.Queries, logs []string) (taskID strin
 func newTestWSServerWithQueries(t *testing.T, hub *Hub, q *gen.Queries) (*httptest.Server, string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ServeWS(hub, w, r, "", "*", q)
+		ServeWS(hub, w, r, "", nil, "*", q)
 	}))
 	t.Cleanup(srv.Close)
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")

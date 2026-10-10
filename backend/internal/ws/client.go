@@ -68,7 +68,9 @@ type inboundMsg struct {
 }
 
 // ServeWS upgrades the HTTP connection and starts the client goroutines.
-// authToken is the expected bearer token (empty = no auth required).
+// authToken is the legacy bearer token and namedTokens the named API_TOKENS
+// (name -> token); auth is required when either is configured, and only when
+// both are empty is the endpoint open.
 // corsOrigins is the CORS allowed origins list (comma-separated, "*" = any).
 // q is used to replay historical log entries when a client subscribes to a task.
 //
@@ -79,9 +81,10 @@ type inboundMsg struct {
 // via hub.ConsumeTicket. The long-lived ?token=<API_TOKEN> query param is
 // still accepted as a deprecated fallback for existing setups, but it
 // leaves a durable credential in logs/history, so ?ticket= should be
-// preferred — a warning is logged whenever the fallback is used.
-func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOrigins string, q *gen.Queries) {
-	if authToken != "" {
+// preferred — a warning is logged whenever the fallback is used. The fallback
+// accepts the legacy token or any named token.
+func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken string, namedTokens map[string]string, corsOrigins string, q *gen.Queries) {
+	if authToken != "" || len(namedTokens) > 0 {
 		authorized := false
 		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 			authorized = hub.ConsumeTicket(ticket)
@@ -90,7 +93,14 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken, corsOr
 			// Deprecated fallback: ?token= — kept for existing setups, logged so
 			// operators can see usage and plan migration to ws-ticket.
 			tok := r.URL.Query().Get("token")
-			if subtle.ConstantTimeCompare([]byte(tok), []byte(authToken)) == 1 {
+			// Every candidate is compared (no short-circuit), like BearerAuth.
+			match := authToken != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(authToken)) == 1
+			for _, candidate := range namedTokens {
+				if subtle.ConstantTimeCompare([]byte(tok), []byte(candidate)) == 1 {
+					match = true
+				}
+			}
+			if match {
 				authorized = true
 				slog.Warn("ws auth via deprecated ?token= query param; migrate to POST /api/v1/ws-ticket", "remote", r.RemoteAddr)
 			}
