@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -506,10 +506,23 @@ func (h *TasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Best-effort: tear down the task's worktree before deleting the row. The
 	// branch is kept for review. Look up the repo path for the worktree-remove.
 	if task, err := h.q.GetTask(r.Context(), taskID); err == nil {
+		// Refuse while a run is live: removing the worktree out from under it
+		// would break the agent, and deleting the row cascades to its runs and
+		// logs, making the run's later writes fail on foreign keys.
+		if h.taskRunIsLive(r.Context(), task) {
+			Err(w, http.StatusConflict, errRunLiveDelete.Error())
+			return
+		}
 		if task.WorktreePath != "" {
 			if repo, rerr := h.q.GetRepo(r.Context(), task.RepoID); rerr == nil {
-				if out, gerr := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "worktree", "remove", "--force", task.WorktreePath).CombinedOutput(); gerr != nil {
-					logger.Warn("delete task: remove worktree", "err", gerr, "out", strings.TrimSpace(string(out)))
+				// Serialize with other git operations on the same clone
+				// (worktree setup, push); RemoveWorktree doesn't lock itself.
+				lock := agent.RepoGitLock(repo.Path)
+				lock.Lock()
+				gerr := agent.RemoveWorktree(r.Context(), repo.Path, task.WorktreePath)
+				lock.Unlock()
+				if gerr != nil {
+					logger.Warn("delete task: remove worktree", "err", gerr)
 				}
 			}
 		}
@@ -588,6 +601,10 @@ var runLiveStatuses = map[string]bool{
 // render this as a 409 with the same text; the bulk endpoint records it as a
 // per-task failure in bulkResult.
 var errRunLive = errors.New("a run is currently active on this task; cancel the run before moving its label")
+
+// errRunLiveDelete is the 409 Delete returns while the task's active run is
+// still live (same definition of "live" as errRunLive).
+var errRunLiveDelete = errors.New("a run is currently active on this task; cancel the run before deleting it")
 
 // taskRunIsLive reports whether task's active agent run (if any) is in a
 // status (see runLiveStatuses) during which clearing active_agent_run_id

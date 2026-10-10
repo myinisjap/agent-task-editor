@@ -36,6 +36,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
       remove(taskId)
     } catch (e) {
       console.error('Failed to delete task:', e)
+      alert(String(e))
     }
   }, [remove])
 

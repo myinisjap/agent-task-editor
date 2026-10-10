@@ -949,6 +949,92 @@ func TestTasks_Delete_OK(t *testing.T) {
 	}
 }
 
+// TestTasks_Delete_RunLive_Returns409 guards against deleting a task (and
+// tearing down its worktree) out from under a live agent run.
+func TestTasks_Delete_RunLive_Returns409(t *testing.T) {
+	for _, started := range []bool{false, true} { // pending, running
+		r, q, wfID, repoID := setupTaskRouter(t)
+		ctx := context.Background()
+		task, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+			ID: uuid.NewString(), Title: "Busy", WorkflowID: wfID, RepoID: repoID, Label: "work",
+		})
+		runID := uuid.NewString()
+		if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if started {
+			if _, err := q.SetAgentRunStarted(ctx, runID); err != nil {
+				t.Fatalf("start run: %v", err)
+			}
+		}
+		if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+			CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: task.ID,
+		}); err != nil {
+			t.Fatalf("set active run: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodDelete, "/tasks/"+task.ID, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("started=%v: expected 409, got %d: %s", started, w.Code, w.Body)
+		}
+		if _, err := q.GetTask(ctx, task.ID); err != nil {
+			t.Errorf("started=%v: task should still exist: %v", started, err)
+		}
+		if _, err := q.GetAgentRun(ctx, runID); err != nil {
+			t.Errorf("started=%v: run should still exist: %v", started, err)
+		}
+	}
+}
+
+// TestTasks_Delete_IdleTask_RemovesWorktreeAndRow verifies delete of an idle
+// task tears down its worktree (keeping the branch) and removes the row.
+func TestTasks_Delete_IdleTask_RemovesWorktreeAndRow(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Idle delete", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	wtPath, branch, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: branch, WorktreePath: wtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/tasks/"+task.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree dir removed, stat err=%v", err)
+	}
+	if _, err := q.GetTask(ctx, task.ID); err == nil {
+		t.Error("expected task row to be deleted")
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "branch", "--list", branch).CombinedOutput(); err != nil || strings.TrimSpace(string(out)) == "" {
+		t.Errorf("expected branch kept (err=%v out=%q)", err, out)
+	}
+}
+
 // ---------- MoveLabel ----------
 
 func TestTasks_MoveLabel_ValidTransition(t *testing.T) {
