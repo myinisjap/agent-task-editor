@@ -61,7 +61,9 @@ export type WSEvent =
   // maxCreatedIDsInEvent in the importer); count is always exact. Consumers
   // should do a single list/board refresh rather than fetching each id.
   | { type: 'task.created_bulk'; payload: { repo_id: string; source: string; count: number; ids: string[] } }
-  | { type: 'task.updated'; payload: Task }
+  // Lightweight "something changed, refetch it" signal: carries only the id
+  // (see docs/websocket.md). Never treat the payload as a full Task.
+  | { type: 'task.updated'; payload: { id: string } }
   | { type: 'task.subtask_conflict'; payload: { task_id: string; parent_id: string; files: string[] } }
   // Emitted by the GitHub Issues importer when it ingests a new comment from
   // a task's source issue thread (see GET /tasks/{id}/source-comments).

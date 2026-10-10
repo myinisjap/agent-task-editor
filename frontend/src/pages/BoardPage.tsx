@@ -120,7 +120,7 @@ export default function BoardPage() {
   }, [])
 
   // Ids accumulated from task.label_changed / task.created /
-  // task.git_state_changed / task.pr_mergeable_changed while the flush below
+  // task.git_state_changed / task.pr_mergeable_changed / task.updated while the flush below
   // is debounced. Cleared every time the debounced flush runs.
   const pendingRefetchIdsRef = useRef<Set<string>>(new Set())
 
@@ -142,9 +142,12 @@ export default function BoardPage() {
   useEffect(() => {
     const off = wsClient.on((event) => {
       if (event.type === 'task.updated') {
-        // Payload is already a full Task — apply it directly instead of an
-        // extra REST round-trip (and the lag that round-trip introduces).
-        upsert(event.payload)
+        // task.updated carries only { id } — a "refetch this task" signal —
+        // so it must never be upserted directly (that would replace the
+        // stored task with a stub). Route it through the same debounced
+        // refetch path as the other partial-payload events.
+        pendingRefetchIdsRef.current.add(event.payload.id)
+        flushPendingRefetches()
       } else if (
         event.type === 'task.label_changed' ||
         event.type === 'task.created' ||
@@ -254,7 +257,7 @@ export default function BoardPage() {
   }, [])
 
   // Seed (and re-seed) the running set from the task list itself, so a page
-  // refresh — or a task.updated upsert — mid-run still shows the indicator
+  // refresh — or a task.updated refetch — mid-run still shows the indicator
   // even if the task.agent_started event was missed. This only ADDS ids;
   // removal is handled by the WS task.agent_done and task.label_changed
   // handlers above, and by the reconnect-clear effect, to avoid a stale
