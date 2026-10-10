@@ -6,6 +6,7 @@ import { useAgentsStore } from '../stores/agents'
 import DependenciesPanel from '../components/DependenciesPanel'
 import SubtasksPanel from '../components/SubtasksPanel'
 import TaskHeader from '../components/task-detail/TaskHeader'
+import { humanActionsFor } from '../lib/humanGate'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
@@ -45,6 +46,7 @@ export default function TaskDetailPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [duplicating, setDuplicating] = useState(false)
   // Set once a task.cost_warning event arrives for this task (crossed the
   // early-warning threshold — see GET/PUT /settings/cost-warning). Cleared
@@ -218,6 +220,8 @@ export default function TaskDetailPage() {
     ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
     : false
 
+  const humanActions = humanActionsFor(workflow ?? undefined, task?.label)
+
   const isStartingColumn = task && workflow
     ? [...(workflow.labels ?? [])].sort((a, b) => a.sort_order - b.sort_order)[0]?.name === task.label
     : false
@@ -296,6 +300,7 @@ export default function TaskDetailPage() {
   // The task stays on its label — this is a conversation, not a transition.
   const handleReply = async () => {
     if (!id || !selectedRun || !replyText.trim()) return
+    setActionError('')
     setActionPending(true)
     try {
       const res = await api.tasks.replyRun(id, selectedRun, replyText.trim())
@@ -304,7 +309,7 @@ export default function TaskDetailPage() {
       setSelectedRun(res.run_id)
       refreshRuns()
     } catch (e: any) {
-      alert(e.message)
+      setActionError(e.message ?? String(e))
     } finally {
       setActionPending(false)
     }
@@ -312,13 +317,14 @@ export default function TaskDetailPage() {
 
   const handleApprove = async () => {
     if (!id) return
+    setActionError('')
     setActionPending(true)
     try {
       const updated = await api.tasks.approve(id)
       setTask(updated)
       refreshRuns()
     } catch (e: any) {
-      alert(e.message)
+      setActionError(e.message ?? String(e))
     } finally {
       setActionPending(false)
     }
@@ -328,6 +334,7 @@ export default function TaskDetailPage() {
     // Open review comments are persisted server-side and injected into the
     // next run's prompt directly — only the free-text note travels here.
     if (!id || (!rejectNote.trim() && openComments.length === 0)) return
+    setActionError('')
     setActionPending(true)
     try {
       const updated = await api.tasks.reject(id, rejectNote.trim())
@@ -335,7 +342,7 @@ export default function TaskDetailPage() {
       setRejectNote('')
       refreshRuns()
     } catch (e: any) {
-      alert(e.message)
+      setActionError(e.message ?? String(e))
     } finally {
       setActionPending(false)
     }
@@ -554,6 +561,9 @@ export default function TaskDetailPage() {
           setRejectNote={setRejectNote}
           onReject={handleReject}
           onApprove={handleApprove}
+          canApprove={humanActions.canApprove}
+          canReject={humanActions.canReject}
+          actionError={actionError}
           actionPending={actionPending}
           onJumpToDiffTab={() => setActiveTab('diff')}
         />

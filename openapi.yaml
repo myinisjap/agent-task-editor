@@ -1096,9 +1096,11 @@ components:
               run_id:     { type: string }
               task_id:    { type: string }
               task_title: { type: string }
+              task_label: { type: string, description: "The task's current label." }
+              workflow_id: { type: string, description: "The task's workflow; used to check which human transitions exist from task_label." }
               message:    { type: string, nullable: true }
               created_at: { type: string }
-            required: [run_id, task_id, task_title, message, created_at]
+            required: [run_id, task_id, task_title, task_label, workflow_id, message, created_at]
         cost_total:
           type: object
           description: >-

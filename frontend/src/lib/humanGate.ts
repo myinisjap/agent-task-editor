@@ -37,3 +37,23 @@ export function isHumanGateLabel(workflow: Workflow | undefined, labelName: stri
 export function findLabel(workflow: Workflow | undefined, labelName: string): WorkflowLabel | undefined {
   return workflow?.labels.find((l) => l.name === labelName)
 }
+
+/**
+ * Which approve/reject actions the server will accept for a task sitting on
+ * `labelName`. Mirrors the backend's humanPathTarget (handlers/tasks.go):
+ * Approve follows a `human` transition with path `success`, Reject one with
+ * path `failure`. A task that escalated (waiting_human) while on an agent
+ * label usually has neither; only Reply works there.
+ */
+export function humanActionsFor(
+  workflow: Workflow | undefined,
+  labelName: string | undefined,
+): { canApprove: boolean; canReject: boolean } {
+  const outgoing = (workflow?.transitions ?? []).filter(
+    (t) => t.from_label === labelName && t.trigger_type === 'human',
+  )
+  return {
+    canApprove: outgoing.some((t) => t.path === 'success'),
+    canReject: outgoing.some((t) => t.path === 'failure'),
+  }
+}

@@ -4767,6 +4767,10 @@ export interface components {
                 run_id: string;
                 task_id: string;
                 task_title: string;
+                /** @description The task's current label. */
+                task_label: string;
+                /** @description The task's workflow; used to check which human transitions exist from task_label. */
+                workflow_id: string;
                 message: string | null;
                 created_at: string;
             }[];

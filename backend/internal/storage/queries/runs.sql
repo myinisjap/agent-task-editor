@@ -143,7 +143,7 @@ ORDER BY ar.started_at DESC;
 -- comment in task_runs.go); without this join, that superseded run would
 -- keep showing up in the dashboard's "needs your input" queue forever, even
 -- after a new run for the same task is already active/running.
-SELECT ar.*, t.title as task_title
+SELECT ar.*, t.title as task_title, t.label as task_label, t.workflow_id as task_workflow_id
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
