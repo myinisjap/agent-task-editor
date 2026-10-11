@@ -15,7 +15,7 @@ import { test, expect, type Locator, type Page } from '@playwright/test'
 // credentials in CI, so checks are expected to show warnings/errors).
 const pages: { path: string; name: string; anchor: (page: Page) => Locator }[] = [
   {
-    path: '',
+    path: 'dashboard',
     name: 'Dashboard',
     anchor: (page) => page.getByRole('heading', { name: 'Overview', exact: true }),
   },
@@ -87,8 +87,14 @@ test.describe('all pages load', () => {
 
 // The built app is served under /tasks/; nginx redirects the bare root (the
 // documented start URL) there. Regression test for a blank page at `/`.
+// The app's index route then lands on the Board until first-run setup is
+// complete (the e2e stack has no agents configured), otherwise the Dashboard.
 test('root URL redirects to the app under /tasks/', async ({ page }) => {
   await page.goto('/')
-  await expect(page).toHaveURL(/\/tasks\/$/)
-  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/tasks\/(board)?$/)
+  await expect(
+    page
+      .getByRole('heading', { name: 'Overview', exact: true })
+      .or(page.getByRole('heading', { name: 'Board', exact: true })),
+  ).toBeVisible()
 })

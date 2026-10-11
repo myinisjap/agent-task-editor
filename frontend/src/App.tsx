@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import NavSidebar from './components/shared/NavSidebar'
 import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
+import HomeRoute from './components/shared/HomeRoute'
+import HealthWarningBanner from './components/shared/HealthWarningBanner'
 import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
 
 // Lazy-loaded so heavy per-route dependencies (@xterm/xterm for ChatPage,
@@ -33,7 +35,8 @@ function AppRoutes() {
     <ErrorBoundary key={location.pathname}>
       <Suspense fallback={<div className="p-6 text-slate-400 text-sm">Loading…</div>}>
         <Routes>
-          <Route path="/"                      element={<DashboardPage />} />
+          <Route path="/"                      element={<HomeRoute><DashboardPage /></HomeRoute>} />
+          <Route path="/dashboard"             element={<DashboardPage />} />
           <Route path="/dashboard/usage"       element={<UsagePage />} />
           <Route path="/dashboard/performance" element={<AgentPerformancePage />} />
           <Route path="/board"                 element={<BoardPage />} />
@@ -68,6 +71,7 @@ export default function App() {
         <div className="flex h-dvh overflow-hidden">
           <NavSidebar />
           <main className="flex-1 overflow-auto bg-slate-950 pt-12 md:pt-0">
+            <HealthWarningBanner />
             <AppRoutes />
           </main>
         </div>
