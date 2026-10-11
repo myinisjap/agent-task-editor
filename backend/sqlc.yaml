@@ -63,6 +63,7 @@ sql:
       - "internal/storage/migrations/059_agent_run_escalation_reason.up.sql"
       - "internal/storage/migrations/060_task_side_effects.up.sql"
       - "internal/storage/migrations/061_task_source_pending.up.sql"
+      - "internal/storage/migrations/062_agent_rate_limits.up.sql"
     gen:
       go:
         package: "gen"

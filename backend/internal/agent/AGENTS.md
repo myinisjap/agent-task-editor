@@ -14,7 +14,7 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 | `terminal.go` | `TerminalManager`/`NewTerminalManager` — interactive chat session CLI process management |
 | `errors.go` | `ErrTransient`; typed non-transient escalation signals `ErrMaxTurns` and `ErrCostBudgetExceeded` (detected via `errors.As` in `pool.go#handleProviderError`, routed to `waiting_human`, never retried) |
 | `errclass.go` | `Classification` + `ClassifyLine` — the single table of patterns that classify provider output (ADR 0010). `providers.is429Line`/`isTransientLine` are thin wrappers |
-| `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking), `BackoffDuration(WithBase)`; use `UnblockIfNotBlockedSince` (not `Unblock`) for in-run clears (ADR 0011) |
+| `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking; write-through to `agent_rate_limits` via an optional `RateLimitStore`, reloaded at boot, nil store = in-memory), `BackoffDuration(WithBase)`; use `UnblockIfNotBlockedSince` (not `Unblock`) for in-run clears (ADR 0011) |
 
 Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
 

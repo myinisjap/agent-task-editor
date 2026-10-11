@@ -84,6 +84,10 @@ The `backend` service in `docker-compose.yml` / `docker-compose.release.yml` is 
 - A healthcheck against `GET /readyz` (not `/healthz`) — this actually checks DB connectivity and that the dispatch loop is still ticking, so Docker detects a wedged backend (e.g. a locked SQLite file or a hung sweep) instead of it appearing healthy forever. See [`docs/api.md`](api.md#get-readyz).
 - A default memory ceiling of **4 GB** via `deploy.resources.limits.memory` — headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to, including memory-hungry steps like a frontend test suite running under several concurrent agents. If you run many concurrent agent runs and still hit this ceiling (the container gets OOM-killed and auto-restarts), raise `memory:` under the backend service's `deploy.resources.limits` in your compose file.
 
+## Single-replica deployment
+
+Run exactly one backend replica. Some state is held in process memory (WebSocket tickets, the notify webhook debounce, chat terminal PTYs), so horizontal scaling is not supported. Agent rate-limit blocks are persisted and survive restarts.
+
 ## Environment Variables
 
 All variables can also be set via a YAML config file pointed to by `CONFIG_FILE` (env vars always take precedence over file values).
