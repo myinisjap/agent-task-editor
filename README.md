@@ -218,6 +218,11 @@ Agent shell commands run inside the **backend** Docker container, against your b
 the box. Set `ATE_BIND_ADDR=0.0.0.0` in `.env` (or the environment) to publish on all
 interfaces — only do this alongside `API_TOKEN` and `CORS_ORIGINS` above.
 
+Even on localhost, a web page open in your browser can try to reach the API. Without a token the
+backend therefore rejects cross-origin state-changing requests (`Origin` must be in `CORS_ORIGINS`
+or same-origin), non-JSON request bodies, and unexpected `Host` headers (DNS rebinding). If you
+reach an unauthenticated instance by a custom hostname, add it to `ALLOWED_HOSTS`.
+
 ---
 
 ## Key Environment Variables

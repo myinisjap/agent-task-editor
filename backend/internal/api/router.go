@@ -26,7 +26,7 @@ import (
 // Version var. maxWorkers is the global MAX_WORKERS setting (informational
 // only here) — the dashboard uses it as the effective per-repo concurrency
 // limit fallback for repos with no repos.max_concurrent_runs override.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness, blockReasons handlers.BlockReasonResolver) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness, blockReasons handlers.BlockReasonResolver, allowedHosts string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher, blockReasons)
@@ -63,7 +63,17 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	r.Use(chimiddleware.RequestID)
 	r.Use(middleware.Recover)
 	r.Use(middleware.Logger)
+	// Browser-facing request guards (see middleware/requestguard.go). Order
+	// matters: the Host check runs first (DNS rebinding; applies to every
+	// route incl. /ws, /healthz, /metrics, and only when no API token is
+	// configured), then CORS so its headers — and the preflight 204 — are
+	// produced for allowed origins, then the state-changing-request guards.
+	// Both guards ignore OPTIONS, so preflight is never blocked by them.
+	hostPolicy := middleware.NewHostPolicy(allowedHosts, corsOrigins, bearerToken != "" || len(namedTokens) > 0)
+	r.Use(hostPolicy.Middleware())
 	r.Use(middleware.CORS(corsOrigins))
+	r.Use(middleware.RequireTrustedOrigin(corsOrigins))
+	r.Use(middleware.RequireJSON)
 
 	// WebSocket endpoint — mounted outside BearerAuth because browsers can't set
 	// request headers on a WS handshake. ServeWS performs its own auth check via

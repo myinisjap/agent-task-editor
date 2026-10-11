@@ -1,6 +1,11 @@
 services:
   backend:
     ports: !reset []
+    environment:
+      # Auth is delegated to Traefik's forward-auth (no API_TOKEN), so the
+      # backend's Host check (DNS-rebinding protection) is active; admit the
+      # public hostname Traefik forwards.
+      - ALLOWED_HOSTS=${TRAEFIK_HOST}
 
   frontend:
     ports: !reset []

@@ -16,6 +16,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
@@ -62,6 +63,14 @@ func main() {
 		slog.Warn("API is unauthenticated (API_TOKEN not set) and CORS_ORIGINS=* — any website open in your browser can call this API from localhost (drive-by CSRF-style request execution, no auth needed). Set API_TOKEN and a specific CORS_ORIGINS before exposing this beyond a trusted single-user machine; see README.md#security")
 	} else {
 		slog.Warn("API is unauthenticated (API_TOKEN not set); anyone who can reach this port can register repos, create agent configs, and trigger shell-executing agent runs. Set API_TOKEN before exposing this beyond a trusted single-user machine; see README.md#security")
+	}
+	{
+		hp := middleware.NewHostPolicy(cfg.AllowedHosts, cfg.CORSOrigins, cfg.APIToken != "" || len(cfg.APITokens) > 0)
+		if hp.Enforced {
+			slog.Info("host header check enforced (DNS-rebinding protection)", "allowed_hosts", hp.Hosts, "note", "literal IP hosts always allowed; extend with ALLOWED_HOSTS, or '*' to disable")
+		} else {
+			slog.Info("host header check not enforced", "reason", hp.Reason)
+		}
 	}
 	if cfg.MetricsToken != "" {
 		slog.Info("metrics endpoint bearer auth enabled")
@@ -342,7 +351,7 @@ func main() {
 		slog.Info("chat terminal idle reaper enabled", "idle_timeout", cfg.ChatIdleTimeout)
 	}
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher, blockReasons)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher, blockReasons, cfg.AllowedHosts)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),

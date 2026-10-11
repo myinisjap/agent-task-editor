@@ -18,7 +18,12 @@ type Config struct {
 	DBPath      string `yaml:"db_path"`
 	Port        string `yaml:"port"`
 	CORSOrigins string `yaml:"cors_origins"`
-	APIToken    string `yaml:"api_token"`
+	// AllowedHosts is a comma-separated list of extra Host header values
+	// (hostname or host:port) accepted while the API is unauthenticated, on top
+	// of loopback names and the CORS_ORIGINS hostnames. "*" disables the check.
+	// Ignored when API_TOKEN/API_TOKENS is set. See middleware.NewHostPolicy.
+	AllowedHosts string `yaml:"allowed_hosts"`
+	APIToken     string `yaml:"api_token"`
 	// APITokens maps an actor name to a bearer token, allowing multiple
 	// named credentials so human-triggered transitions can record *who*
 	// approved them (see task_label_history.actor_id). APIToken above
@@ -185,6 +190,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("CORS_ORIGINS"); v != "" {
 		cfg.CORSOrigins = v
+	}
+	if v := os.Getenv("ALLOWED_HOSTS"); v != "" {
+		cfg.AllowedHosts = v
 	}
 	if v := os.Getenv("API_TOKEN"); v != "" {
 		cfg.APIToken = v
