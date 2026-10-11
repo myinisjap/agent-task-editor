@@ -6,13 +6,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
+	"nhooyr.io/websocket"
 )
 
 func openRouterTestDB(t *testing.T) *storage.DB {
@@ -182,4 +185,98 @@ func TestAPIv1_OpenWhenNoTokenConfigured(t *testing.T) {
 	if w.Code == http.StatusUnauthorized {
 		t.Errorf("expected /api/v1/agents to be reachable with no token configured, got 401: %s", w.Body.String())
 	}
+}
+
+// fakeRouterTerminal is a no-op handlers.Terminal so the router mounts a
+// non-nil terminal (ChatHandler.Terminal 503s before any auth check otherwise).
+type fakeRouterTerminal struct{}
+
+func (fakeRouterTerminal) Attach(ctx context.Context, sessionID, repoPath, provider, model string, resume bool, repoID string, pins []runtime.Pin, conn *websocket.Conn) error {
+	return nil
+}
+func (fakeRouterTerminal) Stop(string) {}
+
+func newWSTestRouter(t *testing.T, apiToken string, namedTokens map[string]string) (http.Handler, *ws.Hub) {
+	t.Helper()
+	db := openRouterTestDB(t)
+	hub := ws.NewHub()
+	engine := workflow.New(db.SQL(), hub)
+	r := api.NewRouter(db, engine, hub, "*", apiToken, namedTokens, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", "dev", false, fakeRouterTerminal{}, 5, nil, nil)
+	return r, hub
+}
+
+// TestChatTerminal_ThroughRouter_TicketNotBlockedByBearerAuth guards against
+// the terminal route being mounted inside BearerAuth: browsers can't send an
+// Authorization header on a WS upgrade, so a valid ?ticket= must reach the
+// handler (which then 404s on the unknown session) rather than 401 in
+// middleware.
+func TestChatTerminal_ThroughRouter_TicketNotBlockedByBearerAuth(t *testing.T) {
+	for name, tc := range map[string]struct {
+		apiToken string
+		named    map[string]string
+	}{
+		"API_TOKEN":  {apiToken: "api-secret"},
+		"API_TOKENS": {named: map[string]string{"alice": "alice-secret"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, hub := newWSTestRouter(t, tc.apiToken, tc.named)
+			const path = "/api/v1/chat/sessions/nope/terminal"
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("no ticket: expected 401, got %d", w.Code)
+			}
+
+			ticket, err := hub.IssueTicket()
+			if err != nil {
+				t.Fatal(err)
+			}
+			w = httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path+"?ticket="+ticket, nil))
+			if w.Code != http.StatusNotFound {
+				t.Errorf("valid ticket: expected handler 404 (session not found), got %d: %s", w.Code, w.Body.String())
+			}
+
+			// Single-use: replay is rejected.
+			w = httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path+"?ticket="+ticket, nil))
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("replayed ticket: expected 401, got %d", w.Code)
+			}
+		})
+	}
+}
+
+// TestWS_ThroughRouter_NamedTokensOnly_RequiresAuth verifies /ws is not left
+// open when only API_TOKENS (no legacy API_TOKEN) is configured.
+func TestWS_ThroughRouter_NamedTokensOnly_RequiresAuth(t *testing.T) {
+	r, hub := newWSTestRouter(t, "", map[string]string{"alice": "alice-secret"})
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if c, _, err := websocket.Dial(ctx, wsURL, nil); err == nil {
+		_ = c.Close(websocket.StatusNormalClosure, "")
+		t.Fatal("unauthenticated /ws dial succeeded with API_TOKENS configured")
+	}
+
+	ticket, err := hub.IssueTicket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _, err := websocket.Dial(ctx, wsURL+"?ticket="+ticket, nil)
+	if err != nil {
+		t.Fatalf("ticketed /ws dial failed: %v", err)
+	}
+	_ = c.Close(websocket.StatusNormalClosure, "")
+
+	// Deprecated ?token= fallback accepts a named token.
+	c, _, err = websocket.Dial(ctx, wsURL+"?token=alice-secret", nil)
+	if err != nil {
+		t.Fatalf("named ?token= dial failed: %v", err)
+	}
+	_ = c.Close(websocket.StatusNormalClosure, "")
 }

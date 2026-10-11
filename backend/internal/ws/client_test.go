@@ -21,7 +21,7 @@ func TestServeWS_UnauthorizedRejection_IsJSON(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ws", nil)
 	w := httptest.NewRecorder()
 
-	ServeWS(hub, w, req, "s3cr3t", "*", nil)
+	ServeWS(hub, w, req, "s3cr3t", nil, "*", nil)
 
 	resp := w.Result()
 	if resp.StatusCode != 401 {
@@ -51,7 +51,7 @@ func TestServeWS_UnauthorizedRejection_IsJSON(t *testing.T) {
 func newTestWSServer(t *testing.T, hub *Hub, authToken, corsOrigins string) (*httptest.Server, string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ServeWS(hub, w, r, authToken, corsOrigins, nil)
+		ServeWS(hub, w, r, authToken, nil, corsOrigins, nil)
 	}))
 	t.Cleanup(srv.Close)
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")

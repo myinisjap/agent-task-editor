@@ -57,7 +57,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	costWarningSettingsH := handlers.NewCostWarningSettingsHandler(q)
 	modelPricingH := handlers.NewModelPricingHandler(q, db.SQL())
 	wsTicketH := handlers.NewWSTicketHandler(hub)
-	chatH := handlers.NewChatHandler(q, hub, term, bearerToken, corsOrigins)
+	chatH := handlers.NewChatHandler(q, hub, term, bearerToken, namedTokens, corsOrigins)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -68,14 +68,18 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	// WebSocket endpoint — mounted outside BearerAuth because browsers can't set
 	// request headers on a WS handshake. ServeWS performs its own auth check via
 	// a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket below)
-	// or, as a deprecated fallback, a constant-time compare against ?token=, so
-	// it is not left unauthenticated. Note: this only supports the single
-	// legacy bearerToken — it does not resolve named actors from namedTokens
-	// (out of scope; WS auth is not a human-triggered REST transition, so it
-	// doesn't need to record an actor).
+	// or, as a deprecated fallback, a constant-time compare against ?token=
+	// (legacy or named tokens), so it is not left unauthenticated. Auth is
+	// enforced when either API_TOKEN or API_TOKENS is configured. It doesn't
+	// resolve an actor name: WS auth is not a human-triggered REST transition.
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
-		ws.ServeWS(hub, w, req, bearerToken, corsOrigins, q)
+		ws.ServeWS(hub, w, req, bearerToken, namedTokens, corsOrigins, q)
 	})
+
+	// Chat terminal WebSocket — outside BearerAuth for the same reason as /ws:
+	// browsers can't send an Authorization header on a WS upgrade, so the
+	// handler enforces the single-use ?ticket= itself.
+	r.Get("/api/v1/chat/sessions/{id}/terminal", chatH.Terminal)
 
 	// Prometheus scrape endpoint — mounted outside the main API's BearerAuth
 	// group (and outside /api/v1) so self-hosters don't need to hand the
@@ -177,12 +181,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Interactive chat sessions — free-form conversations against a repo,
 			// separate from the task/workflow state machine (see agent.TerminalManager).
 			// The session's interactive CLI runs in a PTY streamed over the
-			// /terminal WebSocket (raw bytes, ?ticket= auth like /ws).
+			// /terminal WebSocket (raw bytes) is mounted above, outside this
+			// group, with ?ticket= auth like /ws.
 			r.Get("/chat/sessions", chatH.List)
 			r.Post("/chat/sessions", chatH.Create)
 			r.Get("/chat/sessions/{id}", chatH.Get)
 			r.Delete("/chat/sessions/{id}", chatH.Delete)
-			r.Get("/chat/sessions/{id}/terminal", chatH.Terminal)
 
 			// GitHub auth status (used by the frontend to warn when gh credentials are absent)
 			r.Get("/github/auth-status", handlers.GitHubAuthStatus)

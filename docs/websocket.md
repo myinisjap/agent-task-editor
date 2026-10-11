@@ -4,7 +4,7 @@ The WebSocket endpoint provides real-time updates for task state changes and liv
 
 ## Connection
 
-Browsers cannot set custom headers on a WebSocket upgrade request, so auth travels via the query string instead. If `API_TOKEN` is set, connect in two steps:
+Browsers cannot set custom headers on a WebSocket upgrade request, so auth travels via the query string instead. If `API_TOKEN` or `API_TOKENS` is set, connect in two steps:
 
 1. `POST /api/v1/ws-ticket` (normal Bearer auth) — mints a random, single-use ticket valid for ~30s:
    ```json
@@ -18,7 +18,9 @@ Browsers cannot set custom headers on a WebSocket upgrade request, so auth trave
 
 This keeps the long-lived `API_TOKEN` out of the WebSocket URL, since query strings are commonly captured by reverse-proxy access logs and browser history.
 
-**Deprecated fallback:** `ws://host/ws?token=<API_TOKEN>` still works (checked with a constant-time compare) for existing setups that haven't migrated, but it puts the durable token in the URL and may be removed in a future release. Prefer the ticket flow above. Each use of the fallback is logged server-side as a warning.
+**Deprecated fallback:** `ws://host/ws?token=<token>` (the `API_TOKEN` value or any `API_TOKENS` token) still works (checked with a constant-time compare) for existing setups that haven't migrated, but it puts the durable token in the URL and may be removed in a future release. Prefer the ticket flow above. Each use of the fallback is logged server-side as a warning.
+
+The chat terminal socket (`/api/v1/chat/sessions/{id}/terminal`) uses the same single-use `?ticket=` flow; it is served outside the Bearer middleware (like `/ws`) and enforces the ticket itself.
 
 The connection is kept alive with a server-side ping every 25 seconds. Each ping (and each outgoing message write) must complete within 10 seconds; if a peer doesn't respond in time (e.g. it's half-open — laptop sleep, NAT timeout, dropped proxy), the server closes the connection rather than waiting indefinitely.
 
