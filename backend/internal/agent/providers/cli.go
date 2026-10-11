@@ -56,11 +56,51 @@ func sanitizeArgs(args []string) []string {
 	return out
 }
 
-// dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.
+// dangerousEnvKeys are exact (upper-cased) names of user-supplied agent env
+// vars that could hijack process execution, interpreter startup or TLS trust.
+// Matching is case-insensitive; see isDangerousEnvKey.
+//
+// This filter applies ONLY to AgentConfig.Env (the provider config's env,
+// i.e. user-supplied values) inside mergeEnv. It never touches the backend's
+// inherited env (providerBaseEnv allowlist) or values the backend injects
+// itself (ANTHROPIC_AUTH_TOKEN, CODEX_HOME, DISABLE_AUTOUPDATER, ...), which
+// are appended outside mergeEnv.
+//
+// *_BASE_URL / *_API_BASE are deliberately NOT blocked here: the provider
+// config env is the only place an operator can point a CLI at LiteLLM,
+// OpenRouter, etc. Credential exfiltration through a custom base URL is
+// instead handled in claude.go by withholding backend-held Anthropic
+// credentials when the env overrides ANTHROPIC_BASE_URL.
 var dangerousEnvKeys = map[string]bool{
-	"PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true,
-	"HOME": true, "SHELL": true, "IFS": true,
-	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
+	"PATH": true, "HOME": true, "SHELL": true, "IFS": true,
+	"BASH_ENV": true, "ENV": true,
+	"NODE_OPTIONS": true, "NODE_PATH": true,
+	"PYTHONPATH": true, "PYTHONSTARTUP": true, "PYTHONHOME": true,
+	"PERL5LIB": true, "PERL5OPT": true,
+	"RUBYOPT": true, "RUBYLIB": true,
+	"JAVA_TOOL_OPTIONS": true, "_JAVA_OPTIONS": true,
+	// Trust-store hijack.
+	"SSL_CERT_FILE": true, "SSL_CERT_DIR": true, "NODE_EXTRA_CA_CERTS": true,
+	"REQUESTS_CA_BUNDLE": true, "CURL_CA_BUNDLE": true,
+}
+
+// dangerousEnvPrefixes are upper-case key prefixes that are always blocked
+// (dynamic-loader hooks and every git config/exec knob, e.g. GIT_SSH_COMMAND,
+// GIT_CONFIG_*, GIT_EXEC_PATH).
+var dangerousEnvPrefixes = []string{"LD_", "DYLD_", "GIT_"}
+
+// isDangerousEnvKey reports whether a user-supplied env key is blocked.
+func isDangerousEnvKey(k string) bool {
+	u := strings.ToUpper(k)
+	if dangerousEnvKeys[u] {
+		return true
+	}
+	for _, p := range dangerousEnvPrefixes {
+		if strings.HasPrefix(u, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultTestPoolEnv caps common JS test-runner worker/thread pools so a
@@ -90,7 +130,7 @@ func mergeEnv(base []string, extra map[string]string) []string {
 	out := make([]string, len(base))
 	copy(out, base)
 	for k, v := range extra {
-		if dangerousEnvKeys[strings.ToUpper(k)] {
+		if isDangerousEnvKey(k) {
 			slog.Warn("agent env: blocked dangerous key", "key", k)
 			continue
 		}

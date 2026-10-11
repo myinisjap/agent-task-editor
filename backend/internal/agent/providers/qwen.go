@@ -146,6 +146,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	// DISABLE_AUTOUPDATER, since QWEN_CLI_VERSION is pinned in
 	// backend/Dockerfile.
 	env := mergeEnv(providerBaseEnv(qwenEnvAllowlist), input.AgentConfig.Env)
+	if envOverridesKey(input.AgentConfig.Env, "OPENAI_BASE_URL") {
+		// Custom endpoint from the provider config: don't send the backend's
+		// own inherited OpenAI key there (a key the config supplies is kept).
+		env = dropInheritedEnv(env, input.AgentConfig.Env, "OPENAI_API_KEY")
+	}
 	env = append(env, "QWEN_CODE_SUPPRESS_YOLO_WARNING=1", "NO_UPDATE_NOTIFIER=1")
 
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)

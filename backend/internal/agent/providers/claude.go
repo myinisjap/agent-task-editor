@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -244,7 +245,13 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	defer cancel()
 
 	env := mergeEnv(providerBaseEnv(claudeEnvAllowlist), input.AgentConfig.Env)
-	if tok := ClaudeOAuthAccessToken(); tok != "" {
+	if envOverridesKey(input.AgentConfig.Env, "ANTHROPIC_BASE_URL") {
+		// The provider config redirects the CLI to a custom endpoint
+		// (LiteLLM, OpenRouter, ...). Never send backend-held Anthropic
+		// credentials there: drop the inherited ones and skip the host OAuth
+		// token. Credentials the provider config itself supplies are kept.
+		env = dropInheritedEnv(env, input.AgentConfig.Env, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+	} else if tok := ClaudeOAuthAccessToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
 	}
 	// Force-disabled: the CLI self-updating mid-run inside a container we
@@ -666,4 +673,39 @@ func buildClaudeSettingsJSON(enabledPlugins, commandAllowlist, commandDenylist [
 		return "", err
 	}
 	return string(data), nil
+}
+
+// envOverridesKey reports whether the user-supplied env sets key (given
+// upper-case) to a non-empty value, matching the key case-insensitively.
+func envOverridesKey(userEnv map[string]string, key string) bool {
+	for k, v := range userEnv {
+		if strings.EqualFold(k, key) && strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// dropInheritedEnv removes the named keys from env unless the user-supplied
+// env sets them itself (those entries are the operator's explicit choice).
+func dropInheritedEnv(env []string, userEnv map[string]string, keys ...string) []string {
+	userSet := map[string]bool{}
+	for k := range userEnv {
+		userSet[strings.ToUpper(k)] = true
+	}
+	drop := map[string]bool{}
+	for _, k := range keys {
+		if !userSet[k] {
+			drop[k] = true
+		}
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if drop[strings.ToUpper(name)] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }

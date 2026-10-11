@@ -222,6 +222,11 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	defer cancel()
 
 	env := mergeEnv(providerBaseEnv(codexEnvAllowlist), input.AgentConfig.Env)
+	if envOverridesKey(input.AgentConfig.Env, "OPENAI_BASE_URL") {
+		// Custom endpoint from the provider config: don't send the backend's
+		// own inherited OpenAI key there (a key the config supplies is kept).
+		env = dropInheritedEnv(env, input.AgentConfig.Env, "OPENAI_API_KEY")
+	}
 	if codexHome != nil {
 		env = append(env, "CODEX_HOME="+codexHome.HomeDir)
 	}

@@ -326,7 +326,7 @@ usage endpoint on every WS-triggered dashboard refresh.
 
 ## Environment Variable Security
 
-The `env` field on the referenced [Provider Config](../agents.md#provider-configs) passes extra vars to the subprocess. Dangerous keys (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`) are blocked and logged as warnings.
+The `env` field on the referenced [Provider Config](../agents.md#provider-configs) passes extra vars to the subprocess. Execution/trust-hijack keys are blocked and logged as warnings (key name only): `PATH`, `HOME`, `SHELL`, `IFS`, `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `NODE_PATH`, `PYTHONPATH`/`PYTHONSTARTUP`/`PYTHONHOME`, `PERL5LIB`/`PERL5OPT`, `RUBYOPT`/`RUBYLIB`, `JAVA_TOOL_OPTIONS`/`_JAVA_OPTIONS`, `SSL_CERT_FILE`/`SSL_CERT_DIR`/`NODE_EXTRA_CA_CERTS`/`REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE`, and anything starting with `LD_`, `DYLD_` or `GIT_`. `ANTHROPIC_BASE_URL` is allowed (LiteLLM/OpenRouter), but when it is set the backend's inherited `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` and the host Claude OAuth token are withheld so they are never sent to the custom endpoint; supply the key in the same `env`.
 
 ## Setup Checklist
 
