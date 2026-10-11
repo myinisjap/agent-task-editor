@@ -161,6 +161,10 @@ else
   # Prefer setpriv (ambient caps for the unprivileged server); probe first so a
   # restricted container (cap_drop, old util-linux) falls back instead of dying.
   CAPS=+setuid,+setgid,+kill
+  # Unlike gosu, setpriv does not touch HOME/USER; without this the server would
+  # keep root's HOME=/root and could not read its gitconfig (safe.directory),
+  # gh config or ~/.claude (the E2E job's repo registration failed on this).
+  export HOME=/home/node USER=node LOGNAME=node
   if command -v setpriv >/dev/null 2>&1 && \
      setpriv --reuid=node --regid=node --init-groups --inh-caps=$CAPS --ambient-caps=$CAPS true 2>/dev/null; then
     exec setpriv --reuid=node --regid=node --init-groups --inh-caps=$CAPS --ambient-caps=$CAPS "$@"

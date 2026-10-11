@@ -106,7 +106,7 @@ func Decide(in Inputs) Config {
 	if gid == 0 {
 		return off("AGENT_GID is 0; refusing to run agents in root's group")
 	}
-	if int(uid) == in.EUID {
+	if in.EUID >= 0 && uid == uint64(in.EUID) {
 		return off("the server already runs as AGENT_UID; nothing to switch")
 	}
 	// CAP_KILL is needed because the server cancels/times out runs by signalling
