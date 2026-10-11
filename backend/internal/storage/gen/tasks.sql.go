@@ -11,6 +11,69 @@ import (
 	"time"
 )
 
+const claimTaskActiveRunIfFree = `-- name: ClaimTaskActiveRunIfFree :execrows
+UPDATE tasks
+SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND label = ? AND active_agent_run_id IS NULL
+`
+
+type ClaimTaskActiveRunIfFreeParams struct {
+	CurrentAgentRunID *string `json:"current_agent_run_id"`
+	ActiveAgentRunID  *string `json:"active_agent_run_id"`
+	ID                string  `json:"id"`
+	Label             string  `json:"label"`
+}
+
+// Compare-and-swap acquire of the dispatch lock for the sweep: succeeds only
+// while the task is still on the label the caller read AND still has no active
+// run. Zero rows affected means the race was lost (a human moved the task, or
+// another dispatch took the lock first). Escalation bookkeeping uses
+// SetTaskActiveRun / SetTaskActiveRunOnly instead, which are unconditional.
+func (q *Queries) ClaimTaskActiveRunIfFree(ctx context.Context, arg ClaimTaskActiveRunIfFreeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimTaskActiveRunIfFree,
+		arg.CurrentAgentRunID,
+		arg.ActiveAgentRunID,
+		arg.ID,
+		arg.Label,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const claimTaskActiveRunIfHeldBy = `-- name: ClaimTaskActiveRunIfHeldBy :execrows
+UPDATE tasks
+SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND label = ? AND active_agent_run_id = ?
+`
+
+type ClaimTaskActiveRunIfHeldByParams struct {
+	CurrentAgentRunID  *string `json:"current_agent_run_id"`
+	ActiveAgentRunID   *string `json:"active_agent_run_id"`
+	ID                 string  `json:"id"`
+	Label              string  `json:"label"`
+	ActiveAgentRunID_2 *string `json:"active_agent_run_id_2"`
+}
+
+// Compare-and-swap hand-off of the dispatch lock for a human reply: succeeds
+// only while the task is still on the label the caller read AND the lock is
+// still held by the waiting run being replied to. Zero rows affected means the
+// race was lost (a concurrent reply already moved the lock, or the task moved).
+func (q *Queries) ClaimTaskActiveRunIfHeldBy(ctx context.Context, arg ClaimTaskActiveRunIfHeldByParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimTaskActiveRunIfHeldBy,
+		arg.CurrentAgentRunID,
+		arg.ActiveAgentRunID,
+		arg.ID,
+		arg.Label,
+		arg.ActiveAgentRunID_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const clearActiveAgentRun = `-- name: ClearActiveAgentRun :exec
 UPDATE tasks
 SET active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP

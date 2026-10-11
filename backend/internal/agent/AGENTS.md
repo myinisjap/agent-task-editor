@@ -308,7 +308,14 @@ same finding re-triggers a Worker forever. Two mechanisms in `pool.go` (the
 ## Dispatch / Active Run Locking
 
 `active_agent_run_id` prevents double-dispatch:
-- Dispatcher sets it when creating a run
+- Dispatcher sets it when creating a run, via a compare-and-swap
+  (`ClaimTaskActiveRunIfFree` for the sweep, `ClaimTaskActiveRunIfHeldBy` for a
+  human reply) inside `persistRunRow`'s transaction: the task must still be on
+  the label the dispatcher read and the lock must still be what it read. Zero
+  rows affected rolls back the just-created run row and returns
+  `ErrDispatchConflict` — the sweep skips silently (debug log) and the reply
+  handler returns 409. The unconditional `SetTaskActiveRun`/`SetTaskActiveRunOnly`
+  are only for escalation bookkeeping on a lock the run already owns.
 - Pool clears it on `failed` / `cancelled`, and on a `completed` run that has no
   resolvable outcome or whose transition is rejected
 - On a `completed` run that transitions, the pool does **not** pre-clear the

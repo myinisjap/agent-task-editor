@@ -2297,7 +2297,7 @@ paths:
                   run_id: { type: string, description: The continuation run's id. }
         "400": { description: Missing/empty message }
         "404": { description: Run not found or does not belong to the task }
-        "409": { description: Run is not the task's active waiting_human run, or no enabled agent config can serve the reply }
+        "409": { description: Run is not the task's active waiting_human run, no enabled agent config can serve the reply, or a concurrent reply/move changed the task first (the dispatch-lock claim lost the race) }
         "503": { description: Worker pool is saturated }
 
   /tasks/{id}/runs/{run_id}/logs:

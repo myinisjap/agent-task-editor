@@ -151,7 +151,7 @@ func (h *TasksHandler) ReplyRun(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		JSON(w, http.StatusAccepted, map[string]string{"run_id": newRunID})
-	case errors.Is(err, agent.ErrRunNotWaiting), errors.Is(err, agent.ErrNoMatchingConfig):
+	case errors.Is(err, agent.ErrRunNotWaiting), errors.Is(err, agent.ErrNoMatchingConfig), errors.Is(err, agent.ErrDispatchConflict):
 		Err(w, http.StatusConflict, err.Error())
 	case errors.Is(err, agent.ErrPoolSaturated):
 		Err(w, http.StatusServiceUnavailable, err.Error())
