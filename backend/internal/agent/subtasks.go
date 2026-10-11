@@ -80,7 +80,10 @@ func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task
 		// Parent gone (deleted/orphaned): nothing to merge back into. Tear the
 		// child's worktree down so we don't leak it.
 		if child.WorktreePath != "" {
+			gl := RepoGitLock(repoPath)
+			gl.Lock()
 			_ = RemoveWorktree(ctx, repoPath, child.WorktreePath)
+			gl.Unlock()
 		}
 		return
 	}

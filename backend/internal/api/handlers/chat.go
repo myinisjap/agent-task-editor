@@ -125,7 +125,10 @@ func (h *ChatHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if sess.WorktreePath != "" {
 		if repo, rerr := h.q.GetRepo(r.Context(), sess.RepoID); rerr == nil {
+			lock := agent.RepoGitLock(repo.Path)
+			lock.Lock()
 			_ = agent.RemoveWorktree(r.Context(), repo.Path, sess.WorktreePath)
+			lock.Unlock()
 		}
 	}
 	if err := h.q.DeleteChatSession(r.Context(), id); err != nil {

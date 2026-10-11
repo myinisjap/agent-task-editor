@@ -324,7 +324,11 @@ func (s *Syncer) cleanupMergedBranch(ctx context.Context, task gen.Task, repoPat
 	// OnTerminal hook by the time a PR is confirmed merged, but ghsync runs
 	// independently of the workflow engine, so don't assume that happened.
 	if task.WorktreePath != "" {
-		if err := agent.RemoveWorktree(ctx, repoPath, task.WorktreePath); err != nil {
+		lock := agent.RepoGitLock(repoPath)
+		lock.Lock()
+		err := agent.RemoveWorktree(ctx, repoPath, task.WorktreePath)
+		lock.Unlock()
+		if err != nil {
 			log.Warn("ghsync: remove worktree before branch delete", "err", err)
 			// Continue anyway — branch delete below will fail loudly (and be
 			// logged) if the worktree is in fact still attached.
