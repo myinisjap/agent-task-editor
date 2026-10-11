@@ -8,8 +8,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   codex_cli: 'Codex',
   qwen_code: 'Qwen',
   opencode: 'opencode',
-  anthropic: 'Anthropic API',
-  llm: 'LLM API',
 }
 
 /** Friendly provider name for the banner, falling back to the raw kind. */

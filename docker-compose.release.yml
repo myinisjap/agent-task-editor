@@ -81,12 +81,6 @@ services:
       # Optional: enables POST /api/v1/github/webhook (HMAC-signed GitHub
       # webhooks refresh PR state immediately; polling stays as fallback).
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
-      # Optional: use provider=anthropic in agent configs to call the API directly
-      # instead of the CLI (different billing — pay-per-token vs Claude Max)
-      # - LLM_API_KEY=sk-ant-...
-      # Local model via a separate container (OpenAI-compatible API, e.g. llama.cpp
-      # server). host.docker.internal reaches ports the model publishes on the host.
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8081/v1}
       # Optional: GitHub token as a fallback if ~/.config/gh isn't mounted.
       # gh CLI picks this up automatically; set it here to enable PR state sync
       # without mounting the gh config directory.

@@ -23,7 +23,7 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `templates.go` | `TemplatesHandler` | `gen.Queries` |
 | `dashboard.go` | `DashboardHandler` | `gen.Queries` |
 | `health.go` | `Health` func | none |
-| `health_providers.go` | `HealthHandler` | `gen.Queries`, mcp/repo/llm config, backup dir/interval/keep |
+| `health_providers.go` | `HealthHandler` | `gen.Queries`, mcp/repo config, backup dir/interval/keep |
 | `backup.go` | `BackupHandler` | `*storage.DB` |
 | `backup_settings.go` | `BackupSettingsHandler` | `gen.Queries` |
 | `workflow_yaml.go` | helpers for `WorkflowsHandler` | — |

@@ -19,7 +19,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
 | `timeout_secs` | Maximum run duration in seconds (0 = 600s default) |
-| `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default). Applies to `claude`, `qwen_code`, `anthropic`, and `llm` (see the capability table below — `codex_cli`/`opencode` don't enforce it). Hitting the cap **escalates the run to `waiting_human`** with an explanatory note rather than retrying — see [Retry Policy](#retry-policy) below. To tune this against reality rather than guesswork, each run records the turns it actually used (`turns_used` on the run object, surfaced in the task's run history and aggregated per agent config on the Dashboard). |
+| `max_turns` | Maximum agent turns/tool-call iterations per run (0 = 50 default). Applies to `claude` and `qwen_code` (see the capability table below — `codex_cli`/`opencode` don't enforce it). Hitting the cap **escalates the run to `waiting_human`** with an explanatory note rather than retrying — see [Retry Policy](#retry-policy) below. To tune this against reality rather than guesswork, each run records the turns it actually used (`turns_used` on the run object, surfaced in the task's run history and aggregated per agent config on the Dashboard). |
 | `max_retries` | Number of automatic consecutive retries allowed for a task after a **transient** provider error (rate limit, network blip, upstream 5xx) before it's left `failed`/escalated to `waiting_human`. `0` disables auto-retry. Default `3`. See [Retry Policy](#retry-policy) below. |
 | `retry_backoff_secs` | Base backoff, in seconds, before a transient-error retry becomes eligible for re-dispatch. Exponential backoff (`base * 2^attempt`, capped at 10 minutes) is applied on top. Default `30`. |
 | `enabled_plugins` | JSON array of Claude plugin IDs (`"<name>@<marketplace>"`) enabled for this config. **`claude` provider only.** Defaults to `[]` (all off). See [Claude Plugins & MCP Servers](#claude-plugins--mcp-servers) below. |
@@ -30,7 +30,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD (cumulative across all runs of a task, not per run), checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. On `claude`/`qwen_code`, also enforced mid-run as a kill switch that cancels an in-flight run over budget. See [Cost Budgets](#cost-budgets) below. |
-| `effort` | Optional reasoning effort level: `""` (default/unset), `low`, `medium`, `high`, `xhigh`, or `max`. **`claude` (full) and `codex_cli` (partial, clamped)** — see [Effort](#effort) below. Ignored by `qwen_code`, `opencode`, `anthropic`, and `llm`. |
+| `effort` | Optional reasoning effort level: `""` (default/unset), `low`, `medium`, `high`, `xhigh`, or `max`. **`claude` (full) and `codex_cli` (partial, clamped)** — see [Effort](#effort) below. Ignored by `qwen_code` and `opencode`. |
 
 ## Provider Configs
 
@@ -63,62 +63,50 @@ automatically migrated to their own dedicated provider config on upgrade
 | Provider string | Description | MCP Tools | Details |
 |---|---|---|---|
 | `claude` | Claude CLI subprocess (`claude -p ...`) | ✅ All 5 (MCP sidecar) | [providers/claude.md](providers/claude.md) |
-| `anthropic` **(deprecated)** | Anthropic Messages API (direct HTTP) | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/anthropic.md](providers/anthropic.md) |
 | `opencode` | Opencode CLI (`opencode run --format json`) | ❌ None | [providers/opencode.md](providers/opencode.md) |
 | `qwen_code` | Qwen Code CLI (`qwen -p ...`) | ✅ All 5 (MCP sidecar) | [providers/qwen_code.md](providers/qwen_code.md) |
 | `codex_cli` | Codex CLI (`codex exec --json ...`) | ✅ All 5 (MCP sidecar) | [providers/codex_cli.md](providers/codex_cli.md) |
-| `llm` **(deprecated)** | OpenAI-compatible API at `LLM_BASE_URL` | ⚠️ 4 of 5 native (no `resolve_comment`/`create_subtask`) | [providers/llm.md](providers/llm.md) |
 
-> **`anthropic` and `llm` are deprecated: disabled for new/updated provider configs and may be removed in a future
-> release.** They're no longer offered in the UI's provider dropdown, and `POST`/`PATCH` of a provider config using
-> either is rejected. Existing provider/agent configs already using them continue to dispatch, run, and report cost
-> as before. `llm` was previously also the catch-all for any unrecognized provider string (including the dead
-> `openai` dropdown alias); that fallback has been removed; an unrecognized provider string now fails the run
-> explicitly instead of silently being treated as an OpenAI-compatible call.
+> **`anthropic` and `llm` were removed in v0.17.0.** `POST`/`PATCH` of a provider config using either (or the old
+> `openai` alias) is rejected. Legacy configs that still reference them are kept, but their runs fail at dispatch:
+> the task escalates to `waiting_human` with "provider X was removed in v0.17.0; switch this agent config to
+> claude/codex_cli/opencode/qwen_code", and `GET /health/providers` reports a `removed_provider_X` error. An
+> unrecognized provider string is handled the same way.
 
 For per-provider deep-dives (credentials, tool availability, limitations, setup), see the [providers/](providers/) directory.
 
 ### Capability Matrix
 
-A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`codex_cli`); "native" means it's implemented directly in the Go tool-use loop (`anthropic`/`llm`, both **deprecated** — see the note above).
+A consolidated view of provider parity, replacing the scattered footnotes below. "MCP" means the tool is served over the `mcp-server` sidecar (`claude`/`qwen_code`/`codex_cli`).
 
 The table below is **generated** from [`frontend/src/lib/providerCapabilities.ts`](../frontend/src/lib/providerCapabilities.ts) — the same definition `AgentConfigForm`, `ProviderConfigForm`, and `CommandFilterEditor` read to surface these gaps inline in the UI at config time. Run `npm run gen:capability-docs` (from `frontend/`) after changing that file; do not hand-edit the table.
-
-Two rows below aren't config-gated capabilities (no corresponding form control) and are hand-maintained: **Repo-editing tools** and **`search`/grep-style tool**.
-
-| Capability | `claude` | `qwen_code` | `codex_cli` | `anthropic` | `llm` | `opencode` |
-|---|---|---|---|---|---|---|
-| Repo-editing tools | ✅ full CLI toolset | ✅ own CLI toolset | ✅ own CLI toolset | ⚠️ `read_file`/`write_file`/`str_replace`/`list_files`/`list_dir`/`search`/`run_bash` | ⚠️ same as `anthropic` | ✅ own (outside our control) |
-| `search`/grep-style tool | via CLI's own tools | via CLI's own tools | via CLI's own tools | ✅ `search` (ripgrep-backed) | ✅ `search` (ripgrep-backed) | via CLI's own tools |
 
 <!-- BEGIN capability-matrix (generated) -->
 
 _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capability-docs` — do not hand-edit._
 
-| Capability | `claude` | `qwen_code` | `codex_cli` | `anthropic` (deprecated) | `llm` (deprecated) | `opencode` |
-|---|---|---|---|---|---|---|
-| Task-editor tools (6: transitions, complete, request-human, notes, store-info, resolve-comment) | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ⚠️ 5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask). | ❌ No MCP tools — relies on a text OUTCOME: success/failure marker instead of task-editor tool calls. |
-| Label / workflow transitions | ✅ | ✅ | ✅ | ✅ signal_complete implemented natively. | ✅ signal_complete implemented natively. | ❌ Cannot signal workflow transitions via MCP tools; tasks handled by this agent may not move to the next label automatically. |
-| Plugins + user MCP servers | ✅ Supports Claude plugins and user-level MCP servers. | ❌ | ❌ | ❌ | ❌ | ❌ MCP servers / plugins are not supported by the opencode provider. |
-| Command allowlist | ⚠️ Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist instead. | ❌ Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect. Use the denylist instead. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
-| Command denylist | ✅ | ⚠️ Enforced via qwen's --exclude-tools flag (folds into its permissionsDeny policy), which is honored even under yolo mode. Per-pattern Bash(pattern) granularity mirrors --allowed-tools but has not been confirmed live for the deny path; if qwen only accepts bare tool names here, denial may degrade to blanket Bash exclusion. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ✅ Enforced in Go. | ✅ Enforced in Go. | ❌ Not enforced for the opencode provider. |
-| Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Tokens captured from turn.completed are priced via the pricing table (DB-backed, with a hardcoded fallback) — estimated, not authoritative like claude/opencode. The pre-dispatch max_cost_usd guard now works. Runs on an unpriced model are flagged "cost unknown" instead of $0. | ⚠️ Estimated from a pricing table, not authoritative. | ⚠️ Estimated from a pricing table, not authoritative. | ✅ Authoritative cost and token counts, read directly from the CLI's step_finish event (cost + tokens.input/output) — not estimated via a pricing table. |
-| Mid-run cost kill switch | ✅ Mid-run kill switch: projects cost from incremental assistant-message token usage via the pricing table and cancels the run if it crosses the effective budget, escalating to waiting_human. The projection is an estimate (not the CLI's own authoritative total_cost_usd, which is only known after the run ends) — under a subscription plan with $0 real marginal cost, this estimate can still be nonzero and trigger a kill. | ⚠️ Same mid-run kill switch mechanism as claude (projects cost from incremental token usage). Only effective when the configured model is in the pricing table — otherwise the watchdog is a silent no-op and only the pre-dispatch budget guard applies. | ❌ Not implemented — usage is only known at end-of-run for this provider, so mid-run cost can't be projected. Only the pre-dispatch budget guard applies. | ❌ No mid-run kill switch implemented — only the pre-dispatch budget guard applies. | ❌ No mid-run kill switch implemented — only the pre-dispatch budget guard applies. | ❌ Usage is now recorded at end-of-run (see costTracking), but no mid-run kill switch is wired up for this provider yet — step_finish only carries a cumulative-to-date snapshot, not the per-turn incremental usage a watchdog needs to project a running total. Only the pre-dispatch budget guard applies. |
-| Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ Not yet implemented. | ❌ Not yet implemented (backend-dependent). | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
-| `max_turns` | ✅ Enforced via --max-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ✅ Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
-| Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ✅ thread_id + codex exec resume. | ❌ Achievable (persist messages) but not yet implemented. | ❌ Achievable (persist messages) but not yet implemented. | ✅ sessionID + --session. |
-| Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. | ❌ No create_subtask tool — not available on this provider. |
-| Effort (reasoning level) | ✅ Passed as --effort. Supports low/medium/high/xhigh/max. Not all models support effort levels, and higher levels may be restricted by your Anthropic organization — either case degrades silently (the CLI only warns), so verify against the agent run logs. | ❌ No reasoning-effort flag on the qwen CLI — the field is ignored for this provider. | ⚠️ Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high. | ❌ Not implemented for this provider. | ❌ Not implemented for this provider. | ❌ No reasoning-effort flag on the opencode CLI — the field is ignored for this provider. |
-| Permission mode | ✅ Passed as --permission-mode. Leave as Default (unset) to keep today's behavior (no flag — the CLI's own "auto" classifier). command_denylist is still enforced even under bypassPermissions (verified empirically). | ❌ qwen_code always runs in --approval-mode yolo (full auto-approve) — always full bypass, not configurable per agent config. | ❌ codex_cli always runs with --dangerously-bypass-approvals-and-sandbox — always full bypass, not configurable per agent config. | ❌ Not applicable — this provider has no claude-CLI-style permission mode concept. | ❌ Not applicable — this provider has no claude-CLI-style permission mode concept. | ❌ No permission-mode flag on the opencode CLI — the field is ignored for this provider. |
+| Capability | `claude` | `qwen_code` | `codex_cli` | `opencode` |
+|---|---|---|---|---|
+| Task-editor tools (6: transitions, complete, request-human, notes, store-info, resolve-comment) | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ✅ All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled). | ❌ No MCP tools — relies on a text OUTCOME: success/failure marker instead of task-editor tool calls. |
+| Label / workflow transitions | ✅ | ✅ | ✅ | ❌ Cannot signal workflow transitions via MCP tools; tasks handled by this agent may not move to the next label automatically. |
+| Plugins + user MCP servers | ✅ Supports Claude plugins and user-level MCP servers. | ❌ | ❌ | ❌ MCP servers / plugins are not supported by the opencode provider. |
+| Command allowlist | ⚠️ Not an effective restriction for the claude provider: the CLI only auto-approves matches, it does not block non-matching commands. Use the denylist instead. | ❌ Not enforced for the qwen_code provider: qwen's --allowed-tools only bypasses confirmation, and the runner always passes --approval-mode yolo (auto-approve all tools), so allowlist entries have no effect. Use the denylist instead. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ❌ Not enforced for the opencode provider. |
+| Command denylist | ✅ | ⚠️ Enforced via qwen's --exclude-tools flag (folds into its permissionsDeny policy), which is honored even under yolo mode. Per-pattern Bash(pattern) granularity mirrors --allowed-tools but has not been confirmed live for the deny path; if qwen only accepts bare tool names here, denial may degrade to blanket Bash exclusion. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ❌ Not enforced for the opencode provider. |
+| Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Tokens captured from turn.completed are priced via the pricing table (DB-backed, with a hardcoded fallback) — estimated, not authoritative like claude/opencode. The pre-dispatch max_cost_usd guard now works. Runs on an unpriced model are flagged "cost unknown" instead of $0. | ✅ Authoritative cost and token counts, read directly from the CLI's step_finish event (cost + tokens.input/output) — not estimated via a pricing table. |
+| Mid-run cost kill switch | ✅ Mid-run kill switch: projects cost from incremental assistant-message token usage via the pricing table and cancels the run if it crosses the effective budget, escalating to waiting_human. The projection is an estimate (not the CLI's own authoritative total_cost_usd, which is only known after the run ends) — under a subscription plan with $0 real marginal cost, this estimate can still be nonzero and trigger a kill. | ⚠️ Same mid-run kill switch mechanism as claude (projects cost from incremental token usage). Only effective when the configured model is in the pricing table — otherwise the watchdog is a silent no-op and only the pre-dispatch budget guard applies. | ❌ Not implemented — usage is only known at end-of-run for this provider, so mid-run cost can't be projected. Only the pre-dispatch budget guard applies. | ❌ Usage is now recorded at end-of-run (see costTracking), but no mid-run kill switch is wired up for this provider yet — step_finish only carries a cumulative-to-date snapshot, not the per-turn incremental usage a watchdog needs to project a running total. Only the pre-dispatch budget guard applies. |
+| Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ❌ codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md. | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
+| `max_turns` | ✅ Enforced via --max-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ❌ Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
+| Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ✅ thread_id + codex exec resume. | ✅ sessionID + --session. |
+| Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. |
+| Effort (reasoning level) | ✅ Passed as --effort. Supports low/medium/high/xhigh/max. Not all models support effort levels, and higher levels may be restricted by your Anthropic organization — either case degrades silently (the CLI only warns), so verify against the agent run logs. | ❌ No reasoning-effort flag on the qwen CLI — the field is ignored for this provider. | ⚠️ Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high. | ❌ No reasoning-effort flag on the opencode CLI — the field is ignored for this provider. |
+| Permission mode | ✅ Passed as --permission-mode. Leave as Default (unset) to keep today's behavior (no flag — the CLI's own "auto" classifier). command_denylist is still enforced even under bypassPermissions (verified empirically). | ❌ qwen_code always runs in --approval-mode yolo (full auto-approve) — always full bypass, not configurable per agent config. | ❌ codex_cli always runs with --dangerously-bypass-approvals-and-sandbox — always full bypass, not configurable per agent config. | ❌ No permission-mode flag on the opencode CLI — the field is ignored for this provider. |
 
 <!-- END capability-matrix (generated) -->
 
 Notes:
-- `anthropic`/`llm` gained `get_task_transitions`, `list_dir`, `search`, and `str_replace` as native tools; `signal_complete` now takes `outcome: "success"|"failure"` — identical to the MCP version (previously it took a raw `next_label`, which was a bug: the schema advertised `next_label` but the implementation always read `outcome`, silently dropping the model's completion signal).
 - `opencode`'s MCP-via-project-config path (writing a per-run `opencode.json` pointing at the same sidecar) is unexplored; see the provider doc for current status. Until proven out, treat `opencode` as the chat-grade/experimental tier of the providers above.
-- Image attachments and session-continuity-via-persisted-messages for `anthropic`/`llm` are tracked as follow-up work, not implemented here.
 - **Session resume works for `claude`, `qwen_code`, `codex_cli`, and `opencode`.** `Dispatcher.resolveAgentConfig` looks up a prior session for any provider `providerSupportsResume` recognizes, and each of those four runners already records the right session/thread id and passes the CLI's resume flag correctly.
-- **`max_turns` is not enforced on every provider.** `claude` (`--max-turns`), `qwen_code` (`--max-session-turns`), and `anthropic`/`llm` (the Go tool-use loop) honor it. `codex_cli` and `opencode` have no turn-cap flag, so the field is stored but has no effect — on those two, only the agent config's run timeout bounds a run.
+- **`max_turns` is not enforced on every provider.** `claude` (`--max-turns`) and `qwen_code` (`--max-session-turns`) honor it. `codex_cli` and `opencode` have no turn-cap flag, so the field is stored but has no effect — on those two, only the agent config's run timeout bounds a run.
 
 ## Dispatcher
 
@@ -239,14 +227,12 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 |---|---|---|
 | `claude` | CLI's own `result` stream-json message (`usage` + `total_cost_usd`) | Authoritative — the CLI itself knows whether you're on a Claude Max subscription (often `$0`) or metered API billing, so `cost_usd` is used as-is, not estimated. |
 | `qwen_code` | Same `result` envelope parsing as `claude` (`classifyStreamJSON`) | Token counts are authoritative, but the Qwen Code CLI reports **no cost figure at all** — `cost_usd` is left at `0` for this provider (not estimated, not flagged `cost_unknown`). See [providers/qwen_code.md](providers/qwen_code.md#cost--usage-reporting). |
-| `anthropic` | Messages API `usage` field, summed across every turn of the agentic loop | `cost_usd` is *estimated* by multiplying tokens by a USD-per-1M-token price. A model's price comes from the user-editable `model_pricing` table (`GET`/`PUT /api/v1/settings/pricing`, see below) if present, otherwise from a small hardcoded fallback map (`internal/agent/providers/pricing.go`). A model in neither is left at `cost_usd = 0` and the run is flagged `cost_unknown = true` rather than silently reported as free. |
-| `llm` | OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`), summed across every turn | Same estimation approach and pricing table as `anthropic`. |
 | `opencode` | CLI's `step_finish` event (`part.cost` + `part.tokens.{input,output}`) | Authoritative — `cost` is reported directly by the CLI, not estimated. `step_finish` fires per step, not once per run; the runner takes the *last* step_finish's values (assumed cumulative-to-date, mirroring opencode's own session-level SQLite schema) rather than summing across steps. See [providers/opencode.md](providers/opencode.md#cost--usage-reporting). |
-| `codex_cli` | CLI's `turn.completed` JSONL event (`usage.input_tokens`/`usage.output_tokens`) | The Codex CLI's JSON output reports no cost figure, so token counts are priced through the same estimation path (and pricing table) as `anthropic`/`llm`. A model in neither the DB-backed `model_pricing` table nor the hardcoded fallback map leaves `cost_usd = 0` and flags the run `cost_unknown = true`, same as `anthropic`/`llm`. |
+| `codex_cli` | CLI's `turn.completed` JSONL event (`usage.input_tokens`/`usage.output_tokens`) | The Codex CLI's JSON output reports no cost figure, so token counts are priced through an estimation path using the DB-backed `model_pricing` table (falling back to a hardcoded map). A model in neither leaves `cost_usd = 0` and flags the run `cost_unknown = true`. |
 
 ### Editable pricing table
 
-The `anthropic`/`llm` cost estimate is driven by a per-model USD-per-1M-token
+The `codex_cli` cost estimate is driven by a per-model USD-per-1M-token
 price, stored in the DB-backed `model_pricing` table and editable from
 **Configuration → Pricing** in the UI (or directly via `GET`/`PUT
 /api/v1/settings/pricing`). The table is seeded on first migration from the
@@ -263,7 +249,7 @@ or missing price is visible rather than mistaken for a genuinely free run.
 authoritative. `qwen_code` also never sets `cost_unknown`, but for the
 opposite reason: the CLI reports no cost figure at all, so `cost_usd` is
 just left at `0` rather than estimated or flagged. `codex_cli` prices its
-captured tokens the same way as `anthropic`/`llm` and can set
+captured tokens through this table and can set
 `cost_unknown` for an unpriced model.
 
 The Dashboard shows an aggregate total (tokens + cost) across all runs in a terminal state (`completed`/`failed`/`waiting_human`), plus a per-provider breakdown (via `provider_configs.provider`, joined `agent_runs.agent_config_id` → `agent_configs` → `agent_configs.provider_config_id` → `provider_configs`). The aggregate total query does not join on `agent_configs`, so it includes every terminal run regardless of its config. The per-provider breakdown *does* join on `agent_configs`/`provider_configs`, so runs whose agent config was later deleted (`agent_config_id` is set `NULL` on delete) are excluded from that breakdown, since they can no longer be attributed to a provider — a known limitation.
@@ -418,10 +404,9 @@ Two consequences:
   pre-dispatch guard is the only enforcement for that run (and it, too, may
   under-report if the model's cost was never priced on prior runs).
 
-Providers without mid-run priced usage — `codex_cli`, `opencode`, and the
-deprecated `anthropic`/`llm` providers — do **not** support the mid-run kill
-switch (`codex_cli` now prices its captured tokens via the same pricing
-table as `anthropic`/`llm` — see [Cost & Usage
+Providers without mid-run priced usage — `codex_cli` and `opencode` — do **not** support the mid-run kill
+switch (`codex_cli` prices its captured tokens via the pricing
+table — see [Cost & Usage
 Tracking](#cost--usage-tracking) above — but only once the full
 `turn.completed` event arrives at the end of a run, not incrementally, so
 there's nothing for a mid-run watchdog to project against;
@@ -576,7 +561,7 @@ Matrix](#capability-matrix) above):
   equivalent tier for) are clamped down to `high` rather than passed
   through unrecognized.
 
-- **`qwen_code`, `opencode`, `anthropic`, `llm` — not supported.** No
+- **`qwen_code`, `opencode` — not supported.** No
   reasoning-effort flag or config knob on any of these; the field is
   simply ignored.
 
@@ -772,7 +757,7 @@ For the `claude` provider only, each agent config can select which Claude Code p
 - **Enforcement at run time (`claude.go`):**
   - Plugins: the `claude` CLI is invoked with `--settings '{"enabledPlugins": {...}}'`, built by defaulting every discovered plugin to `false` and then setting `true` only for IDs present in `enabled_plugins`. A plugin selected but not present in the current discovery snapshot is still explicitly enabled (stale-inventory fallback).
   - MCP servers: for each name in `enabled_mcp_servers` (skipping the reserved `task-editor` name), its raw config entry is read from `~/.claude.json`'s global `mcpServers` map and merged into the `--mcp-config` file alongside the task-editor sidecar entry. A bare `mcp__<server>` entry is appended to `--allowedTools` per selected server so its tools aren't blocked — this wildcarding behavior is inferred from CLI docs and worth re-verifying against a live run if MCP tool calls are unexpectedly denied.
-- **Scope:** this is currently `claude`-provider-only. Other providers (`anthropic`, `opencode`, `qwen_code`, `codex_cli`, generic `llm`) have the same DB columns available but ignore them entirely.
+- **Scope:** this is currently `claude`-provider-only. Other providers (`opencode`, `qwen_code`, `codex_cli`) have the same DB columns available but ignore them entirely.
 
 ## Command Allowlist / Denylist
 
@@ -806,7 +791,6 @@ concatenation, base64-decoded payloads, etc).
 
 | Provider | Enforcement |
 |---|---|
-| `anthropic`, `llm` | Enforced in Go, in `executeLLMTool`, immediately before spawning the `run_bash` subprocess. Both allowlist and denylist fully supported. |
 | `claude` | Enforced natively by the `claude` CLI via `permissions.allow`/`permissions.deny` in the `--settings` JSON (same `Bash(pattern)` syntax as `--allowedTools`/`--disallowedTools`). Both allowlist and denylist supported; smoke-tested against a live `claude` binary. |
 | `qwen_code` | `command_allowlist` is **not enforced** — qwen's `--allowed-tools` only bypasses its confirmation prompt (it doesn't restrict anything), and this runner always passes `--approval-mode yolo` (auto-approve all tools) on top, making an allowlist moot either way. `command_denylist` **is enforced** via `--exclude-tools Bash(pattern)` entries, which qwen folds into its `permissionsDeny` policy (honored even under `yolo`); the exact pattern-matching granularity on this flag hasn't been confirmed against a live run, so treat per-pattern denial as best-effort. See [providers/qwen_code.md](providers/qwen_code.md). |
 | `opencode` | **Not enforced at all** — opencode has no Bash tool wired up server-side; it manages tool permissions via its own global config. |
@@ -858,7 +842,7 @@ so humans aren't paged for problems that will resolve themselves:
   dispatches for a backoff window (protects shared credentials/quota) **and**
   counts against the *specific task's* retry budget.
 - **Turn-limit exhaustion** — the agent hit its configured `max_turns` cap
-  without finishing (`claude`, `qwen_code`, `anthropic`, `llm`; see the
+  without finishing (`claude`, `qwen_code`; see the
   [`max_turns` field](#fields) above). This is neither a genuine failure nor
   a transient one: the agent didn't fail at the work, it was cut off by a
   limit the operator set on purpose. Re-dispatching would silently hand the
@@ -885,8 +869,7 @@ binary resolution and credential/config lookup, a few locale/proxy/TLS-trust
 vars, and that provider's specific API-key/base-URL vars — see
 [docs/providers/README.md § Subprocess environment](providers/README.md#subprocess-environment)
 and each provider's own doc for the exact list) plus whatever is set via the
-`env` field above. Backend-only secrets like `LLM_API_KEY` (used by the
-deprecated `llm`/`anthropic` providers) or the API's own `API_TOKEN` are
+`env` field above. Backend-only secrets like the API's own `API_TOKEN` are
 never visible to an agent subprocess unless explicitly re-exposed via `env`.
 If an agent needs a value that isn't on its provider's allowlist, set it via
 `env` rather than relying on it being present in the backend's process

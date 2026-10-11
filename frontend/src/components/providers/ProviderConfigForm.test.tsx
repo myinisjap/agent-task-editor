@@ -13,10 +13,10 @@ import type { ProviderConfig } from '../../api/client'
 // save of any unrelated field, which is the whole "existing configs keep
 // working" guarantee this deprecation depends on.
 
-function Harness({ initialProvider }: { initialProvider: FormState['provider'] }) {
+function Harness({ initialProvider }: { initialProvider: string }) {
   const [form, setForm] = useState<FormState>({
     name: 'legacy-anthropic',
-    provider: initialProvider,
+    provider: initialProvider as FormState['provider'],
     model: 'claude-3-opus',
     env: '{}',
   })
@@ -47,7 +47,7 @@ function Harness({ initialProvider }: { initialProvider: FormState['provider'] }
   )
 }
 
-describe('ProviderConfigForm — deprecated provider round-trip', () => {
+describe('ProviderConfigForm — removed provider round-trip', () => {
   it('keeps an existing anthropic config on "anthropic" after editing an unrelated field', async () => {
     const user = userEvent.setup()
     render(<Harness initialProvider="anthropic" />)
@@ -60,8 +60,8 @@ describe('ProviderConfigForm — deprecated provider round-trip', () => {
     expect(screen.getByTestId('current-provider').textContent).toBe('anthropic')
 
     // A deprecation warning should be visible (the warning <p>, distinct
-    // from the disabled "(deprecated)" dropdown option's label text).
-    expect(screen.getByText(/is deprecated, disabled for new configs/i)).toBeInTheDocument()
+    // from the disabled "(removed)" dropdown option's label text).
+    expect(screen.getByText(/was removed in v0.17.0/i)).toBeInTheDocument()
 
     // Edit an unrelated field (name) — the provider must not change as a
     // side effect.
@@ -75,7 +75,7 @@ describe('ProviderConfigForm — deprecated provider round-trip', () => {
 
   it('does not show a deprecation warning for a supported provider', () => {
     render(<Harness initialProvider="claude" />)
-    expect(screen.queryByText(/is deprecated, disabled for new configs/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/was removed in v0.17.0/i)).not.toBeInTheDocument()
     const [select] = screen.getAllByRole('combobox') as HTMLSelectElement[]
     expect(select.value).toBe('claude')
   })

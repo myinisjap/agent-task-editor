@@ -1,105 +1,13 @@
-# Provider: `llm` (OpenAI-Compatible API)
+# Provider: `llm` (removed)
 
-> **Deprecated — disabled for now and may be removed in a future release.** `POST`/`PATCH` of a provider config
-> with `provider: "llm"` (or the `openai` alias below) is rejected; neither is offered in the UI's provider
-> dropdown anymore. Existing provider/agent configs already using `llm` continue to dispatch and run as described
-> below — this page remains for anyone maintaining one of those configs.
+> **Removed in v0.17.0.** The `llm` provider no longer exists. Creating or switching a provider config to it is
+> rejected with `400`. Existing provider/agent configs that still reference it are kept in the database (nothing
+> is deleted), but any run for such a config fails at dispatch: the task escalates to `waiting_human` with
+> "provider llm was removed in v0.17.0; switch this agent config to claude/codex_cli/opencode/qwen_code", the Health
+> page shows a `removed_provider_llm` error, and the provider dropdown flags the config as removed.
+>
+> To migrate, open the config on the Providers page and switch it to [`claude`](claude.md),
+> [`codex_cli`](codex_cli.md), [`opencode`](opencode.md) or [`qwen_code`](qwen_code.md), then reply to the
+> escalated task to resume it. `LLM_API_KEY` and `LLM_BASE_URL` are no longer read by the backend.
 
-The `llm` provider calls any OpenAI-compatible REST endpoint. Historically it was also the catch-all backend for any provider string that didn't match a known provider — that fallback has been removed; an unrecognized provider string now fails the run explicitly instead of silently being dispatched as an OpenAI-compatible call. Like the (also deprecated) `anthropic` provider, it uses a native Go tool-use loop — no CLI binary needed.
-
-## Provider String
-
-`llm`, or the historical `openai` alias for the same code path — both deprecated (see above):
-
-```
-"provider": "llm"
-"provider": "openai"
-```
-
-## How It Works
-
-Makes HTTP calls to `POST <LLM_BASE_URL>/chat/completions` using the OpenAI chat completions format. Runs a tool-use loop (up to `max_turns` turns, default `50`) until the model calls `signal_complete` or `request_human`, or runs out of turns. The turn limit is configurable per agent config via the `max_turns` field (`0`/unset falls back to `50`).
-
-The provider string and model come from the agent config's referenced [Provider Config](../agents.md#provider-configs) (`provider_config_id`), not the agent config itself.
-
-## Credentials
-
-**Required:**
-- `LLM_API_KEY` — sent as `Authorization: Bearer <key>`
-- `LLM_BASE_URL` — defaults to `https://api.openai.com/v1`; override to point at any compatible API
-
-```bash
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=sk-...
-```
-
-## Compatible Backends
-
-| Backend | `LLM_BASE_URL` |
-|---|---|
-| OpenAI | `https://api.openai.com/v1` (default) |
-| Azure OpenAI | `https://<resource>.openai.azure.com/openai/deployments/<model>` |
-| Ollama (local) | `http://localhost:11434/v1` |
-| LM Studio | `http://localhost:1234/v1` |
-| Any OpenAI-compat API | Set accordingly |
-
-## MCP Tools
-
-**Not supported.** No CLI binary is invoked, so no `--mcp-config` is possible. Equivalent functionality — including `get_task_transitions` and `signal_complete(outcome, summary)` with the same `outcome: "success"|"failure"` shape as MCP — is provided natively via the tool-use loop. `resolve_comment` and `create_subtask` are not available natively. See [agents.md](../agents.md) for full MCP-vs-native parity across providers.
-
-## Native Tools Available to Agent
-
-| Tool | Description |
-|---|---|
-| `read_file(path)` | Read a file from the repo |
-| `write_file(path, content)` | Write/overwrite a file |
-| `str_replace(path, old, new)` | Replace a substring in a file; `old` must match exactly once, or the call fails |
-| `list_files(path?)` | List a single directory's immediate contents |
-| `list_dir(path?)` | Recursively list files/dirs under path (skips `.git`, `node_modules`, and other dotdirs; capped at 2000 entries) |
-| `search(pattern, glob?)` | Search the repo with ripgrep (`rg`), optionally restricted to files matching `glob`; capped at 1&nbsp;MB of output |
-| `run_bash(command)` | Run a shell command |
-| `get_task_transitions()` | List available workflow transitions from the task's current label |
-| `store_info(info)` | Store run summary |
-| `update_task_notes(notes, append?)` | Write agent notes |
-| `signal_complete(outcome, summary)` | Complete the run; `outcome` is `"success"` or `"failure"` and the label is resolved automatically, same as MCP |
-| `request_human(message)` | Pause for human input |
-
-`search` requires `ripgrep` (`rg`) on `PATH`; the backend Docker image installs it by default. If `rg` isn't found, the tool returns `error: ripgrep (rg) not found on PATH` rather than failing the run. `search`, `list_dir`, and `list_files` are read-only and are **not** gated by the command allowlist/denylist (same treatment as `read_file`); `run_bash` is the only tool subject to that policy.
-
-## Command Allowlist / Denylist
-
-`command_allowlist` and `command_denylist` (JSON arrays of `"*"`-wildcard glob
-patterns on the agent config — workflow-behavior fields, not part of the
-Provider Config — both defaulting to `[]`/no restriction) are enforced
-server-side, in Go, immediately before a `run_bash` call is executed: the denylist is
-checked first and always wins; if the allowlist is non-empty, the command must also
-match at least one allow pattern. A denied command returns an `error: ...` string to
-the model instead of running.
-
-This is **best-effort string matching against the full command line, not a sandbox**
-— it does not prevent constructing a denied command indirectly (e.g. via `$()`,
-backticks, string concatenation, or encoded payloads). It reduces the blast radius of
-a straightforwardly misbehaving or prompt-injected agent, not a determined one.
-
-## Image Attachments
-
-Not supported.
-
-## Model Selection
-
-Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) (e.g. `gpt-4o`, `gpt-4o-mini`, `llama3.2`). Passed directly to the API.
-
-## Cost & Usage Reporting
-
-Token usage (`input_tokens`/`output_tokens`) is summed from the response's OpenAI-compatible `usage` field (`prompt_tokens`/`completion_tokens`) across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens against the user-editable pricing table (`GET`/`PUT /api/v1/settings/pricing`, Configuration → Pricing in the UI), falling back to a small hardcoded map (`internal/agent/providers/pricing.go`) for any model with no matching row — accuracy depends on the model ID matching an entry in one of the two. A model matching neither has that run's `cost_unknown` flag set instead of silently showing `$0`. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
-
-**Mid-run cost kill switch: not supported.** No watchdog wiring for this (deprecated) provider — `max_cost_usd` only prevents the *next* dispatch once already exhausted. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
-
-## Rate Limit Handling
-
-Detects HTTP 429 responses. Reads `x-ratelimit-reset-requests`, `x-ratelimit-reset-tokens`, and `retry-after` headers to determine when to retry.
-
-## Setup Checklist
-
-1. Set `LLM_BASE_URL` and `LLM_API_KEY`
-2. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "llm"` (or any non-reserved string) and the desired `model`, then an agent config referencing it via `provider_config_id`
+The historical `openai` provider alias (which mapped to this provider) is removed along with it.

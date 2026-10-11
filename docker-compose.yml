@@ -87,12 +87,6 @@ services:
       # Optional: enables POST /api/v1/github/webhook (HMAC-signed GitHub
       # webhooks refresh PR state immediately; polling stays as fallback).
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
-      # Optional: use provider=anthropic in agent configs to call the API directly
-      # instead of the CLI (different billing — pay-per-token vs Claude Max)
-      # - LLM_API_KEY=sk-ant-...
-      # Local model via a separate container (OpenAI-compatible API, e.g. llama.cpp
-      # server). host.docker.internal reaches ports the model publishes on the host.
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8081/v1}
       # qwen_code provider config. Not the shared host ~/.qwen (whose baseUrl is
       # localhost:8081 — the backend itself, from in here). QWEN_HOME points qwen
       # at the mounted /etc/qwen/settings.json instead; QWEN_RUNTIME_DIR sends

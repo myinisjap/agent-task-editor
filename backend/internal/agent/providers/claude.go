@@ -27,7 +27,7 @@ type ClaudeRunner struct {
 	// token is a per-run scoped one minted in MCPManager.Prepare.
 	BackendURL string
 	// PriceResolver resolves model to USD-per-1M pricing for the mid-run cost
-	// watchdog (see cost_watchdog.go). Unlike anthropic/llm, claude's own
+	// watchdog (see cost_watchdog.go). claude's own
 	// terminal total_cost_usd is authoritative and always used for the final
 	// persisted Result.CostUSD — this resolver is only consulted to *project*
 	// cost from incremental token usage while the run is still in flight.

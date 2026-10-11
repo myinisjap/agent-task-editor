@@ -553,10 +553,10 @@ using the same matcher the importer/scheduler call at runtime.
 | `completed_at` | RFC3339? | When the run finished |
 | `input_tokens` | integer | Total input/prompt tokens consumed across the run (summed across all turns); `0` if the provider doesn't report usage |
 | `output_tokens` | integer | Total output/completion tokens consumed across the run |
-| `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`opencode`; estimated from tokens against the user-editable pricing table (falling back to an internal hardcoded table) for `codex_cli`/`anthropic`/`llm`; always `0` for `qwen_code`, which reports tokens but no cost figure at all. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
-| `cost_unknown` | integer | `1` if tokens were consumed but no pricing table row matched the model, so `cost_usd` was left at `0` as a placeholder rather than a computed figure. Only applies to the `codex_cli`/`anthropic`/`llm` estimation path. `0` otherwise — including for `claude`/`opencode` (whose `cost_usd`, even a legitimate `0` under a subscription plan, is always authoritative) and for `qwen_code` (which never reports a cost figure to estimate against). |
+| `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`opencode`; estimated from tokens against the user-editable pricing table (falling back to an internal hardcoded table) for `codex_cli`; always `0` for `qwen_code`, which reports tokens but no cost figure at all. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
+| `cost_unknown` | integer | `1` if tokens were consumed but no pricing table row matched the model, so `cost_usd` was left at `0` as a placeholder rather than a computed figure. Only applies to the `codex_cli` estimation path. `0` otherwise — including for `claude`/`opencode` (whose `cost_usd`, even a legitimate `0` under a subscription plan, is always authoritative) and for `qwen_code` (which never reports a cost figure to estimate against). |
 | `session_id` | string | Provider-side conversation session for this run (claude/qwen stream-json `session_id`); used to resume the session on a later run (see [agents.md § Session Resume](agents.md#session-resume)). Empty when the provider has no session |
-| `turns_used` | integer | Internal agent turns this run actually consumed, to compare against the agent config's `max_turns` cap. `0` means *not reported*, never "zero turns": only `claude`/`qwen_code` (from the CLI stream-json result event's `num_turns`) and `anthropic`/`llm` (from their own agentic loop counter) report a real count; `codex_cli`/`opencode` expose no comparable figure and always leave it `0`. The count is never estimated |
+| `turns_used` | integer | Internal agent turns this run actually consumed, to compare against the agent config's `max_turns` cap. `0` means *not reported*, never "zero turns": only `claude`/`qwen_code` (from the CLI stream-json result event's `num_turns`) report a real count; `codex_cli`/`opencode` expose no comparable figure and always leave it `0`. The count is never estimated |
 
 ### `GET /tasks/{id}/runs`
 List a page of agent runs for a task (newest first) — cursor-paginated on
@@ -984,7 +984,7 @@ Returns aggregated statistics:
   (`avg_turns_used` / `p90_turns_used`), alongside the config's current
   `max_turns` cap, so the cap can be tuned against real usage rather than
   guesswork. Both turn aggregates average only over runs that actually
-  reported a count: `claude`/`qwen_code` and `anthropic`/`llm` report one,
+  reported a count: `claude`/`qwen_code` report one,
   while `codex_cli`/`opencode` expose no comparable figure and are excluded
   rather than counted as zero (see `turns_used` on the run object);
   a transient-retry snapshot (`avg_transient_retries`, `tasks_with_retries`);
@@ -1238,8 +1238,9 @@ list of checks:
   fields read `0` when that cap isn't configured, and `tripped` is always
   `false` in that case.
 - `hint` is a one-line fix, present whenever `status` is not `ok`.
-- Checks covered: the `claude` CLI (present + authenticated), API keys for the
-  `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for
+- Checks covered: the `claude` CLI (present + authenticated), an error per removed
+  provider (`removed_provider_anthropic`/`_llm`/`_openai`) still used by an enabled
+  agent config, `qwen`/`opencode` binaries (only emitted for
   providers actually referenced by an **enabled** agent config or a chat
   session, via their Provider Config — an unused/disabled Provider Config
   doesn't produce a check), the MCP sidecar binary
@@ -1360,13 +1361,13 @@ calls these endpoints. See [backup.md](backup.md#changing-the-intervalretention-
 
 ### `GET /settings/pricing` / `PUT /settings/pricing`
 Reads/replaces the user-editable per-model USD-per-1M-token pricing table
-used to estimate `anthropic`/`llm` run costs (see [agents.md § Editable
+used to estimate `codex_cli` run costs (see [agents.md § Editable
 pricing table](agents.md#editable-pricing-table)). `GET` returns every row,
 ordered by model. `PUT` replaces the *entire* table with the submitted array
 in a single transaction — add/remove/edit a model are all expressed
 client-side as a new full list. Rejects an empty or duplicate `model`, or a
 negative `input_per_1m`/`output_per_1m`, with `400`. Takes effect on the very
-next `anthropic`/`llm` run completion without a restart. A model not listed
+next run completion without a restart. A model not listed
 here falls back to a small hardcoded table; a model matching neither has
 that run's `cost_unknown` flag set to `1` instead of a silent `$0` (see the
 `AgentRun` object above).

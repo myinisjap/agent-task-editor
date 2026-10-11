@@ -10,7 +10,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [getting-started.md](getting-started.md) | Installation, environment variables, and first steps |
 | [workflows.md](workflows.md) | Workflow state machine: labels, transitions, approve/reject |
 | [agents.md](agents.md) | Agent configs, providers, dispatcher, worker pool, prompt construction |
-| [providers/](providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code`, plus the deprecated `anthropic`/`llm` (credentials, MCP support, limitations) |
+| [providers/](providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code`, (credentials, MCP support, limitations) |
 | [mcp-tools.md](mcp-tools.md) | MCP sidecar tool reference (for `claude`, `qwen_code`, and `codex_cli` providers) |
 | [runtime.md](runtime.md) | Per-repo agent toolchains via `mise`/`uv` — language version pins, detection, fail-closed behavior |
 | [board-mcp.md](board-mcp.md) | Standalone MCP server for creating board tickets from a chat client (e.g. Claude Desktop) |

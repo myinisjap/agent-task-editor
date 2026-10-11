@@ -47,8 +47,6 @@ type HealthHandler struct {
 	db              *storage.DB
 	mcpBinary       string
 	repoBaseDir     string
-	llmBaseURL      string
-	llmAPIKey       string
 	backupDir       string
 	backupInterval  time.Duration
 	backupKeep      int
@@ -90,14 +88,12 @@ func (h *HealthHandler) SetAuthInfo(authConfigured bool, listenAddr string) {
 // if it also implements GlobalCostReporter (as *agent.Dispatcher does), the
 // global cost-ceiling snapshot surfaced on Readyz/Providers; it may be nil
 // (e.g. in tests), in which case those checks are skipped/omitted.
-func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int, version string, checkForUpdates bool, dispatcher DispatcherLiveness) *HealthHandler {
+func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, backupDir string, backupInterval time.Duration, backupKeep int, version string, checkForUpdates bool, dispatcher DispatcherLiveness) *HealthHandler {
 	h := &HealthHandler{
 		q:               q,
 		db:              db,
 		mcpBinary:       mcpBinary,
 		repoBaseDir:     repoBaseDir,
-		llmBaseURL:      llmBaseURL,
-		llmAPIKey:       llmAPIKey,
 		backupDir:       backupDir,
 		backupInterval:  backupInterval,
 		backupKeep:      backupKeep,
@@ -160,8 +156,6 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 	checks := health.Checks(health.Input{
 		MCPBinary:       h.mcpBinary,
 		RepoBaseDir:     h.repoBaseDir,
-		LLMBaseURL:      h.llmBaseURL,
-		LLMAPIKey:       h.llmAPIKey,
 		Providers:       providers,
 		BackupDir:       h.backupDir,
 		BackupInterval:  backupInterval,

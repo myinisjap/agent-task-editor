@@ -127,23 +127,13 @@ func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentCo
 	return view
 }
 
-// knownProviders lists every provider string the system recognizes for
-// reads, model lists, and dispatch. It intentionally still includes
-// "anthropic" and "llm" so that existing agent/provider configs continue to
-// work after those providers were deprecated for new configs (see
-// deprecatedProviders below and the write-path checks in providers.go).
+// knownProviders lists every provider string accepted for reads, model lists
+// and writes. The removed providers (anthropic, llm, openai; see
+// agent.IsRemovedProvider) are deliberately absent: legacy rows that still
+// reference them are kept in the database but fail at dispatch with a clear
+// error, and any attempt to create or switch a config to one is rejected.
 var knownProviders = map[string]bool{
-	"claude": true, "anthropic": true, "llm": true, "opencode": true, "qwen_code": true,
-	"codex_cli": true,
-}
-
-// deprecatedProviders lists providers that are disabled for new or updated
-// provider configs. They remain in knownProviders (above) so that existing
-// configs keep dispatching, listing models, and rendering capability
-// warnings. "openai" is included because it was a dead dropdown option that
-// aliased to the same deprecated LLMRunner code path.
-var deprecatedProviders = map[string]bool{
-	"anthropic": true, "llm": true, "openai": true,
+	"claude": true, "opencode": true, "qwen_code": true, "codex_cli": true,
 }
 
 // flexBool unmarshals JSON true/false as well as numeric 0/1, since some

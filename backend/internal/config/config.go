@@ -43,8 +43,6 @@ type Config struct {
 	GitHubWebhookSecret string        `yaml:"github_webhook_secret"`
 	MCPBinary           string        `yaml:"mcp_server_path"`
 	MCPBoardBinary      string        `yaml:"mcp_board_path"`
-	LLMBaseURL          string        `yaml:"llm_base_url"`
-	LLMAPIKey           string        `yaml:"llm_api_key"`
 	MaxWorkers          int           `yaml:"max_workers"`
 	RepoBaseDir         string        `yaml:"repo_base_dir"`
 	UploadDir           string        `yaml:"upload_dir"`
@@ -165,7 +163,6 @@ func Defaults() Config {
 		DBPath:                "agent-task-editor.db",
 		Port:                  "8080",
 		CORSOrigins:           "http://localhost:5173,http://localhost:8080",
-		LLMBaseURL:            "https://api.openai.com/v1",
 		MaxWorkers:            5,
 		GitHubSyncInterval:    30 * time.Second,
 		IssueSyncInterval:     60 * time.Second,
@@ -249,12 +246,6 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MCP_BOARD_PATH"); v != "" {
 		cfg.MCPBoardBinary = v
-	}
-	if v := os.Getenv("LLM_BASE_URL"); v != "" {
-		cfg.LLMBaseURL = v
-	}
-	if v := os.Getenv("LLM_API_KEY"); v != "" {
-		cfg.LLMAPIKey = v
 	}
 	if v := os.Getenv("MAX_WORKERS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

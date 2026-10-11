@@ -11,10 +11,6 @@ if [[ -f "$(dirname "$0")/.env" ]]; then
   set +o allexport
 fi
 
-export LLM_API_KEY=${LLM_API_KEY:-"your_api_key_here"}
-export LLM_BASE_URL=${LLM_BASE_URL:-"http://localhost:8081/v1"}
-export LLM_MODEL=${LLM_MODEL:-"gemma-4-12B-it-qat-UD-Q4_K_XL"}
-
 # Parse optional --repo-dir <path> / --all-cli flags before the command.
 ALL_CLI=false
 while [[ $# -gt 0 ]]; do

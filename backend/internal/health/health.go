@@ -52,11 +52,10 @@ type Check struct {
 type Input struct {
 	MCPBinary   string
 	RepoBaseDir string
-	LLMBaseURL  string
-	LLMAPIKey   string
 	// Providers is the set of provider strings used by enabled agent configs
-	// (e.g. "claude", "anthropic", "llm", "qwen_code", "opencode",
-	// "codex_cli").
+	// (e.g. "claude", "qwen_code", "opencode", "codex_cli"). Removed
+	// providers (anthropic, llm, openai) that legacy configs still reference
+	// surface as an error check instead.
 	Providers map[string]bool
 
 	// BackupDir/BackupInterval/BackupKeep mirror config.Config's automatic
@@ -128,7 +127,22 @@ func DefaultDeps() Deps {
 
 // providerCheckOrder is the stable order provider-specific checks are emitted
 // in by Checks (claude is always first and handled separately).
-var providerCheckOrder = []string{"anthropic", "llm", "qwen_code", "opencode", "codex_cli"}
+var providerCheckOrder = []string{"qwen_code", "opencode", "codex_cli"}
+
+// removedProviderOrder is the stable order removed-provider errors are emitted in.
+var removedProviderOrder = []string{"anthropic", "llm", "openai"}
+
+// removedProviderCheck flags an enabled agent config that still references a
+// provider removed in v0.17.0. Runs for that config fail until it is switched.
+func removedProviderCheck(provider string) Check {
+	return Check{
+		ID:     "removed_provider_" + provider,
+		Name:   "Removed provider: " + provider,
+		Status: StatusError,
+		Detail: "an enabled agent config still uses the removed " + provider + " provider; its runs fail at dispatch",
+		Hint:   "Provider " + provider + " was removed in v0.17.0. Switch the provider config to claude, codex_cli, opencode or qwen_code.",
+	}
+}
 
 // ProviderCheck runs the single readiness check for a provider kind (e.g.
 // "claude", "codex_cli"). ok is false when the kind has no check. It is the
@@ -138,10 +152,6 @@ func ProviderCheck(provider string, in Input, d Deps) (Check, bool) {
 	switch provider {
 	case "claude":
 		return claudeCheck(d), true
-	case "anthropic":
-		return anthropicCheck(in, d), true
-	case "llm":
-		return llmCheck(in), true
 	case "qwen_code":
 		return binaryCheck(d, "qwen", "Qwen CLI", "qwen_code provider",
 			"Install the qwen CLI and ensure it's on the server's PATH."), true
@@ -177,6 +187,12 @@ func Checks(in Input, d *Deps) []Check {
 	var checks []Check
 
 	checks = append(checks, claudeCheck(deps))
+
+	for _, provider := range removedProviderOrder {
+		if in.Providers[provider] {
+			checks = append(checks, removedProviderCheck(provider))
+		}
+	}
 
 	for _, provider := range providerCheckOrder {
 		if in.Providers[provider] {

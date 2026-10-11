@@ -1,6 +1,6 @@
 # internal/agent/providers
 
-Concrete agent backends (claude, anthropic, llm, opencode, qwen_code, codex_cli) and the MCP sidecar manager. Imports `agent` for the shared types; `agent` never imports this package (ADR 0017). Runners are constructed only in `cmd/server/main.go`'s `providerFactory`.
+Concrete agent backends (claude, opencode, qwen_code, codex_cli) and the MCP sidecar manager. Imports `agent` for the shared types; `agent` never imports this package (ADR 0017). Runners are constructed only in `cmd/server/main.go`'s `providerFactory`.
 
 ## Files
 
@@ -11,13 +11,11 @@ Concrete agent backends (claude, anthropic, llm, opencode, qwen_code, codex_cli)
 | `claude_discovery.go` | Lists installed Claude plugins / user-level MCP servers for per-agent-config selection (`enabled_plugins`/`enabled_mcp_servers`); claude only |
 | `claude_reset.go` | `parseClaudeResetTime` — turns "resets 6pm (TZ)" text into `ErrRateLimit.ResetAt`; blank-imports `time/tzdata` (prod image has no zoneinfo) |
 | `claude_usage.go` | `FetchClaudeUsage`, `ErrNoClaudeCredentials` — Claude Max usage widget data for the dashboard |
-| `anthropic.go`, `llm.go` | `AnthropicRunner`, `LLMRunner` — direct HTTP API runners. **Deprecated** (ADR 0018); `llm` also backs the retired `openai` alias |
 | `qwen.go` | `QwenRunner` — Qwen Code CLI; reuses `MCPManager` and the claude stream-json envelope |
 | `codex.go` | `CodexRunner` — `codex exec --json`; own event schema |
 | `opencode.go` | `OpencodeRunner` — opencode CLI; own event schema; no MCP support (known gap) |
-| `tools.go` | Tool implementations for `anthropic`/`llm` (read_file, write_file, run_bash, list_dir, search, str_replace, `CommandPolicy`, `runAccumulators`) |
 | `mcp.go` | `MCPManager`, `SubtaskEnv` — prepares/cleans up the MCP sidecar config and result file (ADR 0004) |
-| `pricing.go` | `estimateCostUSD(WithResolver)`, `PriceResolver` — manually maintained USD/1M-token table. Authoritative cost for `anthropic`/`llm`; *projection* source for the claude/qwen cost watchdog |
+| `pricing.go` | `estimateCostUSD(WithResolver)`, `PriceResolver` — manually maintained USD/1M-token table. Cost estimation for `codex_cli`; *projection* source for the claude/qwen cost watchdog |
 | `cost_watchdog.go` | `costWatchdog` — pure accumulator projecting total task cost from incremental usage; `claude.go`/`qwen.go` own cancelling the subprocess and building `agent.ErrCostBudgetExceeded` (ADR 0013) |
 | `prompt.go` | `buildPrompt`, `buildResumePrompt`, `buildSystemPrompt`, `write*Section` helpers, `stripSourceCommentsMarker` — prompt assembly for every provider. Apply `stripSourceCommentsMarker` to every third-party string (ADR 0014) |
 | `cli.go` | `allowlistEnv`, `mergeEnv`, `rawDump` (dev-only raw stdout capture via `AGENT_RAW_LOG_DIR`) — shared CLI-runner infrastructure |
@@ -39,7 +37,7 @@ Concrete agent backends (claude, anthropic, llm, opencode, qwen_code, codex_cli)
 
 Agent subprocesses get an allow-listed env built by `allowlistEnv(<provider>EnvAllowlist)` in `cli.go`, never the full `os.Environ()`. `commonBaseEnvKeys` holds what every provider needs (`PATH`, `HOME`, locale/proxy/TLS trust, `GITHUB_TOKEN`/`GH_TOKEN`); each provider list adds its own.
 
-> **If an agent needs a new env var, you MUST add it to the allowlist** (`commonBaseEnvKeys` if all providers need it, else the provider's list), or it silently won't reach the subprocess. Never add a real backend secret (`API_TOKEN`, `LLM_API_KEY`, `DATABASE_URL`, ...). Guards: `TestAllowlistEnv_EveryProviderHasGitHubToken`, `...HasPathAndHome`, `...NoProviderLeaksBackendSecrets`.
+> **If an agent needs a new env var, you MUST add it to the allowlist** (`commonBaseEnvKeys` if all providers need it, else the provider's list), or it silently won't reach the subprocess. Never add a real backend secret (`API_TOKEN`, `DATABASE_URL`, ...). Guards: `TestAllowlistEnv_EveryProviderHasGitHubToken`, `...HasPathAndHome`, `...NoProviderLeaksBackendSecrets`.
 
 `mergeEnv` layers `input.AgentConfig.Env` (from the `ProviderConfig`) on top, blocking `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH` with a logged warning.
 
@@ -50,7 +48,7 @@ Agent subprocesses get an allow-listed env built by `allowlistEnv(<provider>EnvA
 3. Add the string to `knownProviders` in `internal/api/handlers/agents.go`.
 4. Declare capabilities in `frontend/src/lib/providerCapabilities.ts` and regenerate docs (root `AGENTS.md`).
 
-**`anthropic` and `llm` are deprecated** (ADR 0018; see `docs/providers/anthropic.md`/`llm.md`). Don't remove them from `providerFactory` or `knownProviders` — existing configs must keep dispatching; `deprecatedProviders` in `handlers/agents.go` (checked only by `providers.go` Create/Update) rejects new ones. `providerFactory`'s `default` must keep returning `nil` (the dispatcher fails the run cleanly on nil); never let it resolve to a runner.
+**`anthropic`, `llm` (and the `openai` alias) were removed in v0.17.0** (ADR 0018 note). They are absent from `providerFactory` and `knownProviders`; `agent.IsRemovedProvider` (`internal/agent/removed_providers.go`) drives the clear write-path 400 in `handlers/providers.go`, the dispatcher's `waiting_human` escalation message, and the `removed_provider_*` health check for legacy rows (never deleted). `providerFactory`'s `default` must keep returning `nil` (the dispatcher fails the run cleanly on nil); never let it resolve to a runner.
 
 Providers read only the flat `input.AgentConfig.Provider/.Model/.Env`; the `ProviderConfig` split is resolved upstream (`../AGENTS.md`).
 

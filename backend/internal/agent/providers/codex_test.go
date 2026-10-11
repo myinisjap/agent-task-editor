@@ -355,7 +355,7 @@ func TestCodexRunner_Run_Exit0Success(t *testing.T) {
 // With a PriceResolver that recognizes the configured model, Run must price
 // the "turn.completed" event's 10/20 input/output tokens (see
 // codexHelperInput("exit0_success") above) into a non-zero CostUSD and
-// leave CostUnknown false — the same estimation path qwen/anthropic/llm use
+// leave CostUnknown false — the same estimation path qwen uses
 // (applyUsageWithCost, providers/pricing.go).
 func TestCodexRunner_Run_PricesTokensAgainstResolver(t *testing.T) {
 	runner := &CodexRunner{

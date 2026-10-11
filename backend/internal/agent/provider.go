@@ -1,7 +1,7 @@
 // Package agent implements the agent runtime core: the Provider interface,
 // bounded worker pool, and dispatcher. Concrete provider backends
-// (ClaudeRunner, AnthropicRunner, LLMRunner, QwenRunner,
-// CodexRunner, OpencodeRunner) live in the sibling providers package.
+// (ClaudeRunner, QwenRunner, CodexRunner,
+// OpencodeRunner) live in the sibling providers package.
 package agent
 
 import (
@@ -57,11 +57,11 @@ type Result struct {
 	OutputTokens int64
 	// CostUSD is the (estimated, unless otherwise noted) USD cost of the
 	// run. For the `claude` CLI provider this is the CLI's own authoritative
-	// total_cost_usd figure; for anthropic/llm providers it is computed from
-	// InputTokens/OutputTokens via the internal pricing table. Zero if
+	// total_cost_usd figure; for providers without their own figure (codex_cli) it is computed
+	// from InputTokens/OutputTokens via the internal pricing table. Zero if
 	// unknown/unreported — not necessarily a free run.
 	CostUSD float64
-	// CostUnknown is true only when the anthropic/llm providers consumed
+	// CostUnknown is true only when a pricing-table provider (codex_cli) consumed
 	// tokens but no price entry (DB-backed or hardcoded fallback) matched
 	// the model, so CostUSD was left at 0 as a placeholder rather than a
 	// computed figure. Always false for claude/qwen_code (and any other
@@ -84,8 +84,8 @@ type Result struct {
 	// TurnsUsed is the number of internal agent turns the run actually
 	// consumed, for comparison against the configured AgentConfig.MaxTurns
 	// cap. 0 means "not reported" — only providers that expose a real count
-	// set it (claude/qwen_code from the stream-json result event's num_turns;
-	// anthropic/llm from their own agentic loop counter). codex_cli and
+	// set it (claude/qwen_code from the stream-json result event's num_turns).
+	// codex_cli and
 	// opencode report no comparable figure and leave it 0; it is never
 	// estimated, since an invented count is worse than an absent one.
 	TurnsUsed int64

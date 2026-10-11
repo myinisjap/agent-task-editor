@@ -47,7 +47,7 @@ ARG TARGETARCH
 ARG INSECURE_SKIP_SSL_VERIFY=false
 # gosu (Debian's actively-maintained equivalent of alpine's su-exec) drops
 # privileges in the entrypoint. build-essential covers cgo/node-gyp builds.
-# ripgrep (rg) backs the anthropic/llm providers' native `search` tool.
+# ripgrep (rg) for agent code search.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates git bash build-essential gosu ripgrep curl util-linux \
     && rm -rf /var/lib/apt/lists/*

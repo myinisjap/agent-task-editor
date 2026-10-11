@@ -90,7 +90,7 @@ func TestProviderChecks_OnlyEmittedWhenUsed(t *testing.T) {
 	d := fakeDeps(nil, nil, nil, "/home/u", false)
 	checks := Checks(Input{}, d)
 	// No providers configured → no qwen/opencode/anthropic/llm/codex rows.
-	for _, id := range []string{"qwen_cli", "opencode_cli", "anthropic_api", "llm_api", "codex_cli"} {
+	for _, id := range []string{"qwen_cli", "opencode_cli", "removed_provider_anthropic", "removed_provider_llm", "codex_cli"} {
 		if hasID(checks, id) {
 			t.Fatalf("did not expect check %q when provider unused", id)
 		}
@@ -155,34 +155,13 @@ func TestBinaryCheck_Present(t *testing.T) {
 	}
 }
 
-func TestAnthropicCheck_KeyPresence(t *testing.T) {
+func TestRemovedProviderCheck(t *testing.T) {
 	d := fakeDeps(nil, nil, nil, "/home/u", false)
-	got := find(t, Checks(Input{Providers: map[string]bool{"anthropic": true}}, d), "anthropic_api")
-	if got.Status != StatusError {
-		t.Fatalf("missing key should be error, got %q", got.Status)
-	}
-	got = find(t, Checks(Input{Providers: map[string]bool{"anthropic": true}, LLMAPIKey: "k"}, d), "anthropic_api")
-	if got.Status != StatusOK {
-		t.Fatalf("key present should be ok, got %q", got.Status)
-	}
-}
-
-func TestLLMCheck_KeyAndBaseURL(t *testing.T) {
-	d := fakeDeps(nil, nil, nil, "/home/u", false)
-	// No key.
-	got := find(t, Checks(Input{Providers: map[string]bool{"llm": true}}, d), "llm_api")
-	if got.Status != StatusError {
-		t.Fatalf("missing key should be error, got %q", got.Status)
-	}
-	// Key but no base URL.
-	got = find(t, Checks(Input{Providers: map[string]bool{"llm": true}, LLMAPIKey: "k"}, d), "llm_api")
-	if got.Status != StatusWarn {
-		t.Fatalf("missing base URL should warn, got %q", got.Status)
-	}
-	// Both present.
-	got = find(t, Checks(Input{Providers: map[string]bool{"llm": true}, LLMAPIKey: "k", LLMBaseURL: "https://x"}, d), "llm_api")
-	if got.Status != StatusOK {
-		t.Fatalf("key+baseurl should be ok, got %q", got.Status)
+	for _, p := range []string{"anthropic", "llm", "openai"} {
+		got := find(t, Checks(Input{Providers: map[string]bool{p: true}}, d), "removed_provider_"+p)
+		if got.Status != StatusError || got.Hint == "" {
+			t.Errorf("%s: want error with hint, got %+v", p, got)
+		}
 	}
 }
 
