@@ -144,6 +144,8 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Post("/tasks/{id}/rerun", h.Rerun)
 	r.Get("/tasks/{id}/diff", h.Diff)
 	r.Post("/tasks/{id}/side-effects/retry", h.RetrySideEffects)
+	r.Post("/tasks/{id}/source-update/apply", h.ApplySourceUpdate)
+	r.Delete("/tasks/{id}/source-update", h.DiscardSourceUpdate)
 
 	return r, q, wfID, repoID
 }
@@ -3882,5 +3884,92 @@ func TestTasks_SideEffects_GetListAndRetry(t *testing.T) {
 	r.ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/tasks/nope/side-effects/retry", nil))
 	if rw.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestTasks_SourceUpdate_ApplyAndDiscard(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Old", Description: "old body", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	do := func(method, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+		return w
+	}
+	hold := func() {
+		if err := q.UpsertTaskSourcePending(ctx, gen.UpsertTaskSourcePendingParams{
+			TaskID: task.ID, Title: "New", Description: "new body", Type: "bug",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Nothing pending: both are conflicts; unknown task is 404.
+	if w := do(http.MethodPost, "/tasks/"+task.ID+"/source-update/apply"); w.Code != http.StatusConflict {
+		t.Errorf("apply with none pending: %d", w.Code)
+	}
+	if w := do(http.MethodDelete, "/tasks/"+task.ID+"/source-update"); w.Code != http.StatusConflict {
+		t.Errorf("discard with none pending: %d", w.Code)
+	}
+	if w := do(http.MethodPost, "/tasks/nope/source-update/apply"); w.Code != http.StatusNotFound {
+		t.Errorf("apply unknown task: %d", w.Code)
+	}
+
+	// The pending edit is surfaced on GET and in the list.
+	hold()
+	gw := do(http.MethodGet, "/tasks/"+task.ID)
+	var got struct {
+		SourcePendingUpdate *struct {
+			Title string `json:"title"`
+			Type  string `json:"type"`
+		} `json:"source_pending_update"`
+	}
+	if err := json.NewDecoder(gw.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SourcePendingUpdate == nil || got.SourcePendingUpdate.Title != "New" {
+		t.Fatalf("source_pending_update = %+v", got.SourcePendingUpdate)
+	}
+	if lw := do(http.MethodGet, "/tasks"); !strings.Contains(lw.Body.String(), `"source_pending_update":{`) {
+		t.Errorf("list missing source_pending_update: %s", lw.Body)
+	}
+
+	// Apply overwrites the task and clears the pending row.
+	aw := do(http.MethodPost, "/tasks/"+task.ID+"/source-update/apply")
+	if aw.Code != http.StatusOK {
+		t.Fatalf("apply: %d %s", aw.Code, aw.Body)
+	}
+	updated, _ := q.GetTask(ctx, task.ID)
+	if updated.Title != "New" || updated.Description != "new body" || updated.Type != "bug" {
+		t.Errorf("task after apply = %+v", updated)
+	}
+	if _, err := q.GetTaskSourcePending(ctx, task.ID); err == nil {
+		t.Errorf("pending row should be gone after apply")
+	}
+
+	// Discard leaves the task alone and hides the edit.
+	if err := q.UpsertTaskSourcePending(ctx, gen.UpsertTaskSourcePendingParams{
+		TaskID: task.ID, Title: "Newer", Description: "x", Type: "bug",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dw := do(http.MethodDelete, "/tasks/"+task.ID+"/source-update")
+	if dw.Code != http.StatusOK {
+		t.Fatalf("discard: %d %s", dw.Code, dw.Body)
+	}
+	if !strings.Contains(dw.Body.String(), `"source_pending_update":null`) {
+		t.Errorf("discard response still has pending: %s", dw.Body)
+	}
+	after, _ := q.GetTask(ctx, task.ID)
+	if after.Title != "New" {
+		t.Errorf("discard changed the task: %q", after.Title)
+	}
+	if w := do(http.MethodPost, "/tasks/"+task.ID+"/source-update/apply"); w.Code != http.StatusConflict {
+		t.Errorf("apply after discard: %d", w.Code)
 	}
 }

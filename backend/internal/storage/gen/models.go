@@ -275,6 +275,16 @@ type TaskSourceComment struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+type TaskSourcePending struct {
+	TaskID      string    `json:"task_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Type        string    `json:"type"`
+	Dismissed   int64     `json:"dismissed"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type TaskTemplate struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`

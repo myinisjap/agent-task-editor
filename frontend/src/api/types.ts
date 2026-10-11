@@ -1196,6 +1196,116 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/source-update/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply the held source-issue edit to the task
+         * @description With issue_sync_update_policy "always", an edit to the source issue made after a human approved the task is not written to the task; it is held as source_pending_update. This overwrites the task's title, description and type with the held text and clears it. Emits task.updated. Returns the task.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Applied */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The task has no pending source update */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/source-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Discard the held source-issue edit
+         * @description Dismisses the held edit without applying it. The same upstream text is not held again; a further edit to the issue is. Emits task.updated. Returns the task.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Discarded */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The task has no pending source update */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/github-status": {
         parameters: {
             query?: never;
@@ -4595,10 +4705,23 @@ export interface components {
             active_run_status?: "pending" | "running" | "waiting_human";
             /** @description Outstanding post-transition side effects (branch push, PR creation, source-issue write-back) from the durable outbox: rows that are waiting, being retried after a failure, or failed for good. Populated on GET /tasks and GET /tasks/{id}; always an array, empty when nothing is outstanding or on mutation responses. */
             side_effects?: components["schemas"]["TaskSideEffect"][];
+            /** @description An edit to the source issue that the sync importer held back because a human had already approved the task (it passed a human gate). Null when none is pending. Apply or discard it via /tasks/{id}/source-update. Populated on GET /tasks and GET /tasks/{id} and the source-update responses. */
+            source_pending_update?: components["schemas"]["TaskSourcePendingUpdate"] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description Issue text held for a human to apply or discard, stored exactly as the importer would have written it to the task. */
+        TaskSourcePendingUpdate: {
+            title: string;
+            description: string;
+            type: string;
+            /**
+             * Format: date-time
+             * @description When this edit was first held
+             */
+            created_at: string;
         };
         /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
         TaskSideEffect: {

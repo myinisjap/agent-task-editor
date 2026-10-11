@@ -334,9 +334,31 @@ components:
             that are waiting, being retried after a failure, or failed for
             good. Populated on GET /tasks and GET /tasks/{id}; always an array,
             empty when nothing is outstanding or on mutation responses.
+        source_pending_update:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TaskSourcePendingUpdate'
+          description: >
+            An edit to the source issue that the sync importer held back
+            because a human had already approved the task (it passed a human
+            gate). Null when none is pending. Apply or discard it via
+            /tasks/{id}/source-update. Populated on GET /tasks and
+            GET /tasks/{id} and the source-update responses.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
       required: [id, title, description, type, label, repo_id, workflow_id, created_at, updated_at]
+
+    TaskSourcePendingUpdate:
+      type: object
+      description: >
+        Issue text held for a human to apply or discard, stored exactly as the
+        importer would have written it to the task.
+      properties:
+        title: { type: string }
+        description: { type: string }
+        type: { type: string }
+        created_at: { type: string, format: date-time, description: When this edit was first held }
+      required: [title, description, type, created_at]
 
     TaskSideEffect:
       type: object
@@ -2682,6 +2704,50 @@ paths:
               schema: { $ref: '#/components/schemas/Task' }
         "404": { description: Task not found }
         "409": { description: The task has no failed side effects }
+
+  /tasks/{id}/source-update/apply:
+    post:
+      summary: Apply the held source-issue edit to the task
+      description: >
+        With issue_sync_update_policy "always", an edit to the source issue
+        made after a human approved the task is not written to the task; it is
+        held as source_pending_update. This overwrites the task's title,
+        description and type with the held text and clears it. Emits
+        task.updated. Returns the task.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Applied
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        "404": { description: Task not found }
+        "409": { description: The task has no pending source update }
+
+  /tasks/{id}/source-update:
+    delete:
+      summary: Discard the held source-issue edit
+      description: >
+        Dismisses the held edit without applying it. The same upstream text is
+        not held again; a further edit to the issue is. Emits task.updated.
+        Returns the task.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Discarded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        "404": { description: Task not found }
+        "409": { description: The task has no pending source update }
 
   /tasks/{id}/github-status:
     get:

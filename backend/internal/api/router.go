@@ -88,6 +88,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
+	tasksH.SetPublisher(hub)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -217,6 +218,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
 			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)
+			r.Post("/tasks/{id}/source-update/apply", tasksH.ApplySourceUpdate)
+			r.Delete("/tasks/{id}/source-update", tasksH.DiscardSourceUpdate)
 			r.Get("/tasks/{id}/github-status", tasksH.GitHubStatus)
 			r.Patch("/tasks/{id}/git-state", tasksH.UpdateGitState)
 			r.Patch("/tasks/{id}/pause", tasksH.SetPaused)

@@ -291,6 +291,36 @@ All three are governed per repo:
 | `issue_sync_gone_label` | _(empty)_ | Destination label when the action is `move`. Required when setting `move` |
 | `issue_comment_sync_enabled` | `0` | `1` to ingest the issue's comment thread |
 
+#### Block after approval
+
+Once a human has approved a task, an edit to the source issue no longer
+overwrites the task's title, description or type, whatever
+`issue_sync_update_policy` says (it matters in practice for `always`, which
+would otherwise let anyone who can edit the issue change what an agent does
+after a human signed off). A task counts as approved when its label history
+contains a human-triggered move off a human-gate label (an `agent_ignore` label,
+or a non-terminal label whose every outgoing transition is human-triggered; the
+same rule as the Inbox's "Awaiting approval"). If the history cannot be read the
+task is treated as approved. Before approval, behaviour is exactly as described
+above.
+
+Instead the importer stores the text it would have written (including any
+intake-rule or template shaping) in the `task_source_pending` table, logs it at
+info level, and publishes `task.updated`. The task then carries
+`source_pending_update` (`title`, `description`, `type`, `created_at`) on
+`GET /tasks` and `GET /tasks/{id}`, and the task detail page shows a notice
+"The source issue was edited after approval" with the current and new text. The
+Inbox lists it under "Source issue edited". A human then chooses:
+
+- `POST /api/v1/tasks/{id}/source-update/apply` writes the held text to the task
+  and clears it.
+- `DELETE /api/v1/tasks/{id}/source-update` discards it. The same upstream text
+  is not held again; a further edit is. If the issue is edited back to match
+  the task, the held edit is dropped automatically.
+
+Both return the task, or `409` when nothing is pending. A newer edit replaces an
+unapplied one. Comment ingestion is unaffected.
+
 ```bash
 curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
   -H "Content-Type: application/json" \

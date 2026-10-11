@@ -41,6 +41,7 @@ export default function InboxPage() {
   const needsMe = useNeedsMeStore((s) => s.items)
   const refreshNeedsMe = useNeedsMeStore((s) => s.refresh)
   const failed = useInboxStore((s) => s.failedEffects)
+  const sourceEdits = useInboxStore((s) => s.sourceEdits)
   const refreshEffects = useInboxStore((s) => s.refresh)
   const paused = useHealthStore((s) => s.paused)
   const resume = useHealthStore((s) => s.resume)
@@ -56,7 +57,7 @@ export default function InboxPage() {
     if (useWorkflowStore.getState().workflows.length === 0) void useWorkflowStore.getState().fetch()
   }, [refreshNeedsMe, refreshEffects, fetchHealth])
 
-  const groups = buildInbox(needsMe, failed, paused)
+  const groups = buildInbox(needsMe, failed, paused, sourceEdits)
   const total = inboxCount(groups)
 
   const run = async (key: string, fn: () => Promise<unknown>, after: () => Promise<unknown> | void) => {
@@ -161,6 +162,41 @@ export default function InboxPage() {
               >
                 Retry
               </button>
+            </div>
+          </Row>
+        ))}
+      </Section>
+
+      <Section title="Source issue edited" count={groups.source_edit.length}>
+        {groups.source_edit.map(({ task, since }) => (
+          <Row key={task.id} error={errors[`su:${task.id}`]}>
+            <div className="min-w-0">
+              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
+                {task.title}
+              </Link>
+              <p className="text-xs text-amber-300 mt-1">
+                The source issue was edited after approval. Review the new text before it reaches the agent.
+              </p>
+            </div>
+            <div className="shrink-0 flex flex-col items-end gap-2">
+              <span className="text-xs text-slate-500">{formatRelativeAge(since)}</span>
+              <div className="flex gap-2">
+                <Link to={`/tasks/${task.id}`} className={SECONDARY}>Review</Link>
+                <button
+                  disabled={busy[`su:${task.id}`]}
+                  onClick={() => run(`su:${task.id}`, () => api.tasks.discardSourceUpdate(task.id), refreshEffects)}
+                  className={SECONDARY}
+                >
+                  Discard
+                </button>
+                <button
+                  disabled={busy[`su:${task.id}`]}
+                  onClick={() => run(`su:${task.id}`, () => api.tasks.applySourceUpdate(task.id), refreshEffects)}
+                  className={PRIMARY}
+                >
+                  Apply
+                </button>
+              </div>
             </div>
           </Row>
         ))}

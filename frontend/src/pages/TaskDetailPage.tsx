@@ -11,6 +11,7 @@ import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
 import ForceMoveControl from '../components/task-detail/ForceMoveControl'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
+import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
@@ -542,6 +543,8 @@ export default function TaskDetailPage() {
               onRerun={handleRerun}
               actionPending={actionPending}
             />
+
+            <SourceUpdateNotice task={task} onChanged={setTask} />
 
             <ForceMoveControl
               task={task}
