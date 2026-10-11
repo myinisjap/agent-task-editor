@@ -403,3 +403,36 @@ func TestProviderReady(t *testing.T) {
 		t.Fatal("a provider kind with no check has nothing to re-test and counts as ready")
 	}
 }
+
+func TestIsLoopbackListen(t *testing.T) {
+	for addr, want := range map[string]bool{
+		":8080": false, "0.0.0.0:8080": false, "": false, "192.168.1.5:80": false,
+		"127.0.0.1:8080": true, "[::1]:8080": true, "localhost:8080": true,
+	} {
+		if got := IsLoopbackListen(addr); got != want {
+			t.Errorf("IsLoopbackListen(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
+func TestAPIAuthCheck(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Input
+		want Status
+	}{
+		{"open on all interfaces", Input{ListenAddr: ":8080"}, StatusWarn},
+		{"token set", Input{ListenAddr: ":8080", AuthConfigured: true}, StatusOK},
+		{"loopback only", Input{ListenAddr: "127.0.0.1:8080"}, StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := apiAuthCheck(tc.in); got.Status != tc.want {
+				t.Fatalf("status = %s, want %s (%+v)", got.Status, tc.want, got)
+			}
+		})
+	}
+	if c := find(t, Checks(Input{ListenAddr: ":8080"}, fakeDeps(nil, nil, nil, "", false)), "api_auth"); c.Status != StatusWarn || c.Hint == "" {
+		t.Fatalf("Checks should include a warning api_auth row: %+v", c)
+	}
+}

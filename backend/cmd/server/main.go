@@ -62,7 +62,10 @@ func main() {
 
 	startTime := time.Now()
 	slog.Info("agent-task-editor starting", "version", Version)
-	if cfg.APIToken != "" {
+	if cfg.APIToken == "" && len(cfg.APITokens) == 0 && !health.IsLoopbackListen(fmt.Sprintf(":%s", cfg.Port)) {
+		slog.Warn("SECURITY: no API_TOKEN/API_TOKENS configured and the server listens on all interfaces (:" + cfg.Port + "). Every host that can reach this port (other containers on shared Docker networks, LAN peers, local agent processes) can use the full API, including creating agent runs that execute shell commands. Set API_TOKEN, and keep the backend off shared networks; see docs/getting-started.md#set-an-api-token-in-production. This is also shown on the Health page (api_auth).")
+	}
+	if cfg.APIToken != "" || len(cfg.APITokens) > 0 {
 		slog.Info("bearer auth enabled")
 	} else if cfg.CORSOrigins == "*" {
 		slog.Warn("API is unauthenticated (API_TOKEN not set) and CORS_ORIGINS=* — any website open in your browser can call this API from localhost (drive-by CSRF-style request execution, no auth needed). Set API_TOKEN and a specific CORS_ORIGINS before exposing this beyond a trusted single-user machine; see README.md#security")
@@ -367,6 +370,7 @@ func main() {
 		slog.Info("chat terminal idle reaper enabled", "idle_timeout", cfg.ChatIdleTimeout)
 	}
 
+	listenAddr := fmt.Sprintf(":%s", cfg.Port)
 	router := api.NewRouter(api.RouterDeps{
 		DB:                 db,
 		Engine:             engine,
@@ -378,6 +382,7 @@ func main() {
 		MetricsToken:       cfg.MetricsToken,
 		MetricsPublic:      cfg.MetricsPublic,
 		RepoBaseDir:        cfg.RepoBaseDir,
+		ListenAddr:         listenAddr,
 		UploadDir:          uploadDir,
 		MCPBinary:          cfg.MCPBinary,
 		LLMBaseURL:         cfg.LLMBaseURL,
@@ -396,7 +401,7 @@ func main() {
 	})
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%s", cfg.Port),
+		Addr:         listenAddr,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,

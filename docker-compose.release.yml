@@ -20,7 +20,7 @@ services:
     stop_grace_period: 90s
     image: ghcr.io/myinisjap/agent-task-editor-backend:${ATE_VERSION:-latest}${ATE_CLI_SUFFIX:-}
     pull_policy: always
-    # Bound to loopback by default: API_TOKEN ships commented out, so a
+    # Bound to loopback by default: API_TOKEN may be empty, so a
     # 0.0.0.0 binding would expose the board and the agent-dispatch path to
     # the whole LAN. Set ATE_BIND_ADDR=0.0.0.0 (and set API_TOKEN!) to expose
     # it deliberately; see the Security section in the README.
@@ -73,8 +73,11 @@ services:
       - MCP_SERVER_PATH=/app/mcp-server
       # Path to the board MCP binary; enables the create-task tools in chat sessions
       - MCP_BOARD_PATH=/app/mcp-board
-      # Optional: set API_TOKEN to require a Bearer token on all API requests
-      # - API_TOKEN=change-me
+      # Bearer token auth. Empty = no auth (the backend then logs a warning and
+      # the Health page shows an "API authentication" warning). ./run.sh
+      # generates API_TOKEN into .env on first run; otherwise set it in .env.
+      - API_TOKEN=${API_TOKEN:-}
+      - API_TOKENS=${API_TOKENS:-}
       # Optional: use provider=anthropic in agent configs to call the API directly
       # instead of the CLI (different billing — pay-per-token vs Claude Max)
       # - LLM_API_KEY=sk-ant-...

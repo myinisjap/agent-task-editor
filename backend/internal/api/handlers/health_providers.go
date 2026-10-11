@@ -66,6 +66,17 @@ type HealthHandler struct {
 	// pauses supplies the provider circuit breaker state; same optional
 	// capability pattern as globalCost. May be nil.
 	pauses ProviderPauseController
+	// authConfigured/listenAddr feed the api_auth check; set via SetAuthInfo.
+	authConfigured bool
+	listenAddr     string
+}
+
+// SetAuthInfo records whether bearer auth is configured and the address the
+// server listens on, for the api_auth warning on the Providers report. Kept
+// off the constructor so its many callers don't change.
+func (h *HealthHandler) SetAuthInfo(authConfigured bool, listenAddr string) {
+	h.authConfigured = authConfigured
+	h.listenAddr = listenAddr
 }
 
 // NewHealthHandler constructs a HealthHandler from the relevant server config.
@@ -159,6 +170,8 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		AgentLogsCount:  logCount,
 		Version:         h.version,
 		CheckForUpdates: h.checkForUpdates,
+		AuthConfigured:  h.authConfigured,
+		ListenAddr:      h.listenAddr,
 	}, nil)
 
 	resp := map[string]any{"checks": checks}
