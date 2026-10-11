@@ -90,6 +90,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `AGENT_UID` | `10001` | uid of the `agent` account (gid = `PGID`); set up by `entrypoint.sh`, read by `internal/agentuser` |
 | `AGENT_FIX_REPO_PERMS` | `auto` | `auto`/`always`/`never`: whether the entrypoint adds group-write to repos under `REPO_BASE_DIR` for the agent user |
 | `SKIP_PREMIGRATE_SNAPSHOT` | `false` | Set `true` to skip the automatic pre-migration `VACUUM INTO` snapshot (written next to the DB file whenever migrations are pending; last 3 kept) and to start anyway if it cannot be written. See `docs/backup.md#pre-migration-snapshots`. |
+| `GITHUB_WEBHOOK_SECRET` | _(none)_ | Enables `POST /api/v1/github/webhook` (outside bearer auth, HMAC-SHA256 `X-Hub-Signature-256`); GitHub webhooks then refresh task PR state immediately and polling backs off to a fallback. Unset = route returns 404. See `docs/task-sources.md#github-webhook-optional` |
 | `METRICS_TOKEN` | _(none)_ | Dedicated bearer token for `GET /metrics`. Unset + API auth configured = API token(s) required; unset + no auth = open |
 | `METRICS_PUBLIC` | `false` | `true` leaves `/metrics` unauthenticated even when API auth is configured (opt-out for tokenless scrapers) |
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |

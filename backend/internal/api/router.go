@@ -42,6 +42,12 @@ type RouterDeps struct {
 	// MetricsPublic leaves /metrics unauthenticated even when API auth is on.
 	MetricsPublic bool
 
+	// GitHubWebhookSecret enables POST /api/v1/github/webhook (HMAC-SHA256
+	// signature auth, outside bearer auth). Empty = the route returns 404.
+	GitHubWebhookSecret string
+	// PRRefresher receives matched webhook events (the ghsync Syncer).
+	PRRefresher handlers.PRRefresher
+
 	RepoBaseDir string
 	// ListenAddr is the HTTP server's bind address (e.g. ":8080"); used only
 	// for the api_auth health warning.
@@ -142,6 +148,13 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// browsers can't send an Authorization header on a WS upgrade, so the
 	// handler enforces the single-use ?ticket= itself.
 	r.Get("/api/v1/chat/sessions/{id}/terminal", chatH.Terminal)
+
+	// GitHub webhook receiver — outside BearerAuth because GitHub cannot send
+	// our token; authenticated by the HMAC-SHA256 X-Hub-Signature-256 header
+	// against GITHUB_WEBHOOK_SECRET (404 when unset). It sits on a literal path
+	// so it wins over the /api/v1 mount below.
+	webhookH := handlers.NewGitHubWebhookHandler(deps.GitHubWebhookSecret, deps.PRRefresher)
+	r.Post("/api/v1/github/webhook", webhookH.Handle)
 
 	// Prometheus scrape endpoint — mounted outside the main API's BearerAuth
 	// group (and outside /api/v1) so self-hosters don't need to hand the

@@ -3794,6 +3794,62 @@ paths:
                   authed: { type: boolean }
                   note:   { type: string }
 
+  /github/webhook:
+    post:
+      summary: Receive a GitHub webhook delivery
+      description: >
+        Optional push channel that refreshes task PR state immediately instead
+        of waiting for the next ghsync poll. NOT behind bearer auth (GitHub
+        cannot send the API token); authenticated instead by the HMAC-SHA256
+        `X-Hub-Signature-256` header computed with `GITHUB_WEBHOOK_SECRET`
+        (constant-time compare). Returns 404 when `GITHUB_WEBHOOK_SECRET` is
+        unset. Body capped at 2 MB. Handled events: `ping`, `pull_request`
+        (opened, closed, reopened, synchronize, edited, ready_for_review,
+        converted_to_draft), `pull_request_review`,
+        `pull_request_review_comment`, `issue_comment` (on PRs),
+        `check_suite` / `check_run` (completed) and `status`. Payload fields
+        only select which tasks to refresh; state is re-fetched from the forge.
+        Deliveries are deduplicated by `X-GitHub-Delivery` and refreshes are
+        debounced per task; work runs asynchronously after the response.
+        Content type must be `application/json`. See docs/task-sources.md.
+      security: []
+      parameters:
+        - { name: X-GitHub-Event, in: header, required: true, schema: { type: string } }
+        - { name: X-GitHub-Delivery, in: header, required: false, schema: { type: string } }
+        - { name: X-Hub-Signature-256, in: header, required: true, schema: { type: string, example: "sha256=..." } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: ping answered, or duplicate delivery ignored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [pong, duplicate] }
+        "202":
+          description: Accepted; matching tasks are refreshed in the background
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [accepted] }
+        "204":
+          description: Event or action not handled
+        "400":
+          description: Unreadable body or invalid JSON
+        "401":
+          description: Missing or invalid signature
+        "404":
+          description: Webhook receiver disabled (GITHUB_WEBHOOK_SECRET unset)
+        "413":
+          description: Body too large
+
   /health/providers:
     get:
       summary: Provider / onboarding readiness checks

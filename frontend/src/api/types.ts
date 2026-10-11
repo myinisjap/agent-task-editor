@@ -3569,6 +3569,105 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/github/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive a GitHub webhook delivery
+         * @description Optional push channel that refreshes task PR state immediately instead of waiting for the next ghsync poll. NOT behind bearer auth (GitHub cannot send the API token); authenticated instead by the HMAC-SHA256 `X-Hub-Signature-256` header computed with `GITHUB_WEBHOOK_SECRET` (constant-time compare). Returns 404 when `GITHUB_WEBHOOK_SECRET` is unset. Body capped at 2 MB. Handled events: `ping`, `pull_request` (opened, closed, reopened, synchronize, edited, ready_for_review, converted_to_draft), `pull_request_review`, `pull_request_review_comment`, `issue_comment` (on PRs), `check_suite` / `check_run` (completed) and `status`. Payload fields only select which tasks to refresh; state is re-fetched from the forge. Deliveries are deduplicated by `X-GitHub-Delivery` and refreshes are debounced per task; work runs asynchronously after the response. Content type must be `application/json`. See docs/task-sources.md.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-GitHub-Event": string;
+                    "X-GitHub-Delivery"?: string;
+                    "X-Hub-Signature-256": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description ping answered, or duplicate delivery ignored */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            status?: "pong" | "duplicate";
+                        };
+                    };
+                };
+                /** @description Accepted; matching tasks are refreshed in the background */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            status?: "accepted";
+                        };
+                    };
+                };
+                /** @description Event or action not handled */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unreadable body or invalid JSON */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing or invalid signature */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Webhook receiver disabled (GITHUB_WEBHOOK_SECRET unset) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body too large */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/providers": {
         parameters: {
             query?: never;

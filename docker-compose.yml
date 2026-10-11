@@ -84,6 +84,9 @@ services:
       # generates API_TOKEN into .env on first run; otherwise set it in .env.
       - API_TOKEN=${API_TOKEN:-}
       - API_TOKENS=${API_TOKENS:-}
+      # Optional: enables POST /api/v1/github/webhook (HMAC-signed GitHub
+      # webhooks refresh PR state immediately; polling stays as fallback).
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
       # Optional: use provider=anthropic in agent configs to call the API directly
       # instead of the CLI (different billing — pay-per-token vs Claude Max)
       # - LLM_API_KEY=sk-ant-...

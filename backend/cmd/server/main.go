@@ -370,34 +370,48 @@ func main() {
 		slog.Info("chat terminal idle reaper enabled", "idle_timeout", cfg.ChatIdleTimeout)
 	}
 
+	// GitHub PR status auto-sync: polls all eligible tasks on a configurable
+	// interval and pushes "task.git_state_changed" WebSocket events so the
+	// board refreshes automatically without a page reload. Also ingests PR
+	// review feedback / failed GHA checks (see internal/ghsync/pr_review.go);
+	// engine is passed through so a repo can opt into auto-transitioning a
+	// task back to its failure-path label when new feedback arrives.
+	ghSyncer := ghsync.New(db.SQL(), pub, cfg.GitHubSyncInterval, engine)
+	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
+	if cfg.GitHubWebhookSecret != "" {
+		slog.Info("github webhook receiver enabled", "path", "/api/v1/github/webhook")
+	}
+
 	listenAddr := fmt.Sprintf(":%s", cfg.Port)
 	router := api.NewRouter(api.RouterDeps{
-		DB:                 db,
-		Engine:             engine,
-		Hub:                hub,
-		CORSOrigins:        cfg.CORSOrigins,
-		AllowedHosts:       cfg.AllowedHosts,
-		BearerToken:        cfg.APIToken,
-		NamedTokens:        cfg.APITokens,
-		MetricsToken:       cfg.MetricsToken,
-		MetricsPublic:      cfg.MetricsPublic,
-		RepoBaseDir:        cfg.RepoBaseDir,
-		ListenAddr:         listenAddr,
-		UploadDir:          uploadDir,
-		MCPBinary:          cfg.MCPBinary,
-		LLMBaseURL:         cfg.LLMBaseURL,
-		LLMAPIKey:          cfg.LLMAPIKey,
-		BackupDir:          cfg.BackupDir,
-		BackupInterval:     cfg.BackupInterval,
-		BackupKeep:         cfg.BackupKeep,
-		Version:            Version,
-		CheckForUpdates:    cfg.UpdateCheckEnabled,
-		MaxWorkers:         maxWorkers,
-		Canceller:          pool,
-		ReplyDispatcher:    dispatcher,
-		DispatcherLiveness: dispatcher,
-		BlockReasons:       blockReasons,
-		Terminal:           terminal,
+		DB:                  db,
+		Engine:              engine,
+		Hub:                 hub,
+		CORSOrigins:         cfg.CORSOrigins,
+		AllowedHosts:        cfg.AllowedHosts,
+		BearerToken:         cfg.APIToken,
+		NamedTokens:         cfg.APITokens,
+		MetricsToken:        cfg.MetricsToken,
+		MetricsPublic:       cfg.MetricsPublic,
+		GitHubWebhookSecret: cfg.GitHubWebhookSecret,
+		PRRefresher:         ghSyncer,
+		RepoBaseDir:         cfg.RepoBaseDir,
+		ListenAddr:          listenAddr,
+		UploadDir:           uploadDir,
+		MCPBinary:           cfg.MCPBinary,
+		LLMBaseURL:          cfg.LLMBaseURL,
+		LLMAPIKey:           cfg.LLMAPIKey,
+		BackupDir:           cfg.BackupDir,
+		BackupInterval:      cfg.BackupInterval,
+		BackupKeep:          cfg.BackupKeep,
+		Version:             Version,
+		CheckForUpdates:     cfg.UpdateCheckEnabled,
+		MaxWorkers:          maxWorkers,
+		Canceller:           pool,
+		ReplyDispatcher:     dispatcher,
+		DispatcherLiveness:  dispatcher,
+		BlockReasons:        blockReasons,
+		Terminal:            terminal,
 	})
 
 	srv := &http.Server{
@@ -411,15 +425,6 @@ func main() {
 	// Root context cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	// GitHub PR status auto-sync: polls all eligible tasks on a configurable
-	// interval and pushes "task.git_state_changed" WebSocket events so the
-	// board refreshes automatically without a page reload. Also ingests PR
-	// review feedback / failed GHA checks (see internal/ghsync/pr_review.go);
-	// engine is passed through so a repo can opt into auto-transitioning a
-	// task back to its failure-path label when new feedback arrives.
-	ghSyncer := ghsync.New(db.SQL(), pub, cfg.GitHubSyncInterval, engine)
-	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 
 	// Issue import: polls repos with issue sync enabled, creates tasks from
 	// matching open issues (deduped by tasks.source/source_ref), keeps
