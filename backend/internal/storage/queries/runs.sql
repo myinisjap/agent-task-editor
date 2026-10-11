@@ -105,7 +105,7 @@ VALUES (?, ?, ?, ?, ?);
 
 -- name: DeleteOldAgentLogs :execrows
 -- Deletes agent_logs rows belonging to runs in a terminal status
--- (completed/failed/waiting_human) whose run completed_at is older than the
+-- (completed/failed/waiting_human/interrupted) whose run completed_at is older than the
 -- cutoff. Never touches logs for a run that is still pending/running (no
 -- completed_at, or non-terminal status), so the active run and the WS
 -- replay path (which reads the live run's logs) are unaffected. cutoff is
@@ -115,7 +115,7 @@ VALUES (?, ?, ?, ?, ?);
 DELETE FROM agent_logs
 WHERE agent_run_id IN (
   SELECT id FROM agent_runs
-  WHERE status IN ('completed','failed','waiting_human')
+  WHERE status IN ('completed','failed','waiting_human','interrupted')
     AND completed_at IS NOT NULL
     AND completed_at < ?1
 );

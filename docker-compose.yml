@@ -1,5 +1,8 @@
 services:
   backend:
+    # Must exceed SHUTDOWN_DRAIN_TIMEOUT (default 60s) plus a few seconds for
+    # HTTP/outbox shutdown, or the runtime SIGKILLs mid-drain.
+    stop_grace_period: 90s
     build:
       context: ./backend
       dockerfile: Dockerfile

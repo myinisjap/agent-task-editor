@@ -101,6 +101,8 @@ export default function RunHistoryList({
                       run.status === 'failed'        ? 'text-red-400' :
                       run.status === 'waiting_human' ? 'text-pink-400' :
                       run.status === 'cancelled'     ? 'text-orange-400' :
+                      // Interrupted by a server restart: not a failure, so neutral grey.
+                      run.status === 'interrupted'   ? 'text-slate-400' :
                       'text-slate-500'
                     }`}>{run.status}</span>
                   </div>
