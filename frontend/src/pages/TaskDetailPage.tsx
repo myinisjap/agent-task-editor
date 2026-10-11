@@ -482,6 +482,7 @@ export default function TaskDetailPage() {
               onSyncGitState={handleSyncGitState}
               onBack={() => navigate('/board')}
               labels={workflow?.labels ?? []}
+              transitions={workflow?.transitions ?? []}
               onMoveLabel={handleMoveLabel}
               onDuplicate={() => setDuplicating(true)}
             />

@@ -4,6 +4,7 @@ import type { Task, WorkflowLabel } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import TaskCard from './TaskCard'
+import { dropStateClass, type DropState } from './dropState'
 
 const MAX_VISIBLE = 5
 
@@ -20,9 +21,11 @@ type Props = {
   className?: string
   selectedIds?: Set<string>
   onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
+  /** While a card is being dragged: whether this column is a legal drop target. */
+  dropState?: DropState
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect, dropState }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const remove = useTasksStore((s) => s.remove)
   const [expanded, setExpanded] = useState(false)
@@ -87,7 +90,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
       </div>
       <div
         ref={setNodeRef}
-        className={`flex-1 flex flex-col gap-3 p-2 rounded-lg min-h-[100px] transition-colors ${isOver ? 'bg-slate-700/50' : 'bg-slate-800/30'}`}
+        className={`flex-1 flex flex-col gap-3 p-2 rounded-lg min-h-[100px] transition-colors ${isOver && dropState !== 'illegal' ? 'bg-slate-700/50' : 'bg-slate-800/30'} ${dropStateClass(dropState)}`}
       >
         {visibleTasks.map((task) => (
           <TaskCard
