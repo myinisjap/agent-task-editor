@@ -429,6 +429,34 @@ describe('BoardPage WS refetch coalescing (#350)', () => {
     expect(tasksGetMock).toHaveBeenCalledWith('task-1')
   })
 
+  it('task.updated with an id-only payload refetches instead of replacing the stored task with a stub', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one', label: 'todo' })])
+    tasksGetMock.mockResolvedValue(task({ id: 'task-1', title: 'Task one', label: 'todo' }))
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await vi.waitFor(() => expect(wsOnHandler).not.toBeNull())
+    await vi.waitFor(() => expect(useTasksStore.getState().tasks).toHaveLength(1))
+
+    wsOnHandler!({ type: 'task.updated', payload: { id: 'task-1' } })
+
+    // The stored task is untouched synchronously (no stub upsert)...
+    const stored = useTasksStore.getState().tasks.find(t => t.id === 'task-1')
+    expect(stored?.title).toBe('Task one')
+    expect(stored?.label).toBe('todo')
+    expect(tasksGetMock).not.toHaveBeenCalled()
+
+    // ...and the debounced refetch fetches the full task.
+    await vi.advanceTimersByTimeAsync(250)
+    expect(tasksGetMock).toHaveBeenCalledWith('task-1')
+    const after = useTasksStore.getState().tasks.find(t => t.id === 'task-1')
+    expect(after?.title).toBe('Task one')
+  })
+
   it('a small burst of distinct task ids (at/under the threshold) coalesces into one get per id, not one per event', async () => {
     seedStores([
       task({ id: 'task-1', title: 'Task one' }),
