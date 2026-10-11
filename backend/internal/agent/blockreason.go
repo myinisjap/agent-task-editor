@@ -80,7 +80,7 @@ func NewBlockReasonResolver(q *gen.Queries, pool *Pool, rateLimits *RateLimitReg
 // resolve block reasons for a whole page of tasks without N+1 queries.
 type blockSharedState struct {
 	configs       []gen.AgentConfig
-	inUse         map[string]int64    // repo_id -> in-flight run count
+	inUse         map[string]int64    // repo_id -> pending/running run count (worker slots in use)
 	repos         map[string]gen.Repo // repo_id -> repo
 	labelsByWF    map[string][]gen.WorkflowLabel
 	transByWF     map[string][]gen.WorkflowTransition

@@ -125,7 +125,7 @@ Notes:
 The dispatcher runs a background goroutine that sweeps the database every 5 seconds:
 
 1. Queries `ListAgentPickupTasks` — tasks whose label appears in any agent-triggerable transition AND whose `active_agent_run_id IS NULL`, ordered by `priority` (urgent → high → normal → low) then oldest first. See [Task Priority](#task-priority) below.
-2. Computes each repo's current in-flight run count (`CountActiveRunsByRepo`) and skips any task whose repo is already at its effective concurrency limit — see [Per-Repo Concurrency Limits](#per-repo-concurrency-limits) below.
+2. Computes each repo's current worker-slot usage (`CountActiveRunsByRepo`: tasks whose active run is `pending` or `running`) and skips any task whose repo is already at its effective concurrency limit — see [Per-Repo Concurrency Limits](#per-repo-concurrency-limits) below.
 3. Loads all agent configs, matches each task to the first config whose `labels` array contains the task's label.
 4. Creates an `agent_runs` record with status `pending`.
 5. Sets the task's `active_agent_run_id` (and updates `current_agent_run_id`) — this prevents the next sweep from double-dispatching. The two "phantom" `waiting_human` escalation paths (cost budget exhausted/unenforceable, and provider disabled or unknown) are the exception: their synthetic run has no logs and no feedback, so they set only `active_agent_run_id` (still gating re-dispatch) and leave `current_agent_run_id` pointing at the task's last real run — the run WS replay shows and the run the next dispatch reads rework feedback from. See [Cost Budgets](#cost-budgets) below and issue #344.
@@ -137,12 +137,12 @@ Every step above that declines to dispatch a task (paused, repo at its concurren
 
 ## Per-Repo Concurrency Limits
 
-Each repo has an optional `max_concurrent_runs` column (nullable, editable on the Repos page). It caps how many agent runs the dispatcher will keep in flight against that repo at once, independent of how many free slots the global worker pool has:
+Each repo has an optional `max_concurrent_runs` column (nullable, editable on the Repos page). It caps how many agent runs the dispatcher will keep pending or running against that repo at once, independent of how many free slots the global worker pool has:
 
 - **Unset (`null`, the default)** — no repo-specific cap; the dispatcher falls back to the global `MAX_WORKERS` limit, preserving pre-#255 behavior exactly.
-- **Set to a positive integer** — the dispatcher skips any further tasks for that repo once its in-flight run count (`active_agent_run_id IS NOT NULL`, same signal `ListAgentPickupTasks` excludes on) reaches this value, even if the pool has free workers. This prevents one repo with many eligible tasks (e.g. from a schedule or bulk GitHub Issues import) from monopolizing every worker slot and starving every other repo.
-- The limit is enforced per-sweep: in-flight counts are loaded once at the start of a sweep and updated in-process as tasks are dispatched within that sweep, so a repo hitting its limit mid-sweep is skipped for the rest of that sweep too.
-- The Dashboard's "Repo concurrency" section shows live in-use vs. effective-limit slots per repo (only repos with at least one in-flight run are listed).
+- **Set to a positive integer** — the dispatcher skips any further tasks for that repo once its count of pending/running runs reaches this value (tasks parked on `waiting_human`, including cost-budget and other escalations, keep their re-dispatch lock but occupy no worker, so they do not count), even if the pool has free workers. This prevents one repo with many eligible tasks (e.g. from a schedule or bulk GitHub Issues import) from monopolizing every worker slot and starving every other repo.
+- The limit is enforced per-sweep: usage counts are loaded once at the start of a sweep and updated in-process as tasks are dispatched within that sweep, so a repo hitting its limit mid-sweep is skipped for the rest of that sweep too.
+- The Dashboard's "Repo concurrency" section shows live in-use vs. effective-limit slots per repo (only repos with at least one pending/running run are listed).
 
 ## Worker Pool
 
