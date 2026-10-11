@@ -24,6 +24,7 @@ const PricingSettingsPage = lazy(() => import('./pages/PricingSettingsPage'))
 const ReposPage = lazy(() => import('./pages/ReposPage'))
 const TemplatesPage = lazy(() => import('./pages/TemplatesPage'))
 const IntakeRulesPage = lazy(() => import('./pages/IntakeRulesPage'))
+const InboxPage = lazy(() => import('./pages/InboxPage'))
 const HealthPage = lazy(() => import('./pages/HealthPage'))
 
 function AppRoutes() {
@@ -40,6 +41,7 @@ function AppRoutes() {
           <Route path="/dashboard"             element={<DashboardPage />} />
           <Route path="/dashboard/usage"       element={<UsagePage />} />
           <Route path="/dashboard/performance" element={<AgentPerformancePage />} />
+          <Route path="/inbox"                 element={<InboxPage />} />
           <Route path="/board"                 element={<BoardPage />} />
           <Route path="/chat"                  element={<ChatPage />} />
           <Route path="/tasks/:id"             element={<TaskDetailPage />} />

@@ -5,8 +5,9 @@ import { useNotificationsStore, notificationsSupported } from '../../stores/noti
 import { useWsStatus } from '../../lib/useWsStatus'
 import { useHealthStore, worstHealth } from '../../stores/health'
 import type { WSStatus } from '../../api/ws'
-import { useNeedsMeStore } from '../../stores/needsMe'
 import { useNeedsMeSync } from '../../lib/useNeedsMeSync'
+import { useInboxSync } from '../../lib/useInboxSync'
+import { useInboxCount } from '../../stores/inbox'
 
 interface NavGroup {
   key: string
@@ -18,6 +19,7 @@ interface NavGroup {
 // link above the collapsible groups; the remaining 10 destinations are
 // organized into logical categories below.
 const topLevelLink = { to: '/dashboard', label: 'Dashboard' }
+const inboxLink = { to: '/inbox', label: 'Inbox' }
 
 const groups: NavGroup[] = [
   {
@@ -93,7 +95,8 @@ export default function NavSidebar() {
   const toggleNotifications = useNotificationsStore((s) => s.toggle)
   const wsStatus = useWsStatus()
   useNeedsMeSync()
-  const needsMeCount = useNeedsMeStore((st) => st.items.length)
+  useInboxSync()
+  const inboxCount = useInboxCount()
   const healthSeverity = worstHealth(useHealthStore((s) => s.checks))
   const location = useLocation()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
@@ -166,13 +169,21 @@ export default function NavSidebar() {
             className={linkClassName}
           >
             {topLevelLink.label}
-            {needsMeCount > 0 && (
+          </NavLink>
+
+          <NavLink
+            to={inboxLink.to}
+            onClick={() => setIsOpen(false)}
+            className={linkClassName}
+          >
+            {inboxLink.label}
+            {inboxCount > 0 && (
               <span
                 className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] px-1.5 py-0.5 rounded-full bg-pink-600 text-white text-[10px] font-semibold"
-                title={`${needsMeCount} task${needsMeCount === 1 ? '' : 's'} need you`}
-                aria-label={`${needsMeCount} tasks need you`}
+                title={`${inboxCount} item${inboxCount === 1 ? '' : 's'} waiting on you`}
+                aria-label={`${inboxCount} items waiting on you`}
               >
-                {needsMeCount}
+                {inboxCount}
               </span>
             )}
           </NavLink>
