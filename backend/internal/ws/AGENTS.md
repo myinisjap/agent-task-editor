@@ -1,6 +1,6 @@
 # internal/ws
 
-WebSocket hub and per-client connection management.
+WebSocket hub and per-client connection management. Protocol reference: `docs/websocket.md`.
 
 ## Hub
 
@@ -9,55 +9,32 @@ hub := ws.NewHub()
 hub.Publish(eventType string, payload map[string]any)
 ```
 
-The hub maintains the set of connected clients. `Publish` serialises the event as JSON and delivers it to every client subscribed to the relevant task. The `agent.log` event carries a `task_id` in its payload and is routed only to subscribed clients; all other events are broadcast to all clients.
+`Publish` serialises JSON and delivers it to clients. `agent.log` carries a `task_id` and goes only to clients subscribed to that task; all other events broadcast to all clients. `*Hub` satisfies both `workflow.Publisher` and `agent.Publisher` — one hub instance is passed to both.
 
-`Hub` satisfies both `workflow.Publisher` and `agent.Publisher` interfaces — a single hub instance is passed to both the workflow engine and the agent pool.
+## Client Lifecycle (`ServeWS`)
 
-## Client Lifecycle
-
-Each WebSocket connection is managed by `ServeWS`:
-
-1. Auth (if `API_TOKEN`/`API_TOKENS` set) — ticket only:
-   - `?ticket=` is checked via `hub.ConsumeTicket`. Tickets are minted by the
-     bearer-gated `POST /api/v1/ws-ticket` (see `ticket.go` / `handlers.WSTicketHandler`),
-     are random (`crypto/rand`), single-use, and expire after ~30s. This keeps the
-     long-lived API token out of the URL — query strings leak into reverse-proxy/access
-     logs and browser history.
-   - The old `?token=<API_TOKEN>` fallback was **removed** (breaking): it is not read at all, so
-     a request carrying only `?token=` gets `401`.
-2. WebSocket upgrade using `nhooyr.io/websocket`
-3. Two goroutines started under a shared context:
-   - **Read pump** — parses `subscribe`/`unsubscribe` messages; enforces max 100 subscriptions; spawns `replayTaskLogs` only when a subscribe is a *newly added* id (re-subscribing to an id already in the map is a no-op — otherwise a buggy/looping client resending the same frame would spawn one replay goroutine per frame without ever tripping the subscription cap). In-flight replays per client are capped at `maxConcurrentReplays` (4) via a semaphore channel (`Client.replaySlots`); new subscriptions block for a slot rather than being dropped, so every added subscription still gets its replay.
-   - **Write pump** — also, when `Hub.Publish` drops an event for a full buffer it sets `Client.lagged` and nudges `Client.wake`; the pump writes one `{"type":"resync","payload":{}}` frame (`takeResync`) once `c.send` is empty, clearing the flag only then. No sequence numbers. Drains `c.send` channel and writes to connection; sends keepalive pings every 25s. Every `conn.Write` and `conn.Ping` is wrapped in its own `context.WithTimeout` (`writeTimeout` / `pingTimeout`, both 10s) rather than using the shared request context directly — a hijacked connection has no socket deadlines and the request ctx is never cancelled by a peer disconnect, so without a per-call timeout a half-open peer (laptop sleep, NAT timeout, proxy drop) would park the write pump in `Write`/`Ping` forever, leaving the client in `Hub.clients` (and the `WSConnectedClients` gauge) for the process lifetime.
-4. Either pump cancels the shared context on error/close
-5. `wg.Wait()` then graceful close
+1. **Auth** (when `API_TOKEN`/`API_TOKENS` is set): `?ticket=` only, checked with `hub.ConsumeTicket`. Tickets come from the bearer-gated `POST /api/v1/ws-ticket` (`ticket.go`, `handlers.WSTicketHandler`). A request with only `?token=` gets `401`. `/ws` is mounted outside `BearerAuth`. (ADR 0022)
+2. Upgrade with `nhooyr.io/websocket`; the origin pattern list comes from `CORS_ORIGINS`.
+3. Two goroutines under a shared context:
+   - **Read pump**: parses `subscribe`/`unsubscribe`; max 100 subscriptions; spawns `replayTaskLogs` only for a *newly added* id (re-subscribing is a no-op); at most `maxConcurrentReplays` (4) in flight via `Client.replaySlots`, blocking rather than dropping.
+   - **Write pump**: drains `c.send`, pings every 25s, and wraps every `conn.Write`/`conn.Ping` in its own 10s timeout (`writeTimeout`/`pingTimeout`) — never the shared context directly. When `Hub.Publish` drops an event for a full buffer it sets `Client.lagged` and nudges `Client.wake`; the pump sends one `{"type":"resync","payload":{}}` frame (`takeResync`) once `c.send` is empty. (ADR 0023)
+4. Either pump cancels the shared context; `wg.Wait()` then graceful close.
 
 ## Ticket Auth (`ticket.go`)
 
-`ticketStore` (unexported, held on `Hub.tickets`) issues and validates the tickets used above:
-
 ```go
-hub.IssueTicket() (string, error) // called by POST /api/v1/ws-ticket
+hub.IssueTicket() (string, error)   // called by POST /api/v1/ws-ticket
 hub.ConsumeTicket(ticket string) bool
 ```
 
-- `issue()` generates 32 random bytes via `crypto/rand` and encodes them with `base64.RawURLEncoding` (query-string safe). It also opportunistically sweeps expired entries on each call so the map can't grow unbounded if tickets are minted but never consumed.
-- `consume()` always deletes the ticket on lookup — whether or not it was found or still valid — so replay of a used or expired ticket always fails (true single-use).
-- Default TTL is 30s (`ticketTTL`); tests can override it via `newTicketStoreWithTTL`.
-- The store is a plain `sync.Mutex`-guarded map — fine for expected volume (single-user/self-hosted); no background sweep goroutine.
+32 random bytes (`crypto/rand`, `base64.RawURLEncoding`), TTL 30s (`ticketTTL`; tests use `newTicketStoreWithTTL`). `issue()` sweeps expired entries; `consume()` always deletes on lookup so a ticket is truly single-use. Mutex-guarded map, no background goroutine.
 
 ## Log Replay
 
-On subscribe, `replayTaskLogs` fetches the **tail** of the task's current agent run's log (the newest `replayLimit` = 500 entries, via `ListAgentLogsPage`) and sends it as a **single batched `agent.log_replay` message**, not one `agent.log` per row. This ensures clients that reconnect mid-run (or open the task detail page after a run started) see prior output, while bounding the work: the previous per-row replay queued *every* persisted row through the 256-slot send buffer, which stalled the UI and could drop live events on a long run. The batch payload carries `entries` (chronological, oldest first), `run_id`, `task_id`, and `has_more`; when `has_more` is true the client loads earlier entries on demand via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
+On subscribe, `replayTaskLogs` sends the newest `replayLimit` (500) entries of the task's `current_agent_run_id` run (via `ListAgentLogsPage`; `current_`, not `active_`, so finished runs replay — ADR 0001) as **one** `agent.log_replay` message (`entries` oldest-first, `run_id`, `task_id`, `has_more`). Earlier entries load via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
 
-Replay uses `task.current_agent_run_id` (not `active_agent_run_id`) — so clients can also replay logs from completed or failed runs.
-
-Live `agent.log` entries published by the pool (`internal/agent/pool.go` `persistLogs`) carry the same `id` as the row `replayTaskLogs` later returns for that entry (both are the persisted `agent_logs` row id). This is the dedupe contract clients rely on: a browser that reconnects mid-run gets the live stream plus a replay batch that overlaps it, and matches on `id` to avoid showing duplicate lines.
+Live `agent.log` events published by `pool.go#persistLogs` carry the same `id` as the persisted `agent_logs` row that replay later returns. Keep that contract: clients dedupe the live/replay overlap by `id`.
 
 ## Send Buffer
 
-Each client has a 256-message buffered channel. If a client is too slow to consume messages and the buffer fills, subsequent publishes drop the message for that client. The connection is not forcibly closed — backpressure is absorbed by dropping rather than blocking.
-
-## CORS for WebSocket
-
-`ServeWS` builds an origin pattern list from the same `CORS_ORIGINS` config used by the HTTP middleware, and passes it to `websocket.AcceptOptions`. This enforces the same origin policy for WS upgrades.
+256-message buffered channel per client. When full, publishes are dropped for that client (and a `resync` is queued); the connection is not closed.

@@ -19,6 +19,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [api.md](api.md) | REST API reference |
 | [websocket.md](websocket.md) | WebSocket protocol and event types |
 | [backup.md](backup.md) | Backup, restore, and continuous replication |
+| [adr/](adr/README.md) | Architecture Decision Records: why the runtime, storage and API work the way they do |
 | [screenshots.md](screenshots.md) | Runbook for regenerating the README/docs screenshots and hero GIF |
 
 ## Quick Start

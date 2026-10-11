@@ -5,7 +5,7 @@ React 19 + TypeScript + Vite + Tailwind CSS. Single-page application served by n
 ## Stack
 
 - **React 19** with functional components and hooks
-- **TypeScript** — full `strict` enabled (`noUncheckedIndexedAccess` intentionally left off; see `tsconfig.app.json`)
+- **TypeScript** — full `strict` (`noUncheckedIndexedAccess` intentionally off; see `tsconfig.app.json`)
 - **Vite** — dev server (`:5173`) + production bundler
 - **Tailwind CSS** — utility-first styling
 - **Zustand** — lightweight global state
@@ -32,13 +32,13 @@ src/
 │   ├── BoardPage.tsx        Main Kanban board
 │   ├── TaskDetailPage.tsx   Task detail + live agent log stream
 │   ├── DashboardPage.tsx    Stats and recent activity
-│   ├── WorkflowPage.tsx     Workflow editor (labels + transitions; per-workflow loads are request-sequenced and Save is guarded against stale YAML — see #332)
+│   ├── WorkflowPage.tsx     Workflow editor (labels + transitions; request-sequenced loads, Save guarded against stale YAML — ADR 0034)
 │   ├── AgentConfigPage.tsx  Agent config management
 │   ├── ProviderConfigPage.tsx Provider config management (provider/model/env — shared by agent configs and chat sessions)
 │   ├── ReposPage.tsx        Repo management
 │   └── HealthPage.tsx       Provider readiness / health checks
 ├── stores/
-│   ├── tasks.ts      Task list state + WebSocket updates (fetch() is request-sequenced via a monotonic reqId and preserves WS upserts/removes that land mid-sweep — see #341)
+│   ├── tasks.ts      Task list state + WebSocket updates (request-sequenced `fetch()`; preserves WS upserts/removes landing mid-sweep — ADR 0034)
 │   ├── agents.ts     Agent config state
 │   ├── providerConfigs.ts Provider config state (provider/model/env)
 │   ├── repos.ts      Repo list state
@@ -72,16 +72,7 @@ VITE_WS_BASE_URL=ws://localhost:8080     # empty = same origin (Docker)
 VITE_API_TOKEN=                          # dev-only: seeds localStorage once if set
 ```
 
-`VITE_API_TOKEN` is a **build-time** convenience only — it's used to seed the
-runtime token in `localStorage` the first time the app loads if nothing is
-stored yet (so `.env.local` dev setups don't need to click through the token
-prompt). It is **not** the mechanism used in production or the prebuilt
-Docker image, since a build-time env var can never be baked into a published
-image. The actual runtime token flow lives in `src/api/authToken.ts`: when
-the backend has `API_TOKEN` set and a request comes back 401, `ApiTokenGate`
-(`src/components/shared/ApiTokenGate.tsx`) prompts for a token, stores it in
-`localStorage`, and every subsequent request/WS-ticket mint sends it as
-`Authorization: Bearer <token>`.
+`VITE_API_TOKEN` is a dev-only convenience that seeds the runtime token in `localStorage` once. Production and the prebuilt image use the runtime flow in `src/api/authToken.ts` + `ApiTokenGate` (ADR 0032); never rely on a build-time token there.
 
 ## Development
 
@@ -97,69 +88,19 @@ npm run e2e            # Playwright E2E smoke tests (stack must already be runni
 
 ## Testing
 
-Three layers:
+Three layers (ADR 0035):
 
-- **Pure-function tests** in `src/lib/*.test.ts` (parsers, validators — no DOM).
-- **Component tests** (Vitest + Testing Library, `jsdom` environment — see the
-  `test` block in `vite.config.ts` and `src/test/setup.ts`) for pages and
-  components: `src/pages/*.test.tsx`, `src/components/**/*.test.tsx`. These
-  render real component trees and assert on behavior (drag-to-move, bulk
-  actions, tab switching, button enablement), not snapshots.
-- **E2E smoke tests** (`e2e/*.spec.ts`, Playwright + Chromium, `frontend/playwright.config.ts`)
-  running against the real, built docker-compose stack
-  (`http://localhost:5173/tasks/`) — not `npm run dev`, and nothing mocked.
-  Covers board load, task creation, task-detail navigation, and the Logs
-  tab's WS log pane mount (`board.spec.ts`), plus a data-driven check that
-  every static app route loads (`pages-load.spec.ts`) — a page-specific
-  heading or `data-testid` anchor becomes visible, without asserting on
-  list/empty-state content or (for `HealthPage`) provider-check results.
-  Every spec runs under two Playwright projects, `chromium` (desktop) and
-  `mobile-chrome` (a Pixel 7 viewport/UA exercising the app's mobile
-  layout — collapsed nav sidebar, mobile header bars, etc.); `npm run e2e`
-  runs both. Kept fast and non-flaky, not a full E2E suite — see
-  `e2e/README.md`. Requires the stack to already be running
-  (`./dev.sh start` or `docker compose up -d --build --wait`) and a
-  registered repo; `e2e/global-setup.ts` seeds one automatically via the
-  backend API (mirroring `scripts/seed-demo.sh`), but the repo *directory*
-  itself must exist on disk under `REPO_BASE_DIR` before the stack starts
-  (see `e2e/README.md`). Run with `npm run e2e` (`npm run e2e:install` once,
-  first time, to fetch the Chromium browser). Wired into CI as its own job
-  (`.github/workflows/ci.yml`, `e2e`), independent of the `frontend`/
-  `backend`/`docker-build` jobs so a slow or flaky E2E run never gates the
-  fast unit-test feedback loop.
+- **Pure-function tests** in `src/lib/*.test.ts` (no DOM).
+- **Component tests** (Vitest + Testing Library, `jsdom`; setup in `vite.config.ts` and `src/test/setup.ts`) for `src/pages/*.test.tsx` and `src/components/**/*.test.tsx`. Assert on behavior, not snapshots.
+- **E2E smoke tests** (`e2e/*.spec.ts`, Playwright) against the real built compose stack at `http://localhost:5173/tasks/` — nothing mocked, not `npm run dev`. Every spec runs under `chromium` and `mobile-chrome`. Needs the stack running (`./dev.sh start` or `docker compose up -d --build --wait`) and the repo directory present under `REPO_BASE_DIR` before start; `e2e/global-setup.ts` seeds the repo row. `npm run e2e:install` once. See `e2e/README.md`. Keep it small and non-flaky; it runs as its own CI job.
 
-Common mocking patterns used by the component tests:
-- `vi.mock('../../api/client', ...)` (relative to the test file) to replace
-  `api.*` calls with `vi.fn()`s — see `src/test/mockApi.ts` for a factory
-  covering the full `api` surface if a test needs more than a couple of
-  methods stubbed.
-- Zustand stores (`useTasksStore`, `useWorkflowStore`, `useReposStore`, ...)
-  are seeded directly via `.setState(...)` — but note that a page's own
-  mount-time `fetch()` effects (calling the mocked `api.*.list()`) will
-  overwrite that seed once they resolve, so also mock the underlying API
-  call to resolve with the same fixture when a component fetches on mount.
-- `wsClient` (`../../api/ws`) is mocked to a no-op
-  (`{ on: () => () => {}, subscribeTask: vi.fn(), unsubscribeTask: vi.fn() }`)
-  to avoid a real WebSocket connection.
-- Dragging (`@dnd-kit`) is simulated with real `fireEvent.mouseDown` /
-  `mouseMove` / `mouseUp` sequences (dnd-kit's `MouseSensor` listens for
-  native mouse events, not React synthetic pointer events) plus
-  `getBoundingClientRect` stubs on the draggable/droppable elements so
-  dnd-kit's collision detection has real geometry — see
-  `src/components/board/TaskBoard.test.tsx`.
+Mocking patterns for component tests:
+- `vi.mock('../../api/client', ...)` (path relative to the test) with `vi.fn()`s; `src/test/mockApi.ts` covers the full `api` surface.
+- Seed Zustand stores with `.setState(...)`, and also mock the underlying API call, since a page's mount-time `fetch()` overwrites the seed.
+- Mock `wsClient` (`../../api/ws`) as `{ on: () => () => {}, subscribeTask: vi.fn(), unsubscribeTask: vi.fn() }`.
+- Simulate `@dnd-kit` drags with real `fireEvent.mouseDown`/`mouseMove`/`mouseUp` plus `getBoundingClientRect` stubs (see `src/components/board/TaskBoard.test.tsx`).
 
-CI measures coverage with `npm run test:coverage` (`vitest run --coverage`)
-and enforces a statements floor (see `.github/workflows/ci.yml`, "Enforce
-coverage floor"). The v8 coverage provider only instruments modules a test
-actually *imports* by default, so a brand-new file nothing imports would be
-silently absent from the report instead of counted as 0% — meaning a floor
-computed that way could never detect newly-added untested code, which is the
-whole point of having one. To avoid that, `vite.config.ts`'s
-`test.coverage` block sets `all: true` plus an `include: ['src/**/*.{ts,tsx}']`
-glob, forcing every source file into the report regardless of whether any
-test imports it. A short `exclude` list keeps out files with nothing to
-assert: the test files themselves, `src/api/types.ts` (generated, see
-below), `src/main.tsx` (bootstrap), and `src/test/**` (setup/helpers).
+CI enforces a statements coverage floor via `npm run test:coverage` (`.github/workflows/ci.yml`, "Enforce coverage floor"). `vite.config.ts` sets `coverage.all: true` with `include: ['src/**/*.{ts,tsx}']` so new untested files count as 0%; the `exclude` list is tests, generated `src/api/types.ts`, `src/main.tsx`, `src/test/**`. Don't widen the exclusions to hide gaps. CI uploads the report as the `frontend-coverage` artifact.
 
 ## Code Generation
 
@@ -174,33 +115,18 @@ CI regenerates the file and fails the build (`git diff --exit-code`) if it
 doesn't match what's committed, so the spec and the generated client types
 can't silently diverge.
 
-CI also uploads a `vitest run --coverage` report as a build artifact
-(`frontend-coverage`) on every run so coverage trends stay visible on PRs.
-
 ## Adding a New Page
 
 1. Create `src/pages/MyPage.tsx`
 2. Add a route in `App.tsx`
 3. Add navigation link in the layout component
 4. Add any new API calls to `src/api/client.ts`
-5. Add types to `src/api/types.ts`
+5. Add types via `openapi.yaml` + `npm run gen:api` (never hand-edit `src/api/types.ts`)
 
-## Theming (dark / light)
+## Theming (dark / light) — ADR 0033
 
-The UI is authored **dark-first** with Tailwind's `slate` palette (plus accent colors).
-Rather than add `dark:` variants everywhere, the dark palette is kept as-is and a **light**
-theme is derived by remapping Tailwind's `--color-<name>-<shade>` CSS variables under a
-`.light` root class in `src/index.css`. Tailwind v4 compiles utilities to
-`var(--color-...)`, so overriding those variables re-themes existing classes with no
-component edits. The light values are a perceptual index-mirror of the dark ramp — regenerate
-them with `node scripts/gen-light-theme.mjs` after a Tailwind upgrade.
-
-`src/stores/theme.ts` owns the `'dark' | 'light'` state (persisted to `localStorage`,
-defaulting to `prefers-color-scheme`) and toggles the root class; an inline script in
-`index.html` applies the class before first paint to avoid a flash. Because the theme rides
-on CSS variables, prefer Tailwind `slate`/accent utilities over hardcoded hex so new UI
-themes automatically.
+Authored **dark-first** with Tailwind `slate` plus accents. The light theme is derived by remapping `--color-<name>-<shade>` variables under a `.light` root class in `src/index.css` (regenerate with `node scripts/gen-light-theme.mjs` after a Tailwind upgrade). Prefer `slate`/accent utilities over hardcoded hex, and don't add per-component `dark:` variants. `src/stores/theme.ts` persists the choice; an inline script in `index.html` applies the class before first paint.
 
 ## State Management Pattern
 
-Zustand stores own server state. Components call store actions which call `client.ts` functions, then update store state on success. WebSocket events from `ws.ts` are also wired into stores to keep state live without polling.
+Zustand stores own server state. Components call store actions which call `client.ts`, then update state on success; WS events from `ws.ts` also feed the stores (no polling). Sequence fetches and merge WS updates as in ADR 0034.

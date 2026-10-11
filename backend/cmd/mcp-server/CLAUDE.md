@@ -1,1 +1,1 @@
-@backend/cmd/mcp-server/AGENTS.md
+@AGENTS.md

@@ -24,7 +24,7 @@ On success, wraps two DB writes in a transaction:
 - the label update — a **compare-and-swap** (`UPDATE tasks SET label = ? … WHERE
   id = ? AND label = ?`, the expected from-label) run as raw SQL on the tx, not
   the generated `UpdateTaskLabel` (sqlc's SQLite analyzer miscompiles the extra
-  guard param — see the byte-offset note in `internal/storage/CLAUDE.md`). It
+  guard param — ADR 0020, `internal/storage/AGENTS.md`). It
   still clears `active_agent_run_id`. If it matches 0 rows, a concurrent
   transition already moved the task, so it returns `ErrStale` (no clobber).
 - `CreateTaskLabelHistory` (audit log)
@@ -48,7 +48,7 @@ TriggerAgent TransitionTrigger = "agent"
 TriggerHuman TransitionTrigger = "human"
 ```
 
-Human-triggered transitions come from the Approve/Reject handlers. Agent-triggered transitions come from the pool after a run completes with `NextLabel` set; the pool uses `TransitionExpecting` with the dispatch-time label so an outcome is never applied on top of a human move made after the run finished. `internal/ghsync`'s optional PR-review auto-transition (per-repo opt-in `pr_review_auto_transition_enabled`) also uses `TriggerHuman` when it moves a task along its workflow's "failure" path on new GitHub review feedback — it mirrors the manual Reject action rather than introducing a new trigger, and duplicates a narrow "resolve the failure-path target" helper (`ghsync.(*Syncer).failurePathTarget`) rather than depending on `api/handlers`.
+Human transitions come from Approve/Reject/MoveLabel. Agent transitions come from the pool after a run completes with `NextLabel`; the pool uses `TransitionExpecting` with the dispatch-time label so an outcome never lands on a human move made after the run finished. `TriggerSubtasksComplete` is used by `SubtaskCoordinator` (ADR 0016) and bypasses the human/agent gate checks. `internal/ghsync`'s opt-in PR-review auto-transition uses `TriggerHuman` to mirror Reject, with its own `ghsync.(*Syncer).failurePathTarget` rather than depending on `api/handlers`. Do not write `tasks.label` outside the engine (ADR 0029).
 
 ## AgentPickupLabels
 
