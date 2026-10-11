@@ -253,6 +253,18 @@ type TaskSchedule struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
+type TaskSideEffect struct {
+	ID        string    `json:"id"`
+	TaskID    string    `json:"task_id"`
+	Kind      string    `json:"kind"`
+	Status    string    `json:"status"`
+	Attempts  int64     `json:"attempts"`
+	NextAt    time.Time `json:"next_at"`
+	LastError *string   `json:"last_error"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type TaskSourceComment struct {
 	ID                string    `json:"id"`
 	TaskID            string    `json:"task_id"`

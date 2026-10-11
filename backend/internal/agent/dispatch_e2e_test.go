@@ -152,18 +152,19 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	engine := workflow.New(db.SQL(), pub)
 
 	termQ := gen.New(db.SQL())
-	engine.OnTerminal = func(ctx context.Context, task gen.Task) {
+	engine.OnTerminal = func(ctx context.Context, task gen.Task) error {
 		if task.WorktreePath == "" {
-			return
+			return nil
 		}
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			return
+			return err
 		}
 		if repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
 			_ = PushBranch(ctx, task.WorktreePath, task.Branch)
 		}
 		_ = RemoveWorktree(ctx, repo.Path, task.WorktreePath)
+		return nil
 	}
 
 	pool := NewPool(2, db.SQL(), engine, pub)
@@ -186,6 +187,10 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	dispDone := make(chan struct{})
 	go func() { defer close(poolDone); pool.Start(ctx) }()
 	go func() { defer close(dispDone); d.Run(ctx) }()
+	// The engine's side-effect outbox worker runs OnTerminal after the
+	// transition commits, as in cmd/server/main.go.
+	sideDone := make(chan struct{})
+	go func() { defer close(sideDone); engine.RunSideEffects(ctx) }()
 
 	// Build the repo before registering the drain cleanup so that this cleanup —
 	// registered last, therefore run first (t.Cleanup is LIFO) — cancels the loop
@@ -200,6 +205,7 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 		cancel()
 		<-poolDone
 		<-dispDone
+		<-sideDone
 	})
 	return h
 }

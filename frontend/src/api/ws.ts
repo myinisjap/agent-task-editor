@@ -67,6 +67,10 @@ export type WSEvent =
   // Lightweight "something changed, refetch it" signal: carries only the id
   // (see docs/websocket.md). Never treat the payload as a full Task.
   | { type: 'task.updated'; payload: { id: string } }
+  // A task's post-transition side effect (push, PR creation, issue write-back)
+  // finished or failed; status is done | pending (failed, retrying) | failed.
+  // task.updated follows, so consumers that refetch need not handle this.
+  | { type: 'task.side_effect'; payload: { task_id: string; kind: string; status: string; last_error?: string } }
   | { type: 'task.subtask_conflict'; payload: { task_id: string; parent_id: string; files: string[] } }
   // Emitted by the GitHub Issues importer when it ingests a new comment from
   // a task's source issue thread (see GET /tasks/{id}/source-comments).
