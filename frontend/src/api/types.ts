@@ -3265,6 +3265,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/needs-me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tasks that need a human, oldest first
+         * @description The single server-side definition of "needs me". Each task appears at most once with one primary reason; precedence is waiting_human > pr_conflict > human_gate. waiting_human: the task's active run is waiting for input (run_id and message set). pr_conflict: the task has an open PR marked as conflicting. human_gate: the task sits on a non-terminal, non-agent_ignore label with no agent-triggerable outbound transition and at least one human transition, with no live run. Archived and (for pr_conflict/human_gate) paused tasks are excluded.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NeedsMeResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard": {
         parameters: {
             query?: never;
@@ -4198,6 +4237,27 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        NeedsMeResponse: {
+            items: components["schemas"]["NeedsMeItem"][];
+        };
+        NeedsMeItem: {
+            task_id: string;
+            task_title: string;
+            repo_id: string;
+            workflow_id: string;
+            label: string;
+            /** @enum {string} */
+            reason: "waiting_human" | "pr_conflict" | "human_gate";
+            /** @description Waiting run feedback or notes text, when present. */
+            message?: string;
+            /** @description Set when reason is waiting_human. */
+            run_id?: string;
+            /**
+             * Format: date-time
+             * @description When the task started needing a human; the list is sorted by this ascending.
+             */
+            since: string;
+        };
         /** @description The provider/model/API-key (env vars) triple, split out of AgentConfig so it can be shared/reused by chat sessions and agent configs alike. */
         ProviderConfig: {
             id: string;

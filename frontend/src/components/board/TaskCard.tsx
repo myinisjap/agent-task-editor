@@ -8,6 +8,8 @@ import { useTasksStore } from '../../stores/tasks'
 import { useReposStore } from '../../stores/repos'
 import GitStateBadge from './GitStateBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
+import { useNeedsMeStore } from '../../stores/needsMe'
+import { needsMeReasonLabel } from '../../lib/needsMe'
 import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
 import { formatRelativeCountdown } from '../../lib/format'
 
@@ -48,6 +50,7 @@ function TaskCard({
   onToggleSelect?: (taskId: string, shiftKey: boolean) => void
 }) {
   const navigate = useNavigate()
+  const needsMe = useNeedsMeStore((st) => st.byTask[task.id])
   const upsert = useTasksStore((s) => s.upsert)
   const repoName = useReposStore((s) => s.byId(task.repo_id))?.name
   // A task with any unsatisfied blocker is gated from dispatch; mute it and show
@@ -384,7 +387,15 @@ function TaskCard({
               ⏸ Paused
             </span>
           )}
-          {isRunning && (
+          {needsMe && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-pink-900/70 text-pink-200 font-semibold"
+              title={needsMeReasonLabel(needsMe.reason)}
+            >
+              Needs you
+            </span>
+          )}
+          {isRunning && !needsMe && (
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
           )}
           {!isRunning && task.active_run_status === 'waiting_human' && (
