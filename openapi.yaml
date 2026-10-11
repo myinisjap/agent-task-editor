@@ -278,6 +278,17 @@ components:
             agent-triggerable label), or when it IS a candidate but has no
             active block (i.e. it's simply next in line — see
             queue_position, a separate, unrelated concern).
+        active_run_status:
+          type: string
+          enum: [pending, running, waiting_human]
+          description: >
+            Derived, read-time status of the run holding the task's
+            re-dispatch lock (active_agent_run_id). That lock intentionally
+            stays set for waiting_human runs (and for synthetic escalation
+            runs such as cost-cap), so clients use this field to tell an agent
+            that is actually working (pending/running) from a task that needs
+            a human (waiting_human). Computed on GET /tasks and
+            GET /tasks/{id}; absent when the task has no active run.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
       required: [id, title, description, type, label, repo_id, workflow_id, created_at, updated_at]

@@ -4320,6 +4320,11 @@ export interface components {
             cumulative_cost_usd?: number;
             /** @description Derived, read-time explanation of why this task isn't currently being dispatched (see BlockReason). Computed on every GET /tasks and GET /tasks/{id} response by re-evaluating the same predicates the dispatcher itself uses, in the same order, so it never drifts from actual dispatch behavior and never goes stale. Only the FIRST reason the dispatcher would hit is reported — clearing it may simply expose the next one, so this is not an exhaustive list. Absent/null when the task isn't currently a dispatch candidate at all (e.g. archived, already running, or not on an agent-triggerable label), or when it IS a candidate but has no active block (i.e. it's simply next in line — see queue_position, a separate, unrelated concern). */
             block_reason?: components["schemas"]["BlockReason"] | null;
+            /**
+             * @description Derived, read-time status of the run holding the task's re-dispatch lock (active_agent_run_id). That lock intentionally stays set for waiting_human runs (and for synthetic escalation runs such as cost-cap), so clients use this field to tell an agent that is actually working (pending/running) from a task that needs a human (waiting_human). Computed on GET /tasks and GET /tasks/{id}; absent when the task has no active run.
+             * @enum {string}
+             */
+            active_run_status?: "pending" | "running" | "waiting_human";
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

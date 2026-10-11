@@ -224,7 +224,12 @@ export default function BoardPage() {
         // (debounced so a burst of simultaneous agent-done events triggers
         // one rollup fetch instead of one per task).
         debouncedRefreshCostByTask()
-        // Run finished (success or failure) — clear the running indicator.
+        // Run finished (success or failure) — clear the running indicator,
+        // and refetch the task so its derived active_run_status is fresh: a
+        // run that ended in waiting_human keeps active_agent_run_id set and
+        // must flip the card to "Needs you" rather than just going blank.
+        pendingRefetchIdsRef.current.add(event.payload.task_id)
+        flushPendingRefetches()
         setRunningTaskIds(prev => {
           const next = new Set(prev)
           next.delete(event.payload.task_id)
@@ -247,7 +252,7 @@ export default function BoardPage() {
   // Clear the WS-derived "running" set whenever the connection drops so a
   // missed task.agent_done can't leave a permanently-stuck pulse dot. Once
   // the connection re-opens and tasks are refetched, the effect below
-  // re-seeds ids from each task's active_agent_run_id.
+  // re-seeds ids from each task's active_run_status.
   useEffect(() => {
     return wsClient.onStatusChange((status) => {
       if (status !== 'open') {
@@ -256,7 +261,7 @@ export default function BoardPage() {
     })
   }, [])
 
-  // Seed (and re-seed) the running set from the task list itself, so a page
+  // Seed (and re-seed) the running set (pending/running runs only) from the task list itself, so a page
   // refresh — or a task.updated refetch — mid-run still shows the indicator
   // even if the task.agent_started event was missed. This only ADDS ids;
   // removal is handled by the WS task.agent_done and task.label_changed
@@ -268,7 +273,10 @@ export default function BoardPage() {
       let changed = false
       const next = new Set(prev)
       for (const t of tasks) {
-        if (t.active_agent_run_id && !next.has(t.id)) {
+        // active_agent_run_id also stays set for waiting_human runs (it is the
+        // re-dispatch lock), so key off the run's actual status instead.
+        const live = t.active_run_status === 'pending' || t.active_run_status === 'running'
+        if (t.active_agent_run_id && live && !next.has(t.id)) {
           next.add(t.id)
           changed = true
         }
