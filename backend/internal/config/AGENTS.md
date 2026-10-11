@@ -12,6 +12,7 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `APIToken` | `API_TOKEN` | `api_token` | _(empty)_ |
 | `APITokens` | `API_TOKENS` | `api_tokens` | _(empty map)_ |
 | `MetricsToken` | `METRICS_TOKEN` | `metrics_token` | _(empty)_ |
+| `MetricsPublic` | `METRICS_PUBLIC` | `metrics_public` | `false` |
 | `MCPBinary` | `MCP_SERVER_PATH` | `mcp_server_path` | _(empty)_ |
 | `MCPBoardBinary` | `MCP_BOARD_PATH` | `mcp_board_path` | _(empty)_ |
 | `LLMBaseURL` | `LLM_BASE_URL` | `llm_base_url` | `https://api.openai.com/v1` |
@@ -49,7 +50,7 @@ config/env-var-only choice — see `internal/backup` and `docs/backup.md`.
   entries are merged into (and override same-named) YAML `api_tokens` entries.
   `APIToken` is still supported as an anonymous/legacy fallback — a request
   authenticated with it resolves to actor `""`, same as before this field existed.
-- `MetricsToken` empty (the default) leaves `GET /metrics` unauthenticated, independent of `APIToken`/`APITokens` — most Prometheus scrape setups can't easily carry a different token than other tooling.
+- `/metrics` auth: `MetricsToken` set -> that token only. Unset and `APIToken`/`APITokens` configured -> an API token is required (breaking vs. the old open default). `MetricsPublic=true` opts out (open). No API auth at all -> open.
 - `MCPBinary` empty means ClaudeRunner runs without MCP tools (`signal_complete`/`request_human` unavailable)
 - `MCPBoardBinary` empty means chat sessions launch without the board MCP tools (`list_repos`/`list_workflows`/`create_task`); set it to the `mcp-board` binary path to let chat sessions create tickets. See `docs/board-mcp.md`.
 - `BackupDir` empty disables the automatic local-snapshot scheduler (`internal/backup.Scheduler`); the on-demand `GET /api/v1/backup` endpoint and the Health page's "Download backup" button are always available regardless. See `docs/backup.md`.

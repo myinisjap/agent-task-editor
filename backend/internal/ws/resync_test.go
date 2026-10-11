@@ -82,7 +82,7 @@ func TestClient_NotLaggedNoResync(t *testing.T) {
 // reading it receives a resync frame after the queued events.
 func TestServeWS_SlowClientReceivesResync(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "*")
+	_, wsURL := newTestWSServer(t, hub, false, "*")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -3467,7 +3467,7 @@ paths:
         the rest of /api/v1 — minting a ticket already requires holding the
         token. The ticket is consumed on first use; a replayed or expired
         ticket is rejected with 401. See docs/websocket.md for the full
-        connection flow, including the deprecated ?token= fallback.
+        connection flow. The former ?token= fallback was removed (401).
       responses:
         "200":
           description: A freshly minted ticket

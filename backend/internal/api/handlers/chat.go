@@ -36,14 +36,13 @@ type ChatHandler struct {
 	term Terminal
 	// auth mirrors the /ws endpoint: WS handshakes can't carry the bearer header,
 	// so a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket) is
-	// validated here. Empty bearerToken = open (no auth), same as ServeWS.
-	bearerToken string
-	namedTokens map[string]string
-	corsOrigins string
+	// validated here. false = open (no auth), same as ServeWS.
+	authRequired bool
+	corsOrigins  string
 }
 
-func NewChatHandler(q *gen.Queries, hub *ws.Hub, term Terminal, bearerToken string, namedTokens map[string]string, corsOrigins string) *ChatHandler {
-	return &ChatHandler{q: q, hub: hub, term: term, bearerToken: bearerToken, namedTokens: namedTokens, corsOrigins: corsOrigins}
+func NewChatHandler(q *gen.Queries, hub *ws.Hub, term Terminal, authRequired bool, corsOrigins string) *ChatHandler {
+	return &ChatHandler{q: q, hub: hub, term: term, authRequired: authRequired, corsOrigins: corsOrigins}
 }
 
 func (h *ChatHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +143,7 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusServiceUnavailable, "terminal is not available")
 		return
 	}
-	if (h.bearerToken != "" || len(h.namedTokens) > 0) && !h.hub.ConsumeTicket(r.URL.Query().Get("ticket")) {
+	if h.authRequired && !h.hub.ConsumeTicket(r.URL.Query().Get("ticket")) {
 		Err(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}

@@ -18,9 +18,7 @@ Browsers cannot set custom headers on a WebSocket upgrade request, so auth trave
 
 This keeps the long-lived `API_TOKEN` out of the WebSocket URL, since query strings are commonly captured by reverse-proxy access logs and browser history.
 
-**Deprecated fallback:** `ws://host/ws?token=<token>` (the `API_TOKEN` value or any `API_TOKENS` token) still works (checked with a constant-time compare) for existing setups that haven't migrated, but it puts the durable token in the URL and may be removed in a future release. Prefer the ticket flow above. Each use of the fallback is logged server-side as a warning.
-
-The chat terminal socket (`/api/v1/chat/sessions/{id}/terminal`) uses the same single-use `?ticket=` flow; it is served outside the Bearer middleware (like `/ws`) and enforces the ticket itself.
+**Removed:** the old `ws://host/ws?token=<API_TOKEN>` fallback is no longer accepted (it put the durable token in the URL, where proxies and browser history capture it). A request that only carries `?token=` gets `401`; use the ticket flow above. The same applies to the chat terminal socket (`?ticket=` only).
 
 The connection is kept alive with a server-side ping every 25 seconds. Each ping (and each outgoing message write) must complete within 10 seconds; if a peer doesn't respond in time (e.g. it's half-open — laptop sleep, NAT timeout, dropped proxy), the server closes the connection rather than waiting indefinitely.
 

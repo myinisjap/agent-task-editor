@@ -97,7 +97,7 @@ func seedTaskWithLogs(t *testing.T, q *gen.Queries, logs []string) (taskID strin
 func newTestWSServerWithQueries(t *testing.T, hub *Hub, q *gen.Queries) (*httptest.Server, string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ServeWS(hub, w, r, "", nil, "*", q)
+		ServeWS(hub, w, r, false, "*", q)
 	}))
 	t.Cleanup(srv.Close)
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -225,7 +225,7 @@ func TestReplayTaskLogs_RepeatSubscribe_ReplaysOnce(t *testing.T) {
 // cap check (the id is only counted once), and the map must settle at size 1.
 func TestServeWS_SubscriptionCap_RepeatedSameID_DoesNotGrowMap(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "*")
+	_, wsURL := newTestWSServer(t, hub, false, "*")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

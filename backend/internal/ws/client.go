@@ -3,7 +3,6 @@ package ws
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -106,42 +105,21 @@ type inboundMsg struct {
 }
 
 // ServeWS upgrades the HTTP connection and starts the client goroutines.
-// authToken is the legacy bearer token and namedTokens the named API_TOKENS
-// (name -> token); auth is required when either is configured, and only when
-// both are empty is the endpoint open.
+// authRequired reports whether API auth is configured (false = no auth).
 // corsOrigins is the CORS allowed origins list (comma-separated, "*" = any).
 // q is used to replay historical log entries when a client subscribes to a task.
 //
 // Auth: browsers can't set the Authorization header on a WS handshake, so
-// auth travels via the query string instead. The primary mechanism is a
-// short-lived, single-use ticket minted by POST /api/v1/ws-ticket (itself
-// bearer-authed) and passed as ?ticket=; ServeWS validates and consumes it
-// via hub.ConsumeTicket. The long-lived ?token=<API_TOKEN> query param is
-// still accepted as a deprecated fallback for existing setups, but it
-// leaves a durable credential in logs/history, so ?ticket= should be
-// preferred — a warning is logged whenever the fallback is used. The fallback
-// accepts the legacy token or any named token.
-func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken string, namedTokens map[string]string, corsOrigins string, q *gen.Queries) {
-	if authToken != "" || len(namedTokens) > 0 {
+// auth is a short-lived, single-use ticket minted by POST /api/v1/ws-ticket
+// (itself bearer-authed) and passed as ?ticket=; ServeWS validates and
+// consumes it via hub.ConsumeTicket. The former ?token=<API_TOKEN> query
+// param fallback has been removed: it leaked the durable credential into
+// proxy/access logs and browser history. It is now rejected with 401.
+func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authRequired bool, corsOrigins string, q *gen.Queries) {
+	if authRequired {
 		authorized := false
 		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 			authorized = hub.ConsumeTicket(ticket)
-		}
-		if !authorized {
-			// Deprecated fallback: ?token= — kept for existing setups, logged so
-			// operators can see usage and plan migration to ws-ticket.
-			tok := r.URL.Query().Get("token")
-			// Every candidate is compared (no short-circuit), like BearerAuth.
-			match := authToken != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(authToken)) == 1
-			for _, candidate := range namedTokens {
-				if subtle.ConstantTimeCompare([]byte(tok), []byte(candidate)) == 1 {
-					match = true
-				}
-			}
-			if match {
-				authorized = true
-				slog.Warn("ws auth via deprecated ?token= query param; migrate to POST /api/v1/ws-ticket", "remote", r.RemoteAddr)
-			}
 		}
 		if !authorized {
 			// This runs before websocket.Accept, so it's a normal HTTP
