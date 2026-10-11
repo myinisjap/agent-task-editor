@@ -99,7 +99,7 @@ google-chrome --headless --disable-gpu --no-sandbox --window-size=1440,900 \
   --screenshot=docs/img/board.png http://localhost:5173/board
 ```
 
-Note: the dashboard is split into three routes — `/` (Overview: label
+Note: the dashboard is split into three routes — `/dashboard` (Overview; `/` redirects to the Board until setup is complete: label
 counts, active agents, intervention queue), `/dashboard/usage` (Cost &
 Usage), and `/dashboard/performance` (Agent Performance). Capture all three
 with the same single-shot approach: `docs/img/dashboard.png`,

@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
 import { useNotificationsStore, notificationsSupported } from '../../stores/notifications'
 import { useWsStatus } from '../../lib/useWsStatus'
+import { useHealthStore, worstHealth } from '../../stores/health'
 import type { WSStatus } from '../../api/ws'
 import { useNeedsMeStore } from '../../stores/needsMe'
 import { useNeedsMeSync } from '../../lib/useNeedsMeSync'
@@ -16,7 +17,7 @@ interface NavGroup {
 // Dashboard is the home route and stays reachable as a standalone top-level
 // link above the collapsible groups; the remaining 10 destinations are
 // organized into logical categories below.
-const topLevelLink = { to: '/', label: 'Dashboard' }
+const topLevelLink = { to: '/dashboard', label: 'Dashboard' }
 
 const groups: NavGroup[] = [
   {
@@ -93,6 +94,7 @@ export default function NavSidebar() {
   const wsStatus = useWsStatus()
   useNeedsMeSync()
   const needsMeCount = useNeedsMeStore((st) => st.items.length)
+  const healthSeverity = worstHealth(useHealthStore((s) => s.checks))
   const location = useLocation()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     loadOpenGroups(groupForPath(location.pathname)),
@@ -187,7 +189,15 @@ export default function NavSidebar() {
                   aria-controls={panelId}
                   className="flex items-center justify-between px-3 py-2 rounded-md text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
                 >
-                  <span>{group.label}</span>
+                  <span>
+                    {group.label}
+                    {group.key === 'system' && healthSeverity && !isGroupOpen && (
+                      <span
+                        aria-hidden="true"
+                        className={`ml-2 inline-block w-2 h-2 rounded-full align-middle ${healthSeverity === 'error' ? 'bg-red-500' : 'bg-amber-400'}`}
+                      />
+                    )}
+                  </span>
                   <span
                     aria-hidden="true"
                     className={`transition-transform duration-150 ${isGroupOpen ? 'rotate-90' : ''}`}
@@ -205,6 +215,13 @@ export default function NavSidebar() {
                         className={linkClassName}
                       >
                         {label}
+                        {to === '/health' && healthSeverity && (
+                          <span
+                            role="img"
+                            aria-label={healthSeverity === 'error' ? 'Health check failing' : 'Health check warning'}
+                            className={`ml-2 inline-block w-2 h-2 rounded-full align-middle ${healthSeverity === 'error' ? 'bg-red-500' : 'bg-amber-400'}`}
+                          />
+                        )}
                       </NavLink>
                     ))}
                   </div>

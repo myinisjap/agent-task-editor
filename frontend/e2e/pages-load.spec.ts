@@ -15,7 +15,7 @@ import { test, expect, type Locator, type Page } from '@playwright/test'
 // credentials in CI, so checks are expected to show warnings/errors).
 const pages: { path: string; name: string; anchor: (page: Page) => Locator }[] = [
   {
-    path: '',
+    path: 'dashboard',
     name: 'Dashboard',
     anchor: (page) => page.getByRole('heading', { name: 'Overview', exact: true }),
   },
