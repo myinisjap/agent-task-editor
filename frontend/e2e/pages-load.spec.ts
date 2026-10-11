@@ -30,6 +30,11 @@ const pages: { path: string; name: string; anchor: (page: Page) => Locator }[] =
     anchor: (page) => page.getByRole('heading', { name: 'Agent Performance', exact: true }),
   },
   {
+    path: 'inbox',
+    name: 'Inbox',
+    anchor: (page) => page.getByRole('heading', { name: 'Inbox', exact: true }),
+  },
+  {
     path: 'board',
     name: 'Board',
     anchor: (page) => page.getByRole('heading', { name: 'Board', exact: true }),
