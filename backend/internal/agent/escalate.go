@@ -139,6 +139,8 @@ func (l runLifecycle) escalate(ctx context.Context, e escalation) error {
 	}
 
 	switch e.Lock {
+	case lockUntouched:
+		// Already locked on this run by the dispatcher; nothing to write.
 	case lockPhantomOnly:
 		if note(wrapErr("lock task on run", func() error {
 			return l.q.SetTaskActiveRunOnly(ctx, gen.SetTaskActiveRunOnlyParams{ActiveAgentRunID: &e.RunID, ID: e.TaskID})
