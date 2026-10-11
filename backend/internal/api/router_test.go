@@ -45,7 +45,7 @@ func newTestRouter(t *testing.T, apiToken, metricsToken string) http.Handler {
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, "dev", false, nil, 5, nil, nil, "")
+	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, "dev", false, nil, 5, nil, nil, "*")
 }
 
 // TestHealthzEndpoint_UnauthenticatedEvenWithAPIToken verifies GET /healthz
@@ -287,6 +287,7 @@ func TestAPIv1_ScopedSidecarTokens(t *testing.T) {
 	do := func(method, path, tok string) int {
 		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
 		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
 		return w.Code
