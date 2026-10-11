@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -486,4 +487,67 @@ func (p *Pool) escalateFailureLoop(ctx context.Context, job Job, result Result, 
 		})
 	}
 	log.Warn("pool: failure loop exceeded threshold, escalating to waiting_human", "from", job.Input.Task.Label, "to", toLabel, "threshold", failureLoopThreshold)
+}
+
+// handleRejectedTransition handles a completed run whose agent-requested
+// transition to toLabel was refused by the workflow engine (WIP limit, guard,
+// missing transition, ...). The task stays on an agent-triggerable label, so
+// simply releasing the lock would make the dispatcher re-run the agent on the
+// next sweep, forever. A genuine rejection therefore counts as a failed attempt
+// against the same consecutive-failure counter genuine run failures use; once
+// maxConsecutiveFailures is reached the run is escalated to waiting_human
+// (lock kept). Below the threshold the lock is released so the task can retry,
+// e.g. after a WIP slot frees.
+//
+// A concurrent move is not a rejection: if the engine reported ErrStale or
+// ErrTaskNotFound, or the task is no longer on the run's label (a human or
+// another run moved it), the lock is released without counting or escalating.
+func (p *Pool) handleRejectedTransition(ctx context.Context, job Job, result Result, toLabel string, transErr error, log *slog.Logger) {
+	taskID := job.Input.Task.ID
+	if errors.Is(transErr, workflow.ErrStale) || errors.Is(transErr, workflow.ErrTaskNotFound) {
+		p.releaseLock(ctx, taskID, job.RunID)
+		return
+	}
+	cur, err := p.q.GetTask(ctx, taskID)
+	if err != nil || cur.Label != job.Input.Task.Label {
+		// Task gone or moved by someone else: nothing to count.
+		p.releaseLock(ctx, taskID, job.RunID)
+		return
+	}
+	n, err := p.q.IncrementTaskFailureCount(ctx, taskID)
+	if err != nil {
+		log.Warn("pool: increment failure count (rejected transition)", "err", err)
+		p.releaseLock(ctx, taskID, job.RunID)
+		return
+	}
+	if n < maxConsecutiveFailures {
+		p.releaseLock(ctx, taskID, job.RunID)
+		return
+	}
+	msg := fmt.Sprintf("Agent asked to move to %q but the move was rejected: %v. This happened %d times in a row. Resolve the blocker (e.g. free a WIP slot) or move the task manually.", toLabel, transErr, n)
+	costUnknown := int64(0)
+	if result.CostUnknown {
+		costUnknown = 1
+	}
+	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
+		Status:       "waiting_human",
+		StoredInfo:   result.StoredInfo,
+		Notes:        &msg,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
+		ID:           job.RunID,
+	}); err != nil {
+		log.Warn("pool: rejected-transition escalation: set run status", "err", err)
+	}
+	if p.pub != nil {
+		p.pub.Publish("task.needs_human", map[string]any{
+			"task_id": taskID,
+			"run_id":  job.RunID,
+			"message": msg,
+		})
+	}
+	log.Warn("pool: rejected transition limit reached, escalating to waiting_human", "to", toLabel, "count", n, "limit", maxConsecutiveFailures)
 }
