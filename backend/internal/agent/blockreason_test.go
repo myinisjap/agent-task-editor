@@ -250,7 +250,8 @@ func TestBlockReasonResolver_Dependency(t *testing.T) {
 func TestBlockReasonResolver_RetryBackoff(t *testing.T) {
 	f := newBlockReasonFixture(t)
 	task := f.newTask(t, "ready")
-	future := time.Now().Add(time.Hour)
+	// Timestamps are stored at second precision (storage.FormatTime).
+	future := time.Now().Add(time.Hour).Truncate(time.Second)
 	task, err := f.q.SetTaskTransientRetry(context.Background(), gen.SetTaskTransientRetryParams{
 		TransientRetryCount: 2, NextRetryAt: &future, ID: task.ID,
 	})
