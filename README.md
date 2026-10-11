@@ -35,8 +35,8 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **First-run onboarding checklist** — a dismissible setup checklist on the Board for unconfigured instances, sequencing add a repo → configure a provider → create an agent config → create your first task, checking each off live and surfacing failing readiness checks inline
 - **Configurable database cleanup** — automatic pruning of old agent logs (retention days + how often it runs) is DB-backed and editable at runtime from the Health page, no restart required — see [docs/backup.md#agent-log-retention](docs/backup.md#agent-log-retention)
-- **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
-- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
+- **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; gated by `METRICS_TOKEN`, or by the API tokens when API auth is on (`METRICS_PUBLIC=true` opts out)
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), (the old `?token=` query fallback was removed)
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 - **Installable as a PWA** — add the board to your phone's home screen for quick access
 - **Browser notifications when a human is needed** — opt-in (off by default; enable from the sidebar); fires whenever an agent calls the `request_human` MCP tool, or a task lands on a label only a human can move it out of, driven by the existing WebSocket event stream, no extra backend or push infrastructure required
@@ -231,7 +231,8 @@ reach an unauthenticated instance by a custom hostname, add it to `ALLOWED_HOSTS
 |---|---|---|
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth required |
 | `API_TOKENS` | _(empty)_ | Named bearer tokens (`name1:token1,name2:token2`) — resolves to an actor name recorded in the label history audit trail; see [docs/getting-started.md](docs/getting-started.md#authentication) |
-| `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated |
+| `METRICS_TOKEN` | _(empty)_ | Dedicated bearer token for `GET /metrics`; empty = API token(s) required when API auth is configured, else open |
+| `METRICS_PUBLIC` | `false` | `true` leaves `GET /metrics` unauthenticated even when API auth is configured |
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory |
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary; required for label transitions with the `claude` provider |
 | `LLM_API_KEY` | _(empty)_ | API key for the `anthropic` or `llm` provider |

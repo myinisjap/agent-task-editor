@@ -21,7 +21,7 @@ func TestServeWS_UnauthorizedRejection_IsJSON(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ws", nil)
 	w := httptest.NewRecorder()
 
-	ServeWS(hub, w, req, "s3cr3t", nil, "*", nil)
+	ServeWS(hub, w, req, true, "*", nil)
 
 	resp := w.Result()
 	if resp.StatusCode != 401 {
@@ -48,10 +48,10 @@ func TestServeWS_UnauthorizedRejection_IsJSON(t *testing.T) {
 // run after a successful upgrade: the ticket vs. deprecated ?token=
 // fallback, origin-based CORS rejection, and the maxSubscriptions cap.
 
-func newTestWSServer(t *testing.T, hub *Hub, authToken, corsOrigins string) (*httptest.Server, string) {
+func newTestWSServer(t *testing.T, hub *Hub, authRequired bool, corsOrigins string) (*httptest.Server, string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ServeWS(hub, w, r, authToken, nil, corsOrigins, nil)
+		ServeWS(hub, w, r, authRequired, corsOrigins, nil)
 	}))
 	t.Cleanup(srv.Close)
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -60,7 +60,7 @@ func newTestWSServer(t *testing.T, hub *Hub, authToken, corsOrigins string) (*ht
 
 func TestServeWS_TicketAuth_AllowsUpgrade(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "s3cr3t", "*")
+	_, wsURL := newTestWSServer(t, hub, true, "*")
 
 	ticket, err := hub.IssueTicket()
 	if err != nil {
@@ -76,41 +76,27 @@ func TestServeWS_TicketAuth_AllowsUpgrade(t *testing.T) {
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 }
 
-// TestServeWS_DeprecatedTokenFallback_AllowsUpgrade verifies the deprecated
-// ?token=<API_TOKEN> query param still authenticates the upgrade (kept for
-// backward compatibility, per ServeWS's doc comment).
-func TestServeWS_DeprecatedTokenFallback_AllowsUpgrade(t *testing.T) {
+// TestServeWS_TokenQueryParam_Rejected verifies the removed ?token= fallback
+// no longer authenticates the upgrade, even with the correct API token: it
+// must 401, and only ?ticket= is accepted.
+func TestServeWS_TokenQueryParam_Rejected(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "s3cr3t", "*")
+	_, wsURL := newTestWSServer(t, hub, true, "*")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, resp, err := websocket.Dial(ctx, wsURL+"?token=s3cr3t", nil)
-	if err != nil {
-		t.Fatalf("Dial with the deprecated ?token= fallback should succeed: %v (resp=%v)", err, resp)
-	}
-	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-}
-
-// TestServeWS_WrongToken_RejectsUpgrade verifies an incorrect ?token= value
-// is rejected (the deprecated fallback still enforces a constant-time
-// comparison against the real token).
-func TestServeWS_WrongToken_RejectsUpgrade(t *testing.T) {
-	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "s3cr3t", "*")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, resp, err := websocket.Dial(ctx, wsURL+"?token=wrong", nil)
-	if err == nil {
-		t.Fatal("expected Dial to fail for an incorrect token")
-	}
-	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
-		code := -1
-		if resp != nil {
-			code = resp.StatusCode
+	for _, tok := range []string{"s3cr3t", "wrong"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, resp, err := websocket.Dial(ctx, wsURL+"?token="+tok, nil)
+		cancel()
+		if err == nil {
+			t.Fatalf("expected Dial with ?token=%s to fail", tok)
 		}
-		t.Errorf("expected 401 response, got %d", code)
+		if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+			code := -1
+			if resp != nil {
+				code = resp.StatusCode
+			}
+			t.Errorf("?token=%s: expected 401, got %d", tok, code)
+		}
 	}
 }
 
@@ -118,7 +104,7 @@ func TestServeWS_WrongToken_RejectsUpgrade(t *testing.T) {
 // second connection after being consumed once.
 func TestServeWS_TicketIsSingleUse(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "s3cr3t", "*")
+	_, wsURL := newTestWSServer(t, hub, true, "*")
 
 	ticket, err := hub.IssueTicket()
 	if err != nil {
@@ -146,7 +132,7 @@ func TestServeWS_TicketIsSingleUse(t *testing.T) {
 // (open/no-auth mode), a connection with no ticket/token at all succeeds.
 func TestServeWS_OpenAuth_NoTokenRequired(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "*")
+	_, wsURL := newTestWSServer(t, hub, false, "*")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -164,7 +150,7 @@ func TestServeWS_OpenAuth_NoTokenRequired(t *testing.T) {
 // doesn't set one), so this test sets it via HTTPHeader.
 func TestServeWS_BadOrigin_RejectsUpgrade(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "https://allowed.example.com")
+	_, wsURL := newTestWSServer(t, hub, false, "https://allowed.example.com")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -187,7 +173,7 @@ func TestServeWS_BadOrigin_RejectsUpgrade(t *testing.T) {
 // TestServeWS_BadOrigin_RejectsUpgrade: a matching Origin header is accepted.
 func TestServeWS_GoodOrigin_AllowsUpgrade(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "https://allowed.example.com")
+	_, wsURL := newTestWSServer(t, hub, false, "https://allowed.example.com")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -222,7 +208,7 @@ func (h *Hub) subscriptionCount() int {
 // rather than a timing-based hub-Publish round trip.
 func TestServeWS_SubscriptionCap_IgnoresBeyondLimit(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "*")
+	_, wsURL := newTestWSServer(t, hub, false, "*")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -264,7 +250,7 @@ func TestServeWS_SubscriptionCap_IgnoresBeyondLimit(t *testing.T) {
 // then asserts the client is still registered in the hub afterwards.
 func TestServeWS_WritePump_SurvivesNormalTraffic(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "*")
+	_, wsURL := newTestWSServer(t, hub, false, "*")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -316,7 +302,7 @@ func TestServeWS_WritePump_SurvivesNormalTraffic(t *testing.T) {
 // cancelled context (or the connection itself is already gone) and return.
 func TestServeWS_AbruptPeerClose_RemovesClientFromHub(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "*")
+	_, wsURL := newTestWSServer(t, hub, false, "*")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

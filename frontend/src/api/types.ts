@@ -3937,7 +3937,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a short-lived WebSocket auth ticket
-         * @description Returns a random, single-use ticket valid for ~30 seconds, used to authenticate the GET /ws upgrade (?ticket=<ticket>) without putting the long-lived API token in the URL. Requires the same Bearer auth as the rest of /api/v1 — minting a ticket already requires holding the token. The ticket is consumed on first use; a replayed or expired ticket is rejected with 401. See docs/websocket.md for the full connection flow, including the deprecated ?token= fallback.
+         * @description Returns a random, single-use ticket valid for ~30 seconds, used to authenticate the GET /ws upgrade (?ticket=<ticket>) without putting the long-lived API token in the URL. Requires the same Bearer auth as the rest of /api/v1 — minting a ticket already requires holding the token. The ticket is consumed on first use; a replayed or expired ticket is rejected with 401. See docs/websocket.md for the full connection flow. The former ?token= fallback was removed (401).
          */
         post: {
             parameters: {

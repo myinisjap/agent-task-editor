@@ -88,7 +88,8 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `DB_PATH` | `agent-task-editor.db` | SQLite database file path |
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth. Requests using this token are recorded anonymously (no actor name) in the label history audit trail — see `API_TOKENS` below for named tokens. |
 | `API_TOKENS` | _(empty)_ | Comma-separated named bearer tokens, format `name1:token1,name2:token2`. Any of these tokens authenticates like `API_TOKEN`, but the matching name is recorded as the actor in `task_label_history.actor_id` for human-triggered transitions (approve/reject/move label), and surfaced via `GET /tasks/{id}/label-history`. Can be combined with `API_TOKEN` (kept for backward compatibility as an anonymous fallback). If the same token string is reused across multiple names, the last one loaded wins. |
-| `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated (see [Metrics](#metrics)) |
+| `METRICS_TOKEN` | _(empty)_ | Dedicated bearer token for `GET /metrics`. Empty = the API token(s) are required when `API_TOKEN`/`API_TOKENS` is set, otherwise open (see [Metrics](#metrics)) |
+| `METRICS_PUBLIC` | `false` | `true` leaves `GET /metrics` unauthenticated even when API auth is configured and `METRICS_TOKEN` is unset |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8080` | Comma-separated allowed origins; set to `*` explicitly to allow any origin (not recommended outside trusted single-user localhost use) |
 | `ALLOWED_HOSTS` | _(empty)_ | Comma-separated extra `Host` header values (hostname or `host:port`) accepted **only while no `API_TOKEN`/`API_TOKENS` is set** — DNS-rebinding protection for unauthenticated instances. Always allowed: `localhost`, `127.0.0.1`, `::1`, `backend`, any IP literal, and the hostnames in `CORS_ORIGINS`. Set it if you reach an unauthenticated instance by a custom name (e.g. `ate.lan`); rejected requests get a 403 naming this variable. `*` disables the check. Ignored (check off) when a token is configured. |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
@@ -183,6 +184,7 @@ api_tokens:
   alice: tok-alice
   bob: tok-bob
 metrics_token: ""
+metrics_public: false
 cors_origins: "*"
 mcp_server_path: /path/to/mcp-server
 llm_base_url: https://api.openai.com/v1
@@ -198,9 +200,9 @@ backup_keep: 7
 
 ### Authentication
 
-Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this using a runtime token (see below), not a build-time one. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
+Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this using a runtime token (see below), not a build-time one. The former `?token=<value>` query-string fallback has been removed (it leaked the token into proxy logs and browser history); non-browser clients must use the ticket flow too.
 
-To identify *who* performed a human-triggered transition (approve/reject/move label) in the audit trail, set `API_TOKENS` (format `name1:token1,name2:token2`, or the `api_tokens` map in the YAML config) instead of, or alongside, `API_TOKEN`. Each named token authenticates the same way, but the resolved name is recorded as `actor_id` in `task_label_history` and returned by `GET /tasks/{id}/label-history`. `API_TOKEN` remains supported as a legacy/anonymous fallback — requests using it are recorded with an empty actor, exactly as before this feature existed. Note: the `/ws` WebSocket endpoint currently only supports the single legacy `API_TOKEN` for its `?token=` query param check, not named tokens.
+To identify *who* performed a human-triggered transition (approve/reject/move label) in the audit trail, set `API_TOKENS` (format `name1:token1,name2:token2`, or the `api_tokens` map in the YAML config) instead of, or alongside, `API_TOKEN`. Each named token authenticates the same way, but the resolved name is recorded as `actor_id` in `task_label_history` and returned by `GET /tasks/{id}/label-history`. `API_TOKEN` remains supported as a legacy/anonymous fallback — requests using it are recorded with an empty actor, exactly as before this feature existed. Named tokens work with `POST /api/v1/ws-ticket` like any other API route.
 
 **Frontend token entry.** Once `API_TOKEN` is set on the backend, the first API request the UI makes will come back `401`, and the UI shows a simple one-field "enter API token" screen instead of a broken board. Enter the token once; it's stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on every subsequent request and WS ticket mint, for every page (board, task detail incl. the live log stream, workflows, agents, repos, health, backup download). A wrong or expired token sends you back to that screen rather than leaving the UI in a broken state. With `API_TOKEN` unset, no prompt ever appears. This is a runtime flow — it works with the prebuilt/GHCR image exactly the same as a locally built one, since nothing needs to be baked in at build time.
 
@@ -220,9 +222,10 @@ VITE_API_TOKEN=your-token-here
 state, run/cost/token counters, WebSocket hub stats, GitHub sync sweep durations
 and `gh` call counts, plus standard Go runtime metrics) — point a Prometheus
 scrape config at it. It's served at the server root (not under `/api/v1`) and is
-**not** gated by `API_TOKEN`; set `METRICS_TOKEN` if you need to lock it down
-independently (e.g. when the backend port is reachable beyond your Prometheus
-instance). See [api.md](api.md#get-metrics) for the full metric list.
+gated like the API: with `API_TOKEN`/`API_TOKENS` configured it requires one of
+those tokens (`Authorization: Bearer ...`), unless you set a dedicated
+`METRICS_TOKEN` for Prometheus or opt out with `METRICS_PUBLIC=true`. With no
+auth configured it is open. See [api.md](api.md#get-metrics) for the full metric list.
 
 ## Provider-Specific Setup
 

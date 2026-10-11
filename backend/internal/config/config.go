@@ -29,11 +29,14 @@ type Config struct {
 	// approved them (see task_label_history.actor_id). APIToken above
 	// remains supported as a legacy/anonymous fallback (actor name "").
 	APITokens map[string]string `yaml:"api_tokens"`
-	// MetricsToken optionally gates GET /metrics with its own bearer token,
-	// independent of APIToken. Empty (the default) leaves /metrics
-	// unauthenticated, matching most Prometheus scrape setups that can't
-	// easily carry a different token than other tooling.
-	MetricsToken       string        `yaml:"metrics_token"`
+	// MetricsToken optionally gates GET /metrics with its own bearer token.
+	// When empty, /metrics falls back to the API tokens if API auth is
+	// configured (see MetricsPublic for the opt-out), and is open otherwise.
+	MetricsToken string `yaml:"metrics_token"`
+	// MetricsPublic (METRICS_PUBLIC=true) opts /metrics out of API-token
+	// auth when MetricsToken is unset, for scrapers that can't carry a
+	// token. Ignored when MetricsToken is set.
+	MetricsPublic      bool          `yaml:"metrics_public"`
 	MCPBinary          string        `yaml:"mcp_server_path"`
 	MCPBoardBinary     string        `yaml:"mcp_board_path"`
 	LLMBaseURL         string        `yaml:"llm_base_url"`
@@ -218,6 +221,13 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("METRICS_TOKEN"); v != "" {
 		cfg.MetricsToken = v
+	}
+	if v := os.Getenv("METRICS_PUBLIC"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.MetricsPublic = b
+		} else {
+			slog.Warn("ignoring invalid METRICS_PUBLIC", "value", v)
+		}
 	}
 	if v := os.Getenv("MCP_SERVER_PATH"); v != "" {
 		cfg.MCPBinary = v

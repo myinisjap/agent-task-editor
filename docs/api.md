@@ -1227,14 +1227,21 @@ list of checks:
 
 ### `GET /metrics`
 Prometheus text-exposition-format metrics for scraping (served at the server
-root, **not** under `/api/v1`). Not gated by `API_TOKEN` — independently
-gated by the optional `METRICS_TOKEN` env var (unset by default, i.e.
-unauthenticated, since most Prometheus scrape configs can't easily carry a
-second, endpoint-specific token). When `METRICS_TOKEN` is set, requests must
-carry `Authorization: Bearer $METRICS_TOKEN`.
+root, **not** under `/api/v1`). Auth modes, in order:
+
+1. `METRICS_TOKEN` set: requests must carry `Authorization: Bearer $METRICS_TOKEN`
+   (the API tokens are not accepted).
+2. `METRICS_TOKEN` unset and API auth configured (`API_TOKEN` / `API_TOKENS`):
+   requests must carry one of the API tokens. Set `METRICS_TOKEN` to give
+   Prometheus a dedicated token instead.
+3. `METRICS_PUBLIC=true` (and no `METRICS_TOKEN`): `/metrics` is unauthenticated
+   even though API auth is configured.
+4. No auth configured at all: open, as before.
+
+The active mode is logged at startup.
 
 ```bash
-curl http://localhost:8080/metrics
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/metrics
 # or, if METRICS_TOKEN is set:
 curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:8080/metrics
 ```
@@ -1383,4 +1390,5 @@ curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/
 The ticket is valid for ~30 seconds and is consumed on first use — connect
 with `ws://host/ws?ticket=<ticket>` before it expires; a replayed or expired
 ticket is rejected with `401`. See [websocket.md](websocket.md) for the full
-connection flow, including the deprecated `?token=` fallback.
+connection flow. The former `?token=<API_TOKEN>` query-string fallback has
+been removed; `/ws?token=...` now returns `401`.

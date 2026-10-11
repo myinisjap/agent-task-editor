@@ -26,7 +26,7 @@ import (
 // Version var. maxWorkers is the global MAX_WORKERS setting (informational
 // only here) — the dashboard uses it as the effective per-repo concurrency
 // limit fallback for repos with no repos.max_concurrent_runs override.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness, blockReasons handlers.BlockReasonResolver, allowedHosts string) http.Handler {
+func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, metricsPublic bool, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness, blockReasons handlers.BlockReasonResolver, allowedHosts string) http.Handler {
 	q := gen.New(db.SQL())
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher, blockReasons)
@@ -57,7 +57,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	costWarningSettingsH := handlers.NewCostWarningSettingsHandler(q)
 	modelPricingH := handlers.NewModelPricingHandler(q, db.SQL())
 	wsTicketH := handlers.NewWSTicketHandler(hub)
-	chatH := handlers.NewChatHandler(q, hub, term, bearerToken, namedTokens, corsOrigins)
+	chatH := handlers.NewChatHandler(q, hub, term, bearerToken != "" || len(namedTokens) > 0, corsOrigins)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -77,13 +77,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 	// WebSocket endpoint — mounted outside BearerAuth because browsers can't set
 	// request headers on a WS handshake. ServeWS performs its own auth check via
-	// a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket below)
-	// or, as a deprecated fallback, a constant-time compare against ?token=
-	// (legacy or named tokens), so it is not left unauthenticated. Auth is
-	// enforced when either API_TOKEN or API_TOKENS is configured. It doesn't
-	// resolve an actor name: WS auth is not a human-triggered REST transition.
+	// a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket below),
+	// so it is not left unauthenticated. The old ?token= query-string fallback
+	// has been removed.
+	authRequired := bearerToken != "" || len(namedTokens) > 0
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
-		ws.ServeWS(hub, w, req, bearerToken, namedTokens, corsOrigins, q)
+		ws.ServeWS(hub, w, req, authRequired, corsOrigins, q)
 	})
 
 	// Chat terminal WebSocket — outside BearerAuth for the same reason as /ws:
@@ -94,9 +93,15 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	// Prometheus scrape endpoint — mounted outside the main API's BearerAuth
 	// group (and outside /api/v1) so self-hosters don't need to hand the
 	// primary API_TOKEN to their Prometheus scrape config. Gated by its own,
-	// independent METRICS_TOKEN (empty by default, i.e. unauthenticated,
-	// matching most Prometheus setups) via the same BearerAuth middleware.
-	r.With(middleware.BearerAuth(metricsToken, nil)).Get("/metrics", metrics.Handler().ServeHTTP)
+	// independent METRICS_TOKEN via the same BearerAuth middleware. When
+	// METRICS_TOKEN is unset and API auth is configured, the API tokens gate
+	// /metrics too (unless METRICS_PUBLIC opts out); with no auth configured
+	// at all it stays open.
+	metricsAuth := middleware.BearerAuth(metricsToken, nil)
+	if metricsToken == "" && !metricsPublic {
+		metricsAuth = middleware.BearerAuth(bearerToken, namedTokens)
+	}
+	r.With(metricsAuth).Get("/metrics", metrics.Handler().ServeHTTP)
 
 	// Liveness probe — mounted outside BearerAuth so container orchestrators
 	// (docker/k8s) can healthcheck without needing API_TOKEN. Returns only a

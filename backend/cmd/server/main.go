@@ -72,8 +72,15 @@ func main() {
 			slog.Info("host header check not enforced", "reason", hp.Reason)
 		}
 	}
-	if cfg.MetricsToken != "" {
-		slog.Info("metrics endpoint bearer auth enabled")
+	switch {
+	case cfg.MetricsToken != "":
+		slog.Info("metrics endpoint auth: METRICS_TOKEN bearer token required")
+	case cfg.MetricsPublic:
+		slog.Warn("metrics endpoint auth: public (METRICS_PUBLIC=true); /metrics is unauthenticated")
+	case cfg.APIToken != "" || len(cfg.APITokens) > 0:
+		slog.Info("metrics endpoint auth: API token required (set METRICS_TOKEN for a dedicated scrape token, or METRICS_PUBLIC=true to leave it open)")
+	default:
+		slog.Info("metrics endpoint auth: open (no API auth configured)")
 	}
 	if cfg.RepoBaseDir == "" {
 		slog.Warn("REPO_BASE_DIR is not set; any host path can be registered as a repo")
@@ -351,7 +358,7 @@ func main() {
 		slog.Info("chat terminal idle reaper enabled", "idle_timeout", cfg.ChatIdleTimeout)
 	}
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher, blockReasons, cfg.AllowedHosts)
+	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, cfg.MetricsPublic, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher, blockReasons, cfg.AllowedHosts)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),

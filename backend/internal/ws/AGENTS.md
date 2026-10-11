@@ -17,14 +17,14 @@ The hub maintains the set of connected clients. `Publish` serialises the event a
 
 Each WebSocket connection is managed by `ServeWS`:
 
-1. Auth (if `API_TOKEN` set) — ticket-first, token-fallback:
-   - `?ticket=` is checked first via `hub.ConsumeTicket`. Tickets are minted by the
+1. Auth (if `API_TOKEN`/`API_TOKENS` set) — ticket only:
+   - `?ticket=` is checked via `hub.ConsumeTicket`. Tickets are minted by the
      bearer-gated `POST /api/v1/ws-ticket` (see `ticket.go` / `handlers.WSTicketHandler`),
      are random (`crypto/rand`), single-use, and expire after ~30s. This keeps the
      long-lived API token out of the URL — query strings leak into reverse-proxy/access
      logs and browser history.
-   - `?token=` is a **deprecated fallback**, checked via constant-time compare against
-     `API_TOKEN`, kept for existing setups. A warning is logged whenever it's used.
+   - The old `?token=<API_TOKEN>` fallback was **removed** (breaking): it is not read at all, so
+     a request carrying only `?token=` gets `401`.
 2. WebSocket upgrade using `nhooyr.io/websocket`
 3. Two goroutines started under a shared context:
    - **Read pump** — parses `subscribe`/`unsubscribe` messages; enforces max 100 subscriptions; spawns `replayTaskLogs` only when a subscribe is a *newly added* id (re-subscribing to an id already in the map is a no-op — otherwise a buggy/looping client resending the same frame would spawn one replay goroutine per frame without ever tripping the subscription cap). In-flight replays per client are capped at `maxConcurrentReplays` (4) via a semaphore channel (`Client.replaySlots`); new subscriptions block for a slot rather than being dropped, so every added subscription still gets its replay.

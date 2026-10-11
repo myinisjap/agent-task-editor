@@ -7,8 +7,8 @@ Chi v5 router wired in `router.go`. All HTTP handlers and middleware live under 
 ```
 GET  /healthz               (no auth; static liveness stub)
 GET  /readyz                (no auth; DB ping + dispatcher heartbeat — what the compose healthcheck targets)
-GET  /ws                    (auth via single-use ?ticket=, see POST /ws-ticket below; deprecated ?token= fallback still accepted)
-GET  /metrics                (Prometheus scrape; gated by its own METRICS_TOKEN, outside /api/v1 and outside the main bearer group)
+GET  /ws                    (auth via single-use ?ticket=, see POST /ws-ticket below; the old ?token= fallback was removed and now 401s)
+GET  /metrics                (Prometheus scrape; gated by METRICS_TOKEN, else by the API tokens when API auth is configured unless METRICS_PUBLIC=true; outside /api/v1 and outside the main bearer group)
 /api/v1/
   POST body limit: 1 MB (50 MB for POST /tasks, which handles image uploads via multipart)
   POST /ws-ticket             WSTicketHandler (mints single-use WS auth ticket; bearer-gated)

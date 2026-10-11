@@ -42,10 +42,15 @@ func openRouterTestDB(t *testing.T) *storage.DB {
 
 func newTestRouter(t *testing.T, apiToken, metricsToken string) http.Handler {
 	t.Helper()
+	return newTestRouterFull(t, apiToken, nil, metricsToken, false)
+}
+
+func newTestRouterFull(t *testing.T, apiToken string, named map[string]string, metricsToken string, metricsPublic bool) http.Handler {
+	t.Helper()
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, "dev", false, nil, 5, nil, nil, "*")
+	return api.NewRouter(db, engine, hub, "*", apiToken, named, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, metricsPublic, "dev", false, nil, 5, nil, nil, "*")
 }
 
 // TestHealthzEndpoint_UnauthenticatedEvenWithAPIToken verifies GET /healthz
@@ -74,21 +79,84 @@ func TestHealthzEndpoint_UnauthenticatedEvenWithAPIToken(t *testing.T) {
 	}
 }
 
-// TestMetricsEndpoint_UnauthenticatedByDefault verifies GET /metrics is
-// reachable without a bearer token when METRICS_TOKEN is unset, even though
-// API_TOKEN is configured — the two are independent.
-func TestMetricsEndpoint_UnauthenticatedByDefault(t *testing.T) {
-	r := newTestRouter(t, "api-secret", "")
-
+func metricsGet(h http.Handler, bearer string) int {
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w.Code
+}
+
+// TestMetricsEndpoint_FallsBackToAPIToken verifies that with METRICS_TOKEN
+// unset and API auth configured, /metrics requires an API token (legacy or
+// named).
+func TestMetricsEndpoint_FallsBackToAPIToken(t *testing.T) {
+	r := newTestRouterFull(t, "api-secret", map[string]string{"alice": "alice-secret"}, "", false)
+
+	if got := metricsGet(r, ""); got != http.StatusUnauthorized {
+		t.Fatalf("no token: expected 401, got %d", got)
+	}
+	if got := metricsGet(r, "wrong"); got != http.StatusUnauthorized {
+		t.Fatalf("wrong token: expected 401, got %d", got)
+	}
+	if got := metricsGet(r, "api-secret"); got != http.StatusOK {
+		t.Fatalf("API_TOKEN: expected 200, got %d", got)
+	}
+	if got := metricsGet(r, "alice-secret"); got != http.StatusOK {
+		t.Fatalf("named token: expected 200, got %d", got)
+	}
+}
+
+// TestMetricsEndpoint_OpenWhenNoAuthConfigured verifies open mode stays open.
+func TestMetricsEndpoint_OpenWhenNoAuthConfigured(t *testing.T) {
+	r := newTestRouter(t, "", "")
+	if got := metricsGet(r, ""); got != http.StatusOK {
+		t.Fatalf("expected 200, got %d", got)
+	}
+}
+
+// TestMetricsEndpoint_PublicOptOut verifies METRICS_PUBLIC leaves /metrics
+// open even though API auth is configured.
+func TestMetricsEndpoint_PublicOptOut(t *testing.T) {
+	r := newTestRouterFull(t, "api-secret", nil, "", true)
+	if got := metricsGet(r, ""); got != http.StatusOK {
+		t.Fatalf("expected 200, got %d", got)
+	}
+}
+
+// TestMetricsEndpoint_MetricsTokenWinsOverAPIToken verifies a set
+// METRICS_TOKEN is the only accepted credential (API token rejected).
+func TestMetricsEndpoint_MetricsTokenWinsOverAPIToken(t *testing.T) {
+	r := newTestRouterFull(t, "api-secret", nil, "metrics-secret", false)
+	if got := metricsGet(r, "api-secret"); got != http.StatusUnauthorized {
+		t.Fatalf("API token: expected 401, got %d", got)
+	}
+	if got := metricsGet(r, "metrics-secret"); got != http.StatusOK {
+		t.Fatalf("metrics token: expected 200, got %d", got)
+	}
+}
+
+// TestWS_TokenQueryParamRejected verifies /ws?token=<API_TOKEN> is 401 at the
+// router level now that the fallback is removed.
+func TestWS_TokenQueryParamRejected(t *testing.T) {
+	r := newTestRouterFull(t, "api-secret", map[string]string{"alice": "alice-secret"}, "", false)
+	for _, tok := range []string{"api-secret", "alice-secret"} {
+		req := httptest.NewRequest(http.MethodGet, "/ws?token="+tok, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("?token=%s: expected 401, got %d", tok, w.Code)
+		}
+	}
+	// Named-tokens-only config must still require auth on /ws.
+	r = newTestRouterFull(t, "", map[string]string{"alice": "alice-secret"}, "", false)
+	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if ct := w.Header().Get("Content-Type"); ct == "" {
-		t.Errorf("expected a Content-Type header")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("named-only /ws without ticket: expected 401, got %d", w.Code)
 	}
 }
 
@@ -202,7 +270,7 @@ func newWSTestRouter(t *testing.T, apiToken string, namedTokens map[string]strin
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	r := api.NewRouter(db, engine, hub, "*", apiToken, namedTokens, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", "dev", false, fakeRouterTerminal{}, 5, nil, nil, "")
+	r := api.NewRouter(db, engine, hub, "*", apiToken, namedTokens, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", false, "dev", false, fakeRouterTerminal{}, 5, nil, nil, "")
 	return r, hub
 }
 
@@ -274,12 +342,11 @@ func TestWS_ThroughRouter_NamedTokensOnly_RequiresAuth(t *testing.T) {
 	}
 	_ = c.Close(websocket.StatusNormalClosure, "")
 
-	// Deprecated ?token= fallback accepts a named token.
-	c, _, err = websocket.Dial(ctx, wsURL+"?token=alice-secret", nil)
-	if err != nil {
-		t.Fatalf("named ?token= dial failed: %v", err)
+	// The removed ?token= fallback rejects a named token too.
+	if c, _, err := websocket.Dial(ctx, wsURL+"?token=alice-secret", nil); err == nil {
+		_ = c.Close(websocket.StatusNormalClosure, "")
+		t.Fatal("named ?token= dial succeeded; the query-string fallback should be gone")
 	}
-	_ = c.Close(websocket.StatusNormalClosure, "")
 }
 
 func TestAPIv1_ScopedSidecarTokens(t *testing.T) {
@@ -354,7 +421,7 @@ func newGuardedRouter(t *testing.T, apiToken, cors, allowedHosts string) http.Ha
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	return api.NewRouter(db, engine, hub, cors, apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", "dev", false, nil, 5, nil, nil, allowedHosts)
+	return api.NewRouter(db, engine, hub, cors, apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", false, "dev", false, nil, 5, nil, nil, allowedHosts)
 }
 
 // TestCrossOriginTextPlainPost_DoesNotReachHandler is the drive-by-browser
