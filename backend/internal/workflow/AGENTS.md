@@ -7,6 +7,7 @@ The state machine engine that validates and executes label transitions for tasks
 ```go
 engine := workflow.New(db *sql.DB, pub Publisher)
 engine.Transition(ctx, taskID, toLabel, trigger, actorID, note) error
+engine.TransitionExpecting(ctx, taskID, toLabel, trigger, actorID, note, expectedFrom) error // ErrStale if task is not on expectedFrom
 engine.AvailableTransitions(ctx, taskID, trigger) ([]string, error)
 engine.AgentPickupLabels(ctx, workflowID) ([]string, error)
 ```
@@ -47,7 +48,7 @@ TriggerAgent TransitionTrigger = "agent"
 TriggerHuman TransitionTrigger = "human"
 ```
 
-Human-triggered transitions come from the Approve/Reject handlers. Agent-triggered transitions come from the pool after a run completes with `NextLabel` set. `internal/ghsync`'s optional PR-review auto-transition (per-repo opt-in `pr_review_auto_transition_enabled`) also uses `TriggerHuman` when it moves a task along its workflow's "failure" path on new GitHub review feedback — it mirrors the manual Reject action rather than introducing a new trigger, and duplicates a narrow "resolve the failure-path target" helper (`ghsync.(*Syncer).failurePathTarget`) rather than depending on `api/handlers`.
+Human-triggered transitions come from the Approve/Reject handlers. Agent-triggered transitions come from the pool after a run completes with `NextLabel` set; the pool uses `TransitionExpecting` with the dispatch-time label so an outcome is never applied on top of a human move made after the run finished. `internal/ghsync`'s optional PR-review auto-transition (per-repo opt-in `pr_review_auto_transition_enabled`) also uses `TriggerHuman` when it moves a task along its workflow's "failure" path on new GitHub review feedback — it mirrors the manual Reject action rather than introducing a new trigger, and duplicates a narrow "resolve the failure-path target" helper (`ghsync.(*Syncer).failurePathTarget`) rather than depending on `api/handlers`.
 
 ## AgentPickupLabels
 

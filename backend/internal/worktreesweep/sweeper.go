@@ -15,6 +15,8 @@ package worktreesweep
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -47,11 +49,18 @@ var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 type Sweeper struct {
 	q        *gen.Queries
 	interval time.Duration
+	// minAge is how recently a worktree directory must have been modified for
+	// the sweeper to leave it alone, a belt-and-braces guard against deleting a
+	// worktree provisioned while the sweep was running.
+	minAge time.Duration
 }
+
+// DefaultMinAge is the default recency grace period for fresh worktrees.
+const DefaultMinAge = 5 * time.Minute
 
 // New creates a Sweeper that reconciles worktrees every interval.
 func New(q *gen.Queries, interval time.Duration) *Sweeper {
-	return &Sweeper{q: q, interval: interval}
+	return &Sweeper{q: q, interval: interval, minAge: DefaultMinAge}
 }
 
 func (s *Sweeper) currentInterval() time.Duration {
@@ -143,6 +152,9 @@ func (s *Sweeper) reconcileRepo(ctx context.Context, repoPath string, keep map[s
 			continue // never touch anything that isn't a clean single segment
 		}
 		wtPath := filepath.Join(dir, id)
+		if s.recentlyModified(e) {
+			continue // likely just provisioned; the next sweep will reconsider it
+		}
 		// `git worktree remove --force` (and its os.RemoveAll fallback) mutate
 		// the repo's shared ref/worktree-admin store, racing against sibling
 		// worktrees' concurrent commits/merges/provisioning if unserialized.
@@ -153,6 +165,14 @@ func (s *Sweeper) reconcileRepo(ctx context.Context, repoPath string, keep map[s
 		// comment / issue #344.
 		lock := agent.RepoGitLock(repoPath)
 		lock.Lock()
+		// The keep-set was snapshotted before this scan, so a task created and
+		// provisioned in between is missing from it. Re-check the DB under the
+		// repo lock (which provisioning also holds) right before deleting.
+		if s.ownedNow(ctx, id) {
+			lock.Unlock()
+			slog.Info("worktreesweep: skipping worktree whose owner appeared after the keep-set snapshot", "repo", repoPath, "id", id)
+			continue
+		}
 		removed := removeWorktree(ctx, repoPath, wtPath)
 		lock.Unlock()
 		if removed {
@@ -171,6 +191,37 @@ func (s *Sweeper) reconcileRepo(ctx context.Context, repoPath string, keep map[s
 		_, _ = exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "prune").CombinedOutput()
 		lock.Unlock()
 	}
+}
+
+// recentlyModified reports whether the directory entry was modified within
+// minAge. Stat errors count as "not recent" so a broken entry can still be
+// reclaimed.
+func (s *Sweeper) recentlyModified(e os.DirEntry) bool {
+	if s.minAge <= 0 {
+		return false
+	}
+	info, err := e.Info()
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) < s.minAge
+}
+
+// ownedNow re-checks the DB for a live owner of id: a non-archived task or any
+// chat session. It errs on the side of keeping: any lookup error other than
+// "no rows" is treated as owned.
+func (s *Sweeper) ownedNow(ctx context.Context, id string) bool {
+	t, err := s.q.GetTask(ctx, id)
+	if err == nil {
+		return t.Archived == 0
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	if _, err := s.q.GetChatSession(ctx, id); err == nil || !errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	return false
 }
 
 // removeWorktree tears down one worktree directory, returning true if it

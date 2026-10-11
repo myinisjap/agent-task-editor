@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1858,5 +1859,62 @@ func TestPool_PersistLogs_PublishedEntryIDMatchesPersistedRow(t *testing.T) {
 	}
 	if publishedID != persistedID {
 		t.Errorf("published entry id %q does not match persisted row id %q", publishedID, persistedID)
+	}
+}
+
+// humanMovingProvider simulates a human MoveLabel landing after the run is
+// done: it moves the task (and clears the lock, as UpdateTaskLabel does)
+// before returning its completed result.
+type humanMovingProvider struct {
+	db     *sql.DB
+	taskID string
+	to     string
+	result agent.Result
+}
+
+func (p *humanMovingProvider) Run(ctx context.Context, _ agent.RunInput, _ chan<- agent.LogEntry) (agent.Result, error) {
+	_, err := p.db.ExecContext(ctx, `UPDATE tasks SET label = ?, active_agent_run_id = NULL WHERE id = ?`, p.to, p.taskID)
+	return p.result, err
+}
+
+// TestPool_HumanMoveBeforeOutcome_OutcomeNotApplied: a human moves the task to
+// a label that also has a matching agent edge; the agent's outcome (resolved
+// against the dispatch label) must not be applied on top of it.
+func TestPool_HumanMoveBeforeOutcome_OutcomeNotApplied(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+	ctx := context.Background()
+
+	wfs, _ := q.ListWorkflows(ctx)
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+	// plan --success--> review-plan is the dispatch-label edge; add the same
+	// target from "work" so the stale outcome would be valid there.
+	if _, err := q.CreateWorkflowTransition(ctx, gen.CreateWorkflowTransitionParams{
+		ID: uuid.NewString(), WorkflowID: wfs[0].ID, FromLabel: "work", ToLabel: "review-plan", TriggerType: "agent",
+	}); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{ID: taskID, CurrentAgentRunID: &runID, ActiveAgentRunID: &runID}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	provider := &humanMovingProvider{db: db.SQL(), taskID: taskID, to: "work",
+		result: agent.Result{Status: "completed", Outcome: "success"}}
+	_, stop := startPool(t, pool)
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
+	waitForStatus(t, q, runID, "completed")
+	waitForActiveRunCleared(t, q, taskID)
+	time.Sleep(200 * time.Millisecond) // give a (wrong) transition time to land
+	stop()
+
+	task, _ := q.GetTask(ctx, taskID)
+	if task.Label != "work" {
+		t.Errorf("task must stay on the human's label 'work', got %q", task.Label)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Errorf("expected lock cleared, got %q", *task.ActiveAgentRunID)
 	}
 }
