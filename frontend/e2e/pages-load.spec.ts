@@ -84,3 +84,11 @@ test.describe('all pages load', () => {
     })
   }
 })
+
+// The built app is served under /tasks/; nginx redirects the bare root (the
+// documented start URL) there. Regression test for a blank page at `/`.
+test('root URL redirects to the app under /tasks/', async ({ page }) => {
+  await page.goto('/')
+  await expect(page).toHaveURL(/\/tasks\/$/)
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+})
