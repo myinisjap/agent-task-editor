@@ -5,17 +5,9 @@ Claude Desktop) manage the board — discover repos/workflows and create tickets
 Communication is over stdio using JSON-RPC 2.0 (newline-delimited JSON), the
 same wire protocol as `cmd/mcp-server`.
 
-## Why this is separate from cmd/mcp-server
+## Why this is separate from cmd/mcp-server (ADR 0024)
 
-`cmd/mcp-server` is the **per-run sidecar** the in-flow kanban agents get. It is
-ephemeral (spawned as a child of each agent subprocess) and task-scoped (its
-tools act on the one run via env-injected `RUN_ID`/`TRANSITIONS`/`RESULT_FILE`).
-
-`cmd/mcp-board` is the opposite: a **long-lived process a human points a chat
-client at**. It has no run context; it just talks to the backend REST API. The
-flow agents never see its tools, so task creation lives here and *not* in the
-flow agents' toolset — which is exactly the access boundary this binary exists
-to enforce.
+`cmd/mcp-server` is the ephemeral, task-scoped per-run sidecar. `cmd/mcp-board` is a long-lived process a human points a chat client at; it has no run context and only calls the backend REST API. Flow agents never see its tools, so ticket creation must stay here and out of the flow agents' toolset.
 
 ## Tools
 

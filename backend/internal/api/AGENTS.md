@@ -29,48 +29,28 @@ GET  /metrics                (Prometheus scrape; gated by METRICS_TOKEN, else by
   health/providers             HealthHandler (provider/onboarding readiness checks)
 ```
 
-## Middleware Chain (in order)
+## Middleware Chain (in order; ADR 0030)
 
-1. `chimiddleware.RequestID` — generates a request ID and injects it into the
-   request context (must run first so every downstream middleware/handler can
-   read it) and sets the `X-Request-Id` response header
-2. `middleware.Recover` — catches panics, logs the stack trace + `request_id`, returns 500
-3. `middleware.Logger` — structured slog request logging (method, path, status,
-   duration, `request_id`)
-4. `HostPolicy.Middleware` — DNS-rebinding Host allowlist; enforced only when no
-   API token is configured (`ALLOWED_HOSTS`); applies to every route incl.
-   `/ws`, `/healthz`, `/metrics`
-5. `middleware.CORS` — sets CORS headers; configured from `CORS_ORIGINS`
-6. `middleware.RequireTrustedOrigin` — 403 for POST/PUT/PATCH/DELETE whose
-   `Origin` is neither in `CORS_ORIGINS` nor same-origin (no Origin = pass)
-7. `middleware.RequireJSON` — 415 for POST/PUT/PATCH bodies that aren't
-   `application/json` (exempt: multipart `POST /api/v1/tasks`, YAML workflow
-   import/update). Add new non-JSON routes to `jsonExemptions`.
-8. `middleware.BearerAuth` — validates `Authorization: Bearer <token>` against the
-   legacy single `bearerToken` and/or the `namedTokens` (`name -> token`) map from
-   `cfg.APITokens`; a named-token match is stored on the request context and
-   retrievable via `middleware.ActorFromContext` (see `handlers/tasks.go`'s
-   human-triggered transition handlers, which pass it as `actorID` to
-   `engine.Transition`). No-op if both are empty.
+1. `chimiddleware.RequestID` — must be first so every layer sees the id; sets `X-Request-Id`
+2. `middleware.Recover` — panics → logged stack + `request_id`, 500
+3. `middleware.Logger` — slog request log (method, path, status, duration, `request_id`)
+4. `HostPolicy.Middleware` — DNS-rebinding Host allowlist; enforced only when no API token is set (`ALLOWED_HOSTS`); applies to every route incl. `/ws`, `/healthz`, `/metrics`
+5. `middleware.CORS` — from `CORS_ORIGINS`
+6. `middleware.RequireTrustedOrigin` — 403 for POST/PUT/PATCH/DELETE whose `Origin` is neither in `CORS_ORIGINS` nor same-origin (no Origin = pass)
+7. `middleware.RequireJSON` — 415 for non-JSON POST/PUT/PATCH bodies; exempt: multipart `POST /api/v1/tasks`, YAML workflow import/update. **Add new non-JSON routes to `jsonExemptions`.**
+8. `middleware.BearerAuth` — legacy `bearerToken` and/or `namedTokens`; a named match is exposed via `middleware.ActorFromContext` and passed as `actorID` to `engine.Transition` by human-triggered handlers. No-op when both empty.
 9. Per-route 1 MB body limit on `/api/v1/*`
 
-### Logging conventions
+`/ws` is mounted **outside** `BearerAuth` and authenticated in `ws.ServeWS` via single-use tickets (ADR 0022). Never skip auth via a request header.
 
-- All request-level logs (`middleware.Logger`, `middleware.Recover`) include a
-  `request_id` field (from `chimiddleware.GetReqID`), so a single request can be
-  traced across log lines.
-- Handlers that need to log something tied to the in-flight request (instead of
-  using the bare `slog` package functions) should call
-  `middleware.LoggerFromContext(r.Context())` to get a `*slog.Logger` pre-scoped
-  with `request_id`, then use `logger.Warn(...)`/`logger.Error(...)` etc.
+### Logging
+
+Request-level logs include `request_id`. Handlers use `middleware.LoggerFromContext(r.Context())` for a logger pre-scoped with it.
 
 ## Handler Conventions
 
-- Handlers are structs with constructor `NewXxxHandler(q *gen.Queries, ...)` 
-- JSON decode errors → `400 Bad Request`
-- Not found → `404`
-- Validation errors → `400` with `{"error":"message"}`
-- `Err(w, status, msg)` helper writes JSON error response
-- `JSON(w, status, v)` helper marshals response
+- Handlers are structs with constructor `NewXxxHandler(q *gen.Queries, ...)`
+- JSON decode errors → `400`; not found → `404`; validation → `400` with `{"error":"message"}`
+- Always respond through `Err(w, status, msg)` / `JSON(w, status, v)` so every `/api/v1/*` response is JSON
 
-See `handlers/CLAUDE.md` for per-handler details.
+See `handlers/AGENTS.md` for per-handler details.

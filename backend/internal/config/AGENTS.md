@@ -27,12 +27,6 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `BackupInterval` | `BACKUP_INTERVAL` | `backup_interval` | `24h` (initial/seed value only — see below) |
 | `BackupKeep` | `BACKUP_KEEP` | `backup_keep` | `7` (initial/seed value only — see below) |
 
-`BackupInterval`/`BackupKeep` only seed the `backup_settings` DB row on first
-migration; once running, both are edited at runtime via
-`PUT /api/v1/backup/settings` (10-minute minimum interval), independent of
-this config/env-var layer. `BackupDir` remains a restart-required,
-config/env-var-only choice — see `internal/backup` and `docs/backup.md`.
-
 ## Loading Order
 
 1. Start with `Defaults()`
@@ -41,18 +35,9 @@ config/env-var-only choice — see `internal/backup` and `docs/backup.md`.
 
 ## Notes
 
-- `REPO_BASE_DIR` empty is valid (warn-only at startup); production deployments should set it
-- `APIToken` empty means no authentication is required
-- `APITokens` is `name -> token`. Unlike `APIToken`, a match resolves to an actor
-  name (via `middleware.ActorFromContext`) recorded in `task_label_history.actor_id`
-  for human-triggered transitions. `API_TOKENS` env var format is
-  `name1:token1,name2:token2` (comma-separated pairs, split on the first `:`,
-  whitespace trimmed); malformed entries are skipped with a `slog.Warn`. Env var
-  entries are merged into (and override same-named) YAML `api_tokens` entries.
-  `APIToken` is still supported as an anonymous/legacy fallback — a request
-  authenticated with it resolves to actor `""`, same as before this field existed.
-- `/metrics` auth: `MetricsToken` set -> that token only. Unset and `APIToken`/`APITokens` configured -> an API token is required (breaking vs. the old open default). `MetricsPublic=true` opts out (open). No API auth at all -> open.
-- `MCPBinary` empty means ClaudeRunner runs without MCP tools (`signal_complete`/`request_human` unavailable)
-- `MCPBoardBinary` empty means chat sessions launch without the board MCP tools (`list_repos`/`list_workflows`/`create_task`); set it to the `mcp-board` binary path to let chat sessions create tickets. See `docs/board-mcp.md`.
-- `BackupDir` empty disables the automatic local-snapshot scheduler (`internal/backup.Scheduler`); the on-demand `GET /api/v1/backup` endpoint and the Health page's "Download backup" button are always available regardless. See `docs/backup.md`.
-- `CORSOrigins` defaults to the known local dev/prod origins (`http://localhost:5173,http://localhost:8080`), not `*`; the wildcard is still available by setting `CORS_ORIGINS=*` explicitly. An empty `APIToken` now also triggers a startup `slog.Warn` in `cmd/server/main.go` (warn-only, matching the `REPO_BASE_DIR` pattern), escalated to a stronger message when `CORSOrigins == "*"` as well.
+- `REPO_BASE_DIR` empty is valid (warn-only at startup); an empty `API_TOKEN`/`API_TOKENS` also warns. Keep new safety config permissive-by-default with a startup warning (ADR 0005).
+- `APITokens` is `name -> token`; a match resolves to an actor name (`middleware.ActorFromContext`) recorded in `task_label_history.actor_id`. `API_TOKENS` format: `name1:token1,name2:token2` (split on the first `:`, whitespace trimmed, malformed entries skipped with `slog.Warn`); env entries override same-named YAML entries. The legacy `APIToken` resolves to actor `""`.
+- `/metrics` auth: `MetricsToken` set → that token only; else if `APIToken`/`APITokens` configured → an API token is required; `MetricsPublic=true` opts out; no API auth → open.
+- `MCPBinary` empty: runners run without the sidecar tools. `MCPBoardBinary` empty: chat sessions have no board tools (`docs/board-mcp.md`).
+- `BackupDir` empty disables the scheduler (restart required to change); on-demand `GET /api/v1/backup` is always available (`docs/backup.md`). `BackupInterval`/`BackupKeep` only seed the DB row; runtime changes go through `PUT /api/v1/backup/settings` (10-minute minimum) — ADR 0031.
+- `CORSOrigins` defaults to the local dev/prod origins, not `*`; `CORS_ORIGINS=*` must be explicit.
