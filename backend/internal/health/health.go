@@ -120,6 +120,46 @@ func DefaultDeps() Deps {
 	}
 }
 
+// providerCheckOrder is the stable order provider-specific checks are emitted
+// in by Checks (claude is always first and handled separately).
+var providerCheckOrder = []string{"anthropic", "llm", "qwen_code", "opencode", "codex_cli"}
+
+// ProviderCheck runs the single readiness check for a provider kind (e.g.
+// "claude", "codex_cli"). ok is false when the kind has no check. It is the
+// same check Checks emits, exposed so the provider circuit breaker can re-test
+// one provider cheaply while dispatch is paused.
+func ProviderCheck(provider string, in Input, d Deps) (Check, bool) {
+	switch provider {
+	case "claude":
+		return claudeCheck(d), true
+	case "anthropic":
+		return anthropicCheck(in, d), true
+	case "llm":
+		return llmCheck(in), true
+	case "qwen_code":
+		return binaryCheck(d, "qwen", "Qwen CLI", "qwen_code provider",
+			"Install the qwen CLI and ensure it's on the server's PATH."), true
+	case "opencode":
+		return binaryCheck(d, "opencode", "opencode CLI", "opencode provider",
+			"Install the opencode CLI and ensure it's on the server's PATH."), true
+	case "codex_cli":
+		return codexCheck(d), true
+	}
+	return Check{}, false
+}
+
+// ProviderReady reports whether provider's health check currently passes
+// (StatusOK). A kind with no check is reported ready, since there is nothing
+// to re-test.
+func ProviderReady(provider string, in Input, d *Deps) bool {
+	deps := DefaultDeps()
+	if d != nil {
+		deps = *d
+	}
+	c, ok := ProviderCheck(provider, in, deps)
+	return !ok || c.Status == StatusOK
+}
+
 // Checks runs all applicable health checks and returns them in a stable order.
 // A nil Deps uses DefaultDeps.
 func Checks(in Input, d *Deps) []Check {
@@ -132,22 +172,12 @@ func Checks(in Input, d *Deps) []Check {
 
 	checks = append(checks, claudeCheck(deps))
 
-	if in.Providers["anthropic"] {
-		checks = append(checks, anthropicCheck(in, deps))
-	}
-	if in.Providers["llm"] {
-		checks = append(checks, llmCheck(in))
-	}
-	if in.Providers["qwen_code"] {
-		checks = append(checks, binaryCheck(deps, "qwen", "Qwen CLI", "qwen_code provider",
-			"Install the qwen CLI and ensure it's on the server's PATH."))
-	}
-	if in.Providers["opencode"] {
-		checks = append(checks, binaryCheck(deps, "opencode", "opencode CLI", "opencode provider",
-			"Install the opencode CLI and ensure it's on the server's PATH."))
-	}
-	if in.Providers["codex_cli"] {
-		checks = append(checks, codexCheck(deps))
+	for _, provider := range providerCheckOrder {
+		if in.Providers[provider] {
+			if c, ok := ProviderCheck(provider, in, deps); ok {
+				checks = append(checks, c)
+			}
+		}
 	}
 
 	checks = append(checks, mcpCheck(in, deps))

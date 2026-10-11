@@ -389,3 +389,17 @@ func TestRepoBaseDirCheck(t *testing.T) {
 		t.Fatalf("existing repo base dir should be ok")
 	}
 }
+
+func TestProviderReady(t *testing.T) {
+	noCreds := fakeDeps(map[string]bool{"claude": true}, nil, nil, "/home/u", false)
+	if ProviderReady("claude", Input{}, noCreds) {
+		t.Fatal("claude without credentials must not be ready")
+	}
+	withCreds := fakeDeps(map[string]bool{"claude": true}, map[string]bool{"/home/u/.claude/.credentials.json": true}, nil, "/home/u", false)
+	if !ProviderReady("claude", Input{}, withCreds) {
+		t.Fatal("claude with credentials should be ready")
+	}
+	if !ProviderReady("no-such-provider", Input{}, noCreds) {
+		t.Fatal("a provider kind with no check has nothing to re-test and counts as ready")
+	}
+}

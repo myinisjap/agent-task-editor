@@ -1223,6 +1223,11 @@ list of checks:
 - `status` is `ok` (green — ready), `warn` (yellow — optional/degraded, or a
   credential we couldn't detect heuristically), or `error` (red — a required
   item is missing and runs using it will fail).
+- `paused_providers` — provider kinds paused by the provider circuit breaker
+  (`[{provider, reason, paused_at}]`, empty when none). See
+  [agents.md#provider-circuit-breaker](agents.md#provider-circuit-breaker).
+  `POST /health/providers/{provider}/resume` lifts a pause manually and returns
+  `{"resumed": true|false}`.
 - `global_cost` — same global daily/monthly spend-ceiling snapshot as
   `GET /dashboard`'s `global_cost_budget` (minus the forecast fields) — see
   [agents.md#global-cost-ceiling](agents.md#global-cost-ceiling). Present

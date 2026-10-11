@@ -5,6 +5,7 @@ import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import HomeRoute from './components/shared/HomeRoute'
 import HealthWarningBanner from './components/shared/HealthWarningBanner'
+import ProviderPausedBanner from './components/shared/ProviderPausedBanner'
 import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
 
 // Lazy-loaded so heavy per-route dependencies (@xterm/xterm for ChatPage,
@@ -71,6 +72,7 @@ export default function App() {
         <div className="flex h-dvh overflow-hidden">
           <NavSidebar />
           <main className="flex-1 overflow-auto bg-slate-950 pt-12 md:pt-0">
+            <ProviderPausedBanner />
             <HealthWarningBanner />
             <AppRoutes />
           </main>

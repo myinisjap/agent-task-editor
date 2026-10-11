@@ -48,6 +48,9 @@ type Pool struct {
 	wg         sync.WaitGroup
 	// RateLimits tracks per-agent-config rate-limit blocks. Optional — no-op when nil.
 	RateLimits *RateLimitRegistry
+	// ProviderPauses is the provider circuit breaker, tripped when a run is
+	// classified ClassAuth. Optional — no-op when nil.
+	ProviderPauses *ProviderPauseRegistry
 	// GitName/GitEmail are used for safety-net commits when the container has no git identity.
 	GitName  string
 	GitEmail string
@@ -592,6 +595,12 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 		result.Message = &msg
 		result.EscalationReason = ReasonAuthRequired
 		authNotes = &msg
+		// One broken login would otherwise escalate every task the dispatcher
+		// starts next: pause dispatch for this provider kind until its health
+		// check passes again (or a human resumes it).
+		if p.ProviderPauses.Pause(job.Input.AgentConfig.Provider, "Not logged in: re-authenticate the "+job.Input.AgentConfig.Provider+" provider.") {
+			log.Warn("pool: auth failure, pausing dispatch for provider", "provider", job.Input.AgentConfig.Provider)
+		}
 	}
 	if result.Status == "failed" {
 		log.Warn("pool: agent run failed", "classification", string(classification), "final_status", finalStatus)

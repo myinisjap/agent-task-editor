@@ -202,6 +202,25 @@ escalation.
 Runs escalated before this field existed have a null reason and are treated as
 a question (Reply).
 
+### Provider circuit breaker
+
+An `auth_required` escalation also trips a per-provider circuit breaker so one
+broken login doesn't escalate every queued task in turn. The breaker is keyed
+by provider **kind** (`claude`, `codex_cli`, ...), not by agent config, because
+the login is shared by every config of that kind and the Health checks are per
+kind too. While a kind is paused the dispatcher skips agent configs of that kind
+(falling over to a lower-priority config of another kind if one matches) and
+leaves the tasks queued, not escalated. Human replies are never gated.
+
+The pause lifts when that provider's existing Health check (`internal/health`)
+passes, re-checked every 30s once the pause is at least 30s old, or when someone
+clicks **Resume** in the app-wide banner (`POST /health/providers/{provider}/resume`).
+The state is in memory only: a restart clears it, and the next auth failure
+re-trips it. Because Health checks are heuristic (credentials present, not a live
+token validation), an expired-but-present token can resume and re-trip; each
+cycle costs at most one escalated task. See `GET /health/providers`
+(`paused_providers`) and the `provider.pause_changed` WebSocket event.
+
 ## Log Entry Types
 
 | Type | Meaning |

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -32,6 +33,14 @@ type GlobalCostReporter interface {
 	GlobalCostStatus() agent.GlobalCostStatus
 }
 
+// ProviderPauseController exposes the provider circuit breaker (see
+// agent.ProviderPauseRegistry): the providers whose dispatch is paused after an
+// auth-classified run, and a manual resume. *agent.Dispatcher satisfies it.
+type ProviderPauseController interface {
+	PausedProviders() []agent.PausedProvider
+	ResumeProvider(provider string) bool
+}
+
 // HealthHandler serves provider/onboarding readiness checks.
 type HealthHandler struct {
 	q               *gen.Queries
@@ -54,6 +63,9 @@ type HealthHandler struct {
 	// doesn't also need a GlobalCostStatus method. May be nil, in which case
 	// both Readyz and Providers omit the global_cost block entirely.
 	globalCost GlobalCostReporter
+	// pauses supplies the provider circuit breaker state; same optional
+	// capability pattern as globalCost. May be nil.
+	pauses ProviderPauseController
 }
 
 // NewHealthHandler constructs a HealthHandler from the relevant server config.
@@ -84,6 +96,9 @@ func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, ll
 	}
 	if gc, ok := dispatcher.(GlobalCostReporter); ok {
 		h.globalCost = gc
+	}
+	if pc, ok := dispatcher.(ProviderPauseController); ok {
+		h.pauses = pc
 	}
 	return h
 }
@@ -155,5 +170,28 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		resp["global_cost"] = h.globalCost.GlobalCostStatus()
 	}
 
+	// Always present (empty when nothing is paused) so the UI can render one
+	// banner per paused provider without a nil check.
+	paused := []agent.PausedProvider{}
+	if h.pauses != nil {
+		paused = h.pauses.PausedProviders()
+	}
+	resp["paused_providers"] = paused
+
 	JSON(w, http.StatusOK, resp)
+}
+
+// ResumeProvider manually clears a provider's circuit-breaker pause so
+// dispatch resumes immediately. If the provider is still broken the next
+// auth-classified run pauses it again. Idempotent: resuming a provider that is
+// not paused returns 200 with resumed=false.
+//
+// POST /api/v1/health/providers/{provider}/resume
+func (h *HealthHandler) ResumeProvider(w http.ResponseWriter, r *http.Request) {
+	if h.pauses == nil {
+		JSON(w, http.StatusOK, map[string]any{"resumed": false})
+		return
+	}
+	resumed := h.pauses.ResumeProvider(chi.URLParam(r, "provider"))
+	JSON(w, http.StatusOK, map[string]any{"resumed": resumed})
 }

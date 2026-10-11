@@ -3523,7 +3523,7 @@ export interface paths {
         };
         /**
          * Provider / onboarding readiness checks
-         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers actually referenced by an enabled agent config or a chat session, via their Provider Config — an unused/disabled Provider Config produces no check), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md), and version (the running build's version — see /healthz). Also includes an opt-in update_check row (UPDATE_CHECK_ENABLED, default false) that compares the running version against the latest GitHub release tag; best-effort and never fails the response (degrades to warn when offline or gh is unavailable). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
+         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers actually referenced by an enabled agent config or a chat session, via their Provider Config — an unused/disabled Provider Config produces no check), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md), and version (the running build's version — see /healthz). Also includes an opt-in update_check row (UPDATE_CHECK_ENABLED, default false) that compares the running version against the latest GitHub release tag; best-effort and never fails the response (degrades to warn when offline or gh is unavailable). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation. Also lists paused_providers: provider kinds whose dispatch the provider circuit breaker paused after a run was classified as an auth failure (CLI not logged in). Queued tasks for a paused provider are left untouched; the pause lifts automatically once that provider's health check passes again, or manually via POST /health/providers/{provider}/resume. The pause state is held in memory and resets on restart. Changes are broadcast as the provider.pause_changed WebSocket event ({provider, paused}).
          */
         get: {
             parameters: {
@@ -3542,6 +3542,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             checks?: components["schemas"]["ProviderCheck"][];
+                            paused_providers?: components["schemas"]["PausedProvider"][];
                         };
                     };
                 };
@@ -3549,6 +3550,49 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/providers/{provider}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Manually resume a paused provider
+         * @description Clears the provider circuit breaker for a provider kind (e.g. claude) so dispatch resumes on the next sweep. If the provider is still not logged in, the next auth-classified run pauses it again. Idempotent.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    provider: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Whether the provider was paused before this call */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            resumed: boolean;
+                        };
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -5049,6 +5093,15 @@ export interface components {
             detail: string;
             /** @description How to fix it; present when status is not ok. */
             hint?: string;
+        };
+        /** @description A provider kind whose dispatch is paused by the provider circuit breaker after an auth-classified run. */
+        PausedProvider: {
+            /** @description Provider kind, matching provider_configs.provider (e.g. claude). */
+            provider: string;
+            /** @description Human-readable cause. */
+            reason: string;
+            /** Format: date-time */
+            paused_at: string;
         };
         Error: {
             error: string;

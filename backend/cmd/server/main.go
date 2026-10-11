@@ -20,6 +20,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
+	"github.com/myinisjap/agent-task-editor/backend/internal/health"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
@@ -301,6 +302,10 @@ func main() {
 	rateLimits := agent.NewRateLimitRegistry()
 	pool := agent.NewPool(maxWorkers, db.SQL(), engine, pub)
 	pool.RateLimits = rateLimits
+	// Provider circuit breaker: a run classified auth pauses dispatch for its
+	// provider kind; in-memory (resets safely on restart), re-checked below.
+	providerPauses := agent.NewProviderPauseRegistry(pub)
+	pool.ProviderPauses = providerPauses
 	// Register gh as git's credential helper for github.com so push/fetch over
 	// HTTPS authenticate with GITHUB_TOKEN/gh auth instead of failing with
 	// "could not read Username". Best-effort — no-op if gh isn't authenticated.
@@ -313,6 +318,7 @@ func main() {
 	pool.Subtasks = subtaskCoord
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 	dispatcher.RateLimits = rateLimits
+	dispatcher.ProviderPauses = providerPauses
 	dispatcher.SetUploadDir(uploadDir)
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = pub
@@ -467,6 +473,10 @@ func main() {
 	go pool.Start(ctx)
 	go memguard.New(pool).Run(ctx)
 	go dispatcher.Run(ctx)
+	// Auto-resume paused providers once their existing health check passes.
+	go providerPauses.RunRecheck(ctx, 30*time.Second, func(provider string) bool {
+		return health.ProviderReady(provider, health.Input{LLMBaseURL: cfg.LLMBaseURL, LLMAPIKey: cfg.LLMAPIKey}, nil)
+	})
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)
 	go taskScheduler.Run(ctx)
