@@ -732,7 +732,7 @@ func (q *Queries) ListTaskRunCountsByAgentConfig(ctx context.Context) ([]ListTas
 }
 
 const listWaitingHumanRuns = `-- name: ListWaitingHumanRuns :many
-SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, ar.input_tokens, ar.output_tokens, ar.cost_usd, ar.session_id, ar.cost_unknown, ar.turns_used, t.title as task_title
+SELECT ar.id, ar.task_id, ar.agent_config_id, ar.status, ar.feedback, ar.stored_info, ar.started_at, ar.completed_at, ar.created_at, ar.notes, ar.input_tokens, ar.output_tokens, ar.cost_usd, ar.session_id, ar.cost_unknown, ar.turns_used, t.title as task_title, t.label as task_label, t.workflow_id as task_workflow_id
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'
@@ -741,23 +741,25 @@ ORDER BY ar.created_at DESC
 `
 
 type ListWaitingHumanRunsRow struct {
-	ID            string     `json:"id"`
-	TaskID        string     `json:"task_id"`
-	AgentConfigID *string    `json:"agent_config_id"`
-	Status        string     `json:"status"`
-	Feedback      *string    `json:"feedback"`
-	StoredInfo    *string    `json:"stored_info"`
-	StartedAt     *time.Time `json:"started_at"`
-	CompletedAt   *time.Time `json:"completed_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	Notes         *string    `json:"notes"`
-	InputTokens   int64      `json:"input_tokens"`
-	OutputTokens  int64      `json:"output_tokens"`
-	CostUsd       float64    `json:"cost_usd"`
-	SessionID     string     `json:"session_id"`
-	CostUnknown   int64      `json:"cost_unknown"`
-	TurnsUsed     int64      `json:"turns_used"`
-	TaskTitle     string     `json:"task_title"`
+	ID             string     `json:"id"`
+	TaskID         string     `json:"task_id"`
+	AgentConfigID  *string    `json:"agent_config_id"`
+	Status         string     `json:"status"`
+	Feedback       *string    `json:"feedback"`
+	StoredInfo     *string    `json:"stored_info"`
+	StartedAt      *time.Time `json:"started_at"`
+	CompletedAt    *time.Time `json:"completed_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	Notes          *string    `json:"notes"`
+	InputTokens    int64      `json:"input_tokens"`
+	OutputTokens   int64      `json:"output_tokens"`
+	CostUsd        float64    `json:"cost_usd"`
+	SessionID      string     `json:"session_id"`
+	CostUnknown    int64      `json:"cost_unknown"`
+	TurnsUsed      int64      `json:"turns_used"`
+	TaskTitle      string     `json:"task_title"`
+	TaskLabel      string     `json:"task_label"`
+	TaskWorkflowID string     `json:"task_workflow_id"`
 }
 
 // Only surfaces a waiting_human run while it is still the task's active run.
@@ -794,6 +796,8 @@ func (q *Queries) ListWaitingHumanRuns(ctx context.Context) ([]ListWaitingHumanR
 			&i.CostUnknown,
 			&i.TurnsUsed,
 			&i.TaskTitle,
+			&i.TaskLabel,
+			&i.TaskWorkflowID,
 		); err != nil {
 			return nil, err
 		}

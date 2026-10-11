@@ -962,7 +962,7 @@ Returns aggregated statistics:
 
 - `label_counts` — number of tasks currently in each workflow label.
 - `active_agents` — agent runs currently in progress.
-- `intervention_queue` — runs in `waiting_human`, awaiting approve/reject.
+- `intervention_queue` — runs in `waiting_human`, awaiting a human. Each item includes the task's current `task_label` and `workflow_id` so clients can tell whether approve/reject apply (a human `success`/`failure` transition from that label) or only a reply does.
 - `cost_total` / `cost_by_provider` — aggregate token/cost usage across all
   runs in a terminal state (completed, failed, waiting_human), computed
   from data already recorded in this app's own database.

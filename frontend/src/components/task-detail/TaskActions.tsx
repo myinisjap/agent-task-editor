@@ -14,6 +14,9 @@ export default function TaskActions({
   setRejectNote,
   onReject,
   onApprove,
+  canApprove,
+  canReject,
+  actionError,
   actionPending,
   onJumpToDiffTab,
 }: {
@@ -27,6 +30,11 @@ export default function TaskActions({
   setRejectNote: (v: string) => void
   onReject: () => void
   onApprove: () => void
+  // Whether the workflow defines a human success/failure transition from the
+  // task's current label; Approve/Reject are hidden when it doesn't.
+  canApprove: boolean
+  canReject: boolean
+  actionError?: string
   actionPending: boolean
   onJumpToDiffTab: () => void
 }) {
@@ -70,7 +78,12 @@ export default function TaskActions({
           </button>
         </div>
       )}
+      {actionError && (
+        <p role="alert" className="text-xs text-red-400 mb-3">{actionError}</p>
+      )}
+      {(canApprove || canReject) && (
       <div className="flex gap-3 items-start">
+        {canReject ? (
         <textarea
           value={rejectNote}
           onChange={(e) => setRejectNote(e.target.value)}
@@ -82,7 +95,11 @@ export default function TaskActions({
           rows={2}
           className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500"
         />
+        ) : (
+          <div className="flex-1" />
+        )}
         <div className="flex flex-col gap-2">
+          {canApprove && (
           <button
             onClick={onApprove}
             disabled={actionPending}
@@ -90,6 +107,8 @@ export default function TaskActions({
           >
             Approve
           </button>
+          )}
+          {canReject && (
           <button
             onClick={onReject}
             disabled={actionPending || (!rejectNote.trim() && openCommentsCount === 0)}
@@ -97,8 +116,10 @@ export default function TaskActions({
           >
             Reject
           </button>
+          )}
         </div>
       </div>
+      )}
     </div>
   )
 }

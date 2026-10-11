@@ -215,11 +215,15 @@ type activeAgentRow struct {
 }
 
 type interventionRow struct {
-	RunID     string  `json:"run_id"`
-	TaskID    string  `json:"task_id"`
-	TaskTitle string  `json:"task_title"`
-	Message   *string `json:"message"`
-	CreatedAt string  `json:"created_at"`
+	RunID     string `json:"run_id"`
+	TaskID    string `json:"task_id"`
+	TaskTitle string `json:"task_title"`
+	// TaskLabel / WorkflowID let the UI decide which human actions
+	// (approve/reject) the task's current label actually defines.
+	TaskLabel  string  `json:"task_label"`
+	WorkflowID string  `json:"workflow_id"`
+	Message    *string `json:"message"`
+	CreatedAt  string  `json:"created_at"`
 }
 
 func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -266,11 +270,13 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 	interventionRows := make([]interventionRow, 0, len(waitingRuns))
 	for _, r := range waitingRuns {
 		interventionRows = append(interventionRows, interventionRow{
-			RunID:     r.ID,
-			TaskID:    r.TaskID,
-			TaskTitle: r.TaskTitle,
-			Message:   r.Feedback,
-			CreatedAt: r.CreatedAt.String(),
+			RunID:      r.ID,
+			TaskID:     r.TaskID,
+			TaskTitle:  r.TaskTitle,
+			TaskLabel:  r.TaskLabel,
+			WorkflowID: r.TaskWorkflowID,
+			Message:    r.Feedback,
+			CreatedAt:  r.CreatedAt.String(),
 		})
 	}
 

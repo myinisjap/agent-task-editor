@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useDashboard } from '../lib/useDashboard'
+import { humanActionsFor } from '../lib/humanGate'
 import { useWorkflowStore } from '../stores/workflow'
 import TaskFactory from '../components/TaskFactory'
 import FactoryLine from '../components/FactoryLine'
@@ -47,6 +48,7 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const { dash, refresh } = useDashboard()
   const [rejectNote, setRejectNote] = useState<Record<string, string>>({})
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<Record<string, boolean>>({})
   const [visualize, setVisualize] = useState(() => {
     try { return localStorage.getItem(VISUALIZE_KEY) === '1' } catch { return false }
@@ -74,12 +76,13 @@ export default function DashboardPage() {
   }
 
   const handleApprove = async (taskId: string) => {
+    setActionErrors((m) => ({ ...m, [taskId]: '' }))
     setPending((p) => ({ ...p, [taskId]: true }))
     try {
       await api.tasks.approve(taskId)
       refresh()
     } catch (e: any) {
-      alert(e.message)
+      setActionErrors((m) => ({ ...m, [taskId]: e.message ?? String(e) }))
     } finally {
       setPending((p) => ({ ...p, [taskId]: false }))
     }
@@ -88,13 +91,14 @@ export default function DashboardPage() {
   const handleReject = async (taskId: string) => {
     const note = rejectNote[taskId] ?? ''
     if (!note.trim()) return
+    setActionErrors((m) => ({ ...m, [taskId]: '' }))
     setPending((p) => ({ ...p, [taskId]: true }))
     try {
       await api.tasks.reject(taskId, note)
       setRejectNote((n) => ({ ...n, [taskId]: '' }))
       refresh()
     } catch (e: any) {
-      alert(e.message)
+      setActionErrors((m) => ({ ...m, [taskId]: e.message ?? String(e) }))
     } finally {
       setPending((p) => ({ ...p, [taskId]: false }))
     }
@@ -282,31 +286,65 @@ export default function DashboardPage() {
                     {new Date(item.created_at).toLocaleTimeString()}
                   </span>
                 </div>
-                <div className="flex gap-2 items-start">
-                  <input
-                    type="text"
-                    value={rejectNote[item.task_id] ?? ''}
-                    onChange={(e) =>
-                      setRejectNote((n) => ({ ...n, [item.task_id]: e.target.value }))
-                    }
-                    placeholder="Rejection note…"
-                    className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
-                  />
-                  <button
-                    onClick={() => handleApprove(item.task_id)}
-                    disabled={pending[item.task_id]}
-                    className="px-3 py-1.5 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleReject(item.task_id)}
-                    disabled={pending[item.task_id] || !(rejectNote[item.task_id] ?? '').trim()}
-                    className="px-3 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                </div>
+                {(() => {
+                  const { canApprove, canReject } = humanActionsFor(
+                    workflows.find((w) => w.id === item.workflow_id),
+                    item.task_label,
+                  )
+                  if (!canApprove && !canReject) {
+                    return (
+                      <div className="flex items-center gap-2">
+                        <p className="flex-1 text-xs text-slate-500">
+                          This task is on an agent label, so there is nothing to approve or reject. Reply to the agent on the task page.
+                        </p>
+                        <button
+                          onClick={() => navigate(`/tasks/${item.task_id}`)}
+                          className="px-3 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white"
+                        >
+                          Reply
+                        </button>
+                      </div>
+                    )
+                  }
+                  return (
+                    <div className="flex gap-2 items-start">
+                      {canReject ? (
+                        <input
+                          type="text"
+                          value={rejectNote[item.task_id] ?? ''}
+                          onChange={(e) =>
+                            setRejectNote((n) => ({ ...n, [item.task_id]: e.target.value }))
+                          }
+                          placeholder="Rejection note…"
+                          className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                        />
+                      ) : (
+                        <div className="flex-1" />
+                      )}
+                      {canApprove && (
+                        <button
+                          onClick={() => handleApprove(item.task_id)}
+                          disabled={pending[item.task_id]}
+                          className="px-3 py-1.5 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                      )}
+                      {canReject && (
+                        <button
+                          onClick={() => handleReject(item.task_id)}
+                          disabled={pending[item.task_id] || !(rejectNote[item.task_id] ?? '').trim()}
+                          className="px-3 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      )}
+                    </div>
+                  )
+                })()}
+                {actionErrors[item.task_id] && (
+                  <p role="alert" className="text-xs text-red-400 mt-2">{actionErrors[item.task_id]}</p>
+                )}
               </div>
             ))}
           </div>

@@ -15,6 +15,8 @@ function renderActions(overrides: Partial<React.ComponentProps<typeof TaskAction
     setRejectNote: vi.fn(),
     onReject: vi.fn(),
     onApprove: vi.fn(),
+    canApprove: true,
+    canReject: true,
     actionPending: false,
     onJumpToDiffTab: vi.fn(),
     ...overrides,
@@ -89,3 +91,32 @@ describe('TaskActions enablement rules', () => {
 function renderActionsCleanup() {
   document.body.innerHTML = ''
 }
+
+describe('TaskActions human-transition gating', () => {
+  it('hides Approve and Reject when no human transition exists, leaving Reply', () => {
+    renderActions({ needsHuman: true, replyText: 'x', canApprove: false, canReject: false })
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reply & Continue' })).toBeEnabled()
+  })
+
+  it('shows only Approve when only a success transition exists', () => {
+    renderActions({ canApprove: true, canReject: false })
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+  })
+
+  it('shows only Reject when only a failure transition exists', () => {
+    renderActions({ canApprove: false, canReject: true, rejectNote: 'n' })
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument()
+  })
+
+  it('renders an action error inline without calling window.alert', () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    renderActions({ needsHuman: true, actionError: 'boom' })
+    expect(screen.getByRole('alert')).toHaveTextContent('boom')
+    expect(alertSpy).not.toHaveBeenCalled()
+    alertSpy.mockRestore()
+  })
+})
