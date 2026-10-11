@@ -316,6 +316,7 @@ How it works:
   capability sets and cannot switch back to `node`. At startup the server
   verifies this with a live probe (uid correct, all capability sets empty) and
   disables isolation with an error if the check fails.
+- The server's own children (`git`, `gh`, `mise`, `uv`, ...) are wrapped the same way via `agentuser.ServerCommand`, so a hook or config an agent plants in a repo (`core.fsmonitor`, `core.hooksPath`, ...) never runs with those capabilities; only the server process itself holds them (a source-scanning test rejects raw `exec.Command` elsewhere).
 - `/data` is `0700 node`; the server's `~/.config/gh` is not readable by `agent`;
   the agent has its own `HOME=/home/agent` (own `.gitconfig`).
 - Shared by group (`PGID`, with `umask 002`): bind-mounted repos and

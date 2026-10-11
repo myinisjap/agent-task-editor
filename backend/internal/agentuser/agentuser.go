@@ -24,6 +24,10 @@
 // uid, so a regression degrades to the old behaviour with an error rather than
 // to a false sense of security.
 //
+// Server-side children (git, gh, mise, uv, ...) get the same cap-dropping
+// wrapper via ServerCommand/DropCaps, because an agent can plant hooks or
+// config in the repos they operate on.
+//
 // Fallback. When the server lacks the ability to switch (no CAP_SETUID/
 // CAP_SETGID, AGENT_UID unset, `./dev.sh dev` outside Docker, compose `user:`
 // pinned, ...) isolation is disabled with a startup warning and children run as
@@ -229,6 +233,38 @@ func apply(c Config, cmd *exec.Cmd) {
 	cmd.SysProcAttr.AmbientCaps = nil
 	cmd.Path, cmd.Args = Wrap(c, cmd.Path, cmd.Args)
 	cmd.Env = ChildEnv(cmd.Env, c)
+}
+
+// DropCaps strips the server's ambient capabilities from a command the SERVER
+// itself runs (git, gh, mise, uv, ...), by wrapping it in the same
+// `setpriv --inh-caps=-all --ambient-caps=-all --` prefix agent children get.
+// Without it such children inherit CAP_SETUID/SETGID/KILL (ambient caps survive
+// execve), and since agents can write to the repos those tools operate on, a
+// planted git hook, core.fsmonitor/core.sshCommand, or mise/uv config would run
+// with CAP_SETUID and could become any uid. Must be called after Path/Args are
+// final and before Start. A no-op when isolation is not active.
+func DropCaps(cmd *exec.Cmd) {
+	c := Current()
+	if !c.Enabled || cmd == nil || cmd.Err != nil {
+		return
+	}
+	cmd.Path, cmd.Args = Wrap(c, cmd.Path, cmd.Args)
+}
+
+// ServerCommand is exec.Command for server-side (non-agent) children: every
+// such spawn must use it (or ServerCommandContext) so no child carries the
+// server's capabilities. A guard test rejects raw exec.Command elsewhere.
+func ServerCommand(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	DropCaps(cmd)
+	return cmd
+}
+
+// ServerCommandContext is the context-aware form of ServerCommand.
+func ServerCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	DropCaps(cmd)
+	return cmd
 }
 
 // ShareDir makes a server-created private temp directory (MkdirTemp, 0700)

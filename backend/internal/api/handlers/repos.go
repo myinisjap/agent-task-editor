@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -316,7 +315,7 @@ func (h *ReposHandler) validateExistingRepoPath(w http.ResponseWriter, r *http.R
 		Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
 		return false
 	}
-	if err := exec.CommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+	if err := agentuser.ServerCommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
 		Err(w, http.StatusBadRequest, "path is not a git repository")
 		return false
 	}
@@ -476,7 +475,7 @@ func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
 		fail(fmt.Sprintf("failed to create parent directory: %v", err))
 		return
 	}
-	if out, err := exec.CommandContext(ctx, "git", "clone", remoteURL, destPath).CombinedOutput(); err != nil {
+	if out, err := agentuser.ServerCommandContext(ctx, "git", "clone", remoteURL, destPath).CombinedOutput(); err != nil {
 		fail(fmt.Sprintf("git clone failed: %s", strings.TrimSpace(string(out))))
 		return
 	}
@@ -794,7 +793,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the path is still a valid git repository.
-	if err := exec.CommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+	if err := agentuser.ServerCommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
 		Err(w, http.StatusBadRequest, "path is not a git repository")
 		return
 	}
@@ -868,7 +867,7 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", "--", ref).Output()
+	out, err := agentuser.ServerCommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", "--", ref).Output()
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to read git tree")
 		return

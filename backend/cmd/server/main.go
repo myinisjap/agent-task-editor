@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -313,7 +312,7 @@ func main() {
 	// Register gh as git's credential helper for github.com so push/fetch over
 	// HTTPS authenticate with GITHUB_TOKEN/gh auth instead of failing with
 	// "could not read Username". Best-effort — no-op if gh isn't authenticated.
-	if out, err := exec.Command("gh", "auth", "setup-git").CombinedOutput(); err != nil {
+	if out, err := agentuser.ServerCommand("gh", "auth", "setup-git").CombinedOutput(); err != nil {
 		slog.Warn("gh auth setup-git failed; git push to github.com will not be authenticated", "err", err, "out", strings.TrimSpace(string(out)))
 	}
 
@@ -629,7 +628,7 @@ func resolveGitIdentity() (string, string) {
 }
 
 func runOutput(name string, args ...string) string {
-	out, err := exec.Command(name, args...).Output()
+	out, err := agentuser.ServerCommand(name, args...).Output()
 	if err != nil {
 		return ""
 	}

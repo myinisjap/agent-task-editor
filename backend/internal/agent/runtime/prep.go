@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -113,7 +113,7 @@ func Install(ctx context.Context, pins []Pin) error {
 	ctx, cancel := context.WithTimeout(ctx, InstallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "mise", args...)
+	cmd := agentuser.ServerCommandContext(ctx, "mise", args...)
 	cmd.Env = miseEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -158,7 +158,7 @@ func EnsureVenv(ctx context.Context, worktreeDir, pythonPath, pinVersion string)
 	ctx, cancel := context.WithTimeout(ctx, InstallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "uv", "venv", "--python", pythonPath, venvDir)
+	cmd := agentuser.ServerCommandContext(ctx, "uv", "venv", "--python", pythonPath, venvDir)
 	cmd.Env = miseEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -208,7 +208,7 @@ func venvMatchesVersion(venvDir, pinVersion string) bool {
 // file) leaves the venv visible to git status rather than blocking venv
 // creation.
 func excludeVenv(worktreeDir string) {
-	out, err := exec.Command("git", "-C", worktreeDir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude").Output()
+	out, err := agentuser.ServerCommand("git", "-C", worktreeDir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude").Output()
 	if err != nil {
 		return
 	}
@@ -237,7 +237,7 @@ func ResolvePythonPath(ctx context.Context, version string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, InstallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "mise", "where", "python@"+version)
+	cmd := agentuser.ServerCommandContext(ctx, "mise", "where", "python@"+version)
 	cmd.Env = miseEnv()
 	out, err := cmd.Output()
 	if err != nil {

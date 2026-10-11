@@ -3,7 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
-	"os/exec"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +18,7 @@ const latestGitHubReleaseRepo = "myinisjap/agent-task-editor"
 func latestGitHubReleaseViaGH() (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "gh", "release", "view",
+	out, err := agentuser.ServerCommandContext(ctx, "gh", "release", "view",
 		"--repo", latestGitHubReleaseRepo,
 		"--json", "tagName",
 		"-q", ".tagName",
