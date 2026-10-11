@@ -30,3 +30,6 @@ logged warning. Guards: `TestAllowlistEnv_EveryProviderHasGitHubToken`,
 - Never add a real backend secret to the allowlist.
 - Chat sessions and task runs both inherit the allowlist behavior, including
   `SSL_CA_CERT_PATH`-derived variables.
+
+
+> Note (v0.17.0): `LLM_API_KEY` named above no longer exists (the `anthropic`/`llm` providers were removed); the allowlist rationale applies unchanged to `API_TOKEN`, DB credentials, etc.

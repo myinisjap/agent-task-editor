@@ -848,7 +848,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		// Instead, escalate straight to waiting_human (same shape as
 		// checkCostBudget's exhausted-budget escalation) so the task stays
 		// locked on this run until a human fixes the config and replies.
-		msg := fmt.Sprintf("agent config's provider is disabled or unknown: %q", agentCfg.Provider)
+		msg := ProviderUnavailableMessage(agentCfg.Provider)
 		log.Error("dispatcher: no runner for provider", "provider", agentCfg.Provider)
 		// persistRunRow (above) already set BOTH current_agent_run_id and
 		// active_agent_run_id to this phantom run before the provider was
@@ -864,6 +864,9 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			Lock: lockRestoreCurrent, CurrentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
 		}); err != nil {
 			log.Warn("dispatcher: nil-provider escalation", "err", err)
+		}
+		if IsRemovedProvider(agentCfg.Provider) {
+			return "", fmt.Errorf("%w: %s", ErrProviderUnavailable, msg)
 		}
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
 	}

@@ -252,7 +252,7 @@ func main() {
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
 	backendURL := "http://localhost:" + cfg.Port
 
-	// priceResolver resolves anthropic/llm model pricing from the
+	// priceResolver resolves model pricing from the
 	// user-editable model_pricing table (GET/PUT /api/v1/settings/pricing),
 	// falling back to the hardcoded map in providers/pricing.go for any
 	// model not present in the DB. It reads the DB fresh on every run
@@ -268,13 +268,6 @@ func main() {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
-		case "anthropic":
-			// Deprecated: disabled for new/updated provider configs (see
-			// deprecatedProviders in handlers/providers.go), retained here so
-			// existing configs keep dispatching. Calls the Anthropic Messages
-			// API directly — no CLI binary needed. Requires LLM_API_KEY to be
-			// set. Billed per-token (not Claude Max).
-			return &providers.AnthropicRunner{APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
 		case "opencode":
 			return &providers.OpencodeRunner{}
 		case "qwen_code":
@@ -289,15 +282,10 @@ func main() {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
-		case "llm", "openai":
-			// Deprecated: disabled for new/updated provider configs (see
-			// deprecatedProviders in handlers/providers.go), retained here so
-			// existing configs keep dispatching. "openai" is the historical
-			// dead dropdown alias for this same OpenAI-compatible path.
-			return &providers.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
 		default:
-			// Unrecognized provider string: fail explicitly instead of
-			// silently falling back to an OpenAI-compatible call.
+			// Unrecognized or removed provider string (incl. the removed
+			// anthropic/llm/openai providers): the dispatcher fails the run
+			// with agent.ProviderUnavailableMessage instead of crashing.
 			return nil
 		}
 	}
@@ -348,8 +336,8 @@ func main() {
 	// allowlist instead of the backend's full environment — the interactive
 	// terminal launches the same claude/codex/qwen/opencode binaries (with
 	// the same Bash access) as the headless runners, so it needs the same
-	// #321 protection against leaking backend-only secrets (LLM_API_KEY,
-	// API_TOKEN, DB creds, etc.) to the CLI's shell.
+	// #321 protection against leaking backend-only secrets (API_TOKEN,
+	// DB creds, etc.) to the CLI's shell.
 	terminal.EnvAllowlist = providers.EnvAllowlistFor
 	// Expose the board MCP tools (list_repos/list_workflows/create_task) to chat
 	// sessions when MCP_BOARD_PATH points at the mcp-board binary. This is a
@@ -401,8 +389,6 @@ func main() {
 		ListenAddr:          listenAddr,
 		UploadDir:           uploadDir,
 		MCPBinary:           cfg.MCPBinary,
-		LLMBaseURL:          cfg.LLMBaseURL,
-		LLMAPIKey:           cfg.LLMAPIKey,
 		BackupDir:           cfg.BackupDir,
 		BackupInterval:      cfg.BackupInterval,
 		BackupKeep:          cfg.BackupKeep,
@@ -534,7 +520,7 @@ func main() {
 	}()
 	// Auto-resume paused providers once their existing health check passes.
 	go providerPauses.RunRecheck(ctx, 30*time.Second, func(provider string) bool {
-		return health.ProviderReady(provider, health.Input{LLMBaseURL: cfg.LLMBaseURL, LLMAPIKey: cfg.LLMAPIKey}, nil)
+		return health.ProviderReady(provider, health.Input{}, nil)
 	})
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)

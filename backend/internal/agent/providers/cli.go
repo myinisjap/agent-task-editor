@@ -151,7 +151,7 @@ func mergeEnv(base []string, extra map[string]string) []string {
 // (~/.claude, ~/.codex, ~/.qwen, opencode's XDG/HOME-based auth store), and
 // a handful of locale/proxy/TLS-trust vars that CLIs or their Node/Python
 // runtimes commonly consult. This is intentionally NOT os.Environ() — see
-// #321: the full backend process environment (including LLM_API_KEY,
+// #321: the full backend process environment (including
 // API_TOKEN, DB credentials, etc.) must never reach an agent subprocess.
 var commonBaseEnvKeys = map[string]bool{
 	"PATH": true,
@@ -199,7 +199,7 @@ var commonBaseEnvKeys = map[string]bool{
 	// Username for 'https://github.com'" — even though the backend's own
 	// post-run PushBranch (which runs with the full os.Environ()) succeeds,
 	// masking the gap. Unlike the secrets #321 deliberately withholds
-	// (API_TOKEN, LLM_API_KEY, DB creds), this is a credential the agent is
+	// (API_TOKEN, DB creds), this is a credential the agent is
 	// meant to use, so it belongs in the allowlist.
 	"GITHUB_TOKEN": true,
 	"GH_TOKEN":     true,

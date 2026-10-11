@@ -1,6 +1,6 @@
 # internal/agent
 
-The agent package owns the agent runtime core: the provider abstraction, the bounded worker pool, and the dispatcher. Concrete provider backends (claude, anthropic, llm, opencode, qwen_code, codex_cli) live in the sibling `providers` package (see `providers/AGENTS.md`) — this package defines only the `Provider` interface and the shared types/errors providers are built against; it does **not** import `providers` (providers imports `agent`, never the reverse).
+The agent package owns the agent runtime core: the provider abstraction, the bounded worker pool, and the dispatcher. Concrete provider backends (claude, opencode, qwen_code, codex_cli) live in the sibling `providers` package (see `providers/AGENTS.md`) — this package defines only the `Provider` interface and the shared types/errors providers are built against; it does **not** import `providers` (providers imports `agent`, never the reverse).
 
 ## Files
 
@@ -16,7 +16,7 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 | `errclass.go` | `Classification` + `ClassifyLine` — the single table of patterns that classify provider output (ADR 0010). `providers.is429Line`/`isTransientLine` are thin wrappers |
 | `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking; write-through to `agent_rate_limits` via an optional `RateLimitStore`, reloaded at boot, nil store = in-memory), `BackoffDuration(WithBase)`; use `UnblockIfNotBlockedSince` (not `Unblock`) for in-run clears (ADR 0011) |
 
-Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
+Concrete runners (`ClaudeRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
 
 ## Worktrees (ADR 0008, 0009)
 

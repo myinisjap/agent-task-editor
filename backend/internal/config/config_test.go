@@ -125,8 +125,6 @@ func TestLoad_EnvVarsOverrideDefaults(t *testing.T) {
 	t.Setenv("DB_PATH", "env-override.db")
 	t.Setenv("API_TOKEN", "env-token")
 	t.Setenv("CORS_ORIGINS", "https://my-app.com")
-	t.Setenv("LLM_BASE_URL", "https://custom-llm.example.com/v1")
-	t.Setenv("LLM_API_KEY", "key-xyz")
 	t.Setenv("MCP_SERVER_PATH", "/usr/local/bin/mcp")
 	t.Setenv("MCP_BOARD_PATH", "/usr/local/bin/mcp-board")
 
@@ -143,8 +141,6 @@ func TestLoad_EnvVarsOverrideDefaults(t *testing.T) {
 		{"DBPath", cfg.DBPath, "env-override.db"},
 		{"APIToken", cfg.APIToken, "env-token"},
 		{"CORSOrigins", cfg.CORSOrigins, "https://my-app.com"},
-		{"LLMBaseURL", cfg.LLMBaseURL, "https://custom-llm.example.com/v1"},
-		{"LLMAPIKey", cfg.LLMAPIKey, "key-xyz"},
 		{"MCPBinary", cfg.MCPBinary, "/usr/local/bin/mcp"},
 		{"MCPBoardBinary", cfg.MCPBoardBinary, "/usr/local/bin/mcp-board"},
 	}

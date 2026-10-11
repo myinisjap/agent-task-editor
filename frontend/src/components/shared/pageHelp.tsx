@@ -137,9 +137,7 @@ export function UsageHelp() {
           <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> CLIs report their
           own authoritative cost (which may be legitimately $0 under a subscription plan). The{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider (and the
-          deprecated <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers) have no
+          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider has no
           cost figure of their own, so their tokens are priced from the table you configure on the{' '}
           <strong>Pricing</strong> page instead. The{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code> CLI reports tokens
@@ -388,10 +386,10 @@ export function ProvidersHelp() {
           <li><code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code>, <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code>, <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> — other CLI-based providers</li>
         </ul>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code> (direct Anthropic API calls) and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> (any OpenAI-compatible API) are{' '}
-          <strong>deprecated and disabled for new configs</strong> — they're no longer offered here, but existing
-          configs on them keep running.
+          The <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code> and{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers were{' '}
+          <strong>removed</strong> in v0.17.0. Configs still on them fail at dispatch — switch them to a
+          supported provider.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
@@ -412,10 +410,8 @@ export function PricingHelp() {
         <h3 className="text-slate-100 font-semibold">What this configures</h3>
         <p>
           USD price per 1M input/output tokens. It's the sole cost source for the{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider (and the
-          deprecated <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers), none of which
-          report their own cost. The{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider, which
+          reports no cost of its own. The{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> CLIs report their
           own authoritative final cost and never read this table for that. However,{' '}
@@ -684,8 +680,7 @@ export function HealthHelp() {
         <p>
           Provider readiness — the <code className="bg-slate-800 rounded px-1 font-mono">claude</code>{' '}
           and <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> CLI logins,
-          and the <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> API keys — plus
+          and any leftover configs on removed providers — plus
           supporting infrastructure: GitHub auth for PRs/issue sync, the configured repo base
           directory, the MCP sidecar the task-editor tools depend on, automatic local backups,
           database size, and the app's own version/update-available status. Green means ready;

@@ -15,8 +15,6 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `MetricsPublic` | `METRICS_PUBLIC` | `metrics_public` | `false` |
 | `MCPBinary` | `MCP_SERVER_PATH` | `mcp_server_path` | _(empty)_ |
 | `MCPBoardBinary` | `MCP_BOARD_PATH` | `mcp_board_path` | _(empty)_ |
-| `LLMBaseURL` | `LLM_BASE_URL` | `llm_base_url` | `https://api.openai.com/v1` |
-| `LLMAPIKey` | `LLM_API_KEY` | `llm_api_key` | _(empty)_ |
 | `MaxWorkers` | `MAX_WORKERS` | `max_workers` | `5` |
 | `RepoBaseDir` | `REPO_BASE_DIR` | `repo_base_dir` | _(empty)_ |
 | `UploadDir` | `UPLOAD_DIR` | `upload_dir` | `uploads` (next to DB) |

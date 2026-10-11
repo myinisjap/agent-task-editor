@@ -170,11 +170,10 @@ allowed exact command via denylist-of-everything-else, which isn't practical for
 glob-style allowlisting). **If you need to restrict which commands an agent can run,
 rely on `command_denylist` for the `claude` provider; `command_allowlist` is
 currently a no-op here** (the field/UI still exists for forward-compatibility and
-for parity with the `anthropic`/`llm` providers, where it is fully enforced).
+for forward-compatibility).
 
 Denylist enforcement here is done by the Claude CLI itself (not task-editor's own
-process), so it is somewhat more robust than the generic `run_bash` string-match
-enforcement used by the `anthropic`/`llm` providers — but it is still glob-pattern
+process) — but it is still glob-pattern
 matching on the command string, not a sandbox.
 
 ## Permission Mode
@@ -310,8 +309,8 @@ window, plus each window's reset time — the same numbers `claude`/the OMC
 HUD plugin show. This is fetched live from Anthropic's OAuth usage endpoint
 (`GET https://api.anthropic.com/api/oauth/usage`) using the OAuth access
 token from `~/.claude/.credentials.json` (i.e. it requires a Claude Max/Pro
-account authenticated via `claude login` — a bare `ANTHROPIC_API_KEY`, or
-the `anthropic`/`llm` providers, do not produce this file).
+account authenticated via `claude login` — a bare `ANTHROPIC_API_KEY`
+does not produce this file).
 
 It is unrelated to the "Cost & usage" section further down the Dashboard,
 which aggregates token/cost totals from this app's own `agent_runs` table.

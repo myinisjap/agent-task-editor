@@ -28,7 +28,7 @@ decision; add a new one and mark the old one `Superseded by NNNN`.
 | [0015](0015-rework-loop-feedback-and-circuit-breaker.md) | Failure findings become feedback; repeated rework loops escalate |
 | [0016](0016-subtask-merge-back-coordinator.md) | Subtasks merge back through a per-parent coordinator |
 | [0017](0017-providers-package-and-one-parser-per-provider.md) | `agent` defines the contract; `providers` implements it; one parser file per provider |
-| [0018](0018-provider-configs-and-provider-deprecation.md) | Provider configs are a separate entity; `anthropic`/`llm` are deprecated, not removed |
+| [0018](0018-provider-configs-and-provider-deprecation.md) | Provider configs are a separate entity; `anthropic`/`llm` are deprecated, then removed in v0.17.0 |
 | [0019](0019-agent-env-allowlist.md) | Agent subprocesses get an allow-listed environment |
 | [0020](0020-sqlc-constraints.md) | sqlc query-writing constraints |
 | [0021](0021-utc-timestamp-storage.md) | All timestamps are stored as UTC `YYYY-MM-DD HH:MM:SS` |

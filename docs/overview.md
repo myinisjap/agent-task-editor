@@ -80,11 +80,9 @@ Browser ──── REST + WebSocket ──── Backend (Go)
                           SQLite DB        Agent Provider
                                           ┌──────────────────┐
                                           │ ClaudeRunner      │ (claude CLI + MCP)
-                                          │ AnthropicRunner   │ (Messages API)
                                           │ OpencodeRunner    │ (opencode CLI)
                                           │ QwenRunner        │ (qwen CLI + MCP)
                                           │ CodexRunner       │ (codex CLI + MCP)
-                                          │ LLMRunner         │ (OpenAI-compat)
                                           └──────────────────┘
 ```
 

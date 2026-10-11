@@ -56,13 +56,15 @@ components:
           type: string
         provider:
           type: string
-          enum: [claude, anthropic, llm, opencode, qwen_code, codex_cli]
+          enum: [claude, opencode, qwen_code, codex_cli]
           description: >
-            `anthropic` and `llm` are deprecated: disabled for new/updated provider
-            configs (POST/PATCH using either returns 400) and may be removed in a
-            future release. Both remain valid enum values here only because existing
-            provider configs already using them are still returned by GET/list
-            endpoints and continue to dispatch and run.
+            The `anthropic` and `llm` (alias `openai`) providers were removed in
+            v0.17.0. POST/PATCH using either returns 400. Legacy rows that still
+            reference them are kept (never deleted) and may be returned by GET/list
+            endpoints as these raw strings; runs of such configs fail at dispatch
+            (the task escalates to waiting_human with a "provider X was removed"
+            message) and GET /health/providers reports an error check
+            `removed_provider_<name>`.
         model:
           type: string
         env:
@@ -603,7 +605,7 @@ components:
       description: >
         One user-editable USD-per-1M-token pricing row (see 042_model_pricing
         and internal/agent/providers/pricing.go's DBPriceResolver), used to
-        estimate anthropic/llm/codex_cli run costs. A model with no row here
+        estimate codex_cli run costs. A model with no row here
         falls back to an internal, approximate hardcoded table; a model
         matching neither has its cost flagged unknown (AgentRun.cost_unknown)
         instead of being silently reported as free. Read fresh on every run
@@ -745,7 +747,7 @@ components:
           description: >
             JSON array of shell-command glob patterns ("*" wildcard). If non-empty, only
             commands matching at least one pattern may run via run_bash/Bash. Fully
-            enforced for anthropic, llm, and qwen_code. NOT an effective restriction for
+            enforced for qwen_code. NOT an effective restriction for
             claude (the CLI only auto-approves matches; non-matching commands still run
             — see docs/providers/claude.md). Not enforced for opencode. Defaults to "[]"
             (no restriction).
@@ -754,7 +756,7 @@ components:
           description: >
             JSON array of shell-command glob patterns ("*" wildcard). Commands matching
             any pattern here are always denied, regardless of command_allowlist. Checked
-            first. Fully enforced for anthropic, llm, and claude. NOT enforced for
+            first. Fully enforced for claude. NOT enforced for
             qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]"
             (no restriction).
         max_cost_usd:
@@ -772,8 +774,8 @@ components:
             token usage as the run progresses and cancel an in-flight run that
             crosses the cap, escalating to waiting_human — this projection is
             an *estimate* via the pricing table, not the provider's own
-            authoritative billed cost. Other providers (codex_cli, opencode,
-            anthropic, llm) only block the *next* dispatch once the budget is
+            authoritative billed cost. Other providers (codex_cli, opencode)
+            only block the *next* dispatch once the budget is
             already exhausted. See docs/agents.md#cost-budgets.
         effort:
           type: string
@@ -785,8 +787,8 @@ components:
             unrecognized model or an organization-side restriction can make
             the CLI silently ignore it) and mapped to codex_cli's
             model_reasoning_effort config override (xhigh/max clamp down to
-            high, since codex has no higher tier). Ignored by qwen_code,
-            opencode, anthropic, and llm. See docs/agents.md#effort.
+            high, since codex has no higher tier). Ignored by qwen_code
+            and opencode. See docs/agents.md#effort.
         permission_mode:
           type: string
           enum: ["", default, auto, acceptEdits, bypassPermissions]
@@ -1111,7 +1113,7 @@ components:
             USD cost of the run. For the `claude`/`qwen_code`/`opencode`
             providers this is the CLI's own authoritative reported cost
             (which may legitimately be 0, e.g. under a Claude Max
-            subscription); for anthropic/llm/codex_cli providers it is
+            subscription); for the codex_cli provider it is
             *estimated* by computing input/output tokens against the
             user-editable pricing table (see GET/PUT /settings/pricing),
             falling back to an internal, approximate pricing table for
@@ -1124,7 +1126,7 @@ components:
             hardcoded fallback) matched the model, so cost_usd was left at 0
             as a placeholder rather than a computed figure — add a row for
             this model at /settings/pricing to get a real estimate. Only
-            applies to the anthropic/llm/codex_cli estimation path described
+            applies to the codex_cli estimation path described
             under cost_usd. 0 otherwise, including for
             claude/qwen_code/opencode (which never set this; their cost_usd,
             including a legitimate 0 under a Claude Max subscription, is
@@ -1144,8 +1146,7 @@ components:
             comparison against the agent config's configured `max_turns` cap.
             0 means "not reported": only providers that expose a real count
             set it (`claude`/`qwen_code` from the CLI stream-json result
-            event's `num_turns`; `anthropic`/`llm` from their own agentic
-            loop counter). `codex_cli` and `opencode` report no comparable
+            event's `num_turns`). `codex_cli` and `opencode` report no comparable
             figure and always leave it 0 — the count is never estimated.
       required: [id, task_id, agent_config_id, status, created_at]
 
@@ -3923,8 +3924,7 @@ paths:
         Reports the readiness of each agent provider and supporting piece of
         infrastructure so first-run misconfiguration is visible at a glance
         instead of surfacing as a failed agent run. Checks the claude CLI
-        (present + authenticated), API keys for the anthropic/llm providers,
-        qwen/opencode binaries (only for providers actually referenced by an
+        (present + authenticated), qwen/opencode binaries (only for providers actually referenced by an
         enabled agent config or a chat session, via their Provider Config —
         an unused/disabled Provider Config produces no check), the MCP
         sidecar binary (MCP_SERVER_PATH), gh auth,
@@ -4169,7 +4169,7 @@ paths:
       summary: List user-editable model pricing rows
       description: >
         Returns every row of the user-editable USD-per-1M-token pricing table
-        used to estimate anthropic/llm/codex_cli run costs, ordered by model.
+        used to estimate codex_cli run costs, ordered by model.
         Models with no row here fall back to an internal, approximate
         hardcoded table. See ModelPricing and AgentRun.cost_unknown.
       responses:
@@ -4184,7 +4184,7 @@ paths:
       description: >
         Replaces the whole pricing table with the submitted rows in a single
         transaction — add/remove/edit a model are all expressed client-side
-        as a new full list. Takes effect on the very next anthropic/llm run
+        as a new full list. Takes effect on the very next run
         completion without a restart. Rejects an empty/duplicate model or a
         negative price.
       requestBody:

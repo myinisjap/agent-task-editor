@@ -65,7 +65,7 @@ type TerminalManager struct {
 	// EnvAllowlist, when set, scopes each session's CLI subprocess env to
 	// that provider's allowlist (see providers.EnvAllowlistFor) instead of
 	// the backend's full os.Environ() — closing the same backend-secret-leak
-	// path (LLM_API_KEY, API_TOKEN, DB creds, etc. otherwise visible to
+	// path (API_TOKEN, DB creds, etc. otherwise visible to
 	// `env`/`printenv` inside the CLI's Bash tool) that the headless runners
 	// were scoped against in #321. Wired from cmd/server with
 	// providers.EnvAllowlistFor; nil (e.g. in tests that don't set it) falls
@@ -113,7 +113,7 @@ type ptySession struct {
 }
 
 // ErrTerminalUnsupported means the session's provider has no interactive CLI
-// (e.g. the `anthropic` API provider, which is not a terminal program).
+// (e.g. a removed or unknown provider string).
 var ErrTerminalUnsupported = errors.New("provider has no interactive terminal")
 
 // ErrTooManySessions is returned by Attach/ensure when MaxSessions is set and
@@ -303,7 +303,7 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	// environment (see EnvAllowlist doc comment / #321), not the full
 	// os.Environ() — a chat session's CLI has the same Bash access as a
 	// headless run, so it must not be able to read backend-only secrets
-	// (LLM_API_KEY, API_TOKEN, DB creds, etc.) via `env`/`printenv`/
+	// (API_TOKEN, DB creds, etc.) via `env`/`printenv`/
 	// /proc/self/environ either. Falls back to os.Environ() only when
 	// EnvAllowlist isn't wired up (e.g. some tests), to avoid silently
 	// breaking callers that haven't set it.
@@ -729,7 +729,7 @@ func terminalCommand(provider, model string, resume bool) (name string, args []s
 			args = append(args, "--model", model)
 		}
 	default:
-		// anthropic (API provider) and anything unknown: no interactive terminal.
+		// Removed (anthropic/llm) and unknown providers: no interactive terminal.
 		return "", nil, ErrTerminalUnsupported
 	}
 	return name, args, nil

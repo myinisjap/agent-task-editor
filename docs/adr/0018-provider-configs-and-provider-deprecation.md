@@ -33,3 +33,8 @@ configs must keep working. The old `providerFactory` default silently turned
   "finish" the deprecation, and do not restore a default runner.
 - Adding a provider touches three places (factory, `knownProviders`, the
   runner file) plus capabilities (ADR 0007).
+
+
+## Update (v0.17.0): removal
+
+The deprecated `anthropic` and `llm` (alias `openai`) providers, their runners, the native tool loop and `LLM_API_KEY`/`LLM_BASE_URL` were removed in v0.17.0. The deprecation path described above is preserved only as the legacy-row behaviour: rows are never deleted, creating/switching to a removed provider is a `400`, and a run for a legacy config fails at dispatch (task escalates to `waiting_human`, `removed_provider_*` health error). The decision text above is kept as history.

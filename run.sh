@@ -23,8 +23,6 @@ fi
 # Image tag to run. Override with ATE_VERSION=v1.2.3 (or a bare "1.2.3").
 export ATE_VERSION=${ATE_VERSION:-latest}
 
-export LLM_BASE_URL=${LLM_BASE_URL:-"http://host.docker.internal:8081/v1"}
-
 # Parse optional --repo-dir <path> / --all-cli flags before the command.
 ALL_CLI=false
 while [[ $# -gt 0 ]]; do
