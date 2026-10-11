@@ -30,21 +30,25 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 		return fmt.Errorf("create workflow: %w", err)
 	}
 
+	// "review" sets create_pr so the happy path (Approve -> done) ends with a PR
+	// rather than a local-only branch. Best-effort: repos without a forge remote
+	// just log and skip (see Engine.OnCreatePR).
 	labels := []struct {
 		name        string
 		color       string
 		order       int
 		agentIgnore bool
 		terminal    bool
+		createPR    bool
 	}{
-		{"not_ready", "#6B7280", 0, true, false},
-		{"plan", "#8B5CF6", 1, false, false},
-		{"review-plan", "#3B82F6", 2, false, false},
-		{"work", "#F59E0B", 3, false, false},
-		{"testing", "#F97316", 4, false, false},
-		{"agent-review", "#6366F1", 5, false, false},
-		{"review", "#EC4899", 6, false, false},
-		{"done", "#10B981", 7, false, true},
+		{"not_ready", "#6B7280", 0, true, false, false},
+		{"plan", "#8B5CF6", 1, false, false, false},
+		{"review-plan", "#3B82F6", 2, false, false, false},
+		{"work", "#F59E0B", 3, false, false, false},
+		{"testing", "#F97316", 4, false, false, false},
+		{"agent-review", "#6366F1", 5, false, false, false},
+		{"review", "#EC4899", 6, false, false, true},
+		{"done", "#10B981", 7, false, true, false},
 	}
 
 	for _, l := range labels {
@@ -56,6 +60,10 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 		if l.terminal {
 			isTerminal = 1
 		}
+		createPR := int64(0)
+		if l.createPR {
+			createPR = 1
+		}
 		if _, err := q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
 			ID:          uuid.NewString(),
 			WorkflowID:  wfID,
@@ -64,6 +72,7 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 			SortOrder:   int64(l.order),
 			AgentIgnore: agentIgnore,
 			IsTerminal:  isTerminal,
+			CreatePr:    createPR,
 		}); err != nil {
 			return fmt.Errorf("create label %s: %w", l.name, err)
 		}
