@@ -243,7 +243,7 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
+			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		case "anthropic":
 			// Deprecated: disabled for new/updated provider configs (see
 			// deprecatedProviders in handlers/providers.go), retained here so
@@ -258,13 +258,13 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
+			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		case "codex_cli":
 			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
+			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		case "llm", "openai":
 			// Deprecated: disabled for new/updated provider configs (see
 			// deprecatedProviders in handlers/providers.go), retained here so
@@ -326,7 +326,7 @@ func main() {
 	// human-driven surface (the chat tab), deliberately separate from the in-flow
 	// kanban agents, which never get task-creation tools. Nil when unset.
 	if cfg.MCPBoardBinary != "" {
-		terminal.ChatMCP = providers.NewChatMCPProvisioner(cfg.MCPBoardBinary, backendURL, cfg.APIToken)
+		terminal.ChatMCP = providers.NewChatMCPProvisioner(cfg.MCPBoardBinary, backendURL)
 		slog.Info("board MCP enabled for chat sessions", "binary", cfg.MCPBoardBinary)
 	}
 	// CHAT_MAX_SESSIONS/CHAT_IDLE_TIMEOUT bound the otherwise-unbounded growth

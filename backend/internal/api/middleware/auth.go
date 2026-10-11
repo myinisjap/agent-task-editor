@@ -5,6 +5,8 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/scopedtoken"
 )
 
 type ctxKey int
@@ -32,7 +34,18 @@ func ActorFromContext(ctx context.Context) string {
 // task_label_history.actor_id). A match against the legacy bearerToken (or
 // no auth configured at all) resolves to actor "", preserving prior
 // anonymous behavior.
+//
+// Besides the admin tokens, a per-run/per-session scoped token minted by
+// scopedtoken.Default (handed to the MCP sidecars) is accepted, but only for
+// the exact routes that sidecar calls; any other route gets 403. Its actor is
+// "agent:<run id>" or "chat:<session id>". In open mode (no tokens configured)
+// the middleware stays a no-op and scoped tokens are irrelevant.
 func BearerAuth(bearerToken string, namedTokens map[string]string) func(http.Handler) http.Handler {
+	return BearerAuthScoped(bearerToken, namedTokens, scopedtoken.Default)
+}
+
+// BearerAuthScoped is BearerAuth with an explicit scoped-token registry.
+func BearerAuthScoped(bearerToken string, namedTokens map[string]string, scoped *scopedtoken.Registry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if bearerToken == "" && len(namedTokens) == 0 {
 			return next
@@ -61,6 +74,22 @@ func BearerAuth(bearerToken string, namedTokens map[string]string) func(http.Han
 			if !matched && bearerToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(bearerToken)) == 1 {
 				matched = true
 				actor = ""
+			}
+
+			if !matched && scoped != nil {
+				if g, ok := scoped.Lookup(token); ok {
+					// RawPath != "" means the router (chi prefers RawPath)
+					// could route differently from URL.Path; refuse.
+					if r.URL.RawPath != "" || !g.Allows(r.Method, r.URL.Path) {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"error":"forbidden"}`))
+						return
+					}
+					ctx := context.WithValue(r.Context(), actorKey, g.Actor())
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 			}
 
 			if !matched {

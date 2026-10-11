@@ -24,10 +24,10 @@ type QwenRunner struct {
 	// UploadDir is the server-side directory where task attachments are stored.
 	// Reserved for future use if Qwen CLI gains an --image flag.
 	UploadDir string
-	// BackendURL / APIToken let the create_subtask MCP tool post children live to
-	// the backend REST API (same container). Set from server config.
+	// BackendURL lets the create_subtask MCP tool post children live to the
+	// backend REST API (same container). Set from server config. The bearer
+	// token is a per-run scoped one minted in MCPManager.Prepare.
 	BackendURL string
-	APIToken   string
 	// PriceResolver resolves model to USD-per-1M pricing for the mid-run cost
 	// watchdog (see cost_watchdog.go). Like claude, qwen's own terminal
 	// total_cost_usd (when present) is used as-is for the final persisted
@@ -120,7 +120,6 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		var err error
 		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, nil, &SubtaskEnv{
 			BackendURL:  r.BackendURL,
-			APIToken:    r.APIToken,
 			TaskID:      input.Task.ID,
 			Enabled:     input.AgentConfig.SubtasksEnabled,
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,

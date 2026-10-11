@@ -12,6 +12,7 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
+	"github.com/myinisjap/agent-task-editor/backend/internal/scopedtoken"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
@@ -279,4 +280,70 @@ func TestWS_ThroughRouter_NamedTokensOnly_RequiresAuth(t *testing.T) {
 		t.Fatalf("named ?token= dial failed: %v", err)
 	}
 	_ = c.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestAPIv1_ScopedSidecarTokens(t *testing.T) {
+	h := newTestRouter(t, "admin-tok", "")
+	do := func(method, path, tok string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	run, err := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindRun, RunID: "r1", TaskID: "task-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, _ := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindChat, Chat: "s1"})
+
+	// Allowed: own task's subtasks route (handler may 4xx, but never 401/403).
+	if c := do(http.MethodPost, "/api/v1/tasks/task-1/subtasks", run); c == http.StatusUnauthorized || c == http.StatusForbidden {
+		t.Errorf("run token on own subtasks route: got %d", c)
+	}
+	// Rejected: other task, admin routes, wrong method, encoded path.
+	for _, tc := range []struct{ m, p string }{
+		{http.MethodPost, "/api/v1/tasks/task-2/subtasks"},
+		{http.MethodGet, "/api/v1/tasks/task-1/subtasks"},
+		{http.MethodGet, "/api/v1/backup"},
+		{http.MethodPut, "/api/v1/agents/abc"},
+		{http.MethodGet, "/api/v1/tasks"},
+		{http.MethodPost, "/api/v1/tasks"},
+		{http.MethodPost, "/api/v1/tasks/task-1%2Fx/subtasks"},
+	} {
+		if c := do(tc.m, tc.p, run); c != http.StatusForbidden {
+			t.Errorf("run token %s %s: want 403, got %d", tc.m, tc.p, c)
+		}
+	}
+	// Chat token: board routes only.
+	for _, tc := range []struct{ m, p string }{
+		{http.MethodGet, "/api/v1/repos"},
+		{http.MethodGet, "/api/v1/workflows"},
+		{http.MethodPost, "/api/v1/tasks"},
+	} {
+		if c := do(tc.m, tc.p, chat); c == http.StatusUnauthorized || c == http.StatusForbidden {
+			t.Errorf("chat token %s %s: got %d", tc.m, tc.p, c)
+		}
+	}
+	for _, tc := range []struct{ m, p string }{
+		{http.MethodGet, "/api/v1/backup"},
+		{http.MethodPut, "/api/v1/agents/abc"},
+		{http.MethodPost, "/api/v1/tasks/task-1/subtasks"},
+		{http.MethodDelete, "/api/v1/tasks/task-1"},
+	} {
+		if c := do(tc.m, tc.p, chat); c != http.StatusForbidden {
+			t.Errorf("chat token %s %s: want 403, got %d", tc.m, tc.p, c)
+		}
+	}
+
+	// Revoked tokens are plain 401.
+	scopedtoken.Default.Revoke(run)
+	scopedtoken.Default.Revoke(chat)
+	if c := do(http.MethodPost, "/api/v1/tasks/task-1/subtasks", run); c != http.StatusUnauthorized {
+		t.Errorf("revoked run token: want 401, got %d", c)
+	}
+	if c := do(http.MethodGet, "/api/v1/repos", chat); c != http.StatusUnauthorized {
+		t.Errorf("revoked chat token: want 401, got %d", c)
+	}
 }
