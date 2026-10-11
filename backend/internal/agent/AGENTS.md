@@ -37,7 +37,7 @@ never the main clone.
   origin if the repo has a remote, then remove the worktree. The branch itself is
   kept at this point so it remains available for review (diffing, manual
   inspection) even after the worktree is gone.
-- **Task delete** (`tasks.go`): removes the worktree; branch kept.
+- **Task delete** (`tasks.go`): 409 while a run is live; otherwise removes the worktree under `RepoGitLock`; branch kept.
 - **Post-merge cleanup** (`ghsync.Syncer`, `worktree.go#DeleteLocalBranch`): the
   background GitHub sync polls open PRs and, once it observes a task's PR has
   been merged (`git_state` transitions to `pr_merged`), removes any leftover

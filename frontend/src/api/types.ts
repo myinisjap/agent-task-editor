@@ -218,6 +218,13 @@ export interface paths {
                     };
                     content?: never;
                 };
+                /** @description An agent run on this task is `pending` or `running`. Cancel the run (POST /tasks/{id}/runs/{run_id}/cancel) before deleting. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         options?: never;

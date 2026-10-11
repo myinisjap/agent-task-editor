@@ -1634,6 +1634,10 @@ paths:
       summary: Delete a task
       responses:
         "204": { description: Deleted }
+        "409":
+          description: >
+            An agent run on this task is `pending` or `running`. Cancel the
+            run (POST /tasks/{id}/runs/{run_id}/cancel) before deleting.
 
   /tasks/{id}/label:
     patch:

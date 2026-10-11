@@ -58,6 +58,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
       remove(taskId)
     } catch (e) {
       console.error('Failed to delete task:', e)
+      alert(String(e))
     }
   }, [remove])
 
