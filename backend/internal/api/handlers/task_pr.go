@@ -169,6 +169,11 @@ var (
 	errPRBadGateway = errors.New("bad gateway")
 )
 
+// IsPRPrecondition reports whether err from CreatePRForTask means the task or
+// repo cannot have a PR at all (no branch, no remote, unsupported forge) as
+// opposed to a transient failure worth retrying.
+func IsPRPrecondition(err error) bool { return errors.Is(err, errPRBadRequest) }
+
 func prCreateStatus(err error) int {
 	switch {
 	case errors.Is(err, errPRBadRequest):

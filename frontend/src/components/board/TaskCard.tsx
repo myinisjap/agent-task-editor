@@ -7,6 +7,7 @@ import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { useReposStore } from '../../stores/repos'
 import GitStateBadge from './GitStateBadge'
+import SideEffectBadge from '../shared/SideEffectBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
 import { useNeedsMeStore } from '../../stores/needsMe'
 import { needsMeReasonLabel } from '../../lib/needsMe'
@@ -415,6 +416,7 @@ function TaskCard({
               ⏸ API limit
             </span>
           )}
+          <SideEffectBadge effects={task.side_effects} />
           {costWarned && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"

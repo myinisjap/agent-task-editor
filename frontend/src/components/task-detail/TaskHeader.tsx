@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, authedRawFetch, type Task, type Repo, type WorkflowLabel, type WorkflowTransition } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
+import SideEffectBadge from '../shared/SideEffectBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
 import AgentNotesModal from './AgentNotesModal'
@@ -407,6 +408,14 @@ export default function TaskHeader({
             {task.max_cost_usd ? ` / $${task.max_cost_usd.toFixed(2)} budget` : ''}
           </span>
         </Row>
+        {task.side_effects && task.side_effects.length > 0 && (
+          <Row label="Pending work">
+            <SideEffectBadge
+              effects={task.side_effects}
+              onRetry={() => { void api.tasks.retrySideEffects(task.id).catch(() => {}) }}
+            />
+          </Row>
+        )}
         {task.branch && (
           <>
             <Row label="Branch">

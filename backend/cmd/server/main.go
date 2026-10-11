@@ -171,24 +171,29 @@ func main() {
 	// auto-advance (Mechanism 2). Git identity is filled in once resolved below.
 	subtaskCoord := agent.NewSubtaskCoordinator(termQ, engine, pub, "", "")
 
-	// On reaching a terminal label: for a subtask, merge its branch back into the
-	// parent's branch (see SubtaskCoordinator). For an ordinary task, push the
-	// branch (if the repo has a remote) and tear down its worktree to reclaim
-	// disk — the branch is kept for human review/PR. Best-effort.
-	engine.OnTerminal = func(ctx context.Context, task gen.Task) {
+	// The three hooks below are the bodies of the engine's durable side-effect
+	// outbox (see workflow.Engine.RunSideEffects): a transition only records
+	// that the work is owed, and a background worker runs it with a background
+	// context, retrying with backoff when it returns an error.
+	//
+	// OnTerminal, on reaching a terminal label: for a subtask, merge its branch
+	// back into the parent's branch (see SubtaskCoordinator). For an ordinary
+	// task, push the branch (if the repo has a remote) and tear down its
+	// worktree to reclaim disk — the branch is kept for human review/PR. The
+	// worktree is only removed once the push succeeded, so a retry can push again.
+	engine.OnTerminal = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			slog.Warn("onTerminal: get repo", "task_id", task.ID, "err", err)
-			return
+			return fmt.Errorf("get repo: %w", err)
 		}
 		if agent.IsSubtask(task) {
 			// Children merge back into the parent's branch instead of pushing to
 			// origin / keeping their branch.
 			subtaskCoord.OnChildTerminal(ctx, task, repo.Path)
-			return
+			return nil
 		}
 		if task.WorktreePath == "" {
-			return
+			return nil
 		}
 		// PushBranch and RemoveWorktree mutate the repo's shared ref store;
 		// serialize against sibling worktrees' concurrent git writes (safety-net
@@ -199,47 +204,53 @@ func main() {
 		// ordering. See worktree.go's repoGitLocks doc comment / issue #344.
 		lock := agent.RepoGitLock(repo.Path)
 		lock.Lock()
+		defer lock.Unlock()
 		if repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
 			if err := agent.PushBranch(ctx, task.WorktreePath, task.Branch); err != nil {
-				slog.Warn("onTerminal: push branch", "task_id", task.ID, "branch", task.Branch, "err", err)
+				return fmt.Errorf("push branch %s: %w", task.Branch, err)
 			}
 		}
 		if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
-			slog.Warn("onTerminal: remove worktree", "task_id", task.ID, "err", err)
+			return fmt.Errorf("remove worktree: %w", err)
 		}
-		lock.Unlock()
+		return nil
 	}
 
 	// Status write-back to the source GitHub issue for imported tasks (opt-in
-	// per repo via issue_writeback_enabled). This instance backs the workflow
-	// engine's OnLeaveNotReady hook below; ghsync and the tasks handler
-	// construct their own writeback.Writeback internally (see ghsync.New and
+	// per repo via issue_writeback_enabled). This instance backs the
+	// OnLeaveNotReady hook below; ghsync and the tasks handler construct their
+	// own writeback.Writeback internally (see ghsync.New and
 	// handlers.NewTasksHandler) since they own their own *gen.Queries.
 	// See docs/task-sources.md.
 	issueWriteback := writeback.New(termQ)
-	engine.OnLeaveNotReady = func(ctx context.Context, task gen.Task) {
+	engine.OnLeaveNotReady = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			slog.Warn("onLeaveNotReady: get repo", "task_id", task.ID, "err", err)
-			return
+			return fmt.Errorf("get repo: %w", err)
 		}
 		issueWriteback.OnLeaveNotReady(ctx, task, repo)
+		return nil
 	}
 
 	// On reaching a label marked create_pr: push the branch and open (or reuse) a
-	// GitHub PR, reusing the same path as the manual "Create PR" endpoint so both
-	// produce an identical PR and issue write-back. Best-effort — a failure here
-	// (no remote, gh unauthenticated, push rejected) is logged, not fatal; the
-	// transition has already committed and a human can still open the PR manually.
-	engine.OnCreatePR = func(ctx context.Context, task gen.Task) {
+	// PR, reusing the same path as the manual "Create PR" endpoint so both
+	// produce an identical PR and issue write-back. A failure (gh
+	// unauthenticated, push rejected, forge down) is retried with backoff and
+	// surfaced on the task; a missing remote or branch is a precondition, not a
+	// failure, and is skipped as before.
+	engine.OnCreatePR = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			slog.Warn("onCreatePR: get repo", "task_id", task.ID, "err", err)
-			return
+			return fmt.Errorf("get repo: %w", err)
 		}
 		if _, _, err := handlers.CreatePRForTask(ctx, termQ, issueWriteback, task, repo); err != nil {
-			slog.Warn("onCreatePR: create pr", "task_id", task.ID, "err", err)
+			if handlers.IsPRPrecondition(err) {
+				slog.Warn("onCreatePR: skipped", "task_id", task.ID, "err", err)
+				return nil
+			}
+			return err
 		}
+		return nil
 	}
 
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
@@ -471,6 +482,13 @@ func main() {
 	slog.Info("worktree sweeper starting", "interval", cfg.WorktreeSweepInterval)
 
 	go pool.Start(ctx)
+	// Durable side-effect outbox worker (push, PR creation, write-back); it
+	// stops when ctx is cancelled on shutdown.
+	sideEffectsDone := make(chan struct{})
+	go func() {
+		defer close(sideEffectsDone)
+		engine.RunSideEffects(ctx)
+	}()
 	go memguard.New(pool).Run(ctx)
 	go dispatcher.Run(ctx)
 	// Auto-resume paused providers once their existing health check passes.
@@ -514,6 +532,12 @@ func main() {
 	defer shutCancel()
 	if err := srv.Shutdown(shutCtx); err != nil {
 		slog.Error("shutdown error", "err", err)
+	}
+	// An interrupted side effect is left pending in the outbox and resumes on
+	// the next start; give the worker a moment to record that.
+	select {
+	case <-sideEffectsDone:
+	case <-shutCtx.Done():
 	}
 }
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -65,6 +66,45 @@ type taskResponse struct {
 	// erroring the whole task response). Only populated on the single-task
 	// GET, mirroring CumulativeCostUsd.
 	MatchedRuleName *string `json:"matched_rule_name,omitempty"`
+	// SideEffects lists the task's outstanding post-transition side effects
+	// (push, PR creation, issue write-back) from the durable outbox: waiting,
+	// retrying after a failure, or failed for good. Always an array; empty
+	// when nothing is outstanding. Populated on the list and single-task GET.
+	SideEffects []sideEffectResponse `json:"side_effects"`
+}
+
+// sideEffectResponse is the wire form of one outstanding task_side_effects row.
+type sideEffectResponse struct {
+	Kind      string    `json:"kind"`
+	Status    string    `json:"status"`
+	Attempts  int64     `json:"attempts"`
+	NextAt    time.Time `json:"next_at"`
+	LastError *string   `json:"last_error"`
+}
+
+// sideEffectMap fetches the outstanding side effects for the given task ids in
+// one query, keyed by task id.
+func (h *TasksHandler) sideEffectMap(ctx context.Context, ids []string) map[string][]sideEffectResponse {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListTaskSideEffectsForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string][]sideEffectResponse)
+	for _, r := range rows {
+		m[r.TaskID] = append(m[r.TaskID], sideEffectResponse{Kind: r.Kind, Status: r.Status, Attempts: r.Attempts, NextAt: r.NextAt, LastError: r.LastError})
+	}
+	return m
+}
+
+// applySideEffects sets the outstanding side effects on a response.
+func applySideEffects(resp taskResponse, m map[string][]sideEffectResponse) taskResponse {
+	if effects, ok := m[resp.ID]; ok {
+		resp.SideEffects = effects
+	}
+	return resp
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the
@@ -80,7 +120,7 @@ func toTaskResponse(t gen.Task) taskResponse {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		raw = json.RawMessage("[]")
 	}
-	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0}
+	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, SideEffects: []sideEffectResponse{}}
 }
 
 // toTaskResponses converts a slice of gen.Task values.

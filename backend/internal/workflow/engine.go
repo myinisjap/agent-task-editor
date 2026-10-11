@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -113,28 +114,37 @@ type Engine struct {
 	db  *sql.DB
 	q   querier
 	pub Publisher
-	// OnTerminal, if set, is called after a task successfully transitions into a
-	// terminal label. Used to push the task's branch and tear down its worktree.
-	// Failures are the callback's concern; the transition has already committed.
-	OnTerminal func(ctx context.Context, task gen.Task)
-	// OnLeaveNotReady, if set, is called after a task successfully transitions
-	// off the workflow's human-gate label — the label GateLabel resolves to,
-	// which is "not_ready" for the default workflow but generalizes to any
-	// workflow — for the first time (i.e. fromLabel is the gate label and
-	// toLabel is not). Used to apply an "agent is already working on this" signal
-	// to an imported task's source GitHub issue. Failures are the callback's
-	// concern; the transition has already committed.
-	OnLeaveNotReady func(ctx context.Context, task gen.Task)
-	// OnCreatePR, if set, is called after a task transitions into a label marked
-	// create_pr, regardless of who triggered the move. Used to push the task's
-	// branch and open a GitHub pull request. Failures are the callback's concern;
-	// the transition has already committed.
-	OnCreatePR func(ctx context.Context, task gen.Task)
+	sq  *gen.Queries
+	// wake nudges the side-effect worker right after a transition enqueues work.
+	wake chan struct{}
+
+	// OnTerminal, if set, makes a transition into a terminal label enqueue a
+	// "terminal" side effect, which the worker (RunSideEffects) runs shortly
+	// after the transition commits. Used to push the task's branch and tear down
+	// its worktree. The task passed in is re-read when the effect runs. A
+	// returned error is recorded and the effect retried with backoff.
+	OnTerminal func(ctx context.Context, task gen.Task) error
+	// OnLeaveNotReady, if set, makes a transition off the workflow's human-gate
+	// label (the label GateLabel resolves to, "not_ready" for the default
+	// workflow) enqueue a "leave_not_ready" side effect. Used to apply an "agent
+	// is already working on this" signal to an imported task's source issue.
+	OnLeaveNotReady func(ctx context.Context, task gen.Task) error
+	// OnCreatePR, if set, makes a transition into a label marked create_pr
+	// enqueue a "create_pr" side effect, regardless of who triggered the move.
+	// Used to push the task's branch and open a pull request.
+	OnCreatePR func(ctx context.Context, task gen.Task) error
+
+	// SideEffectBackoff returns the delay before the next attempt after the given
+	// number of failed attempts (1-based). Nil uses DefaultSideEffectBackoff.
+	SideEffectBackoff func(attempts int) time.Duration
+	// SideEffectTimeout bounds one execution of a hook. Zero uses
+	// DefaultSideEffectTimeout.
+	SideEffectTimeout time.Duration
 }
 
 // New creates a new Engine.
 func New(db *sql.DB, pub Publisher) *Engine {
-	return &Engine{db: db, q: gen.New(db), pub: pub}
+	return &Engine{db: db, q: gen.New(db), sq: gen.New(db), pub: pub, wake: make(chan struct{}, 1)}
 }
 
 // Transition validates and executes a label change for a task.
@@ -167,7 +177,7 @@ const ForcedNotePrefix = "Forced move"
 // construction: the trigger recorded is always TriggerHuman. Everything else
 // matches Transition: the compare-and-swap label update, clearing
 // active_agent_run_id, the history row, the task.label_changed event, and the
-// OnTerminal / OnCreatePR / OnLeaveNotReady hooks. The history note is
+// side-effect outbox rows (see OnTerminal / OnCreatePR / OnLeaveNotReady). The history note is
 // ForcedNotePrefix, followed by ": " and the caller's note when non-empty.
 // Returns ErrUnknownLabel if toLabel is not a label of the task's workflow.
 // Callers are responsible for refusing the move while an agent run is live.
@@ -282,8 +292,38 @@ func (e *Engine) transition(ctx context.Context, taskID, toLabel string, trigger
 	}); err != nil {
 		return fmt.Errorf("record history: %w", err)
 	}
+	// Side effects are written to the outbox in the same transaction as the
+	// label change, so they exist if and only if the move committed. The worker
+	// runs them out of band; nothing here waits on git or the forge.
+	var effects []string
+	if toIsTerminal && e.OnTerminal != nil {
+		effects = append(effects, SideEffectTerminal)
+	}
+	if toCreatePR && e.OnCreatePR != nil {
+		effects = append(effects, SideEffectCreatePR)
+	}
+	// Enqueue leave_not_ready when a task first moves off the workflow's
+	// human-gate label (GateLabel). We deliberately key only on the real
+	// agent_ignore gate, not GateLabel's first-label fallback: the
+	// "agent-in-progress" write-back signals that a task has left a human-review
+	// column, which is only meaningful when such a column exists.
+	if gate, _ := GateLabel(labels); gate != "" && fromLabel == gate && toLabel != gate && e.OnLeaveNotReady != nil {
+		effects = append(effects, SideEffectLeaveNotReady)
+	}
+	for _, kind := range effects {
+		if err := tq.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{
+			ID:     uuid.NewString(),
+			TaskID: taskID,
+			Kind:   kind,
+		}); err != nil {
+			return fmt.Errorf("enqueue %s side effect: %w", kind, err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	if len(effects) > 0 {
+		e.nudgeWorker()
 	}
 
 	if e.pub != nil {
@@ -301,28 +341,6 @@ func (e *Engine) transition(ctx context.Context, taskID, toLabel string, trigger
 				e.pub.Publish("task.updated", map[string]any{"id": d.TaskID})
 			}
 		}
-	}
-
-	if toIsTerminal && e.OnTerminal != nil {
-		task.Label = toLabel
-		e.OnTerminal(ctx, task)
-	}
-
-	if toCreatePR && e.OnCreatePR != nil {
-		task.Label = toLabel
-		e.OnCreatePR(ctx, task)
-	}
-
-	// Fire OnLeaveNotReady when a task first moves off the workflow's human-gate
-	// label (GateLabel — "not_ready" for the default workflow, the equivalent
-	// gate for any custom one). We deliberately key only on the real agent_ignore
-	// gate, not GateLabel's first-label fallback: the "agent-in-progress"
-	// write-back signals that a task has left a human-review column, which is
-	// only meaningful when such a column exists. A workflow with no agent_ignore
-	// label has no human gate to leave, so the hook stays a no-op there.
-	if gate, _ := GateLabel(labels); gate != "" && fromLabel == gate && toLabel != gate && e.OnLeaveNotReady != nil {
-		task.Label = toLabel
-		e.OnLeaveNotReady(ctx, task)
 	}
 
 	return nil

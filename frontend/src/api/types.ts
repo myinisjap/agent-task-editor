@@ -1141,6 +1141,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/side-effects/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry a task's failed side effects
+         * @description Makes the task's failed outbox rows (see TaskSideEffect) pending again with a fresh attempt budget; the background worker picks them up immediately. Returns the task with its current side_effects.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Requeued */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The task has no failed side effects */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/github-status": {
         parameters: {
             query?: never;
@@ -4439,10 +4494,31 @@ export interface components {
              * @enum {string}
              */
             active_run_status?: "pending" | "running" | "waiting_human";
+            /** @description Outstanding post-transition side effects (branch push, PR creation, source-issue write-back) from the durable outbox: rows that are waiting, being retried after a failure, or failed for good. Populated on GET /tasks and GET /tasks/{id}; always an array, empty when nothing is outstanding or on mutation responses. */
+            side_effects?: components["schemas"]["TaskSideEffect"][];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
+        TaskSideEffect: {
+            /**
+             * @description terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue.
+             * @enum {string}
+             */
+            kind: "terminal" | "create_pr" | "leave_not_ready";
+            /** @enum {string} */
+            status: "pending" | "running" | "failed";
+            /** @description Failed attempts so far */
+            attempts: number;
+            /**
+             * Format: date-time
+             * @description When the next attempt is due
+             */
+            next_at: string;
+            /** @description Error from the most recent failed attempt */
+            last_error?: string | null;
         };
         /** @description Explains why a pickup-eligible task is not currently being dispatched. Mirrors the non-dispatch paths in the agent dispatcher (see docs/agents.md#dispatch): a task paused, the server's global daily/monthly spend ceiling tripped (halting ALL dispatch, not just this task), its repo at its concurrency limit, no enabled agent config matching its label, every matching config rate-limited, its own cost budget exhausted, the target label's WIP limit full, an unmet dependency, transient-retry backoff, or its label excluded via agent_ignore. */
         BlockReason: {

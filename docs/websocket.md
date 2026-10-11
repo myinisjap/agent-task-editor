@@ -81,6 +81,18 @@ clients should refetch the task rather than rely on payload fields.
 { "type": "task.updated", "payload": { "id": "uuid" } }
 ```
 
+### `task.side_effect`
+A post-transition side effect (branch push, PR creation, source-issue
+write-back) ran or failed. These run from a durable outbox after the label
+change commits, with retry and backoff. `status` is `done`, `pending` (the
+attempt failed and will be retried; `last_error` says why) or `failed` (attempts
+exhausted; retry with `POST /tasks/{id}/side-effects/retry`). A `task.updated`
+event follows each one.
+
+```json
+{ "type": "task.side_effect", "payload": { "task_id": "uuid", "kind": "create_pr", "status": "pending", "last_error": "gh: not authenticated" } }
+```
+
 ### `task.agent_started`
 An agent run began.
 

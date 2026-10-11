@@ -142,8 +142,10 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		positions := h.queuePositionMap(r.Context())
 		blockReasons := h.blockReasonMap(r.Context(), children)
 		runStatuses := h.activeRunStatusMap(r.Context(), ids)
+		effects := h.sideEffectMap(r.Context(), ids)
 		resp := toTaskResponses(children)
 		for i := range resp {
+			resp[i] = applySideEffects(resp[i], effects)
 			resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 		}
 		JSON(w, http.StatusOK, resp)
@@ -176,8 +178,10 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	positions := h.queuePositionMap(r.Context())
 	blockReasons := h.blockReasonMap(r.Context(), tasks)
 	runStatuses := h.activeRunStatusMap(r.Context(), ids)
+	effects := h.sideEffectMap(r.Context(), ids)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
+		resp[i] = applySideEffects(resp[i], effects)
 		resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 	}
 	JSON(w, http.StatusOK, resp)
@@ -404,6 +408,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
 	resp = applyBlockReason(resp, h.blockReasonMap(r.Context(), []gen.Task{task}))
 	resp = applyActiveRunStatus(resp, h.activeRunStatusMap(r.Context(), ids))
+	resp = applySideEffects(resp, h.sideEffectMap(r.Context(), ids))
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost
 	}
@@ -793,6 +798,34 @@ func (h *TasksHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	JSON(w, http.StatusOK, toTaskResponse(task))
+}
+
+// RetrySideEffects makes the task's failed side effects (push, PR creation,
+// write-back) pending again with a fresh attempt budget; the background worker
+// picks them up immediately. 404 for an unknown task; 409 when nothing is in
+// the failed state.
+func (h *TasksHandler) RetrySideEffects(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	n, err := h.engine.RetrySideEffects(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n == 0 {
+		Err(w, http.StatusConflict, "task has no failed side effects")
+		return
+	}
+	task, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to fetch task")
+		return
+	}
+	resp := applySideEffects(toTaskResponse(task), h.sideEffectMap(r.Context(), []string{taskID}))
+	JSON(w, http.StatusOK, resp)
 }
 
 func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {

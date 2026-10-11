@@ -325,9 +325,44 @@ components:
             that is actually working (pending/running) from a task that needs
             a human (waiting_human). Computed on GET /tasks and
             GET /tasks/{id}; absent when the task has no active run.
+        side_effects:
+          type: array
+          items: { $ref: '#/components/schemas/TaskSideEffect' }
+          description: >
+            Outstanding post-transition side effects (branch push, PR
+            creation, source-issue write-back) from the durable outbox: rows
+            that are waiting, being retried after a failure, or failed for
+            good. Populated on GET /tasks and GET /tasks/{id}; always an array,
+            empty when nothing is outstanding or on mutation responses.
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
       required: [id, title, description, type, label, repo_id, workflow_id, created_at, updated_at]
+
+    TaskSideEffect:
+      type: object
+      description: >
+        One outstanding row of the side-effect outbox. A label transition
+        records the work it owes (pushing the branch, opening a PR, updating
+        the source issue) in the same transaction as the move; a background
+        worker runs it with exponential backoff. Rows are deleted on success,
+        so only unfinished work is listed. A pending row with attempts > 0 and
+        a last_error is "failed, retrying"; status failed means the attempt
+        budget is exhausted and it needs a manual retry.
+      properties:
+        kind:
+          type: string
+          enum: [terminal, create_pr, leave_not_ready]
+          description: >
+            terminal = push the branch and tear down the worktree (or merge a
+            subtask back); create_pr = push and open a pull request;
+            leave_not_ready = apply the in-progress signal to the source issue.
+        status:
+          type: string
+          enum: [pending, running, failed]
+        attempts: { type: integer, description: Failed attempts so far }
+        next_at: { type: string, format: date-time, description: When the next attempt is due }
+        last_error: { type: string, nullable: true, description: Error from the most recent failed attempt }
+      required: [kind, status, attempts, next_at]
 
     BlockReason:
       type: object
@@ -2187,6 +2222,27 @@ paths:
                   git_state: { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
         "400": { description: Task has no branch, or repo has no/invalid GitHub remote }
         "502": { description: gh pr create failed (e.g. not authenticated) }
+
+  /tasks/{id}/side-effects/retry:
+    post:
+      summary: Retry a task's failed side effects
+      description: >
+        Makes the task's failed outbox rows (see TaskSideEffect) pending again
+        with a fresh attempt budget; the background worker picks them up
+        immediately. Returns the task with its current side_effects.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Requeued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        "404": { description: Task not found }
+        "409": { description: The task has no failed side effects }
 
   /tasks/{id}/github-status:
     get:

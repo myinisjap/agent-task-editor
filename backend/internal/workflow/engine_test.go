@@ -422,8 +422,9 @@ func TestTransition_OnLeaveNotReady_FiresOnceWhenLeavingNotReady(t *testing.T) {
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	var calls []string
-	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) {
+	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) error {
 		calls = append(calls, task.ID)
+		return nil
 	}
 
 	task := createTestTask(t, db, "not_ready", wfID)
@@ -431,6 +432,12 @@ func TestTransition_OnLeaveNotReady_FiresOnceWhenLeavingNotReady(t *testing.T) {
 	if err := engine.Transition(context.Background(), task.ID, "plan", workflow.TriggerHuman, "human-1", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
 	}
+
+	// The hook runs from the outbox worker, not inline in Transition.
+	if len(calls) != 0 {
+		t.Fatalf("hook ran inline: %v", calls)
+	}
+	engine.DrainSideEffects(context.Background())
 
 	if len(calls) != 1 || calls[0] != task.ID {
 		t.Fatalf("expected OnLeaveNotReady to fire once for task %s, got %v", task.ID, calls)
@@ -443,8 +450,9 @@ func TestTransition_OnLeaveNotReady_DoesNotFireOnOtherTransitions(t *testing.T) 
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	var calls []string
-	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) {
+	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) error {
 		calls = append(calls, task.ID)
+		return nil
 	}
 
 	// review -> work is a feedback-loop transition unrelated to not_ready.
@@ -452,6 +460,12 @@ func TestTransition_OnLeaveNotReady_DoesNotFireOnOtherTransitions(t *testing.T) 
 	if err := engine.Transition(context.Background(), task.ID, "work", workflow.TriggerHuman, "reviewer-1", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
 	}
+
+	// The hook runs from the outbox worker, not inline in Transition.
+	if len(calls) != 0 {
+		t.Fatalf("hook ran inline: %v", calls)
+	}
+	engine.DrainSideEffects(context.Background())
 
 	if len(calls) != 0 {
 		t.Fatalf("expected OnLeaveNotReady not to fire for review->work, got %v", calls)
@@ -488,14 +502,21 @@ func TestTransition_OnCreatePR_FiresWhenEnteringCreatePRLabel(t *testing.T) {
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	var calls []string
-	engine.OnCreatePR = func(_ context.Context, task gen.Task) {
+	engine.OnCreatePR = func(_ context.Context, task gen.Task) error {
 		calls = append(calls, task.Label) // label should already be the destination
+		return nil
 	}
 
 	task := createTestTask(t, db, "agent-review", wfID)
 	if err := engine.Transition(context.Background(), task.ID, "review", workflow.TriggerAgent, "", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
 	}
+
+	// The hook runs from the outbox worker, not inline in Transition.
+	if len(calls) != 0 {
+		t.Fatalf("hook ran inline: %v", calls)
+	}
+	engine.DrainSideEffects(context.Background())
 
 	if len(calls) != 1 || calls[0] != "review" {
 		t.Fatalf("expected OnCreatePR to fire once with label review, got %v", calls)
@@ -509,14 +530,21 @@ func TestTransition_OnCreatePR_DoesNotFireForNonCreatePRLabel(t *testing.T) {
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	var calls []string
-	engine.OnCreatePR = func(_ context.Context, task gen.Task) {
+	engine.OnCreatePR = func(_ context.Context, task gen.Task) error {
 		calls = append(calls, task.ID)
+		return nil
 	}
 
 	task := createTestTask(t, db, "work", wfID)
 	if err := engine.Transition(context.Background(), task.ID, "testing", workflow.TriggerAgent, "", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
 	}
+
+	// The hook runs from the outbox worker, not inline in Transition.
+	if len(calls) != 0 {
+		t.Fatalf("hook ran inline: %v", calls)
+	}
+	engine.DrainSideEffects(context.Background())
 
 	if len(calls) != 0 {
 		t.Fatalf("expected OnCreatePR not to fire, got %v", calls)
@@ -653,10 +681,11 @@ func TestForceTransition_FiresOnTerminal(t *testing.T) {
 	task := createTestTask(t, db, "work", defaultWorkflowID(t, db))
 	eng := workflow.New(db.SQL(), &noopPublisher{})
 	called := ""
-	eng.OnTerminal = func(_ context.Context, tk gen.Task) { called = tk.Label }
+	eng.OnTerminal = func(_ context.Context, tk gen.Task) error { called = tk.Label; return nil }
 	if err := eng.ForceTransition(context.Background(), task.ID, "done", "alice", ""); err != nil {
 		t.Fatal(err)
 	}
+	eng.DrainSideEffects(context.Background())
 	if called != "done" {
 		t.Errorf("OnTerminal not fired for done, got %q", called)
 	}

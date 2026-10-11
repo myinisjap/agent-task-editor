@@ -143,6 +143,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Patch("/tasks/{id}/notes", h.UpdateNotes)
 	r.Post("/tasks/{id}/rerun", h.Rerun)
 	r.Get("/tasks/{id}/diff", h.Diff)
+	r.Post("/tasks/{id}/side-effects/retry", h.RetrySideEffects)
 
 	return r, q, wfID, repoID
 }
@@ -3785,5 +3786,101 @@ func TestTasks_MoveLabel_Force_LiveRun_Returns409(t *testing.T) {
 	got, _ := q.GetTask(context.Background(), task.ID)
 	if got.Label != "work" || got.ActiveAgentRunID == nil {
 		t.Errorf("task should be untouched, got label=%q active=%v", got.Label, got.ActiveAgentRunID)
+	}
+}
+
+// ---------- Side effects (outbox) ----------
+
+type sideEffectsView struct {
+	ID          string `json:"id"`
+	SideEffects []struct {
+		Kind      string  `json:"kind"`
+		Status    string  `json:"status"`
+		Attempts  int     `json:"attempts"`
+		LastError *string `json:"last_error"`
+	} `json:"side_effects"`
+}
+
+func TestTasks_SideEffects_GetListAndRetry(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+	task, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "T", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	})
+	other, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Other", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+
+	get := func(id string) sideEffectsView {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/tasks/"+id, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("get: %d %s", w.Code, w.Body)
+		}
+		var v sideEffectsView
+		_ = json.NewDecoder(w.Body).Decode(&v)
+		return v
+	}
+
+	// Empty outbox serializes as an array, not null.
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID, nil))
+	if !strings.Contains(w.Body.String(), `"side_effects":[]`) {
+		t.Fatalf("expected empty side_effects array, got %s", w.Body)
+	}
+
+	if err := q.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{ID: uuid.NewString(), TaskID: task.ID, Kind: "create_pr"}); err != nil {
+		t.Fatal(err)
+	}
+	msg := "gh: not authenticated"
+	row, _ := q.ListDueTaskSideEffects(ctx, gen.ListDueTaskSideEffectsParams{NextAt: time.Now().Add(time.Hour), Limit: 10})
+	if err := q.FailTaskSideEffect(ctx, gen.FailTaskSideEffectParams{ID: row[0].ID, Attempts: 8, LastError: &msg}); err != nil {
+		t.Fatal(err)
+	}
+
+	v := get(task.ID)
+	if len(v.SideEffects) != 1 || v.SideEffects[0].Kind != "create_pr" || v.SideEffects[0].Status != "failed" ||
+		v.SideEffects[0].LastError == nil || *v.SideEffects[0].LastError != msg {
+		t.Fatalf("unexpected side_effects: %+v", v.SideEffects)
+	}
+	if got := get(other.ID); len(got.SideEffects) != 0 {
+		t.Fatalf("other task should have none, got %+v", got.SideEffects)
+	}
+
+	// List includes it too.
+	lw := httptest.NewRecorder()
+	r.ServeHTTP(lw, httptest.NewRequest(http.MethodGet, "/tasks", nil))
+	var list []sideEffectsView
+	_ = json.NewDecoder(lw.Body).Decode(&list)
+	found := false
+	for _, it := range list {
+		if it.ID == task.ID && len(it.SideEffects) == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("list did not include side_effects: %s", lw.Body)
+	}
+
+	// Retry requeues the failed row.
+	rw := httptest.NewRecorder()
+	r.ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/tasks/"+task.ID+"/side-effects/retry", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("retry: %d %s", rw.Code, rw.Body)
+	}
+	if v := get(task.ID); len(v.SideEffects) != 1 || v.SideEffects[0].Status != "pending" || v.SideEffects[0].Attempts != 0 {
+		t.Fatalf("expected pending after retry, got %+v", v.SideEffects)
+	}
+
+	// Nothing failed now: 409. Unknown task: 404.
+	rw = httptest.NewRecorder()
+	r.ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/tasks/"+task.ID+"/side-effects/retry", nil))
+	if rw.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rw.Code)
+	}
+	rw = httptest.NewRecorder()
+	r.ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/tasks/nope/side-effects/retry", nil))
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
 	}
 }
