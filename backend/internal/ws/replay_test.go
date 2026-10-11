@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 
@@ -141,7 +143,7 @@ func TestReplayTaskLogs_SubscribeSendsBatchedReplay(t *testing.T) {
 		t.Fatalf("expected type agent.log_replay, got %q (payload=%v)", evt.Type, evt.Payload)
 	}
 
-	payload := evt.Payload
+	payload := wsevent.ToMap(evt.Payload)
 	if payload["task_id"] != taskID {
 		t.Errorf("expected task_id %q, got %v", taskID, payload["task_id"])
 	}

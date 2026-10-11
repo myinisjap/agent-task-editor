@@ -27,7 +27,7 @@ type recordingPub struct {
 	events []string
 }
 
-func (p *recordingPub) Publish(eventType string, _ map[string]any) {
+func (p *recordingPub) Publish(eventType string, _ any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)

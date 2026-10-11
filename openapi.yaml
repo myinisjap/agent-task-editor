@@ -1601,6 +1601,445 @@ components:
         error: { type: string }
       required: [error]
 
+    # ---------------------------------------------------------------------
+    # WebSocket events (GET /ws). Not REST responses: these schemas are the
+    # source of truth for the server-pushed event stream. WsEvent is the
+    # discriminated union of every event envelope {type, payload}; the Go
+    # payload structs in backend/internal/wsevent and the frontend's WSEvent
+    # type (frontend/src/api/ws.ts) are both pinned to it (a Go test fails on
+    # drift; the TS type is generated). See docs/websocket.md.
+    # ---------------------------------------------------------------------
+    WsEvent:
+      description: >-
+        Envelope of every message the server pushes on the /ws socket (and the
+        locally synthesised `resync` after a reconnect). Discriminated by `type`.
+      oneOf:
+        - $ref: "#/components/schemas/WsTaskLabelChangedEvent"
+        - $ref: "#/components/schemas/WsTaskUpdatedEvent"
+        - $ref: "#/components/schemas/WsTaskSideEffectEvent"
+        - $ref: "#/components/schemas/WsTaskAgentStartedEvent"
+        - $ref: "#/components/schemas/WsTaskAgentDoneEvent"
+        - $ref: "#/components/schemas/WsTaskNeedsHumanEvent"
+        - $ref: "#/components/schemas/WsTaskCostWarningEvent"
+        - $ref: "#/components/schemas/WsSystemCostBudgetTrippedEvent"
+        - $ref: "#/components/schemas/WsTaskReviewCommentsChangedEvent"
+        - $ref: "#/components/schemas/WsTaskRateLimitedEvent"
+        - $ref: "#/components/schemas/WsProviderPauseChangedEvent"
+        - $ref: "#/components/schemas/WsTaskGitStateChangedEvent"
+        - $ref: "#/components/schemas/WsTaskPrMergeableChangedEvent"
+        - $ref: "#/components/schemas/WsTaskReviewCommentAddedEvent"
+        - $ref: "#/components/schemas/WsTaskSubtaskConflictEvent"
+        - $ref: "#/components/schemas/WsTaskSourceCommentAddedEvent"
+        - $ref: "#/components/schemas/WsTaskCreatedEvent"
+        - $ref: "#/components/schemas/WsTaskCreatedBulkEvent"
+        - $ref: "#/components/schemas/WsRepoCloneDoneEvent"
+        - $ref: "#/components/schemas/WsRepoCloneFailedEvent"
+        - $ref: "#/components/schemas/WsAgentLogEvent"
+        - $ref: "#/components/schemas/WsAgentLogReplayEvent"
+        - $ref: "#/components/schemas/WsResyncEvent"
+      discriminator:
+        propertyName: type
+        mapping:
+          task.label_changed: "#/components/schemas/WsTaskLabelChangedEvent"
+          task.updated: "#/components/schemas/WsTaskUpdatedEvent"
+          task.side_effect: "#/components/schemas/WsTaskSideEffectEvent"
+          task.agent_started: "#/components/schemas/WsTaskAgentStartedEvent"
+          task.agent_done: "#/components/schemas/WsTaskAgentDoneEvent"
+          task.needs_human: "#/components/schemas/WsTaskNeedsHumanEvent"
+          task.cost_warning: "#/components/schemas/WsTaskCostWarningEvent"
+          system.cost_budget_tripped: "#/components/schemas/WsSystemCostBudgetTrippedEvent"
+          task.review_comments_changed: "#/components/schemas/WsTaskReviewCommentsChangedEvent"
+          task.rate_limited: "#/components/schemas/WsTaskRateLimitedEvent"
+          provider.pause_changed: "#/components/schemas/WsProviderPauseChangedEvent"
+          task.git_state_changed: "#/components/schemas/WsTaskGitStateChangedEvent"
+          task.pr_mergeable_changed: "#/components/schemas/WsTaskPrMergeableChangedEvent"
+          task.review_comment_added: "#/components/schemas/WsTaskReviewCommentAddedEvent"
+          task.subtask_conflict: "#/components/schemas/WsTaskSubtaskConflictEvent"
+          task.source_comment_added: "#/components/schemas/WsTaskSourceCommentAddedEvent"
+          task.created: "#/components/schemas/WsTaskCreatedEvent"
+          task.created_bulk: "#/components/schemas/WsTaskCreatedBulkEvent"
+          repo.clone_done: "#/components/schemas/WsRepoCloneDoneEvent"
+          repo.clone_failed: "#/components/schemas/WsRepoCloneFailedEvent"
+          agent.log: "#/components/schemas/WsAgentLogEvent"
+          agent.log_replay: "#/components/schemas/WsAgentLogReplayEvent"
+          resync: "#/components/schemas/WsResyncEvent"
+
+    WsTaskLabelChangedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.label_changed] }
+        payload: { $ref: "#/components/schemas/WsTaskLabelChangedPayload" }
+      required: [type, payload]
+    WsTaskLabelChangedPayload:
+      type: object
+      description: A task moved to a new label.
+      properties:
+        task_id: { type: string }
+        from:    { type: string }
+        to:      { type: string }
+        note:    { type: string, description: "Transition note; empty string when none." }
+      required: [task_id, from, to, note]
+
+    WsTaskUpdatedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.updated] }
+        payload: { $ref: "#/components/schemas/WsTaskUpdatedPayload" }
+      required: [type, payload]
+    WsTaskUpdatedPayload:
+      type: object
+      description: >-
+        Lightweight "something about this task changed, refetch it" signal.
+        Carries only the id; never treat it as a full Task.
+      properties:
+        id: { type: string }
+      required: [id]
+
+    WsTaskSideEffectEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.side_effect] }
+        payload: { $ref: "#/components/schemas/WsTaskSideEffectPayload" }
+      required: [type, payload]
+    WsTaskSideEffectPayload:
+      type: object
+      description: >-
+        A post-transition side effect (push, PR creation, issue write-back) ran
+        or failed. A task.updated follows each one.
+      properties:
+        task_id:    { type: string }
+        kind:       { type: string, description: "Side-effect kind, e.g. create_pr, terminal, leave_not_ready." }
+        status:     { type: string, enum: [done, pending, failed], description: "pending = the attempt failed and will be retried." }
+        last_error: { type: string, description: "Empty string when there is no error." }
+      required: [task_id, kind, status, last_error]
+
+    WsTaskAgentStartedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.agent_started] }
+        payload: { $ref: "#/components/schemas/WsTaskAgentStartedPayload" }
+      required: [type, payload]
+    WsTaskAgentStartedPayload:
+      type: object
+      description: An agent run began.
+      properties:
+        task_id:    { type: string }
+        run_id:     { type: string }
+        agent_name: { type: string }
+      required: [task_id, run_id, agent_name]
+
+    WsTaskAgentDoneEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.agent_done] }
+        payload: { $ref: "#/components/schemas/WsTaskAgentDonePayload" }
+      required: [type, payload]
+    WsTaskAgentDonePayload:
+      type: object
+      description: An agent run reached a terminal (or waiting_human) status.
+      properties:
+        task_id: { type: string }
+        run_id:  { type: string }
+        status:  { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled, interrupted] }
+      required: [task_id, run_id, status]
+
+    WsTaskNeedsHumanEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.needs_human] }
+        payload: { $ref: "#/components/schemas/WsTaskNeedsHumanPayload" }
+      required: [type, payload]
+    WsTaskNeedsHumanPayload:
+      type: object
+      description: A run escalated to a human (request_human, cost-budget exhaustion, retry exhaustion, ...).
+      properties:
+        task_id: { type: string }
+        run_id:  { type: string }
+        reason:
+          type: string
+          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition]
+          description: Same code as AgentRun.escalation_reason.
+        message: { type: string }
+      required: [task_id, run_id, reason, message]
+
+    WsTaskCostWarningEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.cost_warning] }
+        payload: { $ref: "#/components/schemas/WsTaskCostWarningPayload" }
+      required: [type, payload]
+    WsTaskCostWarningPayload:
+      type: object
+      description: >-
+        A task's cumulative cost crossed the early-warning threshold of its
+        effective cost budget (see GET/PUT /settings/cost-warning). Sent either
+        by a provider's mid-run watchdog (run_id present) or by the
+        dispatcher's pre-dispatch check (run_id omitted; no run in flight yet).
+      properties:
+        task_id:    { type: string }
+        run_id:     { type: string, description: "Omitted for the dispatcher's pre-dispatch variant." }
+        spent_usd:  { type: number }
+        budget_usd: { type: number }
+      required: [task_id, spent_usd, budget_usd]
+
+    WsSystemCostBudgetTrippedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [system.cost_budget_tripped] }
+        payload: { $ref: "#/components/schemas/WsSystemCostBudgetTrippedPayload" }
+      required: [type, payload]
+    WsSystemCostBudgetTrippedPayload:
+      type: object
+      description: >-
+        The global daily/monthly spend ceiling was reached and dispatch is
+        halted. Not task-scoped; fired once on the transition into the tripped
+        state.
+      properties:
+        reason:            { type: string, enum: [daily, monthly] }
+        message:           { type: string }
+        daily_spent_usd:   { type: number }
+        daily_limit_usd:   { type: number }
+        monthly_spent_usd: { type: number }
+        monthly_limit_usd: { type: number }
+      required: [reason, message, daily_spent_usd, daily_limit_usd, monthly_spent_usd, monthly_limit_usd]
+
+    WsTaskReviewCommentsChangedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.review_comments_changed] }
+        payload: { $ref: "#/components/schemas/WsTaskReviewCommentsChangedPayload" }
+      required: [type, payload]
+    WsTaskReviewCommentsChangedPayload:
+      type: object
+      description: A completed run resolved one or more review comments (only sent when resolved > 0).
+      properties:
+        task_id:  { type: string }
+        run_id:   { type: string }
+        resolved: { type: integer }
+      required: [task_id, run_id, resolved]
+
+    WsTaskRateLimitedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.rate_limited] }
+        payload: { $ref: "#/components/schemas/WsTaskRateLimitedPayload" }
+      required: [type, payload]
+    WsTaskRateLimitedPayload:
+      type: object
+      description: A run was rate-limited by the provider and will be retried automatically.
+      properties:
+        task_id:         { type: string }
+        run_id:          { type: string }
+        agent_config_id: { type: string }
+        unblocked_at:    { type: string, description: "RFC3339 time retries resume; empty string when unknown." }
+      required: [task_id, run_id, agent_config_id, unblocked_at]
+
+    WsProviderPauseChangedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [provider.pause_changed] }
+        payload: { $ref: "#/components/schemas/WsProviderPauseChangedPayload" }
+      required: [type, payload]
+    WsProviderPauseChangedPayload:
+      type: object
+      description: The provider circuit breaker tripped (paused true) or lifted (paused false).
+      properties:
+        provider: { type: string }
+        paused:   { type: boolean }
+      required: [provider, paused]
+
+    WsTaskGitStateChangedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.git_state_changed] }
+        payload: { $ref: "#/components/schemas/WsTaskGitStateChangedPayload" }
+      required: [type, payload]
+    WsTaskGitStateChangedPayload:
+      type: object
+      description: The task's PR/git state changed (fired by the background forge sync).
+      properties:
+        task_id:   { type: string }
+        git_state: { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
+        pr_url:    { type: string }
+      required: [task_id, git_state, pr_url]
+
+    WsTaskPrMergeableChangedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.pr_mergeable_changed] }
+        payload: { $ref: "#/components/schemas/WsTaskPrMergeableChangedPayload" }
+      required: [type, payload]
+    WsTaskPrMergeableChangedPayload:
+      type: object
+      description: The forge's merge-conflict verdict for the task's PR changed (sent only on a change).
+      properties:
+        task_id:      { type: string }
+        pr_mergeable: { type: string, enum: ["", mergeable, conflicting, unknown] }
+      required: [task_id, pr_mergeable]
+
+    WsTaskReviewCommentAddedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.review_comment_added] }
+        payload: { $ref: "#/components/schemas/WsTaskReviewCommentAddedPayload" }
+      required: [type, payload]
+    WsTaskReviewCommentAddedPayload:
+      type: object
+      description: The forge sync ingested a new PR review comment for the task.
+      properties:
+        task_id:    { type: string }
+        comment_id: { type: string }
+        source:     { type: string, description: "Forge/source name, e.g. github." }
+      required: [task_id, comment_id, source]
+
+    WsTaskSubtaskConflictEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.subtask_conflict] }
+        payload: { $ref: "#/components/schemas/WsTaskSubtaskConflictPayload" }
+      required: [type, payload]
+    WsTaskSubtaskConflictPayload:
+      type: object
+      description: A subtask's branch conflicted on merge into its parent. task_id is the child task.
+      properties:
+        task_id:   { type: string }
+        parent_id: { type: string }
+        files:     { type: array, items: { type: string } }
+      required: [task_id, parent_id, files]
+
+    WsTaskSourceCommentAddedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.source_comment_added] }
+        payload: { $ref: "#/components/schemas/WsTaskSourceCommentAddedPayload" }
+      required: [type, payload]
+    WsTaskSourceCommentAddedPayload:
+      type: object
+      description: The importer ingested a new comment from the task's source issue thread.
+      properties:
+        task_id:    { type: string }
+        comment_id: { type: string }
+      required: [task_id, comment_id]
+
+    WsTaskCreatedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.created] }
+        payload: { $ref: "#/components/schemas/WsTaskCreatedPayload" }
+      required: [type, payload]
+    WsTaskCreatedPayload:
+      type: object
+      description: >-
+        A task was created by a schedule or as a subtask. A subset of Task
+        fields; refetch the task for full data.
+      properties:
+        id:         { type: string }
+        title:      { type: string }
+        label:      { type: string }
+        repo_id:    { type: string }
+        source:     { type: string, description: "Present for schedule-created tasks." }
+        source_ref: { type: string, description: "Present for schedule-created tasks." }
+        parent_id:  { type: string, description: "Present for subtasks." }
+      required: [id, title, label, repo_id]
+
+    WsTaskCreatedBulkEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.created_bulk] }
+        payload: { $ref: "#/components/schemas/WsTaskCreatedBulkPayload" }
+      required: [type, payload]
+    WsTaskCreatedBulkPayload:
+      type: object
+      description: >-
+        Sent by the issue importer instead of one task.created per item. count
+        is exact; ids is capped server-side. Do a single list refresh.
+      properties:
+        repo_id: { type: string }
+        source:  { type: string }
+        count:   { type: integer }
+        ids:     { type: array, items: { type: string } }
+      required: [repo_id, source, count, ids]
+
+    WsRepoCloneDoneEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [repo.clone_done] }
+        payload: { $ref: "#/components/schemas/WsRepoClonePayload" }
+      required: [type, payload]
+    WsRepoCloneFailedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [repo.clone_failed] }
+        payload: { $ref: "#/components/schemas/WsRepoClonePayload" }
+      required: [type, payload]
+    WsRepoClonePayload:
+      type: object
+      description: Outcome of an async repo clone (repo.clone_done / repo.clone_failed).
+      properties:
+        repo_id:      { type: string }
+        clone_status: { type: string, enum: [ready, error] }
+        clone_error:  { type: string, description: "Empty string on success." }
+      required: [repo_id, clone_status, clone_error]
+
+    WsAgentLogEntry:
+      type: object
+      description: >-
+        A log line as pushed over the WebSocket. Note this is not AgentLog: the
+        timestamp key is `at` and there is no agent_run_id (the enclosing
+        payload carries run_id). `id` is the persisted agent_logs row id.
+      properties:
+        id:      { type: string }
+        type:    { type: string, enum: [stdout, stderr, system, tool_call, tool_result] }
+        content: { type: string }
+        at:      { type: string, format: date-time }
+      required: [id, type, content, at]
+
+    WsAgentLogEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [agent.log] }
+        payload: { $ref: "#/components/schemas/WsAgentLogPayload" }
+      required: [type, payload]
+    WsAgentLogPayload:
+      type: object
+      description: One live log entry. Delivered only to clients subscribed to task_id.
+      properties:
+        run_id:  { type: string }
+        task_id: { type: string }
+        entry:   { $ref: "#/components/schemas/WsAgentLogEntry" }
+      required: [run_id, task_id, entry]
+
+    WsAgentLogReplayEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [agent.log_replay] }
+        payload: { $ref: "#/components/schemas/WsAgentLogReplayPayload" }
+      required: [type, payload]
+    WsAgentLogReplayPayload:
+      type: object
+      description: >-
+        Sent once on subscribe: the newest (capped) tail of the current run's
+        persisted log, chronological. has_more means earlier entries exist.
+      properties:
+        run_id:   { type: string }
+        task_id:  { type: string }
+        has_more: { type: boolean }
+        entries:  { type: array, items: { $ref: "#/components/schemas/WsAgentLogEntry" } }
+      required: [run_id, task_id, has_more, entries]
+
+    WsResyncEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [resync] }
+        payload: { $ref: "#/components/schemas/WsResyncPayload" }
+      required: [type, payload]
+    WsResyncPayload:
+      type: object
+      description: >-
+        Events were dropped for this client (or it reconnected); refetch any
+        state derived from WebSocket events. Always empty.
+      additionalProperties: false
+
 paths:
   /tasks:
     get:

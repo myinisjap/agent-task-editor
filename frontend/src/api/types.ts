@@ -5182,6 +5182,361 @@ export interface components {
         Error: {
             error: string;
         };
+        /** @description Envelope of every message the server pushes on the /ws socket (and the locally synthesised `resync` after a reconnect). Discriminated by `type`. */
+        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
+        WsTaskLabelChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.label_changed";
+            payload: components["schemas"]["WsTaskLabelChangedPayload"];
+        };
+        /** @description A task moved to a new label. */
+        WsTaskLabelChangedPayload: {
+            task_id: string;
+            from: string;
+            to: string;
+            /** @description Transition note; empty string when none. */
+            note: string;
+        };
+        WsTaskUpdatedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.updated";
+            payload: components["schemas"]["WsTaskUpdatedPayload"];
+        };
+        /** @description Lightweight "something about this task changed, refetch it" signal. Carries only the id; never treat it as a full Task. */
+        WsTaskUpdatedPayload: {
+            id: string;
+        };
+        WsTaskSideEffectEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.side_effect";
+            payload: components["schemas"]["WsTaskSideEffectPayload"];
+        };
+        /** @description A post-transition side effect (push, PR creation, issue write-back) ran or failed. A task.updated follows each one. */
+        WsTaskSideEffectPayload: {
+            task_id: string;
+            /** @description Side-effect kind, e.g. create_pr, terminal, leave_not_ready. */
+            kind: string;
+            /**
+             * @description pending = the attempt failed and will be retried.
+             * @enum {string}
+             */
+            status: "done" | "pending" | "failed";
+            /** @description Empty string when there is no error. */
+            last_error: string;
+        };
+        WsTaskAgentStartedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.agent_started";
+            payload: components["schemas"]["WsTaskAgentStartedPayload"];
+        };
+        /** @description An agent run began. */
+        WsTaskAgentStartedPayload: {
+            task_id: string;
+            run_id: string;
+            agent_name: string;
+        };
+        WsTaskAgentDoneEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.agent_done";
+            payload: components["schemas"]["WsTaskAgentDonePayload"];
+        };
+        /** @description An agent run reached a terminal (or waiting_human) status. */
+        WsTaskAgentDonePayload: {
+            task_id: string;
+            run_id: string;
+            /** @enum {string} */
+            status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
+        };
+        WsTaskNeedsHumanEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.needs_human";
+            payload: components["schemas"]["WsTaskNeedsHumanPayload"];
+        };
+        /** @description A run escalated to a human (request_human, cost-budget exhaustion, retry exhaustion, ...). */
+        WsTaskNeedsHumanPayload: {
+            task_id: string;
+            run_id: string;
+            /**
+             * @description Same code as AgentRun.escalation_reason.
+             * @enum {string}
+             */
+            reason: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition";
+            message: string;
+        };
+        WsTaskCostWarningEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.cost_warning";
+            payload: components["schemas"]["WsTaskCostWarningPayload"];
+        };
+        /** @description A task's cumulative cost crossed the early-warning threshold of its effective cost budget (see GET/PUT /settings/cost-warning). Sent either by a provider's mid-run watchdog (run_id present) or by the dispatcher's pre-dispatch check (run_id omitted; no run in flight yet). */
+        WsTaskCostWarningPayload: {
+            task_id: string;
+            /** @description Omitted for the dispatcher's pre-dispatch variant. */
+            run_id?: string;
+            spent_usd: number;
+            budget_usd: number;
+        };
+        WsSystemCostBudgetTrippedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "system.cost_budget_tripped";
+            payload: components["schemas"]["WsSystemCostBudgetTrippedPayload"];
+        };
+        /** @description The global daily/monthly spend ceiling was reached and dispatch is halted. Not task-scoped; fired once on the transition into the tripped state. */
+        WsSystemCostBudgetTrippedPayload: {
+            /** @enum {string} */
+            reason: "daily" | "monthly";
+            message: string;
+            daily_spent_usd: number;
+            daily_limit_usd: number;
+            monthly_spent_usd: number;
+            monthly_limit_usd: number;
+        };
+        WsTaskReviewCommentsChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.review_comments_changed";
+            payload: components["schemas"]["WsTaskReviewCommentsChangedPayload"];
+        };
+        /** @description A completed run resolved one or more review comments (only sent when resolved > 0). */
+        WsTaskReviewCommentsChangedPayload: {
+            task_id: string;
+            run_id: string;
+            resolved: number;
+        };
+        WsTaskRateLimitedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.rate_limited";
+            payload: components["schemas"]["WsTaskRateLimitedPayload"];
+        };
+        /** @description A run was rate-limited by the provider and will be retried automatically. */
+        WsTaskRateLimitedPayload: {
+            task_id: string;
+            run_id: string;
+            agent_config_id: string;
+            /** @description RFC3339 time retries resume; empty string when unknown. */
+            unblocked_at: string;
+        };
+        WsProviderPauseChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "provider.pause_changed";
+            payload: components["schemas"]["WsProviderPauseChangedPayload"];
+        };
+        /** @description The provider circuit breaker tripped (paused true) or lifted (paused false). */
+        WsProviderPauseChangedPayload: {
+            provider: string;
+            paused: boolean;
+        };
+        WsTaskGitStateChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.git_state_changed";
+            payload: components["schemas"]["WsTaskGitStateChangedPayload"];
+        };
+        /** @description The task's PR/git state changed (fired by the background forge sync). */
+        WsTaskGitStateChangedPayload: {
+            task_id: string;
+            /** @enum {string} */
+            git_state: "" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
+            pr_url: string;
+        };
+        WsTaskPrMergeableChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.pr_mergeable_changed";
+            payload: components["schemas"]["WsTaskPrMergeableChangedPayload"];
+        };
+        /** @description The forge's merge-conflict verdict for the task's PR changed (sent only on a change). */
+        WsTaskPrMergeableChangedPayload: {
+            task_id: string;
+            /** @enum {string} */
+            pr_mergeable: "" | "mergeable" | "conflicting" | "unknown";
+        };
+        WsTaskReviewCommentAddedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.review_comment_added";
+            payload: components["schemas"]["WsTaskReviewCommentAddedPayload"];
+        };
+        /** @description The forge sync ingested a new PR review comment for the task. */
+        WsTaskReviewCommentAddedPayload: {
+            task_id: string;
+            comment_id: string;
+            /** @description Forge/source name, e.g. github. */
+            source: string;
+        };
+        WsTaskSubtaskConflictEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.subtask_conflict";
+            payload: components["schemas"]["WsTaskSubtaskConflictPayload"];
+        };
+        /** @description A subtask's branch conflicted on merge into its parent. task_id is the child task. */
+        WsTaskSubtaskConflictPayload: {
+            task_id: string;
+            parent_id: string;
+            files: string[];
+        };
+        WsTaskSourceCommentAddedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.source_comment_added";
+            payload: components["schemas"]["WsTaskSourceCommentAddedPayload"];
+        };
+        /** @description The importer ingested a new comment from the task's source issue thread. */
+        WsTaskSourceCommentAddedPayload: {
+            task_id: string;
+            comment_id: string;
+        };
+        WsTaskCreatedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.created";
+            payload: components["schemas"]["WsTaskCreatedPayload"];
+        };
+        /** @description A task was created by a schedule or as a subtask. A subset of Task fields; refetch the task for full data. */
+        WsTaskCreatedPayload: {
+            id: string;
+            title: string;
+            label: string;
+            repo_id: string;
+            /** @description Present for schedule-created tasks. */
+            source?: string;
+            /** @description Present for schedule-created tasks. */
+            source_ref?: string;
+            /** @description Present for subtasks. */
+            parent_id?: string;
+        };
+        WsTaskCreatedBulkEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.created_bulk";
+            payload: components["schemas"]["WsTaskCreatedBulkPayload"];
+        };
+        /** @description Sent by the issue importer instead of one task.created per item. count is exact; ids is capped server-side. Do a single list refresh. */
+        WsTaskCreatedBulkPayload: {
+            repo_id: string;
+            source: string;
+            count: number;
+            ids: string[];
+        };
+        WsRepoCloneDoneEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "repo.clone_done";
+            payload: components["schemas"]["WsRepoClonePayload"];
+        };
+        WsRepoCloneFailedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "repo.clone_failed";
+            payload: components["schemas"]["WsRepoClonePayload"];
+        };
+        /** @description Outcome of an async repo clone (repo.clone_done / repo.clone_failed). */
+        WsRepoClonePayload: {
+            repo_id: string;
+            /** @enum {string} */
+            clone_status: "ready" | "error";
+            /** @description Empty string on success. */
+            clone_error: string;
+        };
+        /** @description A log line as pushed over the WebSocket. Note this is not AgentLog: the timestamp key is `at` and there is no agent_run_id (the enclosing payload carries run_id). `id` is the persisted agent_logs row id. */
+        WsAgentLogEntry: {
+            id: string;
+            /** @enum {string} */
+            type: "stdout" | "stderr" | "system" | "tool_call" | "tool_result";
+            content: string;
+            /** Format: date-time */
+            at: string;
+        };
+        WsAgentLogEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "agent.log";
+            payload: components["schemas"]["WsAgentLogPayload"];
+        };
+        /** @description One live log entry. Delivered only to clients subscribed to task_id. */
+        WsAgentLogPayload: {
+            run_id: string;
+            task_id: string;
+            entry: components["schemas"]["WsAgentLogEntry"];
+        };
+        WsAgentLogReplayEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "agent.log_replay";
+            payload: components["schemas"]["WsAgentLogReplayPayload"];
+        };
+        /** @description Sent once on subscribe: the newest (capped) tail of the current run's persisted log, chronological. has_more means earlier entries exist. */
+        WsAgentLogReplayPayload: {
+            run_id: string;
+            task_id: string;
+            has_more: boolean;
+            entries: components["schemas"]["WsAgentLogEntry"][];
+        };
+        WsResyncEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "resync";
+            payload: components["schemas"]["WsResyncPayload"];
+        };
+        /** @description Events were dropped for this client (or it reconnected); refetch any state derived from WebSocket events. Always empty. */
+        WsResyncPayload: Record<string, never>;
     };
     responses: never;
     parameters: never;

@@ -21,7 +21,7 @@ type runtimeTestPub struct {
 	events []string
 }
 
-func (p *runtimeTestPub) Publish(eventType string, _ map[string]any) {
+func (p *runtimeTestPub) Publish(eventType string, _ any) {
 	p.events = append(p.events, eventType)
 }
 

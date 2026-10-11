@@ -1,4 +1,4 @@
-import type { Task, AgentLog, AgentRun } from './client'
+import type { components } from './types'
 import { getApiToken, notifyUnauthorized } from './authToken'
 
 // wsTicketParam returns a "?ticket=..." query string for authenticating a
@@ -27,59 +27,11 @@ export async function wsTicketParam(): Promise<string> {
   return ''
 }
 
-export type WSEvent =
-  | { type: 'task.label_changed'; payload: { task_id: string; from: string; to: string; note?: string } }
-  | { type: 'task.agent_started'; payload: { task_id: string; run_id: string; agent_name: string } }
-  | { type: 'task.agent_done'; payload: { task_id: string; run_id: string; status: AgentRun['status'] } }
-  | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string; reason?: string } }
-  // Provider circuit breaker tripped (paused: true, after an auth-classified
-  // run) or lifted (paused: false, auto or manual resume).
-  | { type: 'provider.pause_changed'; payload: { provider: string; paused: boolean } }
-  | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
-  // Emitted when a task's cumulative recorded cost crosses the configurable
-  // early-warning threshold (see GET/PUT /settings/cost-warning, default
-  // 80%) of its effective cost budget — either from a provider's mid-run
-  // cost watchdog (claude, qwen_code — before the hard kill at 100%) or from
-  // the dispatcher's pre-dispatch check (any provider). run_id is omitted for
-  // the dispatcher's pre-dispatch variant (no run is in flight yet).
-  | { type: 'task.cost_warning'; payload: { task_id: string; run_id?: string; spent_usd: number; budget_usd: number } }
-  | { type: 'agent.log'; payload: { task_id: string; run_id: string; entry: AgentLog } }
-  // Sent once on subscribe: the tail of the run's persisted log as a single
-  // batched message (capped server-side). has_more signals that earlier entries
-  // exist and can be fetched via the REST logs endpoint ("load earlier").
-  | { type: 'agent.log_replay'; payload: { task_id: string; run_id: string; has_more: boolean; entries: AgentLog[] } }
-  | { type: 'task.git_state_changed'; payload: { task_id: string; git_state: Task['git_state']; pr_url: string } }
-  // Emitted by the GitHub PR status sweep when GitHub's merge-conflict verdict
-  // for a task's PR changes (e.g. the base branch moved and the PR now
-  // conflicts). Only sent on a change, not on every sweep.
-  | { type: 'task.pr_mergeable_changed'; payload: { task_id: string; pr_mergeable: Task['pr_mergeable'] } }
-  | { type: 'task.review_comments_changed'; payload: { task_id: string; run_id: string; resolved: number } }
-  // task.created payloads carry a subset of Task fields (always includes id);
-  // consumers should refetch the task for full data.
-  | { type: 'task.created'; payload: Pick<Task, 'id' | 'title' | 'label' | 'repo_id' | 'source' | 'source_ref'> }
-  // Emitted by the GitHub Issues importer instead of one task.created per
-  // item when a sweep creates one or more tasks for a repo — batches what
-  // would otherwise be a per-issue event storm (and per-client GET storm)
-  // into a single event. ids is capped server-side (see
-  // maxCreatedIDsInEvent in the importer); count is always exact. Consumers
-  // should do a single list/board refresh rather than fetching each id.
-  | { type: 'task.created_bulk'; payload: { repo_id: string; source: string; count: number; ids: string[] } }
-  // Lightweight "something changed, refetch it" signal: carries only the id
-  // (see docs/websocket.md). Never treat the payload as a full Task.
-  | { type: 'task.updated'; payload: { id: string } }
-  // A task's post-transition side effect (push, PR creation, issue write-back)
-  // finished or failed; status is done | pending (failed, retrying) | failed.
-  // task.updated follows, so consumers that refetch need not handle this.
-  | { type: 'task.side_effect'; payload: { task_id: string; kind: string; status: string; last_error?: string } }
-  | { type: 'task.subtask_conflict'; payload: { task_id: string; parent_id: string; files: string[] } }
-  // Emitted by the GitHub Issues importer when it ingests a new comment from
-  // a task's source issue thread (see GET /tasks/{id}/source-comments).
-  | { type: 'task.source_comment_added'; payload: { task_id: string; comment_id: string } }
-  // Sent by the server when this client's send buffer overflowed and one or
-  // more events were dropped (see Hub.Publish). Also synthesised locally after
-  // a reconnect, since events published while disconnected are lost the same
-  // way. Consumers must refetch whatever state they derive from WS events.
-  | { type: 'resync'; payload: Record<string, never> }
+// WSEvent is generated from the WsEvent schema in openapi.yaml (the source of
+// truth for the WebSocket contract, mirrored by the Go structs in
+// backend/internal/wsevent). Do not hand-write payload shapes here; edit the
+// spec and run `npm run gen:api`. Per-event semantics are in docs/websocket.md.
+export type WSEvent = components['schemas']['WsEvent']
 
 type Handler = (event: WSEvent) => void
 

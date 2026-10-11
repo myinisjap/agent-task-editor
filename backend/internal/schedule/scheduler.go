@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/cronexpr"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intake"
@@ -20,7 +22,7 @@ import (
 
 // Publisher is satisfied by *ws.Hub — it sends events to all connected clients.
 type Publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // Scheduler polls all enabled task_schedules on the configured interval and
@@ -270,13 +272,13 @@ func (s *Scheduler) fireIfDue(ctx context.Context, sched gen.TaskSchedule, now t
 	}
 
 	log.Info("schedule sweep: task created", "task_id", task.ID, "template_id", tmpl.ID, "repo_id", repo.ID)
-	s.hub.Publish("task.created", map[string]any{
-		"id":         task.ID,
-		"title":      task.Title,
-		"label":      task.Label,
-		"repo_id":    task.RepoID,
-		"source":     task.Source,
-		"source_ref": task.SourceRef,
+	s.hub.Publish(wsevent.TypeTaskCreated, wsevent.TaskCreated{
+		ID:        task.ID,
+		Title:     task.Title,
+		Label:     task.Label,
+		RepoID:    task.RepoID,
+		Source:    &task.Source,
+		SourceRef: &task.SourceRef,
 	})
 	return true
 }

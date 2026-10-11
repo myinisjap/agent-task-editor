@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -424,10 +426,10 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 				log.Warn("dispatcher: set task cost_warned", "err", err)
 			}
 			if d.Publisher != nil {
-				d.Publisher.Publish("task.cost_warning", map[string]any{
-					"task_id":    t.ID,
-					"spent_usd":  spent,
-					"budget_usd": budget,
+				d.Publisher.Publish(wsevent.TypeTaskCostWarning, wsevent.TaskCostWarning{
+					TaskID:    t.ID,
+					SpentUSD:  spent,
+					BudgetUSD: budget,
 				})
 			}
 		}
@@ -588,13 +590,13 @@ func (d *Dispatcher) refreshGlobalCostStatus(ctx context.Context) bool {
 		msg := fmt.Sprintf("global cost budget tripped (%s): $%.2f of $%.2f", status.TrippedReason, dailySpentOrMonthly(status), limitFor(status))
 		slog.Warn("dispatcher: global cost budget tripped, halting all new dispatch", "component", "dispatcher", "reason", status.TrippedReason, "daily_spent", dailySpent, "daily_limit", d.MaxDailyCostUSD, "monthly_spent", monthlySpent, "monthly_limit", d.MaxMonthlyCostUSD)
 		if d.Publisher != nil {
-			d.Publisher.Publish("system.cost_budget_tripped", map[string]any{
-				"reason":            status.TrippedReason,
-				"message":           msg,
-				"daily_spent_usd":   status.DailySpentUSD,
-				"daily_limit_usd":   status.DailyLimitUSD,
-				"monthly_spent_usd": status.MonthlySpentUSD,
-				"monthly_limit_usd": status.MonthlyLimitUSD,
+			d.Publisher.Publish(wsevent.TypeSystemCostBudgetTripped, wsevent.SystemCostBudgetTripped{
+				Reason:          status.TrippedReason,
+				Message:         msg,
+				DailySpentUSD:   status.DailySpentUSD,
+				DailyLimitUSD:   status.DailyLimitUSD,
+				MonthlySpentUSD: status.MonthlySpentUSD,
+				MonthlyLimitUSD: status.MonthlyLimitUSD,
 			})
 		}
 	}

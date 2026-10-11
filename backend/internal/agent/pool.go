@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -27,7 +29,7 @@ var runtimePrep = runtime.Prep
 
 // Publisher broadcasts events to connected WebSocket clients.
 type Publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // Job is a single unit of work submitted to the pool.
@@ -461,11 +463,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// needs_human escalation) — the watchdog observed projected cost cross
 	// CostWarnRatio*budget at some point during the run.
 	if result.CostWarned && p.pub != nil {
-		p.pub.Publish("task.cost_warning", map[string]any{
-			"task_id":    job.Input.Task.ID,
-			"run_id":     job.RunID,
-			"spent_usd":  job.Input.CostSpentUSD + result.CostUSD,
-			"budget_usd": job.Input.CostBudgetUSD,
+		p.pub.Publish(wsevent.TypeTaskCostWarning, wsevent.TaskCostWarning{
+			TaskID:    job.Input.Task.ID,
+			RunID:     job.RunID,
+			SpentUSD:  job.Input.CostSpentUSD + result.CostUSD,
+			BudgetUSD: job.Input.CostBudgetUSD,
 		})
 	}
 
@@ -505,10 +507,10 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	if p.pub != nil {
-		p.pub.Publish("task.agent_done", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"status":  finalStatus,
+		p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
+			TaskID: job.Input.Task.ID,
+			RunID:  job.RunID,
+			Status: finalStatus,
 		})
 	}
 
@@ -550,10 +552,10 @@ func (p *Pool) startRun(ctx context.Context, job Job, log *slog.Logger, startedA
 		return false
 	}
 	if p.pub != nil {
-		p.pub.Publish("task.agent_started", map[string]any{
-			"task_id":    job.Input.Task.ID,
-			"run_id":     job.RunID,
-			"agent_name": job.Input.AgentConfig.Name,
+		p.pub.Publish(wsevent.TypeTaskAgentStarted, wsevent.TaskAgentStarted{
+			TaskID:    job.Input.Task.ID,
+			RunID:     job.RunID,
+			AgentName: job.Input.AgentConfig.Name,
 		})
 	}
 	return true
@@ -719,11 +721,11 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 					unblockStr = until.Format(time.RFC3339)
 				}
 			}
-			p.pub.Publish("task.rate_limited", map[string]any{
-				"task_id":         job.Input.Task.ID,
-				"run_id":          job.RunID,
-				"agent_config_id": job.Input.AgentConfig.ID,
-				"unblocked_at":    unblockStr,
+			p.pub.Publish(wsevent.TypeTaskRateLimited, wsevent.TaskRateLimited{
+				TaskID:        job.Input.Task.ID,
+				RunID:         job.RunID,
+				AgentConfigID: job.Input.AgentConfig.ID,
+				UnblockedAt:   unblockStr,
 			})
 		}
 		p.handleTransientFailure(ctx, job, result, "rate limited: "+rl.Message, startedAt)
@@ -883,10 +885,10 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 			applied++
 		}
 		if applied > 0 && p.pub != nil {
-			p.pub.Publish("task.review_comments_changed", map[string]any{
-				"task_id":  job.Input.Task.ID,
-				"run_id":   job.RunID,
-				"resolved": applied,
+			p.pub.Publish(wsevent.TypeTaskReviewCommentsChange, wsevent.TaskReviewCommentsChanged{
+				TaskID:   job.Input.Task.ID,
+				RunID:    job.RunID,
+				Resolved: applied,
 			})
 		}
 	}
@@ -1101,14 +1103,14 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 			// clients can dedupe live entries against agent.log_replay and
 			// GET /tasks/{id}/runs/{run_id}/logs pages by id alone.
 			if p.pub != nil {
-				p.pub.Publish("agent.log", map[string]any{
-					"run_id":  runID,
-					"task_id": taskID,
-					"entry": map[string]any{
-						"id":      logID,
-						"type":    entry.Type,
-						"content": entry.Content,
-						"at":      entry.At,
+				p.pub.Publish(wsevent.TypeAgentLog, wsevent.AgentLog{
+					RunID:  runID,
+					TaskID: taskID,
+					Entry: wsevent.AgentLogEntry{
+						ID:      logID,
+						Type:    string(entry.Type),
+						Content: entry.Content,
+						At:      entry.At,
 					},
 				})
 			}

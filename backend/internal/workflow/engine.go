@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -106,7 +108,7 @@ type querier interface {
 // Publisher publishes a workflow event (e.g. to the WebSocket hub).
 // The payload is a map that can be JSON-encoded by the caller.
 type Publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // Engine validates and executes workflow label transitions.
@@ -327,18 +329,18 @@ func (e *Engine) transition(ctx context.Context, taskID, toLabel string, trigger
 	}
 
 	if e.pub != nil {
-		e.pub.Publish("task.label_changed", map[string]any{
-			"task_id": taskID,
-			"from":    fromLabel,
-			"to":      toLabel,
-			"note":    note,
+		e.pub.Publish(wsevent.TypeTaskLabelChanged, wsevent.TaskLabelChanged{
+			TaskID: taskID,
+			From:   fromLabel,
+			To:     toLabel,
+			Note:   note,
 		})
 		// A label change can satisfy or un-satisfy edges that point at this task
 		// (e.g. moving into or out of a terminal label). Nudge dependents so their
 		// "blocked by N" badges refresh live instead of going stale on the board.
 		if deps, derr := e.q.ListTaskDependents(ctx, taskID); derr == nil {
 			for _, d := range deps {
-				e.pub.Publish("task.updated", map[string]any{"id": d.TaskID})
+				e.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: d.TaskID})
 			}
 		}
 	}

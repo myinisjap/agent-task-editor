@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -228,13 +230,13 @@ func (e *Engine) publishSideEffect(se gen.TaskSideEffect, status, lastError stri
 	if e.pub == nil {
 		return
 	}
-	e.pub.Publish("task.side_effect", map[string]any{
-		"task_id":    se.TaskID,
-		"kind":       se.Kind,
-		"status":     status,
-		"last_error": lastError,
+	e.pub.Publish(wsevent.TypeTaskSideEffect, wsevent.TaskSideEffect{
+		TaskID:    se.TaskID,
+		Kind:      se.Kind,
+		Status:    status,
+		LastError: lastError,
 	})
-	e.pub.Publish("task.updated", map[string]any{"id": se.TaskID})
+	e.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: se.TaskID})
 }
 
 // RetrySideEffects makes a task's failed side effects pending again with a
@@ -247,7 +249,7 @@ func (e *Engine) RetrySideEffects(ctx context.Context, taskID string) (int64, er
 	if n > 0 {
 		e.nudgeWorker()
 		if e.pub != nil {
-			e.pub.Publish("task.updated", map[string]any{"id": taskID})
+			e.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: taskID})
 		}
 	}
 	return n, nil

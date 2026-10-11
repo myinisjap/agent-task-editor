@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
@@ -33,7 +35,7 @@ func isValidGitRef(ref string) bool {
 // RepoEventPublisher publishes repo lifecycle events (e.g. async clone
 // completion) to connected WebSocket clients. Satisfied by *ws.Hub.
 type RepoEventPublisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 type ReposHandler struct {
@@ -465,7 +467,7 @@ func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
 		}); err != nil {
 			slog.Warn("cloneRepoAsync: mark error", "repo_id", repoID, "err", err)
 		}
-		h.publishRepoEvent("repo.clone_failed", repoID, "error", msg)
+		h.publishRepoEvent(wsevent.TypeRepoCloneFailed, repoID, "error", msg)
 	}
 
 	// Create parent directory structure (e.g. repoBaseDir/org/).
@@ -486,7 +488,7 @@ func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
 		slog.Warn("cloneRepoAsync: mark ready", "repo_id", repoID, "err", err)
 	}
 	setClaudeTrust(ctx, destPath)
-	h.publishRepoEvent("repo.clone_done", repoID, "ready", "")
+	h.publishRepoEvent(wsevent.TypeRepoCloneDone, repoID, "ready", "")
 }
 
 // publishRepoEvent broadcasts a repo clone lifecycle event to WS clients.
@@ -494,10 +496,10 @@ func (h *ReposHandler) publishRepoEvent(event, repoID, status, errMsg string) {
 	if h.pub == nil {
 		return
 	}
-	h.pub.Publish(event, map[string]any{
-		"repo_id":      repoID,
-		"clone_status": status,
-		"clone_error":  errMsg,
+	h.pub.Publish(event, wsevent.RepoClone{
+		RepoID:      repoID,
+		CloneStatus: status,
+		CloneError:  errMsg,
 	})
 }
 

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -18,11 +20,11 @@ type eventRecorder struct {
 	types  []string
 }
 
-func (r *eventRecorder) Publish(eventType string, payload map[string]any) {
+func (r *eventRecorder) Publish(eventType string, payload any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.types = append(r.types, eventType)
-	r.events = append(r.events, payload)
+	r.events = append(r.events, wsevent.ToMap(payload))
 }
 
 func (r *eventRecorder) sideEffectEvents() []map[string]any {

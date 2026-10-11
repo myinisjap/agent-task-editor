@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"nhooyr.io/websocket"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -319,24 +321,24 @@ func replayTaskLogs(ctx context.Context, c *Client, q *gen.Queries, taskID strin
 	}
 
 	// logs are newest-first; reverse to chronological order for the client.
-	entries := make([]map[string]any, len(logs))
+	entries := make([]wsevent.AgentLogEntry, len(logs))
 	for i := range logs {
 		log := logs[len(logs)-1-i]
-		entries[i] = map[string]any{
-			"id":      log.ID,
-			"type":    log.Type,
-			"content": log.Content,
-			"at":      log.Timestamp,
+		entries[i] = wsevent.AgentLogEntry{
+			ID:      log.ID,
+			Type:    log.Type,
+			Content: log.Content,
+			At:      log.Timestamp,
 		}
 	}
 
 	msg, err := json.Marshal(Event{
-		Type: "agent.log_replay",
-		Payload: map[string]any{
-			"run_id":   runID,
-			"task_id":  taskID,
-			"has_more": hasMore,
-			"entries":  entries,
+		Type: wsevent.TypeAgentLogReplay,
+		Payload: wsevent.AgentLogReplay{
+			RunID:   runID,
+			TaskID:  taskID,
+			HasMore: hasMore,
+			Entries: entries,
 		},
 	})
 	if err != nil {
