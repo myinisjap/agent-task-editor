@@ -152,6 +152,12 @@ describe('AgentConfigForm permission mode field', () => {
     expect(screen.getByText(/this mode skips approval prompts entirely/i)).toBeInTheDocument()
   })
 
+  it('always shows the guardrail-not-sandbox note on the command filters', () => {
+    renderForm(baseForm(), [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.getByText(/these lists are guardrails, not a sandbox/i)).toBeInTheDocument()
+  })
+
   it('notes the denylist is still enforced under bypassPermissions when a denylist is set', () => {
     const form = baseForm({
       provider_config_id: 'pc-claude',

@@ -359,7 +359,10 @@ export function AgentsHelp() {
           The command denylist stays enforced in every mode, including{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">bypassPermissions</code> — verified
           against a live claude CLI, a denylisted command is still refused even with approval prompts
-          bypassed.
+          bypassed. It is still a guardrail, not a sandbox: it matches command prefixes, so an agent
+          can get around it with <code className="bg-slate-800 rounded px-1 font-mono">sh -c</code>,{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">env</code>, an interpreter or a
+          script, and it won't contain an untrusted or prompt-injected agent.
         </p>
       </section>
     </>
