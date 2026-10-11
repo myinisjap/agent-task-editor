@@ -10,6 +10,7 @@ import GitStateBadge from './GitStateBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
 import { useNeedsMeStore } from '../../stores/needsMe'
 import { needsMeReasonLabel } from '../../lib/needsMe'
+import { escalationInfo } from '../../lib/escalation'
 import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
 import { formatRelativeCountdown } from '../../lib/format'
 
@@ -390,9 +391,9 @@ function TaskCard({
           {needsMe && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-pink-900/70 text-pink-200 font-semibold"
-              title={needsMeReasonLabel(needsMe.reason)}
+              title={needsMeReasonLabel(needsMe.reason, needsMe.escalation_reason)}
             >
-              Needs you
+              {needsMe.escalation_reason ? escalationInfo(needsMe.escalation_reason).short : 'Needs you'}
             </span>
           )}
           {isRunning && !needsMe && (

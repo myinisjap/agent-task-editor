@@ -375,7 +375,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 		if unknownRuns > 0 {
 			msg := fmt.Sprintf("cost budget cannot be enforced: %d run(s) have unknown cost - add pricing for the model at Configuration -> Pricing", unknownRuns)
 			log.Warn("dispatcher: skipping dispatch, task has cost-unknown runs under an active budget", "spent", spent, "budget", budget, "unknown_runs", unknownRuns)
-			return d.escalateCostBudget(ctx, t, matched, msg, "cost-unknown")
+			return d.escalateCostBudget(ctx, t, matched, ReasonCostUnknown, msg, "cost-unknown")
 		}
 
 		warnRatio := d.resolveCostWarnRatio(ctx)
@@ -396,7 +396,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	}
 	msg := fmt.Sprintf("budget exhausted: $%.2f of $%.2f", spent, budget)
 	log.Warn("dispatcher: skipping dispatch, cost budget exhausted", "spent", spent, "budget", budget)
-	return d.escalateCostBudget(ctx, t, matched, msg, "budget-exhausted")
+	return d.escalateCostBudget(ctx, t, matched, ReasonCostBudget, msg, "budget-exhausted")
 }
 
 // escalateCostBudget creates a "phantom" agent_runs row directly in
@@ -408,7 +408,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 // Returns true (skip dispatch) alongside any error, matching
 // checkCostBudget's contract that a failure here should still prevent
 // dispatch this sweep.
-func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, msg, reason string) (bool, error) {
+func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, code EscalationReason, msg, reason string) (bool, error) {
 	runID := uuid.NewString()
 	if _, err := d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:            runID,
@@ -416,13 +416,6 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 		AgentConfigID: &matched.ID,
 	}); err != nil {
 		return true, fmt.Errorf("create %s run: %w", reason, err)
-	}
-	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status: "waiting_human",
-		Notes:  &msg,
-		ID:     runID,
-	}); err != nil {
-		return true, fmt.Errorf("set %s run status: %w", reason, err)
 	}
 	// Lock the task on this run, same as a real waiting_human escalation —
 	// stays locked until a human acts (raises the budget, or replies via
@@ -433,19 +426,10 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 	// dispatch reads rework feedback from (startRun's prior-feedback lookup
 	// also keys off current_agent_run_id). Leaving current_agent_run_id
 	// pointing at the last real run fixes both. See issue #344.
-	if err := d.q.SetTaskActiveRunOnly(ctx, gen.SetTaskActiveRunOnlyParams{
-		ActiveAgentRunID: &runID,
-		ID:               t.ID,
+	if err := d.lifecycle().escalate(ctx, escalation{
+		TaskID: t.ID, RunID: runID, Reason: code, Message: msg, Lock: lockPhantomOnly, FailFast: true,
 	}); err != nil {
-		return true, fmt.Errorf("lock task on %s run: %w", reason, err)
-	}
-
-	if d.Publisher != nil {
-		d.Publisher.Publish("task.needs_human", map[string]any{
-			"task_id": t.ID,
-			"run_id":  runID,
-			"message": msg,
-		})
+		return true, fmt.Errorf("escalate %s run: %w", reason, err)
 	}
 
 	return true, nil
@@ -820,13 +804,6 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		// locked on this run until a human fixes the config and replies.
 		msg := fmt.Sprintf("agent config's provider is disabled or unknown: %q", agentCfg.Provider)
 		log.Error("dispatcher: no runner for provider", "provider", agentCfg.Provider)
-		if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-			Status: "waiting_human",
-			Notes:  &msg,
-			ID:     runID,
-		}); err != nil {
-			log.Warn("dispatcher: mark nil-provider run waiting_human", "err", err)
-		}
 		// persistRunRow (above) already set BOTH current_agent_run_id and
 		// active_agent_run_id to this phantom run before the provider was
 		// resolved. This run has no logs and no feedback, so — same reasoning
@@ -836,19 +813,11 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		// phantom row. active_agent_run_id is deliberately left pointing at
 		// runID: it still needs to hold the re-dispatch lock until a human
 		// fixes the config. See issue #344.
-		if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-			CurrentAgentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
-			ActiveAgentRunID:  &runID,
-			ID:                t.ID,
+		if err := d.lifecycle().escalate(ctx, escalation{
+			TaskID: t.ID, RunID: runID, Reason: ReasonProviderMissing, Message: msg,
+			Lock: lockRestoreCurrent, CurrentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
 		}); err != nil {
-			log.Warn("dispatcher: restore current_agent_run_id after nil-provider escalation", "err", err)
-		}
-		if d.Publisher != nil {
-			d.Publisher.Publish("task.needs_human", map[string]any{
-				"task_id": t.ID,
-				"run_id":  runID,
-				"message": msg,
-			})
+			log.Warn("dispatcher: nil-provider escalation", "err", err)
 		}
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
 	}
@@ -968,26 +937,11 @@ func (d *Dispatcher) resolveRuntimeSpec(repo gen.Repo, worktreeDir string) (*Run
 func (d *Dispatcher) escalateRuntimePrepFailure(ctx context.Context, t gen.Task, runID string, prepErr error, log *slog.Logger) error {
 	msg := fmt.Sprintf("agent runtime prep failed: %v", prepErr)
 	log.Error("dispatcher: runtime prep failed", "err", prepErr)
-	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status: "waiting_human",
-		Notes:  &msg,
-		ID:     runID,
+	if err := d.lifecycle().escalate(ctx, escalation{
+		TaskID: t.ID, RunID: runID, Reason: ReasonRuntimePrep, Message: msg,
+		Lock: lockRestoreCurrent, CurrentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
 	}); err != nil {
-		log.Warn("dispatcher: mark runtime-prep-failed run waiting_human", "err", err)
-	}
-	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-		CurrentAgentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
-		ActiveAgentRunID:  &runID,
-		ID:                t.ID,
-	}); err != nil {
-		log.Warn("dispatcher: restore current_agent_run_id after runtime-prep escalation", "err", err)
-	}
-	if d.Publisher != nil {
-		d.Publisher.Publish("task.needs_human", map[string]any{
-			"task_id": t.ID,
-			"run_id":  runID,
-			"message": msg,
-		})
+		log.Warn("dispatcher: runtime-prep escalation", "err", err)
 	}
 	return fmt.Errorf("%w: %v", ErrRuntimePrepFailed, prepErr)
 }
@@ -1348,4 +1302,10 @@ func toAgentConfig(cfg gen.AgentConfig, pc gen.ProviderConfig) AgentConfig {
 		CommandAllowlist:  commandAllowlist,
 		CommandDenylist:   commandDenylist,
 	}
+}
+
+// lifecycle returns the run-lifecycle helper that owns escalation (see
+// escalate.go).
+func (d *Dispatcher) lifecycle() runLifecycle {
+	return runLifecycle{q: d.q, pub: d.Publisher}
 }

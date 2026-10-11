@@ -33,6 +33,9 @@ export default function TaskDetailPage() {
   const [rejectNote, setRejectNote] = useState('')
   const [replyText, setReplyText] = useState('')
   const [actionPending, setActionPending] = useState(false)
+  // Run whose escalation the user already retried; hides its banner until the
+  // re-dispatched run shows up and is selected.
+  const [retriedRunId, setRetriedRunId] = useState<string | null>(null)
   const [creatingPR, setCreatingPR] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [showHelp, setShowHelp] = useState(false)
@@ -221,7 +224,7 @@ export default function TaskDetailPage() {
   }, [id, refreshTask, refreshRuns, refreshComments, refreshLabelHistory, refreshSourceComments])
 
   const activeRun = runs.find((r) => r.id === selectedRun)
-  const needsHuman = activeRun?.status === 'waiting_human'
+  const needsHuman = activeRun?.status === 'waiting_human' && activeRun.id !== retriedRunId
   const isRunning = activeRun?.status === 'running'
   const latestRun = runs[0]
   const canRerun = !!(latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed' || latestRun.status === 'cancelled'))
@@ -282,6 +285,23 @@ export default function TaskDetailPage() {
       refreshRuns()
     } catch (e: any) {
       alert(e.message)
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  // Retry from an escalation banner: same re-dispatch as Rerun, but errors
+  // show inline in the banner rather than in an alert().
+  const handleRetryEscalation = async () => {
+    if (!id || !selectedRun) return
+    setActionError('')
+    setActionPending(true)
+    try {
+      await api.tasks.rerun(id)
+      setRetriedRunId(selectedRun)
+      refreshRuns()
+    } catch (e: any) {
+      setActionError(e.message ?? String(e))
     } finally {
       setActionPending(false)
     }
@@ -573,6 +593,7 @@ export default function TaskDetailPage() {
           replyText={replyText}
           setReplyText={setReplyText}
           onReply={handleReply}
+          onRetry={handleRetryEscalation}
           rejectNote={rejectNote}
           setRejectNote={setRejectNote}
           onReject={handleReject}

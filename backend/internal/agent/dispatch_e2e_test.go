@@ -516,6 +516,7 @@ func TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked(t *testing.T) {
 	h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
 		return r.Status == "waiting_human"
 	}, "run to be persisted as waiting_human after max-turns exhaustion")
+	assertEscalationReason(t, h.q, *esc.ActiveAgentRunID, ReasonMaxTurns)
 	if esc.Label != "ready" {
 		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
 	}
@@ -605,6 +606,7 @@ func TestE2E_WaitingHumanStaysLocked(t *testing.T) {
 		return err == nil && run.Status == "waiting_human"
 	}, "run to reach waiting_human with the task locked")
 	runID := *locked.ActiveAgentRunID
+	assertEscalationReason(t, h.q, runID, ReasonAgentQuestion)
 
 	if !h.pub.has("task.needs_human") {
 		t.Error("expected task.needs_human event")
@@ -1035,6 +1037,9 @@ func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
 	}
 	if len(runs) != 1 {
 		t.Fatalf("expected exactly one run (the lock should have prevented re-dispatch), got %d", len(runs))
+	}
+	if runs[0].EscalationReason == nil || *runs[0].EscalationReason != string(ReasonProviderMissing) {
+		t.Errorf("escalation_reason = %v, want %q", runs[0].EscalationReason, ReasonProviderMissing)
 	}
 	if runs[0].Status != "waiting_human" {
 		t.Fatalf("expected the run to stay waiting_human, got %q", runs[0].Status)

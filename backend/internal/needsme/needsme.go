@@ -38,6 +38,10 @@ type Item struct {
 	Message string
 	// RunID is set for ReasonWaitingHuman.
 	RunID string
+	// EscalationReason is the waiting run's escalation_reason code (why the
+	// run went to waiting_human), when recorded. Empty for runs that predate
+	// the column and for non-waiting_human items.
+	EscalationReason string
 	// Since is when the task started needing a human (run creation for
 	// waiting_human, otherwise the task's last update).
 	Since time.Time
@@ -64,6 +68,9 @@ func Classify(task gen.Task, run *gen.AgentRun, wf WorkflowDef) (Item, bool) {
 		it.RunID = run.ID
 		it.Since = run.CreatedAt
 		it.Message = firstNonEmpty(run.Feedback, run.Notes)
+		if run.EscalationReason != nil {
+			it.EscalationReason = *run.EscalationReason
+		}
 		return it, true
 	}
 	if task.Paused != 0 {

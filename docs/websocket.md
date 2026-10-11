@@ -121,10 +121,20 @@ watchdog — see `docs/agents.md#cost-budgets`) or retry-budget exhaustion (see
   "payload": {
     "task_id": "uuid",
     "run_id": "uuid",
+    "reason": "agent_question",
     "message": "Please review the schema changes before I continue."
   }
 }
 ```
+
+`reason` is the run's escalation code (the same value stored as
+`agent_runs.escalation_reason` and returned on the run and on `GET /needs-me`
+items as `escalation_reason`): `agent_question`, `auth_required`,
+`repeated_failure`, `rework_loop`, `cost_budget`, `cost_unknown`,
+`provider_missing`, `runtime_prep`, `max_turns`, `transient_exhausted`,
+`no_outcome` or `rejected_transition`. Note that `request_human` is only one
+cause; the UI uses the code to pick the primary action (Reply for a question,
+Retry or a link to the relevant settings page otherwise).
 
 The frontend surfaces this as an opt-in browser notification (see
 [Client-Side Behaviour](#client-side-behaviour)). Also fans out to the

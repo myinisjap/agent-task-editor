@@ -173,6 +173,35 @@ running
                     engine.Transition()              → active_run cleared
 ```
 
+### Escalation reasons
+
+Every run that ends in `waiting_human` records a closed-set `escalation_reason`
+(returned on the run as `escalation_reason`, on `GET /needs-me` items, and as
+`reason` in the `task.needs_human` event). The human-readable explanation is in
+the run's `notes` (the agent's own question for `agent_question` is in
+`feedback`). All paths share one helper (`internal/agent/escalate.go`), which
+writes the status, reason and message, applies the lock handling each path
+already had, and publishes the event; the lock itself is never cleared by an
+escalation.
+
+| Code | Cause | UI primary action |
+|---|---|---|
+| `agent_question` | Agent called `request_human` | Reply |
+| `rework_loop` | The same failure/rework transition fired repeatedly | Reply with guidance |
+| `auth_required` | Provider CLI is not logged in | Open Health, then Retry |
+| `cost_budget` | Task cost budget exhausted (pre- or mid-run) | Raise budget, then Retry |
+| `cost_unknown` | Budget set but a run's cost is unpriced | Add pricing, then Retry |
+| `provider_missing` | Agent config's provider is disabled or unknown | Open providers, then Retry |
+| `runtime_prep` | Pinned toolchain install failed | Open repos, then Retry |
+| `max_turns` | Agent hit `max_turns` | Raise max turns, then Retry |
+| `repeated_failure` | Consecutive failures hit the cap | Retry |
+| `transient_exhausted` | Transient-retry budget exhausted | Retry |
+| `no_outcome` | Run finished without a usable outcome | Retry |
+| `rejected_transition` | Agent's requested move was refused repeatedly | Retry |
+
+Runs escalated before this field existed have a null reason and are treated as
+a question (Reply).
+
 ## Log Entry Types
 
 | Type | Meaning |

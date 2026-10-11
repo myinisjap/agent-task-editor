@@ -41,6 +41,10 @@ type Result struct {
 	Notes *string
 	// Structured info stored on the run for later inspection
 	StoredInfo *string
+	// EscalationReason is set by the pool (never by providers) when the run
+	// ends in waiting_human, so the terminal bookkeeping can record and
+	// publish why. A provider-reported waiting_human is an agent_question.
+	EscalationReason EscalationReason
 	// ResolvedComments lists review comments the agent claims to have addressed
 	// (via the MCP sidecar's resolve_comment tool). The pool marks them resolved
 	// in the database only when the run completes successfully.

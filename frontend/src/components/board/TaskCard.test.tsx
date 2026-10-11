@@ -16,6 +16,7 @@ import TaskCard from './TaskCard'
 import type { Task } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { useReposStore } from '../../stores/repos'
+import { useNeedsMeStore } from '../../stores/needsMe'
 
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client')
@@ -431,5 +432,26 @@ describe('TaskCard action buttons keyboard reachability (#350)', () => {
 
     fireEvent.mouseLeave(card)
     expect(deleteButton).toHaveAttribute('tabindex', '-1')
+  })
+})
+
+describe('TaskCard escalation badge', () => {
+  it('names the escalation reason from the needs-me item', () => {
+    useNeedsMeStore.setState({
+      byTask: {
+        'task-esc': {
+          task_id: 'task-esc', task_title: 't', repo_id: 'r', workflow_id: 'w', label: 'work',
+          reason: 'waiting_human', escalation_reason: 'cost_budget', since: '2026-01-01T00:00:00Z',
+        },
+      },
+    })
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ id: 'task-esc' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Budget reached')).toBeInTheDocument()
+    expect(screen.getByTitle('Cost budget reached')).toBeInTheDocument()
+    useNeedsMeStore.setState({ byTask: {} })
   })
 })
