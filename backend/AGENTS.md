@@ -69,6 +69,18 @@ Files in `internal/storage/migrations/` follow the `NNN_name.up.sql` / `NNN_name
 3. Run `sqlc generate` to update `gen/`
 4. Update `gen/models.go` struct if adding columns (sqlc handles this, but verify)
 
+## Timestamps
+
+Every DATETIME/TIMESTAMP column is stored as `YYYY-MM-DD HH:MM:SS` in UTC (what
+`CURRENT_TIMESTAMP` writes). `storage.Open` registers a thin wrapper around
+mattn/go-sqlite3 that converts any bound `time.Time` / `*time.Time` query arg to
+this format via `storage.FormatTime`, so plain string comparison and ORDER BY
+are correct; do not wrap columns in `datetime()` just to compare them. Use
+`storage.FormatTime(t)` when building a timestamp string by hand. Sub-second
+precision is dropped. TEXT cursor columns parsed as RFC3339 in Go
+(`task_pr_review_state.last_*`) and `task_source_comments.external_created_at`
+are intentionally not canonicalized. Migration 058 rewrote legacy rows.
+
 ## Testing
 
 Tests are in `*_test.go` files alongside the packages. The storage tests use an in-memory SQLite instance. Run a specific package:

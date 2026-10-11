@@ -33,7 +33,7 @@ type DB struct {
 
 // Open opens (or creates) the SQLite database at path and runs all pending migrations.
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite3", path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
+	sqlDB, err := sql.Open(utcDriverName, path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
