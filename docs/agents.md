@@ -768,8 +768,10 @@ so humans aren't paged for problems that will resolve themselves:
 
 - **Genuine failure** — the agent ran and the work itself failed (e.g. tests
   didn't pass, the agent gave up). Behaves as before: the task stays on its
-  current label and the next dispatcher sweep (~5s) re-picks it up
-  immediately, with no retry limit.
+  current label and the next dispatcher sweep (~5s) re-picks it up. After
+  **3 consecutive** genuine failures the task is escalated to `waiting_human`
+  (lock kept) instead of being re-run again; a completed run, any label
+  transition, a reply, or a re-run resets the streak.
 - **Transient failure** — a rate limit (`429`), a network-level error,
   upstream `5xx`, or (for CLI providers) a text match for signals like
   connection resets or `502/503/504`. The match is anchored (word/HTTP-status
@@ -785,9 +787,12 @@ so humans aren't paged for problems that will resolve themselves:
 - The task board shows a **"↻ Retrying (n)"** badge while a task is in a
   backed-off auto-retry window, so it's clear at a glance that no action is
   needed yet.
-- Setting `max_retries` to `0` disables auto-retry for that config entirely,
-  reverting to the old behavior (immediate, unbounded re-dispatch) for
-  transient errors too.
+- Setting `max_retries` to `0` disables auto-retry for that config entirely:
+  the first transient failure escalates straight to `waiting_human` (there is
+  no silent immediate re-dispatch).
+- A run that **completes without reporting an outcome** (no `signal_complete`,
+  no `OUTCOME:` line) is escalated to `waiting_human` once, with a note on the
+  run, rather than being re-run every sweep.
 - This is separate from, and complementary to, the existing per-agent-config
   rate-limit block: a `429` still blocks the *whole config* from new
   dispatches for a backoff window (protects shared credentials/quota) **and**

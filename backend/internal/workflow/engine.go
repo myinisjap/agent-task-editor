@@ -211,7 +211,7 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	// be a no-op (human transitions carry no run id) or wrongly reject the
 	// agent's own transition.
 	res, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND label = ?`,
+		`UPDATE tasks SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, consecutive_failure_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND label = ?`,
 		toLabel, task.CurrentAgentRunID, taskID, fromLabel)
 	if err != nil {
 		return fmt.Errorf("update task label: %w", err)

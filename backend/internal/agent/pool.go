@@ -615,12 +615,45 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 		metrics.RunClassificationTotal.WithLabelValues(string(classification)).Inc()
 	}
 
+	// Genuine failures release the dispatch lock, so without a cap the next 5s
+	// sweep would re-run a persistently failing task forever. Count them and,
+	// once maxConsecutiveFailures is reached, escalate to waiting_human (lock
+	// kept) instead. Auth failures are already escalated above and don't count.
+	genuineFailure := finalStatus == "failed"
+	runNotes := result.Notes // run-row notes only; task agent_notes keeps the agent's own text
+	if genuineFailure {
+		n, err := p.q.IncrementTaskFailureCount(ctx, job.Input.Task.ID)
+		switch {
+		case err != nil:
+			slog.Warn("pool: increment failure count", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
+		case n >= maxConsecutiveFailures:
+			finalStatus = "waiting_human"
+			msg := fmt.Sprintf("Agent failed %d times in a row without completing. Review the run logs, then re-dispatch or intervene manually.", n)
+			result.Message = &msg
+			runNotes = &msg
+			log.Warn("pool: consecutive failure limit reached, escalating to waiting_human", "count", n, "limit", maxConsecutiveFailures)
+		}
+	}
+
 	// A genuine (non-transient) failure or a successful completion resets the
 	// task's transient-retry budget so a later unrelated transient blip
 	// starts counting fresh.
-	if finalStatus == "failed" || finalStatus == "completed" {
+	//
+	// The transient reset on genuine failure is kept deliberately: a run that
+	// executed and failed on its own merits shows the infra is reachable, so an
+	// earlier blip shouldn't count against a later one. It can't defeat
+	// escalation because the genuine-failure counter above is separate and is
+	// NOT reset by transient failures, so alternating transient/genuine
+	// failures still hit maxConsecutiveFailures.
+	if genuineFailure || finalStatus == "completed" {
 		if _, err := p.q.ResetTaskTransientRetry(ctx, job.Input.Task.ID); err != nil {
 			slog.Warn("pool: reset transient retry count", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
+		}
+	}
+	// A completed run clears the genuine-failure streak.
+	if finalStatus == "completed" {
+		if err := p.q.ResetTaskFailureCount(ctx, job.Input.Task.ID); err != nil {
+			slog.Warn("pool: reset failure count", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
 		}
 	}
 
@@ -631,7 +664,7 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
 		Status:       finalStatus,
 		StoredInfo:   result.StoredInfo,
-		Notes:        result.Notes,
+		Notes:        runNotes,
 		InputTokens:  result.InputTokens,
 		OutputTokens: result.OutputTokens,
 		CostUsd:      result.CostUSD,
@@ -782,21 +815,20 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 				p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 			}
 		} else {
-			// No resolved label — unlock and block re-dispatch until a human acts.
-			p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
-			if p.pub != nil {
-				p.pub.Publish("task.needs_human", map[string]any{
-					"task_id": job.Input.Task.ID,
-					"run_id":  job.RunID,
-					"message": "Agent completed but outcome could not be resolved to a transition. Please review and move the task manually.",
-				})
-			}
+			// No resolved label: the agent finished without reporting an outcome
+			// (no signal_complete / OUTCOME: line) or reported one that maps to no
+			// unambiguous transition. Re-running would just repeat the same thing
+			// every sweep, so escalate: mark the run waiting_human and KEEP the
+			// lock until a human acts.
+			p.escalateNoOutcome(ctx, job, result, log)
 		}
 
 	case "failed":
-		// Genuine failure — the task stays on its current label; unlock it so the
-		// next sweep re-picks it (transient failures never reach here; they are
-		// handled by handleTransientFailure, which owns their lock/backoff).
+		// Genuine failure below the consecutive-failure limit — the task stays on
+		// its current label; unlock it so the next sweep re-picks it. Reaching
+		// the limit turns finalStatus into waiting_human in persistRunResult, so
+		// it never gets here. (Transient failures never reach here either; they
+		// are handled by handleTransientFailure, which owns their lock/backoff.)
 		p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 
 	case "waiting_human":

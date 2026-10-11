@@ -191,6 +191,7 @@ type Task struct {
 	PrMergeable             string     `json:"pr_mergeable"`
 	CostWarned              int64      `json:"cost_warned"`
 	MatchedRuleID           *string    `json:"matched_rule_id"`
+	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
 }
 
 type TaskDependency struct {

@@ -1522,7 +1522,7 @@ func TestPool_Success_ResetsRetryCount(t *testing.T) {
 		t.Fatalf("seed retry count: %v", err)
 	}
 
-	provider := &mockProvider{result: agent.Result{Status: "completed"}}
+	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "success"}}
 
 	_, stop := startPool(t, pool)
 
