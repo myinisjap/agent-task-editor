@@ -40,10 +40,10 @@ type CodexRunner struct {
 	// Reserved for future use; codex exec's -i/--image flag could attach these
 	// directly once wired up.
 	UploadDir string
-	// BackendURL / APIToken let the create_subtask MCP tool post children live to
-	// the backend REST API (same container). Set from server config.
+	// BackendURL lets the create_subtask MCP tool post children live to the
+	// backend REST API (same container). Set from server config. The bearer
+	// token is a per-run scoped one minted in MCPManager.Prepare.
 	BackendURL string
-	APIToken   string
 	// PriceResolver resolves model to USD-per-1M pricing so the tokens
 	// captured from "turn.completed" events (see classifyCodexJSON) can be
 	// priced into a Result.CostUSD — codex's own JSON output reports no
@@ -191,7 +191,6 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		var err error
 		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, nil, &SubtaskEnv{
 			BackendURL:  r.BackendURL,
-			APIToken:    r.APIToken,
 			TaskID:      input.Task.ID,
 			Enabled:     input.AgentConfig.SubtasksEnabled,
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
@@ -204,7 +203,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		entry := mcpServerEntry{
 			Command: r.MCP.ServerBinary,
 			Args:    []string{},
-			Env:     mcpSidecarEnv(input, r.BackendURL, r.APIToken),
+			Env:     mcpSidecarEnv(input, r.BackendURL, mcpCfg.Token),
 		}
 		codexHome, err = prepareCodexHome(input.RunID, &entry)
 		if err != nil {

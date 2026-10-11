@@ -38,6 +38,7 @@ triggers the "Release" workflow the same way.
 - **Usage help modal** now documents the Global spend ceiling section (daily/monthly caps, burn-rate forecast, and that tripping the cap halts new dispatch without killing in-flight runs).
 
 ### Security
+- **Admin `API_TOKEN` no longer handed to MCP sidecars** — the `create_subtask` sidecar and the chat board MCP used to receive the admin token via env and a predictable `/tmp/ate-*mcp*.json` file, readable by any agent running as the same user. Each run/chat session now gets a random per-run token (only its hash is kept, in memory) that is accepted solely for the routes that sidecar calls (`POST /tasks/{own task}/subtasks`; `GET /repos`, `GET /workflows`, `POST /tasks` for chat), is recorded as actor `agent:<run id>` / `chat:<session id>`, and is revoked when the run/session ends. MCP config files now live in private 0700 per-run directories. Open mode (no token configured) is unchanged.
 - **Go toolchain bumped 1.26.6 → 1.26.9** (CI and the backend Docker builder) — picks up the upstream fixes for ten standard-library vulnerabilities in `net/http`, `net/textproto` and `crypto/tls` (GO-2026-6603 … GO-2026-6612) that `govulncheck` flags as reachable from the server.
 
 ### Fixed
