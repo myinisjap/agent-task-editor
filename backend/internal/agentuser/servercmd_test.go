@@ -69,8 +69,10 @@ func TestServerChildrenDropCapsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	os.Chmod(dir, 0o777)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
 	self, _ := os.Executable()
 	bin := filepath.Join(dir, "test.bin")
 	data, err := os.ReadFile(self)
@@ -81,8 +83,12 @@ func TestServerChildrenDropCapsEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "out")
-	os.Mkdir(out, 0o777)
-	os.Chmod(out, 0o777)
+	if err := os.Mkdir(out, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(out, 0o777); err != nil {
+		t.Fatal(err)
+	}
 	caps := "+setuid,+setgid,+kill"
 	cmd := exec.Command(sp, "--reuid=1000", "--regid=1000", "--clear-groups",
 		"--inh-caps="+caps, "--ambient-caps="+caps, "--bounding-set=+setuid,+setgid,+kill", "--",
@@ -124,7 +130,10 @@ func e2eChild(t *testing.T, out string) {
 	}
 	run := func(name, hook string) {
 		script := filepath.Join(out, name+".sh")
-		os.WriteFile(script, []byte("#!/bin/sh\ncat /proc/self/status > "+filepath.Join(out, name+".status")+"\nexit 0\n"), 0o755)
+		body := "#!/bin/sh\ncat /proc/self/status > " + filepath.Join(out, name+".status") + "\nexit 0\n"
+		if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		cfg := exec.Command("git", "-C", repo, "config", "core.fsmonitor", script)
 		if o, err := cfg.CombinedOutput(); err != nil {
 			t.Fatalf("git config: %v %s", err, o)
