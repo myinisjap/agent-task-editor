@@ -50,7 +50,13 @@ func newTestRouterFull(t *testing.T, apiToken string, named map[string]string, m
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	return api.NewRouter(db, engine, hub, "*", apiToken, named, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, metricsPublic, "dev", false, nil, 5, nil, nil, "*")
+	return api.NewRouter(api.RouterDeps{
+		DB: db, Engine: engine, Hub: hub, CORSOrigins: "*", AllowedHosts: "*",
+		BearerToken: apiToken, NamedTokens: named,
+		MetricsToken: metricsToken, MetricsPublic: metricsPublic,
+		UploadDir: t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
+		Version: "dev", MaxWorkers: 5,
+	})
 }
 
 // TestHealthzEndpoint_UnauthenticatedEvenWithAPIToken verifies GET /healthz
@@ -270,7 +276,12 @@ func newWSTestRouter(t *testing.T, apiToken string, namedTokens map[string]strin
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	r := api.NewRouter(db, engine, hub, "*", apiToken, namedTokens, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", false, "dev", false, fakeRouterTerminal{}, 5, nil, nil, "")
+	r := api.NewRouter(api.RouterDeps{
+		DB: db, Engine: engine, Hub: hub, CORSOrigins: "*",
+		BearerToken: apiToken, NamedTokens: namedTokens,
+		UploadDir: t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
+		Version: "dev", Terminal: fakeRouterTerminal{}, MaxWorkers: 5,
+	})
 	return r, hub
 }
 
@@ -421,7 +432,12 @@ func newGuardedRouter(t *testing.T, apiToken, cors, allowedHosts string) http.Ha
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	return api.NewRouter(db, engine, hub, cors, apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", false, "dev", false, nil, 5, nil, nil, allowedHosts)
+	return api.NewRouter(api.RouterDeps{
+		DB: db, Engine: engine, Hub: hub, CORSOrigins: cors, AllowedHosts: allowedHosts,
+		BearerToken: apiToken,
+		UploadDir:   t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
+		Version: "dev", MaxWorkers: 5,
+	})
 }
 
 // TestCrossOriginTextPlainPost_DoesNotReachHandler is the drive-by-browser
