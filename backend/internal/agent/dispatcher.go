@@ -753,7 +753,7 @@ type runOptions struct {
 	humanReply *string
 }
 
-// startRun provisions the task's worktree if needed, creates the run row,
+// startRun creates the run row,
 // marks it as the task's active run, and submits the job to the pool. Shared
 // by the sweep dispatch path and DispatchReply. It reads as a sequence of
 // phases, each delegated to a helper below.
@@ -765,10 +765,11 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", fmt.Errorf("get repo: %w", err)
 	}
 
-	workDir, err := d.ensureWorktree(ctx, t, repo)
-	if err != nil {
-		return "", err
-	}
+	// Only a local stat happens here. A missing worktree is provisioned later,
+	// from the pool worker (see worktreeSetup / Pool.setupWorktree), because
+	// provisioning runs `git fetch --prune`, which can block on the network and
+	// must never stall the single-threaded sweep or a DispatchReply request.
+	workDir, haveWorktree := existingWorktree(t)
 
 	runID := uuid.NewString()
 	log = log.With("run_id", runID)
@@ -814,6 +815,10 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	}
 
 	attachmentRels, attachmentAbsPaths := d.resolveAttachments(t, workDir, log)
+	var setup func(context.Context) (WorktreeResult, error)
+	if !haveWorktree {
+		setup = d.worktreeSetup(t, repo, attachmentAbsPaths, log)
+	}
 	reviewComments := d.loadReviewComments(ctx, t.ID, log)
 	sourceComments := d.loadSourceComments(ctx, t.ID, log)
 
@@ -887,8 +892,9 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	}
 
 	enqueued := d.pool.Submit(Job{
-		RunID:    runID,
-		Provider: provider,
+		RunID:         runID,
+		Provider:      provider,
+		SetupWorktree: setup,
 		Input: RunInput{
 			RunID:              runID,
 			Task:               Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), RepoPath: repo.Path, Attachments: attachmentRels},
@@ -985,60 +991,77 @@ func (d *Dispatcher) escalateRuntimePrepFailure(ctx context.Context, t gen.Task,
 	return fmt.Errorf("%w: %v", ErrRuntimePrepFailed, prepErr)
 }
 
-// ensureWorktree returns the task's working directory, provisioning a git
-// worktree on first dispatch and reusing it across re-runs. Each task works in
-// its own worktree on its own branch so concurrent agents on the same repo don't
-// conflict. A subtask's branch is cut from its parent's branch (not the repo
-// base) so its work merges back cleanly.
+// existingWorktree returns the task's recorded worktree directory when it is
+// still present on disk. It only stats the filesystem (no git, no network), so
+// it is safe to call from the sweep.
 //
-// t.WorktreePath can be stale — pointing at a directory that no longer exists
-// — for a task that was archived (worktree reclaimed; see
+// t.WorktreePath can be stale -- pointing at a directory that no longer exists
+// -- for a task that was archived (worktree reclaimed; see
 // api/handlers.reclaimWorktreeOnArchive) and later unarchived, or one whose
 // worktree the periodic sweeper reclaimed out from under it (see
-// internal/worktreesweep, which never touches the DB row). Treating a
-// missing directory the same as an empty WorktreePath reprovisions it here
+// internal/worktreesweep, which never touches the DB row). A missing directory
+// is treated the same as an empty WorktreePath: the worker reprovisions it
 // rather than handing the agent a nonexistent cwd.
-func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Repo) (string, error) {
-	if workDir := t.WorktreePath; workDir != "" {
-		if fi, statErr := os.Stat(workDir); statErr == nil && fi.IsDir() {
-			return workDir, nil
+func existingWorktree(t gen.Task) (string, bool) {
+	workDir := t.WorktreePath
+	if workDir == "" {
+		return "", false
+	}
+	if fi, statErr := os.Stat(workDir); statErr == nil && fi.IsDir() {
+		return workDir, true
+	}
+	slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
+	return "", false
+}
+
+// worktreeSetup returns the closure the pool worker runs (see
+// Pool.setupWorktree) to provision the task's git worktree. Each task works in
+// its own worktree on its own branch so concurrent agents on the same repo
+// don't conflict. A subtask's branch is cut from its parent's branch (not the
+// repo base) so its work merges back cleanly.
+//
+// The closure runs `git fetch --prune` and `git worktree add -b`, both of
+// which mutate the repo's shared ref store, so it serializes against sibling
+// worktrees' commits/merges/branch-deletes/worktree-adds -- and the worktree
+// sweeper -- via the per-repo lock (see worktree.go's repoGitLocks doc comment
+// / issue #344). The lock is a plain, non-reentrant mutex, never taken inside
+// provisionWorktree itself, since subtasks.go already holds it around calls to
+// provisionWorktree/RemoveWorktree. The task row is updated while the lock is
+// still held so the sweeper never sees a directory without its recorded owner.
+func (d *Dispatcher) worktreeSetup(t gen.Task, repo gen.Repo, attachmentAbsPaths []string, log *slog.Logger) func(context.Context) (WorktreeResult, error) {
+	return func(ctx context.Context) (WorktreeResult, error) {
+		// parentBranchBase does a DB read; resolve it before taking the repo git
+		// lock so a slow DB doesn't hold the lock.
+		base := d.parentBranchBase(ctx, t)
+
+		var wtPath, branch, baseRef string
+		var perr error
+		lock := RepoGitLock(repo.Path)
+		lock.Lock()
+		defer lock.Unlock()
+		if base != "" {
+			wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
+		} else {
+			wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
 		}
-		slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
+		if perr != nil {
+			return WorktreeResult{}, fmt.Errorf("provision worktree: %w", perr)
+		}
+		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+			Branch:       branch,
+			WorktreePath: wtPath,
+			BaseRef:      baseRef,
+			ID:           t.ID,
+		}); err != nil {
+			return WorktreeResult{}, fmt.Errorf("persist worktree: %w", err)
+		}
+		if len(attachmentAbsPaths) > 0 {
+			if err := copyAttachmentsToWorktree(wtPath, attachmentAbsPaths); err != nil {
+				log.Warn("dispatcher: copy attachments to worktree", "err", err)
+			}
+		}
+		return WorktreeResult{Path: wtPath, Branch: branch}, nil
 	}
-
-	// parentBranchBase does a DB read; resolve it before taking the repo git
-	// lock so a slow DB doesn't hold the lock.
-	base := d.parentBranchBase(ctx, t)
-
-	var wtPath, branch, baseRef string
-	var perr error
-	// provisionWorktree(From) runs `git fetch --prune` and `git worktree add
-	// -b`, both of which mutate the repo's shared ref store. Serialize against
-	// sibling worktrees' commits/merges/branch-deletes/worktree-adds via the
-	// per-repo lock (see worktree.go's repoGitLocks doc comment / issue #344).
-	// The lock is a plain, non-reentrant mutex — never taken inside
-	// provisionWorktree itself, since subtasks.go already holds it around
-	// calls to provisionWorktree/RemoveWorktree.
-	lock := RepoGitLock(repo.Path)
-	lock.Lock()
-	if base != "" {
-		wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
-	} else {
-		wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
-	}
-	lock.Unlock()
-	if perr != nil {
-		return "", fmt.Errorf("provision worktree: %w", perr)
-	}
-	if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
-		Branch:       branch,
-		WorktreePath: wtPath,
-		BaseRef:      baseRef,
-		ID:           t.ID,
-	}); err != nil {
-		return "", fmt.Errorf("persist worktree: %w", err)
-	}
-	return wtPath, nil
 }
 
 // providerSupportsResume reports whether the given provider's session-resume
