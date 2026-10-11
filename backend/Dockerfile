@@ -59,9 +59,25 @@ RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl 
 # for one binary) — same reproducibility rationale as CLAUDE_CLI_VERSION
 # below: two builds of the same tag must produce the same agent runtime.
 # gh's release asset names TARGETARCH verbatim (linux_amd64 / linux_arm64).
+# Integrity: the tarball is verified against a sha256 pinned HERE (not one
+# fetched from the same release, which a compromised release could swap along
+# with the tarball). A version bump that forgets the hashes fails the build.
+# To bump: set GH_CLI_VERSION, then copy the linux_amd64 / linux_arm64 lines
+# from https://github.com/cli/cli/releases/download/v<ver>/gh_<ver>_checksums.txt
+# into the two ARGs below.
 ARG GH_CLI_VERSION=2.63.2
-RUN curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_${TARGETARCH}.tar.gz" \
-      | tar -xz -C /usr/local --strip-components=1 "gh_${GH_CLI_VERSION}_linux_${TARGETARCH}/bin/gh"
+ARG GH_CLI_SHA256_AMD64=912fdb1ca29cb005fb746fc5d2b787a289078923a29d0f9ec19a0b00272ded00
+ARG GH_CLI_SHA256_ARM64=0f31e2a8549c64b5c1679f0b99ce5e0dac7c91da9e86f6246adb8805b0f0b4bb
+RUN case "$TARGETARCH" in \
+      amd64) GH_SHA256="$GH_CLI_SHA256_AMD64" ;; \
+      arm64) GH_SHA256="$GH_CLI_SHA256_ARM64" ;; \
+      *) echo "unsupported TARGETARCH for gh: $TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    GH_TARBALL="gh_${GH_CLI_VERSION}_linux_${TARGETARCH}.tar.gz" && \
+    curl -fsSL -o "/tmp/$GH_TARBALL" "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/$GH_TARBALL" && \
+    echo "$GH_SHA256  /tmp/$GH_TARBALL" | sha256sum -c - && \
+    tar -xzf "/tmp/$GH_TARBALL" -C /usr/local --strip-components=1 "gh_${GH_CLI_VERSION}_linux_${TARGETARCH}/bin/gh" && \
+    rm -f "/tmp/$GH_TARBALL"
 
 # mise (per-repo language runtime manager): pinned release tarball, same
 # reproducibility reason as gh above. Uses the musl-static build rather than
@@ -71,14 +87,23 @@ RUN curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/
 # musl-static has no libc dependency, so it runs unchanged on any base. mise's
 # release assets name amd64 "x64" (not "amd64") but arm64 "arm64" verbatim —
 # an asymmetric mapping unlike gh's, so TARGETARCH needs translating first.
+# Integrity: verified against sha256 pinned here, same rationale as gh above.
+# To bump: set MISE_VERSION, then copy the linux-x64-musl / linux-arm64-musl
+# lines from https://github.com/jdx/mise/releases/download/v<ver>/SHASUMS256.txt
+# into the two ARGs below.
 ARG MISE_VERSION=2026.8.14
+ARG MISE_SHA256_AMD64=3832f39c325e343f81fe3d92b2447c5d1a5eea1bc85092bb7b6c25806222647e
+ARG MISE_SHA256_ARM64=06186cfbfe947049b21d58575fb0ea800cc26ed1375f20f4b678cb3a9d679437
 RUN case "$TARGETARCH" in \
-      amd64) MISE_ARCH=x64 ;; \
-      arm64) MISE_ARCH=arm64 ;; \
+      amd64) MISE_ARCH=x64; MISE_SHA256="$MISE_SHA256_AMD64" ;; \
+      arm64) MISE_ARCH=arm64; MISE_SHA256="$MISE_SHA256_ARM64" ;; \
       *) echo "unsupported TARGETARCH for mise: $TARGETARCH" >&2; exit 1 ;; \
     esac && \
-    curl -fsSL "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${MISE_ARCH}-musl.tar.gz" \
-      | tar -xz -C /tmp && mv /tmp/mise/bin/mise /usr/local/bin/mise && rm -rf /tmp/mise
+    MISE_TARBALL="mise-v${MISE_VERSION}-linux-${MISE_ARCH}-musl.tar.gz" && \
+    curl -fsSL -o "/tmp/$MISE_TARBALL" "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/$MISE_TARBALL" && \
+    echo "$MISE_SHA256  /tmp/$MISE_TARBALL" | sha256sum -c - && \
+    tar -xzf "/tmp/$MISE_TARBALL" -C /tmp && mv /tmp/mise/bin/mise /usr/local/bin/mise && \
+    rm -rf /tmp/mise "/tmp/$MISE_TARBALL"
 
 # uv (Python venv/package manager, used for the python pin — see
 # docs/runtime.md): copied as a prebuilt binary from its own pinned image,
