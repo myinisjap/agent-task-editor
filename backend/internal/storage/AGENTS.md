@@ -7,6 +7,7 @@ SQLite database layer: connection management, schema migrations, sqlc-generated 
 | File | Purpose |
 |---|---|
 | `db.go` | Opens SQLite connection with WAL mode; runs migrations |
+| `premigrate.go` | Pre-migration `VACUUM INTO` snapshot next to the DB file when migrations are pending (keeps 3; aborts startup on failure unless `SKIP_PREMIGRATE_SNAPSHOT=true`; skipped for `:memory:`/`file:` DSNs) |
 | `seed.go` | Seeds the default workflow on first startup |
 | `migrations/` | SQL migration files (`NNN_name.up.sql` / `NNN_name.down.sql`) |
 | `queries/` | Source SQL files for sqlc codegen |
