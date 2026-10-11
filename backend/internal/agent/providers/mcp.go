@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/scopedtoken"
 )
 
@@ -68,14 +69,28 @@ type SubtaskEnv struct {
 // "task-editor" in extraServers is ignored to avoid colliding with the sidecar entry.
 // The caller must call Cleanup when the run ends.
 func (m *MCPManager) Prepare(runID string, transitions []agent.TransitionHint, reviewComments []agent.ReviewComment, extraServers map[string]json.RawMessage, subtasks *SubtaskEnv) (*MCPRunConfig, error) {
-	resultFile := filepath.Join(os.TempDir(), fmt.Sprintf("ate-result-%s.json", runID))
+	// The per-run directory is created first because the sidecar's result file
+	// lives inside it: the sidecar runs as the agent user and /tmp is sticky,
+	// so a result file created directly in /tmp could not be removed by the
+	// server afterwards. Inside this server-owned dir it can.
+	dir, err := os.MkdirTemp("", "ate-mcp-")
+	if err != nil {
+		return nil, fmt.Errorf("create mcp dir: %w", err)
+	}
+	if err := agentuser.ShareDir(dir, true); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("share mcp dir: %w", err)
+	}
+	resultFile := filepath.Join(dir, "result.json")
 
 	transitionsJSON, err := json.Marshal(transitions)
 	if err != nil {
+		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("marshal transitions: %w", err)
 	}
 	reviewCommentsJSON, err := json.Marshal(reviewComments)
 	if err != nil {
+		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("marshal review comments: %w", err)
 	}
 
@@ -98,6 +113,7 @@ func (m *MCPManager) Prepare(runID string, transitions []agent.TransitionHint, r
 		// POST /tasks/<this task>/subtasks and dies in Cleanup.
 		tok, err := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindRun, RunID: runID, TaskID: subtasks.TaskID})
 		if err != nil {
+			_ = os.RemoveAll(dir)
 			return nil, fmt.Errorf("mint sidecar token: %w", err)
 		}
 		token = tok
@@ -118,21 +134,26 @@ func (m *MCPManager) Prepare(runID string, transitions []agent.TransitionHint, r
 
 	data, err := marshalMCPConfigWithExtras(cfg, extraServers)
 	if err != nil {
+		scopedtoken.Default.Revoke(token)
+		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("marshal mcp config: %w", err)
 	}
 	// The MCP config format forces the sidecar env (including the scoped
-	// token) into the file, so it lives in a private per-run 0700 directory
-	// (not a predictable shared /tmp path) and is removed by Cleanup.
-	dir, err := os.MkdirTemp("", "ate-mcp-")
-	if err != nil {
-		scopedtoken.Default.Revoke(token)
-		return nil, fmt.Errorf("create mcp dir: %w", err)
-	}
+	// token) into the file, so it lives in the private per-run directory
+	// (0700, or 0770 shared with the agent group when the agent runs as a
+	// separate user; never a predictable shared /tmp path) and is removed by
+	// Cleanup.
 	configFile := filepath.Join(dir, "mcp.json")
 	if err := os.WriteFile(configFile, data, 0600); err != nil {
 		scopedtoken.Default.Revoke(token)
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("write mcp config: %w", err)
+	}
+	// The sidecar is the agent's child and must read this file as the agent user.
+	if err := agentuser.ShareFile(configFile); err != nil {
+		scopedtoken.Default.Revoke(token)
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("share mcp config: %w", err)
 	}
 
 	return &MCPRunConfig{ConfigFile: configFile, ResultFile: resultFile, Token: token, dir: dir}, nil

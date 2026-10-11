@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 const bashOutputLimit = 1 << 20 // 1 MB
@@ -213,6 +214,7 @@ func executeLLMTool(ctx context.Context, repoPath string, policy CommandPolicy, 
 		}
 		cmd := exec.CommandContext(ctx, "sh", "-c", command)
 		cmd.Dir = repoPath
+		agentuser.Apply(cmd) // model-chosen commands never run as the server user
 		pipe, err := cmd.StdoutPipe()
 		if err != nil {
 			return fmt.Sprintf("error: %v", err), nil
@@ -359,6 +361,7 @@ func searchRepo(ctx context.Context, repoPath, pattern, glob string) (string, *a
 
 	cmd := exec.CommandContext(ctx, "rg", rgArgs...)
 	cmd.Dir = repoPath
+	agentuser.Apply(cmd)
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Sprintf("error: %v", err), nil

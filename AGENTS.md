@@ -33,6 +33,7 @@ agent-task-editor/
 │   ├── cmd/mcp-board/        # Standalone MCP server for creating board tickets from a chat client (see docs/board-mcp.md)
 │   └── internal/
 │       ├── agent/            # Provider system, pool, dispatcher
+│       ├── agentuser/        # Runs agent subprocesses as the unprivileged `agent` OS user (Credential switch + capability stripping); leaf package
 │       ├── api/              # Chi router, handlers, middleware
 │       ├── backup/           # Optional rotated local `VACUUM INTO` snapshot scheduler (see docs/backup.md)
 │       ├── config/           # YAML + env var config
@@ -85,6 +86,9 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `API_TOKENS` | _(none)_ | Named bearer tokens (`name1:token1,name2:token2`); resolves to an actor name recorded in `task_label_history.actor_id` for human-triggered transitions, surfaced via `GET /tasks/{id}/label-history` |
 | `ALLOWED_HOSTS` | _(none)_ | Extra `Host` header values (hostname or `host:port`, comma-separated) accepted while no `API_TOKEN`/`API_TOKENS` is set (DNS-rebinding protection). Always allowed: `localhost`, `127.0.0.1`, `::1`, `backend`, IP literals and hostnames from `CORS_ORIGINS`. `*` disables the check; ignored when a token is set |
 | `REPO_BASE_DIR` | _(none)_ | Restrict repo paths; empty = any path allowed (warns on startup) |
+| `AGENT_ISOLATION` | `true` | Run provider CLIs as a separate unprivileged `agent` OS user (server keeps `CAP_SETUID/SETGID/KILL`, children get none; falls back to the server user with a warning when it can't switch). `false` opts out. See `docs/getting-started.md#agent-user-isolation` |
+| `AGENT_UID` | `10001` | uid of the `agent` account (gid = `PGID`); set up by `entrypoint.sh`, read by `internal/agentuser` |
+| `AGENT_FIX_REPO_PERMS` | `auto` | `auto`/`always`/`never`: whether the entrypoint adds group-write to repos under `REPO_BASE_DIR` for the agent user |
 | `SKIP_PREMIGRATE_SNAPSHOT` | `false` | Set `true` to skip the automatic pre-migration `VACUUM INTO` snapshot (written next to the DB file whenever migrations are pending; last 3 kept) and to start anyway if it cannot be written. See `docs/backup.md#pre-migration-snapshots`. |
 | `METRICS_TOKEN` | _(none)_ | Dedicated bearer token for `GET /metrics`. Unset + API auth configured = API token(s) required; unset + no auth = open |
 | `METRICS_PUBLIC` | `false` | `true` leaves `/metrics` unauthenticated even when API auth is configured (opt-out for tokenless scrapers) |

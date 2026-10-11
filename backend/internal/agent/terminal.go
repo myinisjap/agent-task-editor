@@ -18,6 +18,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // ChatMCPProvisioner builds the per-provider CLI wiring that exposes extra MCP
@@ -336,6 +337,10 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	if venvBin != "" {
 		cmd.Env = prependChatPath(cmd.Env, venvBin)
 	}
+
+	// Run the chat CLI as the unprivileged agent user (no-op when unavailable).
+	// pty.Start merges Setsid/Setctty into the SysProcAttr set here.
+	agentuser.Apply(cmd)
 
 	tty, err := pty.Start(cmd)
 	if err != nil {

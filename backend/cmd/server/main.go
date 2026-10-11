@@ -14,6 +14,7 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
@@ -49,6 +50,10 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
 	cfgPath := os.Getenv("CONFIG_FILE")
+	// Decide whether agent subprocesses run as a separate unprivileged user
+	// (must precede anything that spawns an agent). Never fails startup.
+	agentuser.Init()
+
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		slog.Error("failed to load config", "err", err)

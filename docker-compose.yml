@@ -66,6 +66,15 @@ services:
       # are owned by you, not root. dev.sh sets these from `id -u`/`id -g`.
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # Agent processes (provider CLIs, chat terminals) run as a separate
+      # unprivileged 'agent' user so they can't read the server's DB, env
+      # secrets or gh credentials. AGENT_ISOLATION=false opts out; AGENT_UID
+      # overrides the default uid (10001); AGENT_FIX_REPO_PERMS=never stops the
+      # entrypoint from adding group-write to mounted repos. See
+      # docs/getting-started.md#agent-user-isolation.
+      - AGENT_ISOLATION=${AGENT_ISOLATION:-true}
+      - AGENT_UID=${AGENT_UID:-}
+      - AGENT_FIX_REPO_PERMS=${AGENT_FIX_REPO_PERMS:-auto}
       # Path to the MCP sidecar binary built into the image
       - MCP_SERVER_PATH=/app/mcp-server
       # Path to the board MCP binary; enables the create-task tools in chat sessions
@@ -138,6 +147,12 @@ services:
       # then this mount shares that session with the container.
       - ${HOME}/.claude:/home/node/.claude
       - ${HOME}/.claude.json:/home/node/.claude.json
+      # The same two paths again under the agent user's HOME: provider CLIs run
+      # as a separate unprivileged 'agent' user (see AGENT_ISOLATION below), so
+      # ~/.claude and ~/.claude.json stay fully read-write for them. Without
+      # these lines the entrypoint falls back to symlinks into /home/node.
+      - ${HOME}/.claude:/home/agent/.claude
+      - ${HOME}/.claude.json:/home/agent/.claude.json
       # GitHub CLI auth — run 'gh auth login' on your host machine first,
       # then this mount shares that credential with the container.
       # The :ro flag makes it read-only (the container never writes new auth).

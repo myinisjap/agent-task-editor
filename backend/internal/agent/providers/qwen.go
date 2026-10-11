@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // QwenRunner runs the Qwen Code CLI in headless mode (-p + stream-json).
@@ -159,7 +160,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	}
 	cmd := newCLICommand(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
-	cmd.Env = env
+	cmd.Env = agentuser.Env(env) // HOME etc. of the agent account when isolated
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

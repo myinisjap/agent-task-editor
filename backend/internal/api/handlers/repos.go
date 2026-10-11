@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/go-chi/chi/v5"
@@ -940,7 +941,7 @@ func setClaudeTrust(ctx context.Context, repoPath string) {
 	// directory and rename over the original — os.Rename is atomic on the same
 	// filesystem, so readers see either the old or the new file, never a
 	// half-written one. A crash mid-write leaves only an orphaned temp file.
-	if err := atomicWriteFile(claudeJSON, out, 0o600); err != nil {
+	if err := atomicWriteFile(claudeJSON, out, agentuser.SharedFileMode()); err != nil {
 		middleware.LoggerFromContext(ctx).Warn("failed to update claude trust dialog", "path", repoPath, "err", err)
 	}
 }
