@@ -29,7 +29,9 @@ whole agent config, which is a different scope from one task's budget.
   independently of the per-task budget. Post-run cleanup uses
   `UnblockIfNotBlockedSince(cfgID, startedAt)` rather than `Unblock`, so with
   `MAX_WORKERS > 1` a run that started before a sibling's fresh 429 cannot wipe
-  that block or the consecutive-429 counter (issue #344).
+  that block or the consecutive-429 counter (issue #344). Blocks are written
+  through to the `agent_rate_limits` table and reloaded (unexpired only) at
+  startup so a restart does not forget a fresh 429; store errors only log.
 - Claude "resets 6pm (TZ)" text is parsed to an exact `ResetAt` for retry
   scheduling; the binary embeds `time/tzdata` because the prod image has no
   zoneinfo.

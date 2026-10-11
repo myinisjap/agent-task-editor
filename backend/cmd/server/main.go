@@ -305,7 +305,8 @@ func main() {
 	if maxWorkers <= 0 {
 		maxWorkers = 5
 	}
-	rateLimits := agent.NewRateLimitRegistry()
+	// Blocks are persisted so a restart does not forget a provider 429.
+	rateLimits := agent.NewRateLimitRegistryWithStore(agent.NewSQLRateLimitStore(gen.New(db.SQL())))
 	pool := agent.NewPool(maxWorkers, db.SQL(), engine, pub)
 	pool.RateLimits = rateLimits
 	// Provider circuit breaker: a run classified auth pauses dispatch for its
