@@ -8,6 +8,11 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 )
 
+// resyncFrame is the pre-marshalled "resync" frame sent to a client that missed
+// one or more events because its send buffer was full; it tells the client to
+// refetch its state over REST. See Client.markLagged.
+var resyncFrame = []byte(`{"type":"resync","payload":{}}`)
+
 // Event is the JSON envelope sent to every WebSocket client.
 type Event struct {
 	Type    string         `json:"type"`
@@ -75,6 +80,9 @@ func (h *Hub) Publish(eventType string, payload map[string]any) {
 		default:
 			metrics.WSBroadcastDroppedTotal.Inc()
 			slog.Warn("ws client send buffer full, dropping event", "type", eventType)
+			// The client has missed an event and cannot tell. Flag it so the
+			// write pump sends a "resync" frame once the buffer drains.
+			c.markLagged()
 		}
 	}
 }

@@ -60,4 +60,15 @@ describe('useDashboard WS refresh debounce (#350)', () => {
 
     expect(dashboardGetMock).toHaveBeenCalledTimes(2)
   })
+
+  it('re-fetches on a resync event (dropped WS events or reconnect)', async () => {
+    renderHook(() => useDashboard())
+    await vi.waitFor(() => expect(dashboardGetMock).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(wsOnHandler).not.toBeNull())
+
+    wsOnHandler!({ type: 'resync', payload: {} })
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(dashboardGetMock).toHaveBeenCalledTimes(2)
+  })
 })
