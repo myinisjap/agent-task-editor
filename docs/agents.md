@@ -737,6 +737,13 @@ best-effort string matching, not a sandbox.** It does not prevent an agent from
 constructing a denied command indirectly (via `$()`, backticks, string
 concatenation, base64-decoded payloads, etc).
 
+> **These lists are guardrails, not a sandbox.** They match command prefixes, so an
+> agent can get around them with `sh -c '...'`, `env`, an interpreter, or a script
+> file. `Bash` is always allowed for the `claude` provider, and `codex_cli` and
+> `qwen_code` run with approvals and sandboxing off. Don't rely on these lists to
+> contain an untrusted or prompt-injected agent; run such agents only against
+> repos and credentials you are prepared to expose.
+
 - **Denylist always wins:** if a command matches any `command_denylist` pattern, it
   is refused regardless of `command_allowlist`.
 - **Allowlist, if non-empty, is exclusive:** a command must match at least one
