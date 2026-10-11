@@ -182,3 +182,29 @@ describe('AgentConfigForm permission mode field', () => {
     expect(screen.queryByText(/this mode skips approval prompts entirely/i)).not.toBeInTheDocument()
   })
 })
+
+describe('AgentConfigForm labels and field order', () => {
+  it('labels the cost field as a cumulative per-task budget', () => {
+    renderForm(baseForm(), [providerConfig('pc-1', 'claude')])
+    expect(screen.getByText('Max cost per task (USD)')).toBeInTheDocument()
+    expect(screen.queryByText(/max cost per run/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/cumulative across all runs of a task/i)).toBeInTheDocument()
+  })
+
+  it('renders labels and system prompt before the tuning fields', () => {
+    renderForm(baseForm(), [providerConfig('pc-1', 'claude')])
+    const pos = (text: string) => {
+      const el = screen.getByText(text, { selector: 'label' })
+      return el
+    }
+    const before = (a: HTMLElement, b: HTMLElement) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    const labels = pos('Labels')
+    const prompt = pos('System prompt')
+    expect(before(pos('Provider config'), labels)).toBe(true)
+    expect(before(labels, prompt)).toBe(true)
+    for (const knob of ['Timeout (secs)', 'Max tokens', 'Max turns', 'Max retries', 'Max cost per task (USD)']) {
+      expect(before(prompt, pos(knob))).toBe(true)
+    }
+  })
+})

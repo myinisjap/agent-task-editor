@@ -22,6 +22,9 @@ triggers the "Release" workflow the same way.
 ### Changed
 - **Default workflow opens a PR at `review`** — fresh installs now seed the `review` label with `create_pr`, so the happy path (Approve → `done`) no longer ends with work stranded on a local `ate-…` branch. Repos without a forge remote or auth skip it harmlessly (logged). Existing workflows are unchanged; `docs/getting-started.md` now covers it and the manual Create PR button.
 
+- Agent config form: the cost field is now labelled "Max cost per task (USD)" (it is a cumulative budget across all runs of a task, not per run), and the Labels and System prompt fields now appear right after Provider config, ahead of the tuning fields.
+
+
 ### Added
 - **Godot as a per-repo agent runtime** — the Repos page's Agent runtime section can now pin a `godot` version (e.g. `4.3-stable`), installed via `mise` like the other languages, so agents can run `godot --headless` for imports, GDScript tests, or exports. **Detect from repo** suggests the version from a Godot 4 `project.godot`. See `docs/runtime.md#godot`.
 - **Outbound webhook notifications when a task needs a human** — set `NOTIFY_WEBHOOK_URL` to POST a JSON payload whenever a task hits `task.needs_human`, arrives on a human-gate label (e.g. `review-plan`), crosses the cost-warning threshold, or the global cost budget trips. Disabled by default; debounced (`NOTIFY_DEBOUNCE`, default 5m) so a retry storm doesn't spam the endpoint, and includes a deep link to the task when `NOTIFY_BASE_URL` is set. See `docs/websocket.md#outbound-webhook` and `docs/getting-started.md#notifications`.

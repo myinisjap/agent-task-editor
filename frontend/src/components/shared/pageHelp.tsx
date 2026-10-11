@@ -316,8 +316,8 @@ export function AgentsHelp() {
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Budgets, subtasks &amp; effort</h3>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">max_cost_usd</code> sets a per-run
-          spending cap (pre-dispatch guard on every provider; a mid-run kill switch too, on
+          <code className="bg-slate-800 rounded px-1 font-mono">max_cost_usd</code> sets a per-task
+          spending cap, cumulative across all of a task's runs (pre-dispatch guard on every provider; a mid-run kill switch too, on
           providers that support it — see the <strong>Pricing</strong> page's help). Enabling{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">subtasks_enabled</code> lets the
           agent split its work into child tasks via the <code className="bg-slate-800 rounded px-1 font-mono">create_subtask</code>{' '}
