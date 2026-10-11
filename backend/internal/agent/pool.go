@@ -35,6 +35,20 @@ type Job struct {
 	RunID    string
 	Provider Provider
 	Input    RunInput
+	// SetupWorktree, when non-nil, provisions the task's git worktree. The
+	// pool worker calls it before toolchain prep and the provider, so the
+	// network-bound `git fetch` never runs in the dispatcher's sweep. On
+	// success the worker fills in Input.RepoPath, Input.Task.Branch and
+	// Input.Runtime.WorktreeDir from the result. Nil means the worktree already
+	// exists and Input.RepoPath is final.
+	SetupWorktree func(ctx context.Context) (WorktreeResult, error)
+}
+
+// WorktreeResult is what Job.SetupWorktree reports about the provisioned
+// worktree.
+type WorktreeResult struct {
+	Path   string
+	Branch string
 }
 
 // Pool manages a bounded set of concurrent agent runs.
@@ -292,6 +306,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		return
 	}
 
+	var ok bool
+	if job, ok = p.setupWorktree(ctx, job, rc, log, startedAt); !ok {
+		return
+	}
+
 	// Prepare the repo's pinned toolchains (mise install / uv venv), if any,
 	// here — in this run's own goroutine, under runCtx (the run's lifecycle
 	// context: cancellable via Cancel, torn down on pool shutdown, but never
@@ -419,6 +438,37 @@ func (p *Pool) startRun(ctx context.Context, job Job, log *slog.Logger, startedA
 		})
 	}
 	return true
+}
+
+// setupWorktree provisions the task's worktree (job.SetupWorktree) in this
+// run's own goroutine, so the network-bound `git fetch --prune` never blocks
+// the dispatcher's sweep. It returns the job with the worktree-dependent input
+// fields filled in, or false after ending the run: a human cancel is recorded
+// as cancelled, and any other failure goes through handleTransientFailure
+// (bounded backed-off retry, then waiting_human), which releases the dispatch
+// lock only if this run still owns it. No-op when the worktree already existed.
+func (p *Pool) setupWorktree(ctx context.Context, job Job, rc *runControl, log *slog.Logger, startedAt time.Time) (Job, bool) {
+	if job.SetupWorktree == nil {
+		return job, true
+	}
+	res, err := job.SetupWorktree(ctx)
+	if err != nil {
+		if rc.cancelled.Load() {
+			p.handleCancelled(job, Result{}, startedAt, CancelReason(rc.reason.Load()))
+			return job, false
+		}
+		log.Error("pool: worktree setup failed", "err", err)
+		p.handleTransientFailure(ctx, job, Result{}, fmt.Sprintf("worktree setup failed: %v", err), startedAt)
+		return job, false
+	}
+	job.Input.RepoPath = res.Path
+	job.Input.Task.Branch = res.Branch
+	if spec := job.Input.Runtime; spec != nil {
+		cp := *spec
+		cp.WorktreeDir = res.Path
+		job.Input.Runtime = &cp
+	}
+	return job, true
 }
 
 // prepareRuntime installs the repo's pinned toolchains (job.Input.Runtime,

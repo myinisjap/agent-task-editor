@@ -29,7 +29,7 @@ var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 //   - the pool's safety-net commit / push (pool.go)
 //   - the subtask coordinator's merge-back / branch teardown (subtasks.go)
 //   - the dispatcher's worktree provisioning — `git fetch --prune` + `git
-//     worktree add -b` (dispatcher.go's ensureWorktree)
+//     worktree add -b` (dispatcher.go's worktreeSetup, run from the pool worker)
 //   - cmd/server/main.go's engine.OnTerminal — branch push + worktree teardown
 //     for non-subtask tasks
 //   - the worktree sweeper's reclaim pass — `git worktree remove --force` and
