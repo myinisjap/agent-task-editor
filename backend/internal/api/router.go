@@ -16,20 +16,69 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
-// NewRouter builds and returns the application router.
+// RouterDeps carries everything NewRouter needs. Named fields replace a long
+// positional parameter list in which adjacent string/bool/int values were easy
+// to transpose.
 //
-// backupDir/backupInterval/backupKeep are only used to render the
-// auto_backup health check (informational) — the actual scheduler is
-// started separately in cmd/server/main.go. version/checkForUpdates
-// configure the /healthz and /health/providers "Version"/"Update available"
-// rows — see internal/health and cmd/server/main.go's ldflags-stamped
-// Version var. maxWorkers is the global MAX_WORKERS setting (informational
-// only here) — the dashboard uses it as the effective per-repo concurrency
-// limit fallback for repos with no repos.max_concurrent_runs override.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, metricsPublic bool, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness, blockReasons handlers.BlockReasonResolver, allowedHosts string) http.Handler {
+// BackupDir/BackupInterval/BackupKeep are only used to render the auto_backup
+// health check (informational) — the actual scheduler is started separately in
+// cmd/server/main.go. Version/CheckForUpdates configure the /healthz and
+// /health/providers "Version"/"Update available" rows — see internal/health
+// and cmd/server/main.go's ldflags-stamped Version var. MaxWorkers is the
+// global MAX_WORKERS setting (informational only here) — the dashboard uses it
+// as the effective per-repo concurrency limit fallback for repos with no
+// repos.max_concurrent_runs override.
+type RouterDeps struct {
+	DB     *storage.DB
+	Engine *workflow.Engine
+	Hub    *ws.Hub
+
+	CORSOrigins  string
+	AllowedHosts string
+
+	BearerToken  string
+	NamedTokens  map[string]string
+	MetricsToken string
+	// MetricsPublic leaves /metrics unauthenticated even when API auth is on.
+	MetricsPublic bool
+
+	RepoBaseDir string
+	UploadDir   string
+	MCPBinary   string
+	LLMBaseURL  string
+	LLMAPIKey   string
+
+	BackupDir      string
+	BackupInterval time.Duration
+	BackupKeep     int
+
+	Version         string
+	CheckForUpdates bool
+	MaxWorkers      int
+
+	// Canceller cancels in-flight runs (the worker pool).
+	Canceller handlers.RunCanceller
+	// ReplyDispatcher delivers human replies to waiting runs (the dispatcher).
+	ReplyDispatcher handlers.ReplyDispatcher
+	// DispatcherLiveness reports dispatch-loop liveness (the dispatcher). It
+	// may also implement handlers.GlobalCostReporter.
+	DispatcherLiveness handlers.DispatcherLiveness
+	BlockReasons       handlers.BlockReasonResolver
+	// Terminal backs the chat terminal WebSocket; nil makes it return 503.
+	Terminal handlers.Terminal
+}
+
+// NewRouter builds and returns the application router.
+func NewRouter(deps RouterDeps) http.Handler {
+	db, engine, hub := deps.DB, deps.Engine, deps.Hub
+	corsOrigins, allowedHosts := deps.CORSOrigins, deps.AllowedHosts
+	bearerToken, namedTokens := deps.BearerToken, deps.NamedTokens
+	metricsToken, metricsPublic := deps.MetricsToken, deps.MetricsPublic
+	repoBaseDir, uploadDir := deps.RepoBaseDir, deps.UploadDir
+	dispatcherLiveness := deps.DispatcherLiveness
 	q := gen.New(db.SQL())
 
-	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher, blockReasons)
+	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -47,17 +96,17 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	if gc, ok := dispatcherLiveness.(handlers.GlobalCostReporter); ok {
 		globalCost = gc
 	}
-	dashH := handlers.NewDashboardHandler(q, maxWorkers, globalCost)
+	dashH := handlers.NewDashboardHandler(q, deps.MaxWorkers, globalCost)
 	outcomeQualityH := handlers.NewOutcomeQualityHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
-	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates, dispatcherLiveness)
+	healthH := handlers.NewHealthHandler(q, db, deps.MCPBinary, repoBaseDir, deps.LLMBaseURL, deps.LLMAPIKey, deps.BackupDir, deps.BackupInterval, deps.BackupKeep, deps.Version, deps.CheckForUpdates, dispatcherLiveness)
 	backupH := handlers.NewBackupHandler(db)
 	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	logRetentionSettingsH := handlers.NewLogRetentionSettingsHandler(q)
 	costWarningSettingsH := handlers.NewCostWarningSettingsHandler(q)
 	modelPricingH := handlers.NewModelPricingHandler(q, db.SQL())
 	wsTicketH := handlers.NewWSTicketHandler(hub)
-	chatH := handlers.NewChatHandler(q, hub, term, bearerToken != "" || len(namedTokens) > 0, corsOrigins)
+	chatH := handlers.NewChatHandler(q, hub, deps.Terminal, bearerToken != "" || len(namedTokens) > 0, corsOrigins)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)

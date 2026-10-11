@@ -363,7 +363,33 @@ func main() {
 		slog.Info("chat terminal idle reaper enabled", "idle_timeout", cfg.ChatIdleTimeout)
 	}
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, cfg.MetricsPublic, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher, blockReasons, cfg.AllowedHosts)
+	router := api.NewRouter(api.RouterDeps{
+		DB:                 db,
+		Engine:             engine,
+		Hub:                hub,
+		CORSOrigins:        cfg.CORSOrigins,
+		AllowedHosts:       cfg.AllowedHosts,
+		BearerToken:        cfg.APIToken,
+		NamedTokens:        cfg.APITokens,
+		MetricsToken:       cfg.MetricsToken,
+		MetricsPublic:      cfg.MetricsPublic,
+		RepoBaseDir:        cfg.RepoBaseDir,
+		UploadDir:          uploadDir,
+		MCPBinary:          cfg.MCPBinary,
+		LLMBaseURL:         cfg.LLMBaseURL,
+		LLMAPIKey:          cfg.LLMAPIKey,
+		BackupDir:          cfg.BackupDir,
+		BackupInterval:     cfg.BackupInterval,
+		BackupKeep:         cfg.BackupKeep,
+		Version:            Version,
+		CheckForUpdates:    cfg.UpdateCheckEnabled,
+		MaxWorkers:         maxWorkers,
+		Canceller:          pool,
+		ReplyDispatcher:    dispatcher,
+		DispatcherLiveness: dispatcher,
+		BlockReasons:       blockReasons,
+		Terminal:           terminal,
+	})
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
