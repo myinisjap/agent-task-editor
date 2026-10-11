@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -23,14 +23,6 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
-
-// validGitRef matches HEAD, HEAD~N, HEAD^N, 40/64-char hex SHAs, and safe branch/tag names.
-// First char must be alphanumeric to prevent flag injection (e.g. --no-index).
-var validGitRef = regexp.MustCompile(`^(HEAD([~^][0-9]+)?|[0-9a-f]{40,64}|[a-zA-Z0-9][a-zA-Z0-9._/-]*)$`)
-
-func isValidGitRef(ref string) bool {
-	return validGitRef.MatchString(ref) && !strings.Contains(ref, "..")
-}
 
 // RepoEventPublisher publishes repo lifecycle events (e.g. async clone
 // completion) to connected WebSocket clients. Satisfied by *ws.Hub.
@@ -315,7 +307,7 @@ func (h *ReposHandler) validateExistingRepoPath(w http.ResponseWriter, r *http.R
 		Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
 		return false
 	}
-	if err := agentuser.ServerCommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+	if err := gitcmd.Run(r.Context(), path, "rev-parse", "--git-dir"); err != nil {
 		Err(w, http.StatusBadRequest, "path is not a git repository")
 		return false
 	}
@@ -475,7 +467,7 @@ func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
 		fail(fmt.Sprintf("failed to create parent directory: %v", err))
 		return
 	}
-	if out, err := agentuser.ServerCommandContext(ctx, "git", "clone", remoteURL, destPath).CombinedOutput(); err != nil {
+	if out, err := gitcmd.Combined(ctx, "", "clone", remoteURL, destPath); err != nil {
 		fail(fmt.Sprintf("git clone failed: %s", strings.TrimSpace(string(out))))
 		return
 	}
@@ -793,7 +785,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the path is still a valid git repository.
-	if err := agentuser.ServerCommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+	if err := gitcmd.Run(r.Context(), path, "rev-parse", "--git-dir"); err != nil {
 		Err(w, http.StatusBadRequest, "path is not a git repository")
 		return
 	}
@@ -862,12 +854,12 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 	if ref == "" {
 		ref = "HEAD"
 	}
-	if !isValidGitRef(ref) {
+	if !gitcmd.IsValidRef(ref) {
 		Err(w, http.StatusBadRequest, "invalid git ref")
 		return
 	}
 
-	out, err := agentuser.ServerCommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", "--", ref).Output()
+	out, err := gitcmd.Output(r.Context(), repo.Path, "ls-tree", "-r", "--name-only", "--", ref)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to read git tree")
 		return

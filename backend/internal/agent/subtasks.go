@@ -1,10 +1,11 @@
 package agent
 
 import (
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
+
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 
@@ -167,7 +168,7 @@ func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, pa
 	// Ensure the parent has a worktree to merge into (it was provisioned at plan
 	// dispatch; re-provision defensively if it was pruned).
 	parentDir := parent.WorktreePath
-	if parentDir == "" || !dirExistsAgent(parentDir) {
+	if parentDir == "" || !gitcmd.DirExists(parentDir) {
 		wtPath, _, baseRef, perr := provisionWorktree(ctx, repoPath, parent.ID, parent.Title)
 		if perr != nil {
 			log.Warn("subtasks: provision parent worktree", "err", perr)
@@ -336,11 +337,6 @@ func short8(id string) string {
 		return id[:8]
 	}
 	return id
-}
-
-func dirExistsAgent(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.IsDir()
 }
 
 func terminalLabelSet(labels []gen.WorkflowLabel) map[string]bool {

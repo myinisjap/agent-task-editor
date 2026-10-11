@@ -11,12 +11,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"regexp"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"strings"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
-	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	_ "github.com/myinisjap/agent-task-editor/backend/internal/ghclient" // registers the GitHub forge.Forge implementation
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -116,33 +114,20 @@ func (s *Service) CreateForTask(ctx context.Context, task gen.Task, repo gen.Rep
 // in: its worktree if that still exists, otherwise the repo's main clone (which
 // keeps the branch ref after the worktree is torn down on a terminal label).
 func GitDir(task gen.Task, repo gen.Repo) string {
-	if task.WorktreePath == "" || !dirExists(task.WorktreePath) {
+	if task.WorktreePath == "" || !gitcmd.DirExists(task.WorktreePath) {
 		return repo.Path
 	}
 	return task.WorktreePath
-}
-
-func dirExists(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.IsDir()
-}
-
-// validGitRef matches HEAD, HEAD~N, HEAD^N, 40/64-char hex SHAs, and safe branch/tag names.
-// First char must be alphanumeric to prevent flag injection (e.g. --no-index).
-var validGitRef = regexp.MustCompile(`^(HEAD([~^][0-9]+)?|[0-9a-f]{40,64}|[a-zA-Z0-9][a-zA-Z0-9._/-]*)$`)
-
-func isValidGitRef(ref string) bool {
-	return validGitRef.MatchString(ref) && !strings.Contains(ref, "..")
 }
 
 // BranchCommits returns the commit subjects unique to the task's branch
 // relative to its base ref (best-effort — empty slice if the git log fails or
 // either ref is invalid).
 func BranchCommits(ctx context.Context, gitDir, baseRef, branch string) []string {
-	if !isValidGitRef(baseRef) || !isValidGitRef(branch) {
+	if !gitcmd.IsValidRef(baseRef) || !gitcmd.IsValidRef(branch) {
 		return nil
 	}
-	out, err := agentuser.ServerCommandContext(ctx, "git", "-C", gitDir, "log", "--format=%s", baseRef+".."+branch).Output()
+	out, err := gitcmd.Output(ctx, gitDir, "log", "--format=%s", baseRef+".."+branch)
 	if err != nil {
 		return nil
 	}

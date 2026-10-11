@@ -18,7 +18,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -188,7 +188,7 @@ func (s *Sweeper) reconcileRepo(ctx context.Context, repoPath string, keep map[s
 		// it's serialized under the same per-repo lock.
 		lock := agent.RepoGitLock(repoPath)
 		lock.Lock()
-		_, _ = agentuser.ServerCommandContext(ctx, "git", "-C", repoPath, "worktree", "prune").CombinedOutput()
+		_, _ = gitcmd.Combined(ctx, repoPath, "worktree", "prune")
 		lock.Unlock()
 	}
 }
@@ -232,7 +232,7 @@ func (s *Sweeper) ownedNow(ctx context.Context, id string) bool {
 // reconcileRepo then runs `git worktree prune` to clear the stale
 // administration entry.
 func removeWorktree(ctx context.Context, repoPath, wtPath string) bool {
-	if out, err := agentuser.ServerCommandContext(ctx, "git", "-C", repoPath, "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
+	if out, err := gitcmd.Combined(ctx, repoPath, "worktree", "remove", "--force", wtPath); err != nil {
 		slog.Warn("worktreesweep: git worktree remove failed; falling back to direct removal", "path", wtPath, "err", err, "out", string(out))
 		if rmErr := os.RemoveAll(wtPath); rmErr != nil {
 			slog.Warn("worktreesweep: failed to remove orphaned worktree dir", "path", wtPath, "err", rmErr)
