@@ -29,7 +29,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude`, `qwen_code`, `codex_cli`, and `opencode`** — see [Session Resume](#session-resume) below. Default on. |
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
-| `max_cost_usd` | Advisory per-task cost budget cap in USD, checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. On `claude`/`qwen_code`, also enforced mid-run as a kill switch that cancels an in-flight run over budget. See [Cost Budgets](#cost-budgets) below. |
+| `max_cost_usd` | Advisory per-task cost budget cap in USD (cumulative across all runs of a task, not per run), checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. On `claude`/`qwen_code`, also enforced mid-run as a kill switch that cancels an in-flight run over budget. See [Cost Budgets](#cost-budgets) below. |
 | `effort` | Optional reasoning effort level: `""` (default/unset), `low`, `medium`, `high`, `xhigh`, or `max`. **`claude` (full) and `codex_cli` (partial, clamped)** — see [Effort](#effort) below. Ignored by `qwen_code`, `opencode`, `anthropic`, and `llm`. |
 
 ## Provider Configs
