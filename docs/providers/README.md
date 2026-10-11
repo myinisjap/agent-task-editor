@@ -44,7 +44,8 @@ receives:
   exact list, or `backend/internal/agent/providers/cli.go` for the
   authoritative allowlists.
 - Whatever the agent config's own `env` field sets explicitly (filtered
-  through a small execution-hijack denylist — `PATH`, `LD_PRELOAD`, `HOME`,
+  through a small execution-hijack denylist — `PATH`, `HOME`, `NODE_OPTIONS`, `BASH_ENV`, `LD_*`, `DYLD_*`, `GIT_*`,
+  interpreter-path vars, CA-bundle vars,
   etc. can't be overridden this way).
 
 This means a backend-only secret (e.g. the deprecated `llm`/`anthropic`
