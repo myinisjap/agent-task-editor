@@ -131,8 +131,10 @@ Delete a task and all associated runs/logs. Also tears down the per-task git wor
 Move the task to a different label via the workflow engine. Goes through normal transition validation — `to_label` must be a valid transition from the current label.
 
 ```json
-{ "to_label": "label-name", "note": "optional note" }
+{ "to_label": "label-name", "note": "optional note", "force": false }
 ```
+
+Set `"force": true` for a **force move**: an escape hatch for a wedged task that bypasses the workflow's transition table and moves the task to *any* label of its workflow (including back to `not_ready`). It is for human API callers only (agents move labels in-process, not through this endpoint). It still refuses with `409` while the task's agent run is live, returns `400` if `to_label` is not a label of the task's workflow, and otherwise behaves like a normal move: `active_agent_run_id` is cleared, `task.label_changed` is published, and terminal / create-PR hooks fire. The history row is recorded with trigger `human`, the token's actor, and a note of `Forced move` (or `Forced move: <your note>`).
 
 Returns `400` if no transition exists, `403` if the transition requires human auth or the target label is `agent_ignore`, `409` if the task's active agent run is still live (`pending`/`running`) — cancel the run first (see issue #244).
 

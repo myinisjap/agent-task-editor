@@ -82,6 +82,9 @@ var (
 	ErrGateRequired = errors.New("transition requires human approval")
 	ErrAgentIgnored = errors.New("label is marked agent_ignore; agents cannot move tasks here")
 	ErrTaskNotFound = errors.New("task not found")
+	// ErrUnknownLabel means a forced move targeted a label that does not exist
+	// in the task's workflow.
+	ErrUnknownLabel = errors.New("label does not exist in the task's workflow")
 	// ErrStale means the task's label changed out from under this transition
 	// between validation and the compare-and-swap write — a concurrent transition
 	// won the race. Callers should refresh and retry.
@@ -152,6 +155,31 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 // final UPDATE is already a compare-and-swap on the label, so the check is
 // atomic. An empty expectedFrom behaves exactly like Transition.
 func (e *Engine) TransitionExpecting(ctx context.Context, taskID, toLabel string, trigger TransitionTrigger, actorID, note, expectedFrom string) error {
+	return e.transition(ctx, taskID, toLabel, trigger, actorID, note, expectedFrom, false)
+}
+
+// ForcedNotePrefix is prepended to the note of every label move made through
+// ForceTransition, so the forced move is visible in task_label_history.
+const ForcedNotePrefix = "Forced move"
+
+// ForceTransition moves a task to any label of its workflow, bypassing the
+// transition table (an escape hatch for wedged tasks). It is human-only by
+// construction: the trigger recorded is always TriggerHuman. Everything else
+// matches Transition: the compare-and-swap label update, clearing
+// active_agent_run_id, the history row, the task.label_changed event, and the
+// OnTerminal / OnCreatePR / OnLeaveNotReady hooks. The history note is
+// ForcedNotePrefix, followed by ": " and the caller's note when non-empty.
+// Returns ErrUnknownLabel if toLabel is not a label of the task's workflow.
+// Callers are responsible for refusing the move while an agent run is live.
+func (e *Engine) ForceTransition(ctx context.Context, taskID, toLabel, actorID, note string) error {
+	n := ForcedNotePrefix
+	if note != "" {
+		n += ": " + note
+	}
+	return e.transition(ctx, taskID, toLabel, TriggerHuman, actorID, n, "", true)
+}
+
+func (e *Engine) transition(ctx context.Context, taskID, toLabel string, trigger TransitionTrigger, actorID, note, expectedFrom string, force bool) error {
 	task, err := e.q.GetTask(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
@@ -160,17 +188,19 @@ func (e *Engine) TransitionExpecting(ctx context.Context, taskID, toLabel string
 		return fmt.Errorf("%w: task is on %q, expected %q", ErrStale, task.Label, expectedFrom)
 	}
 
-	trans, err := e.q.GetWorkflowTransition(ctx, gen.GetWorkflowTransitionParams{
-		WorkflowID: task.WorkflowID,
-		FromLabel:  task.Label,
-		ToLabel:    toLabel,
-	})
-	if err != nil {
-		return ErrNoTransition
-	}
+	if !force {
+		trans, err := e.q.GetWorkflowTransition(ctx, gen.GetWorkflowTransitionParams{
+			WorkflowID: task.WorkflowID,
+			FromLabel:  task.Label,
+			ToLabel:    toLabel,
+		})
+		if err != nil {
+			return ErrNoTransition
+		}
 
-	if trigger == TriggerAgent && trans.TriggerType == "human" {
-		return ErrGateRequired
+		if trigger == TriggerAgent && trans.TriggerType == "human" {
+			return ErrGateRequired
+		}
 	}
 
 	labels, err := e.q.ListWorkflowLabels(ctx, task.WorkflowID)
@@ -179,14 +209,19 @@ func (e *Engine) TransitionExpecting(ctx context.Context, taskID, toLabel string
 	}
 	toIsTerminal := false
 	toCreatePR := false
+	found := false
 	for _, l := range labels {
 		if l.Name == toLabel {
+			found = true
 			if l.AgentIgnore != 0 && trigger == TriggerAgent {
 				return ErrAgentIgnored
 			}
 			toIsTerminal = l.IsTerminal != 0
 			toCreatePR = l.CreatePr != 0
 		}
+	}
+	if force && !found {
+		return ErrUnknownLabel
 	}
 
 	fromLabel := task.Label

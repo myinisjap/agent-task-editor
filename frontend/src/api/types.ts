@@ -301,6 +301,11 @@ export interface paths {
                     "application/json": {
                         to_label: string;
                         note?: string;
+                        /**
+                         * @description Force move: bypass the workflow's transition table and move the task to any label of its workflow (escape hatch for wedged tasks). Recorded in label history with the note prefixed "Forced move". Still refused with 409 while an agent run is live; 400 if to_label is not a label of the task's workflow.
+                         * @default false
+                         */
+                        force?: boolean;
                     };
                 };
             };

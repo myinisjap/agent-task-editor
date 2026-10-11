@@ -548,6 +548,7 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ToLabel string `json:"to_label"`
 		Note    string `json:"note"`
+		Force   bool   `json:"force"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -567,7 +568,16 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
 		return
 	}
-	if err := h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, middleware.ActorFromContext(r.Context()), body.Note); err != nil {
+	actor := middleware.ActorFromContext(r.Context())
+	if body.Force {
+		// Every authenticated API caller is a human token holder today (there
+		// are no agent-scoped tokens; agents move labels in-process, not via
+		// this endpoint), so no extra actor check is possible or needed.
+		err = h.engine.ForceTransition(r.Context(), taskID, body.ToLabel, actor, body.Note)
+	} else {
+		err = h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, actor, body.Note)
+	}
+	if err != nil {
 		handleTransitionError(w, err)
 		return
 	}
@@ -845,6 +855,8 @@ func handleTransitionError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, workflow.ErrNoTransition):
 		Err(w, http.StatusBadRequest, "no transition defined between these labels")
+	case errors.Is(err, workflow.ErrUnknownLabel):
+		Err(w, http.StatusBadRequest, "label does not exist in the task's workflow")
 	case errors.Is(err, workflow.ErrGateRequired):
 		Err(w, http.StatusForbidden, "transition requires human approval")
 	case errors.Is(err, workflow.ErrAgentIgnored):

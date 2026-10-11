@@ -9,6 +9,7 @@ import TaskHeader from '../components/task-detail/TaskHeader'
 import { humanActionsFor } from '../lib/humanGate'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
+import ForceMoveControl from '../components/task-detail/ForceMoveControl'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
@@ -520,6 +521,12 @@ export default function TaskDetailPage() {
               onStop={handleStop}
               onRerun={handleRerun}
               actionPending={actionPending}
+            />
+
+            <ForceMoveControl
+              task={task}
+              labels={workflow?.labels ?? []}
+              onMoved={(updated) => { setTask(updated); refreshRuns(); refreshLabelHistory() }}
             />
 
             <LabelHistoryList history={labelHistory} />
