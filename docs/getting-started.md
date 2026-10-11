@@ -140,6 +140,12 @@ These are read directly via `os.Getenv` by `internal/forge/gitea`, not through t
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API). **Deprecated**: the `llm` provider is disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using it. |
 | `LLM_API_KEY` | _(empty)_ | API key for the `llm` or `anthropic` providers. **Deprecated**: both providers are disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using them. |
 
+### Shutdown
+
+| Variable | Default | Description |
+|---|---|---|
+| `SHUTDOWN_DRAIN_TIMEOUT` | `60s` | On SIGTERM/SIGINT, how long in-flight agent runs may keep going (no new runs start) before the remainder are cancelled and recorded as `interrupted`. `0` interrupts immediately. Interrupted runs are not failures: the task stays on its label, its lock is released, and it re-dispatches after restart (resuming the provider session when the agent config has `resume_sessions` on and the provider supports it, otherwise re-running normally). Runs left running by a crash or SIGKILL become `interrupted` on the next boot. Set your container's stop grace period (docker compose `stop_grace_period`) above this value or the runtime will SIGKILL mid-drain. |
+
 ### Chat Terminal Sessions
 
 Each Chat-tab session keeps a live interactive CLI subprocess (plus a scrollback buffer) running across WebSocket disconnects so a browser refresh reattaches to the same session. By default nothing bounds how many of these accumulate or how long an unattached one stays alive; the following opt-in settings cap that growth.

@@ -65,6 +65,8 @@ Providers stream log entries on `logCh` as they run. The pool drains this channe
 - `waiting_human` — agent called `request_human`, hit a login/auth error, or exhausted its transient-retry budget; `Message` surfaces to the UI
 - `cancelled` — a human stopped the run via `POST /tasks/{id}/runs/{run_id}/cancel` (see "Run Cancellation" below). Terminal; excluded from usage/dashboard aggregates.
 
+- `interrupted` — the server shut down (drain window expired, root ctx cancelled) or crashed mid-run (boot sweep, `storage.RecoverInterruptedRuns`). Not a failure: no retry/failure counters touched, task not paused, lock released, session id persisted so the re-dispatch resumes it. `Pool.Shutdown(drain)` stops `Submit`, interrupts queued jobs, waits for workers, then cancels stragglers with `CancelReasonShutdown`. Excluded from usage/dashboard aggregates.
+
 ## Run Cancellation (Kill Switch)
 
 `Pool.Cancel(runID)` stops an in-flight run. The pool keeps a per-run cancel

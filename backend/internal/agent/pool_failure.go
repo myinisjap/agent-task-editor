@@ -204,12 +204,16 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
 
 	note := reason.note()
+	status := "cancelled"
+	if reason == CancelReasonShutdown {
+		status = "interrupted"
+	}
 	costUnknown := int64(0)
 	if result.CostUnknown {
 		costUnknown = 1
 	}
 	if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
-		Status:       "cancelled",
+		Status:       status,
 		Notes:        &note,
 		InputTokens:  result.InputTokens,
 		OutputTokens: result.OutputTokens,
@@ -220,11 +224,15 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 	}); err != nil {
 		log.Error("pool: set run cancelled", "err", err)
 	}
-	metrics.RunTerminalTotal.WithLabelValues("cancelled").Inc()
+	metrics.RunTerminalTotal.WithLabelValues(status).Inc()
 	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
 
-	if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
-		log.Warn("pool: reset transient retry (cancel)", "err", err)
+	// An interrupted run leaves every retry/failure counter exactly as it was:
+	// the process going away says nothing about the task or the infra.
+	if reason != CancelReasonShutdown {
+		if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
+			log.Warn("pool: reset transient retry (cancel)", "err", err)
+		}
 	}
 
 	if reason == CancelReasonUser {
@@ -238,22 +246,23 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 		p.pub.Publish("task.agent_done", map[string]any{
 			"task_id": job.Input.Task.ID,
 			"run_id":  job.RunID,
-			"status":  "cancelled",
+			"status":  status,
 		})
 		// Nudge boards (which may not be subscribed to this task) to refetch so
 		// the newly-paused state is reflected without a reload.
 		p.pub.Publish("task.updated", map[string]any{"id": job.Input.Task.ID})
 	}
 
-	// The agent config isn't why we stopped, so clear any rate-limit backoff.
+	// The agent config isn't why we stopped, so clear any rate-limit backoff
+	// (except on shutdown, which says nothing about the config either way).
 	// Conditional on no newer 429 having landed since this run started (see
 	// issue #344) so a concurrently-finishing sibling run's fresh block isn't
 	// clobbered.
-	if p.RateLimits != nil {
+	if p.RateLimits != nil && reason != CancelReasonShutdown {
 		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.ID, startedAt)
 	}
 
-	log.Info("pool: agent run cancelled", "reason", reason)
+	log.Info("pool: agent run cancelled", "reason", reason, "status", status)
 }
 
 // hasLoginError scans the last 20 log entries for an auth/login error signal.

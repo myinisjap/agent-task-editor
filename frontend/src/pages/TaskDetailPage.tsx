@@ -227,7 +227,7 @@ export default function TaskDetailPage() {
   const needsHuman = activeRun?.status === 'waiting_human' && activeRun.id !== retriedRunId
   const isRunning = activeRun?.status === 'running'
   const latestRun = runs[0]
-  const canRerun = !!(latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed' || latestRun.status === 'cancelled'))
+  const canRerun = !!(latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed' || latestRun.status === 'cancelled' || latestRun.status === 'interrupted'))
   const isHumanGateLabel = task
     ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
     : false

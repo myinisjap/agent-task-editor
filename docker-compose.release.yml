@@ -15,6 +15,9 @@
 # `id -u`/`id -g`; they default to 1000:1000.
 services:
   backend:
+    # Must exceed SHUTDOWN_DRAIN_TIMEOUT (default 60s) plus a few seconds for
+    # HTTP/outbox shutdown, or the runtime SIGKILLs mid-drain.
+    stop_grace_period: 90s
     image: ghcr.io/myinisjap/agent-task-editor-backend:${ATE_VERSION:-latest}${ATE_CLI_SUFFIX:-}
     pull_policy: always
     # Bound to loopback by default: API_TOKEN ships commented out, so a

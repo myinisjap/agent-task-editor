@@ -77,6 +77,18 @@ type Pool struct {
 	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
 	mu      sync.Mutex
 	running map[string]*runControl
+
+	// draining is set by Shutdown: Submit refuses new jobs and workers stop
+	// picking queued ones. stop wakes idle workers; hardStop is set once the
+	// drain window has expired so a run registering late is cancelled too.
+	draining atomic.Bool
+	hardStop atomic.Bool
+	stop     chan struct{}
+	stopOnce sync.Once
+	// ShutdownGrace bounds how long Shutdown waits, after cancelling the
+	// remaining runs, for them to record their interrupted status. Defaults
+	// to 30s; a field so tests can shorten it.
+	ShutdownGrace time.Duration
 }
 
 // CancelReason distinguishes why a run was cancelled, so handleCancelled can
@@ -94,10 +106,17 @@ const (
 	// container memory crossed its critical threshold — not the task's
 	// fault. Leaves the task unpaused so it's re-dispatched normally.
 	CancelReasonResourceConstraint
+	// CancelReasonShutdown is the server shutting down (drain window expired,
+	// or the root context was cancelled). The run ends "interrupted", not
+	// failed or cancelled: it consumes no retry budget, leaves the task
+	// unpaused with its lock released, and re-dispatches after restart.
+	CancelReasonShutdown
 )
 
 func (r CancelReason) note() string {
 	switch r {
+	case CancelReasonShutdown:
+		return "Run interrupted by server shutdown. Not a failure of this task: it will be re-dispatched (resuming the prior session when supported) after restart."
 	case CancelReasonResourceConstraint:
 		return "Run stopped: container was low on memory (likely a runaway subprocess, e.g. a test run). Not a failure of this task — it will be retried."
 	default:
@@ -107,6 +126,8 @@ func (r CancelReason) note() string {
 
 func (r CancelReason) String() string {
 	switch r {
+	case CancelReasonShutdown:
+		return "shutdown"
 	case CancelReasonResourceConstraint:
 		return "resource_constraint"
 	default:
@@ -135,7 +156,88 @@ func NewPool(maxWorkers int, db *sql.DB, engine *workflow.Engine, pub Publisher)
 		engine:     engine,
 		pub:        pub,
 		running:    make(map[string]*runControl),
+		stop:       make(chan struct{}),
+
+		ShutdownGrace: 30 * time.Second,
 	}
+}
+
+// Draining reports whether Shutdown has begun, i.e. the pool no longer
+// accepts new jobs.
+func (p *Pool) Draining() bool {
+	return p.draining.Load()
+}
+
+// Shutdown stops the pool gracefully and blocks until every worker has
+// exited. It stops accepting jobs (Submit returns false), records jobs still
+// queued but never started as interrupted, and lets in-flight runs keep going
+// for up to drain. Runs still going after that are cancelled with
+// CancelReasonShutdown, so they end "interrupted" with their dispatch lock
+// released, and are given ShutdownGrace to record that. Callers must keep the
+// pool's context alive (and the DB open) until Shutdown returns, and only then
+// cancel it. Safe to call more than once.
+func (p *Pool) Shutdown(drain time.Duration) {
+	p.draining.Store(true)
+	p.stopOnce.Do(func() { close(p.stop) })
+
+	// Queued jobs hold a pending run row and the task lock but never started.
+	for {
+		select {
+		case job := <-p.jobs:
+			p.handleCancelled(job, Result{}, time.Now(), CancelReasonShutdown)
+			continue
+		default:
+		}
+		break
+	}
+	metrics.PoolQueueDepth.Set(0)
+
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(drain)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return
+	case <-timer.C:
+	}
+
+	p.hardStop.Store(true)
+	p.mu.Lock()
+	ids := make([]string, 0, len(p.running))
+	for id := range p.running {
+		ids = append(ids, id)
+	}
+	p.mu.Unlock()
+	slog.Warn("pool: drain window expired, interrupting remaining runs", "component", "pool", "count", len(ids))
+	for _, id := range ids {
+		p.cancelWithReason(id, CancelReasonShutdown)
+	}
+
+	grace := time.NewTimer(p.ShutdownGrace)
+	defer grace.Stop()
+	select {
+	case <-done:
+	case <-grace.C:
+		slog.Warn("pool: runs did not stop within the shutdown grace period; boot recovery will mark them interrupted", "component", "pool")
+	}
+}
+
+// cancelledBy reports whether the run's context was cancelled and why: an
+// explicit Cancel* call carries its own reason, while a context cancelled
+// without one is the pool's parent context going away (process shutdown).
+func cancelledBy(rc *runControl, runCtx context.Context) (CancelReason, bool) {
+	if rc.cancelled.Load() {
+		return CancelReason(rc.reason.Load()), true
+	}
+	if runCtx.Err() != nil {
+		return CancelReasonShutdown, true
+	}
+	return 0, false
 }
 
 // Cancel signals the in-flight run identified by runID to stop, as a
@@ -229,6 +331,9 @@ func (p *Pool) Start(ctx context.Context) {
 
 // Submit enqueues a job. Returns false if the queue is full (job was not enqueued).
 func (p *Pool) Submit(job Job) bool {
+	if p.draining.Load() {
+		return false
+	}
 	select {
 	case p.jobs <- job:
 		metrics.PoolQueueDepth.Set(float64(len(p.jobs)))
@@ -261,7 +366,13 @@ func (p *Pool) worker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-p.stop:
+			return
 		case job := <-p.jobs:
+			if p.draining.Load() {
+				p.handleCancelled(job, Result{}, time.Now(), CancelReasonShutdown)
+				continue
+			}
 			p.runGuarded(ctx, job)
 		}
 	}
@@ -294,6 +405,10 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// It also inherits the worker ctx, so pool shutdown still tears the run down.
 	runCtx, cancel := context.WithCancel(ctx)
 	rc := p.registerRun(job.RunID, cancel)
+	if p.hardStop.Load() {
+		// Registered after Shutdown's cancel sweep; make sure it is stopped too.
+		p.cancelWithReason(job.RunID, CancelReasonShutdown)
+	}
 	metrics.PoolBusyWorkers.Inc()
 	defer func() {
 		metrics.PoolBusyWorkers.Dec()
@@ -329,8 +444,12 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// marked "cancelled" (not failed), consumes no retry budget, and is not
 	// re-dispatched. Checked before error classification because a cancelled
 	// provider typically returns a context/transient-looking error.
-	if rc.cancelled.Load() {
-		p.handleCancelled(job, result, startedAt, CancelReason(rc.reason.Load()))
+	if reason, ok := cancelledBy(rc, ctx); ok {
+		if reason == CancelReasonShutdown {
+			// Keep the provider session so the re-dispatch can resume it.
+			p.persistRunSession(job, result, log)
+		}
+		p.handleCancelled(job, result, startedAt, reason)
 		return
 	}
 
@@ -453,8 +572,8 @@ func (p *Pool) setupWorktree(ctx context.Context, job Job, rc *runControl, log *
 	}
 	res, err := job.SetupWorktree(ctx)
 	if err != nil {
-		if rc.cancelled.Load() {
-			p.handleCancelled(job, Result{}, startedAt, CancelReason(rc.reason.Load()))
+		if reason, ok := cancelledBy(rc, ctx); ok {
+			p.handleCancelled(job, Result{}, startedAt, reason)
 			return job, false
 		}
 		log.Error("pool: worktree setup failed", "err", err)

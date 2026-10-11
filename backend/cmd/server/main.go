@@ -119,26 +119,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Mark any runs left in 'running' or 'pending' from a previous crash as
-	// 'failed'. 'pending' runs are ones the dispatcher created but the pool never
-	// started (or the process died between creating the run and enqueuing it);
-	// without this sweep they'd linger forever. The following statement then
-	// clears every task's active_agent_run_id, so these tasks become dispatchable
-	// again on the next sweep.
-	if res, err := db.SQL().ExecContext(seedCtx,
-		`UPDATE agent_runs SET status='failed', completed_at=CURRENT_TIMESTAMP WHERE status IN ('running','pending')`); err != nil {
-		slog.Error("failed to sweep stuck runs", "err", err)
+	// Mark runs left 'running'/'pending' by a previous crash as 'interrupted'
+	// (not 'failed') and clear every task's dispatch lock so they re-dispatch;
+	// see storage.RecoverInterruptedRuns.
+	if n, err := storage.RecoverInterruptedRuns(seedCtx, db); err != nil {
+		slog.Error("failed to recover interrupted runs", "err", err)
 		os.Exit(1)
-	} else if n, _ := res.RowsAffected(); n > 0 {
-		slog.Warn("marked stuck runs as failed", "count", n)
-	}
-
-	// Clear active_agent_run_id for all tasks — the worker pool has restarted
-	// so nothing is genuinely active from the previous process.
-	if _, err := db.SQL().ExecContext(seedCtx,
-		`UPDATE tasks SET active_agent_run_id = NULL WHERE active_agent_run_id IS NOT NULL`); err != nil {
-		slog.Error("failed to clear active agent runs", "err", err)
-		os.Exit(1)
+	} else if n > 0 {
+		slog.Warn("marked stuck runs as interrupted", "count", n)
 	}
 
 	// WebSocket hub — satisfies workflow.Publisher and agent.Publisher
@@ -481,7 +469,11 @@ func main() {
 	worktreeSweeper := worktreesweep.New(termQ, cfg.WorktreeSweepInterval)
 	slog.Info("worktree sweeper starting", "interval", cfg.WorktreeSweepInterval)
 
-	go pool.Start(ctx)
+	poolDone := make(chan struct{})
+	go func() {
+		defer close(poolDone)
+		pool.Start(ctx)
+	}()
 	// Durable side-effect outbox worker (push, PR creation, write-back); it
 	// stops when ctx is cancelled on shutdown.
 	sideEffectsDone := make(chan struct{})
@@ -490,7 +482,14 @@ func main() {
 		engine.RunSideEffects(ctx)
 	}()
 	go memguard.New(pool).Run(ctx)
-	go dispatcher.Run(ctx)
+	// The dispatcher has its own context so shutdown can stop it starting new
+	// runs while in-flight ones drain (the root ctx stays live until then).
+	dispatchCtx, stopDispatch := context.WithCancel(ctx)
+	dispatchDone := make(chan struct{})
+	go func() {
+		defer close(dispatchDone)
+		dispatcher.Run(dispatchCtx)
+	}()
 	// Auto-resume paused providers once their existing health check passes.
 	go providerPauses.RunRecheck(ctx, 30*time.Second, func(provider string) bool {
 		return health.ProviderReady(provider, health.Input{LLMBaseURL: cfg.LLMBaseURL, LLMAPIKey: cfg.LLMAPIKey}, nil)
@@ -526,6 +525,20 @@ func main() {
 	// restart loop can be traced to its source (docker stop, OOM, an external
 	// kill) instead of just showing a bare "shutting down".
 	slog.Info("shutting down...", "signal", sig.String(), "uptime", time.Since(startTime).Round(time.Second).String())
+
+	// Shutdown order:
+	//  1. stop the dispatcher (no new runs) and wait for its sweep to finish;
+	//  2. drain the pool: in-flight runs keep going for SHUTDOWN_DRAIN_TIMEOUT
+	//     with HTTP (agent MCP sidecars post to it) and the side-effect worker
+	//     still up, then the rest are cancelled and recorded as interrupted;
+	//  3. cancel the root context, stopping every other background loop;
+	//  4. shut down HTTP, wait for the side-effect worker to record its state;
+	//  5. wait for the pool's workers, so nothing touches the DB after the
+	//     deferred db.Close().
+	stopDispatch()
+	<-dispatchDone
+	slog.Info("draining in-flight agent runs", "timeout", cfg.ShutdownDrainTimeout.String())
+	pool.Shutdown(cfg.ShutdownDrainTimeout)
 	cancel()
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -538,6 +551,11 @@ func main() {
 	select {
 	case <-sideEffectsDone:
 	case <-shutCtx.Done():
+	}
+	select {
+	case <-poolDone:
+	case <-shutCtx.Done():
+		slog.Warn("agent pool workers did not exit before the shutdown deadline")
 	}
 }
 

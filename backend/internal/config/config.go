@@ -100,6 +100,13 @@ type Config struct {
 	// killed, scrollback released). 0 (the default) disables idle reaping.
 	ChatIdleTimeout time.Duration `yaml:"chat_idle_timeout"`
 
+	// ShutdownDrainTimeout is how long SIGTERM/SIGINT lets in-flight agent
+	// runs keep going (dispatch stopped, HTTP still up) before the remaining
+	// runs are cancelled and recorded as "interrupted". 0 skips the drain and
+	// interrupts runs immediately. Default 60s. Container orchestrators must
+	// allow at least this long before SIGKILL (docker stop_grace_period).
+	ShutdownDrainTimeout time.Duration `yaml:"shutdown_drain_timeout"`
+
 	// GitTimeout bounds each individual shell-out to `git` performed by the
 	// agent package (worktree provisioning, fetch, commit, push, merge,
 	// branch cleanup). Without a bound, a stalled remote or an interactive
@@ -166,6 +173,7 @@ func Defaults() Config {
 		WorktreeSweepInterval: 10 * time.Minute,
 		ChatMaxSessions:       0,
 		ChatIdleTimeout:       0,
+		ShutdownDrainTimeout:  60 * time.Second,
 		GitTimeout:            120 * time.Second,
 		NotifyDebounce:        5 * time.Minute,
 	}
@@ -340,6 +348,13 @@ func Load(path string) (Config, error) {
 			cfg.ChatIdleTimeout = d
 		} else {
 			slog.Warn("invalid CHAT_IDLE_TIMEOUT; using default", "value", v, "default", cfg.ChatIdleTimeout)
+		}
+	}
+	if v := os.Getenv("SHUTDOWN_DRAIN_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			cfg.ShutdownDrainTimeout = d
+		} else {
+			slog.Warn("invalid SHUTDOWN_DRAIN_TIMEOUT; using default", "value", v, "default", cfg.ShutdownDrainTimeout)
 		}
 	}
 	if v := os.Getenv("GIT_TIMEOUT"); v != "" {

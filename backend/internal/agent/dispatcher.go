@@ -917,8 +917,13 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		},
 	})
 	if !enqueued {
+		// Refused because the server is shutting down: not a failure.
+		dropStatus := "failed"
+		if d.pool.Draining() {
+			dropStatus = "interrupted"
+		}
 		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-			Status: "failed",
+			Status: dropStatus,
 			ID:     runID,
 		})
 		// Owner-scoped: this run just claimed the lock (SetTaskActiveRun above),

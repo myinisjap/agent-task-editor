@@ -1049,7 +1049,7 @@ components:
         id:               { type: string }
         task_id:          { type: string }
         agent_config_id:  { type: string, nullable: true, description: "Agent config that ran this task; set NULL if that config is later deleted." }
-        status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled] }
+        status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled, interrupted] }
         feedback:         { type: string, nullable: true }
         stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }
         notes:            { type: string, nullable: true, description: "Human/agent notes attached to the run; null when none." }

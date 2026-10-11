@@ -4891,7 +4891,7 @@ export interface components {
             /** @description Agent config that ran this task; set NULL if that config is later deleted. */
             agent_config_id: string | null;
             /** @enum {string} */
-            status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled";
+            status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
             feedback?: string | null;
             /** @description Free-form info the agent stored for this run (via the MCP store_info tool); null when none. */
             stored_info?: string | null;
