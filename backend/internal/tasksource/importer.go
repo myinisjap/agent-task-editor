@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intake"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -17,7 +19,7 @@ import (
 
 // Publisher is satisfied by *ws.Hub — it sends events to all connected clients.
 type Publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // Importer polls all repos with issue sync enabled and keeps their imported
@@ -298,7 +300,7 @@ func (im *Importer) sweepRepo(ctx context.Context, repo gen.Repo, rules []gen.In
 				log.Warn("issue import: clear gone state failed", "task_id", task.ID, "err", err)
 			} else {
 				task.SourceState = ""
-				im.hub.Publish("task.updated", map[string]any{"id": task.ID})
+				im.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: task.ID})
 			}
 		}
 
@@ -412,11 +414,11 @@ func (im *Importer) createNewTasks(ctx context.Context, repo gen.Repo, sourceNam
 		}
 		ids = append(ids, task.ID)
 	}
-	im.hub.Publish("task.created_bulk", map[string]any{
-		"repo_id": repo.ID,
-		"source":  sourceName,
-		"count":   len(created),
-		"ids":     ids,
+	im.hub.Publish(wsevent.TypeTaskCreatedBulk, wsevent.TaskCreatedBulk{
+		RepoID: repo.ID,
+		Source: sourceName,
+		Count:  len(created),
+		IDs:    ids,
 	})
 
 	return len(created)
@@ -654,7 +656,7 @@ func (im *Importer) applyFieldUpdates(ctx context.Context, task *gen.Task, item 
 	}
 	*task = updated
 	log.Info("issue import: task updated from source", "task_id", task.ID, "ref", item.Ref)
-	im.hub.Publish("task.updated", map[string]any{"id": task.ID})
+	im.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: task.ID})
 	return true
 }
 
@@ -694,9 +696,9 @@ func (im *Importer) ingestComments(ctx context.Context, source CommentSource, re
 			continue
 		}
 		inserted++
-		im.hub.Publish("task.source_comment_added", map[string]any{
-			"task_id":    task.ID,
-			"comment_id": created.ID,
+		im.hub.Publish(wsevent.TypeTaskSourceCommentAdded, wsevent.TaskSourceCommentAdded{
+			TaskID:    task.ID,
+			CommentID: created.ID,
 		})
 	}
 	if inserted > 0 {
@@ -747,7 +749,7 @@ func (im *Importer) applyGoneAction(ctx context.Context, repo gen.Repo, task gen
 		log.Warn("issue import: set gone state failed", "task_id", task.ID, "ref", task.SourceRef, "err", err)
 		return false
 	}
-	im.hub.Publish("task.updated", map[string]any{"id": task.ID})
+	im.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: task.ID})
 	log.Info("issue import: task flagged gone", "task_id", task.ID, "ref", task.SourceRef)
 
 	activeRun := task.ActiveAgentRunID != nil && *task.ActiveAgentRunID != ""

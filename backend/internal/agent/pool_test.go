@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -38,11 +40,11 @@ type testPub struct {
 	payloads []map[string]any
 }
 
-func (p *testPub) Publish(eventType string, payload map[string]any) {
+func (p *testPub) Publish(eventType string, payload any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
-	p.payloads = append(p.payloads, payload)
+	p.payloads = append(p.payloads, wsevent.ToMap(payload))
 }
 
 func (p *testPub) hasEvent(name string) bool {

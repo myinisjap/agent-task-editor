@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -98,10 +100,10 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Resul
 		}
 		p.releaseLock(bg, job.Input.Task.ID, job.RunID)
 		if p.pub != nil {
-			p.pub.Publish("task.agent_done", map[string]any{
-				"task_id": job.Input.Task.ID,
-				"run_id":  job.RunID,
-				"status":  finalStatus,
+			p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
+				TaskID: job.Input.Task.ID,
+				RunID:  job.RunID,
+				Status: finalStatus,
 			})
 		}
 	}
@@ -243,14 +245,14 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 	p.releaseLock(bg, job.Input.Task.ID, job.RunID)
 
 	if p.pub != nil {
-		p.pub.Publish("task.agent_done", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"status":  status,
+		p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
+			TaskID: job.Input.Task.ID,
+			RunID:  job.RunID,
+			Status: status,
 		})
 		// Nudge boards (which may not be subscribed to this task) to refetch so
 		// the newly-paused state is reflected without a reload.
-		p.pub.Publish("task.updated", map[string]any{"id": job.Input.Task.ID})
+		p.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: job.Input.Task.ID})
 	}
 
 	// The agent config isn't why we stopped, so clear any rate-limit backoff

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -311,7 +313,7 @@ func (c *SubtaskCoordinator) publishUpdated(ids ...string) {
 		return
 	}
 	for _, id := range ids {
-		c.pub.Publish("task.updated", map[string]any{"id": id})
+		c.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: id})
 	}
 }
 
@@ -319,10 +321,10 @@ func (c *SubtaskCoordinator) publishConflict(childID, parentID string, files []s
 	if c.pub == nil {
 		return
 	}
-	c.pub.Publish("task.subtask_conflict", map[string]any{
-		"task_id":   childID,
-		"parent_id": parentID,
-		"files":     files,
+	c.pub.Publish(wsevent.TypeTaskSubtaskConflict, wsevent.TaskSubtaskConflict{
+		TaskID:   childID,
+		ParentID: parentID,
+		Files:    files,
 	})
 	c.publishUpdated(childID, parentID)
 }

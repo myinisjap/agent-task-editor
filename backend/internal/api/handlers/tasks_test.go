@@ -53,7 +53,7 @@ type apiTask struct {
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
 type noopPub struct{}
 
-func (noopPub) Publish(string, map[string]any) {}
+func (noopPub) Publish(string, any) {}
 
 // fakeCanceller records the run IDs it was asked to cancel and reports whether
 // each was "active" via the found map. saturated controls what Saturated()

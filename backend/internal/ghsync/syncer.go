@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -20,7 +22,7 @@ import (
 
 // Publisher is satisfied by *ws.Hub — it sends events to all connected clients.
 type Publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // Syncer polls all eligible tasks on a fixed interval and refreshes their
@@ -285,10 +287,10 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 
 	log.Info("ghsync: git state updated", "old_state", task.GitState, "new_state", state)
 
-	s.hub.Publish("task.git_state_changed", map[string]any{
-		"task_id":   task.ID,
-		"git_state": state,
-		"pr_url":    storeURL,
+	s.hub.Publish(wsevent.TypeTaskGitStateChanged, wsevent.TaskGitStateChanged{
+		TaskID:   task.ID,
+		GitState: state,
+		PRURL:    storeURL,
 	})
 
 	// Status write-back to the source GitHub issue (opt-in per repo, no-op if

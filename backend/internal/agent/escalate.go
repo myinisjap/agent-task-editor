@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -92,11 +94,11 @@ func (l runLifecycle) announceNeedsHuman(taskID, runID string, reason Escalation
 	if l.pub == nil {
 		return
 	}
-	l.pub.Publish("task.needs_human", map[string]any{
-		"task_id": taskID,
-		"run_id":  runID,
-		"reason":  string(reason),
-		"message": msg,
+	l.pub.Publish(wsevent.TypeTaskNeedsHuman, wsevent.TaskNeedsHuman{
+		TaskID:  taskID,
+		RunID:   runID,
+		Reason:  string(reason),
+		Message: msg,
 	})
 }
 
@@ -157,10 +159,10 @@ func (l runLifecycle) escalate(ctx context.Context, e escalation) error {
 
 	l.announceNeedsHuman(e.TaskID, e.RunID, e.Reason, e.Message)
 	if e.PublishDone && l.pub != nil {
-		l.pub.Publish("task.agent_done", map[string]any{
-			"task_id": e.TaskID,
-			"run_id":  e.RunID,
-			"status":  "waiting_human",
+		l.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
+			TaskID: e.TaskID,
+			RunID:  e.RunID,
+			Status: "waiting_human",
 		})
 	}
 	return firstErr

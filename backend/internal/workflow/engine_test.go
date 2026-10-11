@@ -18,7 +18,7 @@ type noopPublisher struct {
 	events []string
 }
 
-func (p *noopPublisher) Publish(eventType string, _ map[string]any) {
+func (p *noopPublisher) Publish(eventType string, _ any) {
 	p.events = append(p.events, eventType)
 }
 

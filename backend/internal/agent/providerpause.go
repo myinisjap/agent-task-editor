@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 )
 
 // PausedProvider describes one provider kind whose dispatch is paused because
@@ -101,9 +103,9 @@ func (r *ProviderPauseRegistry) publish(provider string, paused bool) {
 	if r.pub == nil {
 		return
 	}
-	r.pub.Publish("provider.pause_changed", map[string]any{
-		"provider": provider,
-		"paused":   paused,
+	r.pub.Publish(wsevent.TypeProviderPauseChanged, wsevent.ProviderPauseChanged{
+		Provider: provider,
+		Paused:   paused,
 	})
 }
 
