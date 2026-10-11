@@ -55,6 +55,10 @@ services:
       - PORT=8080
       - DB_PATH=/data/agent-task-editor.db
       - CORS_ORIGINS=http://localhost:5173
+      # Optional: extra Host header values accepted while API_TOKEN is unset
+      # (DNS-rebinding protection), e.g. ALLOWED_HOSTS=ate.lan. See
+      # docs/getting-started.md.
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-}
       # Run agents as your host user so files they write to bind-mounted repos
       # are owned by you, not root. dev.sh sets these from `id -u`/`id -g`.
       - PUID=${PUID:-1000}

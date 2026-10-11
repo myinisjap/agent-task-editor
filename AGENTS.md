@@ -83,6 +83,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 |---|---|---|
 | `API_TOKEN` | _(none)_ | Bearer token auth; empty = open |
 | `API_TOKENS` | _(none)_ | Named bearer tokens (`name1:token1,name2:token2`); resolves to an actor name recorded in `task_label_history.actor_id` for human-triggered transitions, surfaced via `GET /tasks/{id}/label-history` |
+| `ALLOWED_HOSTS` | _(none)_ | Extra `Host` header values (hostname or `host:port`, comma-separated) accepted while no `API_TOKEN`/`API_TOKENS` is set (DNS-rebinding protection). Always allowed: `localhost`, `127.0.0.1`, `::1`, `backend`, IP literals and hostnames from `CORS_ORIGINS`. `*` disables the check; ignored when a token is set |
 | `REPO_BASE_DIR` | _(none)_ | Restrict repo paths; empty = any path allowed (warns on startup) |
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
 | `MCP_BOARD_PATH` | _(none)_ | Path to mcp-board binary; enables the board tools (list_repos/list_workflows/create_task) inside chat sessions. See `docs/board-mcp.md` |

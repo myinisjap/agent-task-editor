@@ -1,6 +1,6 @@
 # internal/api/middleware
 
-Four middleware functions used by the Chi router.
+Middleware functions used by the Chi router.
 
 ## `Recover`
 
@@ -17,6 +17,13 @@ Sets `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods`, and `Access-
 Configured from the `CORS_ORIGINS` env var:
 - `*` or empty → allow all origins
 - Comma-separated list → set the header to the request's `Origin` if it matches, otherwise omit
+
+## Request guards (`requestguard.go`)
+
+CORS only shapes response headers; these stop the request itself.
+- `RequireTrustedOrigin(corsOrigins)`: 403 on POST/PUT/PATCH/DELETE with an `Origin` that is not in the CORS list and not same-origin (`Origin` host:port == `r.Host`, default ports normalised; `X-Forwarded-Host` is deliberately not trusted). No `Origin` or a safe method (incl. preflight `OPTIONS`) passes. `*` is permissive.
+- `RequireJSON`: 415 on POST/PUT/PATCH with a non-empty body that isn't `application/json` (charset etc. allowed). Exemptions live in `jsonExemptions`.
+- `NewHostPolicy(allowedHosts, corsOrigins, authEnabled).Middleware()`: Host allowlist, enforced only without any API token. Built-ins: localhost, 127.0.0.1, ::1, backend, IP literals, CORS origin hostnames, plus `ALLOWED_HOSTS` (`*` disables).
 
 ## `BearerAuth`
 

@@ -37,14 +37,22 @@ GET  /metrics                (Prometheus scrape; gated by its own METRICS_TOKEN,
 2. `middleware.Recover` — catches panics, logs the stack trace + `request_id`, returns 500
 3. `middleware.Logger` — structured slog request logging (method, path, status,
    duration, `request_id`)
-4. `middleware.CORS` — sets CORS headers; configured from `CORS_ORIGINS`
-5. `middleware.BearerAuth` — validates `Authorization: Bearer <token>` against the
+4. `HostPolicy.Middleware` — DNS-rebinding Host allowlist; enforced only when no
+   API token is configured (`ALLOWED_HOSTS`); applies to every route incl.
+   `/ws`, `/healthz`, `/metrics`
+5. `middleware.CORS` — sets CORS headers; configured from `CORS_ORIGINS`
+6. `middleware.RequireTrustedOrigin` — 403 for POST/PUT/PATCH/DELETE whose
+   `Origin` is neither in `CORS_ORIGINS` nor same-origin (no Origin = pass)
+7. `middleware.RequireJSON` — 415 for POST/PUT/PATCH bodies that aren't
+   `application/json` (exempt: multipart `POST /api/v1/tasks`, YAML workflow
+   import/update). Add new non-JSON routes to `jsonExemptions`.
+8. `middleware.BearerAuth` — validates `Authorization: Bearer <token>` against the
    legacy single `bearerToken` and/or the `namedTokens` (`name -> token`) map from
    `cfg.APITokens`; a named-token match is stored on the request context and
    retrievable via `middleware.ActorFromContext` (see `handlers/tasks.go`'s
    human-triggered transition handlers, which pass it as `actorID` to
    `engine.Transition`). No-op if both are empty.
-6. Per-route 1 MB body limit on `/api/v1/*`
+9. Per-route 1 MB body limit on `/api/v1/*`
 
 ### Logging conventions
 

@@ -698,3 +698,14 @@ func TestLoad_InvalidNotifyDebounce_UsesDefault(t *testing.T) {
 		t.Errorf("expected default notify debounce on invalid input, got %v", cfg.NotifyDebounce)
 	}
 }
+
+func TestLoad_AllowedHostsEnv(t *testing.T) {
+	t.Setenv("ALLOWED_HOSTS", "ate.lan,other.example:9000")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AllowedHosts != "ate.lan,other.example:9000" {
+		t.Errorf("AllowedHosts = %q", cfg.AllowedHosts)
+	}
+}

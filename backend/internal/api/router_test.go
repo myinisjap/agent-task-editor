@@ -45,7 +45,7 @@ func newTestRouter(t *testing.T, apiToken, metricsToken string) http.Handler {
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, "dev", false, nil, 5, nil, nil)
+	return api.NewRouter(db, engine, hub, "*", apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, metricsToken, "dev", false, nil, 5, nil, nil, "*")
 }
 
 // TestHealthzEndpoint_UnauthenticatedEvenWithAPIToken verifies GET /healthz
@@ -202,7 +202,7 @@ func newWSTestRouter(t *testing.T, apiToken string, namedTokens map[string]strin
 	db := openRouterTestDB(t)
 	hub := ws.NewHub()
 	engine := workflow.New(db.SQL(), hub)
-	r := api.NewRouter(db, engine, hub, "*", apiToken, namedTokens, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", "dev", false, fakeRouterTerminal{}, 5, nil, nil)
+	r := api.NewRouter(db, engine, hub, "*", apiToken, namedTokens, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", "dev", false, fakeRouterTerminal{}, 5, nil, nil, "")
 	return r, hub
 }
 
@@ -287,6 +287,7 @@ func TestAPIv1_ScopedSidecarTokens(t *testing.T) {
 	do := func(method, path, tok string) int {
 		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
 		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
 		return w.Code
@@ -345,5 +346,91 @@ func TestAPIv1_ScopedSidecarTokens(t *testing.T) {
 	}
 	if c := do(http.MethodGet, "/api/v1/repos", chat); c != http.StatusUnauthorized {
 		t.Errorf("revoked chat token: want 401, got %d", c)
+	}
+}
+
+func newGuardedRouter(t *testing.T, apiToken, cors, allowedHosts string) http.Handler {
+	t.Helper()
+	db := openRouterTestDB(t)
+	hub := ws.NewHub()
+	engine := workflow.New(db.SQL(), hub)
+	return api.NewRouter(db, engine, hub, cors, apiToken, nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", "dev", false, nil, 5, nil, nil, allowedHosts)
+}
+
+// TestCrossOriginTextPlainPost_DoesNotReachHandler is the drive-by-browser
+// regression: a cross-site text/plain "simple" POST (no preflight) must be
+// rejected before the handler runs, so no repo/task/agent is created.
+func TestCrossOriginTextPlainPost_DoesNotReachHandler(t *testing.T) {
+	r := newGuardedRouter(t, "", "http://localhost:5173", "")
+
+	post := func(origin, contentType string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(`{"title":"pwn","repo_id":"x"}`))
+		req.Host = "localhost:8080"
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Content-Type", contentType)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := post("https://evil.example", "text/plain"); w.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin text/plain: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+	// Same-origin attacker origin spoofing nothing: the Content-Type guard alone also blocks it.
+	if w := post("http://localhost:5173", "text/plain"); w.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("allowed origin text/plain: want 415, got %d: %s", w.Code, w.Body.String())
+	}
+	// Control: an allowed origin with JSON reaches the handler (which rejects the bogus repo itself, not 403/415).
+	if w := post("http://localhost:5173", "application/json"); w.Code == http.StatusForbidden || w.Code == http.StatusUnsupportedMediaType {
+		t.Fatalf("allowed origin JSON should reach handler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPreflightStillWorksWithGuards(t *testing.T) {
+	r := newGuardedRouter(t, "", "http://localhost:5173", "")
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/tasks", nil)
+	req.Host = "localhost:8080"
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("preflight: want 204, got %d", w.Code)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Errorf("preflight ACAO = %q", got)
+	}
+}
+
+func TestHostCheck_RouterLevel(t *testing.T) {
+	get := func(r http.Handler, path, host string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = host
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+	// No token: rebinding host rejected everywhere incl. /healthz, /metrics, /ws.
+	r := newGuardedRouter(t, "", "http://localhost:5173", "")
+	for _, p := range []string{"/api/v1/repos", "/healthz", "/metrics", "/ws"} {
+		if c := get(r, p, "evil.example:8080"); c != http.StatusForbidden {
+			t.Errorf("%s with evil host: want 403, got %d", p, c)
+		}
+	}
+	if c := get(r, "/healthz", "localhost:8080"); c != http.StatusOK {
+		t.Errorf("healthz on localhost: got %d", c)
+	}
+	// ALLOWED_HOSTS admits an extra name.
+	r = newGuardedRouter(t, "", "http://localhost:5173", "ate.lan")
+	if c := get(r, "/healthz", "ate.lan:8080"); c != http.StatusOK {
+		t.Errorf("ALLOWED_HOSTS host: got %d", c)
+	}
+	// Token configured: Host check off (auth still applies).
+	r = newGuardedRouter(t, "secret", "http://localhost:5173", "")
+	if c := get(r, "/healthz", "ate.public.example"); c != http.StatusOK {
+		t.Errorf("healthz with token + public host: got %d", c)
+	}
+	if c := get(r, "/api/v1/repos", "ate.public.example"); c != http.StatusUnauthorized {
+		t.Errorf("api with token + public host and no bearer: want 401, got %d", c)
 	}
 }
