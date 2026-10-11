@@ -4603,19 +4603,19 @@ export interface components {
             path: string;
             remote_url?: string | null;
             workflow_id?: string | null;
-            /** @description 1 = open GitHub issues matching issue_sync_label are periodically imported as tasks (requires remote_url and workflow_id). 0 = off. */
-            issue_sync_enabled?: number;
+            /** @description true = open GitHub issues matching issue_sync_label are periodically imported as tasks (requires remote_url and workflow_id). false = off. */
+            issue_sync_enabled?: boolean;
             /**
              * @deprecated
              * @description DEPRECATED — narrows the issue-import fetch to issues carrying this label (empty = all open issues fetched). Prefer an IntakeRule (see /intake-rules) with a match_labels condition, which additionally lets you shape (template/priority/target label/cost) the resulting task, not just filter which issues are fetched. Still honoured for one more release: it continues to control which issues are FETCHED, while any matching rule continues to control how the fetched issue is SHAPED — the two layer, they don't compete. See docs/task-sources.md.
              */
             issue_sync_label?: string;
-            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the issue_writeback_label (or the "agent-in-progress" default) when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
-            issue_writeback_enabled?: number;
+            /** @description true = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the issue_writeback_label (or the "agent-in-progress" default) when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. false = off. See docs/task-sources.md. */
+            issue_writeback_enabled?: boolean;
             /** @description Label applied to the source GitHub issue when a task first leaves the workflow's human-gate label. Empty (the default) falls back to "agent-in-progress". The label must already exist on the GitHub repo, or the write-back silently no-ops. See docs/task-sources.md. */
             issue_writeback_label?: string;
-            /** @description 1 = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. 0 = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
-            pr_review_auto_transition_enabled?: number;
+            /** @description true = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. false = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
+            pr_review_auto_transition_enabled?: boolean;
             /**
              * @description Conflict policy for propagating upstream title/body/label drift (and, when issue_comment_sync_enabled is on, comment ingestion) to an already-imported task. 'gate' (default; empty string is treated the same as 'gate') applies updates only while the task is still on its workflow's human-gate label; 'always' applies them regardless of label; 'never' detects drift but never writes it to the task. See docs/task-sources.md.
              * @enum {string}
@@ -4628,8 +4628,8 @@ export interface components {
             issue_sync_gone_action?: "flag" | "archive" | "move";
             /** @description Target label for issue_sync_gone_action 'move'. Required (rejected with 400) when issue_sync_gone_action is 'move'. */
             issue_sync_gone_label?: string;
-            /** @description 1 = ingest the source GitHub issue's comment thread (write-access authors only: OWNER/MEMBER/COLLABORATOR; this system's own write-back comments are filtered out) into task_source_comments and pass it to the agent prompt as clearly delimited untrusted context. Follows the same issue_sync_update_policy gate as field updates. 0 = off (default). */
-            issue_comment_sync_enabled?: number;
+            /** @description true = ingest the source GitHub issue's comment thread (write-access authors only: OWNER/MEMBER/COLLABORATOR; this system's own write-back comments are filtered out) into task_source_comments and pass it to the agent prompt as clearly delimited untrusted context. Follows the same issue_sync_update_policy gate as field updates. false = off (default). */
+            issue_comment_sync_enabled?: boolean;
             /**
              * @description State of the repo's initial auto-clone. 'ready' for local repos and finished clones; 'cloning' while an async git clone is in progress (POST /repos returns immediately with this status); 'error' if the clone failed (see clone_error). Watch the repo.clone_done / repo.clone_failed WebSocket events for transitions out of 'cloning'.
              * @enum {string}
@@ -4753,8 +4753,15 @@ export interface components {
             content: string;
         };
         Dashboard: {
+            /** @description Non-archived task counts by label name, summed across all workflows. */
             label_counts: {
                 [key: string]: number;
+            };
+            /** @description The same non-archived counts broken out per workflow: workflow id -> label name -> count. Use this when more than one workflow exists, since label names can repeat across workflows. */
+            workflow_label_counts: {
+                [key: string]: {
+                    [key: string]: number;
+                };
             };
             active_agents: {
                 run_id: string;

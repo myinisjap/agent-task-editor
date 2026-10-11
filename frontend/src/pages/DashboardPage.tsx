@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, type Workflow } from '../api/client'
+import { buildChipRows } from '../lib/dashboardChips'
 import { useDashboard } from '../lib/useDashboard'
 import { humanActionsFor } from '../lib/humanGate'
 import { useWorkflowStore } from '../stores/workflow'
@@ -33,15 +34,37 @@ const MODES: { value: VizMode; label: string }[] = [
   { value: 'factory', label: 'Factory' },
 ]
 
-const LABEL_COLORS: Record<string, string> = {
-  not_ready:    '#6B7280',
-  plan:         '#8B5CF6',
-  'review-plan': '#3B82F6',
-  work:         '#F59E0B',
-  testing:      '#F97316',
-  'agent-review': '#6366F1',
-  review:       '#EC4899',
-  done:         '#10B981',
+function LabelChipRows({
+  workflows,
+  labelCounts,
+  workflowLabelCounts,
+}: {
+  workflows: Workflow[]
+  labelCounts: Record<string, number>
+  workflowLabelCounts?: Record<string, Record<string, number>>
+}) {
+  const rows = buildChipRows(workflows, labelCounts, workflowLabelCounts)
+  return (
+    <div className="flex flex-col gap-3">
+      {rows.map((row) => (
+        <div key={row.key}>
+          {row.title && <p className="text-xs text-slate-500 mb-1.5">{row.title}</p>}
+          <div className="flex flex-wrap gap-2">
+            {row.chips.map((c) => (
+              <div
+                key={c.key}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-medium"
+                style={{ backgroundColor: c.color }}
+              >
+                <span>{c.name}</span>
+                <span className="bg-black/20 rounded-full px-1.5 py-0.5 text-xs">{c.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function DashboardPage() {
@@ -167,18 +190,11 @@ export default function DashboardPage() {
               <TaskFactory workflow={workflow} labelCounts={dash.label_counts} robots={mode === 'robots'} />
             )
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(dash.label_counts).map(([label, count]) => (
-                <div
-                  key={label}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-medium"
-                  style={{ backgroundColor: LABEL_COLORS[label] ?? '#6B7280' }}
-                >
-                  <span>{label}</span>
-                  <span className="bg-black/20 rounded-full px-1.5 py-0.5 text-xs">{count}</span>
-                </div>
-              ))}
-            </div>
+            <LabelChipRows
+              workflows={workflows}
+              labelCounts={dash.label_counts}
+              workflowLabelCounts={dash.workflow_label_counts}
+            />
           )}
         </section>
       )}

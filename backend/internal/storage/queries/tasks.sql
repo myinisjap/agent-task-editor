@@ -2,14 +2,14 @@
 SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id, consecutive_failure_count FROM tasks ORDER BY created_at DESC;
 
 -- name: CountAllTasksByLabel :many
--- Per-label counts of non-archived tasks across all workflows, for the
--- dashboard's label_counts map. Scans only (label, archived) instead of
--- pulling every column (including the full description text) of every task
--- row via ListTasks.
-SELECT label, COUNT(*) AS count
+-- Per-(workflow, label) counts of non-archived tasks, for the dashboard's
+-- label_counts and workflow_label_counts maps. Scans only (workflow_id,
+-- label, archived) instead of pulling every column (including the full
+-- description text) of every task row via ListTasks.
+SELECT workflow_id, label, COUNT(*) AS count
 FROM tasks
 WHERE archived = 0
-GROUP BY label;
+GROUP BY workflow_id, label;
 
 -- name: ListTaskTitlesByIDs :many
 -- Titles for a specific set of task ids, e.g. resolving the top-N-by-cost

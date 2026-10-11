@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import BoardPage from './BoardPage'
 import type { Task, Workflow } from '../api/client'
 import { useTasksStore } from '../stores/tasks'
@@ -611,5 +611,54 @@ describe('BoardPage cost rollup debounce (#350)', () => {
     await vi.advanceTimersByTimeAsync(250)
 
     expect(costByTaskMock.mock.calls.length).toBe(callsAfterMount + 1)
+  })
+})
+
+function LocationProbe() {
+  const loc = useLocation()
+  return <div data-testid="loc">{loc.pathname + loc.search}</div>
+}
+
+describe('BoardPage URL-persisted filters', () => {
+  beforeEach(() => {
+    costByTaskMock.mockReset().mockResolvedValue([])
+    tasksListMock.mockReset()
+    workflowsListMock.mockReset()
+    seedStores([
+      task({ id: 'task-1', title: 'Alpha thing', type: 'feature' }),
+      task({ id: 'task-2', title: 'Beta thing', type: 'bug' }),
+    ])
+  })
+
+  it('restores the search and type filters from the URL', async () => {
+    render(
+      <MemoryRouter initialEntries={['/board?q=beta&type=bug']}>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('Beta thing')).toBeInTheDocument()
+    expect(screen.queryByText('Alpha thing')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Search tasks…')).toHaveValue('beta')
+    expect(screen.getByDisplayValue('bug')).toBeInTheDocument()
+  })
+
+  it('writes filter changes to the URL with replace and clears them', async () => {
+    const user = userEvent.setup()
+    render(
+      <MemoryRouter initialEntries={['/board']}>
+        <BoardPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Alpha thing')
+
+    await user.type(screen.getByPlaceholderText('Search tasks…'), 'alp')
+    await user.selectOptions(screen.getByDisplayValue('All types'), 'feature')
+    expect(screen.getByTestId('loc')).toHaveTextContent('/board?q=alp&type=feature')
+    expect(screen.queryByText('Beta thing')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByTestId('loc')).toHaveTextContent(/^\/board$/)
+    expect(await screen.findByText('Beta thing')).toBeInTheDocument()
   })
 })

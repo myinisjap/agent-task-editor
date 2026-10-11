@@ -774,10 +774,10 @@ components:
         remote_url:  { type: string, nullable: true }
         workflow_id: { type: string, nullable: true }
         issue_sync_enabled:
-          type: integer
+          type: boolean
           description: >
-            1 = open GitHub issues matching issue_sync_label are periodically
-            imported as tasks (requires remote_url and workflow_id). 0 = off.
+            true = open GitHub issues matching issue_sync_label are periodically
+            imported as tasks (requires remote_url and workflow_id). false = off.
         issue_sync_label:
           type: string
           deprecated: true
@@ -792,15 +792,15 @@ components:
             continues to control how the fetched issue is SHAPED — the two
             layer, they don't compete. See docs/task-sources.md.
         issue_writeback_enabled:
-          type: integer
+          type: boolean
           description: >
-            1 = status write-back to the source GitHub issue is enabled for
+            true = status write-back to the source GitHub issue is enabled for
             this repo's imported tasks (requires remote_url; independent of
             issue_sync_enabled): comments on the issue when a task's PR
             opens, applies the issue_writeback_label (or the "agent-in-progress"
             default) when a task first leaves the workflow's human-gate label
             ("not_ready" in the default workflow), and closes the issue with a
-            comment when the PR merges. 0 = off. See docs/task-sources.md.
+            comment when the PR merges. false = off. See docs/task-sources.md.
         issue_writeback_label:
           type: string
           description: >
@@ -809,15 +809,15 @@ components:
             "agent-in-progress". The label must already exist on the GitHub
             repo, or the write-back silently no-ops. See docs/task-sources.md.
         pr_review_auto_transition_enabled:
-          type: integer
+          type: boolean
           description: >
-            1 = when ghsync ingests new GitHub PR review/GHA feedback for one
+            true = when ghsync ingests new GitHub PR review/GHA feedback for one
             of this repo's tasks (a changes_requested review, a new inline
             review comment, or a failed check), the task is automatically
             transitioned along its workflow's "failure" human path (the same
             target as a manual Reject), so it lands back in front of an agent
             without a human having to click Reject. Requires remote_url.
-            0 = off (feedback is still ingested and surfaced in the prompt;
+            false = off (feedback is still ingested and surfaced in the prompt;
             a human must transition the task manually). See docs/task-sources.md.
         issue_sync_update_policy:
           type: string
@@ -848,14 +848,14 @@ components:
             Target label for issue_sync_gone_action 'move'. Required
             (rejected with 400) when issue_sync_gone_action is 'move'.
         issue_comment_sync_enabled:
-          type: integer
+          type: boolean
           description: >
-            1 = ingest the source GitHub issue's comment thread (write-access
+            true = ingest the source GitHub issue's comment thread (write-access
             authors only: OWNER/MEMBER/COLLABORATOR; this system's own
             write-back comments are filtered out) into task_source_comments
             and pass it to the agent prompt as clearly delimited untrusted
             context. Follows the same issue_sync_update_policy gate as field
-            updates. 0 = off (default).
+            updates. false = off (default).
         clone_status:
           type: string
           enum: [ready, cloning, error]
@@ -1077,6 +1077,16 @@ components:
         label_counts:
           type: object
           additionalProperties: { type: integer }
+          description: Non-archived task counts by label name, summed across all workflows.
+        workflow_label_counts:
+          type: object
+          description: >
+            The same non-archived counts broken out per workflow: workflow id
+            -> label name -> count. Use this when more than one workflow
+            exists, since label names can repeat across workflows.
+          additionalProperties:
+            type: object
+            additionalProperties: { type: integer }
         active_agents:
           type: array
           items:
@@ -1338,6 +1348,7 @@ components:
             - tripped
       required:
         - label_counts
+        - workflow_label_counts
         - active_agents
         - intervention_queue
         - cost_total
