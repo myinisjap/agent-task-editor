@@ -261,6 +261,33 @@ describe('BoardPage task.created_bulk handling', () => {
       )
     })
   })
+
+  it('a resync event (dropped WS events or reconnect) refetches the board once', async () => {
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(wsOnHandler).not.toBeNull()
+    })
+    const callsAfterMount = tasksListMock.mock.calls.length
+
+    tasksListMock.mockResolvedValue({
+      items: [task({ id: 'task-1' }), task({ id: 'task-9', title: 'Missed' })],
+      nextCursor: null,
+    })
+
+    wsOnHandler!({ type: 'resync', payload: {} })
+
+    await waitFor(() => {
+      expect(tasksListMock.mock.calls.length).toBe(callsAfterMount + 1)
+    })
+    await waitFor(() => {
+      expect(useTasksStore.getState().tasks.map((t) => t.id)).toContain('task-9')
+    })
+  })
 })
 
 // Regression guard for #249 — runningTaskIds was dead state and the "Agent

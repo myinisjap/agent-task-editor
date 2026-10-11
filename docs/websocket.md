@@ -404,12 +404,29 @@ can be fetched via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
 }
 ```
 
+### `resync`
+Sent to a single client when events were dropped for it. Each client has a
+bounded send buffer (256 messages) and `Hub.Publish` never blocks on a slow
+client: when the buffer is full the event is dropped (and counted in
+`ate_ws_broadcast_dropped_total`). Events carry no sequence numbers, so the
+client could not otherwise tell. Instead the server flags the client as lagged
+and, once its buffer has fully drained, sends one `resync` frame (after every
+event that was queued before it). The flag is cleared only when that frame is
+written, so it is never silently lost. The payload is empty; the client should
+refetch any state it derives from WebSocket events (board, task detail,
+dashboard) over REST.
+
+```json
+{ "type": "resync", "payload": {} }
+```
+
 ## Client-Side Behaviour
 
 The frontend `WSClient` (`frontend/src/api/ws.ts`) handles:
 
 - **Auto-reconnect** with exponential back-off (1s → 2s → 4s → … up to 30s)
 - **Re-subscribe** — all active subscriptions are re-sent after a reconnect
+- **Resync** — a server-sent `resync` frame, and every reconnect (events published while disconnected are lost too), is delivered to listeners as a `resync` event; the board, task detail page, dashboard, and subtasks/dependencies panels respond by refetching over REST
 - **Event routing** — listeners registered per `task_id` receive matching `agent.log` entries; global listeners receive all other events
 - **Ticket fetch** — if `VITE_API_TOKEN` is set, `connect()` first `POST`s `/api/v1/ws-ticket` (Bearer-authed) and opens the socket with the returned `?ticket=`; if that fetch fails it falls through and connects without a ticket (the server 401s and the reconnect loop retries)
 - **"Needs human" notifications** — `useHumanNeededNotifications` (`frontend/src/lib/useHumanNeededNotifications.ts`) is mounted once at the app root and listens on this same connection for `task.needs_human` and human-gate `task.label_changed` events, showing a browser `Notification` for each (opt-in, off by default; see the sidebar toggle and `frontend/src/stores/notifications.ts`). This is a Notifications-API-only implementation — there is no server-side Web Push, VAPID keys, or subscription storage, so notifications only fire while a tab/PWA is open.
@@ -479,7 +496,7 @@ budget.
 
 ## Hub Architecture
 
-The server-side hub broadcasts to all connected browser clients that are subscribed to the relevant task. Events published by the pool (agent logs, status changes) and the workflow engine (label changes) flow through a single in-process channel. Each client has a 256-message send buffer; slow clients that fill their buffer have their connection dropped gracefully.
+The server-side hub broadcasts to all connected browser clients that are subscribed to the relevant task. Events published by the pool (agent logs, status changes) and the workflow engine (label changes) flow through a single in-process channel. Each client has a 256-message send buffer; `Publish` never blocks on a slow client: if a client's buffer is full the event is dropped for that client only, the client is flagged, and a [`resync`](#resync) frame is sent once its buffer drains so it can refetch. (Clients are not disconnected for being slow.)
 
 `agent.log` events with a `task_id` are only delivered to clients subscribed to that task. All other events (label changes, agent started/done, rate limited, etc.) are broadcast to all connected clients.
 

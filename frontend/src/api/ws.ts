@@ -68,6 +68,11 @@ export type WSEvent =
   // Emitted by the GitHub Issues importer when it ingests a new comment from
   // a task's source issue thread (see GET /tasks/{id}/source-comments).
   | { type: 'task.source_comment_added'; payload: { task_id: string; comment_id: string } }
+  // Sent by the server when this client's send buffer overflowed and one or
+  // more events were dropped (see Hub.Publish). Also synthesised locally after
+  // a reconnect, since events published while disconnected are lost the same
+  // way. Consumers must refetch whatever state they derive from WS events.
+  | { type: 'resync'; payload: Record<string, never> }
 
 type Handler = (event: WSEvent) => void
 
@@ -87,6 +92,9 @@ class WSClient {
   private reconnectAttempts = 0
   private statusHandlers: StatusHandler[] = []
   private status: WSStatus = 'closed'
+  // True once a connection has opened at least once, so a later open is known
+  // to be a reconnect (events may have been missed while down).
+  private hasOpened = false
 
   private setStatus(status: WSStatus) {
     this.status = status
@@ -119,7 +127,7 @@ class WSClient {
     this.ws.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data) as WSEvent
-        this.handlers.forEach((h) => h(event))
+        this.dispatch(event)
       } catch {
         // ignore malformed messages
       }
@@ -141,7 +149,15 @@ class WSClient {
       this.setStatus('open')
       // Re-subscribe on reconnect
       this.subscriptions.forEach((id) => this.subscribeTask(id))
+      // Events published while we were disconnected are gone: tell consumers
+      // to refetch, exactly as for a server-sent resync frame.
+      if (this.hasOpened) this.dispatch({ type: 'resync', payload: {} })
+      this.hasOpened = true
     }
+  }
+
+  private dispatch(event: WSEvent) {
+    this.handlers.forEach((h) => h(event))
   }
 
   on(handler: Handler) {

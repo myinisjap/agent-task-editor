@@ -168,7 +168,15 @@ export default function TaskDetailPage() {
     wsClient.subscribeTask(id)
 
     const off = wsClient.on((event) => {
-      if (event.type === 'task.label_changed' && event.payload.task_id === id) {
+      if (event.type === 'resync') {
+        // Dropped events or a reconnect: refetch everything this page derives
+        // from WS events.
+        refreshTask()
+        refreshRuns()
+        refreshComments()
+        refreshLabelHistory()
+        refreshSourceComments()
+      } else if (event.type === 'task.label_changed' && event.payload.task_id === id) {
         setEditingTask(false)
         setCostWarning(null)
         refreshTask()

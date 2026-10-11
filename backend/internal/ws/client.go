@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -53,12 +54,49 @@ type Client struct {
 	conn *websocket.Conn
 	send chan []byte
 
+	// lagged is set by Hub.Publish when an event was dropped for this client
+	// because send was full. The write pump clears it when it delivers a
+	// resync frame (see takeResync). wake nudges an idle write pump so a
+	// flag set after the pump last checked is never left unnoticed.
+	lagged atomic.Bool
+	wake   chan struct{}
+
 	subMu         sync.RWMutex
 	subscriptions map[string]bool
 
 	// replaySlots bounds concurrent replayTaskLogs goroutines for this
 	// client; see maxConcurrentReplays.
 	replaySlots chan struct{}
+}
+
+// markLagged records that an event was dropped for this client and wakes the
+// write pump (non-blocking) so it re-checks whether a resync can be sent.
+func (c *Client) markLagged() {
+	c.lagged.Store(true)
+	if c.wake == nil {
+		return
+	}
+	select {
+	case c.wake <- struct{}{}:
+	default: // a wake-up is already pending
+	}
+}
+
+// takeResync reports whether a resync frame is due, and if so clears the
+// lagged flag and returns the frame to write. It only fires once the send
+// buffer is empty, so the resync arrives after every event queued before it
+// and the client's refetch is not overwritten by stale queued events. If the
+// write then fails the connection is being torn down, so there is nothing to
+// retry; otherwise the flag stays set (buffer not yet empty) and a later
+// attempt retries.
+func (c *Client) takeResync() ([]byte, bool) {
+	if len(c.send) != 0 {
+		return nil, false
+	}
+	if !c.lagged.CompareAndSwap(true, false) {
+		return nil, false
+	}
+	return resyncFrame, true
 }
 
 // inboundMsg is sent by the browser to subscribe/unsubscribe a task.
@@ -152,6 +190,7 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken string,
 		hub:           hub,
 		conn:          conn,
 		send:          make(chan []byte, 256),
+		wake:          make(chan struct{}, 1),
 		subscriptions: make(map[string]bool),
 		replaySlots:   make(chan struct{}, maxConcurrentReplays),
 	}
@@ -235,6 +274,13 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken string,
 				if err != nil {
 					return
 				}
+				if !c.writeResyncIfDue(ctx, conn) {
+					return
+				}
+			case <-c.wake:
+				if !c.writeResyncIfDue(ctx, conn) {
+					return
+				}
 			case <-ticker.C:
 				// Keepalive ping. pingTimeout bounds both the ping frame's
 				// write and the wait for the pong, so a half-open peer that
@@ -252,6 +298,18 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request, authToken string,
 
 	wg.Wait()
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// writeResyncIfDue writes a resync frame if this client lagged and its buffer
+// has drained. It returns false if the write failed.
+func (c *Client) writeResyncIfDue(ctx context.Context, conn *websocket.Conn) bool {
+	frame, ok := c.takeResync()
+	if !ok {
+		return true
+	}
+	wctx, wcancel := context.WithTimeout(ctx, writeTimeout)
+	defer wcancel()
+	return conn.Write(wctx, websocket.MessageText, frame) == nil
 }
 
 // replayTaskLogs fetches the tail of the task's current run's log and sends it

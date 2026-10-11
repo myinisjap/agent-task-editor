@@ -173,6 +173,15 @@ export default function BoardPage() {
           return next
         })
       }
+      if (event.type === 'resync') {
+        // The server dropped events for this client (send buffer overflow) or
+        // we just reconnected: anything derived from WS events may be stale.
+        // Refetch the board and cost rollup, and drop the WS-derived running
+        // set so the task-list effect below re-seeds it from the fresh data.
+        setRunningTaskIds(new Set())
+        fetchTasks(showArchived ? { archived: 'all' } : undefined)
+        refreshCostByTask()
+      }
       if (event.type === 'task.created_bulk') {
         // The importer batches an entire sweep's new tasks into one event
         // rather than one task.created per issue — do a single board
