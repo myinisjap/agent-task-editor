@@ -770,8 +770,13 @@ so humans aren't paged for problems that will resolve themselves:
   didn't pass, the agent gave up). Behaves as before: the task stays on its
   current label and the next dispatcher sweep (~5s) re-picks it up. After
   **3 consecutive** genuine failures the task is escalated to `waiting_human`
-  (lock kept) instead of being re-run again; a completed run, any label
-  transition, a reply, or a re-run resets the streak.
+  (lock kept) instead of being re-run again; a successful label
+  transition, a reply, or a re-run resets the streak. A run that completes but
+  whose requested transition is rejected by the workflow (WIP limit, guard, no
+  such transition) counts toward the same streak: below the limit the lock is
+  released so it can retry, and at the limit the run becomes `waiting_human`
+  with a note such as `Agent asked to move to "review" but the move was
+  rejected: ...`. A concurrent human move of the task is not counted.
 - **Transient failure** — a rate limit (`429`), a network-level error,
   upstream `5xx`, or (for CLI providers) a text match for signals like
   connection resets or `502/503/504`. The match is anchored (word/HTTP-status

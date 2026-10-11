@@ -650,12 +650,12 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 			slog.Warn("pool: reset transient retry count", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
 		}
 	}
-	// A completed run clears the genuine-failure streak.
-	if finalStatus == "completed" {
-		if err := p.q.ResetTaskFailureCount(ctx, job.Input.Task.ID); err != nil {
-			slog.Warn("pool: reset failure count", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
-		}
-	}
+	// The genuine-failure streak is deliberately NOT reset here for a completed
+	// run: a completed run whose requested transition is then rejected counts as
+	// a failed attempt (see handleRejectedTransition). The streak is cleared
+	// instead by the successful label transition itself (engine.Transition
+	// zeroes consecutive_failure_count), which is what "completed and advanced"
+	// means.
 
 	costUnknown := int64(0)
 	if result.CostUnknown {
@@ -808,11 +808,9 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 				}
 			}
 			if err := p.engine.Transition(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
-				// The transition didn't land (e.g. rejected or a concurrent move),
-				// so it did not clear the lock — clear it here so the finished run
-				// doesn't leave the task stuck locked.
+				// The transition didn't land, so it did not clear the lock.
 				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
-				p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
+				p.handleRejectedTransition(ctx, job, result, resolvedLabel, err, log)
 			}
 		} else {
 			// No resolved label: the agent finished without reporting an outcome
