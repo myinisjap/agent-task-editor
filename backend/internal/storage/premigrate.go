@@ -16,9 +16,9 @@ import (
 	"github.com/golang-migrate/migrate/v4/source"
 )
 
-// SkipPreMigrateSnapshotEnv, when "true", disables the automatic
-// pre-migration snapshot (and lets startup proceed if the snapshot cannot be
-// written).
+// SkipPreMigrateSnapshotEnv names the env var that, when "true", disables the
+// automatic pre-migration snapshot (and lets startup proceed if the snapshot
+// cannot be written).
 const SkipPreMigrateSnapshotEnv = "SKIP_PREMIGRATE_SNAPSHOT"
 
 // preMigrateKeep is how many pre-migration snapshots are retained.
