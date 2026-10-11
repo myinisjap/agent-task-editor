@@ -24,7 +24,10 @@ type needsMeItem struct {
 	Reason     string  `json:"reason"`
 	Message    *string `json:"message,omitempty"`
 	RunID      *string `json:"run_id,omitempty"`
-	Since      string  `json:"since"`
+	// EscalationReason is the waiting run's escalation code (see
+	// agent_runs.escalation_reason); omitted when none was recorded.
+	EscalationReason *string `json:"escalation_reason,omitempty"`
+	Since            string  `json:"since"`
 }
 
 // List returns every task that needs a human, oldest first.
@@ -47,6 +50,10 @@ func (h *NeedsMeHandler) List(w http.ResponseWriter, r *http.Request) {
 		if it.RunID != "" {
 			id := it.RunID
 			v.RunID = &id
+		}
+		if it.EscalationReason != "" {
+			er := it.EscalationReason
+			v.EscalationReason = &er
 		}
 		out = append(out, v)
 	}

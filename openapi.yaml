@@ -33,6 +33,13 @@ components:
         run_id:
           type: string
           description: Set when reason is waiting_human.
+        escalation_reason:
+          type: string
+          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition]
+          description: >-
+            Why the waiting run escalated to a human (the run's
+            escalation_reason). Present only when reason is waiting_human and a
+            code was recorded; runs from before the column existed omit it.
         since:
           type: string
           format: date-time
@@ -1011,6 +1018,24 @@ components:
         feedback:         { type: string, nullable: true }
         stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }
         notes:            { type: string, nullable: true, description: "Human/agent notes attached to the run; null when none." }
+        escalation_reason:
+          type: string
+          nullable: true
+          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition]
+          description: >-
+            Why the run ended in waiting_human; null for runs in any other
+            status and for waiting_human runs that predate this field. The
+            human-readable explanation is in notes (or feedback for
+            agent_question). agent_question = the agent called request_human;
+            auth_required = provider CLI not logged in; repeated_failure =
+            consecutive failures hit the cap; rework_loop = the same rework
+            transition fired repeatedly; cost_budget / cost_unknown = task cost
+            budget exhausted / unenforceable; provider_missing = the agent
+            config's provider is disabled or unknown; runtime_prep = toolchain
+            install failed; max_turns = turn cap hit; transient_exhausted =
+            transient-retry budget exhausted; no_outcome = finished without a
+            usable outcome; rejected_transition = requested move refused
+            repeatedly.
         started_at:       { type: string, format: date-time, nullable: true }
         completed_at:     { type: string, format: date-time, nullable: true }
         created_at:       { type: string, format: date-time }

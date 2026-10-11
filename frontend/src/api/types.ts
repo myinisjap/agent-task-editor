@@ -4258,6 +4258,11 @@ export interface components {
             /** @description Set when reason is waiting_human. */
             run_id?: string;
             /**
+             * @description Why the waiting run escalated to a human (the run's escalation_reason). Present only when reason is waiting_human and a code was recorded; runs from before the column existed omit it.
+             * @enum {string}
+             */
+            escalation_reason?: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition";
+            /**
              * Format: date-time
              * @description When the task started needing a human; the list is sorted by this ascending.
              */
@@ -4772,6 +4777,11 @@ export interface components {
             stored_info?: string | null;
             /** @description Human/agent notes attached to the run; null when none. */
             notes?: string | null;
+            /**
+             * @description Why the run ended in waiting_human; null for runs in any other status and for waiting_human runs that predate this field. The human-readable explanation is in notes (or feedback for agent_question). agent_question = the agent called request_human; auth_required = provider CLI not logged in; repeated_failure = consecutive failures hit the cap; rework_loop = the same rework transition fired repeatedly; cost_budget / cost_unknown = task cost budget exhausted / unenforceable; provider_missing = the agent config's provider is disabled or unknown; runtime_prep = toolchain install failed; max_turns = turn cap hit; transient_exhausted = transient-retry budget exhausted; no_outcome = finished without a usable outcome; rejected_transition = requested move refused repeatedly.
+             * @enum {string|null}
+             */
+            escalation_reason?: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition" | null;
             /** Format: date-time */
             started_at?: string | null;
             /** Format: date-time */

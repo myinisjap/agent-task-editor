@@ -66,3 +66,16 @@ func TestClassify(t *testing.T) {
 		})
 	}
 }
+
+func TestClassify_EscalationReason(t *testing.T) {
+	run := &gen.AgentRun{ID: "r", Status: "waiting_human", EscalationReason: sp("max_turns")}
+	it, ok := Classify(gen.Task{Label: "work"}, run, wfDef())
+	if !ok || it.EscalationReason != "max_turns" {
+		t.Fatalf("got %+v ok=%v, want escalation reason max_turns", it, ok)
+	}
+	legacy := &gen.AgentRun{ID: "r", Status: "waiting_human"}
+	it, _ = Classify(gen.Task{Label: "work"}, legacy, wfDef())
+	if it.EscalationReason != "" {
+		t.Errorf("legacy run: got %q, want empty", it.EscalationReason)
+	}
+}

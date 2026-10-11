@@ -31,7 +31,7 @@ export type WSEvent =
   | { type: 'task.label_changed'; payload: { task_id: string; from: string; to: string; note?: string } }
   | { type: 'task.agent_started'; payload: { task_id: string; run_id: string; agent_name: string } }
   | { type: 'task.agent_done'; payload: { task_id: string; run_id: string; status: AgentRun['status'] } }
-  | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string } }
+  | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string; reason?: string } }
   | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
   // Emitted when a task's cumulative recorded cost crosses the configurable
   // early-warning threshold (see GET/PUT /settings/cost-warning, default

@@ -229,17 +229,13 @@ func (p *Pool) Submit(job Job) bool {
 // worktree (see issue #244). If the lock has already moved on to another
 // run, this logs and does nothing.
 func (p *Pool) releaseLock(ctx context.Context, taskID, runID string) {
-	n, err := p.q.ClearActiveAgentRunIfOwner(ctx, gen.ClearActiveAgentRunIfOwnerParams{
-		ID:               taskID,
-		ActiveAgentRunID: &runID,
-	})
-	if err != nil {
-		slog.Warn("pool: release lock", "component", "pool", "task_id", taskID, "run_id", runID, "err", err)
-		return
-	}
-	if n == 0 {
-		slog.Warn("pool: skipped clearing dispatch lock owned by another run", "component", "pool", "task_id", taskID, "run_id", runID)
-	}
+	p.lifecycle().releaseLock(ctx, taskID, runID)
+}
+
+// lifecycle returns the run-lifecycle helper that owns escalation and lock
+// release (see escalate.go).
+func (p *Pool) lifecycle() runLifecycle {
+	return runLifecycle{q: p.q, pub: p.pub}
 }
 
 func (p *Pool) worker(ctx context.Context) {
@@ -447,27 +443,11 @@ func (p *Pool) prepareRuntime(ctx context.Context, job Job, log *slog.Logger, st
 	if err := runtimePrep(ctx, spec.Pins, spec.WorktreeDir); err != nil {
 		msg := fmt.Sprintf("agent runtime prep failed: %v", err)
 		log.Error("pool: runtime prep failed", "err", err)
-		if _, serr := p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
-			Status: "waiting_human",
-			Notes:  &msg,
-			ID:     job.RunID,
-		}); serr != nil {
-			log.Warn("pool: mark runtime-prep-failed run waiting_human", "err", serr)
-		}
+		_ = p.lifecycle().escalate(context.Background(), escalation{
+			TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonRuntimePrep, Message: msg, PublishDone: true,
+		})
 		metrics.RunTerminalTotal.WithLabelValues("waiting_human").Inc()
 		metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
-		if p.pub != nil {
-			p.pub.Publish("task.needs_human", map[string]any{
-				"task_id": job.Input.Task.ID,
-				"run_id":  job.RunID,
-				"message": msg,
-			})
-			p.pub.Publish("task.agent_done", map[string]any{
-				"task_id": job.Input.Task.ID,
-				"run_id":  job.RunID,
-				"status":  "waiting_human",
-			})
-		}
 		return false
 	}
 	return true
@@ -604,11 +584,14 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 	// silently retrying forever. Logged below as the `classification` field so
 	// misclassifications are diagnosable from logs alone (see errclass.go).
 	classification := ClassGenuine
+	var authNotes *string
 	if finalStatus == "failed" && p.hasLoginError(ctx, job.RunID) {
 		finalStatus = "waiting_human"
 		classification = ClassAuth
 		msg := "Agent failed: not logged in. Please re-authenticate and re-run."
 		result.Message = &msg
+		result.EscalationReason = ReasonAuthRequired
+		authNotes = &msg
 	}
 	if result.Status == "failed" {
 		log.Warn("pool: agent run failed", "classification", string(classification), "final_status", finalStatus)
@@ -621,6 +604,11 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 	// kept) instead. Auth failures are already escalated above and don't count.
 	genuineFailure := finalStatus == "failed"
 	runNotes := result.Notes // run-row notes only; task agent_notes keeps the agent's own text
+	if authNotes != nil {
+		// Store the reason on the run so the UI can show it (previously a
+		// login failure left the run with no notes or feedback at all).
+		runNotes = authNotes
+	}
 	if genuineFailure {
 		n, err := p.q.IncrementTaskFailureCount(ctx, job.Input.Task.ID)
 		switch {
@@ -631,6 +619,7 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 			msg := fmt.Sprintf("Agent failed %d times in a row without completing. Review the run logs, then re-dispatch or intervene manually.", n)
 			result.Message = &msg
 			runNotes = &msg
+			result.EscalationReason = ReasonRepeatedFailure
 			log.Warn("pool: consecutive failure limit reached, escalating to waiting_human", "count", n, "limit", maxConsecutiveFailures)
 		}
 	}
@@ -661,16 +650,26 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 	if result.CostUnknown {
 		costUnknown = 1
 	}
+	var escReason *string
+	if finalStatus == "waiting_human" {
+		if result.EscalationReason == "" {
+			// A provider-reported waiting_human is the request_human tool.
+			result.EscalationReason = ReasonAgentQuestion
+		}
+		r := string(result.EscalationReason)
+		escReason = &r
+	}
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status:       finalStatus,
-		StoredInfo:   result.StoredInfo,
-		Notes:        runNotes,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		CostUsd:      result.CostUSD,
-		CostUnknown:  costUnknown,
-		TurnsUsed:    result.TurnsUsed,
-		ID:           job.RunID,
+		Status:           finalStatus,
+		StoredInfo:       result.StoredInfo,
+		Notes:            runNotes,
+		InputTokens:      result.InputTokens,
+		OutputTokens:     result.OutputTokens,
+		CostUsd:          result.CostUSD,
+		CostUnknown:      costUnknown,
+		TurnsUsed:        result.TurnsUsed,
+		EscalationReason: escReason,
+		ID:               job.RunID,
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)
 	}
@@ -846,13 +845,7 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 		if result.Message != nil {
 			msg = *result.Message
 		}
-		if p.pub != nil {
-			p.pub.Publish("task.needs_human", map[string]any{
-				"task_id": job.Input.Task.ID,
-				"run_id":  job.RunID,
-				"message": msg,
-			})
-		}
+		p.lifecycle().announceNeedsHuman(job.Input.Task.ID, job.RunID, result.EscalationReason, msg)
 	}
 }
 

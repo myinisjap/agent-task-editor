@@ -44,22 +44,23 @@ type AgentLog struct {
 }
 
 type AgentRun struct {
-	ID            string     `json:"id"`
-	TaskID        string     `json:"task_id"`
-	AgentConfigID *string    `json:"agent_config_id"`
-	Status        string     `json:"status"`
-	Feedback      *string    `json:"feedback"`
-	StoredInfo    *string    `json:"stored_info"`
-	StartedAt     *time.Time `json:"started_at"`
-	CompletedAt   *time.Time `json:"completed_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	Notes         *string    `json:"notes"`
-	InputTokens   int64      `json:"input_tokens"`
-	OutputTokens  int64      `json:"output_tokens"`
-	CostUsd       float64    `json:"cost_usd"`
-	SessionID     string     `json:"session_id"`
-	CostUnknown   int64      `json:"cost_unknown"`
-	TurnsUsed     int64      `json:"turns_used"`
+	ID               string     `json:"id"`
+	TaskID           string     `json:"task_id"`
+	AgentConfigID    *string    `json:"agent_config_id"`
+	Status           string     `json:"status"`
+	Feedback         *string    `json:"feedback"`
+	StoredInfo       *string    `json:"stored_info"`
+	StartedAt        *time.Time `json:"started_at"`
+	CompletedAt      *time.Time `json:"completed_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	Notes            *string    `json:"notes"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	CostUsd          float64    `json:"cost_usd"`
+	SessionID        string     `json:"session_id"`
+	CostUnknown      int64      `json:"cost_unknown"`
+	TurnsUsed        int64      `json:"turns_used"`
+	EscalationReason *string    `json:"escalation_reason"`
 }
 
 type BackupSetting struct {

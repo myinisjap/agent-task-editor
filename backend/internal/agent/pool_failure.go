@@ -73,53 +73,40 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Resul
 		slog.Warn("pool: transient retry budget exhausted, escalating to waiting_human", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "count", count, "max_retries", maxRetries)
 	}
 
-	costUnknown := int64(0)
-	if result.CostUnknown {
-		costUnknown = 1
-	}
-	runParams := gen.SetAgentRunCompletedParams{
-		Status:       finalStatus,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		CostUsd:      result.CostUSD,
-		CostUnknown:  costUnknown,
-		TurnsUsed:    result.TurnsUsed,
-		ID:           job.RunID,
-	}
-	if message != nil {
-		runParams.Notes = message
-	}
-	if _, err := p.q.SetAgentRunCompleted(bg, runParams); err != nil {
-		slog.Warn("pool: set run completed (transient)", "component", "pool", "run_id", job.RunID, "err", err)
-	}
-	metrics.RunTerminalTotal.WithLabelValues(finalStatus).Inc()
-	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
-
 	if finalStatus == "waiting_human" {
 		// waiting_human intentionally stays locked (active run not cleared)
 		// until a human acts, consistent with the login-error escalation path.
+		_ = p.lifecycle().escalate(bg, escalation{
+			TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonTransientExhausted,
+			Message: *message, Result: &result, PublishDone: true,
+		})
+	} else {
+		costUnknown := int64(0)
+		if result.CostUnknown {
+			costUnknown = 1
+		}
+		if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
+			Status:       finalStatus,
+			InputTokens:  result.InputTokens,
+			OutputTokens: result.OutputTokens,
+			CostUsd:      result.CostUSD,
+			CostUnknown:  costUnknown,
+			TurnsUsed:    result.TurnsUsed,
+			ID:           job.RunID,
+		}); err != nil {
+			slog.Warn("pool: set run completed (transient)", "component", "pool", "run_id", job.RunID, "err", err)
+		}
+		p.releaseLock(bg, job.Input.Task.ID, job.RunID)
 		if p.pub != nil {
-			msg := ""
-			if message != nil {
-				msg = *message
-			}
-			p.pub.Publish("task.needs_human", map[string]any{
+			p.pub.Publish("task.agent_done", map[string]any{
 				"task_id": job.Input.Task.ID,
 				"run_id":  job.RunID,
-				"message": msg,
+				"status":  finalStatus,
 			})
 		}
-	} else {
-		p.releaseLock(bg, job.Input.Task.ID, job.RunID)
 	}
-
-	if p.pub != nil {
-		p.pub.Publish("task.agent_done", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"status":  finalStatus,
-		})
-	}
+	metrics.RunTerminalTotal.WithLabelValues(finalStatus).Inc()
+	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
 }
 
 // maxConsecutiveFailures is how many genuine (non-transient) agent failures in a
@@ -136,30 +123,9 @@ const maxConsecutiveFailures = 3
 // re-dispatched, and publishes task.needs_human exactly once.
 func (p *Pool) escalateNoOutcome(ctx context.Context, job Job, result Result, log *slog.Logger) {
 	msg := "Agent finished without reporting an outcome (no signal_complete call or OUTCOME: line), so the task could not be advanced. Review the work and move the task manually or re-dispatch."
-	costUnknown := int64(0)
-	if result.CostUnknown {
-		costUnknown = 1
-	}
-	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status:       "waiting_human",
-		StoredInfo:   result.StoredInfo,
-		Notes:        &msg,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		CostUsd:      result.CostUSD,
-		CostUnknown:  costUnknown,
-		TurnsUsed:    result.TurnsUsed,
-		ID:           job.RunID,
-	}); err != nil {
-		log.Warn("pool: no-outcome escalation: set run status", "err", err)
-	}
-	if p.pub != nil {
-		p.pub.Publish("task.needs_human", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"message": msg,
-		})
-	}
+	_ = p.lifecycle().escalate(ctx, escalation{
+		TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonNoOutcome, Message: msg, Result: &result,
+	})
 	log.Warn("pool: run completed without a resolvable outcome, escalating to waiting_human")
 }
 
@@ -180,40 +146,13 @@ func (p *Pool) handleMaxTurnsExhausted(ctx context.Context, job Job, result Resu
 
 	msg := fmt.Sprintf("Agent hit its turn limit (%d turns) without completing. Review the work so far and re-dispatch or raise max_turns.", mt.MaxTurns)
 
-	costUnknown := int64(0)
-	if result.CostUnknown {
-		costUnknown = 1
-	}
-	if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
-		Status:       "waiting_human",
-		StoredInfo:   result.StoredInfo,
-		Notes:        &msg,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		CostUsd:      result.CostUSD,
-		CostUnknown:  costUnknown,
-		TurnsUsed:    result.TurnsUsed,
-		ID:           job.RunID,
-	}); err != nil {
-		log.Warn("pool: max-turns escalation: set run status", "err", err)
-	}
+	_ = p.lifecycle().escalate(bg, escalation{
+		TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonMaxTurns, Message: msg, Result: &result, PublishDone: true,
+	})
 
 	metrics.RunClassificationTotal.WithLabelValues(string(ClassMaxTurns)).Inc()
 	metrics.RunTerminalTotal.WithLabelValues("waiting_human").Inc()
 	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
-
-	if p.pub != nil {
-		p.pub.Publish("task.needs_human", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"message": msg,
-		})
-		p.pub.Publish("task.agent_done", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"status":  "waiting_human",
-		})
-	}
 
 	log.Warn("pool: agent hit max turns, escalating to waiting_human", "max_turns", mt.MaxTurns)
 }
@@ -234,40 +173,13 @@ func (p *Pool) handleCostBudgetExceeded(ctx context.Context, job Job, result Res
 
 	msg := fmt.Sprintf("mid-run cost budget exceeded: $%.2f of $%.2f", ce.SpentUSD, ce.BudgetUSD)
 
-	costUnknown := int64(0)
-	if result.CostUnknown {
-		costUnknown = 1
-	}
-	if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
-		Status:       "waiting_human",
-		StoredInfo:   result.StoredInfo,
-		Notes:        &msg,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		CostUsd:      result.CostUSD,
-		CostUnknown:  costUnknown,
-		TurnsUsed:    result.TurnsUsed,
-		ID:           job.RunID,
-	}); err != nil {
-		log.Warn("pool: cost-budget escalation: set run status", "err", err)
-	}
+	_ = p.lifecycle().escalate(bg, escalation{
+		TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonCostBudget, Message: msg, Result: &result, PublishDone: true,
+	})
 
 	metrics.RunClassificationTotal.WithLabelValues(string(ClassCostBudget)).Inc()
 	metrics.RunTerminalTotal.WithLabelValues("waiting_human").Inc()
 	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
-
-	if p.pub != nil {
-		p.pub.Publish("task.needs_human", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"message": msg,
-		})
-		p.pub.Publish("task.agent_done", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"status":  "waiting_human",
-		})
-	}
 
 	log.Warn("pool: mid-run cost budget exceeded, escalating to waiting_human", "spent_usd", ce.SpentUSD, "budget_usd", ce.BudgetUSD)
 }
@@ -462,30 +374,9 @@ func (p *Pool) failureLoopExceeded(ctx context.Context, taskID, fromLabel, toLab
 // transient-retry and cost-budget escalations.
 func (p *Pool) escalateFailureLoop(ctx context.Context, job Job, result Result, toLabel string, log *slog.Logger) {
 	msg := fmt.Sprintf("Stuck in a rework loop: the %q → %q failure path fired %d times without the task clearing review. Human intervention required.", job.Input.Task.Label, toLabel, failureLoopThreshold)
-	costUnknown := int64(0)
-	if result.CostUnknown {
-		costUnknown = 1
-	}
-	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status:       "waiting_human",
-		StoredInfo:   result.StoredInfo,
-		Notes:        &msg,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		CostUsd:      result.CostUSD,
-		CostUnknown:  costUnknown,
-		TurnsUsed:    result.TurnsUsed,
-		ID:           job.RunID,
-	}); err != nil {
-		log.Warn("pool: failure-loop escalation: set run status", "err", err)
-	}
-	if p.pub != nil {
-		p.pub.Publish("task.needs_human", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"message": msg,
-		})
-	}
+	_ = p.lifecycle().escalate(ctx, escalation{
+		TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonReworkLoop, Message: msg, Result: &result,
+	})
 	log.Warn("pool: failure loop exceeded threshold, escalating to waiting_human", "from", job.Input.Task.Label, "to", toLabel, "threshold", failureLoopThreshold)
 }
 
@@ -525,29 +416,8 @@ func (p *Pool) handleRejectedTransition(ctx context.Context, job Job, result Res
 		return
 	}
 	msg := fmt.Sprintf("Agent asked to move to %q but the move was rejected: %v. This happened %d times in a row. Resolve the blocker (e.g. free a WIP slot) or move the task manually.", toLabel, transErr, n)
-	costUnknown := int64(0)
-	if result.CostUnknown {
-		costUnknown = 1
-	}
-	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status:       "waiting_human",
-		StoredInfo:   result.StoredInfo,
-		Notes:        &msg,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		CostUsd:      result.CostUSD,
-		CostUnknown:  costUnknown,
-		TurnsUsed:    result.TurnsUsed,
-		ID:           job.RunID,
-	}); err != nil {
-		log.Warn("pool: rejected-transition escalation: set run status", "err", err)
-	}
-	if p.pub != nil {
-		p.pub.Publish("task.needs_human", map[string]any{
-			"task_id": taskID,
-			"run_id":  job.RunID,
-			"message": msg,
-		})
-	}
+	_ = p.lifecycle().escalate(ctx, escalation{
+		TaskID: taskID, RunID: job.RunID, Reason: ReasonRejectedTransition, Message: msg, Result: &result,
+	})
 	log.Warn("pool: rejected transition limit reached, escalating to waiting_human", "to", toLabel, "count", n, "limit", maxConsecutiveFailures)
 }

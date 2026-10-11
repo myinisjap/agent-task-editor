@@ -186,6 +186,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if run.Status != "waiting_human" {
 			t.Fatalf("expected phantom run status 'waiting_human', got %q", run.Status)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 		wantMsg := "budget exhausted: $1.50 of $1.00"
 		if run.Notes == nil || *run.Notes != wantMsg {
 			t.Errorf("expected notes %q, got %v", wantMsg, run.Notes)
@@ -229,6 +230,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if run.Status != "waiting_human" {
 			t.Fatalf("expected phantom run status 'waiting_human', got %q", run.Status)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 		if len(fp.inputs) != 0 {
 			t.Errorf("expected the provider to never be invoked, got %d invocations", len(fp.inputs))
 		}
@@ -249,6 +251,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get agent run: %v", err)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 		wantMsg := "budget exhausted: $1.00 of $1.00"
 		if run.Notes == nil || *run.Notes != wantMsg {
 			t.Errorf("expected notes %q (effective budget = min(5.00, 1.00)), got %v", wantMsg, run.Notes)
@@ -390,6 +393,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if run.Status != "waiting_human" {
 			t.Fatalf("expected phantom run status 'waiting_human', got %q", run.Status)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostUnknown)
 		if run.Notes == nil {
 			t.Fatal("expected phantom run to carry an explanatory notes message")
 		}
@@ -428,6 +432,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get agent run: %v", err)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 		wantMsg := "budget exhausted: $1.50 of $1.00"
 		if run.Notes == nil || *run.Notes != wantMsg {
 			t.Errorf("expected the ordinary exhaustion message %q, got %v", wantMsg, run.Notes)
@@ -519,6 +524,7 @@ func TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked(t *testing.T) {
 	run := h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
 		return r.Status == "waiting_human"
 	}, "run to be persisted as waiting_human after the cost-budget kill")
+	assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 	wantMsg := "mid-run cost budget exceeded: $12.34 of $10.00"
 	if run.Notes == nil || *run.Notes != wantMsg {
 		t.Errorf("expected notes %q, got %v", wantMsg, run.Notes)

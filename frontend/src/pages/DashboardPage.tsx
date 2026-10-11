@@ -6,6 +6,7 @@ import { useDashboard } from '../lib/useDashboard'
 import { humanActionsFor } from '../lib/humanGate'
 import { useNeedsMeStore } from '../stores/needsMe'
 import { needsMeReasonLabel } from '../lib/needsMe'
+import { escalationInfo } from '../lib/escalation'
 import { useWorkflowStore } from '../stores/workflow'
 import TaskFactory from '../components/TaskFactory'
 import FactoryLine from '../components/FactoryLine'
@@ -111,6 +112,20 @@ export default function DashboardPage() {
     setPending((p) => ({ ...p, [taskId]: true }))
     try {
       await api.tasks.approve(taskId)
+      refresh()
+    } catch (e: any) {
+      setActionErrors((m) => ({ ...m, [taskId]: e.message ?? String(e) }))
+    } finally {
+      setPending((p) => ({ ...p, [taskId]: false }))
+    }
+  }
+
+  // Retry an escalated task (clears its lock so the dispatcher re-runs it).
+  const handleRetry = async (taskId: string) => {
+    setActionErrors((m) => ({ ...m, [taskId]: '' }))
+    setPending((p) => ({ ...p, [taskId]: true }))
+    try {
+      await api.tasks.rerun(taskId)
       refresh()
     } catch (e: any) {
       setActionErrors((m) => ({ ...m, [taskId]: e.message ?? String(e) }))
@@ -303,7 +318,7 @@ export default function DashboardPage() {
                       {item.task_title}
                     </button>
                     <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200 font-medium">
-                      {needsMeReasonLabel(item.reason)}
+                      {needsMeReasonLabel(item.reason, item.escalation_reason)}
                     </span>
                     {item.message && (
                       <p className="text-xs text-slate-400 mt-1">{item.message}</p>
@@ -319,6 +334,37 @@ export default function DashboardPage() {
                     item.label,
                   )
                   if (!canApprove && !canReject) {
+                    const esc = escalationInfo(item.escalation_reason)
+                    if (item.reason === 'waiting_human' && esc.action !== 'reply') {
+                      return (
+                        <div className="flex items-center gap-2">
+                          <p className="flex-1 text-xs text-slate-500">
+                            {esc.action === 'fix'
+                              ? 'Fix the cause first, then retry.'
+                              : 'Retry re-runs the task as is; open it to reply with guidance instead.'}
+                          </p>
+                          {esc.action === 'fix' && esc.fix && (
+                            <button
+                              onClick={() => navigate(esc.fix!.to)}
+                              className="px-3 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white"
+                            >
+                              {esc.fix.text}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleRetry(item.task_id)}
+                            disabled={pending[item.task_id]}
+                            className={
+                              esc.action === 'retry'
+                                ? 'px-3 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-50'
+                                : 'px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-100 disabled:opacity-50'
+                            }
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )
+                    }
                     return (
                       <div className="flex items-center gap-2">
                         <p className="flex-1 text-xs text-slate-500">

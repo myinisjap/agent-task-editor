@@ -66,6 +66,7 @@ func TestE2E_GenuineFailure_EscalatesAfterLimit(t *testing.T) {
 	if task.ConsecutiveFailureCount != maxConsecutiveFailures {
 		t.Errorf("consecutive_failure_count = %d, want %d", task.ConsecutiveFailureCount, maxConsecutiveFailures)
 	}
+	assertEscalationReason(t, h.q, *task.ActiveAgentRunID, ReasonRepeatedFailure)
 	if n := h.pub.count("task.needs_human"); n != 1 {
 		t.Errorf("expected exactly 1 task.needs_human, got %d", n)
 	}
@@ -115,6 +116,7 @@ func TestE2E_NoOutcome_EscalatesOnce(t *testing.T) {
 	if runs[0].Notes == nil || *runs[0].Notes == "" {
 		t.Error("expected an explanatory note on the escalated run")
 	}
+	assertEscalationReason(t, h.q, runs[0].ID, ReasonNoOutcome)
 	if n := h.pub.count("task.needs_human"); n != 1 {
 		t.Errorf("expected exactly 1 task.needs_human, got %d", n)
 	}
@@ -133,6 +135,8 @@ func TestE2E_TransientFailure_NoRetries_Escalates(t *testing.T) {
 		t.Errorf("expected exactly 1 run, got %d", len(runs))
 	} else if runs[0].Status != "waiting_human" {
 		t.Errorf("run status = %q, want waiting_human", runs[0].Status)
+	} else {
+		assertEscalationReason(t, h.q, runs[0].ID, ReasonTransientExhausted)
 	}
 	if n := h.pub.count("task.needs_human"); n != 1 {
 		t.Errorf("expected exactly 1 task.needs_human, got %d", n)
@@ -191,6 +195,7 @@ func TestE2E_RejectedTransition_EscalatesAfterLimit(t *testing.T) {
 	if task.ConsecutiveFailureCount != maxConsecutiveFailures {
 		t.Errorf("consecutive_failure_count = %d, want %d", task.ConsecutiveFailureCount, maxConsecutiveFailures)
 	}
+	assertEscalationReason(t, h.q, *task.ActiveAgentRunID, ReasonRejectedTransition)
 	run, err := h.q.GetAgentRun(context.Background(), *task.ActiveAgentRunID)
 	if err != nil {
 		t.Fatalf("get run: %v", err)
