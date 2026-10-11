@@ -86,6 +86,12 @@ type Input struct {
 	// it (UPDATE_CHECK_ENABLED). Best-effort: network/gh failures degrade to
 	// StatusWarn, never StatusError.
 	CheckForUpdates bool
+
+	// AuthConfigured is true when API_TOKEN or API_TOKENS is set; ListenAddr
+	// is the address the HTTP server binds (e.g. ":8080"). Used only by the
+	// api_auth check.
+	AuthConfigured bool
+	ListenAddr     string
 }
 
 // Deps are the environment interactions the checks depend on, injectable so the
@@ -182,6 +188,7 @@ func Checks(in Input, d *Deps) []Check {
 
 	checks = append(checks, mcpCheck(in, deps))
 	checks = append(checks, ghCheck(deps))
+	checks = append(checks, apiAuthCheck(in))
 	checks = append(checks, repoBaseDirCheck(in, deps))
 	checks = append(checks, autoBackupCheck(in))
 	checks = append(checks, dbSizeCheck(in))

@@ -129,10 +129,50 @@ fi
 mkdir -p "$HOME/.claude"
 [ -e "$HOME/.claude.json" ] || : > "$HOME/.claude.json"
 
+# Make sure the API is not left open. With no API_TOKEN/API_TOKENS the backend
+# accepts unauthenticated requests from anything that can reach port 8080 (other
+# containers on shared Docker networks, LAN peers if ATE_BIND_ADDR is widened),
+# and that API can register repos and run shell-executing agents. On first run
+# generate a random API_TOKEN into .env. Never touches an existing value. The UI
+# shows a one-field "enter API token" screen on its first 401; paste the printed
+# token there once (it is kept in the browser's localStorage).
+ensure_api_token() {
+  if [[ -n "${API_TOKEN:-}" || -n "${API_TOKENS:-}" ]]; then
+    return 0
+  fi
+  local envfile token
+  envfile="$(dirname "$0")/.env"
+  if command -v openssl &>/dev/null; then
+    token=$(openssl rand -hex 32)
+  else
+    token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  fi
+  if [[ -z "$token" ]]; then
+    echo "WARNING: API_TOKEN is not set and a token could not be generated automatically."
+    echo "         The API is unauthenticated. Generate one with:"
+    echo "           echo \"API_TOKEN=\$(openssl rand -hex 32)\" >> .env"
+    return 0
+  fi
+  # Keep the file private and make sure we start on a fresh line.
+  if [[ -s "$envfile" && -n "$(tail -c1 "$envfile")" ]]; then echo >> "$envfile"; fi
+  ( umask 077; printf 'API_TOKEN=%s\n' "$token" >> "$envfile" )
+  export API_TOKEN="$token"
+  echo ""
+  echo "  No API_TOKEN was set, so one was generated and saved to $envfile:"
+  echo ""
+  echo "    API_TOKEN=$token"
+  echo ""
+  echo "  The board will ask for this token the first time you open it; paste it in once."
+  echo "  API clients must send:  Authorization: Bearer <token>"
+  echo "  To use your own value, edit API_TOKEN in .env (or set API_TOKENS for named tokens)."
+  echo ""
+}
+
 CMD=${1:-start}
 
 case "$CMD" in
   start)
+    ensure_api_token
     $COMPOSE up -d --pull always
     echo ""
     echo "  Running images:"
@@ -149,6 +189,7 @@ case "$CMD" in
     $COMPOSE down
     ;;
   restart)
+    ensure_api_token
     $COMPOSE down
     $COMPOSE up -d --pull always
     ;;

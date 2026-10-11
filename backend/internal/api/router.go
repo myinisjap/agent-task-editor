@@ -43,10 +43,13 @@ type RouterDeps struct {
 	MetricsPublic bool
 
 	RepoBaseDir string
-	UploadDir   string
-	MCPBinary   string
-	LLMBaseURL  string
-	LLMAPIKey   string
+	// ListenAddr is the HTTP server's bind address (e.g. ":8080"); used only
+	// for the api_auth health warning.
+	ListenAddr string
+	UploadDir  string
+	MCPBinary  string
+	LLMBaseURL string
+	LLMAPIKey  string
 
 	BackupDir      string
 	BackupInterval time.Duration
@@ -100,6 +103,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	outcomeQualityH := handlers.NewOutcomeQualityHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
 	healthH := handlers.NewHealthHandler(q, db, deps.MCPBinary, repoBaseDir, deps.LLMBaseURL, deps.LLMAPIKey, deps.BackupDir, deps.BackupInterval, deps.BackupKeep, deps.Version, deps.CheckForUpdates, dispatcherLiveness)
+	healthH.SetAuthInfo(deps.BearerToken != "" || len(deps.NamedTokens) > 0, deps.ListenAddr)
 	backupH := handlers.NewBackupHandler(db)
 	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	logRetentionSettingsH := handlers.NewLogRetentionSettingsHandler(q)

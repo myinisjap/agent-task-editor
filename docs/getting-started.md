@@ -65,7 +65,16 @@ TRAEFIK_HOST=your.domain.com ./dev.sh start
 
 The app is served at `https://your.domain.com/tasks`. TLS is handled by Traefik via Let's Encrypt. The `forward-auth` middleware (Google OAuth) is applied by default — remove that label from `docker-compose.traefik.yml` if you want the app public or use a different auth mechanism.
 
-> **Note:** The frontend nginx is the only container exposed to Traefik. It proxies `/tasks/api/` and `/tasks/ws` to the backend internally, so the backend container has no public port.
+> **Note:** The frontend nginx is the only container on `proxy_net`. It proxies `/tasks/api/` and `/tasks/ws` to `backend:8080` over the stack's private default network, so the backend has no public port and is not reachable from other containers on `proxy_net`. Don't attach the backend to `proxy_net`: with no `API_TOKEN` set, every neighbouring container could then drive the API. (The private network is deliberately not `internal: true`, because agents need outbound access to git remotes and model APIs.)
+
+## Set an API Token in Production
+
+With no `API_TOKEN`/`API_TOKENS`, the backend accepts unauthenticated requests from anything that can reach port 8080: other containers on a shared Docker network, LAN peers if `ATE_BIND_ADDR` is widened, and agent processes via `localhost:8080`. That API can register repos and start shell-executing agent runs, so set a token for any deployment that is not a single-user laptop.
+
+- `./run.sh` generates a random `API_TOKEN` into `.env` on first start if neither variable is set (it never overwrites an existing value) and prints it. The board asks for it once on first load; paste it in. API clients send `Authorization: Bearer <token>`.
+- Otherwise set it yourself: `echo "API_TOKEN=$(openssl rand -hex 32)" >> .env`, then restart. Both compose files pass `API_TOKEN` and `API_TOKENS` through from `.env`/your shell.
+- The backend logs a `SECURITY:` warning at startup when no token is set and it listens on all interfaces (it always binds `:PORT` inside the container; the host-side publish is loopback-only unless you set `ATE_BIND_ADDR`). The same condition shows as an "API authentication" warning on the Health page. `/healthz` and `/readyz` are unaffected, so container healthchecks keep passing.
+- To check what a running deployment uses: `docker exec <backend-container> printenv API_TOKEN` (empty output or exit status 1 means no token is set). Also check `API_TOKENS`.
 
 ## Backend Resilience: Restart Policy, Readiness, and Memory Limit
 
