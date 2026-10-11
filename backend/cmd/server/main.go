@@ -15,7 +15,6 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
-	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
@@ -24,6 +23,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
+	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -238,8 +238,8 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("get repo: %w", err)
 		}
-		if _, _, err := handlers.CreatePRForTask(ctx, termQ, issueWriteback, task, repo); err != nil {
-			if handlers.IsPRPrecondition(err) {
+		if _, _, err := prflow.New(termQ, issueWriteback).CreateForTask(ctx, task, repo); err != nil {
+			if prflow.IsPrecondition(err) {
 				slog.Warn("onCreatePR: skipped", "task_id", task.ID, "err", err)
 				return nil
 			}
