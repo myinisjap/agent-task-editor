@@ -47,6 +47,7 @@ agent-task-editor/
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
 │       ├── notify/           # Optional outbound webhook when a task needs a human (NOTIFY_WEBHOOK_URL)
+│       ├── prflow/           # Push a task's branch and create/find its PR; shared by the CreatePR handler and the OnCreatePR hook (leaf: no api/handlers or workflow import)
 │       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
 │       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues today, via `forge.Forge`)

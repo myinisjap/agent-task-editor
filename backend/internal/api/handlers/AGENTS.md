@@ -13,7 +13,7 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `uploads.go` | `UploadsHandler.ServeFile` — serves stored attachment files by task/filename (path-traversal-checked via `isSafePathComponent`). Sets `nosniff` + `Content-Disposition: inline` and `Content-Type` from `contentTypeForStoredExt`, not `http.ServeFile` inference (ADR 0030) | — |
 | `task_bulk.go` | `TasksHandler` (pause/archive toggles + bulk action) | — |
 | `task_runs.go` | `TasksHandler` (run list/get/logs/cancel/reply) | `agent` (error sentinels) |
-| `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state) | `ghclient`, `agent.PushBranch` |
+| `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state) | `prflow`, `forge` |
 | `workflows.go` | `WorkflowsHandler` | `gen.Queries`, `*sql.DB` (for YAML import transactions) |
 | `agents.go` | `AgentsHandler` | `gen.Queries` |
 | `providers.go` | `ProviderConfigsHandler` — CRUD for Provider Configs (provider/model/env), the entity `agent_configs`/`chat_sessions` reference by `provider_config_id` | `gen.Queries` |
@@ -38,7 +38,7 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 - **SetArchived** toggles `archived` only (hidden from default list, skipped by ghsync, never dispatched). **Bulk** (`POST /tasks/bulk`) applies `move`/`pause`/`resume`/`archive`/`unarchive` per id; `207` when any fails.
 - **CancelRun** signals the injected `RunCanceller` (the pool): `202` once signalled, `409` not running/unregistered, `404` wrong task; nil-safe (`409`). The pool does the DB writes and broadcast (ADR 0012).
 - **ReplyRun** answers a `waiting_human` run through the injected `ReplyDispatcher`: `202` + new run id; `400` empty message; `404` wrong task; `409` not the active waiting run / no config; `503` pool saturated or no dispatcher wired.
-- **CreatePR** pushes the branch (worktree if present, else main clone), resolves the `forge.Forge` via `forge.ForRemote` (GitHub via `ghclient.GitHub{}`), is idempotent (returns an existing PR), persists via `SetTaskPR`. `400` no branch / unsupported host, `502` creation failed. **PRURL** (`GET /tasks/{id}/pr-url`) only builds a compare URL (`Forge.CompareURL`), no auth.
+- **CreatePR** wraps `prflow.Service.CreateForTask` (shared with the engine `OnCreatePR` hook): pushes the branch (worktree if present, else main clone), resolves the `forge.Forge` via `forge.ForRemote` (GitHub via `ghclient.GitHub{}`), is idempotent (returns an existing PR), persists via `SetTaskPR`. `400` no branch / unsupported host, `502` creation failed. **PRURL** (`GET /tasks/{id}/pr-url`) only builds a compare URL (`Forge.CompareURL`), no auth.
 
 ## Config-List Pagination
 
