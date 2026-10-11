@@ -641,6 +641,17 @@ func (im *Importer) applyFieldUpdates(ctx context.Context, task *gen.Task, item 
 	shaped := im.shapeItem(ctx, repo, item, task.Label, rules, labelCache, log)
 
 	if task.Title == shaped.title && task.Description == shaped.description && task.Type == shaped.taskType {
+		// The issue matches the task again (e.g. an edit was reverted), so a
+		// held edit is stale.
+		im.clearPendingEdit(ctx, task.ID, log)
+		return false
+	}
+
+	// Block-after-approval: once a human has approved the task, an upstream
+	// edit must not silently change what the agent was approved to do. Hold
+	// the new text for a human to apply or discard instead of overwriting.
+	if im.approvedByHuman(ctx, *task, log) {
+		im.holdPendingEdit(ctx, task, shaped, item.Ref, log)
 		return false
 	}
 
@@ -658,6 +669,82 @@ func (im *Importer) applyFieldUpdates(ctx context.Context, task *gen.Task, item 
 	log.Info("issue import: task updated from source", "task_id", task.ID, "ref", item.Ref)
 	im.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: task.ID})
 	return true
+}
+
+// approvedByHuman reports whether a human has already moved the task off a
+// human-gate label of its workflow (see workflow.IsHumanGateLabel) -- the
+// point where a person signed off on the task's current prompt. Fails closed:
+// if the workflow or history cannot be read, the task is treated as approved
+// so an edit is held rather than applied.
+func (im *Importer) approvedByHuman(ctx context.Context, task gen.Task, log *slog.Logger) bool {
+	history, err := im.q.ListTaskLabelHistory(ctx, task.ID)
+	if err != nil {
+		log.Warn("issue import: label history lookup failed; treating task as approved", "task_id", task.ID, "err", err)
+		return true
+	}
+	var human []gen.TaskLabelHistory
+	for _, h := range history {
+		if h.Trigger == string(workflow.TriggerHuman) && h.FromLabel != nil {
+			human = append(human, h)
+		}
+	}
+	if len(human) == 0 {
+		return false
+	}
+	labels, err := im.q.ListWorkflowLabels(ctx, task.WorkflowID)
+	if err != nil {
+		log.Warn("issue import: workflow label lookup failed; treating task as approved", "task_id", task.ID, "err", err)
+		return true
+	}
+	transitions, err := im.q.ListWorkflowTransitions(ctx, task.WorkflowID)
+	if err != nil {
+		log.Warn("issue import: workflow transition lookup failed; treating task as approved", "task_id", task.ID, "err", err)
+		return true
+	}
+	for _, h := range human {
+		if workflow.IsHumanGateLabel(labels, transitions, *h.FromLabel) {
+			return true
+		}
+	}
+	return false
+}
+
+// holdPendingEdit stores the shaped upstream text as the task's pending
+// source edit instead of applying it. It is a no-op (no write, no event) when
+// the same text is already pending, so an unchanged edited issue does not
+// produce an event on every sweep.
+func (im *Importer) holdPendingEdit(ctx context.Context, task *gen.Task, shaped shapedItem, ref string, log *slog.Logger) {
+	if cur, err := im.q.GetTaskSourcePending(ctx, task.ID); err == nil &&
+		cur.Title == shaped.title && cur.Description == shaped.description && cur.Type == shaped.taskType {
+		return
+	}
+	if err := im.q.UpsertTaskSourcePending(ctx, gen.UpsertTaskSourcePendingParams{
+		TaskID:      task.ID,
+		Title:       shaped.title,
+		Description: shaped.description,
+		Type:        shaped.taskType,
+	}); err != nil {
+		log.Warn("issue import: store pending source edit failed", "task_id", task.ID, "ref", ref, "err", err)
+		return
+	}
+	log.Info("issue import: source issue edited after approval; edit held for human review", "task_id", task.ID, "ref", ref)
+	im.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: task.ID})
+}
+
+// clearPendingEdit drops a held (or dismissed) edit that no longer differs
+// from the task.
+func (im *Importer) clearPendingEdit(ctx context.Context, taskID string, log *slog.Logger) {
+	cur, err := im.q.GetTaskSourcePending(ctx, taskID)
+	if err != nil {
+		return // nothing held (the common case), so no write on the hot path
+	}
+	if _, err := im.q.DeleteTaskSourcePending(ctx, taskID); err != nil {
+		log.Warn("issue import: clear pending source edit failed", "task_id", taskID, "err", err)
+		return
+	}
+	if cur.Dismissed == 0 {
+		im.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: taskID})
+	}
 }
 
 // ingestComments fetches the item's comment thread and inserts any trusted,

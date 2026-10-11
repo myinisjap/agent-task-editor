@@ -62,6 +62,7 @@ sql:
       - "internal/storage/migrations/057_task_consecutive_failures.up.sql"
       - "internal/storage/migrations/059_agent_run_escalation_reason.up.sql"
       - "internal/storage/migrations/060_task_side_effects.up.sql"
+      - "internal/storage/migrations/061_task_source_pending.up.sql"
     gen:
       go:
         package: "gen"

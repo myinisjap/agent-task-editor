@@ -246,6 +246,10 @@ export const api = {
       request<{ pr_url: string; git_state: Task['git_state'] }>(`/tasks/${id}/pr`, { method: 'POST' }),
     retrySideEffects: (id: string) =>
       request<Task>(`/tasks/${id}/side-effects/retry`, { method: 'POST' }),
+    applySourceUpdate: (id: string) =>
+      request<Task>(`/tasks/${id}/source-update/apply`, { method: 'POST' }),
+    discardSourceUpdate: (id: string) =>
+      request<Task>(`/tasks/${id}/source-update`, { method: 'DELETE' }),
     githubStatus: (id: string) =>
       request<{ git_state: Task['git_state']; pr_url: string; error?: string }>(`/tasks/${id}/github-status`),
     updateGitState: (id: string, git_state: string) =>

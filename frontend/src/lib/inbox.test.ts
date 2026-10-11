@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { NeedsMeItem, Task, Workflow } from '../api/client'
-import { buildInbox, failedEffectTasks, inboxCount, itemActions } from './inbox'
+import { buildInbox, failedEffectTasks, inboxCount, itemActions, sourceEditTasks } from './inbox'
 import { formatRelativeAge } from './format'
 
 const item = (over: Partial<NeedsMeItem>): NeedsMeItem => ({
@@ -23,6 +23,22 @@ describe('failedEffectTasks', () => {
       task({ id: 'none' }),
     ])
     expect(out.map((o) => o.task.id)).toEqual(['old', 'new'])
+  })
+})
+
+describe('sourceEditTasks', () => {
+  it('keeps tasks with a held edit, skips archived, oldest first', () => {
+    const pend = (created_at: string) => ({ title: 't', description: 'd', type: 'task', created_at })
+    const out = sourceEditTasks([
+      task({ id: 'new', source_pending_update: pend('2026-01-02T00:00:00Z') }),
+      task({ id: 'arch', archived: true, source_pending_update: pend('2026-01-01T00:00:00Z') }),
+      task({ id: 'old', source_pending_update: pend('2026-01-01T00:00:00Z') }),
+      task({ id: 'none', source_pending_update: null }),
+    ])
+    expect(out.map((o) => o.task.id)).toEqual(['old', 'new'])
+    const g = buildInbox([], [], [], out)
+    expect(g.source_edit).toHaveLength(2)
+    expect(inboxCount(g)).toBe(2)
   })
 })
 

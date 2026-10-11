@@ -71,6 +71,43 @@ type taskResponse struct {
 	// retrying after a failure, or failed for good. Always an array; empty
 	// when nothing is outstanding. Populated on the list and single-task GET.
 	SideEffects []sideEffectResponse `json:"side_effects"`
+	// SourcePendingUpdate is an upstream issue edit the importer held back
+	// because a human had already approved the task. Nil when none is pending.
+	// Applied or discarded via /tasks/{id}/source-update.
+	SourcePendingUpdate *sourcePendingResponse `json:"source_pending_update"`
+}
+
+// sourcePendingResponse is the wire form of one task_source_pending row.
+type sourcePendingResponse struct {
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Type        string    `json:"type"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// sourcePendingMap fetches the undismissed held source edits for the given
+// task ids in one query, keyed by task id.
+func (h *TasksHandler) sourcePendingMap(ctx context.Context, ids []string) map[string]sourcePendingResponse {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListTaskSourcePendingForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]sourcePendingResponse, len(rows))
+	for _, r := range rows {
+		m[r.TaskID] = sourcePendingResponse{Title: r.Title, Description: r.Description, Type: r.Type, CreatedAt: r.CreatedAt}
+	}
+	return m
+}
+
+// applySourcePending sets the held source edit on a response.
+func applySourcePending(resp taskResponse, m map[string]sourcePendingResponse) taskResponse {
+	if p, ok := m[resp.ID]; ok {
+		resp.SourcePendingUpdate = &p
+	}
+	return resp
 }
 
 // sideEffectResponse is the wire form of one outstanding task_side_effects row.

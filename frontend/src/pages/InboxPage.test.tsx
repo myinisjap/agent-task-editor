@@ -9,7 +9,7 @@ import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 
 const m = {
-  needsMe: vi.fn(), list: vi.fn(), approve: vi.fn(), rerun: vi.fn(), retry: vi.fn(), health: vi.fn(), resume: vi.fn(),
+  needsMe: vi.fn(), apply: vi.fn(), discard: vi.fn(), list: vi.fn(), approve: vi.fn(), rerun: vi.fn(), retry: vi.fn(), health: vi.fn(), resume: vi.fn(),
 }
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -22,6 +22,8 @@ vi.mock('../api/client', async () => {
         approve: (...a: unknown[]) => m.approve(...a),
         rerun: (...a: unknown[]) => m.rerun(...a),
         retrySideEffects: (...a: unknown[]) => m.retry(...a),
+        applySourceUpdate: (...a: unknown[]) => m.apply(...a),
+        discardSourceUpdate: (...a: unknown[]) => m.discard(...a),
       },
       health: { providers: (...a: unknown[]) => m.health(...a), resumeProvider: (...a: unknown[]) => m.resume(...a) },
     },
@@ -45,7 +47,7 @@ beforeEach(() => {
   m.list.mockResolvedValue({ items: [], nextCursor: null })
   m.health.mockResolvedValue({ checks: [], paused_providers: [] })
   useNeedsMeStore.setState({ items: [], byTask: {} })
-  useInboxStore.setState({ failedEffects: [], loaded: false })
+  useInboxStore.setState({ failedEffects: [], sourceEdits: [], loaded: false })
   useHealthStore.setState({ checks: [], paused: [], loaded: false })
   useWorkflowStore.setState({ workflows: [workflow] as never })
 })
@@ -78,6 +80,22 @@ describe('InboxPage', () => {
     expect(await screen.findByText(/PR creation failed: boom/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(m.retry).toHaveBeenCalledWith('t2')
+  })
+
+  it('lists a source issue edit held after approval and applies or discards it', async () => {
+    m.list.mockResolvedValue({
+      items: [{ id: 't3', title: 'Edited', source_pending_update: { title: 'x', description: 'y', type: 'task', created_at: '2026-01-01T00:00:00Z' } }],
+      nextCursor: null,
+    })
+    m.apply.mockResolvedValue({})
+    m.discard.mockResolvedValue({})
+    renderPage()
+    expect(await screen.findByText(/edited after approval/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Edited' })).toHaveAttribute('href', '/tasks/t3')
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(m.apply).toHaveBeenCalledWith('t3')
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }))
+    expect(m.discard).toHaveBeenCalledWith('t3')
   })
 
   it('resumes a paused provider', async () => {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 )
 
 // Task priority levels. Stored as a plain INTEGER column (tasks.priority) so
@@ -91,10 +93,17 @@ type TasksHandler struct {
 	dispatcher   ReplyDispatcher
 	blockReasons BlockReasonResolver
 	wb           *writeback.Writeback
+	pub          TaskEventPublisher
 }
 
 func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher, blockReasons BlockReasonResolver) *TasksHandler {
 	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller, dispatcher: dispatcher, blockReasons: blockReasons, wb: writeback.New(q)}
+}
+
+// SetPublisher sets the WebSocket publisher used to emit task.updated events
+// from handlers that change a task outside the workflow engine. Nil-safe.
+func (h *TasksHandler) SetPublisher(pub TaskEventPublisher) {
+	h.pub = pub
 }
 
 // SetWriteback overrides the handler's writeback instance. Exported only for
@@ -143,9 +152,11 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		blockReasons := h.blockReasonMap(r.Context(), children)
 		runStatuses := h.activeRunStatusMap(r.Context(), ids)
 		effects := h.sideEffectMap(r.Context(), ids)
+		pendings := h.sourcePendingMap(r.Context(), ids)
 		resp := toTaskResponses(children)
 		for i := range resp {
 			resp[i] = applySideEffects(resp[i], effects)
+			resp[i] = applySourcePending(resp[i], pendings)
 			resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 		}
 		JSON(w, http.StatusOK, resp)
@@ -179,9 +190,11 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	blockReasons := h.blockReasonMap(r.Context(), tasks)
 	runStatuses := h.activeRunStatusMap(r.Context(), ids)
 	effects := h.sideEffectMap(r.Context(), ids)
+	pendings := h.sourcePendingMap(r.Context(), ids)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
 		resp[i] = applySideEffects(resp[i], effects)
+		resp[i] = applySourcePending(resp[i], pendings)
 		resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 	}
 	JSON(w, http.StatusOK, resp)
@@ -409,6 +422,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp = applyBlockReason(resp, h.blockReasonMap(r.Context(), []gen.Task{task}))
 	resp = applyActiveRunStatus(resp, h.activeRunStatusMap(r.Context(), ids))
 	resp = applySideEffects(resp, h.sideEffectMap(r.Context(), ids))
+	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost
 	}
@@ -844,6 +858,77 @@ func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ApplySourceUpdate applies the issue edit held by the importer after the task
+// was approved (see tasksource), overwriting the task's title, description and
+// type with the held text and clearing it. 404 for an unknown task; 409 when
+// no edit is pending. Responds with the updated task.
+func (h *TasksHandler) ApplySourceUpdate(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	pending, err := h.q.GetTaskSourcePending(r.Context(), taskID)
+	if err != nil || pending.Dismissed != 0 {
+		Err(w, http.StatusConflict, "task has no pending source update")
+		return
+	}
+	if _, err := h.q.UpdateTaskFromSource(r.Context(), gen.UpdateTaskFromSourceParams{
+		Title: pending.Title, Description: pending.Description, Type: pending.Type, ID: taskID,
+	}); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := h.q.DeleteTaskSourcePending(r.Context(), taskID); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	slog.Info("source update applied", "task_id", taskID, "actor", middleware.ActorFromContext(r.Context()))
+	h.publishTaskUpdated(taskID)
+	h.respondTask(w, r, taskID)
+}
+
+// DiscardSourceUpdate dismisses the held issue edit without applying it. The
+// same upstream text is not held again; a further edit is. 404 for an unknown
+// task; 409 when no edit is pending. Responds with the task.
+func (h *TasksHandler) DiscardSourceUpdate(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	n, err := h.q.DismissTaskSourcePending(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n == 0 {
+		Err(w, http.StatusConflict, "task has no pending source update")
+		return
+	}
+	slog.Info("source update discarded", "task_id", taskID, "actor", middleware.ActorFromContext(r.Context()))
+	h.publishTaskUpdated(taskID)
+	h.respondTask(w, r, taskID)
+}
+
+func (h *TasksHandler) publishTaskUpdated(taskID string) {
+	if h.pub != nil {
+		h.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: taskID})
+	}
+}
+
+func (h *TasksHandler) respondTask(w http.ResponseWriter, r *http.Request, taskID string) {
+	task, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to fetch task")
+		return
+	}
+	ids := []string{taskID}
+	resp := applySideEffects(toTaskResponse(task), h.sideEffectMap(r.Context(), ids))
+	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
+	JSON(w, http.StatusOK, resp)
 }
 
 // ListLabelHistory returns the task's label-transition audit trail, oldest

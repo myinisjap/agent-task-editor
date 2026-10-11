@@ -7,13 +7,17 @@ type SideEffect = NonNullable<Task['side_effects']>[number]
 /** A task whose outbox holds at least one effect that exhausted its retries. */
 export type FailedEffectTask = { task: Task; effects: SideEffect[]; since: string }
 
-export type InboxGroupKey = 'reply' | 'approval' | 'pr_conflict' | 'side_effect' | 'provider'
+/** A task whose source issue was edited after a human approved it; the edit is held for review. */
+export type SourceEditTask = { task: Task; since: string }
+
+export type InboxGroupKey = 'reply' | 'approval' | 'pr_conflict' | 'side_effect' | 'source_edit' | 'provider'
 
 export type InboxGroups = {
   reply: NeedsMeItem[]
   approval: NeedsMeItem[]
   pr_conflict: NeedsMeItem[]
   side_effect: FailedEffectTask[]
+  source_edit: SourceEditTask[]
   provider: PausedProvider[]
 }
 
@@ -31,23 +35,35 @@ export function failedEffectTasks(tasks: Task[]): FailedEffectTask[] {
   return out.sort((a, b) => a.since.localeCompare(b.since))
 }
 
+/** Tasks holding an issue edit that arrived after approval, oldest first. */
+export function sourceEditTasks(tasks: Task[]): SourceEditTask[] {
+  const out: SourceEditTask[] = []
+  for (const task of tasks) {
+    if (task.archived || !task.source_pending_update) continue
+    out.push({ task, since: task.source_pending_update.created_at })
+  }
+  return out.sort((a, b) => a.since.localeCompare(b.since))
+}
+
 /** Groups every kind of thing waiting on the human. Order inside a group is preserved. */
 export function buildInbox(
   needsMe: NeedsMeItem[],
   failed: FailedEffectTask[],
   paused: PausedProvider[],
+  sourceEdits: SourceEditTask[] = [],
 ): InboxGroups {
   return {
     reply: needsMe.filter((i) => i.reason === 'waiting_human'),
     approval: needsMe.filter((i) => i.reason === 'human_gate'),
     pr_conflict: needsMe.filter((i) => i.reason === 'pr_conflict'),
     side_effect: failed,
+    source_edit: sourceEdits,
     provider: paused,
   }
 }
 
 export function inboxCount(g: InboxGroups): number {
-  return g.reply.length + g.approval.length + g.pr_conflict.length + g.side_effect.length + g.provider.length
+  return g.reply.length + g.approval.length + g.pr_conflict.length + g.side_effect.length + g.source_edit.length + g.provider.length
 }
 
 export type ItemActions = {
