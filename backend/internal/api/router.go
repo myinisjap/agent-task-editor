@@ -301,6 +301,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Post("/repos/{id}/runtime/detect", reposH.Detect)
 
 			// Dashboard
+			r.Get("/needs-me", handlers.NewNeedsMeHandler(q).List)
 			r.Get("/dashboard", dashH.Get)
 			r.Get("/dashboard/cost-by-task", dashH.CostByTask)
 			r.Get("/dashboard/outcome-quality", outcomeQualityH.Get)

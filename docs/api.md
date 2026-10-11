@@ -962,7 +962,7 @@ Returns aggregated statistics:
 
 - `label_counts` — number of tasks currently in each workflow label.
 - `active_agents` — agent runs currently in progress.
-- `intervention_queue` — runs in `waiting_human`, awaiting a human. Each item includes the task's current `task_label` and `workflow_id` so clients can tell whether approve/reject apply (a human `success`/`failure` transition from that label) or only a reply does.
+- `intervention_queue` — runs in `waiting_human`, awaiting a human. Each item includes the task's current `task_label` and `workflow_id` so clients can tell whether approve/reject apply (a human `success`/`failure` transition from that label) or only a reply does. (The Dashboard UI now uses [`GET /needs-me`](#get-needs-me) instead, which also covers human gates and PR conflicts.)
 - `cost_total` / `cost_by_provider` — aggregate token/cost usage across all
   runs in a terminal state (completed, failed, waiting_human), computed
   from data already recorded in this app's own database.
@@ -1036,6 +1036,34 @@ Returns aggregated statistics:
   (`"daily"` or `"monthly"`) is present only when `tripped` is `true`.
   `daily_forecast_usd`/`monthly_forecast_usd` are present only when the
   corresponding limit is configured.
+
+### `GET /needs-me`
+
+The single server-side definition of "needs me". Returns `{ "items": [...] }`,
+oldest first (`since` ascending). Each task appears at most once with one
+primary `reason`; precedence is `waiting_human` > `pr_conflict` > `human_gate`.
+
+```json
+{ "items": [
+  { "task_id": "...", "task_title": "...", "repo_id": "...", "workflow_id": "...", "label": "review",
+    "reason": "human_gate", "since": "2026-01-01T12:00:00Z" },
+  { "task_id": "...", "task_title": "...", "repo_id": "...", "workflow_id": "...", "label": "work",
+    "reason": "waiting_human", "run_id": "...", "message": "Which DB?",
+    "since": "2026-01-01T12:05:00Z" }
+] }
+```
+
+- `waiting_human` — the task's active run is `waiting_human`; `run_id` and
+  `message` (run feedback, else notes) are set when present.
+- `pr_conflict` — `git_state` is `pr_open` and `pr_mergeable` is `conflicting`.
+- `human_gate` — the task is on a non-terminal label with no agent-triggerable
+  outbound transition and at least one human transition (same rule as
+  `workflow.IsHumanGateLabel`), with no pending/running run. `agent_ignore`
+  backlog labels (e.g. `not_ready`) are not gates here.
+
+Archived tasks are excluded; paused tasks are excluded except for
+`waiting_human`. The Dashboard queue, the board's "Needs you" badge and the
+nav count are all driven by this endpoint.
 
 ### `GET /dashboard/cost-by-task`
 Returns the full per-task cost rollup (no top-20 cap, no `task_title`) as a

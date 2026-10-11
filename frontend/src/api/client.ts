@@ -38,6 +38,8 @@ export type AgentRun = Schemas['AgentRun']
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
 export type Dashboard = Schemas['Dashboard']
+export type NeedsMeItem = Schemas['NeedsMeItem']
+export type NeedsMeReason = NeedsMeItem['reason']
 export type OutcomeQuality = Schemas['OutcomeQuality']
 export type ProviderCheck = Schemas['ProviderCheck']
 
@@ -435,6 +437,9 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ repo_id: repoId, rule, limit }),
       }),
+  },
+  needsMe: {
+    list: () => request<Schemas['NeedsMeResponse']>('/needs-me').then((r) => r.items),
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),

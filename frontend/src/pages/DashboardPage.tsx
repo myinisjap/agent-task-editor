@@ -4,6 +4,8 @@ import { api, type Workflow } from '../api/client'
 import { buildChipRows } from '../lib/dashboardChips'
 import { useDashboard } from '../lib/useDashboard'
 import { humanActionsFor } from '../lib/humanGate'
+import { useNeedsMeStore } from '../stores/needsMe'
+import { needsMeReasonLabel } from '../lib/needsMe'
 import { useWorkflowStore } from '../stores/workflow'
 import TaskFactory from '../components/TaskFactory'
 import FactoryLine from '../components/FactoryLine'
@@ -69,7 +71,13 @@ function LabelChipRows({
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { dash, refresh } = useDashboard()
+  const { dash, refresh: refreshDash } = useDashboard()
+  const needsMe = useNeedsMeStore((st) => st.items)
+  const refreshNeedsMe = useNeedsMeStore((st) => st.refresh)
+  const refresh = () => {
+    refreshDash()
+    void refreshNeedsMe()
+  }
   const [rejectNote, setRejectNote] = useState<Record<string, string>>({})
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<Record<string, boolean>>({})
@@ -278,14 +286,14 @@ export default function DashboardPage() {
       )}
 
       {/* Intervention queue */}
-      {dash && dash.intervention_queue.length > 0 && (
+      {needsMe.length > 0 && (
         <section className="mb-8">
           <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
-            Needs your input ({dash.intervention_queue.length})
+            Needs your input ({needsMe.length})
           </h2>
           <div className="flex flex-col gap-3">
-            {dash.intervention_queue.map((item) => (
-              <div key={item.run_id} className="bg-slate-900 border border-pink-900/50 rounded-lg p-4">
+            {needsMe.map((item) => (
+              <div key={item.task_id} className="bg-slate-900 border border-pink-900/50 rounded-lg p-4">
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div>
                     <button
@@ -294,18 +302,21 @@ export default function DashboardPage() {
                     >
                       {item.task_title}
                     </button>
+                    <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200 font-medium">
+                      {needsMeReasonLabel(item.reason)}
+                    </span>
                     {item.message && (
                       <p className="text-xs text-slate-400 mt-1">{item.message}</p>
                     )}
                   </div>
                   <span className="shrink-0 text-xs text-slate-500">
-                    {new Date(item.created_at).toLocaleTimeString()}
+                    {new Date(item.since).toLocaleTimeString()}
                   </span>
                 </div>
-                {(() => {
+                {item.reason !== 'pr_conflict' && (() => {
                   const { canApprove, canReject } = humanActionsFor(
                     workflows.find((w) => w.id === item.workflow_id),
-                    item.task_label,
+                    item.label,
                   )
                   if (!canApprove && !canReject) {
                     return (
@@ -367,7 +378,7 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {dash && !dash.active_agents.length && !dash.intervention_queue.length && (
+      {dash && !dash.active_agents.length && !needsMe.length && (
         <p className="text-sm text-slate-500">No active agents or pending reviews.</p>
       )}
 

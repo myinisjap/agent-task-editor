@@ -8,6 +8,35 @@ servers:
 
 components:
   schemas:
+    NeedsMeResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/NeedsMeItem" }
+    NeedsMeItem:
+      type: object
+      required: [task_id, task_title, repo_id, workflow_id, label, reason, since]
+      properties:
+        task_id: { type: string }
+        task_title: { type: string }
+        repo_id: { type: string }
+        workflow_id: { type: string }
+        label: { type: string }
+        reason:
+          type: string
+          enum: [waiting_human, pr_conflict, human_gate]
+        message:
+          type: string
+          description: Waiting run feedback or notes text, when present.
+        run_id:
+          type: string
+          description: Set when reason is waiting_human.
+        since:
+          type: string
+          format: date-time
+          description: When the task started needing a human; the list is sorted by this ascending.
     ProviderConfig:
       type: object
       description: >
@@ -3099,6 +3128,26 @@ paths:
                               description: The manifest file this suggestion was read from, e.g. "go.mod".
                           required: [source]
         "404": { description: Repo not found }
+
+  /needs-me:
+    get:
+      summary: Tasks that need a human, oldest first
+      description: >
+        The single server-side definition of "needs me". Each task appears at
+        most once with one primary reason; precedence is waiting_human >
+        pr_conflict > human_gate. waiting_human: the task's active run is
+        waiting for input (run_id and message set). pr_conflict: the task has
+        an open PR marked as conflicting. human_gate: the task sits on a
+        non-terminal, non-agent_ignore label with no agent-triggerable
+        outbound transition and at least one human transition, with no live
+        run. Archived and (for pr_conflict/human_gate) paused tasks are
+        excluded.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NeedsMeResponse" }
 
   /dashboard:
     get:
