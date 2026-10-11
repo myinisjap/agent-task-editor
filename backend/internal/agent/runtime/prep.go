@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -208,7 +209,7 @@ func venvMatchesVersion(venvDir, pinVersion string) bool {
 // file) leaves the venv visible to git status rather than blocking venv
 // creation.
 func excludeVenv(worktreeDir string) {
-	out, err := agentuser.ServerCommand("git", "-C", worktreeDir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude").Output()
+	out, err := gitcmd.Output(context.Background(), worktreeDir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
 	if err != nil {
 		return
 	}

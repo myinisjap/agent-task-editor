@@ -2,9 +2,8 @@ package handlers
 
 import (
 	"context"
-	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -26,7 +25,7 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusOK, map[string]any{"branch": task.Branch, "diff": ""})
 		return
 	}
-	if !isValidGitRef(task.BaseRef) || !isValidGitRef(task.Branch) {
+	if !gitcmd.IsValidRef(task.BaseRef) || !gitcmd.IsValidRef(task.Branch) {
 		Err(w, http.StatusBadRequest, "invalid git ref")
 		return
 	}
@@ -35,7 +34,7 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 	// worktree is torn down (the branch is kept). Fall back to the repo's main
 	// clone, which still has the branch ref.
 	gitDir := task.WorktreePath
-	if gitDir == "" || !dirExists(gitDir) {
+	if gitDir == "" || !gitcmd.DirExists(gitDir) {
 		repo, rerr := h.q.GetRepo(r.Context(), task.RepoID)
 		if rerr != nil {
 			Err(w, http.StatusInternalServerError, "failed to locate repo")
@@ -44,7 +43,7 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		gitDir = repo.Path
 	}
 
-	mb, err := agentuser.ServerCommandContext(r.Context(), "git", "-C", gitDir, "merge-base", task.BaseRef, task.Branch).Output()
+	mb, err := gitcmd.Output(r.Context(), gitDir, "merge-base", task.BaseRef, task.Branch)
 	base := task.BaseRef
 	if err == nil {
 		if s := strings.TrimSpace(string(mb)); s != "" {
@@ -52,17 +51,12 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	out, err := agentuser.ServerCommandContext(r.Context(), "git", "-C", gitDir, "diff", base, task.Branch, "--").Output()
+	out, err := gitcmd.Output(r.Context(), gitDir, "diff", base, task.Branch, "--")
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to compute diff")
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"branch": task.Branch, "diff": string(out)})
-}
-
-func dirExists(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.IsDir()
 }
 
 // PRURL builds a forge compare URL for the task's branch with a pre-filled PR

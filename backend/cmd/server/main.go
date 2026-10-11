@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"log/slog"
 	"net/http"
 	"os"
@@ -603,8 +604,8 @@ func main() {
 // Tries `git config` first (covers local dev), then `gh api user` (covers containers with gh auth).
 // Falls back to ("ate", "ate") if neither works.
 func resolveGitIdentity() (string, string) {
-	name := strings.TrimSpace(runOutput("git", "config", "user.name"))
-	email := strings.TrimSpace(runOutput("git", "config", "user.email"))
+	name := strings.TrimSpace(gitConfig("user.name"))
+	email := strings.TrimSpace(gitConfig("user.email"))
 	if name != "" && email != "" {
 		slog.Info("git identity resolved from git config", "name", name, "email", email)
 		return name, email
@@ -635,6 +636,14 @@ func resolveGitIdentity() (string, string) {
 	}
 	slog.Info("git identity resolved", "name", name, "email", email)
 	return name, email
+}
+
+func gitConfig(key string) string {
+	out, err := gitcmd.Output(context.Background(), "", "config", key)
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
 func runOutput(name string, args ...string) string {
