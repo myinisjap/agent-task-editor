@@ -3620,3 +3620,77 @@ func TestTasks_Create_DefaultsToAlphabeticallyFirstWorkflow_WhenNoneNamedDefault
 		t.Errorf("expected task to default to the alphabetically-first workflow %s (Alpha), got %s", alpha.ID, task.WorkflowID)
 	}
 }
+
+// TestTasks_SetArchived_ReclaimWaitsForRepoGitLock asserts the archive-time
+// worktree removal serializes on agent.RepoGitLock(repo.Path): while another
+// git op holds the lock the worktree must survive, and once released the
+// removal proceeds.
+func TestTasks_SetArchived_ReclaimWaitsForRepoGitLock(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Locked archive", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	wtPath, branch, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: branch, WorktreePath: wtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	lock := agent.RepoGitLock(repoDir)
+	lock.Lock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			lock.Unlock()
+		}
+	}()
+
+	done := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, map[string]bool{"archived": true}))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		done <- w.Code
+	}()
+
+	select {
+	case code := <-done:
+		t.Fatalf("archive finished (%d) while the repo git lock was held", code)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("worktree removed while the repo git lock was held: %v", err)
+	}
+
+	lock.Unlock()
+	unlocked = true
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("archive did not finish after the lock was released")
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree removed after lock release, stat err=%v", err)
+	}
+}
