@@ -85,6 +85,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `API_TOKENS` | _(none)_ | Named bearer tokens (`name1:token1,name2:token2`); resolves to an actor name recorded in `task_label_history.actor_id` for human-triggered transitions, surfaced via `GET /tasks/{id}/label-history` |
 | `ALLOWED_HOSTS` | _(none)_ | Extra `Host` header values (hostname or `host:port`, comma-separated) accepted while no `API_TOKEN`/`API_TOKENS` is set (DNS-rebinding protection). Always allowed: `localhost`, `127.0.0.1`, `::1`, `backend`, IP literals and hostnames from `CORS_ORIGINS`. `*` disables the check; ignored when a token is set |
 | `REPO_BASE_DIR` | _(none)_ | Restrict repo paths; empty = any path allowed (warns on startup) |
+| `SKIP_PREMIGRATE_SNAPSHOT` | `false` | Set `true` to skip the automatic pre-migration `VACUUM INTO` snapshot (written next to the DB file whenever migrations are pending; last 3 kept) and to start anyway if it cannot be written. See `docs/backup.md#pre-migration-snapshots`. |
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
 | `MCP_BOARD_PATH` | _(none)_ | Path to mcp-board binary; enables the board tools (list_repos/list_workflows/create_task) inside chat sessions. See `docs/board-mcp.md` |
 | `LLM_API_KEY` | _(none)_ | API key for the `anthropic` or `llm` providers. Both are **deprecated** — disabled for new/updated provider configs, may be removed in a future release; only relevant to existing configs still using them. |
