@@ -774,6 +774,16 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 	switch finalStatus {
 	case "completed":
 		if resolvedLabel != "" {
+			// The outcome was resolved against the label the run was dispatched
+			// on. If a human has since moved the task (possible once the run is
+			// marked completed), applying it would act on the wrong column, and
+			// the failure-loop bookkeeping below would escalate a task the human
+			// already took over. Leave the task where the human put it; the move
+			// already cleared the lock, and releaseLock is owner-scoped.
+			if p.humanMovedTask(ctx, job, log) {
+				p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
+				return
+			}
 			note := ""
 			if result.Message != nil {
 				note = *result.Message
@@ -807,7 +817,9 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 					return
 				}
 			}
-			if err := p.engine.Transition(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
+			// Pass the dispatch-time label so the engine's compare-and-swap
+			// refuses (ErrStale) if a human moved the task since the check above.
+			if err := p.engine.TransitionExpecting(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note, job.Input.Task.Label); err != nil {
 				// The transition didn't land, so it did not clear the lock.
 				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
 				p.handleRejectedTransition(ctx, job, result, resolvedLabel, err, log)
@@ -842,6 +854,25 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 			})
 		}
 	}
+}
+
+// humanMovedTask reports whether the task is no longer on the label this run
+// was dispatched on, logging when so. A lookup error is treated as "not moved"
+// so the transition (which re-checks atomically) decides.
+func (p *Pool) humanMovedTask(ctx context.Context, job Job, log *slog.Logger) bool {
+	if job.Input.Task.Label == "" {
+		return false
+	}
+	t, err := p.q.GetTask(ctx, job.Input.Task.ID)
+	if err != nil {
+		return false
+	}
+	if t.Label != job.Input.Task.Label {
+		log.Warn("pool: task moved since dispatch; skipping agent outcome",
+			"dispatched_label", job.Input.Task.Label, "current_label", t.Label)
+		return true
+	}
+	return false
 }
 
 // persistLogs drains logCh and writes to SQLite in batches wrapped in a transaction.

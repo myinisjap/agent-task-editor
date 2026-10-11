@@ -535,3 +535,41 @@ func TestTransition_OnCreatePR_NilCallbackIsSafe(t *testing.T) {
 		t.Fatalf("transition failed: %v", err)
 	}
 }
+
+// TestTransitionExpecting_RefusesWhenTaskMoved verifies an agent-style
+// transition that carries the dispatch-time label is rejected with ErrStale,
+// and leaves the human's label untouched, even when an edge to the target
+// exists from the label the task is on now. A matching expected label works.
+func TestTransitionExpecting_RefusesWhenTaskMoved(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	// Extra edge so "review-plan" -> "testing" would be valid for an agent.
+	if _, err := q.CreateWorkflowTransition(ctx, gen.CreateWorkflowTransitionParams{
+		ID: uuid.NewString(), WorkflowID: wfID, FromLabel: "review-plan", ToLabel: "testing", TriggerType: "agent",
+	}); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+
+	task := createTestTask(t, db, "review-plan", wfID) // a human already moved it here
+	err := engine.TransitionExpecting(ctx, task.ID, "testing", workflow.TriggerAgent, "run", "", "work")
+	if !errors.Is(err, workflow.ErrStale) {
+		t.Fatalf("expected ErrStale, got %v", err)
+	}
+	got, _ := q.GetTask(ctx, task.ID)
+	if got.Label != "review-plan" {
+		t.Fatalf("task must stay on the human's label, got %q", got.Label)
+	}
+
+	// Matching expected label still transitions.
+	if err := engine.TransitionExpecting(ctx, task.ID, "testing", workflow.TriggerAgent, "run", "", "review-plan"); err != nil {
+		t.Fatalf("expected success with matching expected label, got %v", err)
+	}
+	got, _ = q.GetTask(ctx, task.ID)
+	if got.Label != "testing" {
+		t.Fatalf("expected testing, got %q", got.Label)
+	}
+}

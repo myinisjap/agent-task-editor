@@ -140,9 +140,24 @@ func New(db *sql.DB, pub Publisher) *Engine {
 //   - Returns ErrGateRequired if the transition requires human input but trigger is agent.
 //   - Returns ErrAgentIgnored if the destination label has agent_ignore set.
 func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger TransitionTrigger, actorID, note string) error {
+	return e.TransitionExpecting(ctx, taskID, toLabel, trigger, actorID, note, "")
+}
+
+// TransitionExpecting is Transition with an optional expected from-label. When
+// expectedFrom is non-empty and the task is no longer on that label, the
+// transition is refused with ErrStale instead of being resolved against
+// whatever label the task is on now. Agent-triggered transitions use this to
+// pass the label the run was dispatched on, so an agent outcome can never be
+// applied on top of a human move that landed after the run finished. The
+// final UPDATE is already a compare-and-swap on the label, so the check is
+// atomic. An empty expectedFrom behaves exactly like Transition.
+func (e *Engine) TransitionExpecting(ctx context.Context, taskID, toLabel string, trigger TransitionTrigger, actorID, note, expectedFrom string) error {
 	task, err := e.q.GetTask(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
+	}
+	if expectedFrom != "" && task.Label != expectedFrom {
+		return fmt.Errorf("%w: task is on %q, expected %q", ErrStale, task.Label, expectedFrom)
 	}
 
 	trans, err := e.q.GetWorkflowTransition(ctx, gen.GetWorkflowTransitionParams{
