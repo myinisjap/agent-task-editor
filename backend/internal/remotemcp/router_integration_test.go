@@ -39,11 +39,12 @@ func TestToolsAgainstRealRouter(t *testing.T) {
 	email := allowedEmail
 	g := fakeGoogle(t, &email)
 	t.Cleanup(g.Close)
-	s, err := New(Config{
-		PublicURL: "https://board.example.com/tasks", GoogleClientID: testClientID, GoogleClientSecret: "google-secret",
-		AllowedEmails: []string{allowedEmail}, RedirectHosts: []string{"claude.ai"},
-		GoogleAuthURL: "https://google.test/auth", GoogleTokenURL: g.URL,
-	}, router)
+	s, err := New(func() Config {
+		c := testConfig(t, g.URL)
+		c.PublicURL = "https://board.example.com/tasks"
+		c.DB = db.SQL()
+		return c
+	}(), router)
 	if err != nil {
 		t.Fatal(err)
 	}

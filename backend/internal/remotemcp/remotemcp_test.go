@@ -2,16 +2,19 @@ package remotemcp
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 )
 
 const (
@@ -46,22 +49,43 @@ func fakeAPI() http.Handler {
 	mux.HandleFunc("/api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "t1", "title": "by " + middleware.ActorFromContext(r.Context()), "label": r.URL.Query().Get("label")}})
 	})
-	return middleware.BearerAuth("static-api-token", nil)(mux)
+	return middleware.BearerAuthTrusted("static-api-token", nil)(mux)
+}
+
+const testSigningKey = "test-signing-key-0123456789abcdef0123"
+
+// testDB opens a throwaway SQLite database for the grants table.
+func testDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db.SQL()
+}
+
+// testConfig is a valid Config pointing at the fake Google endpoint.
+func testConfig(t *testing.T, googleURL string) Config {
+	t.Helper()
+	return Config{
+		PublicURL:          "https://board.example.com/tasks/",
+		GoogleClientID:     testClientID,
+		GoogleClientSecret: "google-secret",
+		AllowedEmails:      []string{"Owner@Example.com"},
+		SigningKey:         testSigningKey,
+		ToolProfile:        ToolProfileFull,
+		DB:                 testDB(t),
+		GoogleAuthURL:      "https://google.test/auth",
+		GoogleTokenURL:     googleURL,
+	}
 }
 
 func newTestServer(t *testing.T, email *string) (http.Handler, *httptest.Server) {
 	t.Helper()
 	g := fakeGoogle(t, email)
 	t.Cleanup(g.Close)
-	s, err := New(Config{
-		PublicURL:          "https://board.example.com/tasks/",
-		GoogleClientID:     testClientID,
-		GoogleClientSecret: "google-secret",
-		AllowedEmails:      []string{"Owner@Example.com"},
-		RedirectHosts:      []string{"claude.ai"},
-		GoogleAuthURL:      "https://google.test/auth",
-		GoogleTokenURL:     g.URL,
-	}, fakeAPI())
+	s, err := New(testConfig(t, g.URL), fakeAPI())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,8 +220,16 @@ func TestRegisterRejectsForeignRedirect(t *testing.T) {
 	if _, code := register(t, h, "http://claude.ai/cb"); code != http.StatusBadRequest {
 		t.Errorf("plain-http redirect: got %d", code)
 	}
-	if _, code := register(t, h, "http://127.0.0.1:3333/callback"); code != http.StatusCreated {
+	// Exact match only: same host, different path is refused, and loopback is
+	// refused unless listed.
+	if _, code := register(t, h, "https://claude.ai/other/callback"); code != http.StatusBadRequest {
+		t.Errorf("other claude.ai path: got %d", code)
+	}
+	if _, code := register(t, h, "http://127.0.0.1:3333/callback"); code != http.StatusBadRequest {
 		t.Errorf("loopback redirect: got %d", code)
+	}
+	if _, code := register(t, h, "https://claude.ai/api/mcp/auth_callback"); code != http.StatusCreated {
+		t.Errorf("default redirect: got %d", code)
 	}
 }
 
@@ -282,22 +314,25 @@ func TestDisallowedEmail(t *testing.T) {
 	}
 }
 
-// A client registered while a host was allowed can't be sent there once the
-// host is removed from the allowlist.
-func TestAuthorizeRechecksRedirectHost(t *testing.T) {
+// A client registered while a redirect URI was allowed can't be sent there
+// once the URI is removed from the allowlist.
+func TestAuthorizeRechecksRedirectURI(t *testing.T) {
 	email := allowedEmail
 	g := fakeGoogle(t, &email)
 	t.Cleanup(g.Close)
-	cfg := Config{
-		PublicURL: "https://board.example.com/tasks", GoogleClientID: testClientID, GoogleClientSecret: "google-secret",
-		AllowedEmails: []string{allowedEmail}, RedirectHosts: []string{"claude.ai", "old.example"},
-		GoogleAuthURL: "https://google.test/auth", GoogleTokenURL: g.URL,
+	cfg := testConfig(t, g.URL)
+	cfg.RedirectURIs = []string{"https://claude.ai/api/mcp/auth_callback", "https://old.example/cb"}
+	s1, err := New(cfg, http.NotFoundHandler())
+	if err != nil {
+		t.Fatal(err)
 	}
-	s1, _ := New(cfg, http.NotFoundHandler())
 	clientID, _ := register(t, s1.Wrap(http.NotFoundHandler()), "https://old.example/cb")
 
-	cfg.RedirectHosts = []string{"claude.ai"}
-	s2, _ := New(cfg, http.NotFoundHandler())
+	cfg.RedirectURIs = []string{"https://claude.ai/api/mcp/auth_callback"}
+	s2, err := New(cfg, http.NotFoundHandler())
+	if err != nil {
+		t.Fatal(err)
+	}
 	q := url.Values{"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"https://old.example/cb"},
 		"code_challenge": {"x"}, "code_challenge_method": {"S256"}}
 	rec := do(s2.Wrap(http.NotFoundHandler()), http.MethodGet, "/oauth/authorize?"+q.Encode(), "", "")

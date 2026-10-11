@@ -155,3 +155,22 @@ func TestDefsAndTruncate(t *testing.T) {
 		t.Errorf("truncate: len %d", len(got))
 	}
 }
+
+func TestReadOnlyRemoteToolsDoNotMutate(t *testing.T) {
+	mutating := map[string]bool{"create_task": true, "reply_to_run": true, "approve_task": true, "reject_task": true, "move_task": true}
+	for _, tl := range Select(ReadOnlyRemoteTools) {
+		if mutating[tl.Name] {
+			t.Errorf("read-only profile exposes mutating tool %q", tl.Name)
+		}
+	}
+	// Every read-only tool is also part of the full profile.
+	full := map[string]bool{}
+	for _, n := range RemoteTools {
+		full[n] = true
+	}
+	for _, n := range ReadOnlyRemoteTools {
+		if !full[n] {
+			t.Errorf("%q is read-only but missing from RemoteTools", n)
+		}
+	}
+}

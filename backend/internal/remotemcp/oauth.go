@@ -12,7 +12,6 @@ import (
 	"html"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -43,6 +42,7 @@ const (
 type claims struct {
 	Typ          string   `json:"typ"`
 	Sub          string   `json:"sub,omitempty"`
+	Jti          string   `json:"jti,omitempty"` // grant id; see grants.go
 	Aud          string   `json:"aud,omitempty"`
 	ClientID     string   `json:"cid,omitempty"`
 	RedirectURIs []string `json:"ru,omitempty"`
@@ -170,7 +170,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.now()
 	clientID := s.sign(claims{Typ: tokenClient, RedirectURIs: req.RedirectURIs, ClientName: req.ClientName, IssuedAt: now.Unix()})
-	slog.Info("remote MCP: registered OAuth client", "name", req.ClientName, "redirect_uris", req.RedirectURIs)
+	slog.Info("remote MCP: registered OAuth client", "name", req.ClientName, "client_id", clientID, "redirect_uris", req.RedirectURIs)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"client_id":                  clientID,
 		"client_id_issued_at":        now.Unix(),
@@ -182,20 +182,21 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// redirectAllowed accepts https URIs on a configured host (e.g. claude.ai) and
-// loopback URIs for local clients. Restricting hosts stops someone from
-// registering their own redirect and phishing an allowed user into approving
-// it.
+// redirectAllowed accepts only exact members of the configured redirect URI
+// set (MCP_REDIRECT_URIS, default claude.ai's connector callback). Pinning the
+// full URI, not just the host, stops someone from registering their own
+// redirect and phishing an allowed user into approving it.
 func (s *Server) redirectAllowed(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Fragment != "" || u.Host == "" {
 		return false
 	}
-	host := u.Hostname()
-	if ip := net.ParseIP(host); (ip != nil && ip.IsLoopback()) || host == "localhost" {
-		return u.Scheme == "http" || u.Scheme == "https"
-	}
-	return u.Scheme == "https" && slices.Contains(s.cfg.RedirectHosts, strings.ToLower(host))
+	return slices.Contains(s.cfg.RedirectURIs, raw)
+}
+
+// clientAllowed applies MCP_ALLOWED_CLIENT_IDS; empty allows any client.
+func (s *Server) clientAllowed(id string) bool {
+	return len(s.clients) == 0 || s.clients[id]
 }
 
 // --- authorization endpoint ---
@@ -205,6 +206,10 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	client, err := s.verify(q.Get("client_id"), tokenClient)
 	if err != nil {
 		errorPage(w, "Unknown client. Remove the connector and add it again.")
+		return
+	}
+	if !s.clientAllowed(q.Get("client_id")) {
+		errorPage(w, "This client isn't allowed to connect (see MCP_ALLOWED_CLIENT_IDS).")
 		return
 	}
 	redirectURI := q.Get("redirect_uri")
@@ -281,7 +286,7 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		name = "An MCP client"
 	}
 	ru, _ := url.Parse(redirectURI)
-	consentPage(w, name, ru.Host, s.cfg.GoogleAuthURL+"?"+g.Encode())
+	consentPage(w, name, ru.Host, s.cfg.GoogleAuthURL+"?"+g.Encode(), s.cfg.ToolProfile == ToolProfileFull)
 }
 
 // pkceChallenge matches an S256 challenge: base64url(SHA-256) is 43 chars.
@@ -438,12 +443,12 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	if id, _, ok := r.BasicAuth(); ok && clientID == "" {
 		clientID, _ = url.QueryUnescape(id)
 	}
-	if _, err := s.verify(clientID, tokenClient); err != nil {
+	if _, err := s.verify(clientID, tokenClient); err != nil || !s.clientAllowed(clientID) {
 		oauthError(w, http.StatusUnauthorized, "invalid_client", "unknown client")
 		return
 	}
 
-	var email string
+	var email, jti string
 	switch r.PostForm.Get("grant_type") {
 	case "authorization_code":
 		code := r.PostForm.Get("code")
@@ -465,6 +470,12 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		email = ac.Email
+		var err error
+		if jti, err = s.createGrant(r.Context(), email, clientID); err != nil {
+			slog.Error("remote MCP: recording grant failed", "err", err)
+			oauthError(w, http.StatusInternalServerError, "server_error", "")
+			return
+		}
 
 	case "refresh_token":
 		c, err := s.verify(r.PostForm.Get("refresh_token"), tokenRefresh)
@@ -472,7 +483,11 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 			oauthError(w, http.StatusBadRequest, "invalid_grant", "invalid refresh token")
 			return
 		}
-		email = c.Sub
+		if !s.grantActive(r.Context(), c.Jti, true) {
+			oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh token revoked")
+			return
+		}
+		email, jti = c.Sub, c.Jti
 
 	default:
 		oauthError(w, http.StatusBadRequest, "unsupported_grant_type", "")
@@ -486,8 +501,8 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	access := s.sign(claims{Typ: tokenAccess, Sub: email, Aud: s.resourceURL(), ClientID: clientID, IssuedAt: now.Unix(), ExpiresAt: now.Add(accessTTL).Unix()})
-	refresh := s.sign(claims{Typ: tokenRefresh, Sub: email, Aud: s.resourceURL(), ClientID: clientID, IssuedAt: now.Unix(), ExpiresAt: now.Add(refreshTTL).Unix()})
+	access := s.sign(claims{Typ: tokenAccess, Sub: email, Jti: jti, Aud: s.resourceURL(), ClientID: clientID, IssuedAt: now.Unix(), ExpiresAt: now.Add(accessTTL).Unix()})
+	refresh := s.sign(claims{Typ: tokenRefresh, Sub: email, Jti: jti, Aud: s.resourceURL(), ClientID: clientID, IssuedAt: now.Unix(), ExpiresAt: now.Add(refreshTTL).Unix()})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token":  access,
@@ -524,8 +539,8 @@ func oauthError(w http.ResponseWriter, status int, code, desc string) {
 
 // redirectWith sends the browser back to a client's redirect URI with params
 // added. The target was matched against the client's registered URIs, but it
-// is re-checked against the allowed hosts here too, so narrowing
-// MCP_REDIRECT_HOSTS also covers clients registered before the change.
+// is re-checked against the allowed URIs here too, so narrowing
+// MCP_REDIRECT_URIS also covers clients registered before the change.
 func (s *Server) redirectWith(w http.ResponseWriter, r *http.Request, target string, params url.Values) {
 	if !s.redirectAllowed(target) {
 		errorPage(w, "The redirect URI is not allowed.")
@@ -547,16 +562,20 @@ func (s *Server) redirectWith(w http.ResponseWriter, r *http.Request, target str
 
 // consentPage asks the signed-in browser to confirm before sending it to
 // Google, naming the client and where the grant will be sent.
-func consentPage(w http.ResponseWriter, client, redirectHost, googleURL string) {
+func consentPage(w http.ResponseWriter, client, redirectHost, googleURL string, full bool) {
+	what := "read your board: list tasks and read agent runs, logs and diffs"
+	if full {
+		what = "read and manage your board: list and create tasks, read agent runs, and approve, reject, move or reply to tasks"
+	}
 	setPageHeaders(w)
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprintf(w, `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Task Editor</title>
 <body style="font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;line-height:1.5">
 <h1 style="font-size:1.25rem">Connect to Agent Task Editor?</h1>
-<p><strong>%s</strong> wants to read and manage your board: list and create tasks, read agent runs, and approve, reject, move or reply to tasks. Access will be sent to <strong>%s</strong>.</p>
+<p><strong>%s</strong> wants to %s. Access will be sent to <strong>%s</strong>.</p>
 <p>Only continue if you just started connecting from that client.</p>
 <p><a href="%s" style="display:inline-block;padding:.6rem 1rem;background:#1a73e8;color:#fff;border-radius:6px;text-decoration:none">Continue with Google</a></p>
-</body>`, html.EscapeString(client), html.EscapeString(redirectHost), html.EscapeString(googleURL))
+</body>`, html.EscapeString(client), what, html.EscapeString(redirectHost), html.EscapeString(googleURL))
 }
 
 func setPageHeaders(w http.ResponseWriter) {

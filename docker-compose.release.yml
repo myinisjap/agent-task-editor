@@ -111,6 +111,8 @@ services:
       # - MCP_GOOGLE_CLIENT_ID=...apps.googleusercontent.com
       # - MCP_GOOGLE_CLIENT_SECRET=...
       # - MCP_ALLOWED_EMAILS=you@example.com
+      # - MCP_SIGNING_KEY=...   # >= 32 chars; openssl rand -base64 48
+      # - MCP_TOOL_PROFILE=readonly   # or full (create/reply/approve/reject/move)
     volumes:
       - db_data:/data
       # Per-repo agent toolchains via mise/uv (see docs/runtime.md). Named

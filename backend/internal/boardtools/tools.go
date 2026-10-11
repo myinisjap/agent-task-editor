@@ -73,7 +73,14 @@ func (t Tool) Def() map[string]any {
 // always has.
 var StdioTools = []string{"list_repos", "list_workflows", "create_task"}
 
-// RemoteTools is the set the remote MCP endpoint exposes: ticket creation plus
+// ReadOnlyRemoteTools is the remote MCP endpoint's default ("readonly")
+// profile: it can only read the board. Text in run logs, diffs and task bodies
+// is attacker-influenced, so nothing reachable from it may change state.
+var ReadOnlyRemoteTools = []string{
+	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
+}
+
+// RemoteTools is the "full" remote MCP profile: ticket creation plus
 // reading tasks/runs and unblocking agents that wait on a human.
 var RemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",

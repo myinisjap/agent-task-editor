@@ -134,7 +134,12 @@ admits the emails in `MCP_ALLOWED_EMAILS`.
 
 ### Tools
 
-Everything the stdio server has, plus:
+By default the remote endpoint is **read-only** (`MCP_TOOL_PROFILE=readonly`):
+it exposes `list_repos`, `list_workflows` and the five read tools below (`list_tasks` … `get_diff`).
+Set `MCP_TOOL_PROFILE=full` to also expose `create_task` and the write tools
+(`reply_to_run`, `approve_task`, `reject_task`, `move_task`).
+
+The full profile has everything the stdio server has, plus (read tools first):
 
 | Tool | What it does |
 |---|---|
@@ -168,6 +173,8 @@ deliberately not exposed.
    MCP_GOOGLE_CLIENT_ID=...apps.googleusercontent.com
    MCP_GOOGLE_CLIENT_SECRET=...
    MCP_ALLOWED_EMAILS=you@example.com           # comma-separated
+   MCP_SIGNING_KEY=...                          # openssl rand -base64 48 (>= 32 chars)
+   # MCP_TOOL_PROFILE=full                      # default is read-only; see below
    ```
    With the bundled nginx (`frontend/nginx.conf`) the app lives under `/tasks`,
    so `MCP_PUBLIC_URL` ends in `/tasks`. If you expose the backend directly,
@@ -195,14 +202,33 @@ deliberately not exposed.
 ### How it's secured
 
 - `/mcp` requires a bearer access token issued by this server. Tokens are
-  HMAC-signed with a key derived from `MCP_GOOGLE_CLIENT_SECRET`, bound to the
-  `/mcp` URL, and valid for 1 hour; refresh tokens last 30 days.
+  HMAC-signed with `MCP_SIGNING_KEY` (required, at least 32 characters, separate
+  from the Google client secret; the server refuses to start without it),
+  bound to the `/mcp` URL, and valid for 1 hour; refresh tokens last 30 days.
+  Rotating `MCP_SIGNING_KEY` revokes every token and registered client at once.
 - The email is re-checked against `MCP_ALLOWED_EMAILS` on every request and
-  refresh, so removing an address cuts it off. Rotating the Google client
-  secret revokes every token at once.
-- Dynamic client registration only accepts https redirect URIs on
-  `MCP_REDIRECT_HOSTS` (default `claude.ai,claude.com`) or loopback, and the
-  host is re-checked on every redirect. PKCE (S256) is required.
+  refresh, so removing an address cuts it off.
+- Each sign-in is stored as a revocable grant in the `mcp_grants` table, and its
+  id is carried by every token minted for it. See [Revoking access](#revoking-access).
+- OAuth redirects are pinned to an exact set of URIs, `MCP_REDIRECT_URIS`
+  (default: claude.ai's and claude.com's `/api/mcp/auth_callback`). A different
+  path, host or loopback address is refused at registration and again at every
+  redirect. PKCE (S256) is required. Because dynamic registration is open to
+  anyone who can reach `/oauth/register`, you can additionally pin your own
+  client: connect once, copy the `client_id` the server logs
+  (`remote MCP: registered OAuth client`), set `MCP_ALLOWED_CLIENT_IDS` to it and
+  restart; other clients are then refused at `/oauth/authorize` and `/oauth/token`.
+  The client id stays valid as long as `MCP_SIGNING_KEY` is unchanged.
+- Tool profile: by default (`MCP_TOOL_PROFILE=readonly`) only the read tools
+  (`list_repos`, `list_workflows`, `list_tasks`, `get_task`, `list_runs`,
+  `get_run_logs`, `get_diff`) are exposed, because run logs, diffs and task
+  bodies contain text an attacker can influence and could steer a model into
+  calling write tools. `MCP_TOOL_PROFILE=full` also exposes `create_task`,
+  `reply_to_run`, `approve_task`, `reject_task` and `move_task`; if you enable
+  it, keep claude.ai's per-tool "ask before running" and avoid "always allow"
+  on those tools. The consent page states which profile is active.
+- Tool calls reach the API in-process under a trusted-actor mark that only the
+  `/api/v1` auth chain honours; `/metrics` and every other route ignore it.
 - Before sending you to Google, the server shows a consent page naming the
   client and where access will be sent. Only continue if you just clicked
   Connect yourself.
@@ -215,6 +241,20 @@ deliberately not exposed.
   the usual validation (allowed transitions, labels, run state) applies.
 - Sign-ins in progress and unredeemed codes are held in memory: a restart
   mid-sign-in just means clicking Connect again. Issued tokens survive restarts.
+
+### Revoking access
+
+Remove an email from `MCP_ALLOWED_EMAILS` to cut an account off, or revoke
+individual sign-ins with the server binary (run it against the same database):
+
+```bash
+docker compose exec backend /app/server mcp-grants list
+docker compose exec backend /app/server mcp-grants revoke <grant-id>
+docker compose exec backend /app/server mcp-grants revoke-email you@example.com
+```
+
+A revoked grant's access and refresh tokens stop working immediately; other
+sign-ins are unaffected and the user can simply connect again.
 
 ### Getting told when something changes
 
@@ -240,9 +280,12 @@ on the backend itself:
 |---|---|---|
 | `MCP_PUBLIC_URL` | ✅ to enable | Public base URL `/mcp` and `/oauth/*` are served under, e.g. `https://example.com/tasks`. Unset = remote endpoint off |
 | `MCP_GOOGLE_CLIENT_ID` | ✅ | Google OAuth client ID |
-| `MCP_GOOGLE_CLIENT_SECRET` | ✅ | Google OAuth client secret (also seeds the token-signing key) |
+| `MCP_GOOGLE_CLIENT_SECRET` | ✅ | Google OAuth client secret |
+| `MCP_SIGNING_KEY` | ✅ | Token-signing key, at least 32 characters (`openssl rand -base64 48`). Independent of the Google secret |
 | `MCP_ALLOWED_EMAILS` | ✅ | Comma-separated Google accounts allowed to connect |
-| `MCP_REDIRECT_HOSTS` | — | Hosts OAuth clients may register https redirects on (default `claude.ai,claude.com`) |
+| `MCP_TOOL_PROFILE` | — | `readonly` (default) or `full`; see [How it's secured](#how-its-secured) |
+| `MCP_REDIRECT_URIS` | — | Exact OAuth redirect URIs allowed (default `https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback`) |
+| `MCP_ALLOWED_CLIENT_IDS` | — | Comma-separated OAuth client ids to accept; empty = any client with an allowed redirect |
 
 After connecting, you'll see the consent page once per sign-in; claude.ai
 refreshes tokens on its own after that.

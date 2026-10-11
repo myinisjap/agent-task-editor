@@ -155,10 +155,17 @@ type Config struct {
 	// connected user acts on the board under their email, recorded in
 	// task_label_history.actor_id like a named API token.
 	MCPAllowedEmails []string `yaml:"mcp_allowed_emails"`
-	// MCPRedirectHosts lists the hosts OAuth clients may register https
-	// redirect URIs on (loopback is always allowed). Defaults to claude.ai
-	// and claude.com.
-	MCPRedirectHosts []string `yaml:"mcp_redirect_hosts"`
+	// MCPSigningKey signs the remote MCP's tokens and client ids. Required
+	// (>= 32 chars) when MCPPublicURL is set; independent of the Google secret.
+	MCPSigningKey string `yaml:"mcp_signing_key"`
+	// MCPRedirectURIs is the exact set of OAuth redirect URIs the remote MCP
+	// will register and redirect to. Defaults to claude.ai's connector callbacks.
+	MCPRedirectURIs []string `yaml:"mcp_redirect_uris"`
+	// MCPAllowedClientIDs, when set, restricts the remote MCP to these OAuth
+	// client ids. Empty accepts any client with an allowed redirect URI.
+	MCPAllowedClientIDs []string `yaml:"mcp_allowed_client_ids"`
+	// MCPToolProfile is "readonly" (default) or "full"; see docs/board-mcp.md.
+	MCPToolProfile string `yaml:"mcp_tool_profile"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -181,7 +188,8 @@ func Defaults() Config {
 		ChatIdleTimeout:       0,
 		GitTimeout:            120 * time.Second,
 		NotifyDebounce:        5 * time.Minute,
-		MCPRedirectHosts:      []string{"claude.ai", "claude.com"},
+		MCPRedirectURIs:       []string{"https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"},
+		MCPToolProfile:        "readonly",
 	}
 }
 
@@ -393,8 +401,17 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MCP_ALLOWED_EMAILS"); v != "" {
 		cfg.MCPAllowedEmails = splitList(v)
 	}
-	if v := os.Getenv("MCP_REDIRECT_HOSTS"); v != "" {
-		cfg.MCPRedirectHosts = splitList(v)
+	if v := os.Getenv("MCP_SIGNING_KEY"); v != "" {
+		cfg.MCPSigningKey = v
+	}
+	if v := os.Getenv("MCP_REDIRECT_URIS"); v != "" {
+		cfg.MCPRedirectURIs = splitList(v)
+	}
+	if v := os.Getenv("MCP_ALLOWED_CLIENT_IDS"); v != "" {
+		cfg.MCPAllowedClientIDs = splitList(v)
+	}
+	if v := os.Getenv("MCP_TOOL_PROFILE"); v != "" {
+		cfg.MCPToolProfile = v
 	}
 
 	return cfg, nil

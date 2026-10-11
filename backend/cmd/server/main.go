@@ -97,6 +97,11 @@ func main() {
 
 	slog.Info("database ready", "path", cfg.DBPath)
 
+	// `server mcp-grants ...` manages remote MCP sign-ins and exits.
+	if len(os.Args) > 1 && os.Args[1] == "mcp-grants" {
+		os.Exit(runMCPGrants(db.SQL(), os.Args[2:]))
+	}
+
 	seedCtx := context.Background()
 	if err := storage.SeedDefaultWorkflow(seedCtx, db); err != nil {
 		slog.Error("failed to seed default workflow", "err", err)
@@ -354,14 +359,18 @@ func main() {
 			GoogleClientID:     cfg.MCPGoogleClientID,
 			GoogleClientSecret: cfg.MCPGoogleClientSecret,
 			AllowedEmails:      cfg.MCPAllowedEmails,
-			RedirectHosts:      cfg.MCPRedirectHosts,
+			SigningKey:         cfg.MCPSigningKey,
+			RedirectURIs:       cfg.MCPRedirectURIs,
+			AllowedClientIDs:   cfg.MCPAllowedClientIDs,
+			ToolProfile:        cfg.MCPToolProfile,
+			DB:                 db.SQL(),
 		}, router)
 		if err != nil {
 			slog.Error("remote MCP config invalid", "err", err)
 			os.Exit(1)
 		}
 		router = remote.Wrap(router)
-		slog.Info("remote MCP endpoint enabled", "url", strings.TrimRight(cfg.MCPPublicURL, "/")+"/mcp", "allowed_emails", len(cfg.MCPAllowedEmails))
+		slog.Info("remote MCP endpoint enabled", "url", strings.TrimRight(cfg.MCPPublicURL, "/")+"/mcp", "allowed_emails", len(cfg.MCPAllowedEmails), "tool_profile", cfg.MCPToolProfile)
 	}
 
 	srv := &http.Server{

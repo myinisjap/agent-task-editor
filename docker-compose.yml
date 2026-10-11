@@ -126,7 +126,10 @@ services:
       - MCP_GOOGLE_CLIENT_ID=${MCP_GOOGLE_CLIENT_ID:-}
       - MCP_GOOGLE_CLIENT_SECRET=${MCP_GOOGLE_CLIENT_SECRET:-}
       - MCP_ALLOWED_EMAILS=${MCP_ALLOWED_EMAILS:-}
-      - MCP_REDIRECT_HOSTS=${MCP_REDIRECT_HOSTS:-}
+      - MCP_SIGNING_KEY=${MCP_SIGNING_KEY:-}
+      - MCP_TOOL_PROFILE=${MCP_TOOL_PROFILE:-}
+      - MCP_REDIRECT_URIS=${MCP_REDIRECT_URIS:-}
+      - MCP_ALLOWED_CLIENT_IDS=${MCP_ALLOWED_CLIENT_IDS:-}
     volumes:
       - db_data:/data
       # Per-repo agent toolchains via mise/uv (see docs/runtime.md). Named

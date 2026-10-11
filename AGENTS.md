@@ -88,7 +88,11 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `REPO_BASE_DIR` | _(none)_ | Restrict repo paths; empty = any path allowed (warns on startup) |
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
 | `MCP_BOARD_PATH` | _(none)_ | Path to mcp-board binary; enables the board tools (list_repos/list_workflows/create_task) inside chat sessions. See `docs/board-mcp.md` |
-| `MCP_PUBLIC_URL` | _(none)_ | Enables the remote MCP endpoint at `<url>/mcp` for claude.ai custom connectors; also needs `MCP_GOOGLE_CLIENT_ID`, `MCP_GOOGLE_CLIENT_SECRET`, `MCP_ALLOWED_EMAILS`. See `docs/board-mcp.md#remote-connector` |
+| `MCP_PUBLIC_URL` | _(none)_ | Enables the remote MCP endpoint at `<url>/mcp` for claude.ai custom connectors; also needs `MCP_GOOGLE_CLIENT_ID`, `MCP_GOOGLE_CLIENT_SECRET`, `MCP_ALLOWED_EMAILS`, `MCP_SIGNING_KEY`. See `docs/board-mcp.md#remote-connector` |
+| `MCP_SIGNING_KEY` | _(none)_ | Required (>= 32 chars) when `MCP_PUBLIC_URL` is set: signs the remote MCP's tokens and client ids, independent of the Google secret. Generate with `openssl rand -base64 48`; rotating it revokes every token |
+| `MCP_TOOL_PROFILE` | `readonly` | Remote MCP tool set: `readonly` (list/get/read tools only) or `full` (adds create_task, reply_to_run, approve_task, reject_task, move_task) |
+| `MCP_REDIRECT_URIS` | claude.ai + claude.com connector callbacks | Exact OAuth redirect URIs the remote MCP will register and redirect to (comma-separated); loopback only if listed |
+| `MCP_ALLOWED_CLIENT_IDS` | _(any)_ | Optional comma-separated OAuth client ids the remote MCP accepts; the id is logged when a client registers |
 | `LLM_API_KEY` | _(none)_ | API key for the `anthropic` or `llm` providers. Both are **deprecated** — disabled for new/updated provider configs, may be removed in a future release; only relevant to existing configs still using them. |
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer (see `docs/task-sources.md`) |
