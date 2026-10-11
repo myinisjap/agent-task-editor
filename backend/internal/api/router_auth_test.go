@@ -1,10 +1,20 @@
 package api_test
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/api"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
 // authSmokeRoute is one representative route of an auth-sensitive group.
@@ -133,6 +143,67 @@ func TestRouterAuthSmoke_PublicRoutes(t *testing.T) {
 	if w := authSmokeDo(r, http.MethodGet, term+"?ticket="+ticket, "", ""); w.Code != http.StatusUnauthorized {
 		t.Errorf("terminal with replayed ticket: expected 401, got %d", w.Code)
 	}
+}
+
+// TestRouterAuthSmoke_GitHubWebhook checks POST /api/v1/github/webhook sits
+// outside bearer auth (GitHub can't send our token) and is gated by the HMAC
+// signature instead; with no secret configured the route is not usable.
+func TestRouterAuthSmoke_GitHubWebhook(t *testing.T) {
+	const secret = "whsec"
+	body := `{"zen":"keep it logically awesome"}`
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	do := func(h http.Handler, signature string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/github/webhook", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-GitHub-Event", "ping")
+		if signature != "" {
+			req.Header.Set("X-Hub-Signature-256", signature)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+
+	// API auth configured: the bearer token is neither required nor accepted
+	// as a substitute for the signature.
+	r := newWebhookTestRouter(t, "api-secret", secret)
+	if w := do(r, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("no signature: expected 401, got %d", w.Code)
+	}
+	if w := do(r, "sha256="+strings.Repeat("0", 64)); w.Code != http.StatusUnauthorized {
+		t.Errorf("bad signature: expected 401, got %d", w.Code)
+	}
+	if w := do(r, sig); w.Code != http.StatusOK {
+		t.Errorf("valid signature without bearer token: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Secret unset: route disabled even for a "valid" signature of an empty key.
+	r = newWebhookTestRouter(t, "api-secret", "")
+	emptyMac := hmac.New(sha256.New, nil)
+	emptyMac.Write([]byte(body))
+	if w := do(r, "sha256="+hex.EncodeToString(emptyMac.Sum(nil))); w.Code != http.StatusNotFound {
+		t.Errorf("secret unset: expected 404, got %d", w.Code)
+	}
+}
+
+type noopRefresher struct{}
+
+func (noopRefresher) NoteWebhook()                                      {}
+func (noopRefresher) RefreshMatching(context.Context, ghsync.PRRef) int { return 0 }
+
+func newWebhookTestRouter(t *testing.T, apiToken, secret string) http.Handler {
+	t.Helper()
+	db := openRouterTestDB(t)
+	hub := ws.NewHub()
+	return api.NewRouter(api.RouterDeps{
+		DB: db, Engine: workflow.New(db.SQL(), hub), Hub: hub, CORSOrigins: "*",
+		BearerToken: apiToken, UploadDir: t.TempDir(),
+		BackupInterval: 24 * time.Hour, BackupKeep: 7, Version: "dev", MaxWorkers: 5,
+		GitHubWebhookSecret: secret, PRRefresher: noopRefresher{},
+	})
 }
 
 // TestRouterAuthSmoke_Metrics checks /metrics' own token rules through the

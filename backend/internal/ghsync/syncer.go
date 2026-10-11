@@ -74,6 +74,17 @@ type Syncer struct {
 	// directly, bypassing New.
 	backoffMu sync.Mutex
 	backoff   map[string]*repoBackoff
+
+	// syncMu serializes syncTask between the polling sweep and
+	// webhook-triggered refreshes so they never process one task concurrently.
+	syncMu sync.Mutex
+	// webhookMu guards lastWebhook and pending (see webhook.go).
+	webhookMu   sync.Mutex
+	lastWebhook time.Time
+	pending     map[string]bool
+	// debounce delays webhook-triggered refreshes (webhookDebounce in
+	// production; zero in tests).
+	debounce time.Duration
 }
 
 // New creates a Syncer that polls on the given interval. engine may be nil,
@@ -96,6 +107,7 @@ func New(db *sql.DB, hub Publisher, interval time.Duration, engine *workflow.Eng
 		interval: interval,
 		wb:       writeback.New(gen.New(db)),
 		engine:   engine,
+		debounce: webhookDebounce,
 		backoff:  map[string]*repoBackoff{},
 		getPRHead: func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
 			return repo.forge.PRHead(ctx, repo.ghName, branch)
@@ -116,11 +128,19 @@ func New(db *sql.DB, hub Publisher, interval time.Duration, engine *workflow.Eng
 func (s *Syncer) Run(ctx context.Context) {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
+	var lastSweep time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// While webhooks are arriving, polling is only the fallback for
+			// missed deliveries, so sweep at a longer interval.
+			now := time.Now()
+			if s.webhookRecent(now) && now.Sub(lastSweep) < webhookFallbackFactor*s.interval {
+				continue
+			}
+			lastSweep = now
 			s.sweep(ctx)
 		}
 	}
@@ -183,7 +203,9 @@ func (s *Syncer) sweep(ctx context.Context) {
 		}
 
 		checked++
+		s.syncMu.Lock()
 		ok = s.syncTask(ctx, task, info)
+		s.syncMu.Unlock()
 		if !recordedThisSweep[task.RepoID] {
 			recordedThisSweep[task.RepoID] = true
 			if ok {

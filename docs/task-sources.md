@@ -622,3 +622,46 @@ review comment (e.g. via the `resolve_comment` MCP tool), replying on the
 originating GitHub review thread — is intentionally out of scope for v1. The
 `external_id`/`source` columns on `task_review_comments` are structured to
 make that a natural follow-up without a schema change.
+
+## GitHub webhook (optional)
+
+By default `ghsync` polls GitHub every `GITHUB_SYNC_INTERVAL` (30s). A webhook
+makes PR state (merged/closed, reviews, comments, CI results) refresh within a
+couple of seconds of the event instead. Polling is never turned off: it is the
+fallback for missed deliveries. While webhooks are arriving (one received in
+the last 10 minutes) the sweep simply runs at 4x its normal interval.
+
+Setup:
+
+1. Pick a random secret and set `GITHUB_WEBHOOK_SECRET` on the backend
+   (`.env` is passed through by both compose files). While it is unset the
+   route returns 404.
+2. In the GitHub repo (or org) go to **Settings > Webhooks > Add webhook**:
+   - **Payload URL:** `https://<your-host>/api/v1/github/webhook` directly to
+     the backend, or `https://<your-host>/tasks/api/v1/github/webhook` behind
+     the bundled frontend nginx (its `/tasks/api/` location already proxies it;
+     no nginx change is needed). GitHub must be able to reach this URL, so it
+     usually needs a public hostname or tunnel.
+   - **Content type:** `application/json` (form-encoded is rejected with 415).
+   - **Secret:** the same value as `GITHUB_WEBHOOK_SECRET`.
+   - **Events:** "Let me select individual events": **Pull requests**,
+     **Pull request reviews**, **Pull request review comments**,
+     **Issue comments**, **Check suites**, **Check runs**, **Statuses**.
+3. If no `API_TOKEN`/`API_TOKENS` is set, the DNS-rebinding Host check applies
+   to this route too; add the public hostname to `ALLOWED_HOSTS`.
+4. Check **Recent Deliveries** in GitHub: a `ping` returns 200, real events
+   202 (or 204 for ignored actions).
+
+How it behaves: the route is outside bearer auth (GitHub cannot send the
+token) and authenticated only by the `X-Hub-Signature-256` HMAC-SHA256 of the
+body, compared in constant time; bad or missing signatures get 401. Bodies are
+capped at 2 MB. The payload is used only to find the affected tasks (same
+repository plus PR number, head branch, or head SHA); the actual state is
+re-fetched through the same forge call and code path the poller uses, so a
+spoofed or stale field cannot change task state. Responses are immediate and
+the refresh runs in the background. Repeated `X-GitHub-Delivery` IDs are
+dropped, and bursts of events for one task coalesce into a single refresh
+(2s debounce). The `ate_github_webhook_events_total{event,result}` metric
+counts deliveries.
+
+Gitea has no equivalent receiver yet; Gitea repos keep using polling only.

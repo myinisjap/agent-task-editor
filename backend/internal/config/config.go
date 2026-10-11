@@ -36,16 +36,20 @@ type Config struct {
 	// MetricsPublic (METRICS_PUBLIC=true) opts /metrics out of API-token
 	// auth when MetricsToken is unset, for scrapers that can't carry a
 	// token. Ignored when MetricsToken is set.
-	MetricsPublic      bool          `yaml:"metrics_public"`
-	MCPBinary          string        `yaml:"mcp_server_path"`
-	MCPBoardBinary     string        `yaml:"mcp_board_path"`
-	LLMBaseURL         string        `yaml:"llm_base_url"`
-	LLMAPIKey          string        `yaml:"llm_api_key"`
-	MaxWorkers         int           `yaml:"max_workers"`
-	RepoBaseDir        string        `yaml:"repo_base_dir"`
-	UploadDir          string        `yaml:"upload_dir"`
-	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
-	IssueSyncInterval  time.Duration `yaml:"issue_sync_interval"`
+	MetricsPublic bool `yaml:"metrics_public"`
+	// GitHubWebhookSecret (GITHUB_WEBHOOK_SECRET) enables POST
+	// /api/v1/github/webhook, authenticated by HMAC-SHA256 signature. Empty
+	// leaves the route disabled (404).
+	GitHubWebhookSecret string        `yaml:"github_webhook_secret"`
+	MCPBinary           string        `yaml:"mcp_server_path"`
+	MCPBoardBinary      string        `yaml:"mcp_board_path"`
+	LLMBaseURL          string        `yaml:"llm_base_url"`
+	LLMAPIKey           string        `yaml:"llm_api_key"`
+	MaxWorkers          int           `yaml:"max_workers"`
+	RepoBaseDir         string        `yaml:"repo_base_dir"`
+	UploadDir           string        `yaml:"upload_dir"`
+	GitHubSyncInterval  time.Duration `yaml:"github_sync_interval"`
+	IssueSyncInterval   time.Duration `yaml:"issue_sync_interval"`
 	// ScheduleInterval is how often the task-schedule sweep runs (see
 	// internal/schedule.Scheduler), checking every enabled task_schedule for
 	// due firings. Cron expressions are minute-granularity, so this only
@@ -229,6 +233,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("METRICS_TOKEN"); v != "" {
 		cfg.MetricsToken = v
+	}
+	if v := os.Getenv("GITHUB_WEBHOOK_SECRET"); v != "" {
+		cfg.GitHubWebhookSecret = v
 	}
 	if v := os.Getenv("METRICS_PUBLIC"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
