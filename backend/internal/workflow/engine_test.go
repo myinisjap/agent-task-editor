@@ -573,3 +573,91 @@ func TestTransitionExpecting_RefusesWhenTaskMoved(t *testing.T) {
 		t.Fatalf("expected testing, got %q", got.Label)
 	}
 }
+
+func TestForceTransition_BypassesTableAndRecordsHistory(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	task := createTestTask(t, db, "work", wfID)
+	q := gen.New(db.SQL())
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: task.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pub := &noopPublisher{}
+	eng := workflow.New(db.SQL(), pub)
+	ctx := context.Background()
+
+	if err := eng.Transition(ctx, task.ID, "not_ready", workflow.TriggerHuman, "alice", ""); !errors.Is(err, workflow.ErrNoTransition) {
+		t.Fatalf("precondition: expected ErrNoTransition, got %v", err)
+	}
+	if err := eng.ForceTransition(ctx, task.ID, "not_ready", "alice", "stuck"); err != nil {
+		t.Fatalf("ForceTransition: %v", err)
+	}
+	got, _ := q.GetTask(ctx, task.ID)
+	if got.Label != "not_ready" {
+		t.Errorf("label = %q", got.Label)
+	}
+	if got.ActiveAgentRunID != nil {
+		t.Errorf("active_agent_run_id should be cleared")
+	}
+	hist, _ := q.ListTaskLabelHistory(ctx, task.ID)
+	if len(hist) != 1 || hist[0].Trigger != "human" || hist[0].ActorID == nil || *hist[0].ActorID != "alice" ||
+		hist[0].Note == nil || *hist[0].Note != "Forced move: stuck" {
+		t.Errorf("unexpected history %+v", hist)
+	}
+	found := false
+	for _, e := range pub.events {
+		if e == "task.label_changed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected task.label_changed event, got %v", pub.events)
+	}
+}
+
+func TestForceTransition_NoNoteUsesBareMarker(t *testing.T) {
+	db := setupTestDB(t)
+	task := createTestTask(t, db, "work", defaultWorkflowID(t, db))
+	eng := workflow.New(db.SQL(), &noopPublisher{})
+	if err := eng.ForceTransition(context.Background(), task.ID, "not_ready", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	hist, _ := gen.New(db.SQL()).ListTaskLabelHistory(context.Background(), task.ID)
+	if len(hist) != 1 || hist[0].Note == nil || *hist[0].Note != workflow.ForcedNotePrefix || hist[0].ActorID != nil {
+		t.Errorf("unexpected history %+v", hist)
+	}
+}
+
+func TestForceTransition_UnknownLabel(t *testing.T) {
+	db := setupTestDB(t)
+	task := createTestTask(t, db, "work", defaultWorkflowID(t, db))
+	eng := workflow.New(db.SQL(), &noopPublisher{})
+	err := eng.ForceTransition(context.Background(), task.ID, "bogus", "alice", "")
+	if !errors.Is(err, workflow.ErrUnknownLabel) {
+		t.Fatalf("expected ErrUnknownLabel, got %v", err)
+	}
+	got, _ := gen.New(db.SQL()).GetTask(context.Background(), task.ID)
+	if got.Label != "work" {
+		t.Errorf("label changed to %q", got.Label)
+	}
+}
+
+func TestForceTransition_FiresOnTerminal(t *testing.T) {
+	db := setupTestDB(t)
+	task := createTestTask(t, db, "work", defaultWorkflowID(t, db))
+	eng := workflow.New(db.SQL(), &noopPublisher{})
+	called := ""
+	eng.OnTerminal = func(_ context.Context, tk gen.Task) { called = tk.Label }
+	if err := eng.ForceTransition(context.Background(), task.ID, "done", "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	if called != "done" {
+		t.Errorf("OnTerminal not fired for done, got %q", called)
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -3692,5 +3693,97 @@ func TestTasks_SetArchived_ReclaimWaitsForRepoGitLock(t *testing.T) {
 	}
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Fatalf("expected worktree removed after lock release, stat err=%v", err)
+	}
+}
+
+// ---------- MoveLabel (force) ----------
+
+func forceMove(t *testing.T, h http.Handler, taskID string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/label", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok-alice")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestTasks_MoveLabel_Force_BypassesTransitionTable(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	h := middleware.BearerAuth("", map[string]string{"alice": "tok-alice"})(r)
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Wedged", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+
+	// Without force, work -> not_ready is rejected.
+	if w := forceMove(t, h, task.ID, map[string]any{"to_label": "not_ready"}); w.Code != http.StatusBadRequest {
+		t.Fatalf("non-forced illegal move: expected 400, got %d: %s", w.Code, w.Body)
+	}
+
+	w := forceMove(t, h, task.ID, map[string]any{"to_label": "not_ready", "note": "stuck", "force": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("forced move: expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Label != "not_ready" {
+		t.Errorf("expected label not_ready, got %q", updated.Label)
+	}
+
+	hist, err := q.ListTaskLabelHistory(context.Background(), task.ID)
+	if err != nil || len(hist) != 1 {
+		t.Fatalf("history: %v len=%d", err, len(hist))
+	}
+	e := hist[0]
+	if e.ActorID == nil || *e.ActorID != "alice" {
+		t.Errorf("expected actor alice, got %v", e.ActorID)
+	}
+	if e.Note == nil || *e.Note != "Forced move: stuck" {
+		t.Errorf("unexpected note %v", e.Note)
+	}
+	if e.Trigger != "human" || e.ToLabel != "not_ready" {
+		t.Errorf("unexpected history row %+v", e)
+	}
+}
+
+func TestTasks_MoveLabel_Force_UnknownLabel_Returns400(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Wedged", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	w := forceMove(t, r, task.ID, map[string]any{"to_label": "no_such_label", "force": true})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+	got, _ := q.GetTask(context.Background(), task.ID)
+	if got.Label != "work" {
+		t.Errorf("label should be unchanged, got %q", got.Label)
+	}
+}
+
+func TestTasks_MoveLabel_Force_LiveRun_Returns409(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Busy", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.SetAgentRunStarted(context.Background(), runID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+	w := forceMove(t, r, task.ID, map[string]any{"to_label": "not_ready", "force": true})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body)
+	}
+	got, _ := q.GetTask(context.Background(), task.ID)
+	if got.Label != "work" || got.ActiveAgentRunID == nil {
+		t.Errorf("task should be untouched, got label=%q active=%v", got.Label, got.ActiveAgentRunID)
 	}
 }

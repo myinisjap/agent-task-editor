@@ -227,6 +227,11 @@ export const api = {
     delete: (id: string) => request<void>(`/tasks/${id}`, { method: 'DELETE' }),
     moveLabel: (id: string, to_label: string, note?: string) =>
       request<Task>(`/tasks/${id}/label`, { method: 'PATCH', body: JSON.stringify({ to_label, note }) }),
+    // forceMoveLabel moves a task to any label of its workflow, bypassing the
+    // transition table (escape hatch for wedged tasks). Recorded in label
+    // history as a "Forced move".
+    forceMoveLabel: (id: string, to_label: string, note?: string) =>
+      request<Task>(`/tasks/${id}/label`, { method: 'PATCH', body: JSON.stringify({ to_label, note, force: true }) }),
     approve: (id: string, note?: string) =>
       request<Task>(`/tasks/${id}/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
    reject: (id: string, note: string, to_label?: string) =>

@@ -160,6 +160,15 @@ transitions:
 4. Every successful transition is recorded in `task_label_history` with the trigger, actor ID, and optional note.
 5. Whenever `UpdateTaskLabel` runs (any transition), `active_agent_run_id` is automatically cleared — preventing stale dispatch locks.
 
+## Force move (escape hatch)
+
+Nothing in the default workflow routes back to `not_ready`, so a task wedged in `plan` or `work` could otherwise not be parked. A human can **force move** a task to any label of its workflow, bypassing the transition table, via `PATCH /tasks/{id}/label` with `"force": true` or the "Force move…" button on Task Detail (which opens a confirmation dialog with a warning and an optional note).
+
+- The target must be a label of the task's workflow (else `400`).
+- Refused with `409` while an agent run on the task is `pending`/`running`; cancel the run first. Runs are never cancelled silently.
+- It goes through the engine's `ForceTransition`, so everything that normally happens on entering a label still does: `active_agent_run_id` is cleared, `task.label_changed` is published, and terminal / create-PR / leave-`not_ready` hooks fire.
+- Label history records it with trigger `human`, the actor, and a note starting with `Forced move`.
+
 ## Task Dependencies
 
 A task can declare **dependencies** on other tasks in the same workflow — a way
