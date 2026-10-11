@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useTasksStore } from '../stores/tasks'
 import { useWorkflowStore } from '../stores/workflow'
 import { useReposStore } from '../stores/repos'
@@ -63,12 +64,35 @@ export default function BoardPage() {
 
   // Board filters. Search/repo/type/git-state are applied client-side over
   // the fetched list; the archived toggle changes what we fetch (archived
-  // tasks are excluded from the default GET /tasks response).
-  const [search, setSearch] = useState('')
-  const [filterRepo, setFilterRepo] = useState('')
-  const [filterType, setFilterType] = useState('')
-  const [filterGitState, setFilterGitState] = useState('')
-  const [showArchived, setShowArchived] = useState(false)
+  // tasks are excluded from the default GET /tasks response). All filters
+  // live in the URL query string (?q=&repo=&type=&git_state=&archived=1) so a
+  // reload or a shared link restores them; changes use `replace` so they
+  // don't pile up in browser history.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const search = searchParams.get('q') ?? ''
+  const filterRepo = searchParams.get('repo') ?? ''
+  const rawType = searchParams.get('type') ?? ''
+  const filterType = TASK_TYPES.includes(rawType) ? rawType : ''
+  const rawGitState = searchParams.get('git_state') ?? ''
+  const filterGitState = GIT_STATES.includes(rawGitState) ? rawGitState : ''
+  const showArchived = searchParams.get('archived') === '1'
+
+  const setFilterParam = (key: string, value: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value) next.set(key, value)
+        else next.delete(key)
+        return next
+      },
+      { replace: true },
+    )
+  }
+  const setSearch = (v: string) => setFilterParam('q', v)
+  const setFilterRepo = (v: string) => setFilterParam('repo', v)
+  const setFilterType = (v: string) => setFilterParam('type', v)
+  const setFilterGitState = (v: string) => setFilterParam('git_state', v)
+  const setShowArchived = (v: boolean) => setFilterParam('archived', v ? '1' : '')
 
   // Multi-select for bulk actions: ids of selected task cards.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -322,11 +346,14 @@ export default function BoardPage() {
   )
 
   const clearFilters = () => {
-    setSearch('')
-    setFilterRepo('')
-    setFilterType('')
-    setFilterGitState('')
-    setShowArchived(false)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const k of ['q', 'repo', 'type', 'git_state', 'archived']) next.delete(k)
+        return next
+      },
+      { replace: true },
+    )
   }
 
   const toggleSelect = (taskId: string, orderedIds: string[], shiftKey?: boolean) => {
@@ -373,12 +400,12 @@ export default function BoardPage() {
 
   return (
     <div className="p-6 h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-4">
         <h1 className="text-xl font-semibold text-slate-100">Board</h1>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {workflows.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-slate-500">Workflow:</span>
+              <span className="text-xs text-slate-500 whitespace-nowrap">Workflow:</span>
               <select
                 value={workflow?.id ?? ''}
                 onChange={(e) => setSelectedId(e.target.value)}
@@ -443,7 +470,7 @@ export default function BoardPage() {
           ))}
         </select>
         <button
-          onClick={() => setShowArchived((v) => !v)}
+          onClick={() => setShowArchived(!showArchived)}
           className={`text-xs px-2.5 py-1 rounded border transition-colors ${
             showArchived
               ? 'bg-indigo-700 border-indigo-500 text-indigo-100 hover:bg-indigo-600'

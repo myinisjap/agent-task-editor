@@ -66,7 +66,11 @@ func (h *ReposHandler) List(w http.ResponseWriter, r *http.Request) {
 		repos = repos[:limit]
 		w.Header().Set("X-Next-Cursor", repos[len(repos)-1].ID)
 	}
-	JSON(w, http.StatusOK, repos)
+	out := make([]repoResponse, len(repos))
+	for i, rp := range repos {
+		out[i] = newRepoResponse(rp)
+	}
+	JSON(w, http.StatusOK, out)
 }
 
 func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +79,29 @@ func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "repo not found")
 		return
 	}
-	JSON(w, http.StatusOK, repo)
+	JSON(w, http.StatusOK, newRepoResponse(repo))
+}
+
+// repoResponse is the JSON wire format for gen.Repo. The embedded sqlc row
+// stores boolean columns as int64 (0/1); the shadowing bool fields below make
+// the API emit real JSON true/false, matching what request bodies accept.
+type repoResponse struct {
+	gen.Repo
+	IssueSyncEnabled              bool `json:"issue_sync_enabled"`
+	IssueWritebackEnabled         bool `json:"issue_writeback_enabled"`
+	PrReviewAutoTransitionEnabled bool `json:"pr_review_auto_transition_enabled"`
+	IssueCommentSyncEnabled       bool `json:"issue_comment_sync_enabled"`
+}
+
+// newRepoResponse converts a stored repo row into its API representation.
+func newRepoResponse(r gen.Repo) repoResponse {
+	return repoResponse{
+		Repo:                          r,
+		IssueSyncEnabled:              r.IssueSyncEnabled != 0,
+		IssueWritebackEnabled:         r.IssueWritebackEnabled != 0,
+		PrReviewAutoTransitionEnabled: r.PrReviewAutoTransitionEnabled != 0,
+		IssueCommentSyncEnabled:       r.IssueCommentSyncEnabled != 0,
+	}
 }
 
 // createRepoBody is the decoded request payload for ReposHandler.Create.
@@ -223,7 +249,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if runtimeLanguages != "" {
 		h.prewarmRuntime(repo.ID, repo.Path, runtimeLanguages)
 	}
-	JSON(w, http.StatusCreated, repo)
+	JSON(w, http.StatusCreated, newRepoResponse(repo))
 }
 
 // resolveCloneDestination validates the auto-clone inputs and derives the clone
@@ -796,7 +822,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if runtimeChanged && runtimeLanguages != "" {
 		h.prewarmRuntime(repo.ID, repo.Path, runtimeLanguages)
 	}
-	JSON(w, http.StatusOK, repo)
+	JSON(w, http.StatusOK, newRepoResponse(repo))
 }
 
 // Delete removes a repo. Returns 404 if the repo doesn't exist and 409 (with

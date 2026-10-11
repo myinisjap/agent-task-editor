@@ -174,21 +174,22 @@ func (q *Queries) CountActiveRunsByRepo(ctx context.Context) ([]CountActiveRunsB
 }
 
 const countAllTasksByLabel = `-- name: CountAllTasksByLabel :many
-SELECT label, COUNT(*) AS count
+SELECT workflow_id, label, COUNT(*) AS count
 FROM tasks
 WHERE archived = 0
-GROUP BY label
+GROUP BY workflow_id, label
 `
 
 type CountAllTasksByLabelRow struct {
-	Label string `json:"label"`
-	Count int64  `json:"count"`
+	WorkflowID string `json:"workflow_id"`
+	Label      string `json:"label"`
+	Count      int64  `json:"count"`
 }
 
-// Per-label counts of non-archived tasks across all workflows, for the
-// dashboard's label_counts map. Scans only (label, archived) instead of
-// pulling every column (including the full description text) of every task
-// row via ListTasks.
+// Per-(workflow, label) counts of non-archived tasks, for the dashboard's
+// label_counts and workflow_label_counts maps. Scans only (workflow_id,
+// label, archived) instead of pulling every column (including the full
+// description text) of every task row via ListTasks.
 func (q *Queries) CountAllTasksByLabel(ctx context.Context) ([]CountAllTasksByLabelRow, error) {
 	rows, err := q.db.QueryContext(ctx, countAllTasksByLabel)
 	if err != nil {
@@ -198,7 +199,7 @@ func (q *Queries) CountAllTasksByLabel(ctx context.Context) ([]CountAllTasksByLa
 	var items []CountAllTasksByLabelRow
 	for rows.Next() {
 		var i CountAllTasksByLabelRow
-		if err := rows.Scan(&i.Label, &i.Count); err != nil {
+		if err := rows.Scan(&i.WorkflowID, &i.Label, &i.Count); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

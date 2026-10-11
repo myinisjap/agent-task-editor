@@ -70,7 +70,7 @@ API):
 
 | Repo field | Meaning |
 |---|---|
-| `issue_sync_enabled` | `1` to turn the importer on for this repo |
+| `issue_sync_enabled` | `true` to turn the importer on for this repo |
 | `issue_sync_label` | **Deprecated** (see [Intake routing rules](#intake-routing-rules) below) — only import open issues carrying this label (e.g. `agent-ok`). Empty = **all** open issues |
 
 Two prerequisites are enforced when enabling:
@@ -395,7 +395,7 @@ to check the board.
 
 | Repo field | Meaning |
 |---|---|
-| `issue_writeback_enabled` | `1` to turn write-back on for this repo's imported tasks |
+| `issue_writeback_enabled` | `true` to turn write-back on for this repo's imported tasks |
 | `issue_writeback_label` | Label applied when a task first leaves the human-gate label. Empty (default) = `agent-in-progress`. Must already exist on the GitHub repo. |
 
 Only one prerequisite is enforced when enabling write-back:
@@ -596,7 +596,7 @@ The feedback is deduped on `"<head sha>|<base ref>"`, so:
 By default, newly-ingested PR feedback is surfaced in the prompt but the task
 stays wherever a human put it — someone still has to click Reject (or
 whatever the workflow's manual transition is) to send it back to an agent.
-Setting `pr_review_auto_transition_enabled: 1` on the repo skips that click:
+Setting `pr_review_auto_transition_enabled: true` on the repo skips that click:
 the first time a sweep ingests new feedback for a task (a changes-requested
 review, a new inline comment, a newly-failing check, or a newly-detected merge
 conflict), the task is
