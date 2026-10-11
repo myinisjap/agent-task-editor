@@ -168,11 +168,14 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 
 	pool := NewPool(2, db.SQL(), engine, pub)
 	pool.GitName, pool.GitEmail = "Test", "test@example.com"
+	pauses := NewProviderPauseRegistry(pub)
+	pool.ProviderPauses = pauses
 
 	factory := func(AgentConfig) Provider { return fp }
 	d := NewDispatcher(db.SQL(), pool, engine, factory)
 	d.interval = 15 * time.Millisecond
 	d.Publisher = pub
+	d.ProviderPauses = pauses
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// poolDone/dispDone close when their goroutines fully return. Pool.Start
@@ -1108,4 +1111,68 @@ func TestE2E_WaitingHumanLocksDoNotConsumeRepoSlots(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func (f *fakeProvider) runCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.inputs)
+}
+
+// TestE2E_AuthFailurePausesProviderDispatch: the first auth-classified run
+// escalates its own task and trips the provider circuit breaker; a second
+// queued task on the same provider kind is then left untouched (no run, no
+// escalation) until the provider is resumed.
+func TestE2E_AuthFailurePausesProviderDispatch(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{
+		{
+			logs:   []LogEntry{{Type: LogStderr, Content: "Not logged in · Please run /login"}},
+			result: Result{Status: "failed"},
+		},
+		{result: Result{Status: "completed", Outcome: "success"}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	first := h.seedTaskOnReadyWithProvider(t, wfID, "claude", 0)
+
+	h.pollTask(t, first, func(tk gen.Task) bool { return tk.ActiveAgentRunID != nil }, "first task dispatched")
+	deadline := time.Now().Add(15 * time.Second)
+	for !h.disp.ProviderPauses.IsPaused("claude") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !h.disp.ProviderPauses.IsPaused("claude") {
+		t.Fatal("expected claude provider to be paused after an auth-classified run")
+	}
+	if !h.pub.has("provider.pause_changed") {
+		t.Error("expected provider.pause_changed event")
+	}
+
+	// A second queued task must not be dispatched while paused.
+	firstTask, err := h.q.GetTask(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := uuid.NewString()
+	if _, err := h.q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: second, Title: "queued behind the pause", WorkflowID: wfID, RepoID: firstTask.RepoID, Label: "ready",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.waitForSweeps(t, 5)
+	tk, err := h.q.GetTask(context.Background(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.ActiveAgentRunID != nil {
+		t.Fatalf("task dispatched while its provider was paused (active run %v)", *tk.ActiveAgentRunID)
+	}
+	if n := fp.runCount(); n != 1 {
+		t.Fatalf("provider ran %d times, want 1", n)
+	}
+
+	// Resume: the queued task is picked up on the next sweep.
+	if !h.disp.ResumeProvider("claude") {
+		t.Fatal("ResumeProvider reported not paused")
+	}
+	h.pollTask(t, second, func(tk gen.Task) bool { return tk.ActiveAgentRunID != nil || tk.Label != "ready" }, "queued task dispatched after resume")
 }

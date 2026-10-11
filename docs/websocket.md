@@ -235,6 +235,19 @@ An agent run was rate-limited by the provider and will be retried automatically.
 }
 ```
 
+### `provider.pause_changed`
+The provider circuit breaker tripped (`paused: true`, after a run was
+classified as an auth failure) or lifted (`paused: false`, automatically once the
+provider's health check passes, or via `POST /health/providers/{provider}/resume`).
+Clients refetch `GET /health/providers` for the details.
+
+```json
+{
+  "type": "provider.pause_changed",
+  "payload": { "provider": "claude", "paused": true }
+}
+```
+
 ### `task.git_state_changed`
 The task's GitHub PR state changed (fired by the background GitHub sync). When
 `git_state` transitions to `pr_merged`, the sync also removes any leftover

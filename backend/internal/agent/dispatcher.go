@@ -34,6 +34,9 @@ type Dispatcher struct {
 	ProviderFactory func(cfg AgentConfig) Provider
 	// RateLimits is the shared rate-limit registry (optional — no-op when nil).
 	RateLimits *RateLimitRegistry
+	// ProviderPauses is the provider circuit breaker (optional — no-op when
+	// nil). Sweep dispatch skips agent configs whose provider kind is paused.
+	ProviderPauses *ProviderPauseRegistry
 	// Subtasks coordinates child→parent merge-back (optional — nil disables the
 	// subtask branching model). Used here to branch a child off its parent's
 	// branch and to inject merge-conflict context into a parent's run.
@@ -239,11 +242,15 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 				continue
 			}
 		}
+		if d.providerPaused(ctx, cand) {
+			log.Info("dispatcher: skipping config whose provider is paused, trying next", "agent_config_id", cand.ID)
+			continue
+		}
 		matched = cand
 		break
 	}
 	if matched == nil {
-		log.Info("dispatcher: all matching configs rate-limited, skipping dispatch", "label", t.Label)
+		log.Info("dispatcher: all matching configs rate-limited or provider-paused, skipping dispatch", "label", t.Label)
 		return
 	}
 
@@ -280,6 +287,38 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// this same sweep, not just re-evaluated on the next tick.
 	inUse[repo.ID]++
 }
+
+// providerPaused reports whether cfg's provider kind is paused by the provider
+// circuit breaker. The task is simply left queued (not escalated). A failed
+// provider-config lookup is treated as not paused: startRun surfaces that
+// error through its own path.
+func (d *Dispatcher) providerPaused(ctx context.Context, cfg *gen.AgentConfig) bool {
+	if d.ProviderPauses == nil {
+		return false
+	}
+	paused := d.ProviderPauses.List()
+	if len(paused) == 0 {
+		return false
+	}
+	pc, err := d.q.GetProviderConfig(ctx, cfg.ProviderConfigID)
+	if err != nil {
+		return false
+	}
+	for _, p := range paused {
+		if p.Provider == pc.Provider {
+			return true
+		}
+	}
+	return false
+}
+
+// PausedProviders returns the providers currently paused by the circuit
+// breaker (for GET /health/providers).
+func (d *Dispatcher) PausedProviders() []PausedProvider { return d.ProviderPauses.List() }
+
+// ResumeProvider manually clears a provider's pause and reports whether it
+// was paused.
+func (d *Dispatcher) ResumeProvider(provider string) bool { return d.ProviderPauses.Resume(provider) }
 
 // effectiveBudget resolves the effective cost budget for a task from its
 // own max_cost_usd and its matched agent config's max_cost_usd. A value of

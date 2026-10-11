@@ -211,6 +211,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// first-run misconfiguration is visible at a glance instead of
 			// surfacing as failed agent runs.
 			r.Get("/health/providers", healthH.Providers)
+			r.Post("/health/providers/{provider}/resume", healthH.ResumeProvider)
 
 			// Streams a consistent point-in-time database snapshot (VACUUM INTO)
 			// as application/octet-stream. Plain bearer-gated; see docs/backup.md.

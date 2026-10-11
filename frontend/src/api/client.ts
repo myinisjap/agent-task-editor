@@ -42,6 +42,7 @@ export type NeedsMeItem = Schemas['NeedsMeItem']
 export type NeedsMeReason = NeedsMeItem['reason']
 export type OutcomeQuality = Schemas['OutcomeQuality']
 export type ProviderCheck = Schemas['ProviderCheck']
+export type PausedProvider = Schemas['PausedProvider']
 
 // Narrowed alias for the ProviderCheck.status enum, kept for callers that
 // annotate a status value directly.
@@ -462,7 +463,9 @@ export const api = {
     authStatus: () => request<{ authed: boolean; note: string }>('/github/auth-status'),
   },
   health: {
-    providers: () => request<{ checks: ProviderCheck[] }>('/health/providers'),
+    providers: () => request<{ checks: ProviderCheck[]; paused_providers?: PausedProvider[] }>('/health/providers'),
+    resumeProvider: (provider: string) =>
+      request<{ resumed: boolean }>(`/health/providers/${encodeURIComponent(provider)}/resume`, { method: 'POST' }),
   },
   chat: {
     list: () => request<ChatSession[]>('/chat/sessions'),

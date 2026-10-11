@@ -1543,6 +1543,23 @@ components:
           description: How to fix it; present when status is not ok.
       required: [id, name, status, detail]
 
+    PausedProvider:
+      type: object
+      description: >
+        A provider kind whose dispatch is paused by the provider circuit
+        breaker after an auth-classified run.
+      properties:
+        provider:
+          type: string
+          description: Provider kind, matching provider_configs.provider (e.g. claude).
+        reason:
+          type: string
+          description: Human-readable cause.
+        paused_at:
+          type: string
+          format: date-time
+      required: [provider, reason, paused_at]
+
     Error:
       type: object
       properties:
@@ -3304,6 +3321,14 @@ paths:
         (PATH lookups, credential/config-file existence, env/config values)
         — no real agent invocation is performed, so a green result means
         "ready as far as we can tell", not a live token validation.
+        Also lists paused_providers: provider kinds whose dispatch the
+        provider circuit breaker paused after a run was classified as an auth
+        failure (CLI not logged in). Queued tasks for a paused provider are
+        left untouched; the pause lifts automatically once that provider's
+        health check passes again, or manually via
+        POST /health/providers/{provider}/resume. The pause state is held in
+        memory and resets on restart. Changes are broadcast as the
+        provider.pause_changed WebSocket event ({provider, paused}).
       responses:
         "200":
           description: Ordered list of readiness checks
@@ -3315,6 +3340,32 @@ paths:
                   checks:
                     type: array
                     items: { $ref: "#/components/schemas/ProviderCheck" }
+                  paused_providers:
+                    type: array
+                    items: { $ref: "#/components/schemas/PausedProvider" }
+
+  /health/providers/{provider}/resume:
+    post:
+      summary: Manually resume a paused provider
+      description: >
+        Clears the provider circuit breaker for a provider kind (e.g. claude)
+        so dispatch resumes on the next sweep. If the provider is still not
+        logged in, the next auth-classified run pauses it again. Idempotent.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Whether the provider was paused before this call
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resumed: { type: boolean }
+                required: [resumed]
 
   /uploads/{task_id}/{filename}:
     get:

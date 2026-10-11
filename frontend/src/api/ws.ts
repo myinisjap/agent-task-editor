@@ -32,6 +32,9 @@ export type WSEvent =
   | { type: 'task.agent_started'; payload: { task_id: string; run_id: string; agent_name: string } }
   | { type: 'task.agent_done'; payload: { task_id: string; run_id: string; status: AgentRun['status'] } }
   | { type: 'task.needs_human'; payload: { task_id: string; run_id: string; message: string; reason?: string } }
+  // Provider circuit breaker tripped (paused: true, after an auth-classified
+  // run) or lifted (paused: false, auto or manual resume).
+  | { type: 'provider.pause_changed'; payload: { provider: string; paused: boolean } }
   | { type: 'task.rate_limited'; payload: { task_id: string; run_id: string; agent_config_id: string; unblocked_at: string } }
   // Emitted when a task's cumulative recorded cost crosses the configurable
   // early-warning threshold (see GET/PUT /settings/cost-warning, default
