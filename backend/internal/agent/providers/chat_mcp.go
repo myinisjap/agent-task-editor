@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/scopedtoken"
 )
 
@@ -70,11 +71,21 @@ func NewChatMCPProvisioner(binary, backendURL string) agent.ChatMCPProvisioner {
 				revoke()
 				return nil, nil, noop, fmt.Errorf("create chat mcp dir: %w", err)
 			}
+			if err := agentuser.ShareDir(dir, false); err != nil {
+				revoke()
+				_ = os.RemoveAll(dir)
+				return nil, nil, noop, fmt.Errorf("share chat mcp dir: %w", err)
+			}
 			file := filepath.Join(dir, "mcp.json")
 			if err := os.WriteFile(file, data, 0600); err != nil {
 				revoke()
 				_ = os.RemoveAll(dir)
 				return nil, nil, noop, fmt.Errorf("write chat mcp config: %w", err)
+			}
+			if err := agentuser.ShareFile(file); err != nil {
+				revoke()
+				_ = os.RemoveAll(dir)
+				return nil, nil, noop, fmt.Errorf("share chat mcp config: %w", err)
 			}
 			return []string{"--mcp-config", file}, nil, func() { revoke(); _ = os.RemoveAll(dir) }, nil
 
@@ -85,11 +96,21 @@ func NewChatMCPProvisioner(binary, backendURL string) agent.ChatMCPProvisioner {
 				revoke()
 				return nil, nil, noop, fmt.Errorf("mkdir codex home: %w", err)
 			}
+			if err := agentuser.ShareDir(dir, true); err != nil {
+				revoke()
+				_ = os.RemoveAll(dir)
+				return nil, nil, noop, fmt.Errorf("share codex home: %w", err)
+			}
 			toml := renderCodexMCPTOML(boardMCPServerName, entry)
 			if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(toml), 0600); err != nil {
 				revoke()
 				_ = os.RemoveAll(dir)
 				return nil, nil, noop, fmt.Errorf("write codex config.toml: %w", err)
+			}
+			if err := agentuser.ShareFile(filepath.Join(dir, "config.toml")); err != nil {
+				revoke()
+				_ = os.RemoveAll(dir)
+				return nil, nil, noop, fmt.Errorf("share codex config.toml: %w", err)
 			}
 			return nil, []string{"CODEX_HOME=" + dir}, func() { revoke(); _ = os.RemoveAll(dir) }, nil
 		}

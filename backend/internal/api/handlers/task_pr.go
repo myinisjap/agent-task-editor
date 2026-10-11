@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -47,7 +47,7 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		gitDir = repo.Path
 	}
 
-	mb, err := exec.CommandContext(r.Context(), "git", "-C", gitDir, "merge-base", task.BaseRef, task.Branch).Output()
+	mb, err := agentuser.ServerCommandContext(r.Context(), "git", "-C", gitDir, "merge-base", task.BaseRef, task.Branch).Output()
 	base := task.BaseRef
 	if err == nil {
 		if s := strings.TrimSpace(string(mb)); s != "" {
@@ -55,7 +55,7 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	out, err := exec.CommandContext(r.Context(), "git", "-C", gitDir, "diff", base, task.Branch, "--").Output()
+	out, err := agentuser.ServerCommandContext(r.Context(), "git", "-C", gitDir, "diff", base, task.Branch, "--").Output()
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to compute diff")
 		return
@@ -119,7 +119,7 @@ func collectBranchCommits(ctx context.Context, gitDir, baseRef, branch string) [
 	if !isValidGitRef(baseRef) || !isValidGitRef(branch) {
 		return nil
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", gitDir, "log", "--format=%s", baseRef+".."+branch).Output()
+	out, err := agentuser.ServerCommandContext(ctx, "git", "-C", gitDir, "log", "--format=%s", baseRef+".."+branch).Output()
 	if err != nil {
 		return nil
 	}

@@ -49,7 +49,7 @@ ARG INSECURE_SKIP_SSL_VERIFY=false
 # privileges in the entrypoint. build-essential covers cgo/node-gyp builds.
 # ripgrep (rg) backs the anthropic/llm providers' native `search` tool.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git bash build-essential gosu ripgrep curl \
+      ca-certificates git bash build-essential gosu ripgrep curl util-linux \
     && rm -rf /var/lib/apt/lists/*
 RUN if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then npm config set strict-ssl false; fi
 
@@ -174,6 +174,16 @@ RUN mkdir -p /data /home/node/go /home/node/.cache/go-build "$MISE_DATA_DIR" "$U
     if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then HOME=/home/node git config --global http.sslVerify false; fi && \
     chown node: /home/node/.gitconfig
 
+# Unprivileged 'agent' account that provider CLIs run as (see entrypoint.sh and
+# docs/getting-started.md#agent-user-isolation). Primary group is node's, so
+# repos and the shared caches work through group permissions; its HOME is its
+# own, so it cannot touch the server user's home (git config, gh credentials).
+# entrypoint.sh remaps its uid to AGENT_UID and its gid follows PGID.
+RUN useradd --uid 10001 --gid node --home-dir /home/agent --create-home --shell /bin/bash agent && \
+    HOME=/home/agent git config --global safe.directory '*' && \
+    if [ "$INSECURE_SKIP_SSL_VERIFY" = "true" ]; then HOME=/home/agent git config --global http.sslVerify false; fi && \
+    chown -R agent:node /home/agent
+
 WORKDIR /app
 # entrypoint rarely changes, so copy it before the binaries (which change every
 # code edit) to keep this chmod layer cached across rebuilds.
@@ -185,7 +195,8 @@ COPY --from=builder /app/bin/mcp-board .
 RUN chown -R node: /app
 
 # Stays root so the entrypoint can remap the node user (PUID/PGID) and chown the
-# state dirs; it then drops to node via gosu before running the server.
+# state dirs; it then drops to node (via setpriv, keeping the capabilities needed
+# to launch agents as the 'agent' user, or gosu as a fallback) to run the server.
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["./server"]

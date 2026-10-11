@@ -3,9 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -332,7 +332,7 @@ func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
 // suppressed so an interactive auth prompt fails fast instead of blocking on
 // stdin forever.
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := agentuser.ServerCommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_ASKPASS=",

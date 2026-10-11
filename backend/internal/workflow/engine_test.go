@@ -15,10 +15,13 @@ import (
 
 // noopPublisher satisfies the Publisher interface without doing anything.
 type noopPublisher struct {
+	mu     sync.Mutex // Publish is called from the side-effect goroutine and the test goroutine
 	events []string
 }
 
 func (p *noopPublisher) Publish(eventType string, _ any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
 }
 

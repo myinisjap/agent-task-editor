@@ -3,8 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"net/http"
-	"os/exec"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -580,7 +580,7 @@ func (h *AgentsHandler) GetModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if provider == "opencode" {
-		out, err := exec.Command("opencode", "models").Output()
+		out, err := agentuser.ServerCommand("opencode", "models").Output()
 		if err == nil {
 			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 			var filtered []string

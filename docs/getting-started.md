@@ -2,7 +2,7 @@
 
 ## Security Notice
 
-> **Agent Task Editor executes arbitrary shell commands.** AI agents run with full shell access as the server user. The defaults are permissive and intended for localhost use only.
+> **Agent Task Editor executes arbitrary shell commands.** AI agents run with full shell access, as a separate unprivileged `agent` user inside the container (see [Agent user isolation](#agent-user-isolation)), but that user can still read and write your mounted repos and `~/.claude`. The defaults are permissive and intended for localhost use only.
 >
 > For any non-localhost deployment, set `API_TOKEN`, `REPO_BASE_DIR`, and a tight `CORS_ORIGINS` before starting the stack. Run behind a reverse proxy or VPN. See the [Security section in the README](../README.md#security) for the full checklist.
 
@@ -96,6 +96,9 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer ([task-sources.md](task-sources.md)) |
 | `SCHEDULE_INTERVAL` | `30s` | Poll interval for the recurring task-schedule sweep ([task-templates.md](task-templates.md#recurring-schedules)) |
 | `CONFIG_FILE` | _(empty)_ | Path to a YAML config file (all keys are optional) |
+| `AGENT_ISOLATION` | `true` | Run provider CLIs (task runs, chat terminals) as a separate unprivileged `agent` user. `false` runs them as the server user. See [Agent user isolation](#agent-user-isolation). |
+| `AGENT_UID` | `10001` | uid of the `agent` account (set by `entrypoint.sh`; bumped to `10002` if it equals `PUID`). Its gid is always `PGID`. |
+| `AGENT_FIX_REPO_PERMS` | `auto` | `auto`: at startup add group-write (`chmod -R g+rwX`) to each repo directly under `REPO_BASE_DIR` whose top-level dir isn't already group-writable. `always`: re-walk every start. `never`: skip (manage permissions yourself). |
 
 ### Cost Controls
 
@@ -290,6 +293,53 @@ volumes:
 
 Then register repos using paths under `/repos` in the UI (or via the API), and set `REPO_BASE_DIR=/repos` to prevent agents from escaping that subtree.
 
+## Agent user isolation
+
+The server and the agents it launches used to run as the same OS user, so a
+prompt-injected agent could read `/data` (the SQLite DB), the server's
+environment through `/proc/<pid>/environ` (`API_TOKEN`, `GITHUB_TOKEN`, provider
+keys) and `~/.config/gh`. Provider CLIs (headless runs, chat terminals, the
+deprecated providers' `run_bash`/search tools) now run as a separate
+unprivileged `agent` user. The server, `git`/`gh` calls it makes for push, PR
+creation and PR sync, and the `mise`/`uv` toolchain installs stay on the server
+user (`node`).
+
+How it works:
+
+- `entrypoint.sh` creates/remaps `agent` (uid `AGENT_UID`, default `10001`;
+  primary group = node's group, i.e. `PGID`) and starts the server as `node`
+  with `CAP_SETUID`, `CAP_SETGID` and `CAP_KILL` as ambient capabilities
+  (`setpriv`). The server uses them to start each agent process with the agent
+  uid/gid and to cancel it later.
+- Those capabilities are **not** given to agents: every agent command is wrapped
+  in `setpriv --inh-caps=-all --ambient-caps=-all`, so the CLI starts with empty
+  capability sets and cannot switch back to `node`. At startup the server
+  verifies this with a live probe (uid correct, all capability sets empty) and
+  disables isolation with an error if the check fails.
+- The server's own children (`git`, `gh`, `mise`, `uv`, ...) are wrapped the same way via `agentuser.ServerCommand`, so a hook or config an agent plants in a repo (`core.fsmonitor`, `core.hooksPath`, ...) never runs with those capabilities; only the server process itself holds them (a source-scanning test rejects raw `exec.Command` elsewhere).
+- `/data` is `0700 node`; the server's `~/.config/gh` is not readable by `agent`;
+  the agent has its own `HOME=/home/agent` (own `.gitconfig`).
+- Shared by group (`PGID`, with `umask 002`): bind-mounted repos and
+  `.ate-worktrees/`, the `mise`/`uv`/Go caches, the qwen home, per-run temp dirs
+  (MCP config/result, `CODEX_HOME`). At startup the entrypoint adds the group
+  write bit to repos under `REPO_BASE_DIR` (`AGENT_FIX_REPO_PERMS`) and to
+  `~/.claude` / `~/.claude.json`, which stay mounted read-write and fully usable
+  by the agent (Claude writes sessions and refreshes tokens there). The compose
+  files mount them a second time under `/home/agent`; older compose files still
+  work through symlinks.
+- Fallback, never a startup failure: if the server cannot switch users
+  (`AGENT_ISOLATION=false`, running outside Docker such as `./dev.sh dev`, a
+  compose `user:` override, dropped capabilities) agents run as the server user
+  and the log says why (`agent user isolation is OFF`).
+
+Caveats: files agents create are owned by `agent:<PGID>` (group-writable, so you
+and the server can edit them). Tools that create directories with a hard-coded
+`0755` (ignoring the umask) leave them non-writable by the server/host user;
+worktree cleanup of such a tree may need `chmod -R g+w`. If your repos live in a
+group other than `PGID`, set `AGENT_FIX_REPO_PERMS=never` and grant the agent
+access yourself. `~/.claude` is still writable by agents by design, so Claude
+credentials are not protected from them.
+
 ## Supported Languages & Extending the Toolchain
 
 Agent `Bash`/`run_bash` tool calls execute *inside the backend container*, against your bind-mounted repos (see [Mounting Repositories](#mounting-repositories) above). That means any compiler, runtime, or build tool an agent needs to build, lint, or test a repo must be installed in `backend/Dockerfile`'s final runtime image — not just available on your host machine.
@@ -342,7 +392,7 @@ docker compose build backend
 
 **A note on the switch from Alpine:** the image used to be Alpine-based (`node:26-alpine`, `musl libc`), which meant some prebuilt binaries (certain Rust crates, precompiled CLI tools, some Python wheels expecting `glibc`) needed workarounds or wouldn't run at all. The image moved to `node:26-bookworm-slim` (Debian, `glibc`) specifically so `mise`'s prebuilt python/ruby/java toolchains work — see [runtime.md](runtime.md). That also removes the Alpine/glibc caveat for anything you add to the image yourself: Debian packages and most prebuilt Linux binaries work without the `gcompat` workaround Alpine used to need.
 
-Remember to make sure any new tool's cache/config directories are writable by the `node` user. The container runs as `node`, which `backend/entrypoint.sh` remaps to your host `PUID`/`PGID` at startup and `chown`s the state dirs (`/data`, `/app`, the Go caches, `mise`/`uv`'s caches under `/home/node`) accordingly. If your tool writes elsewhere under `/home/node`, add it to that `chown` list — otherwise agents will hit permission errors the first time they invoke the tool.
+Remember to make sure any new tool's cache/config directories are writable by the `node` user and, because agents run as the `agent` user in `node`'s group, group-writable (see [Agent user isolation](#agent-user-isolation); add them to the `group_rw` list in `entrypoint.sh`). The container runs as `node`, which `backend/entrypoint.sh` remaps to your host `PUID`/`PGID` at startup and `chown`s the state dirs (`/data`, `/app`, the Go caches, `mise`/`uv`'s caches under `/home/node`) accordingly. If your tool writes elsewhere under `/home/node`, add it to that `chown` list — otherwise agents will hit permission errors the first time they invoke the tool.
 
 ## Local Development
 

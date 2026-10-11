@@ -8,12 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/go-chi/chi/v5"
@@ -315,7 +315,7 @@ func (h *ReposHandler) validateExistingRepoPath(w http.ResponseWriter, r *http.R
 		Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
 		return false
 	}
-	if err := exec.CommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+	if err := agentuser.ServerCommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
 		Err(w, http.StatusBadRequest, "path is not a git repository")
 		return false
 	}
@@ -475,7 +475,7 @@ func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
 		fail(fmt.Sprintf("failed to create parent directory: %v", err))
 		return
 	}
-	if out, err := exec.CommandContext(ctx, "git", "clone", remoteURL, destPath).CombinedOutput(); err != nil {
+	if out, err := agentuser.ServerCommandContext(ctx, "git", "clone", remoteURL, destPath).CombinedOutput(); err != nil {
 		fail(fmt.Sprintf("git clone failed: %s", strings.TrimSpace(string(out))))
 		return
 	}
@@ -793,7 +793,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the path is still a valid git repository.
-	if err := exec.CommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+	if err := agentuser.ServerCommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
 		Err(w, http.StatusBadRequest, "path is not a git repository")
 		return
 	}
@@ -867,7 +867,7 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", "--", ref).Output()
+	out, err := agentuser.ServerCommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", "--", ref).Output()
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to read git tree")
 		return
@@ -940,7 +940,7 @@ func setClaudeTrust(ctx context.Context, repoPath string) {
 	// directory and rename over the original — os.Rename is atomic on the same
 	// filesystem, so readers see either the old or the new file, never a
 	// half-written one. A crash mid-write leaves only an orphaned temp file.
-	if err := atomicWriteFile(claudeJSON, out, 0o600); err != nil {
+	if err := atomicWriteFile(claudeJSON, out, agentuser.SharedFileMode()); err != nil {
 		middleware.LoggerFromContext(ctx).Warn("failed to update claude trust dialog", "path", repoPath, "err", err)
 	}
 }

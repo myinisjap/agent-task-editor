@@ -14,6 +14,7 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // newCLICommand builds the exec.Cmd for a provider's CLI subprocess. The CLI
@@ -35,6 +36,10 @@ func newCLICommand(ctx context.Context, name string, args ...string) *exec.Cmd {
 	// Cancel is best-effort (e.g. the process already exited); give Wait a
 	// bounded grace period afterward instead of blocking forever.
 	cmd.WaitDelay = 5 * time.Second
+	// Run the provider CLI (and everything it spawns) as the unprivileged
+	// agent user when available; no-op otherwise. Callers must also pass the
+	// env they assign to cmd.Env through agentuser.Env (the HOME override).
+	agentuser.Apply(cmd)
 	return cmd
 }
 

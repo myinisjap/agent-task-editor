@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // CodexRunner runs the Codex CLI (`codex exec --json`) in non-interactive
@@ -78,9 +79,16 @@ func prepareCodexHome(runID string, entry *mcpServerEntry) (*codexRunConfig, err
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("mkdir codex home: %w", err)
 	}
+	// codex runs as the agent user and writes its sessions/state here.
+	if err := agentuser.ShareDir(dir, true); err != nil {
+		return nil, fmt.Errorf("share codex home: %w", err)
+	}
 	toml := renderCodexMCPTOML("task-editor", *entry)
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(toml), 0600); err != nil {
 		return nil, fmt.Errorf("write codex config.toml: %w", err)
+	}
+	if err := agentuser.ShareFile(filepath.Join(dir, "config.toml")); err != nil {
+		return nil, fmt.Errorf("share codex config.toml: %w", err)
 	}
 	return &codexRunConfig{HomeDir: dir}, nil
 }
@@ -203,7 +211,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		entry := mcpServerEntry{
 			Command: r.MCP.ServerBinary,
 			Args:    []string{},
-			Env:     mcpSidecarEnv(input, r.BackendURL, mcpCfg.Token),
+			Env:     mcpSidecarEnv(input, r.BackendURL, mcpCfg.Token, mcpCfg.ResultFile),
 		}
 		codexHome, err = prepareCodexHome(input.RunID, &entry)
 		if err != nil {
@@ -237,7 +245,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	}
 	cmd := newCLICommand(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
-	cmd.Env = env
+	cmd.Env = agentuser.Env(env) // HOME etc. of the agent account when isolated
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -443,12 +451,12 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 // --mcp-config entry — factored out here since CodexRunner needs to embed
 // them directly into a config.toml [mcp_servers.*] entry rather than letting
 // MCPManager write them into its own JSON file.
-func mcpSidecarEnv(input agent.RunInput, backendURL, apiToken string) map[string]string {
+func mcpSidecarEnv(input agent.RunInput, backendURL, apiToken, resultFile string) map[string]string {
 	transitionsJSON, _ := json.Marshal(input.Transitions)
 	reviewCommentsJSON, _ := json.Marshal(input.OpenReviewComments)
 	env := map[string]string{
 		"RUN_ID":          input.RunID,
-		"RESULT_FILE":     filepath.Join(os.TempDir(), fmt.Sprintf("ate-result-%s.json", input.RunID)),
+		"RESULT_FILE":     resultFile,
 		"TRANSITIONS":     string(transitionsJSON),
 		"REVIEW_COMMENTS": string(reviewCommentsJSON),
 	}
