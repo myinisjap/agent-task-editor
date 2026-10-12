@@ -296,7 +296,7 @@ func (p *Pool) holdOnVerifyFailure(ctx context.Context, job Job, result Result, 
 // escalateVerifyError escalates a run whose verify command could not be run.
 func (p *Pool) escalateVerifyError(ctx context.Context, job Job, result Result, log *slog.Logger) {
 	_ = p.lifecycle().escalate(ctx, escalation{
-		TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonRuntimePrep, Message: result.verify.errMsg, Result: &result,
+		TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonVerifyError, Message: result.verify.errMsg, Result: &result,
 	})
 	log.Warn("pool: verify command could not run, escalating to waiting_human", "err", result.verify.errMsg)
 }

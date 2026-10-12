@@ -51,6 +51,12 @@ const INFO: Record<EscalationReason, EscalationInfo> = {
     action: 'fix',
     fix: { to: '/repos', text: 'Open repos' },
   },
+  verify_error: {
+    short: 'Verify failed to run',
+    label: 'Verify command could not be run',
+    action: 'fix',
+    fix: { to: '/repos', text: 'Open repos' },
+  },
   max_turns: {
     short: 'Turn limit',
     label: 'Agent hit its turn limit',

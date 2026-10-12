@@ -22,8 +22,7 @@ reviewer at the human gate had a diff and logs but no ground truth.
   to `failure`, so the label's existing failure transition and the rework-loop
   breaker apply; with no failure path, `holdOnVerifyFailure` keeps the label,
   stores the feedback and counts toward `maxConsecutiveFailures`. Could not
-  run (`error`): escalate to `waiting_human` (reason `runtime_prep`, no new
-  enum value), never advance, never send back to the agent.
+  run (`error`): escalate to `waiting_human` (reason `verify_error`), never advance, never send back to the agent.
 - Feedback is stored as the run's `feedback` beginning `VERIFICATION FAILED:`;
   `writeFeedbackSection` prints such feedback without the "prior review"
   header. The dispatcher already feeds the current run's feedback to the next

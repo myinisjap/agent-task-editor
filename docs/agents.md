@@ -183,6 +183,7 @@ escalation.
 | `runtime_prep` | Pinned toolchain install failed | Open repos, then Retry |
 | `max_turns` | Agent hit `max_turns` | Raise max turns, then Retry |
 | `repeated_failure` | Consecutive failures hit the cap | Retry |
+| `verify_error` | Verify command could not be run | Check the repo's verify command, then Retry |
 | `transient_exhausted` | Transient-retry budget exhausted | Retry |
 | `no_outcome` | Run finished without a usable outcome | Retry |
 | `rejected_transition` | Agent's requested move was refused repeatedly | Retry |

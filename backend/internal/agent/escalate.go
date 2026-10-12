@@ -33,6 +33,8 @@ const (
 	ReasonProviderMissing EscalationReason = "provider_missing"
 	// ReasonRuntimePrep: installing the repo's pinned toolchains failed.
 	ReasonRuntimePrep EscalationReason = "runtime_prep"
+	// ReasonVerifyError: the repo/label verify command could not be run.
+	ReasonVerifyError EscalationReason = "verify_error"
 	// ReasonMaxTurns: the agent hit its max_turns cap.
 	ReasonMaxTurns EscalationReason = "max_turns"
 	// ReasonTransientExhausted: transient-failure retry budget exhausted.
