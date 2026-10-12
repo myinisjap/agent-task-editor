@@ -26,6 +26,9 @@ const DETAILED_NODE_HEIGHT = 92
 // Handles must exist for edge routing but shouldn't render as visible dots.
 const HANDLE_HIDDEN = { opacity: 0, width: 1, height: 1, border: 'none', background: 'transparent' } as const
 
+// Edit mode: the center top (target) / bottom (source) handles are drag handles.
+const HANDLE_VISIBLE = { width: 12, height: 12, background: '#6366f1', border: '2px solid #e2e8f0' } as const
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function edgeColor(path: string | null | undefined): string {
@@ -113,6 +116,8 @@ interface LabelNodeData {
     createPr: boolean
     selected: boolean
     onSelect?: (name: string) => void
+    /** Edit mode: the top/bottom handles become visible drag targets. */
+    editable?: boolean
   }
 }
 
@@ -185,10 +190,10 @@ function WorkflowLabelNode({ data }: NodeProps) {
       }}
     >
       {/* Handles — kept functional but visually hidden */}
-      <Handle type="target" position={Position.Top} id="top" style={HANDLE_HIDDEN} />
+      <Handle type="target" position={Position.Top} id="top" style={detail?.editable ? HANDLE_VISIBLE : HANDLE_HIDDEN} />
       <Handle type="target" position={Position.Top} id="top-l" style={{ ...HANDLE_HIDDEN, left: '30%' }} />
       <Handle type="target" position={Position.Top} id="top-r" style={{ ...HANDLE_HIDDEN, left: '70%' }} />
-      <Handle type="source" position={Position.Bottom} id="bottom" style={HANDLE_HIDDEN} />
+      <Handle type="source" position={Position.Bottom} id="bottom" style={detail?.editable ? HANDLE_VISIBLE : HANDLE_HIDDEN} />
       <Handle type="source" position={Position.Bottom} id="bottom-l" style={{ ...HANDLE_HIDDEN, left: '30%' }} />
       <Handle type="source" position={Position.Bottom} id="bottom-r" style={{ ...HANDLE_HIDDEN, left: '70%' }} />
       <Handle type="source" position={Position.Right} id="right" style={HANDLE_HIDDEN} />
@@ -242,9 +247,12 @@ interface Props {
   /** Detailed mode only: makes nodes clickable. */
   onSelectLabel?: (name: string) => void
   selectedLabel?: string | null
+  /** Detailed mode only: nodes can be connected by dragging from the bottom handle to another node's top handle. */
+  onConnectLabels?: (from: string, to: string) => void
 }
 
-export default function WorkflowFlowchart({ workflow, staffing, onSelectLabel, selectedLabel }: Props) {
+export default function WorkflowFlowchart({ workflow, staffing, onSelectLabel, selectedLabel, onConnectLabels }: Props) {
+  const editable = Boolean(onConnectLabels && staffing)
   const theme = useThemeStore((s) => s.theme)
   const isDark = theme === 'dark'
   const { nodes: layoutedNodes, edges } = useMemo(() => {
@@ -276,6 +284,7 @@ export default function WorkflowFlowchart({ workflow, staffing, onSelectLabel, s
                 createPr: Boolean(lbl.create_pr),
                 selected: selectedLabel === lbl.name,
                 onSelect: onSelectLabel,
+                editable,
               }
             : undefined,
         },
@@ -327,7 +336,7 @@ export default function WorkflowFlowchart({ workflow, staffing, onSelectLabel, s
     const nodes = layoutNodes(rawNodes, rawEdges, staffing ? DETAILED_NODE_HEIGHT : NODE_HEIGHT)
 
     return { nodes, edges: rawEdges }
-  }, [workflow, staffing, onSelectLabel, selectedLabel, isDark])
+  }, [workflow, staffing, onSelectLabel, selectedLabel, isDark, editable])
 
   const onInit = useCallback(() => {}, [])
 
@@ -357,7 +366,8 @@ export default function WorkflowFlowchart({ workflow, staffing, onSelectLabel, s
         fitView
         fitViewOptions={{ padding: 0.2 }}
         nodesDraggable={false}
-        nodesConnectable={false}
+        nodesConnectable={editable}
+        onConnect={editable ? (c) => { if (c.source && c.target) onConnectLabels?.(c.source, c.target) } : undefined}
         // React Flow only lets pointer events through to a node when the
         // canvas has a node click handler, so selection goes through here.
         onNodeClick={onSelectLabel && staffing ? (_, n) => onSelectLabel(n.id) : undefined}

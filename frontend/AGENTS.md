@@ -49,6 +49,7 @@ src/
 │   ├── parseDiff.ts         Git unified diff parser
 │   ├── parseAgentLog.ts     Parses raw agent log content (plain text or JSON) into a structured summary/detail view
 │   ├── parseWorkflowYaml.ts Hand-rolled parser for the workflow YAML schema (labels/transitions)
+│   ├── workflowEdit.ts      Pure draft-edit/validate/serialize functions behind the Pipeline graph editor
 │   ├── validateWorkflow.ts  Structural validation of a parsed workflow (labels, transitions, reachability)
 │   ├── condensedBoard.ts    Groups workflow labels into condensed/agent-group board columns
 │   ├── diffComments.ts      Maps API review-comment wire type to the diff viewer's view model
