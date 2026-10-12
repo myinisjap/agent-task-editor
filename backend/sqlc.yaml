@@ -64,9 +64,13 @@ sql:
       - "internal/storage/migrations/060_task_side_effects.up.sql"
       - "internal/storage/migrations/061_task_source_pending.up.sql"
       - "internal/storage/migrations/062_agent_rate_limits.up.sql"
+      - "internal/storage/migrations/063_task_side_tables.up.sql"
     gen:
       go:
         package: "gen"
         out: "internal/storage/gen"
         emit_json_tags: true
         emit_pointers_for_null_types: true
+        rename:
+          task: TaskBase
+          tasks_full: Task

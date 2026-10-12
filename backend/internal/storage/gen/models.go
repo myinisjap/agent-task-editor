@@ -202,10 +202,52 @@ type Task struct {
 	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
 }
 
+type TaskBase struct {
+	ID                      string     `json:"id"`
+	Title                   string     `json:"title"`
+	Description             string     `json:"description"`
+	Type                    string     `json:"type"`
+	Label                   string     `json:"label"`
+	RepoID                  string     `json:"repo_id"`
+	WorkflowID              string     `json:"workflow_id"`
+	CurrentAgentRunID       *string    `json:"current_agent_run_id"`
+	AgentNotes              string     `json:"agent_notes"`
+	ActiveAgentRunID        *string    `json:"active_agent_run_id"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	Attachments             string     `json:"attachments"`
+	Paused                  int64      `json:"paused"`
+	TransientRetryCount     int64      `json:"transient_retry_count"`
+	NextRetryAt             *time.Time `json:"next_retry_at"`
+	Source                  string     `json:"source"`
+	SourceRef               string     `json:"source_ref"`
+	Archived                int64      `json:"archived"`
+	ParentTaskID            *string    `json:"parent_task_id"`
+	CreatedByRunID          *string    `json:"created_by_run_id"`
+	MergeStatus             string     `json:"merge_status"`
+	MaxCostUsd              float64    `json:"max_cost_usd"`
+	Priority                int64      `json:"priority"`
+	SourceState             string     `json:"source_state"`
+	SourceStateAt           *time.Time `json:"source_state_at"`
+	CostWarned              int64      `json:"cost_warned"`
+	MatchedRuleID           *string    `json:"matched_rule_id"`
+	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
+}
+
 type TaskDependency struct {
 	TaskID          string    `json:"task_id"`
 	DependsOnTaskID string    `json:"depends_on_task_id"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+type TaskGit struct {
+	TaskID       string `json:"task_id"`
+	Branch       string `json:"branch"`
+	WorktreePath string `json:"worktree_path"`
+	BaseRef      string `json:"base_ref"`
+	GitState     string `json:"git_state"`
+	PrUrl        string `json:"pr_url"`
+	PrMergeable  string `json:"pr_mergeable"`
 }
 
 type TaskLabelHistory struct {
@@ -300,6 +342,13 @@ type TaskTemplate struct {
 	Type        string    `json:"type"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type TaskWriteback struct {
+	TaskID                  string `json:"task_id"`
+	WritebackInProgressSent int64  `json:"writeback_in_progress_sent"`
+	WritebackPrCommented    int64  `json:"writeback_pr_commented"`
+	WritebackClosed         int64  `json:"writeback_closed"`
 }
 
 type Workflow struct {
