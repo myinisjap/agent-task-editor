@@ -213,6 +213,47 @@ func TestE2E_CostBudget(t *testing.T) {
 		}
 	})
 
+	// Regression (#336): when the phantom-run write fails, the guard used to
+	// discard its "blocked" result and start the run against an exhausted
+	// budget, repeating every sweep. It must fail closed instead.
+	t.Run("escalation write fails: fails closed, never dispatches", func(t *testing.T) {
+		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+		h := newE2EHarness(t, fp)
+		wfID := seedE2EWorkflow(t, h.q)
+		taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 1.00, 0)
+		// Fail the phantom run's move to waiting_human (the escalation write).
+		// Its CreateAgentRun insert succeeds, so escalateCostBudget returns
+		// (true, err); a real fake-provider run never waits for a human.
+		if _, err := h.sqlDB.Exec(`CREATE TRIGGER fail_escalate BEFORE UPDATE OF status ON agent_runs
+			WHEN NEW.status = 'waiting_human'
+			BEGIN SELECT RAISE(ABORT, 'forced escalation failure'); END`); err != nil {
+			t.Fatalf("create trigger: %v", err)
+		}
+		h.seedRunWithCost(t, taskID, cfgID, 1.50)
+
+		h.waitForSweeps(t, 5)
+
+		if len(fp.inputs) != 0 {
+			t.Errorf("expected no provider run when the budget escalation fails, got %d", len(fp.inputs))
+		}
+		runs, err := h.q.ListAgentRuns(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("list runs: %v", err)
+		}
+		for _, r := range runs {
+			if r.Status == "running" || r.Status == "completed" && r.CostUsd == 0 {
+				t.Errorf("unexpected real run %s (status %s)", r.ID, r.Status)
+			}
+		}
+		task, err := h.q.GetTask(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		if task.Label != "ready" || task.ActiveAgentRunID != nil {
+			t.Errorf("expected task untouched on ready, got label=%q active=%v", task.Label, task.ActiveAgentRunID)
+		}
+	})
+
 	t.Run("task budget exceeded: escalates without dispatching", func(t *testing.T) {
 		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
 		h := newE2EHarness(t, fp)

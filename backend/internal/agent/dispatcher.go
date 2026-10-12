@@ -258,8 +258,14 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 
 	// Cost-budget guard: only gates the sweep path. DispatchReply (a human
 	// actively replying/intervening) is intentionally never budget-gated.
+	//
+	// Fails closed (#336): escalateCostBudget returns (true, err) when the
+	// phantom-run write fails, and a read failure while computing spend
+	// returns (false, err). Either way an unverifiable budget must not let a
+	// run start, so any error skips dispatch this sweep (retried next sweep).
 	if blocked, err := d.checkCostBudget(ctx, t, *matched); err != nil {
-		log.Error("dispatcher: cost budget check", "err", err)
+		log.Error("dispatcher: cost budget check failed, skipping dispatch this sweep", "err", err, "blocked", blocked)
+		return
 	} else if blocked {
 		return
 	}
@@ -269,9 +275,13 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// dispatched into this sweep — the task stays on its current label and is
 	// re-evaluated next sweep. This never blocks a run that is already in
 	// flight from completing into a full column (that stays soft/visual).
-	if blocked, err := d.checkWIPLimit(ctx, t); err != nil {
+	// A read failure stays fail-open (WIP is only backpressure, not a spend
+	// cap), but a blocked result is honored regardless of err.
+	blocked, err := d.checkWIPLimit(ctx, t)
+	if err != nil {
 		log.Error("dispatcher: wip limit check", "err", err)
-	} else if blocked {
+	}
+	if blocked {
 		return
 	}
 
