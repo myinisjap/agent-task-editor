@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"sync"
 	"testing"
@@ -115,6 +116,7 @@ func (f *fakeProvider) Run(_ context.Context, input RunInput, logCh chan<- LogEn
 
 // e2eHarness bundles the fully wired loop plus the DB handle tests assert against.
 type e2eHarness struct {
+	sqlDB  *sql.DB
 	q      *gen.Queries
 	engine *workflow.Engine
 	pool   *Pool
@@ -200,7 +202,7 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	// `git status`/commit runs against a repo dir being deleted out from under it
 	// ("git status: signal: killed: fatal: not a git repository") and its DB
 	// writes hit a closed handle. This is the E2E flake's root cause.
-	h := &e2eHarness{q: q, engine: engine, pool: pool, disp: d, pub: pub, repo: initRepo(t), cancel: cancel}
+	h := &e2eHarness{sqlDB: db.SQL(), q: q, engine: engine, pool: pool, disp: d, pub: pub, repo: initRepo(t), cancel: cancel}
 	t.Cleanup(func() {
 		cancel()
 		<-poolDone
