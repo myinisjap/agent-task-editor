@@ -51,7 +51,7 @@ sqlc generate   # or: go generate ./...
 
 Generated output goes to `internal/storage/gen/`. Do not hand-edit files in `gen/`.
 
-CI runs `sqlc generate` (pinned version) and fails on any `git diff` — always run it and commit the result after editing queries or migrations. CI also runs `govulncheck ./...` (blocking); it analyzes the stdlib of the running toolchain, not the `go.mod` directive (see `.github/workflows/ci.yml`). Query-writing constraints (ASCII only, positional params, new `tasks` columns) are in `internal/storage/AGENTS.md` (ADR 0020, 0035).
+CI runs `sqlc generate` (pinned version) and fails on any `git diff` — always run it and commit the result after editing queries or migrations. CI also runs `govulncheck ./...` (blocking); it analyzes the stdlib of the running toolchain, not the `go.mod` directive (see `.github/workflows/ci.yml`). Query-writing constraints (ASCII only, positional params, new `tasks` columns) are in `internal/storage/AGENTS.md` (ADR 0020, 0035, 0037).
 
 ## Database Migrations
 
@@ -60,7 +60,7 @@ Files in `internal/storage/migrations/` follow the `NNN_name.up.sql` / `NNN_name
 1. Create `NNN_description.up.sql` and `NNN_description.down.sql`
 2. Update `internal/storage/queries/*.sql` if new columns/tables are involved
 3. Run `sqlc generate` to update `gen/`
-4. Update `gen/models.go` struct if adding columns (sqlc handles this, but verify)
+4. Update `gen/models.go` struct if adding columns (sqlc handles this, but verify). Task columns: see ADR 0037 (`tasks_full` view, `gen/tasks_compat.go`)
 
 ## Timestamps
 

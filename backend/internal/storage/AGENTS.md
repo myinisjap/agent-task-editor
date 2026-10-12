@@ -55,7 +55,7 @@ Long or paginated queries use positional `?N` params, not `@named` (ADR 0020). A
 **Ingestion and sync (ADR 0036)**
 - `ListGhSyncEligibleTasks` filters in SQL to keep `gh` calls bounded.
 - Tasks dedupe by `(source, source_ref)` partial unique index; schedule firings use `source_ref = "<schedule_id>#<marker>"` and `HasOpenTaskForSchedule` (`LIKE '<id>#%'`).
-- `SetTaskPR` sets `git_state` + `pr_url` together; callers preserve an existing URL when the live query surfaces none. `SetTaskPRMergeable` leaves `updated_at` alone.
+- `SetTaskPR` (now an upsert into `task_git`) sets `git_state` + `pr_url` together; callers preserve an existing URL when the live query surfaces none. `SetTaskPRMergeable` leaves `updated_at` alone.
 - `repos.clone_status` (`ready`/`cloning`/`error`) + `clone_error` are written by `SetRepoCloneStatus` (async auto-clone).
 - Repo-create/update handlers name every column, so defaults don't apply; see ADR 0036.
 
@@ -74,13 +74,16 @@ Long or paginated queries use positional `?N` params, not `@named` (ADR 0020). A
 >
 > Keep migrations ASCII too (they have proven tolerant, but it costs nothing).
 >
-> When adding a `tasks` column, append it to **every** explicit column list in `tasks.sql` (including the `t.`-prefixed `ListAgentPickupTasks`), or sqlc emits a per-query row struct instead of `gen.Task`.
+> **Task columns (ADR 0037).** `tasks` holds board state only. Git/worktree/PR fields (`branch`, `worktree_path`, `base_ref`, `git_state`, `pr_url`, `pr_mergeable`) live in `task_git` and the write-back flags in `task_writeback` (lazy rows, upserted on write; missing row = old defaults). Reads select `*` from the `tasks_full` view (LEFT JOINs + COALESCE), which sqlc `rename` maps to `gen.Task`; the bare table is `gen.TaskBase`. When adding a `tasks` column, add it to the table **and** to a new migration that drops and recreates `tasks_full` (any migration that rebuilds `tasks` must do the same). `RETURNING` cannot read the view, so task writes that return a row are unexported `:exec` queries wrapped by `gen/tasks_compat.go` (hand-written; write, then `GetTask`). Do not hand-edit the generated files, but do keep `tasks_compat.go` in sync with `queries/tasks.sql`.
 
 ## Schema Key Tables
 
 ```
 tasks               — title, description, type, label, repo_id, workflow_id,
-                      current_agent_run_id, active_agent_run_id
+                      current_agent_run_id, active_agent_run_id (board state)
+task_git            — task_id, branch, worktree_path, base_ref, git_state, pr_url, pr_mergeable
+task_writeback      — task_id, writeback_in_progress_sent/_pr_commented/_closed
+tasks_full (view)   — tasks + task_git + task_writeback, the flat 37-column read model
 workflow_labels     — name, color, sort_order, agent_ignore, is_terminal
 workflow_transitions — from_label, to_label, trigger_type (agent|human|both)
 agent_runs          — task_id, status, feedback, started_at, completed_at
