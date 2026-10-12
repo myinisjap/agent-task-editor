@@ -1,8 +1,11 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
+import { useAgentsStore } from '../../stores/agents'
+import { useWorkflowStore } from '../../stores/workflow'
+import { unstaffedLabelNames } from '../../lib/staffing'
 import TaskCard from './TaskCard'
 import { dropStateClass, type DropState } from './dropState'
 
@@ -29,6 +32,18 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
   const { setNodeRef, isOver } = useDroppable({ id: label.name })
   const remove = useTasksStore((s) => s.remove)
   const [expanded, setExpanded] = useState(false)
+
+  // Flag agent-triggerable columns nobody works. Only once agent configs have
+  // loaded, so the chip doesn't flash on a cold board.
+  const agents = useAgentsStore((s) => s.configs)
+  const agentsLoaded = useAgentsStore((s) => s.loaded)
+  const workflows = useWorkflowStore((s) => s.workflows)
+  const selectedWorkflowId = useWorkflowStore((s) => s.selectedId)
+  const unstaffed = useMemo(() => {
+    if (!agentsLoaded) return false
+    const wf = workflows.find((w) => w.id === (label.workflow_id || selectedWorkflowId)) ?? workflows[0]
+    return unstaffedLabelNames(wf, agents).has(label.name)
+  }, [agentsLoaded, workflows, selectedWorkflowId, agents, label.workflow_id, label.name])
 
   const shouldCollapse = !!isTerminal && tasks.length > MAX_VISIBLE
   const visibleTasks = shouldCollapse && !expanded ? tasks.slice(0, MAX_VISIBLE) : tasks
@@ -84,6 +99,15 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
         <span className={`text-sm font-semibold uppercase tracking-wide ${isAtOrOverLimit ? (isHardAtOrOverLimit ? 'text-red-300' : 'text-amber-300') : 'text-slate-300'}`}>
           {label.name}
         </span>
+        {unstaffed && (
+          <span
+            data-testid="no-agent-chip"
+            title="Tasks in this column are waiting for an agent, but no enabled agent config covers it. Assign one on the Pipeline page."
+            className="ml-2 mr-auto text-[10px] font-medium normal-case tracking-normal text-amber-300 bg-amber-900/40 border border-amber-700 rounded-full px-1.5 py-0.5"
+          >
+            No agent assigned
+          </span>
+        )}
         <span className={badgeClassName} title={badgeTitle} data-testid="column-count-badge">
           {wipLimit != null ? `${tasks.length} / ${wipLimit}` : tasks.length}
         </span>

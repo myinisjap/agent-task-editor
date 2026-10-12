@@ -27,6 +27,7 @@ const IntakeRulesPage = lazy(() => import('./pages/IntakeRulesPage'))
 const InboxPage = lazy(() => import('./pages/InboxPage'))
 const HealthPage = lazy(() => import('./pages/HealthPage'))
 const PipelinePage = lazy(() => import('./pages/PipelinePage'))
+const PipelineOverviewPage = lazy(() => import('./pages/PipelineOverviewPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
 /** Redirect a retired path to its new home, keeping query string and hash. */
@@ -54,7 +55,8 @@ function AppRoutes() {
           <Route path="/chat"                  element={<ChatPage />} />
           <Route path="/tasks/:id"             element={<TaskDetailPage />} />
           <Route path="/pipeline" element={<PipelinePage />}>
-            <Route index element={<Redirect to="/pipeline/workflow" />} />
+            <Route index element={<Redirect to="/pipeline/overview" />} />
+            <Route path="overview" element={<PipelineOverviewPage />} />
             <Route path="workflow" element={<WorkflowPage />} />
             <Route path="agents"   element={<AgentConfigPage />} />
           </Route>
