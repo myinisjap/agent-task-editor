@@ -44,7 +44,7 @@ describe('ProviderPausedBanner', () => {
 
     const banner = screen.getByTestId('provider-paused-banner')
     expect(banner).toHaveTextContent("Claude isn't logged in — dispatch paused")
-    expect(screen.getByRole('link', { name: /View health/ })).toHaveAttribute('href', '/health')
+    expect(screen.getByRole('link', { name: /View health/ })).toHaveAttribute('href', '/settings/health')
 
     await userEvent.click(screen.getByRole('button', { name: 'Resume' }))
     expect(resumeMock).toHaveBeenCalledWith('claude')

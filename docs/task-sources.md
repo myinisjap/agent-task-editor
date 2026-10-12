@@ -131,8 +131,8 @@ both create tasks. Before intake rules, the only shaping either path could do
 was land the task on the workflow's gate label (issue import) or a single
 fixed `target_label` (schedules) — there was no way to say "an issue labeled
 `bug` from repo X should get the triage template, priority 1, and start on
-`work` instead of the gate." Intake rules (`/intake-rules`, "Intake Rules" in
-Configuration) close that gap: a small match→apply table evaluated at
+`work` instead of the gate." Intake rules (`/settings/intake-rules`, "Intake Rules" in
+Settings) close that gap: a small match→apply table evaluated at
 task-creation time for the `issue` and `schedule` sources.
 
 Rules are evaluated **first-match-wins**, in `sort_order` (then `created_at`)

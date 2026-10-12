@@ -113,7 +113,7 @@ export default function RunHistoryList({
                         // or hardcoded fallback) matched the model — surface that
                         // distinctly from a genuine $0 (e.g. under a Claude Max
                         // subscription) so users know to add a row at /settings/pricing.
-                        ? <span title="Model not found in the pricing table — add it at Configuration → Pricing">cost unknown</span>
+                        ? <span title="Model not found in the pricing table — add it at Settings → Pricing">cost unknown</span>
                         : <>${(run.cost_usd ?? 0).toFixed(4)}</>}
                       {' '}· {formatTokenCount(run.input_tokens ?? 0)}/{formatTokenCount(run.output_tokens ?? 0)} tok
                       {/* turns_used is 0 for providers that report no turn count

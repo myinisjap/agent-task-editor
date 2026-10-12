@@ -29,7 +29,7 @@ describe('HealthWarningBanner', () => {
     const banner = await screen.findByTestId('health-warning-banner')
     expect(banner).toHaveTextContent('Claude CLI: no credentials detected')
     expect(banner).not.toHaveTextContent('Fine')
-    expect(screen.getByRole('link', { name: /View health/ })).toHaveAttribute('href', '/health')
+    expect(screen.getByRole('link', { name: /View health/ })).toHaveAttribute('href', '/settings/health')
   })
 
   it('renders nothing when all checks pass', async () => {

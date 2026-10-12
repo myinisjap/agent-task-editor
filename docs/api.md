@@ -1389,7 +1389,7 @@ curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/
   http://localhost:8080/api/v1/settings/pricing
 ```
 
-The frontend's **Configuration → Pricing** page provides an editable table
+The frontend's **Settings → Pricing** page provides an editable table
 UI (add/remove rows, Save) for this endpoint.
 
 ### `GET /settings/cost-warning` / `PUT /settings/cost-warning`

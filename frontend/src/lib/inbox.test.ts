@@ -75,7 +75,7 @@ describe('itemActions', () => {
     expect(itemActions(item({ reason: 'waiting_human', escalation_reason: 'no_outcome' }), undefined).retry).toBe(true)
     const fix = itemActions(item({ reason: 'waiting_human', escalation_reason: 'auth_required' }), undefined)
     expect(fix.retry).toBe(true)
-    expect(fix.fix?.to).toBe('/health')
+    expect(fix.fix?.to).toBe('/settings/health')
   })
 })
 

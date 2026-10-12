@@ -63,14 +63,14 @@ export default function StaffAgentsButton({ missingLabels }: { missingLabels: st
           </button>
           {noProvider && (
             <span className="text-slate-400">
-              Configure a provider first (see the step above) — <Link to="/providers" className="text-indigo-400 hover:text-indigo-300">Providers →</Link>
+              Configure a provider first (see the step above) — <Link to="/settings/providers" className="text-indigo-400 hover:text-indigo-300">Providers →</Link>
             </span>
           )}
         </div>
       )}
       {unmatched.length > 0 && (
         <p className="text-slate-400">
-          No built-in template for: {unmatched.join(', ')}. <Link to="/agents" className="text-indigo-400 hover:text-indigo-300">Create an agent config →</Link>
+          No built-in template for: {unmatched.join(', ')}. <Link to="/pipeline/agents" className="text-indigo-400 hover:text-indigo-300">Create an agent config →</Link>
         </p>
       )}
       {error && <p role="alert" className="text-red-300">{error}</p>}

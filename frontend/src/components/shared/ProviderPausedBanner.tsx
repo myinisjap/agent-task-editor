@@ -50,7 +50,7 @@ export default function ProviderPausedBanner() {
             {providerLabel(p.provider)} isn&apos;t logged in — dispatch paused.
           </span>
           <span>Queued tasks will wait and resume automatically once the health check passes.</span>
-          <Link to="/health" className="underline font-medium">
+          <Link to="/settings/health" className="underline font-medium">
             View health →
           </Link>
           <button

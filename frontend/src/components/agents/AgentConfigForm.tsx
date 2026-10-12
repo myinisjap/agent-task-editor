@@ -115,7 +115,7 @@ export default function AgentConfigForm({
             ))}
           </select>
           <p className="mt-1 text-xs text-slate-500">
-            <Link to="/providers" className="text-indigo-400 hover:text-indigo-300">Manage provider configs →</Link>
+            <Link to="/settings/providers" className="text-indigo-400 hover:text-indigo-300">Manage provider configs →</Link>
           </p>
         </Field>
 

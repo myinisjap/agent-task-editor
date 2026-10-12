@@ -119,7 +119,7 @@ can't silently diverge.
 
 1. Create `src/pages/MyPage.tsx`
 2. Add a route in `App.tsx`
-3. Add navigation link in the layout component
+3. Add navigation link in `NavSidebar` (or, for a settings-like page, a tab in `SettingsPage`; Workflow/Agents-style pipeline config goes in `PipelinePage`)
 4. Add any new API calls to `src/api/client.ts`
 5. Add types via `openapi.yaml` + `npm run gen:api` (never hand-edit `src/api/types.ts`)
 

@@ -501,7 +501,7 @@ export function ReposHelp() {
         </p>
         <p>
           The label filter here is deprecated in favor of <strong>Intake Rules</strong>{' '}
-          (Configuration → Intake Rules), which can match on more than one label and shape the
+          (Settings → Intake Rules), which can match on more than one label and shape the
           resulting task (template, priority, target label, cost budget) rather than just
           filtering which issues come in. It's still honoured for one more release; existing
           values were migrated into equivalent rules automatically.
