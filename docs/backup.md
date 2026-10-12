@@ -38,7 +38,7 @@ This is safe to run at any time, including while the app is under active
 write load — unlike a raw file copy, `VACUUM INTO` always produces a
 complete, self-consistent snapshot.
 
-The frontend's **Health** page (`/health`) also has a "Download backup"
+The frontend's **Health** page (`/settings/health`) also has a "Download backup"
 button that triggers the same endpoint for a one-click manual snapshot from
 the browser.
 

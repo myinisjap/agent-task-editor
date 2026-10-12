@@ -7,8 +7,8 @@ describe('escalationInfo', () => {
     expect(escalationInfo('transient_exhausted').action).toBe('retry')
     const auth = escalationInfo('auth_required')
     expect(auth.action).toBe('fix')
-    expect(auth.fix?.to).toBe('/health')
-    expect(escalationInfo('cost_budget').fix?.to).toBe('/agents')
+    expect(auth.fix?.to).toBe('/settings/health')
+    expect(escalationInfo('cost_budget').fix?.to).toBe('/pipeline/agents')
   })
 
   it('falls back to a reply for missing or unknown codes', () => {

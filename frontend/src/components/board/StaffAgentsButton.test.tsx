@@ -87,7 +87,7 @@ describe('StaffAgentsButton', () => {
 
     expect(screen.getByRole('button', { name: /Create Planner/ })).toBeDisabled()
     expect(screen.getByText(/Configure a provider first/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Providers →' })).toHaveAttribute('href', '/providers')
+    expect(screen.getByRole('link', { name: 'Providers →' })).toHaveAttribute('href', '/settings/providers')
   })
 
   it('shows an inline error and stops when the API fails', async () => {

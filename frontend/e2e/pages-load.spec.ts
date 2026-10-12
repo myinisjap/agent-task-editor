@@ -45,17 +45,17 @@ const pages: { path: string; name: string; anchor: (page: Page) => Locator }[] =
     anchor: (page) => page.getByTestId('chat-page'),
   },
   {
-    path: 'workflow',
+    path: 'pipeline/workflow',
     name: 'Workflow',
     anchor: (page) => page.getByTestId('workflow-page'),
   },
   {
-    path: 'agents',
+    path: 'pipeline/agents',
     name: 'Agents',
     anchor: (page) => page.getByTestId('agents-page'),
   },
   {
-    path: 'providers',
+    path: 'settings/providers',
     name: 'Providers',
     anchor: (page) => page.getByTestId('providers-page'),
   },
@@ -70,16 +70,43 @@ const pages: { path: string; name: string; anchor: (page: Page) => Locator }[] =
     anchor: (page) => page.getByRole('heading', { name: 'Repos', exact: true }),
   },
   {
-    path: 'templates',
+    path: 'settings/intake-rules',
+    name: 'Intake Rules',
+    anchor: (page) => page.getByRole('heading', { name: 'Intake Routing Rules', exact: true }),
+  },
+  {
+    path: 'settings/templates',
     name: 'Task Templates',
     anchor: (page) => page.getByRole('heading', { name: 'Task Templates', exact: true }),
   },
   {
-    path: 'health',
+    path: 'settings/health',
     name: 'Provider Health',
     anchor: (page) => page.getByRole('heading', { name: 'Provider Health', exact: true }),
   },
 ]
+
+// Retired top-level routes redirect to their new tabbed homes (bookmarks).
+const redirects: { from: string; to: RegExp }[] = [
+  { from: 'workflow', to: /\/pipeline\/workflow$/ },
+  { from: 'agents', to: /\/pipeline\/agents$/ },
+  { from: 'providers', to: /\/settings\/providers$/ },
+  { from: 'pricing', to: /\/settings\/pricing$/ },
+  { from: 'templates', to: /\/settings\/templates$/ },
+  { from: 'intake-rules', to: /\/settings\/intake-rules$/ },
+  { from: 'health', to: /\/settings\/health$/ },
+  { from: 'pipeline', to: /\/pipeline\/workflow$/ },
+  { from: 'settings', to: /\/settings\/providers$/ },
+]
+
+test.describe('legacy routes redirect', () => {
+  for (const { from, to } of redirects) {
+    test(`/${from} redirects`, async ({ page }) => {
+      await page.goto(from)
+      await expect(page).toHaveURL(to)
+    })
+  }
+})
 
 test.describe('all pages load', () => {
   for (const { path, name, anchor } of pages) {

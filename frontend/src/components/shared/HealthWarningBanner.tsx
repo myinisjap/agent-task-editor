@@ -36,7 +36,7 @@ export default function HealthWarningBanner() {
         {failing.length === 1 ? '1 health check needs attention: ' : `${failing.length} health checks need attention: `}
       </span>
       <span>{failing.map((c) => `${c.name}: ${c.detail}`).join(' · ')}</span>{' '}
-      <Link to="/health" className="underline font-medium">
+      <Link to="/settings/health" className="underline font-medium">
         View health →
       </Link>
     </div>

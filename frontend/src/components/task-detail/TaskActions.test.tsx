@@ -140,7 +140,7 @@ describe('TaskActions escalation reason', () => {
     })
     expect(screen.getByText('Agent CLI is not logged in')).toBeInTheDocument()
     expect(screen.getByText('Agent failed: not logged in.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open Health' })).toHaveAttribute('href', '/health')
+    expect(screen.getByRole('link', { name: 'Open Health' })).toHaveAttribute('href', '/settings/health')
     // Reply is demoted but still available.
     expect(screen.getByRole('button', { name: 'Reply & Continue' })).toBeInTheDocument()
   })

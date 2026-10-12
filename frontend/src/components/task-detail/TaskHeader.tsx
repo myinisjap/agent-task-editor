@@ -507,9 +507,9 @@ export default function TaskHeader({
         {task.matched_rule_id && (
           <Row label="Intake rule">
             <Link
-              to="/intake-rules"
+              to="/settings/intake-rules"
               className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-              title="This task's label/priority/template/workflow were shaped by this intake rule at creation — see Configuration → Intake Rules."
+              title="This task's label/priority/template/workflow were shaped by this intake rule at creation — see Settings → Intake Rules."
             >
               {task.matched_rule_name || task.matched_rule_id}
             </Link>

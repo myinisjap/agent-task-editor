@@ -234,7 +234,7 @@ Each `agent_runs` row records `input_tokens`, `output_tokens`, and `cost_usd` fo
 
 The `codex_cli` cost estimate is driven by a per-model USD-per-1M-token
 price, stored in the DB-backed `model_pricing` table and editable from
-**Configuration → Pricing** in the UI (or directly via `GET`/`PUT
+**Settings → Pricing** in the UI (or directly via `GET`/`PUT
 /api/v1/settings/pricing`). The table is seeded on first migration from the
 same values that used to be hardcoded, so estimates are unchanged until you
 edit a row; edits take effect on the very next run completion without a

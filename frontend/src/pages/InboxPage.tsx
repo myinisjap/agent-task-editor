@@ -211,7 +211,7 @@ export default function InboxPage() {
               </p>
               <p className="text-xs text-slate-400 mt-1">
                 {p.reason || 'The provider failed to authenticate.'} Queued tasks wait until it resumes.{' '}
-                <Link to="/health" className="underline">View health</Link>
+                <Link to="/settings/health" className="underline">View health</Link>
               </p>
             </div>
             <div className="shrink-0 flex flex-col items-end gap-2">
