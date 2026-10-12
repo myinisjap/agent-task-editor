@@ -24,6 +24,7 @@ const (
 	TypeTaskCostWarning          = "task.cost_warning"
 	TypeSystemCostBudgetTripped  = "system.cost_budget_tripped"
 	TypeTaskReviewCommentsChange = "task.review_comments_changed"
+	TypeTaskVerification         = "task.verification"
 	TypeTaskRateLimited          = "task.rate_limited"
 	TypeProviderPauseChanged     = "provider.pause_changed"
 	TypeTaskGitStateChanged      = "task.git_state_changed"
@@ -107,6 +108,14 @@ type TaskReviewCommentsChanged struct {
 	TaskID   string `json:"task_id"`
 	RunID    string `json:"run_id"`
 	Resolved int    `json:"resolved"`
+}
+
+// TaskVerification is the payload of task.verification: a run's repo verify
+// command finished. Status is pass | fail | timeout | error.
+type TaskVerification struct {
+	TaskID string `json:"task_id"`
+	RunID  string `json:"run_id"`
+	Status string `json:"status"`
 }
 
 // TaskRateLimited is the payload of task.rate_limited.

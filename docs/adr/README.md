@@ -48,3 +48,4 @@ decision; add a new one and mark the old one `Superseded by NNNN`.
 | [0035](0035-ci-quality-gates.md) | CI gates: generated artifacts, coverage floors, e2e isolation |
 | [0036](0036-idempotent-ingestion-and-explicit-repo-policy-columns.md) | External ingestion is idempotent by external id; repo policy columns are always written explicitly |
 | [0037](0037-task-git-and-writeback-side-tables.md) | Git/PR state and write-back flags live in side tables, read through the `tasks_full` view |
+| [0038](0038-authoritative-verify-command.md) | A repo verify command (with per-label override) is authoritative over the agent's success claim |

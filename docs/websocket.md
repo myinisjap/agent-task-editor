@@ -253,6 +253,24 @@ agent. Only published when at least one comment was actually resolved.
 }
 ```
 
+### `task.verification`
+A run's repo verify command finished (see
+[workflows.md § Verify commands](workflows.md#verify-commands)). Published for
+every verification, before the resulting transition. `status` is `pass`,
+`fail`, `timeout` or `error`; refetch `GET /tasks/{id}/verifications` for the
+details.
+
+```json
+{
+  "type": "task.verification",
+  "payload": {
+    "task_id": "uuid",
+    "run_id": "uuid",
+    "status": "fail"
+  }
+}
+```
+
 ### `task.rate_limited`
 An agent run was rate-limited by the provider and will be retried automatically.
 

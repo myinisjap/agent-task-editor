@@ -74,6 +74,10 @@ type Pool struct {
 	// Used here to skip pushing child branches and to flush/resolve merges once a
 	// parent's run completes.
 	Subtasks *SubtaskCoordinator
+	// Verifier runs the repo verify command when a run reports success (see
+	// verify.go). Optional: with it nil, a repo that has a verify command
+	// configured fails closed (the task is escalated to a human).
+	Verifier Verifier
 
 	// running tracks the cancel func for each in-flight run so a human can stop
 	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
@@ -499,6 +503,17 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	finalStatus := p.persistRunResult(ctx, job, &result, startedAt, log)
 
 	p.safetyNetCommit(ctx, job, finalStatus, log)
+
+	// A configured repo verify command is authoritative over the agent's
+	// self-reported success: it runs after the safety-net commit (so it sees
+	// the final tree) and before the success transition is resolved.
+	if finalStatus == "completed" && result.Outcome == "success" {
+		if p.verifyOutcome(ctx, job, &result, log) {
+			reason, _ := cancelledBy(rc, ctx)
+			p.handleCancelled(job, result, startedAt, reason)
+			return
+		}
+	}
 
 	// Resolve outcome → next label via workflow transitions.
 	var resolvedLabel string
@@ -981,9 +996,13 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 			//      so a reviewer stuck on the same finding re-triggers a Worker
 			//      forever until a human pauses it.
 			if result.Outcome == "failure" {
-				if result.Message != nil && *result.Message != "" {
+				feedback := result.Message
+				if result.verify != nil && result.verify.feedback != "" {
+					feedback = &result.verify.feedback
+				}
+				if feedback != nil && *feedback != "" {
 					if err := p.q.SetAgentRunFeedback(ctx, gen.SetAgentRunFeedbackParams{
-						Feedback: result.Message,
+						Feedback: feedback,
 						ID:       job.RunID,
 					}); err != nil {
 						log.Warn("pool: route failure feedback", "err", err)
@@ -1003,6 +1022,11 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
 				p.handleRejectedTransition(ctx, job, result, resolvedLabel, err, log)
 			}
+		} else if result.verify != nil && result.verify.errMsg != "" {
+			p.escalateVerifyError(ctx, job, result, log)
+		} else if result.verify != nil {
+			// Verification failed and the label has no agent failure path.
+			p.holdOnVerifyFailure(ctx, job, result, log)
 		} else {
 			// No resolved label: the agent finished without reporting an outcome
 			// (no signal_complete / OUTCOME: line) or reported one that maps to no

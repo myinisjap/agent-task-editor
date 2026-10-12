@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Repo verify command: an independent check on an agent's claimed success** (ADR 0038). Set `verify_command` (and `verify_timeout_seconds`, default 600) on a repo; when a run reports success the pool runs it in the task's worktree, as the agent user with the repo's runtime pins, before taking the success transition. Exit 0 proceeds; a non-zero exit or timeout overrides the agent's claim (failure transition if the label has one, otherwise the task keeps its label and counts a failed attempt) and the capped output is injected into the next run's prompt as a `VERIFICATION FAILED:` section. Workflow labels can override it per label (`verify_mode: inherit | custom | disabled` + `verify_command` in the workflow YAML / `PUT /workflows/{id}`). Results are stored per run, served by `GET /tasks/{id}/verifications`, broadcast as `task.verification`, and shown with the diff on the task page. Migration 064. See `docs/workflows.md#verify-commands`.
+
 ### Changed
 - **Internal: task git/PR state and write-back flags moved out of the `tasks` table** into new `task_git` and `task_writeback` side tables (migration 063), read back through a `tasks_full` view. No API or behavior change. The migration runs automatically on startup and, as for every pending migration, a pre-migration snapshot is taken first. See ADR 0037.
 - **Provider rate-limit blocks now survive a backend restart.** The per-agent-config 429 block (and its consecutive-429 backoff counter) is persisted in a new `agent_rate_limits` table (migration 062) and reloaded at startup, so the first dispatch sweep after a deploy no longer hits a provider that just rate-limited it. Expired rows are pruned on boot; a database error only logs and never blocks dispatch.

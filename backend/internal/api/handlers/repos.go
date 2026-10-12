@@ -122,6 +122,11 @@ type createRepoBody struct {
 	// spawn behavior exactly (§4.1 byte-identical). Validated and
 	// re-serialized to JSON for storage by resolveRuntimeLanguages.
 	RuntimeLanguages []runtime.Pin `json:"runtime_languages"`
+	// VerifyCommand / VerifyTimeoutSeconds configure the authoritative
+	// post-run verification (see resolveVerify). Omitted = no command / the
+	// default timeout.
+	VerifyCommand        *string `json:"verify_command"`
+	VerifyTimeoutSeconds *int64  `json:"verify_timeout_seconds"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +217,11 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verifyCommand, verifyTimeout, ok := resolveVerify(w, body.VerifyCommand, body.VerifyTimeoutSeconds, "", defaultVerifyTimeoutSeconds)
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -229,6 +239,8 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeLanguages:              runtimeLanguages,
+		VerifyCommand:                 verifyCommand,
+		VerifyTimeoutSeconds:          verifyTimeout,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -397,6 +409,66 @@ func resolveMaxConcurrentRuns(w http.ResponseWriter, v *int64) (resolved *int64,
 		return nil, false
 	}
 	return v, true
+}
+
+const (
+	defaultVerifyTimeoutSeconds = 600
+	maxVerifyTimeoutSeconds     = 3600
+	maxVerifyCommandLen         = 4096
+)
+
+// resolveVerify validates the verify_command / verify_timeout_seconds request
+// fields. A nil field keeps the supplied current value (the default on create).
+// The command is run through `sh -c` by the pool (as the agent user), so it is
+// only length- and NUL-checked here; it is trusted repo configuration.
+func resolveVerify(w http.ResponseWriter, cmd *string, timeout *int64, curCmd string, curTimeout int64) (string, int64, bool) {
+	command, secs := curCmd, curTimeout
+	if secs <= 0 {
+		secs = defaultVerifyTimeoutSeconds
+	}
+	if cmd != nil {
+		command = strings.TrimSpace(*cmd)
+		if len(command) > maxVerifyCommandLen || strings.ContainsRune(command, 0) {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("verify_command must be at most %d characters and contain no NUL bytes", maxVerifyCommandLen))
+			return "", 0, false
+		}
+	}
+	if timeout != nil {
+		if *timeout < 1 || *timeout > maxVerifyTimeoutSeconds {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("verify_timeout_seconds must be between 1 and %d", maxVerifyTimeoutSeconds))
+			return "", 0, false
+		}
+		secs = *timeout
+	}
+	return command, secs, true
+}
+
+const (
+	verifyModeInherit  = "inherit"
+	verifyModeCustom   = "custom"
+	verifyModeDisabled = "disabled"
+)
+
+// resolveLabelVerify validates a workflow label's verify override and returns
+// the normalised (mode, command) to store: an empty mode is inherit; custom
+// requires a command; inherit and disabled drop any command.
+func resolveLabelVerify(label, mode, command string) (string, string, error) {
+	command = strings.TrimSpace(command)
+	switch mode {
+	case "", verifyModeInherit:
+		return verifyModeInherit, "", nil
+	case verifyModeDisabled:
+		return verifyModeDisabled, "", nil
+	case verifyModeCustom:
+		if command == "" {
+			return "", "", fmt.Errorf("label %q: verify_mode custom requires a verify_command", label)
+		}
+		if len(command) > maxVerifyCommandLen || strings.ContainsRune(command, 0) {
+			return "", "", fmt.Errorf("label %q: verify_command must be at most %d characters and contain no NUL bytes", label, maxVerifyCommandLen)
+		}
+		return verifyModeCustom, command, nil
+	}
+	return "", "", fmt.Errorf("label %q: verify_mode must be one of inherit, custom, disabled", label)
 }
 
 // resolveRuntimeLanguages validates the wire-shape runtime_languages pins
@@ -581,6 +653,9 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// array is a valid, meaningful value (clears the pins back to
 		// unconfigured), so it can't reuse a nil-means-omitted convention.
 		RuntimeLanguages []runtime.Pin `json:"runtime_languages"`
+		// Verify fields: nil (omitted) leaves the stored value untouched.
+		VerifyCommand        *string `json:"verify_command"`
+		VerifyTimeoutSeconds *int64  `json:"verify_timeout_seconds"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -736,6 +811,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		runtimeLanguages = resolved
 	}
 
+	verifyCommand, verifyTimeout, ok := resolveVerify(w, body.VerifyCommand, body.VerifyTimeoutSeconds, existing.VerifyCommand, existing.VerifyTimeoutSeconds)
+	if !ok {
+		return
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -807,6 +887,8 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeLanguages:              runtimeLanguages,
+		VerifyCommand:                 verifyCommand,
+		VerifyTimeoutSeconds:          verifyTimeout,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())

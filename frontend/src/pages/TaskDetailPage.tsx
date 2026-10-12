@@ -58,6 +58,7 @@ export default function TaskDetailPage() {
   // on label change (new lifecycle stage) so a stale warning from a prior
   // stage/run doesn't linger indefinitely.
   const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
+  const [verificationKey, setVerificationKey] = useState(0)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
@@ -181,6 +182,7 @@ export default function TaskDetailPage() {
         refreshComments()
         refreshLabelHistory()
         refreshSourceComments()
+        setVerificationKey((k) => k + 1)
       } else if (event.type === 'task.label_changed' && event.payload.task_id === id) {
         setEditingTask(false)
         setCostWarning(null)
@@ -199,6 +201,8 @@ export default function TaskDetailPage() {
         )
         refreshTask()
         refreshComments()
+      } else if (event.type === 'task.verification' && event.payload.task_id === id) {
+        setVerificationKey((k) => k + 1)
       } else if (event.type === 'task.review_comments_changed' && event.payload.task_id === id) {
         refreshComments()
       } else if (event.type === 'task.needs_human' && event.payload.task_id === id) {
@@ -574,6 +578,7 @@ export default function TaskDetailPage() {
             onAddComment={handleAddComment}
             onRemoveComment={handleRemoveComment}
             onReopenComment={handleReopenComment}
+            verificationRefreshKey={verificationKey}
           />
         )}
       </div>

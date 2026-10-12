@@ -110,6 +110,7 @@ func TestPayloadsMatchOpenAPI(t *testing.T) {
 		{TypeTaskCostWarning, TaskCostWarning{TaskID: "t", RunID: "r", SpentUSD: 1, BudgetUSD: 2}, TaskCostWarning{}},
 		{TypeSystemCostBudgetTripped, SystemCostBudgetTripped{Reason: "daily", Message: "m", DailySpentUSD: 1, DailyLimitUSD: 2, MonthlySpentUSD: 3, MonthlyLimitUSD: 4}, SystemCostBudgetTripped{}},
 		{TypeTaskReviewCommentsChange, TaskReviewCommentsChanged{TaskID: "t", RunID: "r", Resolved: 1}, TaskReviewCommentsChanged{}},
+		{TypeTaskVerification, TaskVerification{TaskID: "t", RunID: "r", Status: "fail"}, TaskVerification{}},
 		{TypeTaskRateLimited, TaskRateLimited{TaskID: "t", RunID: "r", AgentConfigID: "a", UnblockedAt: "u"}, TaskRateLimited{}},
 		{TypeProviderPauseChanged, ProviderPauseChanged{Provider: "p", Paused: true}, ProviderPauseChanged{}},
 		{TypeTaskGitStateChanged, TaskGitStateChanged{TaskID: "t", GitState: "pr_open", PRURL: "u"}, TaskGitStateChanged{}},

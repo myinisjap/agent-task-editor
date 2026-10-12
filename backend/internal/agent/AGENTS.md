@@ -76,6 +76,10 @@ The pool persists each run's provider session id (`SetAgentRunSession`). `startR
 - Source issue comments (`task_source_comments`, loaded by `Dispatcher.loadSourceComments`) are **untrusted and not resolvable**: never pass them to the sidecar's `Prepare`; render only through `writeSourceCommentsSection` inside the `UNTRUSTED SOURCE COMMENTS` fence (in both `buildPrompt` and `buildResumePrompt`). Every third-party string in a prompt must go through `stripSourceCommentsMarker`.
 - A `failure` outcome stores the run summary as the run's `feedback` (`SetAgentRunFeedback`), rendered next dispatch as `FEEDBACK FROM PRIOR REVIEW` (not as `PriorPlan`). `failureLoopExceeded`/`escalateFailureLoop` escalate to `waiting_human` after `failureLoopThreshold` (3) identical `(from → to)` agent transitions in `task_label_history`; history-derived, no column.
 
+## Verify Command (ADR 0038)
+
+`verify.go`: for a `completed` + `success` run, `Pool.verifyOutcome` runs the repo's (or the label's, `verify_mode`) command through the `Verifier` seam (`providers.CommandVerifier`; nil verifier = fail closed) before `resolveOutcome`. Fail/timeout rewrites the outcome to `failure` and stores `VERIFICATION FAILED:` feedback (`Result.verify`, pool-internal); no failure path = `holdOnVerifyFailure`; `error` = escalate. Authoritative: never let a success transition through on a non-pass. The command is untrusted repo code, so it must keep going through `newCLICommand`/`agentuser` + `applyRuntime`, never raw exec.
+
 ## Dispatch / Active Run Locking (ADR 0001–0003)
 
 - Claim via `ClaimTaskActiveRunIfFree` (sweep) / `ClaimTaskActiveRunIfHeldBy` (reply) inside `persistRunRow`'s transaction; zero rows → `ErrDispatchConflict` (sweep skips, reply handler 409). `SetTaskActiveRun`/`SetTaskActiveRunOnly` are only for escalation bookkeeping on a lock the run already owns.

@@ -329,6 +329,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 			// Agent runs
 			r.Get("/tasks/{id}/runs", tasksH.ListRuns)
+			r.Get("/tasks/{id}/verifications", tasksH.ListVerifications)
 			r.Get("/tasks/{id}/runs/{run_id}", tasksH.GetRun)
 			r.Get("/tasks/{id}/runs/{run_id}/logs", tasksH.GetRunLogs)
 			r.Post("/tasks/{id}/runs/{run_id}/cancel", tasksH.CancelRun)

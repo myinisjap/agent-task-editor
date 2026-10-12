@@ -159,6 +159,20 @@ type Repo struct {
 	MaxConcurrentRuns             *int64    `json:"max_concurrent_runs"`
 	IssueWritebackLabel           string    `json:"issue_writeback_label"`
 	RuntimeLanguages              string    `json:"runtime_languages"`
+	VerifyCommand                 string    `json:"verify_command"`
+	VerifyTimeoutSeconds          int64     `json:"verify_timeout_seconds"`
+}
+
+type RunVerification struct {
+	RunID      string    `json:"run_id"`
+	TaskID     string    `json:"task_id"`
+	Command    string    `json:"command"`
+	Status     string    `json:"status"`
+	ExitCode   *int64    `json:"exit_code"`
+	Output     string    `json:"output"`
+	Truncated  int64     `json:"truncated"`
+	DurationMs int64     `json:"duration_ms"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type Task struct {
@@ -360,16 +374,18 @@ type Workflow struct {
 }
 
 type WorkflowLabel struct {
-	ID           string `json:"id"`
-	WorkflowID   string `json:"workflow_id"`
-	Name         string `json:"name"`
-	Color        string `json:"color"`
-	SortOrder    int64  `json:"sort_order"`
-	AgentIgnore  int64  `json:"agent_ignore"`
-	IsTerminal   int64  `json:"is_terminal"`
-	CreatePr     int64  `json:"create_pr"`
-	WipLimit     *int64 `json:"wip_limit"`
-	WipLimitHard int64  `json:"wip_limit_hard"`
+	ID            string `json:"id"`
+	WorkflowID    string `json:"workflow_id"`
+	Name          string `json:"name"`
+	Color         string `json:"color"`
+	SortOrder     int64  `json:"sort_order"`
+	AgentIgnore   int64  `json:"agent_ignore"`
+	IsTerminal    int64  `json:"is_terminal"`
+	CreatePr      int64  `json:"create_pr"`
+	WipLimit      *int64 `json:"wip_limit"`
+	WipLimitHard  int64  `json:"wip_limit_hard"`
+	VerifyMode    string `json:"verify_mode"`
+	VerifyCommand string `json:"verify_command"`
 }
 
 type WorkflowTransition struct {

@@ -49,6 +49,9 @@ type Result struct {
 	// (via the MCP sidecar's resolve_comment tool). The pool marks them resolved
 	// in the database only when the run completes successfully.
 	ResolvedComments []ResolvedComment
+	// verify is set by the pool (never by providers) when the repo verify
+	// command did not pass; see verify.go.
+	verify *verifyVerdict
 	// InputTokens/OutputTokens are the total tokens consumed across the run
 	// (summed across every turn of a multi-turn agentic loop, where
 	// applicable). Zero if the provider does not report usage.

@@ -23,6 +23,7 @@ vi.mock('../api/client', async () => {
         dependencies: vi.fn().mockResolvedValue({ blocked_by: [], blocking: [], blocked_by_count: 0, blocking_count: 0 }),
         reviewComments: vi.fn().mockResolvedValue([]),
         diff: vi.fn().mockResolvedValue({ branch: 'main', diff: '' }),
+        verifications: vi.fn().mockResolvedValue([]),
         runLogs: vi.fn().mockResolvedValue({ items: [], hasMore: false, prevCursor: null }),
       },
       workflows: {

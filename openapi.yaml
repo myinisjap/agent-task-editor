@@ -631,7 +631,19 @@ components:
         create_pr:    { type: integer, description: "When non-zero, a task entering this label auto-opens a GitHub PR (pushes the branch first)." }
         wip_limit:      { type: integer, nullable: true, description: "Max tasks allowed in this label column; null = unlimited (soft/visual by default)." }
         wip_limit_hard: { type: integer, description: "When non-zero, the dispatcher stops picking up tasks whose success target is this label once it is at its wip_limit (backpressure)." }
-      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit_hard]
+        verify_mode:
+          type: string
+          enum: [inherit, custom, disabled]
+          description: >
+            Per-label override of the repo's verify_command, applied to the
+            label a task is on when its run signals success. inherit (the
+            default) uses the repo command; custom runs verify_command below
+            instead; disabled skips verification on this label. The repo's
+            verify_timeout_seconds applies in every mode. Set via the workflow
+            YAML (verify_mode / verify_command) or the labels array of PUT
+            /workflows/{id}.
+        verify_command: { type: string, description: "The label's own command; only meaningful (and required) when verify_mode is custom, else empty." }
+      required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit_hard, verify_mode, verify_command]
 
     WorkflowTransition:
       type: object
@@ -988,8 +1000,46 @@ components:
             `mise x`; a python pin instead gets a per-worktree virtualenv on
             PATH. Prep failure escalates the task to waiting_human — it
             never falls back to a plain spawn. See docs/runtime.md.
+        verify_command:
+          type: string
+          description: >
+            Shell command (run with `sh -c` in the task's worktree, as the
+            unprivileged agent user, with the repo's runtime pins applied)
+            that independently verifies an agent's claimed success. Empty
+            (the default) disables verification. When set it is
+            authoritative: a run that signals success only takes the success
+            transition if the command exits 0; otherwise the failure
+            transition fires (or the task keeps its label) and the capped
+            output is fed to the next run as a `VERIFICATION FAILED:`
+            section. See RunVerification and docs/workflows.md.
+        verify_timeout_seconds:
+          type: integer
+          description: Timeout for verify_command in seconds (1-3600, default 600).
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
+
+    RunVerification:
+      type: object
+      description: >
+        The result of a repo's verify_command for one agent run that signalled
+        success. At most one per run.
+      properties:
+        run_id:      { type: string }
+        task_id:     { type: string }
+        command:     { type: string, description: The command that was run (snapshot of repo.verify_command). }
+        status:
+          type: string
+          enum: [pass, fail, timeout, error]
+          description: >
+            pass = exit 0; fail = non-zero exit; timeout = exceeded
+            verify_timeout_seconds; error = the command could not be run (the
+            task is escalated to waiting_human).
+        exit_code:   { type: integer, nullable: true, description: Null unless the process exited on its own. }
+        output:      { type: string, description: "Tail of the combined stdout and stderr, capped at 16 KiB." }
+        truncated:   { type: boolean, description: True when earlier output was dropped from output. }
+        duration_ms: { type: integer }
+        created_at:  { type: string, format: date-time }
+      required: [run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at]
 
     RuntimeLanguagePin:
       type: object
@@ -1646,6 +1696,7 @@ components:
         - $ref: "#/components/schemas/WsTaskCostWarningEvent"
         - $ref: "#/components/schemas/WsSystemCostBudgetTrippedEvent"
         - $ref: "#/components/schemas/WsTaskReviewCommentsChangedEvent"
+        - $ref: "#/components/schemas/WsTaskVerificationEvent"
         - $ref: "#/components/schemas/WsTaskRateLimitedEvent"
         - $ref: "#/components/schemas/WsProviderPauseChangedEvent"
         - $ref: "#/components/schemas/WsTaskGitStateChangedEvent"
@@ -1672,6 +1723,7 @@ components:
           task.cost_warning: "#/components/schemas/WsTaskCostWarningEvent"
           system.cost_budget_tripped: "#/components/schemas/WsSystemCostBudgetTrippedEvent"
           task.review_comments_changed: "#/components/schemas/WsTaskReviewCommentsChangedEvent"
+          task.verification: "#/components/schemas/WsTaskVerificationEvent"
           task.rate_limited: "#/components/schemas/WsTaskRateLimitedEvent"
           provider.pause_changed: "#/components/schemas/WsProviderPauseChangedEvent"
           task.git_state_changed: "#/components/schemas/WsTaskGitStateChangedEvent"
@@ -1840,6 +1892,21 @@ components:
         run_id:   { type: string }
         resolved: { type: integer }
       required: [task_id, run_id, resolved]
+
+    WsTaskVerificationEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.verification] }
+        payload: { $ref: "#/components/schemas/WsTaskVerificationPayload" }
+      required: [type, payload]
+    WsTaskVerificationPayload:
+      type: object
+      description: A run's repo verify command finished (refetch GET /tasks/{id}/verifications).
+      properties:
+        task_id: { type: string }
+        run_id:  { type: string }
+        status:  { type: string, enum: [pass, fail, timeout, error] }
+      required: [task_id, run_id, status]
 
     WsTaskRateLimitedEvent:
       type: object
@@ -2872,6 +2939,25 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentRun" } }
 
+  /tasks/{id}/verifications:
+    get:
+      summary: List the task's verification results
+      description: >
+        Verify-command results for the task's runs, newest first (at most 20).
+        Empty when the repo has no verify_command or no run has signalled
+        success since one was configured. The first element is the latest
+        result shown beside the diff on the review view.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RunVerification" } }
+
   /tasks/{id}/runs/{run_id}:
     get:
       summary: Get an agent run
@@ -3619,6 +3705,9 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/Repo" } }
     post:
       summary: Register a repo
+      description: >
+        The body also accepts verify_command (string) and
+        verify_timeout_seconds (integer, 1-3600); see the Repo schema.
       responses:
         "201":
           content:
@@ -3674,6 +3763,14 @@ paths:
                     Replaces the repo's toolchain pins. Omit the field to
                     leave existing pins untouched; pass an empty array to
                     clear them back to unconfigured.
+                verify_command:
+                  type: string
+                  description: Replaces the repo's verify command; empty string disables verification. Omit to leave unchanged.
+                verify_timeout_seconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 3600
+                  description: Replaces the verify timeout. Omit to leave unchanged.
       responses:
         "200":
           content:

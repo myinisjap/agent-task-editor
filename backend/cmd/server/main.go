@@ -312,6 +312,7 @@ func main() {
 	pool.GitName, pool.GitEmail = resolveGitIdentity()
 	subtaskCoord.GitName, subtaskCoord.GitEmail = pool.GitName, pool.GitEmail
 	pool.Subtasks = subtaskCoord
+	pool.Verifier = providers.CommandVerifier{}
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 	dispatcher.RateLimits = rateLimits
 	dispatcher.ProviderPauses = providerPauses

@@ -579,6 +579,16 @@ which is computed server-side across every run.
 ### `GET /tasks/{id}/runs/{run_id}`
 Get a single run record.
 
+### `GET /tasks/{id}/verifications`
+The task's repo verify-command results, newest first (at most 20); `[]` when
+none. Each element is a `RunVerification`: `run_id`, `task_id`, `command`,
+`status` (`pass`, `fail`, `timeout`, `error`), `exit_code` (null unless the
+process exited on its own), `output` (tail of combined stdout/stderr, max
+16 KiB), `truncated`, `duration_ms`, `created_at`. See
+[workflows.md § Verify commands](workflows.md#verify-commands). Repos carry
+`verify_command` and `verify_timeout_seconds`; workflow labels carry
+`verify_mode` and `verify_command`.
+
 ### `POST /tasks/{id}/runs/{run_id}/cancel`
 Stop a running agent run (kill switch). The pool cancels the run's context —
 killing CLI provider subprocesses and aborting HTTP provider requests — then,

@@ -65,6 +65,7 @@ sql:
       - "internal/storage/migrations/061_task_source_pending.up.sql"
       - "internal/storage/migrations/062_agent_rate_limits.up.sql"
       - "internal/storage/migrations/063_task_side_tables.up.sql"
+      - "internal/storage/migrations/064_run_verification.up.sql"
     gen:
       go:
         package: "gen"
