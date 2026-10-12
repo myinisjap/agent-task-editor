@@ -271,6 +271,10 @@ func TestVerify_CouldNotRunEscalates(t *testing.T) {
 	if !f.pub.hasEvent("task.needs_human") {
 		t.Error("expected task.needs_human")
 	}
+	run, _ := f.q.GetAgentRun(context.Background(), f.runID)
+	if run.EscalationReason == nil || *run.EscalationReason != string(agent.ReasonVerifyError) {
+		t.Errorf("escalation_reason = %v, want verify_error", run.EscalationReason)
+	}
 }
 
 func TestVerify_NoVerifierWiredFailsClosed(t *testing.T) {

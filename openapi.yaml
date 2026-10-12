@@ -35,7 +35,7 @@ components:
           description: Set when reason is waiting_human.
         escalation_reason:
           type: string
-          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition]
+          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition, verify_error]
           description: >-
             Why the waiting run escalated to a human (the run's
             escalation_reason). Present only when reason is waiting_human and a
@@ -1130,7 +1130,7 @@ components:
         escalation_reason:
           type: string
           nullable: true
-          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition]
+          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition, verify_error]
           description: >-
             Why the run ended in waiting_human; null for runs in any other
             status and for waiting_human runs that predate this field. The
@@ -1141,7 +1141,7 @@ components:
             transition fired repeatedly; cost_budget / cost_unknown = task cost
             budget exhausted / unenforceable; provider_missing = the agent
             config's provider is disabled or unknown; runtime_prep = toolchain
-            install failed; max_turns = turn cap hit; transient_exhausted =
+            install failed; verify_error = the verify command could not be run; max_turns = turn cap hit; transient_exhausted =
             transient-retry budget exhausted; no_outcome = finished without a
             usable outcome; rejected_transition = requested move refused
             repeatedly.
@@ -1832,7 +1832,7 @@ components:
         run_id:  { type: string }
         reason:
           type: string
-          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition]
+          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition, verify_error]
           description: Same code as AgentRun.escalation_reason.
         message: { type: string }
       required: [task_id, run_id, reason, message]
