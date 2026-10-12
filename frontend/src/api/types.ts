@@ -1551,6 +1551,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/verifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the task's verification results
+         * @description Verify-command results for the task's runs, newest first (at most 20). Empty when the repo has no verify_command or no run has signalled success since one was configured. The first element is the latest result shown beside the diff on the review view.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunVerification"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -3203,7 +3243,10 @@ export interface paths {
             };
         };
         put?: never;
-        /** Register a repo */
+        /**
+         * Register a repo
+         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -3318,6 +3361,10 @@ export interface paths {
                         issue_comment_sync_enabled?: boolean;
                         /** @description Replaces the repo's toolchain pins. Omit the field to leave existing pins untouched; pass an empty array to clear them back to unconfigured. */
                         runtime_languages?: components["schemas"]["RuntimeLanguagePin"][];
+                        /** @description Replaces the repo's verify command; empty string disables verification. Omit to leave unchanged. */
+                        verify_command?: string;
+                        /** @description Replaces the verify timeout. Omit to leave unchanged. */
+                        verify_timeout_seconds?: number;
                     };
                 };
             };
@@ -4913,6 +4960,13 @@ export interface components {
             wip_limit?: number | null;
             /** @description When non-zero, the dispatcher stops picking up tasks whose success target is this label once it is at its wip_limit (backpressure). */
             wip_limit_hard: number;
+            /**
+             * @description Per-label override of the repo's verify_command, applied to the label a task is on when its run signals success. inherit (the default) uses the repo command; custom runs verify_command below instead; disabled skips verification on this label. The repo's verify_timeout_seconds applies in every mode. Set via the workflow YAML (verify_mode / verify_command) or the labels array of PUT /workflows/{id}.
+             * @enum {string}
+             */
+            verify_mode: "inherit" | "custom" | "disabled";
+            /** @description The label's own command; only meaningful (and required) when verify_mode is custom, else empty. */
+            verify_command: string;
         };
         WorkflowTransition: {
             id: string;
@@ -5053,6 +5107,31 @@ export interface components {
             max_concurrent_runs?: number | null;
             /** @description Serialized JSON array of this repo's agent toolchain pins (see RuntimeLanguagePin) — stored and returned as a JSON string, not a structured array, matching the DB column. Empty string (the default) means unconfigured: tasks on this repo spawn their agent CLI exactly as they did before this feature existed. When non-empty, the dispatcher runs `mise install` for every pin before invoking the provider and wraps the CLI command with `mise x`; a python pin instead gets a per-worktree virtualenv on PATH. Prep failure escalates the task to waiting_human — it never falls back to a plain spawn. See docs/runtime.md. */
             runtime_languages?: string;
+            /** @description Shell command (run with `sh -c` in the task's worktree, as the unprivileged agent user, with the repo's runtime pins applied) that independently verifies an agent's claimed success. Empty (the default) disables verification. When set it is authoritative: a run that signals success only takes the success transition if the command exits 0; otherwise the failure transition fires (or the task keeps its label) and the capped output is fed to the next run as a `VERIFICATION FAILED:` section. See RunVerification and docs/workflows.md. */
+            verify_command?: string;
+            /** @description Timeout for verify_command in seconds (1-3600, default 600). */
+            verify_timeout_seconds?: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description The result of a repo's verify_command for one agent run that signalled success. At most one per run. */
+        RunVerification: {
+            run_id: string;
+            task_id: string;
+            /** @description The command that was run (snapshot of repo.verify_command). */
+            command: string;
+            /**
+             * @description pass = exit 0; fail = non-zero exit; timeout = exceeded verify_timeout_seconds; error = the command could not be run (the task is escalated to waiting_human).
+             * @enum {string}
+             */
+            status: "pass" | "fail" | "timeout" | "error";
+            /** @description Null unless the process exited on its own. */
+            exit_code: number | null;
+            /** @description Tail of the combined stdout and stderr, capped at 16 KiB. */
+            output: string;
+            /** @description True when earlier output was dropped from output. */
+            truncated: boolean;
+            duration_ms: number;
             /** Format: date-time */
             created_at: string;
         };
@@ -5405,7 +5484,7 @@ export interface components {
             error: string;
         };
         /** @description Envelope of every message the server pushes on the /ws socket (and the locally synthesised `resync` after a reconnect). Discriminated by `type`. */
-        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
+        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
         WsTaskLabelChangedEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -5550,6 +5629,21 @@ export interface components {
             task_id: string;
             run_id: string;
             resolved: number;
+        };
+        WsTaskVerificationEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.verification";
+            payload: components["schemas"]["WsTaskVerificationPayload"];
+        };
+        /** @description A run's repo verify command finished (refetch GET /tasks/{id}/verifications). */
+        WsTaskVerificationPayload: {
+            task_id: string;
+            run_id: string;
+            /** @enum {string} */
+            status: "pass" | "fail" | "timeout" | "error";
         };
         WsTaskRateLimitedEvent: {
             /**

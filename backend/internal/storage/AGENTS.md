@@ -84,9 +84,10 @@ tasks               — title, description, type, label, repo_id, workflow_id,
 task_git            — task_id, branch, worktree_path, base_ref, git_state, pr_url, pr_mergeable
 task_writeback      — task_id, writeback_in_progress_sent/_pr_commented/_closed
 tasks_full (view)   — tasks + task_git + task_writeback, the flat 37-column read model
-workflow_labels     — name, color, sort_order, agent_ignore, is_terminal
+workflow_labels     — name, color, sort_order, agent_ignore, is_terminal, verify_mode/verify_command (per-label verify override)
 workflow_transitions — from_label, to_label, trigger_type (agent|human|both)
 agent_runs          — task_id, status, feedback, started_at, completed_at
+run_verifications   — run_id (PK), task_id, command, status pass|fail|timeout|error, exit_code, output tail (ADR 0038)
 agent_logs          — agent_run_id, type, content, timestamp
 task_label_history  — task_id, from_label, to_label, trigger, actor_id, note
 ```

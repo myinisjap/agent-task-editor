@@ -13,7 +13,7 @@ function label(name: string, opts: { agentIgnore?: boolean; isTerminal?: boolean
     is_terminal: opts.isTerminal ? 1 : 0,
     create_pr: 0,
     wip_limit: null,
-    wip_limit_hard: 0,
+    wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '',
   }
 }
 

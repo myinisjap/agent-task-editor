@@ -73,6 +73,7 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 			AgentIgnore: agentIgnore,
 			IsTerminal:  isTerminal,
 			CreatePr:    createPR,
+			VerifyMode:  "inherit",
 		}); err != nil {
 			return fmt.Errorf("create label %s: %w", l.name, err)
 		}

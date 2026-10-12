@@ -34,6 +34,7 @@ export type RuntimeLanguagePin = Schemas['RuntimeLanguagePin']
 export type ReviewComment = Schemas['ReviewComment']
 export type TaskSourceComment = Schemas['TaskSourceComment']
 export type AgentRun = Schemas['AgentRun']
+export type RunVerification = Schemas['RunVerification']
 // Named *Entry historically; the schema is TaskLabelHistory.
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
@@ -299,6 +300,9 @@ export const api = {
       const { data, headers } = await requestWithHeaders<AgentRun[]>(`/tasks/${id}/runs${qs ? `?${qs}` : ''}`)
       return { items: data ?? [], nextCursor: headers.get('X-Next-Cursor') || null }
     },
+    // verifications returns the task's repo verify-command results, newest
+    // first (empty when no verify command has run).
+    verifications: (id: string) => request<RunVerification[]>(`/tasks/${id}/verifications`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     // listLabelHistory returns the task's label-transition audit trail
     // (oldest first), including the resolved actor for human transitions.
@@ -403,12 +407,12 @@ export const api = {
   repos: {
     list: () => listAllPages<Repo>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number; runtime_languages?: RuntimeLanguagePin[] }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
     // max_concurrent_runs: omit the key to leave it unchanged, or pass null to
     // clear it back to "use the global default" — the backend distinguishes
     // an omitted field from an explicit null (see ReposHandler.Update).
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null; runtime_languages?: RuntimeLanguagePin[] }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number }) =>
 
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),

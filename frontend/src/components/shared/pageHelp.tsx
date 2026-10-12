@@ -50,6 +50,7 @@ export function WorkflowHelp() {
           <li><code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> — agents cannot move tasks here; the dispatcher skips tasks already on this label</li>
           <li><code className="bg-slate-800 rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
           <li><code className="bg-slate-800 rounded px-1 font-mono">create_pr</code> — entering this label pushes the branch and auto-opens a GitHub PR (needs a GitHub remote and gh auth); at most one label per workflow may set this</li>
+          <li><code className="bg-slate-800 rounded px-1 font-mono">verify_mode</code> / <code className="bg-slate-800 rounded px-1 font-mono">verify_command</code> — per-label override of the repo&apos;s verify command (set on the Repos page), applied when a run on this label reports success. Omit (or <code className="bg-slate-800 rounded px-1 font-mono">inherit</code>) to use the repo command; <code className="bg-slate-800 rounded px-1 font-mono">custom</code> (with a <code className="bg-slate-800 rounded px-1 font-mono">verify_command</code>) replaces it; <code className="bg-slate-800 rounded px-1 font-mono">disabled</code> skips verification on this label</li>
         </ul>
         <p>
           Tasks created without an explicit label — GitHub Issue imports, scheduled tasks, and API

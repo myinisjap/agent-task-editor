@@ -742,3 +742,114 @@ func TestWorkflows_UpdateYAML_UnknownWorkflow(t *testing.T) {
 		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body)
 	}
 }
+
+// ---------- per-label verify override ----------
+
+func TestWorkflows_Update_JSON_LabelVerifyRoundTrips(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	wfs, _ := q.ListWorkflows(context.Background())
+	wfID := wfs[0].ID
+
+	put := func(labels []map[string]any) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/workflows/"+wfID, jsonBody(t, map[string]any{"name": "Updated", "labels": labels}))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	w := put([]map[string]any{
+		{"name": "a", "color": "#111", "sort_order": 0},
+		{"name": "b", "color": "#222", "sort_order": 1, "verify_mode": "custom", "verify_command": "  make check "},
+		{"name": "c", "color": "#333", "sort_order": 2, "verify_mode": "disabled", "verify_command": "ignored"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	labels, _ := q.ListWorkflowLabels(context.Background(), wfID)
+	got := map[string][2]string{}
+	for _, l := range labels {
+		got[l.Name] = [2]string{l.VerifyMode, l.VerifyCommand}
+	}
+	want := map[string][2]string{"a": {"inherit", ""}, "b": {"custom", "make check"}, "c": {"disabled", ""}}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("label %s = %v, want %v", k, got[k], v)
+		}
+	}
+
+	for name, l := range map[string]map[string]any{
+		"custom without command": {"name": "x", "color": "#111", "verify_mode": "custom"},
+		"unknown mode":           {"name": "x", "color": "#111", "verify_mode": "sometimes"},
+	} {
+		if w := put([]map[string]any{l}); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d", name, w.Code)
+		}
+	}
+}
+
+func TestWorkflows_YAML_LabelVerifyRoundTrips(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+	yamlBody := `
+name: yaml-verify
+labels:
+  - name: work
+    color: "#111"
+    sort_order: 0
+  - name: testing
+    color: "#222"
+    sort_order: 1
+    verify_mode: custom
+    verify_command: npm run e2e
+  - name: docs
+    color: "#333"
+    sort_order: 2
+    verify_mode: disabled
+transitions:
+  - from: work
+    to: testing
+    trigger: agent
+`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/import", strings.NewReader(yamlBody))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var created struct {
+		gen.Workflow
+		Labels []gen.WorkflowLabel `json:"labels"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	modes := map[string]string{}
+	for _, l := range created.Labels {
+		modes[l.Name] = l.VerifyMode
+	}
+	if modes["work"] != "inherit" || modes["testing"] != "custom" || modes["docs"] != "disabled" {
+		t.Errorf("modes = %v", modes)
+	}
+
+	exportW := httptest.NewRecorder()
+	r.ServeHTTP(exportW, httptest.NewRequest(http.MethodGet, "/workflows/"+created.ID+"/export.yaml", nil))
+	out := exportW.Body.String()
+	for _, want := range []string{"verify_mode: custom", "verify_command: npm run e2e", "verify_mode: disabled"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("export missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "verify_mode: inherit") {
+		t.Errorf("inherit should be omitted from export:\n%s", out)
+	}
+
+	bad := strings.Replace(yamlBody, "name: yaml-verify", "name: yaml-verify-bad", 1)
+	bad = strings.Replace(bad, "verify_command: npm run e2e\n", "", 1)
+	req = httptest.NewRequest(http.MethodPost, "/workflows/import", strings.NewReader(bad))
+	req.Header.Set("Content-Type", "application/yaml")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("custom without command: expected 400, got %d", w.Code)
+	}
+}
