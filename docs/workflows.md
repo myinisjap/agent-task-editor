@@ -19,6 +19,12 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 | `verify_mode` | `inherit` \| `custom` \| `disabled` | Per-label override of the repo's [verify command](#verify-commands). `inherit` (default, may be omitted) uses the repo command; `custom` runs this label's `verify_command` instead; `disabled` skips verification for runs that succeed on this label. |
 | `verify_command` | string | The label's own command. Required when `verify_mode` is `custom`; ignored (and cleared) otherwise. The repo's `verify_timeout_seconds` applies. |
 
+## Pipeline overview
+
+The **Pipeline** page (`/pipeline`, Overview tab) draws the selected workflow as a read-only graph: labels are nodes, transitions are edges (green success, red failure, dashed for agent-triggered). Each node shows who works it: the enabled agent config(s) whose `labels` include it, **Human gate** for labels only a human can move, or an amber **No agent assigned** chip for agent-triggerable labels nobody covers. Nodes also show a non-default verify mode, `terminal`, and `opens PR` markers. The Board shows the same chip in the header of unstaffed columns.
+
+Click a node to open the assign panel: tick or untick an agent config to add or remove that label from its `labels` (the same update the Agents tab performs). Use the Workflow tab to change the labels and transitions themselves. With several workflows, a selector above the graph switches between them.
+
 ## Verify commands
 
 An agent's `signal_complete(outcome="success")` (or the parsed `OUTCOME: success` marker) is only a *claim*. A repo can configure an independent check that decides whether that claim is believed.

@@ -45,6 +45,11 @@ const pages: { path: string; name: string; anchor: (page: Page) => Locator }[] =
     anchor: (page) => page.getByTestId('chat-page'),
   },
   {
+    path: 'pipeline/overview',
+    name: 'Pipeline Overview',
+    anchor: (page) => page.getByTestId('pipeline-overview'),
+  },
+  {
     path: 'pipeline/workflow',
     name: 'Workflow',
     anchor: (page) => page.getByTestId('workflow-page'),
@@ -95,7 +100,7 @@ const redirects: { from: string; to: RegExp }[] = [
   { from: 'templates', to: /\/settings\/templates$/ },
   { from: 'intake-rules', to: /\/settings\/intake-rules$/ },
   { from: 'health', to: /\/settings\/health$/ },
-  { from: 'pipeline', to: /\/pipeline\/workflow$/ },
+  { from: 'pipeline', to: /\/pipeline\/overview$/ },
   { from: 'settings', to: /\/settings\/providers$/ },
 ]
 

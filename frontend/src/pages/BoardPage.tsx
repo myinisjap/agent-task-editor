@@ -1,3 +1,4 @@
+import { useAgentsStore } from '../stores/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTasksStore } from '../stores/tasks'
@@ -121,6 +122,7 @@ export default function BoardPage() {
   useEffect(() => {
     fetchWorkflows()
     fetchRepos()
+    useAgentsStore.getState().fetch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

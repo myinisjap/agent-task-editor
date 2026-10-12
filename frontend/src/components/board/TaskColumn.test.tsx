@@ -1,10 +1,12 @@
 // TaskColumn WIP-limit badge rendering: count-vs-limit display and the
 // soft/hard over-limit visual states. See issue #257.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import TaskColumn from './TaskColumn'
-import type { Task, WorkflowLabel } from '../../api/client'
+import type { AgentConfig, Task, Workflow, WorkflowLabel } from '../../api/client'
+import { useAgentsStore } from '../../stores/agents'
+import { useWorkflowStore } from '../../stores/workflow'
 
 function label(overrides: Partial<WorkflowLabel> = {}): WorkflowLabel {
   return {
@@ -97,5 +99,36 @@ describe('TaskColumn WIP limit badge', () => {
   it('treats a non-positive wip_limit as unlimited', () => {
     renderColumn(label({ wip_limit: 0 }), [task('1')])
     expect(screen.getByTestId('column-count-badge').textContent).toBe('1')
+  })
+})
+
+describe('TaskColumn "No agent assigned" chip', () => {
+  const wf = {
+    id: 'wf', name: 'W', description: '',
+    labels: [label()],
+    transitions: [{ id: 't', workflow_id: 'wf', from_label: 'review', to_label: 'done', trigger_type: 'agent', path: 'success' }],
+  } as unknown as Workflow
+  const agent = { id: 'a', name: 'R', labels: '["review"]', enabled: true } as AgentConfig
+
+  beforeEach(() => {
+    useWorkflowStore.setState({ workflows: [wf], selectedId: 'wf' })
+    useAgentsStore.setState({ configs: [], loaded: true })
+  })
+
+  it('shows for an agent-triggerable column with no agent', () => {
+    renderColumn(label(), [])
+    expect(screen.getByTestId('no-agent-chip')).toHaveTextContent('No agent assigned')
+  })
+
+  it('hides once an enabled agent covers the label', () => {
+    useAgentsStore.setState({ configs: [agent], loaded: true })
+    renderColumn(label(), [])
+    expect(screen.queryByTestId('no-agent-chip')).not.toBeInTheDocument()
+  })
+
+  it('hides until agent configs have loaded', () => {
+    useAgentsStore.setState({ configs: [], loaded: false })
+    renderColumn(label(), [])
+    expect(screen.queryByTestId('no-agent-chip')).not.toBeInTheDocument()
   })
 })
