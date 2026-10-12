@@ -1,3 +1,5 @@
+// Package gen holds the sqlc-generated query code for the storage layer plus
+// the hand-written tasks_compat.go companion.
 package gen
 
 // Hand-written companion to tasks.sql.go (sqlc never touches this file).
