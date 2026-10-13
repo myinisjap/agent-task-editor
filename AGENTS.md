@@ -28,7 +28,7 @@ agent-task-editor/
 │   ├── runtime.md            # Per-repo agent toolchains via mise/uv
 │   ├── backup.md
 │   └── screenshots.md
-├── backend/                  # Go server (go.mod: 1.25; CI + Docker builder: 1.27.0)
+├── backend/                  # Go server (go.mod: 1.25; CI + Docker builder: 1.27.2)
 │   ├── cmd/server/           # Main entrypoint
 │   ├── cmd/mcp-server/       # MCP sidecar (signal_complete / request_human)
 │   ├── cmd/mcp-board/        # Standalone MCP server for creating board tickets from a chat client (see docs/board-mcp.md)

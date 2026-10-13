@@ -29,7 +29,7 @@ triggers the "Release" workflow the same way.
 - **Repo verify command: an independent check on an agent's claimed success** (ADR 0038). Set `verify_command` (and `verify_timeout_seconds`, default 600) on a repo; when a run reports success the pool runs it in the task's worktree, as the agent user with the repo's runtime pins, before taking the success transition. Exit 0 proceeds; a non-zero exit or timeout overrides the agent's claim (failure transition if the label has one, otherwise the task keeps its label and counts a failed attempt) and the capped output is injected into the next run's prompt as a `VERIFICATION FAILED:` section. Workflow labels can override it per label (`verify_mode: inherit | custom | disabled` + `verify_command` in the workflow YAML / `PUT /workflows/{id}`). Results are stored per run, served by `GET /tasks/{id}/verifications`, broadcast as `task.verification`, and shown with the diff on the task page. Migration 064. See `docs/workflows.md#verify-commands`.
 
 ### Changed
-- Backend image and CI now use Go 1.27.0 (the agents' baseline Go toolchain moves from 1.26 to 1.27).
+- Backend image and CI now use Go 1.27.2 (the agents' baseline Go toolchain moves from 1.26 to 1.27).
 
 ### Fixed
 - **Dedicated `verify_error` escalation reason.** When a repo/label verify command cannot be run, the run now escalates with `verify_error` instead of the generic `runtime_prep`; it is exposed in the API enums, `GET /needs-me`, `task.needs_human` and the UI (links to Repos).
