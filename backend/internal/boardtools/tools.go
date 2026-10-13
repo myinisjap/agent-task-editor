@@ -84,7 +84,7 @@ var ReadOnlyRemoteTools = []string{
 // reading tasks/runs and unblocking agents that wait on a human.
 var RemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
-	"create_task", "reply_to_run", "approve_task", "reject_task", "move_task",
+	"create_task", "reply_to_run", "approve_task", "reject_task", "move_task", "archive_task",
 }
 
 // Select returns the tools with the given names, in that order. Unknown names
@@ -264,6 +264,15 @@ func init() {
 			"note":     str("Optional note recorded with the transition"),
 		}, "task_id", "to_label"),
 		call: (*Client).moveTask,
+	})
+	register(Tool{
+		Name:        "archive_task",
+		Description: "Archive a task: hides it from the board and from list_tasks without deleting it, whatever label it is on. Pass archived=false to unarchive. Archiving also removes the task's worktree; the branch and history are kept.",
+		InputSchema: obj(map[string]any{
+			"task_id":  str("Task ID"),
+			"archived": map[string]any{"type": "boolean", "description": "true to archive (default), false to unarchive"},
+		}, "task_id"),
+		call: (*Client).archiveTask,
 	})
 }
 
@@ -547,6 +556,29 @@ func (c *Client) moveTask(args json.RawMessage) (string, bool) {
 		return fmt.Sprintf("move_task failed (%d): %s", status, err.Error()), true
 	}
 	return fmt.Sprintf("Task %s is now on %q.", a.TaskID, t.Label), false
+}
+
+func (c *Client) archiveTask(args json.RawMessage) (string, bool) {
+	a := struct {
+		TaskID   string `json:"task_id"`
+		Archived *bool  `json:"archived"`
+	}{}
+	_ = json.Unmarshal(args, &a)
+	if strings.TrimSpace(a.TaskID) == "" {
+		return "task_id is required", true
+	}
+	archived := a.Archived == nil || *a.Archived
+	var t struct {
+		Archived bool `json:"archived"`
+	}
+	body := map[string]any{"archived": archived}
+	if status, err := c.do(http.MethodPatch, "/api/v1/tasks/"+url.PathEscape(a.TaskID)+"/archive", body, &t); err != nil {
+		return fmt.Sprintf("archive_task failed (%d): %s", status, err.Error()), true
+	}
+	if t.Archived {
+		return fmt.Sprintf("Task %s is archived.", a.TaskID), false
+	}
+	return fmt.Sprintf("Task %s is unarchived.", a.TaskID), false
 }
 
 // getRaw passes an API response body through as the tool result.
