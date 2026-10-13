@@ -19,3 +19,7 @@ CORS only shapes response headers; these stop the request.
 Requires `Authorization: Bearer <token>` when either is non-empty; skips auth when both are empty (development mode). Use `crypto/subtle.ConstantTimeCompare`; check every named token without short-circuiting, then the legacy token. A named match is stored in the request context and read with `ActorFromContext(ctx)` (recorded in `task_label_history.actor_id`); the legacy token or no auth yields `""`. The 401 inlines `{"error":"unauthorized"}` instead of importing `handlers` (import cycle).
 
 `/ws` is not behind this middleware and does not resolve named actors (ADR 0022).
+
+### `WithTrustedActor`
+
+`WithTrustedActor(ctx, actor)` marks a request context as already authenticated by an in-process caller. Only chains built with `BearerAuthTrusted` (the `/api/v1` group in `router.go`) let such requests through without a token and record `actor` for `ActorFromContext`; plain `BearerAuth` (used for `/metrics`) ignores the mark and still demands its token. Only `internal/remotemcp` uses it: its `/mcp` endpoint verifies its own OAuth access tokens, then serves tool calls by invoking the router in-process as the signed-in email. Context values can't be set by a network client, so this is not reachable from outside the process.

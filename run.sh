@@ -9,6 +9,7 @@
 #   ATE_VERSION=v1.2.3 ./run.sh    # pin a specific release
 #   ./run.sh --repo-dir ~/code start
 #   ./run.sh --all-cli             # run the backend image with Codex/Qwen CLIs preinstalled
+#   ./run.sh --with-remote-mcp     # opt in to the remote MCP connector (needs TRAEFIK_HOST + MCP_* in .env)
 
 # Exit on error/unset var/failed pipeline.
 set -euo pipefail
@@ -25,10 +26,12 @@ export ATE_VERSION=${ATE_VERSION:-latest}
 
 # Parse optional --repo-dir <path> / --all-cli flags before the command.
 ALL_CLI=false
+WITH_REMOTE_MCP=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-dir) REPO_BASE_DIR="$2"; shift 2 ;;
     --all-cli) ALL_CLI=true; shift ;;
+    --with-remote-mcp) WITH_REMOTE_MCP=true; shift ;;
     *) break ;;
   esac
 done
@@ -86,9 +89,25 @@ if [[ -n "${SSL_CA_CERT_PATH:-}" ]]; then
   export SSL_CA_CERT_PATH="$(cd "$(dirname "$SSL_CA_CERT_PATH")" && pwd)/$(basename "$SSL_CA_CERT_PATH")"
 fi
 
+# Remote MCP (claude.ai connector) is strictly opt-in: only --with-remote-mcp
+# turns it on. Force the value so a stray MCP_REMOTE_ENABLED=true in .env
+# can't enable it without the flag. See docs/board-mcp.md#remote-connector.
+if [[ "$WITH_REMOTE_MCP" == "true" ]]; then
+  export MCP_REMOTE_ENABLED=true
+else
+  export MCP_REMOTE_ENABLED=false
+fi
+
 COMPOSE="docker compose -f docker-compose.release.yml"
 if [[ -n "${TRAEFIK_HOST:-}" ]]; then
   COMPOSE="$COMPOSE -f docker-compose.traefik.yml"
+fi
+if [[ "$WITH_REMOTE_MCP" == "true" ]]; then
+  if [[ -n "${TRAEFIK_HOST:-}" ]]; then
+    COMPOSE="$COMPOSE -f docker-compose.mcp-remote.yml"
+  else
+    echo "Warning: --with-remote-mcp enables the backend feature, but the public route needs TRAEFIK_HOST (docker-compose.traefik.yml); no public route added"
+  fi
 fi
 
 # Extract GH token from gh CLI (keyring or hosts.yml) if not already set.
@@ -204,7 +223,7 @@ case "$CMD" in
     $COMPOSE exec --user node backend sh
     ;;
   *)
-    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [start|pull|stop|restart|logs|login|shell]"
+    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [--with-remote-mcp] [start|pull|stop|restart|logs|login|shell]"
     exit 1
     ;;
 esac

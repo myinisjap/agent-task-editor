@@ -11,7 +11,21 @@ import (
 
 type ctxKey int
 
-const actorKey ctxKey = iota
+const (
+	actorKey ctxKey = iota
+	trustedKey
+)
+
+// WithTrustedActor marks ctx as an in-process call that has already been
+// authenticated elsewhere (e.g. the remote MCP endpoint, which verifies its
+// own OAuth access tokens) and records actor as the caller. Only chains built
+// with BearerAuthTrusted (the /api/v1 group) honour the mark; plain BearerAuth
+// (e.g. /metrics) ignores it and still demands its own token. Context values
+// can't be set by a network client, so this can't be forged from outside the
+// process.
+func WithTrustedActor(ctx context.Context, actor string) context.Context {
+	return context.WithValue(ctx, trustedKey, actor)
+}
 
 // ActorFromContext returns the resolved actor name for the request's bearer
 // token (see BearerAuth), or "" if unauthenticated/anonymous — i.e. the
@@ -41,16 +55,38 @@ func ActorFromContext(ctx context.Context) string {
 // "agent:<run id>" or "chat:<session id>". In open mode (no tokens configured)
 // the middleware stays a no-op and scoped tokens are irrelevant.
 func BearerAuth(bearerToken string, namedTokens map[string]string) func(http.Handler) http.Handler {
-	return BearerAuthScoped(bearerToken, namedTokens, scopedtoken.Default)
+	return bearerAuth(bearerToken, namedTokens, scopedtoken.Default, false)
 }
 
 // BearerAuthScoped is BearerAuth with an explicit scoped-token registry.
 func BearerAuthScoped(bearerToken string, namedTokens map[string]string, scoped *scopedtoken.Registry) func(http.Handler) http.Handler {
+	return bearerAuth(bearerToken, namedTokens, scoped, false)
+}
+
+// BearerAuthTrusted is BearerAuthScoped for the main API chain: it additionally
+// admits requests marked with WithTrustedActor (the in-process remote MCP
+// endpoint), recording the marked actor. Use it only where that endpoint is
+// meant to reach; everything else (notably /metrics) uses BearerAuth.
+func BearerAuthTrusted(bearerToken string, namedTokens map[string]string) func(http.Handler) http.Handler {
+	return bearerAuth(bearerToken, namedTokens, scopedtoken.Default, true)
+}
+
+func bearerAuth(bearerToken string, namedTokens map[string]string, scoped *scopedtoken.Registry, allowTrusted bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if bearerToken == "" && len(namedTokens) == 0 {
-			return next
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if actor, ok := r.Context().Value(trustedKey).(string); ok && allowTrusted {
+					r = r.WithContext(context.WithValue(r.Context(), actorKey, actor))
+				}
+				next.ServeHTTP(w, r)
+			})
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if actor, ok := r.Context().Value(trustedKey).(string); ok && allowTrusted {
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey, actor)))
+				return
+			}
+
 			auth := r.Header.Get("Authorization")
 			token := strings.TrimPrefix(auth, "Bearer ")
 

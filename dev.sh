@@ -13,10 +13,12 @@ fi
 
 # Parse optional --repo-dir <path> / --all-cli flags before the command.
 ALL_CLI=false
+WITH_REMOTE_MCP=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-dir) REPO_BASE_DIR="$2"; shift 2 ;;
     --all-cli) ALL_CLI=true; shift ;;
+    --with-remote-mcp) WITH_REMOTE_MCP=true; shift ;;
     --raw-log-dir) AGENT_RAW_LOG_DIR="$2"; shift 2 ;;
     *) break ;;
   esac
@@ -79,9 +81,25 @@ if [[ -n "${SSL_CA_CERT_PATH:-}" ]]; then
   export SSL_CA_CERT_PATH="$(cd "$(dirname "$SSL_CA_CERT_PATH")" && pwd)/$(basename "$SSL_CA_CERT_PATH")"
 fi
 
+# Remote MCP (claude.ai connector) is strictly opt-in: only --with-remote-mcp
+# turns it on. Force the value so a stray MCP_REMOTE_ENABLED=true in .env
+# can't enable it without the flag. See docs/board-mcp.md#remote-connector.
+if [[ "$WITH_REMOTE_MCP" == "true" ]]; then
+  export MCP_REMOTE_ENABLED=true
+else
+  export MCP_REMOTE_ENABLED=false
+fi
+
 COMPOSE="docker compose"
 if [[ -n "${TRAEFIK_HOST:-}" ]]; then
   COMPOSE="docker compose -f docker-compose.yml -f docker-compose.traefik.yml"
+fi
+if [[ "$WITH_REMOTE_MCP" == "true" ]]; then
+  if [[ -n "${TRAEFIK_HOST:-}" ]]; then
+    COMPOSE="$COMPOSE -f docker-compose.mcp-remote.yml"
+  else
+    echo "Warning: --with-remote-mcp enables the backend feature, but the public route needs TRAEFIK_HOST (docker-compose.traefik.yml); no public route added"
+  fi
 fi
 
 # Extract GH token from gh CLI (keyring or hosts.yml) if not already set.
@@ -195,7 +213,7 @@ case "$CMD" in
     wait "$BACKEND_PID" "$FRONTEND_PID" || true
     ;;
   *)
-    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [--raw-log-dir <path>] [start|stop|restart|logs|login|shell|dev]"
+    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [--with-remote-mcp] [--raw-log-dir <path>] [start|stop|restart|logs|login|shell|dev]"
     exit 1
     ;;
 esac

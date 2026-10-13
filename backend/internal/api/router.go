@@ -180,7 +180,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	// Everything below requires the Bearer token (when one is configured).
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.BearerAuth(bearerToken, namedTokens))
+		r.Use(middleware.BearerAuthTrusted(bearerToken, namedTokens))
 
 		r.Route("/api/v1", func(r chi.Router) {
 			// Limit request bodies to 1 MB to prevent memory exhaustion.

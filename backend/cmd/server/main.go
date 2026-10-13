@@ -25,6 +25,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
 	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/remotemcp"
 	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -120,6 +121,11 @@ func main() {
 	defer func() { _ = db.Close() }()
 
 	slog.Info("database ready", "path", cfg.DBPath)
+
+	// `server mcp-grants ...` manages remote MCP sign-ins and exits.
+	if len(os.Args) > 1 && os.Args[1] == "mcp-grants" {
+		os.Exit(runMCPGrants(db.SQL(), os.Args[2:]))
+	}
 
 	seedCtx := context.Background()
 	if err := storage.SeedDefaultWorkflow(seedCtx, db); err != nil {
@@ -402,6 +408,35 @@ func main() {
 		BlockReasons:        blockReasons,
 		Terminal:            terminal,
 	})
+
+	// Remote MCP endpoint (claude.ai custom connectors etc.): board tools over
+	// streamable HTTP behind a Google-backed OAuth server. Off unless
+	// MCP_REMOTE_ENABLED=true (never implied by MCP_PUBLIC_URL); see docs/board-mcp.md.
+	if !cfg.MCPRemoteEnabled {
+		if cfg.MCPPublicURL != "" {
+			slog.Warn("remote MCP is OFF: MCP_PUBLIC_URL is set but MCP_REMOTE_ENABLED is not true")
+		} else {
+			slog.Info("remote MCP is off (MCP_REMOTE_ENABLED not set)")
+		}
+	} else {
+		remote, err := remotemcp.New(remotemcp.Config{
+			PublicURL:          cfg.MCPPublicURL,
+			GoogleClientID:     cfg.MCPGoogleClientID,
+			GoogleClientSecret: cfg.MCPGoogleClientSecret,
+			AllowedEmails:      cfg.MCPAllowedEmails,
+			SigningKey:         cfg.MCPSigningKey,
+			RedirectURIs:       cfg.MCPRedirectURIs,
+			AllowedClientIDs:   cfg.MCPAllowedClientIDs,
+			ToolProfile:        cfg.MCPToolProfile,
+			DB:                 db.SQL(),
+		}, router)
+		if err != nil {
+			slog.Error("remote MCP config invalid", "err", err)
+			os.Exit(1)
+		}
+		router = remote.Wrap(router)
+		slog.Info("remote MCP endpoint enabled", "url", strings.TrimRight(cfg.MCPPublicURL, "/")+"/mcp", "allowed_emails", len(cfg.MCPAllowedEmails), "tool_profile", cfg.MCPToolProfile)
+	}
 
 	srv := &http.Server{
 		Addr:         listenAddr,

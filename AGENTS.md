@@ -36,6 +36,7 @@ agent-task-editor/
 │       ├── agent/            # Provider system, pool, dispatcher
 │       ├── agentuser/        # Runs agent subprocesses as the unprivileged `agent` OS user (Credential switch + capability stripping); leaf package
 │       ├── api/              # Chi router, handlers, middleware
+│       ├── boardtools/       # Board MCP tools (list/create/approve/reply…) as REST wrappers; shared by cmd/mcp-board and remotemcp
 │       ├── backup/           # Optional rotated local `VACUUM INTO` snapshot scheduler (see docs/backup.md)
 │       ├── config/           # YAML + env var config
 │       ├── cronexpr/         # Minimal dependency-free 5-field cron evaluator used by task schedules
@@ -51,6 +52,7 @@ agent-task-editor/
 │       ├── memguard/         # Last-resort memory watchdog that cancels a single runaway agent run
 │       ├── needsme/          # Single server-side definition of which tasks need a human and why (drives GET /needs-me, Inbox, badges)
 │       ├── notify/           # Optional outbound webhook when a task needs a human (NOTIFY_WEBHOOK_URL)
+│       ├── remotemcp/        # Remote MCP endpoint (/mcp, streamable HTTP) + Google-backed OAuth server for claude.ai connectors; off unless MCP_REMOTE_ENABLED=true
 │       ├── prflow/           # Push a task's branch and create/find its PR; shared by the CreatePR handler and the OnCreatePR hook (leaf: no api/handlers or workflow import)
 │       ├── scopedtoken/      # Short-lived, route-scoped bearer tokens minted for the MCP sidecars (instead of the admin API token)
 │       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates
@@ -102,6 +104,12 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `METRICS_PUBLIC` | `false` | `true` leaves `/metrics` unauthenticated even when API auth is configured (opt-out for tokenless scrapers) |
 | `MCP_SERVER_PATH` | _(none)_ | Path to mcp-server binary; enables signal_complete/request_human tools |
 | `MCP_BOARD_PATH` | _(none)_ | Path to mcp-board binary; enables the board tools (list_repos/list_workflows/create_task) inside chat sessions. See `docs/board-mcp.md` |
+| `MCP_REMOTE_ENABLED` | `false` | Explicit opt-in for the remote MCP endpoint (claude.ai custom connectors). Other `MCP_*` vars alone never enable it; `true` with a required var missing fails startup. `./run.sh`/`./dev.sh --with-remote-mcp` set it and add `docker-compose.mcp-remote.yml` (the public Traefik route) |
+| `MCP_PUBLIC_URL` | _(none)_ | Public base URL of the remote MCP endpoint (`<url>/mcp`); used only when `MCP_REMOTE_ENABLED=true`, which also needs `MCP_GOOGLE_CLIENT_ID`, `MCP_GOOGLE_CLIENT_SECRET`, `MCP_ALLOWED_EMAILS`, `MCP_SIGNING_KEY`. See `docs/board-mcp.md#remote-connector` |
+| `MCP_SIGNING_KEY` | _(none)_ | Required (>= 32 chars) when `MCP_REMOTE_ENABLED=true`: signs the remote MCP's tokens and client ids, independent of the Google secret. Generate with `openssl rand -base64 48`; rotating it revokes every token |
+| `MCP_TOOL_PROFILE` | `readonly` | Remote MCP tool set: `readonly` (list/get/read tools only) or `full` (adds create_task, reply_to_run, approve_task, reject_task, move_task) |
+| `MCP_REDIRECT_URIS` | claude.ai + claude.com connector callbacks | Exact OAuth redirect URIs the remote MCP will register and redirect to (comma-separated); loopback only if listed |
+| `MCP_ALLOWED_CLIENT_IDS` | _(any)_ | Optional comma-separated OAuth client ids the remote MCP accepts; the id is logged when a client registers |
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer (see `docs/task-sources.md`) |
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set to `true` behind corporate TLS-inspecting proxies. Disables SSL verification for git clone, npm, and the claude CLI (Node.js). Set in your shell or a `.env` file — docker compose passes it as a build arg (npm install of claude-code) and runtime env vars (`GIT_SSL_NO_VERIFY`, `NPM_CONFIG_STRICT_SSL`, `NODE_TLS_REJECT_UNAUTHORIZED`). |

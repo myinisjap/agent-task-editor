@@ -29,11 +29,13 @@ cmd/mcp-server/   Standalone MCP sidecar — stdio JSON-RPC 2.0
 internal/agent/   Provider interface, Pool, Dispatcher (concrete runners in `providers/`)
 internal/api/     Chi router, all HTTP handlers, middleware
 internal/backup/  Optional scheduler: periodic rotated local DB snapshots. Enabled via BACKUP_DIR (restart required); interval/keep are DB-backed (backup_settings table, seeded from BACKUP_INTERVAL/BACKUP_KEEP) and editable at runtime via PUT /api/v1/backup/settings, no restart needed
+internal/boardtools/ Board MCP tools as thin REST wrappers, shared by cmd/mcp-board (stdio) and internal/remotemcp
 internal/config/  Config struct; loaded from YAML file then env vars override
 internal/gitcmd/   The one place the server runs `git` (Output/Run/Combined/CombinedNoPrompt over agentuser.ServerCommandContext) plus the shared `IsValidRef` ref validator and `DirExists`; leaf (agentuser + stdlib only). New git calls go here, not raw agentuser/exec
 internal/ghclient/ Thin wrapper around the `gh` CLI (PR create/lookup, PR head/mergeability, issue listing, PR reviews/review comments/check runs, GitHub URL parsing)
 internal/ghsync/  Background PR-state poller — refreshes task git_state + pr_mergeable from GitHub, cleans up merged branches, ingests PR review/GHA/merge-conflict feedback into task_review_comments + run Feedback (optional auto-transition; see pr_review.go)
 internal/health/  Provider readiness checks (used by GET /health/providers)
+internal/remotemcp/ Remote MCP endpoint (POST /mcp) + Google-backed OAuth server; calls the router in-process via middleware.WithTrustedActor
 internal/prflow/  Push a task's branch and create/find its PR (forge resolution, PR body, SetTaskPR persist, issue write-back); shared by the HTTP CreatePR handler and the workflow OnCreatePR hook wired in cmd/server. Must not import api/handlers
 internal/storage/ SQLite DB, migrations, sqlc-generated queries, seed data
 internal/tasksource/ GitHub Issues importer — polls opted-in repos, creates tasks for new issues, updates tasks whose issue drifted, reconciles tasks whose issue closed/unlabeled, and (opt-in) ingests the issue comment thread

@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -155,6 +156,38 @@ type Config struct {
 	// storm from spamming the webhook. Only meaningful when
 	// NotifyWebhookURL is set.
 	NotifyDebounce time.Duration `yaml:"notify_debounce"`
+	// MCPRemoteEnabled (MCP_REMOTE_ENABLED, default false) is the explicit
+	// opt-in for the remote MCP endpoint (internal/remotemcp). Setting
+	// MCPPublicURL and the other MCP* values alone does NOT enable it. When
+	// true, Load fails unless every required MCP* setting is present.
+	MCPRemoteEnabled bool `yaml:"mcp_remote_enabled"`
+	// MCPPublicURL is the externally reachable base URL the remote MCP
+	// endpoint's /mcp and /oauth/* routes are served under (e.g.
+	// "https://example.com/tasks" behind the bundled nginx, or
+	// "https://ate.example.com" when the backend is exposed directly). Only
+	// used when MCPRemoteEnabled is true.
+	// Requires the MCPGoogle* and MCPAllowedEmails settings below.
+	MCPPublicURL string `yaml:"mcp_public_url"`
+	// MCPGoogleClientID/MCPGoogleClientSecret are the Google OAuth client the
+	// remote MCP endpoint signs users in with. Its authorized redirect URIs
+	// must include <MCPPublicURL>/oauth/callback.
+	MCPGoogleClientID     string `yaml:"mcp_google_client_id"`
+	MCPGoogleClientSecret string `yaml:"mcp_google_client_secret"`
+	// MCPAllowedEmails lists the Google accounts allowed to connect. Each
+	// connected user acts on the board under their email, recorded in
+	// task_label_history.actor_id like a named API token.
+	MCPAllowedEmails []string `yaml:"mcp_allowed_emails"`
+	// MCPSigningKey signs the remote MCP's tokens and client ids. Required
+	// (>= 32 chars) when MCPPublicURL is set; independent of the Google secret.
+	MCPSigningKey string `yaml:"mcp_signing_key"`
+	// MCPRedirectURIs is the exact set of OAuth redirect URIs the remote MCP
+	// will register and redirect to. Defaults to claude.ai's connector callbacks.
+	MCPRedirectURIs []string `yaml:"mcp_redirect_uris"`
+	// MCPAllowedClientIDs, when set, restricts the remote MCP to these OAuth
+	// client ids. Empty accepts any client with an allowed redirect URI.
+	MCPAllowedClientIDs []string `yaml:"mcp_allowed_client_ids"`
+	// MCPToolProfile is "readonly" (default) or "full"; see docs/board-mcp.md.
+	MCPToolProfile string `yaml:"mcp_tool_profile"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -177,6 +210,8 @@ func Defaults() Config {
 		ShutdownDrainTimeout:  60 * time.Second,
 		GitTimeout:            120 * time.Second,
 		NotifyDebounce:        5 * time.Minute,
+		MCPRedirectURIs:       []string{"https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"},
+		MCPToolProfile:        "readonly",
 	}
 }
 
@@ -390,5 +425,78 @@ func Load(path string) (Config, error) {
 		}
 	}
 
+	if v := os.Getenv("MCP_REMOTE_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("MCP_REMOTE_ENABLED must be a boolean, got %q", v)
+		}
+		cfg.MCPRemoteEnabled = b
+	}
+	if v := os.Getenv("MCP_PUBLIC_URL"); v != "" {
+		cfg.MCPPublicURL = v
+	}
+	if v := os.Getenv("MCP_GOOGLE_CLIENT_ID"); v != "" {
+		cfg.MCPGoogleClientID = v
+	}
+	if v := os.Getenv("MCP_GOOGLE_CLIENT_SECRET"); v != "" {
+		cfg.MCPGoogleClientSecret = v
+	}
+	if v := os.Getenv("MCP_ALLOWED_EMAILS"); v != "" {
+		cfg.MCPAllowedEmails = splitList(v)
+	}
+	if v := os.Getenv("MCP_SIGNING_KEY"); v != "" {
+		cfg.MCPSigningKey = v
+	}
+	if v := os.Getenv("MCP_REDIRECT_URIS"); v != "" {
+		cfg.MCPRedirectURIs = splitList(v)
+	}
+	if v := os.Getenv("MCP_ALLOWED_CLIENT_IDS"); v != "" {
+		cfg.MCPAllowedClientIDs = splitList(v)
+	}
+	if v := os.Getenv("MCP_TOOL_PROFILE"); v != "" {
+		cfg.MCPToolProfile = v
+	}
+	if cfg.MCPRemoteEnabled {
+		if err := cfg.validateRemoteMCP(); err != nil {
+			return cfg, err
+		}
+	}
+
 	return cfg, nil
+}
+
+// validateRemoteMCP fails fast when MCP_REMOTE_ENABLED=true but a required
+// setting is missing, rather than silently leaving the feature off.
+func (c Config) validateRemoteMCP() error {
+	var missing []string
+	if c.MCPPublicURL == "" {
+		missing = append(missing, "MCP_PUBLIC_URL")
+	}
+	if c.MCPGoogleClientID == "" {
+		missing = append(missing, "MCP_GOOGLE_CLIENT_ID")
+	}
+	if c.MCPGoogleClientSecret == "" {
+		missing = append(missing, "MCP_GOOGLE_CLIENT_SECRET")
+	}
+	if len(c.MCPAllowedEmails) == 0 {
+		missing = append(missing, "MCP_ALLOWED_EMAILS")
+	}
+	if c.MCPSigningKey == "" {
+		missing = append(missing, "MCP_SIGNING_KEY")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("MCP_REMOTE_ENABLED=true but required settings are missing: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// splitList parses a comma-separated env value, dropping blanks.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

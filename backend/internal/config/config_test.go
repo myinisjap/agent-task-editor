@@ -705,3 +705,64 @@ func TestLoad_AllowedHostsEnv(t *testing.T) {
 		t.Errorf("AllowedHosts = %q", cfg.AllowedHosts)
 	}
 }
+
+func setRemoteMCPEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("MCP_PUBLIC_URL", "https://example.com/tasks")
+	t.Setenv("MCP_GOOGLE_CLIENT_ID", "id")
+	t.Setenv("MCP_GOOGLE_CLIENT_SECRET", "secret")
+	t.Setenv("MCP_ALLOWED_EMAILS", "a@example.com")
+	t.Setenv("MCP_SIGNING_KEY", "0123456789012345678901234567890123456789")
+}
+
+func TestLoad_RemoteMCP_OffByDefaultEvenWithOtherVarsSet(t *testing.T) {
+	setRemoteMCPEnv(t)
+	t.Setenv("MCP_REMOTE_ENABLED", "")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MCPRemoteEnabled {
+		t.Error("MCP_PUBLIC_URL and friends must not enable remote MCP")
+	}
+}
+
+func TestLoad_RemoteMCP_ExplicitlyDisabled(t *testing.T) {
+	setRemoteMCPEnv(t)
+	t.Setenv("MCP_REMOTE_ENABLED", "false")
+	cfg, err := config.Load("")
+	if err != nil || cfg.MCPRemoteEnabled {
+		t.Fatalf("want disabled, got enabled=%v err=%v", cfg.MCPRemoteEnabled, err)
+	}
+}
+
+func TestLoad_RemoteMCP_EnabledWithAllVars(t *testing.T) {
+	setRemoteMCPEnv(t)
+	t.Setenv("MCP_REMOTE_ENABLED", "true")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.MCPRemoteEnabled {
+		t.Error("want enabled")
+	}
+}
+
+func TestLoad_RemoteMCP_EnabledMissingVarsFails(t *testing.T) {
+	t.Setenv("MCP_PUBLIC_URL", "")
+	t.Setenv("MCP_GOOGLE_CLIENT_ID", "")
+	t.Setenv("MCP_GOOGLE_CLIENT_SECRET", "")
+	t.Setenv("MCP_ALLOWED_EMAILS", "")
+	t.Setenv("MCP_SIGNING_KEY", "")
+	t.Setenv("MCP_REMOTE_ENABLED", "true")
+	if _, err := config.Load(""); err == nil {
+		t.Fatal("want error when enabled with required vars missing")
+	}
+}
+
+func TestLoad_RemoteMCP_InvalidBoolFails(t *testing.T) {
+	t.Setenv("MCP_REMOTE_ENABLED", "maybe")
+	if _, err := config.Load(""); err == nil {
+		t.Fatal("want error for non-boolean MCP_REMOTE_ENABLED")
+	}
+}
