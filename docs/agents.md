@@ -841,7 +841,7 @@ so humans aren't paged for problems that will resolve themselves:
 - This is separate from, and complementary to, the existing per-agent-config
   rate-limit block: a `429` still blocks the *whole config* from new
   dispatches for a backoff window (protects shared credentials/quota) **and**
-  counts against the *specific task's* retry budget.
+  counts against the *specific task's* retry budget. The per-config block and its consecutive-429 backoff counter are persisted (`agent_rate_limits` table) and reloaded at startup, so a restart or deploy does not immediately re-hit a provider that just rate-limited; expired rows are pruned on boot, and a database error only logs without blocking dispatch.
 - **Turn-limit exhaustion** — the agent hit its configured `max_turns` cap
   without finishing (`claude`, `qwen_code`; see the
   [`max_turns` field](#fields) above). This is neither a genuine failure nor

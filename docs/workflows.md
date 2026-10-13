@@ -2,7 +2,7 @@
 
 A workflow is the state machine that governs how tasks progress. Each workflow contains **labels** (columns) and **transitions** (allowed moves between labels).
 
-> A condensed version of this reference is also available in the app: click the ⓘ button in the Workflow page header.
+> A condensed version of this reference is also available in the app: click the ⓘ button in the Workflow page header (Pipeline → Workflow tab).
 
 ## Labels
 
@@ -134,7 +134,7 @@ If no matching transition is defined for the current label, the endpoint returns
 
 ## Custom Workflows
 
-Create additional workflows via Settings → Workflows in the UI, or via the REST API:
+Create additional workflows via Pipeline → Workflow → New Workflow in the UI, or via the REST API:
 
 ```http
 POST /api/v1/workflows

@@ -138,6 +138,15 @@ Set `"force": true` for a **force move**: an escape hatch for a wedged task that
 
 Returns `400` if no transition exists, `403` if the transition requires human auth or the target label is `agent_ignore`, `409` if the task's active agent run is still live (`pending`/`running`) — cancel the run first (see issue #244).
 
+### `POST /tasks/{id}/side-effects/retry`
+Re-queues the task's failed side effects (branch push, PR creation, source-issue write-back). These run from a durable outbox after the label change commits, with up to 8 retries and exponential backoff; once exhausted they show as `failed`. This makes the failed rows pending again with a fresh attempt budget and the background worker picks them up immediately. Returns the task, including its `side_effects` array (the outstanding or failed effects, also returned by `GET /tasks` and `GET /tasks/{id}`). `404` if the task does not exist, `409` if it has no failed side effects. Progress is published as the `task.side_effect` WebSocket event.
+
+### `POST /tasks/{id}/source-update/apply`
+With `issue_sync_update_policy: always`, an edit to the source issue made *after* a human approved the task is held in `source_pending_update` instead of overwriting the task. This applies the held title, description and type to the task, clears the hold and publishes `task.updated`. Returns the task. `404` if the task does not exist, `409` if nothing is pending. See [task-sources.md](task-sources.md).
+
+### `DELETE /tasks/{id}/source-update`
+Discards the held source-issue edit without applying it. The same upstream text is not held again; a further edit to the issue is. Returns the task. `404` / `409` as above.
+
 ### `GET /tasks/{id}/label-history`
 Returns the task's label-transition audit trail (`task_label_history`), oldest first:
 
@@ -900,6 +909,9 @@ List files in the repository (recursive, respects `.gitignore`).
 
 ### `GET /github/auth-status`
 Returns whether GitHub CLI credentials are present (used by the frontend to show/hide GitHub-related UI). Not a hard auth check.
+
+### `POST /github/webhook`
+Optional receiver for GitHub webhook deliveries, so PR state refreshes immediately instead of waiting for the next poll. **Not behind bearer auth** (GitHub cannot send the API token): it is authenticated by the HMAC-SHA256 `X-Hub-Signature-256` header, computed with `GITHUB_WEBHOOK_SECRET`. It returns `404` while that variable is unset. Request bodies are capped at 2 MB and must be `application/json`. Responses: `200` (`pong` for a ping, `duplicate` for a repeated `X-GitHub-Delivery`), `202` accepted (matching tasks refresh in the background), `204` event not handled, `400` bad body, `401` bad signature. The payload only selects which tasks to refresh; state is always re-fetched from GitHub. Setup and the handled event list are in [task-sources.md](task-sources.md#github-webhook-optional).
 
 ---
 

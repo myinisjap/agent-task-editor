@@ -12,6 +12,7 @@ agent-task-editor/
 ├── CHANGELOG.md              # Release history; drives GitHub Release notes
 ├── openapi.yaml              # Full REST API spec
 ├── docs/                     # Feature and usage documentation
+│   ├── adr/                  # Architecture Decision Records (rationale and history; AGENTS.md files state only current rules)
 │   ├── README.md
 │   ├── overview.md
 │   ├── getting-started.md
@@ -48,21 +49,25 @@ agent-task-editor/
 │       ├── intake/           # Intake routing rules: match->apply engine shared by tasksource + schedule; leaf package, no deps beyond storage/gen
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
+│       ├── memguard/         # Last-resort memory watchdog that cancels a single runaway agent run
+│       ├── needsme/          # Single server-side definition of which tasks need a human and why (drives GET /needs-me, Inbox, badges)
 │       ├── notify/           # Optional outbound webhook when a task needs a human (NOTIFY_WEBHOOK_URL)
 │       ├── remotemcp/        # Remote MCP endpoint (/mcp, streamable HTTP) + Google-backed OAuth server for claude.ai connectors; off unless MCP_REMOTE_ENABLED=true
 │       ├── prflow/           # Push a task's branch and create/find its PR; shared by the CreatePR handler and the OnCreatePR hook (leaf: no api/handlers or workflow import)
+│       ├── scopedtoken/      # Short-lived, route-scoped bearer tokens minted for the MCP sidecars (instead of the admin API token)
 │       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code
 │       ├── tasksource/       # Task import + ongoing sync from external trackers (GitHub Issues today, via `forge.Forge`)
 │       ├── workflow/         # State machine engine
 │       ├── worktreesweep/    # Periodic reconciliation/GC of each repo's .ate-worktrees/<id> dirs
 │       ├── writeback/        # Per-repo opt-in status write-back to the source issue (label / PR comment / close)
-│       └── ws/               # WebSocket hub and client management
+│       ├── ws/               # WebSocket hub and client management
+│       └── wsevent/          # Typed payloads for every /ws event, checked against openapi.yaml by a test
 └── frontend/                 # React + TypeScript + Vite + Tailwind
     └── src/
         ├── api/              # REST client, WS client, shared types
         ├── components/       # Board, diff viewer, shared UI
-        ├── pages/            # Board, TaskDetail, Dashboard, Workflow, AgentConfig
+        ├── pages/            # Board, Inbox, TaskDetail, Pipeline (overview/workflow/agents), Settings (providers/pricing/intake/templates/health), Repos, Chat, Insights (Dashboard/Usage/Performance)
         └── stores/           # Zustand stores
 ```
 
