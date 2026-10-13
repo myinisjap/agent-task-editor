@@ -1,1 +1,1 @@
-@backend/cmd/server/AGENTS.md
+@AGENTS.md

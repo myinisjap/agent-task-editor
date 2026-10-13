@@ -100,7 +100,11 @@ func writeFeedbackSection(b *strings.Builder, input agent.RunInput) {
 	if input.Feedback == nil || *input.Feedback == "" {
 		return
 	}
-	b.WriteString("FEEDBACK FROM PRIOR REVIEW:\n")
+	// A failed repo verification already carries its own VERIFICATION FAILED:
+	// header and fenced output (agent.buildVerifyFeedback).
+	if !strings.HasPrefix(*input.Feedback, "VERIFICATION FAILED:") {
+		b.WriteString("FEEDBACK FROM PRIOR REVIEW:\n")
+	}
 	b.WriteString(stripSourceCommentsMarker(*input.Feedback))
 	b.WriteString("\n\n---\n\n")
 }

@@ -264,7 +264,9 @@ func main() {
 			text, r := dispatchTool(params.Name, params.Arguments, st, transitions)
 			if r != nil {
 				if data, err := json.Marshal(r); err == nil {
-					if err := os.WriteFile(resultFile, data, 0600); err != nil {
+					// 0660: this sidecar runs as the agent user, the server (a
+					// different uid in the same group) must be able to read it.
+					if err := os.WriteFile(resultFile, data, 0660); err != nil {
 						log.Error("write result file", "err", err)
 					}
 				}

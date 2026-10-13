@@ -159,6 +159,14 @@ var (
 		Help: "Number of repos currently in ghsync error backoff (skipped this sweep).",
 	})
 
+	// GithubWebhookEventsTotal counts GitHub webhook deliveries by event type
+	// and result (refreshed, ignored, duplicate, unmatched, invalid_signature,
+	// bad_request). event is restricted to the handled set plus "other".
+	GithubWebhookEventsTotal = factory.NewCounterVec(prometheus.CounterOpts{
+		Name: "ate_github_webhook_events_total",
+		Help: "GitHub webhook deliveries received, labeled by event type and result.",
+	}, []string{"event", "result"})
+
 	// TasksourceSweepDurationSeconds observes the wall-clock duration of each
 	// tasksource (GitHub issue import) sweep.
 	TasksourceSweepDurationSeconds = factory.NewHistogram(prometheus.HistogramOpts{

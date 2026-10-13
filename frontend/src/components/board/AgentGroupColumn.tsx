@@ -4,6 +4,7 @@ import type { Task, WorkflowLabel } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import TaskCard from './TaskCard'
+import { dropStateClass, type DropState } from './dropState'
 
 type Props = {
   labels: WorkflowLabel[]
@@ -15,6 +16,8 @@ type Props = {
   className?: string
   selectedIds?: Set<string>
   onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
+  /** While a card is being dragged: whether this column is a legal drop target. */
+  dropState?: DropState
 }
 
 /**
@@ -24,7 +27,7 @@ type Props = {
  * - Tasks show a small label badge indicating which actual column they're in.
  * - Dropping a task onto this column moves it to the first label in the group.
  */
-export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onDuplicate, className, selectedIds, onToggleSelect }: Props) {
+export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onDuplicate, className, selectedIds, onToggleSelect, dropState }: Props) {
   // Use the first label's name as the droppable id so DnD moves tasks here
   const dropId = labels[0]?.name ?? '__agent-group__'
   const { setNodeRef, isOver } = useDroppable({ id: dropId })
@@ -36,6 +39,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
       remove(taskId)
     } catch (e) {
       console.error('Failed to delete task:', e)
+      alert(String(e))
     }
   }, [remove])
 
@@ -59,9 +63,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
 
       <div
         ref={setNodeRef}
-        className={`flex-1 flex flex-col gap-3 p-2 rounded-lg min-h-[100px] transition-colors ${
-          isOver ? 'bg-slate-700/50' : 'bg-slate-800/30'
-        }`}
+        className={`flex-1 flex flex-col gap-3 p-2 rounded-lg min-h-[100px] transition-colors ${isOver && dropState !== 'illegal' ? 'bg-slate-700/50' : 'bg-slate-800/30'} ${dropStateClass(dropState)}`}
       >
         {tasks.map((task) => (
           <TaskCard

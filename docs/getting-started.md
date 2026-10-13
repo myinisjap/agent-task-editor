@@ -2,7 +2,7 @@
 
 ## Security Notice
 
-> **Agent Task Editor executes arbitrary shell commands.** AI agents run with full shell access as the server user. The defaults are permissive and intended for localhost use only.
+> **Agent Task Editor executes arbitrary shell commands.** AI agents run with full shell access, as a separate unprivileged `agent` user inside the container (see [Agent user isolation](#agent-user-isolation)), but that user can still read and write your mounted repos and `~/.claude`. The defaults are permissive and intended for localhost use only.
 >
 > For any non-localhost deployment, set `API_TOKEN`, `REPO_BASE_DIR`, and a tight `CORS_ORIGINS` before starting the stack. Run behind a reverse proxy or VPN. See the [Security section in the README](../README.md#security) for the full checklist.
 
@@ -65,7 +65,16 @@ TRAEFIK_HOST=your.domain.com ./dev.sh start
 
 The app is served at `https://your.domain.com/tasks`. TLS is handled by Traefik via Let's Encrypt. The `forward-auth` middleware (Google OAuth) is applied by default — remove that label from `docker-compose.traefik.yml` if you want the app public or use a different auth mechanism.
 
-> **Note:** The frontend nginx is the only container exposed to Traefik. It proxies `/tasks/api/` and `/tasks/ws` to the backend internally, so the backend container has no public port.
+> **Note:** The frontend nginx is the only container on `proxy_net`. It proxies `/tasks/api/` and `/tasks/ws` to `backend:8080` over the stack's private default network, so the backend has no public port and is not reachable from other containers on `proxy_net`. Don't attach the backend to `proxy_net`: with no `API_TOKEN` set, every neighbouring container could then drive the API. (The private network is deliberately not `internal: true`, because agents need outbound access to git remotes and model APIs.)
+
+## Set an API Token in Production
+
+With no `API_TOKEN`/`API_TOKENS`, the backend accepts unauthenticated requests from anything that can reach port 8080: other containers on a shared Docker network, LAN peers if `ATE_BIND_ADDR` is widened, and agent processes via `localhost:8080`. That API can register repos and start shell-executing agent runs, so set a token for any deployment that is not a single-user laptop.
+
+- `./run.sh` generates a random `API_TOKEN` into `.env` on first start if neither variable is set (it never overwrites an existing value) and prints it. The board asks for it once on first load; paste it in. API clients send `Authorization: Bearer <token>`.
+- Otherwise set it yourself: `echo "API_TOKEN=$(openssl rand -hex 32)" >> .env`, then restart. Both compose files pass `API_TOKEN` and `API_TOKENS` through from `.env`/your shell.
+- The backend logs a `SECURITY:` warning at startup when no token is set and it listens on all interfaces (it always binds `:PORT` inside the container; the host-side publish is loopback-only unless you set `ATE_BIND_ADDR`). The same condition shows as an "API authentication" warning on the Health page. `/healthz` and `/readyz` are unaffected, so container healthchecks keep passing.
+- To check what a running deployment uses: `docker exec <backend-container> printenv API_TOKEN` (empty output or exit status 1 means no token is set). Also check `API_TOKENS`.
 
 ## Backend Resilience: Restart Policy, Readiness, and Memory Limit
 
@@ -74,6 +83,10 @@ The `backend` service in `docker-compose.yml` / `docker-compose.release.yml` is 
 - `restart: unless-stopped` — the container is restarted automatically after a crash or OOM kill (and on daemon restart), unless you've explicitly stopped it.
 - A healthcheck against `GET /readyz` (not `/healthz`) — this actually checks DB connectivity and that the dispatch loop is still ticking, so Docker detects a wedged backend (e.g. a locked SQLite file or a hung sweep) instead of it appearing healthy forever. See [`docs/api.md`](api.md#get-readyz).
 - A default memory ceiling of **4 GB** via `deploy.resources.limits.memory` — headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to, including memory-hungry steps like a frontend test suite running under several concurrent agents. If you run many concurrent agent runs and still hit this ceiling (the container gets OOM-killed and auto-restarts), raise `memory:` under the backend service's `deploy.resources.limits` in your compose file.
+
+## Single-replica deployment
+
+Run exactly one backend replica. Some state is held in process memory (WebSocket tickets, the notify webhook debounce, chat terminal PTYs), so horizontal scaling is not supported. Agent rate-limit blocks are persisted and survive restarts.
 
 ## Environment Variables
 
@@ -88,12 +101,17 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `DB_PATH` | `agent-task-editor.db` | SQLite database file path |
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth. Requests using this token are recorded anonymously (no actor name) in the label history audit trail — see `API_TOKENS` below for named tokens. |
 | `API_TOKENS` | _(empty)_ | Comma-separated named bearer tokens, format `name1:token1,name2:token2`. Any of these tokens authenticates like `API_TOKEN`, but the matching name is recorded as the actor in `task_label_history.actor_id` for human-triggered transitions (approve/reject/move label), and surfaced via `GET /tasks/{id}/label-history`. Can be combined with `API_TOKEN` (kept for backward compatibility as an anonymous fallback). If the same token string is reused across multiple names, the last one loaded wins. |
-| `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated (see [Metrics](#metrics)) |
+| `METRICS_TOKEN` | _(empty)_ | Dedicated bearer token for `GET /metrics`. Empty = the API token(s) are required when `API_TOKEN`/`API_TOKENS` is set, otherwise open (see [Metrics](#metrics)) |
+| `METRICS_PUBLIC` | `false` | `true` leaves `GET /metrics` unauthenticated even when API auth is configured and `METRICS_TOKEN` is unset |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8080` | Comma-separated allowed origins; set to `*` explicitly to allow any origin (not recommended outside trusted single-user localhost use) |
+| `ALLOWED_HOSTS` | _(empty)_ | Comma-separated extra `Host` header values (hostname or `host:port`) accepted **only while no `API_TOKEN`/`API_TOKENS` is set** — DNS-rebinding protection for unauthenticated instances. Always allowed: `localhost`, `127.0.0.1`, `::1`, `backend`, any IP literal, and the hostnames in `CORS_ORIGINS`. Set it if you reach an unauthenticated instance by a custom name (e.g. `ate.lan`); rejected requests get a 403 naming this variable. `*` disables the check. Ignored (check off) when a token is configured. |
 | `MAX_WORKERS` | `5` | Maximum concurrent agent runs |
 | `ISSUE_SYNC_INTERVAL` | `60s` | Poll interval for the GitHub Issues importer ([task-sources.md](task-sources.md)) |
 | `SCHEDULE_INTERVAL` | `30s` | Poll interval for the recurring task-schedule sweep ([task-templates.md](task-templates.md#recurring-schedules)) |
 | `CONFIG_FILE` | _(empty)_ | Path to a YAML config file (all keys are optional) |
+| `AGENT_ISOLATION` | `true` | Run provider CLIs (task runs, chat terminals) as a separate unprivileged `agent` user. `false` runs them as the server user. See [Agent user isolation](#agent-user-isolation). |
+| `AGENT_UID` | `10001` | uid of the `agent` account (set by `entrypoint.sh`; bumped to `10002` if it equals `PUID`). Its gid is always `PGID`. |
+| `AGENT_FIX_REPO_PERMS` | `auto` | `auto`: at startup add group-write (`chmod -R g+rwX`) to each repo directly under `REPO_BASE_DIR` whose top-level dir isn't already group-writable. `always`: re-walk every start. `never`: skip (manage permissions yourself). |
 
 ### Cost Controls
 
@@ -135,8 +153,12 @@ These are read directly via `os.Getenv` by `internal/forge/gitea`, not through t
 |---|---|---|
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, and `codex_cli` providers). |
 | `MCP_BOARD_PATH` | _(empty)_ | Path to the `mcp-board` binary. Enables the board tools (`list_repos`/`list_workflows`/`create_task`) inside Chat-tab sessions, so a chat can create tickets. Set automatically by the Docker images and `./dev.sh dev`. See [board-mcp.md](board-mcp.md). |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` provider (any OpenAI-compat API). **Deprecated**: the `llm` provider is disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using it. |
-| `LLM_API_KEY` | _(empty)_ | API key for the `llm` or `anthropic` providers. **Deprecated**: both providers are disabled for new/updated provider configs and may be removed in a future release; this only matters for existing configs still using them. |
+
+### Shutdown
+
+| Variable | Default | Description |
+|---|---|---|
+| `SHUTDOWN_DRAIN_TIMEOUT` | `60s` | On SIGTERM/SIGINT, how long in-flight agent runs may keep going (no new runs start) before the remainder are cancelled and recorded as `interrupted`. `0` interrupts immediately. Interrupted runs are not failures: the task stays on its label, its lock is released, and it re-dispatches after restart (resuming the provider session when the agent config has `resume_sessions` on and the provider supports it, otherwise re-running normally). Runs left running by a crash or SIGKILL become `interrupted` on the next boot. Set your container's stop grace period (docker compose `stop_grace_period`) above this value or the runtime will SIGKILL mid-drain. |
 
 ### Chat Terminal Sessions
 
@@ -182,10 +204,9 @@ api_tokens:
   alice: tok-alice
   bob: tok-bob
 metrics_token: ""
+metrics_public: false
 cors_origins: "*"
 mcp_server_path: /path/to/mcp-server
-llm_base_url: https://api.openai.com/v1
-llm_api_key: ""
 max_workers: 5
 repo_base_dir: /repos
 upload_dir: /data/uploads
@@ -197,9 +218,9 @@ backup_keep: 7
 
 ### Authentication
 
-Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this using a runtime token (see below), not a build-time one. A deprecated `?token=<value>` fallback still works for non-browser clients or old cached frontends, but should not be relied on for new setups.
+Set `API_TOKEN` to require an `Authorization: Bearer <token>` header on all API requests. Since browsers cannot set custom headers on WebSocket upgrades, WS connections instead first `POST /api/v1/ws-ticket` (Bearer-authed) to mint a short-lived, single-use ticket, then connect with `?ticket=<value>` — see [websocket.md](websocket.md). The frontend does this using a runtime token (see below), not a build-time one. The former `?token=<value>` query-string fallback has been removed (it leaked the token into proxy logs and browser history); non-browser clients must use the ticket flow too.
 
-To identify *who* performed a human-triggered transition (approve/reject/move label) in the audit trail, set `API_TOKENS` (format `name1:token1,name2:token2`, or the `api_tokens` map in the YAML config) instead of, or alongside, `API_TOKEN`. Each named token authenticates the same way, but the resolved name is recorded as `actor_id` in `task_label_history` and returned by `GET /tasks/{id}/label-history`. `API_TOKEN` remains supported as a legacy/anonymous fallback — requests using it are recorded with an empty actor, exactly as before this feature existed. Note: the `/ws` WebSocket endpoint currently only supports the single legacy `API_TOKEN` for its `?token=` query param check, not named tokens.
+To identify *who* performed a human-triggered transition (approve/reject/move label) in the audit trail, set `API_TOKENS` (format `name1:token1,name2:token2`, or the `api_tokens` map in the YAML config) instead of, or alongside, `API_TOKEN`. Each named token authenticates the same way, but the resolved name is recorded as `actor_id` in `task_label_history` and returned by `GET /tasks/{id}/label-history`. `API_TOKEN` remains supported as a legacy/anonymous fallback — requests using it are recorded with an empty actor, exactly as before this feature existed. Named tokens work with `POST /api/v1/ws-ticket` like any other API route.
 
 **Frontend token entry.** Once `API_TOKEN` is set on the backend, the first API request the UI makes will come back `401`, and the UI shows a simple one-field "enter API token" screen instead of a broken board. Enter the token once; it's stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on every subsequent request and WS ticket mint, for every page (board, task detail incl. the live log stream, workflows, agents, repos, health, backup download). A wrong or expired token sends you back to that screen rather than leaving the UI in a broken state. With `API_TOKEN` unset, no prompt ever appears. This is a runtime flow — it works with the prebuilt/GHCR image exactly the same as a locally built one, since nothing needs to be baked in at build time.
 
@@ -219,9 +240,10 @@ VITE_API_TOKEN=your-token-here
 state, run/cost/token counters, WebSocket hub stats, GitHub sync sweep durations
 and `gh` call counts, plus standard Go runtime metrics) — point a Prometheus
 scrape config at it. It's served at the server root (not under `/api/v1`) and is
-**not** gated by `API_TOKEN`; set `METRICS_TOKEN` if you need to lock it down
-independently (e.g. when the backend port is reachable beyond your Prometheus
-instance). See [api.md](api.md#get-metrics) for the full metric list.
+gated like the API: with `API_TOKEN`/`API_TOKENS` configured it requires one of
+those tokens (`Authorization: Bearer ...`), unless you set a dedicated
+`METRICS_TOKEN` for Prometheus or opt out with `METRICS_PUBLIC=true`. With no
+auth configured it is open. See [api.md](api.md#get-metrics) for the full metric list.
 
 ## Provider-Specific Setup
 
@@ -245,17 +267,11 @@ break both `./dev.sh login` and host-side `claude` for first-time users — both
 pre-create `~/.claude.json` as an empty file (if missing) before invoking Docker Compose, so
 this doesn't happen.
 
-### Anthropic API (`anthropic` provider) — deprecated
+### Removed providers (`anthropic`, `llm`)
 
-**Disabled for new/updated provider configs and may be removed in a future release.** Not offered in the UI's
-provider dropdown; existing configs continue to run. Set `LLM_API_KEY` to your Anthropic API key. No binary
-needed. See [providers/anthropic.md](providers/anthropic.md).
-
-### OpenAI / LLM (`llm` provider) — deprecated
-
-**Disabled for new/updated provider configs and may be removed in a future release.** Not offered in the UI's
-provider dropdown; existing configs continue to run. Set `LLM_BASE_URL` and `LLM_API_KEY`. Works with any
-OpenAI-compatible API. See [providers/llm.md](providers/llm.md).
+The direct-API `anthropic` and `llm` providers were removed in v0.17.0. `LLM_API_KEY`/`LLM_BASE_URL` are no longer read. Configs
+still on them fail at dispatch until switched to `claude`, `codex_cli`, `opencode` or `qwen_code` — see
+[providers/anthropic.md](providers/anthropic.md).
 
 ### Opencode (`opencode` provider)
 
@@ -279,6 +295,53 @@ volumes:
 ```
 
 Then register repos using paths under `/repos` in the UI (or via the API), and set `REPO_BASE_DIR=/repos` to prevent agents from escaping that subtree.
+
+## Agent user isolation
+
+The server and the agents it launches used to run as the same OS user, so a
+prompt-injected agent could read `/data` (the SQLite DB), the server's
+environment through `/proc/<pid>/environ` (`API_TOKEN`, `GITHUB_TOKEN`, provider
+keys) and `~/.config/gh`. Provider CLIs (headless runs, chat terminals, the
+deprecated providers' `run_bash`/search tools) now run as a separate
+unprivileged `agent` user. The server, `git`/`gh` calls it makes for push, PR
+creation and PR sync, and the `mise`/`uv` toolchain installs stay on the server
+user (`node`).
+
+How it works:
+
+- `entrypoint.sh` creates/remaps `agent` (uid `AGENT_UID`, default `10001`;
+  primary group = node's group, i.e. `PGID`) and starts the server as `node`
+  with `CAP_SETUID`, `CAP_SETGID` and `CAP_KILL` as ambient capabilities
+  (`setpriv`). The server uses them to start each agent process with the agent
+  uid/gid and to cancel it later.
+- Those capabilities are **not** given to agents: every agent command is wrapped
+  in `setpriv --inh-caps=-all --ambient-caps=-all`, so the CLI starts with empty
+  capability sets and cannot switch back to `node`. At startup the server
+  verifies this with a live probe (uid correct, all capability sets empty) and
+  disables isolation with an error if the check fails.
+- The server's own children (`git`, `gh`, `mise`, `uv`, ...) are wrapped the same way via `agentuser.ServerCommand`, so a hook or config an agent plants in a repo (`core.fsmonitor`, `core.hooksPath`, ...) never runs with those capabilities; only the server process itself holds them (a source-scanning test rejects raw `exec.Command` elsewhere).
+- `/data` is `0700 node`; the server's `~/.config/gh` is not readable by `agent`;
+  the agent has its own `HOME=/home/agent` (own `.gitconfig`).
+- Shared by group (`PGID`, with `umask 002`): bind-mounted repos and
+  `.ate-worktrees/`, the `mise`/`uv`/Go caches, the qwen home, per-run temp dirs
+  (MCP config/result, `CODEX_HOME`). At startup the entrypoint adds the group
+  write bit to repos under `REPO_BASE_DIR` (`AGENT_FIX_REPO_PERMS`) and to
+  `~/.claude` / `~/.claude.json`, which stay mounted read-write and fully usable
+  by the agent (Claude writes sessions and refreshes tokens there). The compose
+  files mount them a second time under `/home/agent`; older compose files still
+  work through symlinks.
+- Fallback, never a startup failure: if the server cannot switch users
+  (`AGENT_ISOLATION=false`, running outside Docker such as `./dev.sh dev`, a
+  compose `user:` override, dropped capabilities) agents run as the server user
+  and the log says why (`agent user isolation is OFF`).
+
+Caveats: files agents create are owned by `agent:<PGID>` (group-writable, so you
+and the server can edit them). Tools that create directories with a hard-coded
+`0755` (ignoring the umask) leave them non-writable by the server/host user;
+worktree cleanup of such a tree may need `chmod -R g+w`. If your repos live in a
+group other than `PGID`, set `AGENT_FIX_REPO_PERMS=never` and grant the agent
+access yourself. `~/.claude` is still writable by agents by design, so Claude
+credentials are not protected from them.
 
 ## Supported Languages & Extending the Toolchain
 
@@ -332,7 +395,7 @@ docker compose build backend
 
 **A note on the switch from Alpine:** the image used to be Alpine-based (`node:26-alpine`, `musl libc`), which meant some prebuilt binaries (certain Rust crates, precompiled CLI tools, some Python wheels expecting `glibc`) needed workarounds or wouldn't run at all. The image moved to `node:26-bookworm-slim` (Debian, `glibc`) specifically so `mise`'s prebuilt python/ruby/java toolchains work — see [runtime.md](runtime.md). That also removes the Alpine/glibc caveat for anything you add to the image yourself: Debian packages and most prebuilt Linux binaries work without the `gcompat` workaround Alpine used to need.
 
-Remember to make sure any new tool's cache/config directories are writable by the `node` user. The container runs as `node`, which `backend/entrypoint.sh` remaps to your host `PUID`/`PGID` at startup and `chown`s the state dirs (`/data`, `/app`, the Go caches, `mise`/`uv`'s caches under `/home/node`) accordingly. If your tool writes elsewhere under `/home/node`, add it to that `chown` list — otherwise agents will hit permission errors the first time they invoke the tool.
+Remember to make sure any new tool's cache/config directories are writable by the `node` user and, because agents run as the `agent` user in `node`'s group, group-writable (see [Agent user isolation](#agent-user-isolation); add them to the `group_rw` list in `entrypoint.sh`). The container runs as `node`, which `backend/entrypoint.sh` remaps to your host `PUID`/`PGID` at startup and `chown`s the state dirs (`/data`, `/app`, the Go caches, `mise`/`uv`'s caches under `/home/node`) accordingly. If your tool writes elsewhere under `/home/node`, add it to that `chown` list — otherwise agents will hit permission errors the first time they invoke the tool.
 
 ## Local Development
 
@@ -391,10 +454,11 @@ Set `MCP_SERVER_PATH=/path/to/mcp-server` in the backend environment. `./dev.sh 
 
 ## First Steps After Startup
 
-1. **Register a repository** — go to Settings → Repos → Add Repo. Enter the local filesystem path of the repository agents should work in.
-2. **Create an agent config** — go to Settings → Agents → New Agent. Select a provider, enter a model name, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
+1. **Register a repository** — go to Repos → Add Repo. Enter the local filesystem path of the repository agents should work in.
+2. **Staff the default workflow** — the default workflow needs an agent on every agent-driven stage (`plan`, `work`, `testing`, `agent-review`), so a single agent config isn't enough: the next task would stall with "No agent config". The Board's Get started checklist has a one-click **Create Planner, Worker, Tester, Reviewer** button that builds the missing ones from the built-in templates against the provider config you pick (it is disabled until a provider exists). To do it by hand, go to Pipeline → Agents → New Agent. Select a provider, enter a model name, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
 3. **Create a task** — go to the Board, click New Task. Select the repo and fill in the title/description. To create a variant of an existing task instead, use the "⧉ Duplicate" action (task detail header or a board card's hover controls) to open the same form pre-filled from that task.
 4. **Move it to `plan`** — drag it or use the label selector. The dispatcher will pick it up within 5 seconds and start an agent run.
 5. **Watch the logs** — click on the task to open the detail view; live logs stream in real time.
+6. **Review and open a PR** — in the default workflow, the `review` label is marked `create_pr`: when a task reaches `review`, the backend pushes its `ate-…` branch and opens (or reuses) a pull request. This needs a repo with a GitHub or Gitea remote (`remote_url`) and working push/`gh` auth; on a local-only repo it is skipped with a log line and the task is unaffected. Approve then moves the task to `done`. To open the PR yourself (or retry after a failure), use the **Create PR** button in the task detail header or the Diff tab. Workflows that already exist keep their current settings; fresh installs only get this default. See `docs/workflows.md`.
 
-> **In-app guidance:** until the instance is fully set up, the Board shows a dismissible onboarding checklist that walks through these steps in order (add a repo → configure a provider → create an agent config → create your first task), checking each one off automatically as it's completed. It also surfaces any failing `/health/providers` readiness check (e.g. Claude CLI not authenticated) inline against the step it blocks, so problems show up where you're already looking instead of only on the Health page. Dismiss it any time — it stays dismissed, and it stops appearing on its own once every step passes.
+> **In-app guidance:** until the instance is fully set up, the Board shows a dismissible onboarding checklist that walks through these steps in order (add a repo → configure a provider → staff the default workflow → create your first task), checking each one off automatically as it's completed. It also surfaces any failing `/health/providers` readiness check (e.g. Claude CLI not authenticated) inline against the step it blocks, so problems show up where you're already looking instead of only on the Health page. Dismiss it any time — it stays dismissed, and it stops appearing on its own once every step passes. Until setup is complete (and unless you dismiss the checklist), opening the app at `/` takes you to the Board instead of the Overview; the Overview is always at `/dashboard`. Failing readiness checks stay visible after the checklist is gone: a banner across the top of every page lists them, and the Settings nav item (plus the Health tab inside Settings) shows a red/amber dot until they pass.

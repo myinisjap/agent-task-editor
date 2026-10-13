@@ -62,6 +62,82 @@ func TestMergeEnv_BlocksDangerousKeys(t *testing.T) {
 	}
 }
 
+// TestMergeEnv_BlocksPatternsMixedCase covers every exact, prefix and
+// trust-store pattern with mixed-case keys (N5 / #342).
+func TestMergeEnv_BlocksPatternsMixedCase(t *testing.T) {
+	keys := []string{
+		"Node_Options", "node_path", "Bash_Env", "env", "ENV",
+		"Git_Ssh_Command", "git_config_count", "GIT_CONFIG_KEY_0", "Git_Exec_Path", "GIT_ASKPASS",
+		"PythonPath", "pythonstartup", "PYTHONHOME", "Perl5Lib", "perl5opt", "RubyOpt", "rubylib",
+		"Java_Tool_Options", "_java_options", "Dyld_Insert_Libraries", "dyld_foo",
+		"Ld_Preload", "ld_audit", "LD_LIBRARY_PATH",
+		"Ssl_Cert_File", "ssl_cert_dir", "Node_Extra_Ca_Certs", "requests_ca_bundle", "Curl_Ca_Bundle",
+		"Path", "home", "Shell", "ifs",
+	}
+	for _, k := range keys {
+		t.Run(k, func(t *testing.T) {
+			if !isDangerousEnvKey(k) {
+				t.Fatalf("isDangerousEnvKey(%q) = false, want true", k)
+			}
+			out := mergeEnv([]string{"EXISTING=1"}, map[string]string{k: "evil"})
+			if len(out) != 1 || out[0] != "EXISTING=1" {
+				t.Fatalf("mergeEnv(%q) leaked key: %v", k, out)
+			}
+		})
+	}
+}
+
+// TestMergeEnv_PassesBenignLookalikes ensures near-miss keys are not blocked.
+// *_BASE_URL is intentionally allowed (provider-config base URL feature).
+func TestMergeEnv_PassesBenignLookalikes(t *testing.T) {
+	for _, k := range []string{"MY_VAR", "GOFLAGS", "NPM_CONFIG_REGISTRY", "ENVIRONMENT", "ENV_NAME", "GITHUB_TOKEN", "GITLAB_URL", "OLD_LD_FOO", "NODE_ENV", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"} {
+		if isDangerousEnvKey(k) {
+			t.Errorf("isDangerousEnvKey(%q) = true, want false", k)
+		}
+		out := mergeEnv(nil, map[string]string{k: "v"})
+		if len(out) != 1 || out[0] != k+"=v" {
+			t.Errorf("mergeEnv(%q) = %v, want pass-through", k, out)
+		}
+	}
+}
+
+// TestProviderBaseEnv_InheritedGitAndTLSNotStripped verifies the filter only
+// applies to user-supplied env: backend-inherited GIT_SSL_*/CA vars survive.
+func TestProviderBaseEnv_InheritedGitAndTLSNotStripped(t *testing.T) {
+	t.Setenv("GIT_SSL_CAINFO", "/ca.pem")
+	t.Setenv("GIT_SSL_NO_VERIFY", "true")
+	t.Setenv("NODE_EXTRA_CA_CERTS", "/ca.pem")
+	t.Setenv("SSL_CERT_FILE", "/ca.pem")
+	out := mergeEnv(providerBaseEnv(claudeEnvAllowlist), map[string]string{"GIT_SSH_COMMAND": "evil", "MY_VAR": "1"})
+	joined := "\n" + strings.Join(out, "\n") + "\n"
+	for _, want := range []string{"GIT_SSL_CAINFO=/ca.pem", "GIT_SSL_NO_VERIFY=true", "NODE_EXTRA_CA_CERTS=/ca.pem", "SSL_CERT_FILE=/ca.pem", "MY_VAR=1"} {
+		if !strings.Contains(joined, "\n"+want+"\n") {
+			t.Errorf("expected %q in env", want)
+		}
+	}
+	if strings.Contains(joined, "GIT_SSH_COMMAND") {
+		t.Error("user-supplied GIT_SSH_COMMAND leaked")
+	}
+}
+
+// TestDropInheritedEnv verifies inherited credentials are dropped when a base
+// URL is overridden, but credentials supplied by the user env are kept.
+func TestDropInheritedEnv(t *testing.T) {
+	env := []string{"ANTHROPIC_API_KEY=host", "KEEP=1"}
+	out := dropInheritedEnv(env, map[string]string{"ANTHROPIC_BASE_URL": "https://litellm"}, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+	if !reflect.DeepEqual(out, []string{"KEEP=1"}) {
+		t.Errorf("got %v", out)
+	}
+	env = []string{"ANTHROPIC_API_KEY=user"}
+	out = dropInheritedEnv(env, map[string]string{"anthropic_api_key": "user"}, "ANTHROPIC_API_KEY")
+	if !reflect.DeepEqual(out, env) {
+		t.Errorf("user-supplied key dropped: %v", out)
+	}
+	if !envOverridesKey(map[string]string{"Anthropic_Base_Url": "x"}, "ANTHROPIC_BASE_URL") || envOverridesKey(map[string]string{"ANTHROPIC_BASE_URL": " "}, "ANTHROPIC_BASE_URL") {
+		t.Error("envOverridesKey wrong")
+	}
+}
+
 // TestMergeEnv_BlocksDangerousKeys_CaseInsensitive verifies the block applies
 // regardless of the case the caller used for the key (mergeEnv upper-cases
 // before checking dangerousEnvKeys).

@@ -9,6 +9,7 @@
 #   ATE_VERSION=v1.2.3 ./run.sh    # pin a specific release
 #   ./run.sh --repo-dir ~/code start
 #   ./run.sh --all-cli             # run the backend image with Codex/Qwen CLIs preinstalled
+#   ./run.sh --with-remote-mcp     # opt in to the remote MCP connector (needs TRAEFIK_HOST + MCP_* in .env)
 
 # Exit on error/unset var/failed pipeline.
 set -euo pipefail
@@ -23,14 +24,14 @@ fi
 # Image tag to run. Override with ATE_VERSION=v1.2.3 (or a bare "1.2.3").
 export ATE_VERSION=${ATE_VERSION:-latest}
 
-export LLM_BASE_URL=${LLM_BASE_URL:-"http://host.docker.internal:8081/v1"}
-
 # Parse optional --repo-dir <path> / --all-cli flags before the command.
 ALL_CLI=false
+WITH_REMOTE_MCP=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-dir) REPO_BASE_DIR="$2"; shift 2 ;;
     --all-cli) ALL_CLI=true; shift ;;
+    --with-remote-mcp) WITH_REMOTE_MCP=true; shift ;;
     *) break ;;
   esac
 done
@@ -88,9 +89,25 @@ if [[ -n "${SSL_CA_CERT_PATH:-}" ]]; then
   export SSL_CA_CERT_PATH="$(cd "$(dirname "$SSL_CA_CERT_PATH")" && pwd)/$(basename "$SSL_CA_CERT_PATH")"
 fi
 
+# Remote MCP (claude.ai connector) is strictly opt-in: only --with-remote-mcp
+# turns it on. Force the value so a stray MCP_REMOTE_ENABLED=true in .env
+# can't enable it without the flag. See docs/board-mcp.md#remote-connector.
+if [[ "$WITH_REMOTE_MCP" == "true" ]]; then
+  export MCP_REMOTE_ENABLED=true
+else
+  export MCP_REMOTE_ENABLED=false
+fi
+
 COMPOSE="docker compose -f docker-compose.release.yml"
 if [[ -n "${TRAEFIK_HOST:-}" ]]; then
   COMPOSE="$COMPOSE -f docker-compose.traefik.yml"
+fi
+if [[ "$WITH_REMOTE_MCP" == "true" ]]; then
+  if [[ -n "${TRAEFIK_HOST:-}" ]]; then
+    COMPOSE="$COMPOSE -f docker-compose.mcp-remote.yml"
+  else
+    echo "Warning: --with-remote-mcp enables the backend feature, but the public route needs TRAEFIK_HOST (docker-compose.traefik.yml); no public route added"
+  fi
 fi
 
 # Extract GH token from gh CLI (keyring or hosts.yml) if not already set.
@@ -129,10 +146,50 @@ fi
 mkdir -p "$HOME/.claude"
 [ -e "$HOME/.claude.json" ] || : > "$HOME/.claude.json"
 
+# Make sure the API is not left open. With no API_TOKEN/API_TOKENS the backend
+# accepts unauthenticated requests from anything that can reach port 8080 (other
+# containers on shared Docker networks, LAN peers if ATE_BIND_ADDR is widened),
+# and that API can register repos and run shell-executing agents. On first run
+# generate a random API_TOKEN into .env. Never touches an existing value. The UI
+# shows a one-field "enter API token" screen on its first 401; paste the printed
+# token there once (it is kept in the browser's localStorage).
+ensure_api_token() {
+  if [[ -n "${API_TOKEN:-}" || -n "${API_TOKENS:-}" ]]; then
+    return 0
+  fi
+  local envfile token
+  envfile="$(dirname "$0")/.env"
+  if command -v openssl &>/dev/null; then
+    token=$(openssl rand -hex 32)
+  else
+    token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  fi
+  if [[ -z "$token" ]]; then
+    echo "WARNING: API_TOKEN is not set and a token could not be generated automatically."
+    echo "         The API is unauthenticated. Generate one with:"
+    echo "           echo \"API_TOKEN=\$(openssl rand -hex 32)\" >> .env"
+    return 0
+  fi
+  # Keep the file private and make sure we start on a fresh line.
+  if [[ -s "$envfile" && -n "$(tail -c1 "$envfile")" ]]; then echo >> "$envfile"; fi
+  ( umask 077; printf 'API_TOKEN=%s\n' "$token" >> "$envfile" )
+  export API_TOKEN="$token"
+  echo ""
+  echo "  No API_TOKEN was set, so one was generated and saved to $envfile:"
+  echo ""
+  echo "    API_TOKEN=$token"
+  echo ""
+  echo "  The board will ask for this token the first time you open it; paste it in once."
+  echo "  API clients must send:  Authorization: Bearer <token>"
+  echo "  To use your own value, edit API_TOKEN in .env (or set API_TOKENS for named tokens)."
+  echo ""
+}
+
 CMD=${1:-start}
 
 case "$CMD" in
   start)
+    ensure_api_token
     $COMPOSE up -d --pull always
     echo ""
     echo "  Running images:"
@@ -149,6 +206,7 @@ case "$CMD" in
     $COMPOSE down
     ;;
   restart)
+    ensure_api_token
     $COMPOSE down
     $COMPOSE up -d --pull always
     ;;
@@ -165,7 +223,7 @@ case "$CMD" in
     $COMPOSE exec --user node backend sh
     ;;
   *)
-    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [start|pull|stop|restart|logs|login|shell]"
+    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [--with-remote-mcp] [start|pull|stop|restart|logs|login|shell]"
     exit 1
     ;;
 esac

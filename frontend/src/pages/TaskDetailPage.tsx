@@ -6,9 +6,12 @@ import { useAgentsStore } from '../stores/agents'
 import DependenciesPanel from '../components/DependenciesPanel'
 import SubtasksPanel from '../components/SubtasksPanel'
 import TaskHeader from '../components/task-detail/TaskHeader'
+import { humanActionsFor } from '../lib/humanGate'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
+import ForceMoveControl from '../components/task-detail/ForceMoveControl'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
+import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
@@ -31,6 +34,9 @@ export default function TaskDetailPage() {
   const [rejectNote, setRejectNote] = useState('')
   const [replyText, setReplyText] = useState('')
   const [actionPending, setActionPending] = useState(false)
+  // Run whose escalation the user already retried; hides its banner until the
+  // re-dispatched run shows up and is selected.
+  const [retriedRunId, setRetriedRunId] = useState<string | null>(null)
   const [creatingPR, setCreatingPR] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [showHelp, setShowHelp] = useState(false)
@@ -45,12 +51,14 @@ export default function TaskDetailPage() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [duplicating, setDuplicating] = useState(false)
   // Set once a task.cost_warning event arrives for this task (crossed the
   // early-warning threshold — see GET/PUT /settings/cost-warning). Cleared
   // on label change (new lifecycle stage) so a stale warning from a prior
   // stage/run doesn't linger indefinitely.
   const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
+  const [verificationKey, setVerificationKey] = useState(0)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
@@ -166,7 +174,16 @@ export default function TaskDetailPage() {
     wsClient.subscribeTask(id)
 
     const off = wsClient.on((event) => {
-      if (event.type === 'task.label_changed' && event.payload.task_id === id) {
+      if (event.type === 'resync') {
+        // Dropped events or a reconnect: refetch everything this page derives
+        // from WS events.
+        refreshTask()
+        refreshRuns()
+        refreshComments()
+        refreshLabelHistory()
+        refreshSourceComments()
+        setVerificationKey((k) => k + 1)
+      } else if (event.type === 'task.label_changed' && event.payload.task_id === id) {
         setEditingTask(false)
         setCostWarning(null)
         refreshTask()
@@ -184,6 +201,8 @@ export default function TaskDetailPage() {
         )
         refreshTask()
         refreshComments()
+      } else if (event.type === 'task.verification' && event.payload.task_id === id) {
+        setVerificationKey((k) => k + 1)
       } else if (event.type === 'task.review_comments_changed' && event.payload.task_id === id) {
         refreshComments()
       } else if (event.type === 'task.needs_human' && event.payload.task_id === id) {
@@ -210,13 +229,15 @@ export default function TaskDetailPage() {
   }, [id, refreshTask, refreshRuns, refreshComments, refreshLabelHistory, refreshSourceComments])
 
   const activeRun = runs.find((r) => r.id === selectedRun)
-  const needsHuman = activeRun?.status === 'waiting_human'
+  const needsHuman = activeRun?.status === 'waiting_human' && activeRun.id !== retriedRunId
   const isRunning = activeRun?.status === 'running'
   const latestRun = runs[0]
-  const canRerun = !!(latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed' || latestRun.status === 'cancelled'))
+  const canRerun = !!(latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed' || latestRun.status === 'cancelled' || latestRun.status === 'interrupted'))
   const isHumanGateLabel = task
     ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
     : false
+
+  const humanActions = humanActionsFor(workflow ?? undefined, task?.label)
 
   const isStartingColumn = task && workflow
     ? [...(workflow.labels ?? [])].sort((a, b) => a.sort_order - b.sort_order)[0]?.name === task.label
@@ -274,6 +295,23 @@ export default function TaskDetailPage() {
     }
   }
 
+  // Retry from an escalation banner: same re-dispatch as Rerun, but errors
+  // show inline in the banner rather than in an alert().
+  const handleRetryEscalation = async () => {
+    if (!id || !selectedRun) return
+    setActionError('')
+    setActionPending(true)
+    try {
+      await api.tasks.rerun(id)
+      setRetriedRunId(selectedRun)
+      refreshRuns()
+    } catch (e: any) {
+      setActionError(e.message ?? String(e))
+    } finally {
+      setActionPending(false)
+    }
+  }
+
   // handleStop requests cancellation of the running agent run. The pool marks
   // the run "cancelled" and pauses the task; the resulting task.agent_done WS
   // event refreshes the run list and task, so we just fire the request.
@@ -296,6 +334,7 @@ export default function TaskDetailPage() {
   // The task stays on its label — this is a conversation, not a transition.
   const handleReply = async () => {
     if (!id || !selectedRun || !replyText.trim()) return
+    setActionError('')
     setActionPending(true)
     try {
       const res = await api.tasks.replyRun(id, selectedRun, replyText.trim())
@@ -304,7 +343,7 @@ export default function TaskDetailPage() {
       setSelectedRun(res.run_id)
       refreshRuns()
     } catch (e: any) {
-      alert(e.message)
+      setActionError(e.message ?? String(e))
     } finally {
       setActionPending(false)
     }
@@ -312,13 +351,14 @@ export default function TaskDetailPage() {
 
   const handleApprove = async () => {
     if (!id) return
+    setActionError('')
     setActionPending(true)
     try {
       const updated = await api.tasks.approve(id)
       setTask(updated)
       refreshRuns()
     } catch (e: any) {
-      alert(e.message)
+      setActionError(e.message ?? String(e))
     } finally {
       setActionPending(false)
     }
@@ -328,6 +368,7 @@ export default function TaskDetailPage() {
     // Open review comments are persisted server-side and injected into the
     // next run's prompt directly — only the free-text note travels here.
     if (!id || (!rejectNote.trim() && openComments.length === 0)) return
+    setActionError('')
     setActionPending(true)
     try {
       const updated = await api.tasks.reject(id, rejectNote.trim())
@@ -335,7 +376,7 @@ export default function TaskDetailPage() {
       setRejectNote('')
       refreshRuns()
     } catch (e: any) {
-      alert(e.message)
+      setActionError(e.message ?? String(e))
     } finally {
       setActionPending(false)
     }
@@ -475,6 +516,7 @@ export default function TaskDetailPage() {
               onSyncGitState={handleSyncGitState}
               onBack={() => navigate('/board')}
               labels={workflow?.labels ?? []}
+              transitions={workflow?.transitions ?? []}
               onMoveLabel={handleMoveLabel}
               onDuplicate={() => setDuplicating(true)}
             />
@@ -506,6 +548,14 @@ export default function TaskDetailPage() {
               actionPending={actionPending}
             />
 
+            <SourceUpdateNotice task={task} onChanged={setTask} />
+
+            <ForceMoveControl
+              task={task}
+              labels={workflow?.labels ?? []}
+              onMoved={(updated) => { setTask(updated); refreshRuns(); refreshLabelHistory() }}
+            />
+
             <LabelHistoryList history={labelHistory} />
 
             <SourceCommentsList comments={sourceComments} />
@@ -528,6 +578,7 @@ export default function TaskDetailPage() {
             onAddComment={handleAddComment}
             onRemoveComment={handleRemoveComment}
             onReopenComment={handleReopenComment}
+            verificationRefreshKey={verificationKey}
           />
         )}
       </div>
@@ -550,10 +601,14 @@ export default function TaskDetailPage() {
           replyText={replyText}
           setReplyText={setReplyText}
           onReply={handleReply}
+          onRetry={handleRetryEscalation}
           rejectNote={rejectNote}
           setRejectNote={setRejectNote}
           onReject={handleReject}
           onApprove={handleApprove}
+          canApprove={humanActions.canApprove}
+          canReject={humanActions.canReject}
+          actionError={actionError}
           actionPending={actionPending}
           onJumpToDiffTab={() => setActiveTab('diff')}
         />

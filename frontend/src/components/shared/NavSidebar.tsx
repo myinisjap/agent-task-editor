@@ -3,53 +3,40 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
 import { useNotificationsStore, notificationsSupported } from '../../stores/notifications'
 import { useWsStatus } from '../../lib/useWsStatus'
+import { useHealthStore, worstHealth } from '../../stores/health'
 import type { WSStatus } from '../../api/ws'
+import { useNeedsMeSync } from '../../lib/useNeedsMeSync'
+import { useInboxSync } from '../../lib/useInboxSync'
+import { useInboxCount } from '../../stores/inbox'
 
 interface NavGroup {
   key: string
   label: string
-  links: { to: string; label: string }[]
+  links: { to: string; label: string; end?: boolean }[]
 }
 
-// Dashboard is the home route and stays reachable as a standalone top-level
-// link above the collapsible groups; the remaining 10 destinations are
-// organized into logical categories below.
-const topLevelLink = { to: '/', label: 'Dashboard' }
+// Primary destinations, always visible. Workflow + Agents live under Pipeline;
+// Providers, Pricing, Intake Rules, Templates and Health live under Settings
+// (as URL-backed tabs). The Overview dashboard stays reachable but is
+// deliberately demoted into the collapsible Insights group.
+const inboxLink = { to: '/inbox', label: 'Inbox' }
+const primaryLinks = [
+  { to: '/board', label: 'Board' },
+  { to: '/chat', label: 'Chat' },
+  { to: '/pipeline', label: 'Pipeline' },
+  { to: '/repos', label: 'Repos' },
+  { to: '/settings', label: 'Settings' },
+]
 
 const groups: NavGroup[] = [
   {
     key: 'insights',
     label: 'Insights',
     links: [
+      { to: '/dashboard', label: 'Overview', end: true },
       { to: '/dashboard/usage', label: 'Cost & Usage' },
       { to: '/dashboard/performance', label: 'Performance' },
     ],
-  },
-  {
-    key: 'work',
-    label: 'Work',
-    links: [
-      { to: '/board', label: 'Board' },
-      { to: '/chat', label: 'Chat' },
-    ],
-  },
-  {
-    key: 'configuration',
-    label: 'Configuration',
-    links: [
-      { to: '/workflow', label: 'Workflow' },
-      { to: '/agents', label: 'Agents' },
-      { to: '/providers', label: 'Providers' },
-      { to: '/settings/pricing', label: 'Pricing' },
-      { to: '/repos', label: 'Repos' },
-      { to: '/templates', label: 'Templates' },
-      { to: '/intake-rules', label: 'Intake Rules' },
-    ],
-  },
-  {
-    key: 'system',
-    label: 'System',
-    links: [{ to: '/health', label: 'Health' }],
   },
 ]
 
@@ -89,6 +76,10 @@ export default function NavSidebar() {
   const notificationsPermission = useNotificationsStore((s) => s.permission)
   const toggleNotifications = useNotificationsStore((s) => s.toggle)
   const wsStatus = useWsStatus()
+  useNeedsMeSync()
+  useInboxSync()
+  const inboxCount = useInboxCount()
+  const healthSeverity = worstHealth(useHealthStore((s) => s.checks))
   const location = useLocation()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     loadOpenGroups(groupForPath(location.pathname)),
@@ -154,13 +145,39 @@ export default function NavSidebar() {
             viewport. */}
         <div className="flex flex-col gap-1 overflow-y-auto min-h-0">
           <NavLink
-            to={topLevelLink.to}
-            end
+            to={inboxLink.to}
             onClick={() => setIsOpen(false)}
             className={linkClassName}
           >
-            {topLevelLink.label}
+            {inboxLink.label}
+            {inboxCount > 0 && (
+              <span
+                className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] px-1.5 py-0.5 rounded-full bg-pink-600 text-white text-[10px] font-semibold"
+                title={`${inboxCount} item${inboxCount === 1 ? '' : 's'} waiting on you`}
+                aria-label={`${inboxCount} items waiting on you`}
+              >
+                {inboxCount}
+              </span>
+            )}
           </NavLink>
+
+          {primaryLinks.map(({ to, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              onClick={() => setIsOpen(false)}
+              className={linkClassName}
+            >
+              {label}
+              {to === '/settings' && healthSeverity && (
+                <span
+                  role="img"
+                  aria-label={healthSeverity === 'error' ? 'Health check failing' : 'Health check warning'}
+                  className={`ml-2 inline-block w-2 h-2 rounded-full align-middle ${healthSeverity === 'error' ? 'bg-red-500' : 'bg-amber-400'}`}
+                />
+              )}
+            </NavLink>
+          ))}
 
           {groups.map((group) => {
             const isGroupOpen = !!openGroups[group.key]
@@ -174,7 +191,9 @@ export default function NavSidebar() {
                   aria-controls={panelId}
                   className="flex items-center justify-between px-3 py-2 rounded-md text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
                 >
-                  <span>{group.label}</span>
+                  <span>
+                    {group.label}
+                  </span>
                   <span
                     aria-hidden="true"
                     className={`transition-transform duration-150 ${isGroupOpen ? 'rotate-90' : ''}`}
@@ -184,10 +203,11 @@ export default function NavSidebar() {
                 </button>
                 {isGroupOpen && (
                   <div id={panelId} className="flex flex-col gap-1 pl-1">
-                    {group.links.map(({ to, label }) => (
+                    {group.links.map(({ to, label, end }) => (
                       <NavLink
                         key={to}
                         to={to}
+                        end={end}
                         onClick={() => setIsOpen(false)}
                         className={linkClassName}
                       >

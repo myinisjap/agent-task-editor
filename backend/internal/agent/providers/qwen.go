@@ -1,6 +1,5 @@
 // Package providers implements the concrete agent backends (ClaudeRunner,
-// AnthropicRunner, LLMRunner, QwenRunner, CodexRunner,
-// OpencodeRunner) and the MCP sidecar manager.
+// QwenRunner, CodexRunner, OpencodeRunner) and the MCP sidecar manager.
 package providers
 
 import (
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // QwenRunner runs the Qwen Code CLI in headless mode (-p + stream-json).
@@ -24,10 +24,10 @@ type QwenRunner struct {
 	// UploadDir is the server-side directory where task attachments are stored.
 	// Reserved for future use if Qwen CLI gains an --image flag.
 	UploadDir string
-	// BackendURL / APIToken let the create_subtask MCP tool post children live to
-	// the backend REST API (same container). Set from server config.
+	// BackendURL lets the create_subtask MCP tool post children live to the
+	// backend REST API (same container). Set from server config. The bearer
+	// token is a per-run scoped one minted in MCPManager.Prepare.
 	BackendURL string
-	APIToken   string
 	// PriceResolver resolves model to USD-per-1M pricing for the mid-run cost
 	// watchdog (see cost_watchdog.go). Like claude, qwen's own terminal
 	// total_cost_usd (when present) is used as-is for the final persisted
@@ -120,7 +120,6 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		var err error
 		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, nil, &SubtaskEnv{
 			BackendURL:  r.BackendURL,
-			APIToken:    r.APIToken,
 			TaskID:      input.Task.ID,
 			Enabled:     input.AgentConfig.SubtasksEnabled,
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
@@ -147,6 +146,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	// DISABLE_AUTOUPDATER, since QWEN_CLI_VERSION is pinned in
 	// backend/Dockerfile.
 	env := mergeEnv(providerBaseEnv(qwenEnvAllowlist), input.AgentConfig.Env)
+	if envOverridesKey(input.AgentConfig.Env, "OPENAI_BASE_URL") {
+		// Custom endpoint from the provider config: don't send the backend's
+		// own inherited OpenAI key there (a key the config supplies is kept).
+		env = dropInheritedEnv(env, input.AgentConfig.Env, "OPENAI_API_KEY")
+	}
 	env = append(env, "QWEN_CODE_SUPPRESS_YOLO_WARNING=1", "NO_UPDATE_NOTIFIER=1")
 
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
@@ -155,7 +159,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	}
 	cmd := newCLICommand(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
-	cmd.Env = env
+	cmd.Env = agentuser.Env(env) // HOME etc. of the agent account when isolated
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

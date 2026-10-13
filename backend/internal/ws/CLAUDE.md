@@ -1,1 +1,1 @@
-@backend/internal/ws/AGENTS.md
+@AGENTS.md

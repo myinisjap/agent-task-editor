@@ -23,6 +23,7 @@ vi.mock('../api/client', async () => {
         dependencies: vi.fn().mockResolvedValue({ blocked_by: [], blocking: [], blocked_by_count: 0, blocking_count: 0 }),
         reviewComments: vi.fn().mockResolvedValue([]),
         diff: vi.fn().mockResolvedValue({ branch: 'main', diff: '' }),
+        verifications: vi.fn().mockResolvedValue([]),
         runLogs: vi.fn().mockResolvedValue({ items: [], hasMore: false, prevCursor: null }),
       },
       workflows: {
@@ -95,7 +96,7 @@ function workflow(): Workflow {
     name: 'Default',
     description: '',
     labels: [
-      { id: 'l1', workflow_id: 'wf', name: 'todo', color: '#000', sort_order: 0, agent_ignore: 0, is_terminal: 0, create_pr: 0, wip_limit: null, wip_limit_hard: 0 },
+      { id: 'l1', workflow_id: 'wf', name: 'todo', color: '#000', sort_order: 0, agent_ignore: 0, is_terminal: 0, create_pr: 0, wip_limit: null, wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '' },
     ],
     transitions: [],
     created_at: new Date().toISOString(),

@@ -1,9 +1,20 @@
 services:
   backend:
     ports: !reset []
+    environment:
+      # Auth is delegated to Traefik's forward-auth (no API_TOKEN), so the
+      # backend's Host check (DNS-rebinding protection) is active; admit the
+      # public hostname Traefik forwards.
+      - ALLOWED_HOSTS=${TRAEFIK_HOST}
 
   frontend:
     ports: !reset []
+    # Bridges the two networks: `default` (the private per-project network it
+    # shares with the backend, so nginx can reach backend:8080) and proxy_net
+    # (so Traefik can reach it).
+    networks:
+      - default
+      - proxy
     labels:
       - traefik.enable=true
       - traefik.http.routers.agent-task-editor.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/tasks`)
@@ -12,7 +23,12 @@ services:
       - traefik.http.routers.agent-task-editor.middlewares=forward-auth
       - traefik.http.services.agent-task-editor.loadbalancer.server.port=80
 
+# Only the frontend joins proxy_net. Traefik routes exclusively to the frontend
+# nginx (which proxies /tasks/api/ and /tasks/ws to backend:8080 internally), so
+# the backend stays on the project's private default network and is NOT
+# reachable from other containers on proxy_net. Do not add the backend here:
+# with no API_TOKEN set it would be an unauthenticated API for every neighbour.
 networks:
-  default:
+  proxy:
     name: proxy_net
     external: true

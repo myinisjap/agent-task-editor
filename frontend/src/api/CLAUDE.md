@@ -1,1 +1,1 @@
-@frontend/src/api/AGENTS.md
+@AGENTS.md

@@ -102,8 +102,7 @@ export default function PricingSettingsPage() {
       </div>
       <p className="text-sm text-slate-400 mb-6">
         USD price per 1M tokens used to estimate run cost for the <code className="text-slate-300">codex_cli</code>{' '}
-        provider (and the deprecated <code className="text-slate-300">anthropic</code>/
-        <code className="text-slate-300">llm</code> providers), plus the mid-run cost watchdog on{' '}
+        provider, plus the mid-run cost watchdog on{' '}
         <code className="text-slate-300">claude</code>/<code className="text-slate-300">qwen_code</code> — the{' '}
         <code className="text-slate-300">claude</code> and <code className="text-slate-300">opencode</code> CLIs'
         own final reported cost is authoritative and unaffected. A model with no row here falls back to an internal,

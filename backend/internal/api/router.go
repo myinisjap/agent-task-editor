@@ -16,20 +16,77 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
 
-// NewRouter builds and returns the application router.
+// RouterDeps carries everything NewRouter needs. Named fields replace a long
+// positional parameter list in which adjacent string/bool/int values were easy
+// to transpose.
 //
-// backupDir/backupInterval/backupKeep are only used to render the
-// auto_backup health check (informational) — the actual scheduler is
-// started separately in cmd/server/main.go. version/checkForUpdates
-// configure the /healthz and /health/providers "Version"/"Update available"
-// rows — see internal/health and cmd/server/main.go's ldflags-stamped
-// Version var. maxWorkers is the global MAX_WORKERS setting (informational
-// only here) — the dashboard uses it as the effective per-repo concurrency
-// limit fallback for repos with no repos.max_concurrent_runs override.
-func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins string, bearerToken string, namedTokens map[string]string, repoBaseDir string, uploadDir string, mcpBinary string, llmBaseURL string, llmAPIKey string, backupDir string, backupInterval time.Duration, backupKeep int, canceller handlers.RunCanceller, replyDispatcher handlers.ReplyDispatcher, metricsToken string, version string, checkForUpdates bool, term handlers.Terminal, maxWorkers int, dispatcherLiveness handlers.DispatcherLiveness, blockReasons handlers.BlockReasonResolver) http.Handler {
+// BackupDir/BackupInterval/BackupKeep are only used to render the auto_backup
+// health check (informational) — the actual scheduler is started separately in
+// cmd/server/main.go. Version/CheckForUpdates configure the /healthz and
+// /health/providers "Version"/"Update available" rows — see internal/health
+// and cmd/server/main.go's ldflags-stamped Version var. MaxWorkers is the
+// global MAX_WORKERS setting (informational only here) — the dashboard uses it
+// as the effective per-repo concurrency limit fallback for repos with no
+// repos.max_concurrent_runs override.
+type RouterDeps struct {
+	DB     *storage.DB
+	Engine *workflow.Engine
+	Hub    *ws.Hub
+
+	CORSOrigins  string
+	AllowedHosts string
+
+	BearerToken  string
+	NamedTokens  map[string]string
+	MetricsToken string
+	// MetricsPublic leaves /metrics unauthenticated even when API auth is on.
+	MetricsPublic bool
+
+	// GitHubWebhookSecret enables POST /api/v1/github/webhook (HMAC-SHA256
+	// signature auth, outside bearer auth). Empty = the route returns 404.
+	GitHubWebhookSecret string
+	// PRRefresher receives matched webhook events (the ghsync Syncer).
+	PRRefresher handlers.PRRefresher
+
+	RepoBaseDir string
+	// ListenAddr is the HTTP server's bind address (e.g. ":8080"); used only
+	// for the api_auth health warning.
+	ListenAddr string
+	UploadDir  string
+	MCPBinary  string
+
+	BackupDir      string
+	BackupInterval time.Duration
+	BackupKeep     int
+
+	Version         string
+	CheckForUpdates bool
+	MaxWorkers      int
+
+	// Canceller cancels in-flight runs (the worker pool).
+	Canceller handlers.RunCanceller
+	// ReplyDispatcher delivers human replies to waiting runs (the dispatcher).
+	ReplyDispatcher handlers.ReplyDispatcher
+	// DispatcherLiveness reports dispatch-loop liveness (the dispatcher). It
+	// may also implement handlers.GlobalCostReporter.
+	DispatcherLiveness handlers.DispatcherLiveness
+	BlockReasons       handlers.BlockReasonResolver
+	// Terminal backs the chat terminal WebSocket; nil makes it return 503.
+	Terminal handlers.Terminal
+}
+
+// NewRouter builds and returns the application router.
+func NewRouter(deps RouterDeps) http.Handler {
+	db, engine, hub := deps.DB, deps.Engine, deps.Hub
+	corsOrigins, allowedHosts := deps.CORSOrigins, deps.AllowedHosts
+	bearerToken, namedTokens := deps.BearerToken, deps.NamedTokens
+	metricsToken, metricsPublic := deps.MetricsToken, deps.MetricsPublic
+	repoBaseDir, uploadDir := deps.RepoBaseDir, deps.UploadDir
+	dispatcherLiveness := deps.DispatcherLiveness
 	q := gen.New(db.SQL())
 
-	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, canceller, replyDispatcher, blockReasons)
+	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
+	tasksH.SetPublisher(hub)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -47,42 +104,69 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 	if gc, ok := dispatcherLiveness.(handlers.GlobalCostReporter); ok {
 		globalCost = gc
 	}
-	dashH := handlers.NewDashboardHandler(q, maxWorkers, globalCost)
+	dashH := handlers.NewDashboardHandler(q, deps.MaxWorkers, globalCost)
 	outcomeQualityH := handlers.NewOutcomeQualityHandler(q)
 	uploadsH := handlers.NewUploadsHandler(uploadDir)
-	healthH := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir, backupInterval, backupKeep, version, checkForUpdates, dispatcherLiveness)
+	healthH := handlers.NewHealthHandler(q, db, deps.MCPBinary, repoBaseDir, deps.BackupDir, deps.BackupInterval, deps.BackupKeep, deps.Version, deps.CheckForUpdates, dispatcherLiveness)
+	healthH.SetAuthInfo(deps.BearerToken != "" || len(deps.NamedTokens) > 0, deps.ListenAddr)
 	backupH := handlers.NewBackupHandler(db)
 	backupSettingsH := handlers.NewBackupSettingsHandler(q)
 	logRetentionSettingsH := handlers.NewLogRetentionSettingsHandler(q)
 	costWarningSettingsH := handlers.NewCostWarningSettingsHandler(q)
 	modelPricingH := handlers.NewModelPricingHandler(q, db.SQL())
 	wsTicketH := handlers.NewWSTicketHandler(hub)
-	chatH := handlers.NewChatHandler(q, hub, term, bearerToken, corsOrigins)
+	chatH := handlers.NewChatHandler(q, hub, deps.Terminal, bearerToken != "" || len(namedTokens) > 0, corsOrigins)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(middleware.Recover)
 	r.Use(middleware.Logger)
+	// Browser-facing request guards (see middleware/requestguard.go). Order
+	// matters: the Host check runs first (DNS rebinding; applies to every
+	// route incl. /ws, /healthz, /metrics, and only when no API token is
+	// configured), then CORS so its headers — and the preflight 204 — are
+	// produced for allowed origins, then the state-changing-request guards.
+	// Both guards ignore OPTIONS, so preflight is never blocked by them.
+	hostPolicy := middleware.NewHostPolicy(allowedHosts, corsOrigins, bearerToken != "" || len(namedTokens) > 0)
+	r.Use(hostPolicy.Middleware())
 	r.Use(middleware.CORS(corsOrigins))
+	r.Use(middleware.RequireTrustedOrigin(corsOrigins))
+	r.Use(middleware.RequireJSON)
 
 	// WebSocket endpoint — mounted outside BearerAuth because browsers can't set
 	// request headers on a WS handshake. ServeWS performs its own auth check via
-	// a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket below)
-	// or, as a deprecated fallback, a constant-time compare against ?token=, so
-	// it is not left unauthenticated. Note: this only supports the single
-	// legacy bearerToken — it does not resolve named actors from namedTokens
-	// (out of scope; WS auth is not a human-triggered REST transition, so it
-	// doesn't need to record an actor).
+	// a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket below),
+	// so it is not left unauthenticated. The old ?token= query-string fallback
+	// has been removed.
+	authRequired := bearerToken != "" || len(namedTokens) > 0
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
-		ws.ServeWS(hub, w, req, bearerToken, corsOrigins, q)
+		ws.ServeWS(hub, w, req, authRequired, corsOrigins, q)
 	})
+
+	// Chat terminal WebSocket — outside BearerAuth for the same reason as /ws:
+	// browsers can't send an Authorization header on a WS upgrade, so the
+	// handler enforces the single-use ?ticket= itself.
+	r.Get("/api/v1/chat/sessions/{id}/terminal", chatH.Terminal)
+
+	// GitHub webhook receiver — outside BearerAuth because GitHub cannot send
+	// our token; authenticated by the HMAC-SHA256 X-Hub-Signature-256 header
+	// against GITHUB_WEBHOOK_SECRET (404 when unset). It sits on a literal path
+	// so it wins over the /api/v1 mount below.
+	webhookH := handlers.NewGitHubWebhookHandler(deps.GitHubWebhookSecret, deps.PRRefresher)
+	r.Post("/api/v1/github/webhook", webhookH.Handle)
 
 	// Prometheus scrape endpoint — mounted outside the main API's BearerAuth
 	// group (and outside /api/v1) so self-hosters don't need to hand the
 	// primary API_TOKEN to their Prometheus scrape config. Gated by its own,
-	// independent METRICS_TOKEN (empty by default, i.e. unauthenticated,
-	// matching most Prometheus setups) via the same BearerAuth middleware.
-	r.With(middleware.BearerAuth(metricsToken, nil)).Get("/metrics", metrics.Handler().ServeHTTP)
+	// independent METRICS_TOKEN via the same BearerAuth middleware. When
+	// METRICS_TOKEN is unset and API auth is configured, the API tokens gate
+	// /metrics too (unless METRICS_PUBLIC opts out); with no auth configured
+	// at all it stays open.
+	metricsAuth := middleware.BearerAuth(metricsToken, nil)
+	if metricsToken == "" && !metricsPublic {
+		metricsAuth = middleware.BearerAuth(bearerToken, namedTokens)
+	}
+	r.With(metricsAuth).Get("/metrics", metrics.Handler().ServeHTTP)
 
 	// Liveness probe — mounted outside BearerAuth so container orchestrators
 	// (docker/k8s) can healthcheck without needing API_TOKEN. Returns only a
@@ -96,7 +180,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 	// Everything below requires the Bearer token (when one is configured).
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.BearerAuth(bearerToken, namedTokens))
+		r.Use(middleware.BearerAuthTrusted(bearerToken, namedTokens))
 
 		r.Route("/api/v1", func(r chi.Router) {
 			// Limit request bodies to 1 MB to prevent memory exhaustion.
@@ -131,6 +215,9 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Get("/tasks/{id}/diff", tasksH.Diff)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
+			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)
+			r.Post("/tasks/{id}/source-update/apply", tasksH.ApplySourceUpdate)
+			r.Delete("/tasks/{id}/source-update", tasksH.DiscardSourceUpdate)
 			r.Get("/tasks/{id}/github-status", tasksH.GitHubStatus)
 			r.Patch("/tasks/{id}/git-state", tasksH.UpdateGitState)
 			r.Patch("/tasks/{id}/pause", tasksH.SetPaused)
@@ -177,12 +264,12 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// Interactive chat sessions — free-form conversations against a repo,
 			// separate from the task/workflow state machine (see agent.TerminalManager).
 			// The session's interactive CLI runs in a PTY streamed over the
-			// /terminal WebSocket (raw bytes, ?ticket= auth like /ws).
+			// /terminal WebSocket (raw bytes) is mounted above, outside this
+			// group, with ?ticket= auth like /ws.
 			r.Get("/chat/sessions", chatH.List)
 			r.Post("/chat/sessions", chatH.Create)
 			r.Get("/chat/sessions/{id}", chatH.Get)
 			r.Delete("/chat/sessions/{id}", chatH.Delete)
-			r.Get("/chat/sessions/{id}/terminal", chatH.Terminal)
 
 			// GitHub auth status (used by the frontend to warn when gh credentials are absent)
 			r.Get("/github/auth-status", handlers.GitHubAuthStatus)
@@ -192,6 +279,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			// first-run misconfiguration is visible at a glance instead of
 			// surfacing as failed agent runs.
 			r.Get("/health/providers", healthH.Providers)
+			r.Post("/health/providers/{provider}/resume", healthH.ResumeProvider)
 
 			// Streams a consistent point-in-time database snapshot (VACUUM INTO)
 			// as application/octet-stream. Plain bearer-gated; see docs/backup.md.
@@ -241,6 +329,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 
 			// Agent runs
 			r.Get("/tasks/{id}/runs", tasksH.ListRuns)
+			r.Get("/tasks/{id}/verifications", tasksH.ListVerifications)
 			r.Get("/tasks/{id}/runs/{run_id}", tasksH.GetRun)
 			r.Get("/tasks/{id}/runs/{run_id}/logs", tasksH.GetRunLogs)
 			r.Post("/tasks/{id}/runs/{run_id}/cancel", tasksH.CancelRun)
@@ -282,6 +371,7 @@ func NewRouter(db *storage.DB, engine *workflow.Engine, hub *ws.Hub, corsOrigins
 			r.Post("/repos/{id}/runtime/detect", reposH.Detect)
 
 			// Dashboard
+			r.Get("/needs-me", handlers.NewNeedsMeHandler(q).List)
 			r.Get("/dashboard", dashH.Get)
 			r.Get("/dashboard/cost-by-task", dashH.CostByTask)
 			r.Get("/dashboard/outcome-quality", outcomeQualityH.Get)

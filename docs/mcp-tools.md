@@ -11,9 +11,7 @@ The MCP (Model Context Protocol) sidecar is a small process (`mcp-server`) that 
 | `claude` | ✅ Yes (when `MCP_SERVER_PATH` is set) |
 | `qwen_code` | ✅ Yes (when `MCP_SERVER_PATH` is set) |
 | `codex_cli` | ✅ Yes (when `MCP_SERVER_PATH` is set) — via a per-run `CODEX_HOME` config.toml, not a CLI flag |
-| `anthropic` **(deprecated)** | ❌ No — uses native Go tool loop (`get_task_transitions`, `signal_complete`, `request_human`, `update_task_notes`, `store_info` are implemented natively with the same call shape; `resolve_comment`/`create_subtask` are not available). Disabled for new/updated provider configs — see [providers/anthropic.md](providers/anthropic.md). |
 | `opencode` | ❌ No — opencode has no `--mcp-config` flag |
-| `llm` **(deprecated)** | ❌ No — uses native Go tool loop (same native equivalents as `anthropic`). Disabled for new/updated provider configs — see [providers/llm.md](providers/llm.md). |
 
 ## How It Works
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"sync"
 	"testing"
@@ -27,10 +28,22 @@ type recordingPub struct {
 	events []string
 }
 
-func (p *recordingPub) Publish(eventType string, _ map[string]any) {
+func (p *recordingPub) Publish(eventType string, _ any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
+}
+
+func (p *recordingPub) count(name string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, e := range p.events {
+		if e == name {
+			n++
+		}
+	}
+	return n
 }
 
 func (p *recordingPub) has(name string) bool {
@@ -103,6 +116,7 @@ func (f *fakeProvider) Run(_ context.Context, input RunInput, logCh chan<- LogEn
 
 // e2eHarness bundles the fully wired loop plus the DB handle tests assert against.
 type e2eHarness struct {
+	sqlDB  *sql.DB
 	q      *gen.Queries
 	engine *workflow.Engine
 	pool   *Pool
@@ -110,6 +124,8 @@ type e2eHarness struct {
 	pub    *recordingPub
 	repo   string // path to the temp git repo
 	cancel context.CancelFunc
+	// noRetries seeds the agent config with max_retries=0 (auto-retry disabled).
+	noRetries bool
 }
 
 // newE2EHarness stands up a seeded DB, a real git repo, and a running
@@ -138,27 +154,31 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	engine := workflow.New(db.SQL(), pub)
 
 	termQ := gen.New(db.SQL())
-	engine.OnTerminal = func(ctx context.Context, task gen.Task) {
+	engine.OnTerminal = func(ctx context.Context, task gen.Task) error {
 		if task.WorktreePath == "" {
-			return
+			return nil
 		}
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			return
+			return err
 		}
 		if repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
 			_ = PushBranch(ctx, task.WorktreePath, task.Branch)
 		}
 		_ = RemoveWorktree(ctx, repo.Path, task.WorktreePath)
+		return nil
 	}
 
 	pool := NewPool(2, db.SQL(), engine, pub)
 	pool.GitName, pool.GitEmail = "Test", "test@example.com"
+	pauses := NewProviderPauseRegistry(pub)
+	pool.ProviderPauses = pauses
 
 	factory := func(AgentConfig) Provider { return fp }
 	d := NewDispatcher(db.SQL(), pool, engine, factory)
 	d.interval = 15 * time.Millisecond
 	d.Publisher = pub
+	d.ProviderPauses = pauses
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// poolDone/dispDone close when their goroutines fully return. Pool.Start
@@ -169,6 +189,10 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	dispDone := make(chan struct{})
 	go func() { defer close(poolDone); pool.Start(ctx) }()
 	go func() { defer close(dispDone); d.Run(ctx) }()
+	// The engine's side-effect outbox worker runs OnTerminal after the
+	// transition commits, as in cmd/server/main.go.
+	sideDone := make(chan struct{})
+	go func() { defer close(sideDone); engine.RunSideEffects(ctx) }()
 
 	// Build the repo before registering the drain cleanup so that this cleanup —
 	// registered last, therefore run first (t.Cleanup is LIFO) — cancels the loop
@@ -178,11 +202,12 @@ func newE2EHarness(t *testing.T, fp *fakeProvider) *e2eHarness {
 	// `git status`/commit runs against a repo dir being deleted out from under it
 	// ("git status: signal: killed: fatal: not a git repository") and its DB
 	// writes hit a closed handle. This is the E2E flake's root cause.
-	h := &e2eHarness{q: q, engine: engine, pool: pool, disp: d, pub: pub, repo: initRepo(t), cancel: cancel}
+	h := &e2eHarness{sqlDB: db.SQL(), q: q, engine: engine, pool: pool, disp: d, pub: pub, repo: initRepo(t), cancel: cancel}
 	t.Cleanup(func() {
 		cancel()
 		<-poolDone
 		<-dispDone
+		<-sideDone
 	})
 	return h
 }
@@ -280,9 +305,13 @@ func (h *e2eHarness) seedTaskOnReadyWithProvider(t *testing.T, wfID, provider st
 	}
 
 	pcID := h.createProviderConfig(t, provider, "none")
+	maxRetries := int64(1)
+	if h.noRetries {
+		maxRetries = 0
+	}
 	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
 		ID: uuid.NewString(), Name: "fake-agent", ProviderConfigID: pcID,
-		Labels: `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1,
+		Labels: `["ready"]`, MaxRetries: maxRetries, RetryBackoffSecs: 1,
 		ResumeSessions: resumeSessions,
 	}); err != nil {
 		t.Fatalf("create agent config: %v", err)
@@ -498,6 +527,7 @@ func TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked(t *testing.T) {
 	h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
 		return r.Status == "waiting_human"
 	}, "run to be persisted as waiting_human after max-turns exhaustion")
+	assertEscalationReason(t, h.q, *esc.ActiveAgentRunID, ReasonMaxTurns)
 	if esc.Label != "ready" {
 		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
 	}
@@ -587,6 +617,7 @@ func TestE2E_WaitingHumanStaysLocked(t *testing.T) {
 		return err == nil && run.Status == "waiting_human"
 	}, "run to reach waiting_human with the task locked")
 	runID := *locked.ActiveAgentRunID
+	assertEscalationReason(t, h.q, runID, ReasonAgentQuestion)
 
 	if !h.pub.has("task.needs_human") {
 		t.Error("expected task.needs_human event")
@@ -1018,6 +1049,9 @@ func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("expected exactly one run (the lock should have prevented re-dispatch), got %d", len(runs))
 	}
+	if runs[0].EscalationReason == nil || *runs[0].EscalationReason != string(ReasonProviderMissing) {
+		t.Errorf("escalation_reason = %v, want %q", runs[0].EscalationReason, ReasonProviderMissing)
+	}
 	if runs[0].Status != "waiting_human" {
 		t.Fatalf("expected the run to stay waiting_human, got %q", runs[0].Status)
 	}
@@ -1029,4 +1063,124 @@ func TestE2E_NilProviderFailsRunCleanly(t *testing.T) {
 	if task.CurrentAgentRunID != nil {
 		t.Errorf("expected current_agent_run_id to be restored to nil (no prior run existed), got %v", *task.CurrentAgentRunID)
 	}
+}
+
+// TestE2E_WaitingHumanLocksDoNotConsumeRepoSlots is the regression for the
+// stall where tasks parked on waiting_human (which keep active_agent_run_id
+// set to block re-dispatch) were counted as in-flight, so with no per-repo
+// limit (falling back to MAX_WORKERS=2) two human-blocked tasks starved every
+// other eligible task in the repo despite an idle pool.
+func TestE2E_WaitingHumanLocksDoNotConsumeRepoSlots(t *testing.T) {
+	msg := "need a human"
+	// Calls 0 and 1 park on waiting_human; call 2 (the third task, which can
+	// only be dispatched once the first two stop consuming slots) succeeds.
+	fp := &fakeProvider{steps: []fakeStep{
+		{result: Result{Status: "waiting_human", Message: &msg}},
+		{result: Result{Status: "waiting_human", Message: &msg}},
+		{result: Result{Status: "completed", Outcome: "success"}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	task1ID, task2ID := h.seedTwoTasksOnRepoWithLimit(t, wfID, nil)
+	t1, err := h.q.GetTask(context.Background(), task1ID)
+	if err != nil {
+		t.Fatalf("get task1: %v", err)
+	}
+	task3ID := uuid.NewString()
+	if _, err := h.q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: task3ID, Title: "task three", WorkflowID: wfID, RepoID: t1.RepoID, Label: "ready",
+	}); err != nil {
+		t.Fatalf("create task 3: %v", err)
+	}
+
+	// Exactly one of the three ends up transitioned to "next"; the other two
+	// stay locked on a waiting_human run.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		next, waiting := 0, 0
+		for _, id := range []string{task1ID, task2ID, task3ID} {
+			tk, err := h.q.GetTask(context.Background(), id)
+			if err != nil {
+				t.Fatalf("get task: %v", err)
+			}
+			if tk.Label == "next" {
+				next++
+			} else if tk.ActiveAgentRunID != nil {
+				if run, err := h.q.GetAgentRun(context.Background(), *tk.ActiveAgentRunID); err == nil && run.Status == "waiting_human" {
+					waiting++
+				}
+			}
+		}
+		if next == 1 && waiting == 2 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected 1 task dispatched past two waiting_human tasks, got next=%d waiting_human=%d", next, waiting)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (f *fakeProvider) runCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.inputs)
+}
+
+// TestE2E_AuthFailurePausesProviderDispatch: the first auth-classified run
+// escalates its own task and trips the provider circuit breaker; a second
+// queued task on the same provider kind is then left untouched (no run, no
+// escalation) until the provider is resumed.
+func TestE2E_AuthFailurePausesProviderDispatch(t *testing.T) {
+	fp := &fakeProvider{steps: []fakeStep{
+		{
+			logs:   []LogEntry{{Type: LogStderr, Content: "Not logged in · Please run /login"}},
+			result: Result{Status: "failed"},
+		},
+		{result: Result{Status: "completed", Outcome: "success"}},
+	}}
+	h := newE2EHarness(t, fp)
+	wfID := seedE2EWorkflow(t, h.q)
+	first := h.seedTaskOnReadyWithProvider(t, wfID, "claude", 0)
+
+	h.pollTask(t, first, func(tk gen.Task) bool { return tk.ActiveAgentRunID != nil }, "first task dispatched")
+	deadline := time.Now().Add(15 * time.Second)
+	for !h.disp.ProviderPauses.IsPaused("claude") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !h.disp.ProviderPauses.IsPaused("claude") {
+		t.Fatal("expected claude provider to be paused after an auth-classified run")
+	}
+	if !h.pub.has("provider.pause_changed") {
+		t.Error("expected provider.pause_changed event")
+	}
+
+	// A second queued task must not be dispatched while paused.
+	firstTask, err := h.q.GetTask(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := uuid.NewString()
+	if _, err := h.q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: second, Title: "queued behind the pause", WorkflowID: wfID, RepoID: firstTask.RepoID, Label: "ready",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.waitForSweeps(t, 5)
+	tk, err := h.q.GetTask(context.Background(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.ActiveAgentRunID != nil {
+		t.Fatalf("task dispatched while its provider was paused (active run %v)", *tk.ActiveAgentRunID)
+	}
+	if n := fp.runCount(); n != 1 {
+		t.Fatalf("provider ran %d times, want 1", n)
+	}
+
+	// Resume: the queued task is picked up on the next sweep.
+	if !h.disp.ResumeProvider("claude") {
+		t.Fatal("ResumeProvider reported not paused")
+	}
+	h.pollTask(t, second, func(tk gen.Task) bool { return tk.ActiveAgentRunID != nil || tk.Label != "ready" }, "queued task dispatched after resume")
 }

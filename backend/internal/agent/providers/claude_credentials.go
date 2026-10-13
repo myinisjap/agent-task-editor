@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // claudeTokenEndpoint is Anthropic's OAuth token endpoint used to refresh an
@@ -250,7 +252,7 @@ func writeClaudeOAuthCreds(path string, creds claudeOAuthCreds) error {
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }() // no-op after successful rename
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(agentuser.SharedFileMode()); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("chmod temp credentials file: %w", err)
 	}

@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"net/http"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -156,14 +158,14 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.pub != nil {
-		h.pub.Publish("task.created", map[string]any{
-			"id":        child.ID,
-			"title":     child.Title,
-			"label":     child.Label,
-			"repo_id":   child.RepoID,
-			"parent_id": parentID,
+		h.pub.Publish(wsevent.TypeTaskCreated, wsevent.TaskCreated{
+			ID:       child.ID,
+			Title:    child.Title,
+			Label:    child.Label,
+			RepoID:   child.RepoID,
+			ParentID: parentID,
 		})
-		h.pub.Publish("task.updated", map[string]any{"id": parentID})
+		h.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: parentID})
 	}
 
 	JSON(w, http.StatusCreated, toTaskResponse(child))

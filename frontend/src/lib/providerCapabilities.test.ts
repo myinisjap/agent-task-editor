@@ -29,8 +29,6 @@ describe('providerCapabilities', () => {
     expect(getCapability('codex_cli', 'effort').note).toBeTruthy()
     expect(getCapability('qwen_code', 'effort').support).toBe('none')
     expect(getCapability('opencode', 'effort').support).toBe('none')
-    expect(getCapability('anthropic', 'effort').support).toBe('none')
-    expect(getCapability('llm', 'effort').support).toBe('none')
   })
 
   it('falls back to none for an unrecognized provider', () => {

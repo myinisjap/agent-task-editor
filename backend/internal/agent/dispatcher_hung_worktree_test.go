@@ -34,6 +34,12 @@ func TestDispatchSweep_OneHungWorktree_DoesNotBlockOtherTasks(t *testing.T) {
 	}
 }
 
+// hungGitTimeout is how long the bad repo's git call hangs before the
+// gitTimeout bound fails it. It is deliberately much longer than the sweep is
+// allowed to take, so the test proves the sweep does not wait on git at all
+// (worktree setup runs in the pool worker, not the sweep).
+const hungGitTimeout = 1 * time.Second
+
 func runHungWorktreeTest(t *testing.T) {
 	t.Helper()
 
@@ -52,7 +58,7 @@ func runHungWorktreeTest(t *testing.T) {
 		gitTimeout = origTimeout
 		gitRunner = origRunner
 	})
-	SetGitTimeout(200 * time.Millisecond)
+	SetGitTimeout(hungGitTimeout)
 	gitRunner = func(ctx context.Context, dir string, args ...string) ([]byte, error) {
 		if dir == badRepo {
 			<-ctx.Done()
@@ -158,7 +164,11 @@ func runHungWorktreeTest(t *testing.T) {
 	// outer 20s test guard will fire.
 	sweepCtx, sweepCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer sweepCancel()
+	sweepStart := time.Now()
 	d.sweep(sweepCtx)
+	if elapsed := time.Since(sweepStart); elapsed >= hungGitTimeout {
+		t.Errorf("sweep took %v; it must not wait on the bad repo's hung git call (timeout %v)", elapsed, hungGitTimeout)
+	}
 
 	// The good task must have been dispatched despite the bad repo's task
 	// being processed in the same sweep. The fake provider completes
@@ -186,13 +196,35 @@ func runHungWorktreeTest(t *testing.T) {
 		t.Fatalf("expected at least one agent run created for the good task, got 0")
 	}
 
-	// The bad task must NOT have been dispatched — its worktree provisioning
-	// failed on the forced git timeout, so dispatch logged the error and moved on.
-	badTask, err := q.GetTask(ctx, badTaskID)
-	if err != nil {
-		t.Fatalf("get bad task: %v", err)
+	// The bad task is claimed by the sweep, but its worktree setup runs in
+	// the pool worker and fails on the forced git timeout. That ends the run as
+	// a transient failure: the run is failed, the dispatch lock is released
+	// (owner-scoped) and a backed-off retry is scheduled -- the provider never
+	// ran for it.
+	var badTask gen.Task
+	var badRuns []gen.AgentRun
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		badRuns, _ = q.ListAgentRuns(ctx, badTaskID)
+		badTask, _ = q.GetTask(ctx, badTaskID)
+		if len(badRuns) == 1 && badRuns[0].Status == "failed" && badTask.ActiveAgentRunID == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(badRuns) != 1 || badRuns[0].Status != "failed" {
+		t.Fatalf("expected exactly one failed run for the bad task, got %+v", badRuns)
 	}
 	if badTask.ActiveAgentRunID != nil {
-		t.Fatalf("expected bad task to remain un-dispatched after its git call timed out, got active run %q", *badTask.ActiveAgentRunID)
+		t.Fatalf("expected bad task's dispatch lock released after setup failure, got %q", *badTask.ActiveAgentRunID)
+	}
+	if badTask.TransientRetryCount != 1 || badTask.NextRetryAt == nil {
+		t.Errorf("expected a scheduled transient retry for the bad task, got count=%d next=%v", badTask.TransientRetryCount, badTask.NextRetryAt)
+	}
+	if badTask.WorktreePath != "" {
+		t.Errorf("bad task must not record a worktree, got %q", badTask.WorktreePath)
+	}
+	if n := fp.runCount(); n != 1 {
+		t.Errorf("provider should run only for the good task, got %d invocations", n)
 	}
 }

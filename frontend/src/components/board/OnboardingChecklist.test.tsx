@@ -12,12 +12,15 @@ import { useReposStore } from '../../stores/repos'
 import { useTasksStore } from '../../stores/tasks'
 import { useProviderConfigsStore } from '../../stores/providerConfigs'
 import { useAgentsStore } from '../../stores/agents'
+import { useWorkflowStore } from '../../stores/workflow'
+import { defaultWorkflow, agentFor } from '../../lib/__fixtures__/setupFixtures'
 
 const reposListMock = vi.fn()
 const tasksListMock = vi.fn()
 const providerConfigsListMock = vi.fn()
 const agentsListMock = vi.fn()
 const healthProvidersMock = vi.fn()
+const workflowsListMock = vi.fn()
 
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client')
@@ -28,6 +31,7 @@ vi.mock('../../api/client', async () => {
       tasks: { list: (...args: unknown[]) => tasksListMock(...args) },
       providerConfigs: { list: (...args: unknown[]) => providerConfigsListMock(...args) },
       agents: { list: (...args: unknown[]) => agentsListMock(...args) },
+      workflows: { list: (...args: unknown[]) => workflowsListMock(...args) },
       health: { providers: (...args: unknown[]) => healthProvidersMock(...args) },
     },
   }
@@ -111,6 +115,7 @@ function resetStores() {
   // that need a specific task list call useTasksStore.setState directly.
   useTasksStore.setState({ tasks: [], loading: false, error: null, loaded: true })
   useProviderConfigsStore.setState({ configs: [], loading: false })
+  useWorkflowStore.setState({ workflows: [], loading: false, selectedId: null })
   useAgentsStore.setState({
     configs: [],
     loading: false,
@@ -141,6 +146,7 @@ beforeEach(() => {
   providerConfigsListMock.mockResolvedValue([])
   agentsListMock.mockResolvedValue([])
   healthProvidersMock.mockResolvedValue({ checks: [] })
+  workflowsListMock.mockResolvedValue([defaultWorkflow()])
 })
 
 describe('OnboardingChecklist', () => {
@@ -150,7 +156,7 @@ describe('OnboardingChecklist', () => {
     expect(await screen.findByText('Get started')).toBeInTheDocument()
     expect(screen.getByText('Add a repo')).toBeInTheDocument()
     expect(screen.getByText('Configure a provider')).toBeInTheDocument()
-    expect(screen.getByText('Create an agent config')).toBeInTheDocument()
+    expect(screen.getByText('Staff the default workflow')).toBeInTheDocument()
     expect(screen.getByText('Create your first task')).toBeInTheDocument()
     // Incomplete rows render their destination link.
     expect(screen.getByText('Add a repo →')).toBeInTheDocument()
@@ -165,25 +171,36 @@ describe('OnboardingChecklist', () => {
       expect(screen.queryByText('Add a repo →')).not.toBeInTheDocument()
     })
     expect(screen.getByText('Configure a provider →')).toBeInTheDocument()
-    expect(screen.getByText('Create an agent config →')).toBeInTheDocument()
+    expect(screen.getByText('Set up agents manually →')).toBeInTheDocument()
+  })
+
+  it('keeps the staffing step incomplete when only one agent exists', async () => {
+    reposListMock.mockResolvedValue([repo()])
+    providerConfigsListMock.mockResolvedValue([providerConfig()])
+    agentsListMock.mockResolvedValue([agentConfig({ enabled: true, labels: '["plan"]' })])
+
+    renderChecklist()
+
+    expect(await screen.findByText('Set up agents manually →')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Create Worker, Tester, Reviewer/ })).toBeInTheDocument()
   })
 
   it('treats an agent config with enabled:false as incomplete', async () => {
     reposListMock.mockResolvedValue([repo()])
     providerConfigsListMock.mockResolvedValue([providerConfig()])
-    agentsListMock.mockResolvedValue([agentConfig({ enabled: false })])
+    agentsListMock.mockResolvedValue([agentConfig({ enabled: false, labels: '["plan"]' })])
 
     renderChecklist()
 
     await waitFor(() => {
-      expect(screen.getByText('Create an agent config →')).toBeInTheDocument()
+      expect(screen.getByText('Set up agents manually →')).toBeInTheDocument()
     })
   })
 
   it('renders nothing once all four steps are complete', async () => {
     reposListMock.mockResolvedValue([repo()])
     providerConfigsListMock.mockResolvedValue([providerConfig()])
-    agentsListMock.mockResolvedValue([agentConfig({ enabled: true })])
+    agentsListMock.mockResolvedValue(agentFor(['plan', 'work', 'testing', 'agent-review']))
     // Tasks come from the store (populated by BoardPage in production), not
     // from a fetch this component makes itself — seed it directly.
     useTasksStore.setState({ tasks: [task()], loading: false, error: null, loaded: true })
@@ -198,7 +215,7 @@ describe('OnboardingChecklist', () => {
   it('renders nothing while the tasks store has not loaded yet, even if other steps are complete', async () => {
     reposListMock.mockResolvedValue([repo()])
     providerConfigsListMock.mockResolvedValue([providerConfig()])
-    agentsListMock.mockResolvedValue([agentConfig({ enabled: true })])
+    agentsListMock.mockResolvedValue(agentFor(['plan', 'work', 'testing', 'agent-review']))
     // Simulate BoardPage's fetch still being in flight.
     useTasksStore.setState({ tasks: [], loading: true, error: null, loaded: false })
 

@@ -30,13 +30,16 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once a PR is detected as merged, the task's local branch and worktree are automatically cleaned up
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks, and (opt-in, independently) status is written back to the source issue as the imported task progresses — a comment when its PR opens, an `agent-in-progress` label when it first leaves `not_ready`, and the issue closed with a comment when the PR merges — see [docs/task-sources.md](docs/task-sources.md)
 - **Recurring task schedules** — turn a task template into a cron job: fire a pre-filled task against a repo on a schedule (hourly/daily/weekly presets or raw cron), skipping a firing while a prior unfinished task from the same schedule is still open; can target `not_ready` (human review) or a live agent label for fully unattended maintenance loops, pairing with cost budgets as a safety net — see [docs/task-templates.md](docs/task-templates.md)
-- **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
+- **Inbox** — one page (`/inbox`, with a sidebar count badge) listing everything waiting on you: agent questions and escalations (with the reason), approvals at human gates, PR conflicts, failed side effects and paused providers, each with a one-click action
+- **Pipeline** — a graph of the workflow showing who works each stage (agent, human gate, or a warning when a stage is unstaffed), with click-to-assign agents and a no-YAML graph editor (YAML stays available as the Advanced view); see [docs/workflows.md](docs/workflows.md)
+- **Repo verify command** — an independent check (`go test ./...`, `npm test`, …) run in the task's worktree before an agent's success is accepted, with a per-label override; see [docs/workflows.md#verify-commands](docs/workflows.md#verify-commands)
+- **Insights (formerly the Dashboard)** — split into three focused pages under a collapsed sidebar group: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Task priority** — low/normal/high/urgent priority per task; the dispatcher's pickup queue is ordered priority-first, then oldest-first, with an "N in queue" hint on cards waiting for a free worker
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **First-run onboarding checklist** — a dismissible setup checklist on the Board for unconfigured instances, sequencing add a repo → configure a provider → create an agent config → create your first task, checking each off live and surfacing failing readiness checks inline
 - **Configurable database cleanup** — automatic pruning of old agent logs (retention days + how often it runs) is DB-backed and editable at runtime from the Health page, no restart required — see [docs/backup.md#agent-log-retention](docs/backup.md#agent-log-retention)
-- **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
-- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
+- **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; gated by `METRICS_TOKEN`, or by the API tokens when API auth is on (`METRICS_PUBLIC=true` opts out)
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), (the old `?token=` query fallback was removed)
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 - **Installable as a PWA** — add the board to your phone's home screen for quick access
 - **Browser notifications when a human is needed** — opt-in (off by default; enable from the sidebar); fires whenever an agent calls the `request_human` MCP tool, or a task lands on a label only a human can move it out of, driven by the existing WebSocket event stream, no extra backend or push infrastructure required
@@ -54,7 +57,7 @@ See [docs/overview.md](docs/overview.md) for the full concepts and architecture 
 | ![Board](docs/img/board.png) | ![Task detail with live logs](docs/img/task-logs.png) |
 | **Diff viewer** — per-task diff with inline review comments | **Workflow editor** — visual + YAML, edit labels and transitions |
 | ![Diff viewer with inline comment](docs/img/diff-viewer.png) | ![Workflow editor](docs/img/workflow-editor.png) |
-| **Dashboard overview** — label counts, active agents, and the intervention queue | **Health** — provider and infrastructure readiness checks |
+| **Insights overview** — label counts, active agents, and the intervention queue | **Health** — provider and infrastructure readiness checks |
 | ![Dashboard](docs/img/dashboard.png) | ![Health page](docs/img/health.png) |
 
 ---
@@ -113,7 +116,7 @@ list — it doesn't print env vars, so here's what `run.sh` itself reads
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set `true` to disable SSL verification (git/npm/Node) behind a corporate TLS proxy |
 | `SSL_CA_CERT_PATH` | _(empty)_ | Path to a corporate CA `.pem` file to trust instead — safer alternative to `INSECURE_SKIP_SSL_VERIFY` |
 
-Backend app config (`API_TOKEN`, `LLM_API_KEY`, etc.) is a separate set — see
+Backend app config (`API_TOKEN`, etc.) is a separate set — see
 [Key Environment Variables](#key-environment-variables) below.
 
 > **Repo file ownership.** The backend container remaps its runtime user to your
@@ -166,9 +169,9 @@ See [docs/getting-started.md](docs/getting-started.md) for the full setup guide,
 
 ## First Steps After Startup
 
-1. **Register a repository** — Settings → Repos → Add Repo. Enter the local filesystem path agents should work in.
+1. **Register a repository** — Repos → Add Repo. Enter the local filesystem path agents should work in.
 2. **Create a provider config** — Settings → Providers → New Provider Config. Select a provider, enter a model, and add any required env vars/API keys. Provider configs are reusable — the same one can back multiple agent configs and/or chat sessions.
-3. **Create an agent config** — Settings → Agents → New Agent. Select the provider config you just created, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
+3. **Create an agent config** — Pipeline → Agents → New Agent. Select the provider config you just created, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
 4. **Create a task** — Board → New Task. Select the repo and fill in the title and description.
 5. **Move it to `plan`** — drag it or use the label selector. The dispatcher picks it up within 5 seconds.
 6. **Watch the logs** — click the task to open the detail view; logs stream live as the agent works.
@@ -177,13 +180,11 @@ See [docs/getting-started.md](docs/getting-started.md) for the full setup guide,
 
 ## Agent Provider Comparison
 
-Seven providers are available. Choose based on your auth setup, billing preference, and tool requirements.
+Four providers are available (`anthropic` and `llm` were removed in v0.17.0 — see [docs/providers/](docs/providers/)). Choose based on your auth setup, billing preference, and tool requirements.
 
 | Provider | Auth Required | CLI Dependency | Built-in Tools | Label Transitions | Notes |
 |---|---|---|---|---|---|
 | **`claude`** | Claude Max subscription (authenticated via `~/.claude`) | ✅ `claude` CLI must be installed & authenticated on the host/container | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Without MCP, runs always complete with no label transition. Dangerous env vars (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, etc.) are blocked for security. |
-| **`anthropic`** | Anthropic API key (`LLM_API_KEY`) | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Billed per-token — separate from a Claude Max subscription. No `Glob`/`Grep` tools. |
-| **`llm`** | API key (`LLM_API_KEY`) + `LLM_BASE_URL` | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Works with OpenAI, Azure OpenAI, Ollama, LM Studio, and any OpenAI-compatible endpoint. Same tool set as `anthropic`. Output quality varies by model/endpoint. |
 | **`opencode`** | Provider-specific (configured in `opencode` CLI) | ✅ `opencode` binary must be installed | Depends on opencode config | ❌ MCP tools not available | Label transitions require MCP, which opencode does not support. Runs complete without transitioning the task label. |
 | **`qwen_code`** | Qwen auth (configured in `qwen` CLI) | ✅ `qwen` binary must be installed (see `INSTALL_QWEN_CLI` build arg) | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Same MCP setup as the `claude` provider. |
 | **`codex_cli`** | ChatGPT account login (`codex login`) or `OPENAI_API_KEY` | ✅ `codex` CLI must be installed (see `INSTALL_CODEX_CLI` build arg) | Codex's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via a per-run isolated `CODEX_HOME`, not a CLI flag. Runs fully unsandboxed/unattended (`--dangerously-bypass-approvals-and-sandbox`); command allowlist/denylist not enforced — Codex's own sandbox/approval system is bypassed instead. No cost figure reported (token counts only). |
@@ -192,7 +193,6 @@ Seven providers are available. Choose based on your auth setup, billing preferen
 
 - **`claude` without MCP** — If `MCP_SERVER_PATH` is not set, the agent has no way to call `signal_complete` or `request_human`. Every run will finish with status `completed` but the task label will **not** change. Always build and configure the MCP sidecar when using the `claude` provider.
 - **`claude` env var restrictions** — The `env` field on a provider config cannot override system-critical variables (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, and others). Attempts are blocked and logged as warnings.
-- **`llm` model quality** — The `llm` provider sends the same tool definitions and prompts regardless of endpoint, but smaller or instruction-tuned models may not reliably follow tool-use conventions. Test your chosen model before relying on it for automated workflows.
 
 ---
 
@@ -204,7 +204,7 @@ Agent shell commands run inside the **backend** Docker container, against your b
 
 ## Security
 
-> **This tool executes arbitrary shell commands by design.** AI agents run `Bash` (claude provider) or `run_bash` (anthropic/llm providers) with full shell access as the server user. The security boundary is the container and the `REPO_BASE_DIR` mount — not the application itself.
+> **This tool executes arbitrary shell commands by design.** AI agents run `Bash` (claude provider, or the equivalent shell tool of the other providers) with full shell access as the server user. The security boundary is the container and the `REPO_BASE_DIR` mount — not the application itself.
 
 **Default settings are for localhost only.** Before exposing this to any non-localhost network:
 
@@ -218,6 +218,11 @@ Agent shell commands run inside the **backend** Docker container, against your b
 the box. Set `ATE_BIND_ADDR=0.0.0.0` in `.env` (or the environment) to publish on all
 interfaces — only do this alongside `API_TOKEN` and `CORS_ORIGINS` above.
 
+Even on localhost, a web page open in your browser can try to reach the API. Without a token the
+backend therefore rejects cross-origin state-changing requests (`Origin` must be in `CORS_ORIGINS`
+or same-origin), non-JSON request bodies, and unexpected `Host` headers (DNS rebinding). If you
+reach an unauthenticated instance by a custom hostname, add it to `ALLOWED_HOSTS`.
+
 ---
 
 ## Key Environment Variables
@@ -226,14 +231,15 @@ interfaces — only do this alongside `API_TOKEN` and `CORS_ORIGINS` above.
 |---|---|---|
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth required |
 | `API_TOKENS` | _(empty)_ | Named bearer tokens (`name1:token1,name2:token2`) — resolves to an actor name recorded in the label history audit trail; see [docs/getting-started.md](docs/getting-started.md#authentication) |
-| `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated |
+| `METRICS_TOKEN` | _(empty)_ | Dedicated bearer token for `GET /metrics`; empty = API token(s) required when API auth is configured, else open |
+| `METRICS_PUBLIC` | `false` | `true` leaves `GET /metrics` unauthenticated even when API auth is configured |
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory |
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary; required for label transitions with the `claude` provider |
-| `LLM_API_KEY` | _(empty)_ | API key for the `anthropic` or `llm` provider |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` (OpenAI-compatible) provider |
 | `MAX_WORKERS` | `5` | Maximum number of concurrent agent runs |
 | `MAX_DAILY_COST_USD` | `0` (unlimited) | Global cap on total recorded spend per UTC calendar day, across every task/provider; once reached, the dispatcher stops starting new runs system-wide until the next UTC day — see [docs/agents.md#global-cost-ceiling](docs/agents.md#global-cost-ceiling) |
 | `MAX_MONTHLY_COST_USD` | `0` (unlimited) | Same as above, per UTC calendar month |
+| `GITHUB_WEBHOOK_SECRET` | _(empty, disabled)_ | Enables `POST /api/v1/github/webhook` (HMAC-SHA256 signed) for instant PR-state refresh; polling remains the fallback — see [docs/task-sources.md](docs/task-sources.md#github-webhook-optional) |
+| `SHUTDOWN_DRAIN_TIMEOUT` | `60s` | On SIGTERM, how long in-flight runs may finish before the rest are cancelled and marked `interrupted` (not `failed`); `0` = no drain — see [docs/getting-started.md](docs/getting-started.md) |
 | `NOTIFY_WEBHOOK_URL` | _(empty, disabled)_ | Target URL for outbound "task needs a human" notifications — see [docs/websocket.md#outbound-webhook](docs/websocket.md#outbound-webhook) |
 
 See [docs/getting-started.md](docs/getting-started.md) for the full variable reference.
@@ -271,7 +277,7 @@ cd backend && go build -o mcp-server ./cmd/mcp-server
 | [docs/getting-started.md](docs/getting-started.md) | Installation, environment variables, local dev setup |
 | [docs/workflows.md](docs/workflows.md) | State machine format, labels, transitions, YAML import/export |
 | [docs/agents.md](docs/agents.md) | Providers, dispatcher, worker pool, run lifecycle, prompt construction |
-| [docs/providers/](docs/providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code`, plus the deprecated `anthropic`/`llm` |
+| [docs/providers/](docs/providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code` |
 | [docs/task-sources.md](docs/task-sources.md) | Importing GitHub Issues as tasks |
 | [docs/task-templates.md](docs/task-templates.md) | Task templates and recurring cron-scheduled task creation |
 | [docs/api.md](docs/api.md) | Full REST API endpoint reference |

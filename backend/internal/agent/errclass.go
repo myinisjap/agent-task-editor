@@ -41,7 +41,7 @@ const (
 	// (AgentConfig.MaxTurns) without finishing: escalate to waiting_human.
 	// Re-dispatching would silently void the operator's cap by handing the
 	// next run a fresh turn budget. Applies to the providers that actually
-	// enforce the cap (claude, qwen_code, anthropic, llm) — surfaced
+	// enforce the cap (claude, qwen_code) — surfaced
 	// structurally via a typed error / result subtype, not text-sniffed, so
 	// it deliberately has no classPatterns entry below.
 	ClassMaxTurns Classification = "max_turns"

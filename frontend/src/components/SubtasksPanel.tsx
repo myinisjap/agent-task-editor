@@ -36,7 +36,7 @@ export default function SubtasksPanel({
   useEffect(load, [load])
   useEffect(() => {
     return wsClient.on((e) => {
-      if (e.type === 'task.updated' || e.type === 'task.label_changed' || e.type === 'task.created' || e.type === 'task.subtask_conflict') {
+      if (e.type === 'resync' || e.type === 'task.updated' || e.type === 'task.label_changed' || e.type === 'task.created' || e.type === 'task.subtask_conflict') {
         load()
       }
     })

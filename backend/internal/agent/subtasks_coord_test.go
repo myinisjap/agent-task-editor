@@ -15,7 +15,7 @@ import (
 
 type noopPub struct{}
 
-func (noopPub) Publish(string, map[string]any) {}
+func (noopPub) Publish(string, any) {}
 
 // gitIn runs a git command in dir, failing the test on error.
 func gitIn(t *testing.T, dir string, args ...string) {
