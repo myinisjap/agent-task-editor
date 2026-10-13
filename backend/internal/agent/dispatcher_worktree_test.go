@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"testing"
 
@@ -17,9 +18,9 @@ import (
 // now also clears worktree_path, but this must hold even if that clear were
 // ever skipped/lost) or because the periodic sweeper reclaimed it out from
 // under the task without ever touching this DB row (internal/worktreesweep).
-// Previously ensureWorktree only reprovisioned when WorktreePath == "",
+// Previously worktree setup only reprovisioned when WorktreePath == "",
 // so a stale-but-non-empty path was handed straight to the agent as its cwd
-// — a directory that doesn't exist. ensureWorktree must instead detect the
+// — a directory that doesn't exist. worktree setup must instead detect the
 // missing directory and reprovision a fresh worktree.
 func TestEnsureWorktree_StaleWorktreePath_Reprovisions(t *testing.T) {
 	repo := initRepo(t)
@@ -83,22 +84,26 @@ func TestEnsureWorktree_StaleWorktreePath_Reprovisions(t *testing.T) {
 	}
 
 	d := &Dispatcher{q: q}
-	workDir, err := d.ensureWorktree(ctx, task, repoRow)
-	if err != nil {
-		t.Fatalf("ensureWorktree: %v", err)
+	if _, ok := existingWorktree(task); ok {
+		t.Fatalf("existingWorktree must not report a stale, deleted path as usable")
 	}
+	res, err := d.worktreeSetup(task, repoRow, nil, slog.Default())(ctx)
+	if err != nil {
+		t.Fatalf("worktreeSetup: %v", err)
+	}
+	workDir := res.Path
 	if workDir == staleWtPath && !dirIsReal(t, workDir) {
-		t.Fatalf("ensureWorktree returned the stale, deleted path instead of reprovisioning: %q", workDir)
+		t.Fatalf("worktree setup returned the stale, deleted path instead of reprovisioning: %q", workDir)
 	}
 	if fi, statErr := os.Stat(workDir); statErr != nil || !fi.IsDir() {
-		t.Fatalf("expected ensureWorktree's returned dir to exist: stat err=%v", statErr)
+		t.Fatalf("expected worktree setup's returned dir to exist: stat err=%v", statErr)
 	}
 
 	// The task's DB row must also be updated to the freshly reprovisioned path
 	// so the next call (or a real dispatch) doesn't redo this work.
 	reloaded, err := q.GetTask(ctx, task.ID)
 	if err != nil {
-		t.Fatalf("reload task after ensureWorktree: %v", err)
+		t.Fatalf("reload task after worktree setup: %v", err)
 	}
 	if reloaded.WorktreePath != workDir {
 		t.Errorf("expected task.worktree_path updated to %q, got %q", workDir, reloaded.WorktreePath)
@@ -107,7 +112,7 @@ func TestEnsureWorktree_StaleWorktreePath_Reprovisions(t *testing.T) {
 
 // TestEnsureWorktree_ExistingWorktreePath_Reused verifies the normal,
 // non-stale case is unaffected by the added stat check: when
-// WorktreePath already points at a real directory, ensureWorktree returns it
+// WorktreePath already points at a real directory, worktree setup returns it
 // as-is without reprovisioning.
 func TestEnsureWorktree_ExistingWorktreePath_Reused(t *testing.T) {
 	repo := initRepo(t)
@@ -135,11 +140,6 @@ func TestEnsureWorktree_ExistingWorktreePath_Reused(t *testing.T) {
 	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoID, Name: "r", Path: repo, WorkflowID: &wfID}); err != nil {
 		t.Fatalf("create repo: %v", err)
 	}
-	repoRow, err := q.GetRepo(ctx, repoID)
-	if err != nil {
-		t.Fatalf("get repo: %v", err)
-	}
-
 	task, _ := q.CreateTask(ctx, gen.CreateTaskParams{
 		ID: uuid.NewString(), Title: "Live worktree", Type: "feature", Label: "plan", RepoID: repoID, WorkflowID: wfID, Attachments: "[]",
 	})
@@ -152,10 +152,9 @@ func TestEnsureWorktree_ExistingWorktreePath_Reused(t *testing.T) {
 	}
 	task, _ = q.GetTask(ctx, task.ID)
 
-	d := &Dispatcher{q: q}
-	workDir, err := d.ensureWorktree(ctx, task, repoRow)
-	if err != nil {
-		t.Fatalf("ensureWorktree: %v", err)
+	workDir, ok := existingWorktree(task)
+	if !ok {
+		t.Fatalf("existingWorktree: expected live worktree to be reused")
 	}
 	if workDir != wtPath {
 		t.Errorf("expected the existing worktree path %q reused as-is, got %q", wtPath, workDir)

@@ -55,18 +55,19 @@ func newSubtaskHarness(t *testing.T) *subtaskHarness {
 	coord := NewSubtaskCoordinator(q, engine, pub, "Test", "test@example.com")
 
 	termQ := gen.New(db.SQL())
-	engine.OnTerminal = func(ctx context.Context, task gen.Task) {
+	engine.OnTerminal = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			return
+			return err
 		}
 		if IsSubtask(task) {
 			coord.OnChildTerminal(ctx, task, repo.Path)
-			return
+			return nil
 		}
 		if task.WorktreePath != "" {
 			_ = RemoveWorktree(ctx, repo.Path, task.WorktreePath)
 		}
+		return nil
 	}
 
 	pool := NewPool(2, db.SQL(), engine, pub)
@@ -80,6 +81,7 @@ func newSubtaskHarness(t *testing.T) *subtaskHarness {
 	ctx, cancel := context.WithCancel(context.Background())
 	go pool.Start(ctx)
 	go d.Run(ctx)
+	go engine.RunSideEffects(ctx)
 	t.Cleanup(cancel)
 
 	return &subtaskHarness{q: q, coord: coord, repo: initRepo(t)}

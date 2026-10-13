@@ -2,7 +2,7 @@ import type React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { Task } from '../../api/client'
+import type { Task, WorkflowLabel } from '../../api/client'
 import type TaskHeaderType from './TaskHeader'
 import TaskHeader from './TaskHeader'
 
@@ -354,5 +354,26 @@ describe('TaskHeader block_reason banner (#353)', () => {
     )
 
     expect(screen.getByText(/See Dependencies below/)).toBeInTheDocument()
+  })
+})
+
+describe('TaskHeader "Move to…" filtering', () => {
+  const lbl = (name: string, sort_order: number) =>
+    ({ id: name, workflow_id: 'w1', name, color: '#000', sort_order, agent_ignore: 0, is_terminal: 0, create_pr: 0 }) as unknown as WorkflowLabel
+  const labels = [lbl('todo', 0), lbl('doing', 1), lbl('review', 2), lbl('done', 3)]
+  const transitions = [
+    { id: 'a', workflow_id: 'w1', from_label: 'todo', to_label: 'doing', trigger_type: 'human' as const },
+    { id: 'b', workflow_id: 'w1', from_label: 'todo', to_label: 'review', trigger_type: 'agent' as const },
+  ]
+
+  it('lists only labels reachable via a defined transition', () => {
+    renderHeader(TaskHeader, baseTask({ label: 'todo' }), { labels, transitions })
+    const options = screen.getAllByRole('option').map((o) => o.textContent)
+    expect(options).toEqual(['Move to…', 'doing', 'review'])
+  })
+
+  it('hides the control when there are no legal targets', () => {
+    renderHeader(TaskHeader, baseTask({ label: 'done' }), { labels, transitions })
+    expect(screen.queryByRole('combobox')).toBeNull()
   })
 })

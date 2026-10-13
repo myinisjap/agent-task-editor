@@ -2,19 +2,15 @@ package handlers
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	_ "github.com/myinisjap/agent-task-editor/backend/internal/ghclient" // registers the GitHub forge.Forge implementation
+	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
-	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
 )
 
 // Diff returns the task's accumulated changes: the diff of its branch against
@@ -29,7 +25,7 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusOK, map[string]any{"branch": task.Branch, "diff": ""})
 		return
 	}
-	if !isValidGitRef(task.BaseRef) || !isValidGitRef(task.Branch) {
+	if !gitcmd.IsValidRef(task.BaseRef) || !gitcmd.IsValidRef(task.Branch) {
 		Err(w, http.StatusBadRequest, "invalid git ref")
 		return
 	}
@@ -38,7 +34,7 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 	// worktree is torn down (the branch is kept). Fall back to the repo's main
 	// clone, which still has the branch ref.
 	gitDir := task.WorktreePath
-	if gitDir == "" || !dirExists(gitDir) {
+	if gitDir == "" || !gitcmd.DirExists(gitDir) {
 		repo, rerr := h.q.GetRepo(r.Context(), task.RepoID)
 		if rerr != nil {
 			Err(w, http.StatusInternalServerError, "failed to locate repo")
@@ -47,7 +43,7 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		gitDir = repo.Path
 	}
 
-	mb, err := exec.CommandContext(r.Context(), "git", "-C", gitDir, "merge-base", task.BaseRef, task.Branch).Output()
+	mb, err := gitcmd.Output(r.Context(), gitDir, "merge-base", task.BaseRef, task.Branch)
 	base := task.BaseRef
 	if err == nil {
 		if s := strings.TrimSpace(string(mb)); s != "" {
@@ -55,17 +51,12 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	out, err := exec.CommandContext(r.Context(), "git", "-C", gitDir, "diff", base, task.Branch, "--").Output()
+	out, err := gitcmd.Output(r.Context(), gitDir, "diff", base, task.Branch, "--")
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to compute diff")
 		return
 	}
 	JSON(w, http.StatusOK, map[string]any{"branch": task.Branch, "diff": string(out)})
-}
-
-func dirExists(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.IsDir()
 }
 
 // PRURL builds a forge compare URL for the task's branch with a pre-filled PR
@@ -100,36 +91,13 @@ func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 	base := strings.TrimPrefix(task.BaseRef, "origin/")
 
 	// Collect commit subjects on the branch (best-effort; empty if it fails).
-	gitDir := task.WorktreePath
-	if gitDir == "" || !dirExists(gitDir) {
-		gitDir = repo.Path
-	}
-	commits := collectBranchCommits(r.Context(), gitDir, task.BaseRef, task.Branch)
+	gitDir := prflow.GitDir(task, repo)
+	commits := prflow.BranchCommits(r.Context(), gitDir, task.BaseRef, task.Branch)
 
-	body := buildPRBody(task, commits)
+	body := prflow.BuildBody(task, commits)
 	prURL := f.CompareURL(repoName, base, task.Branch, task.Title, body)
 
 	JSON(w, http.StatusOK, map[string]any{"url": prURL})
-}
-
-// collectBranchCommits returns the commit subjects unique to the task's branch
-// relative to its base ref (best-effort — empty slice if the git log fails or
-// either ref is invalid).
-func collectBranchCommits(ctx context.Context, gitDir, baseRef, branch string) []string {
-	if !isValidGitRef(baseRef) || !isValidGitRef(branch) {
-		return nil
-	}
-	out, err := exec.CommandContext(ctx, "git", "-C", gitDir, "log", "--format=%s", baseRef+".."+branch).Output()
-	if err != nil {
-		return nil
-	}
-	var commits []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line != "" {
-			commits = append(commits, line)
-		}
-	}
-	return commits
 }
 
 // CreatePR pushes the task's branch to origin and opens a GitHub pull request
@@ -149,7 +117,7 @@ func (h *TasksHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, prURL, err := CreatePRForTask(r.Context(), h.q, h.wb, task, repo)
+	updated, prURL, err := prflow.New(h.q, h.wb).CreateForTask(r.Context(), task, repo)
 	if err != nil {
 		Err(w, prCreateStatus(err), err.Error())
 		return
@@ -161,103 +129,15 @@ func (h *TasksHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// errBadRequest / errBadGateway tag PR-creation failures so HTTP callers can map
-// them to a status code while non-HTTP callers (the workflow OnCreatePR hook)
-// can just log them.
-var (
-	errPRBadRequest = errors.New("bad request")
-	errPRBadGateway = errors.New("bad gateway")
-)
-
 func prCreateStatus(err error) int {
 	switch {
-	case errors.Is(err, errPRBadRequest):
+	case prflow.IsPrecondition(err):
 		return http.StatusBadRequest
-	case errors.Is(err, errPRBadGateway):
+	case prflow.IsUpstream(err):
 		return http.StatusBadGateway
 	default:
 		return http.StatusInternalServerError
 	}
-}
-
-// CreatePRForTask pushes the task's branch to origin and opens (or reuses) a
-// pull request on the repo's forge, persists the resulting PR URL + git state
-// on the task, and runs the issue write-back. Shared by the HTTP CreatePR
-// handler and the workflow engine's OnCreatePR hook so both produce an
-// identical PR. It is idempotent: an existing PR for the branch is returned
-// rather than erroring. wb may be nil to skip write-back.
-func CreatePRForTask(ctx context.Context, q *gen.Queries, wb *writeback.Writeback, task gen.Task, repo gen.Repo) (updated gen.Task, prURL string, err error) {
-	if task.Branch == "" {
-		return gen.Task{}, "", fmt.Errorf("%w: task has no branch yet", errPRBadRequest)
-	}
-	if repo.RemoteUrl == nil {
-		return gen.Task{}, "", fmt.Errorf("%w: repo has no remote_url", errPRBadRequest)
-	}
-	f, ghName, ok := forge.ForRemote(*repo.RemoteUrl)
-	if !ok {
-		return gen.Task{}, "", fmt.Errorf("%w: repo remote is not a supported forge URL", errPRBadRequest)
-	}
-
-	// Push the branch first. Push from the worktree if it still exists,
-	// otherwise from the main clone — the branch ref lives there too once the
-	// worktree has been torn down on a terminal transition.
-	gitDir := task.WorktreePath
-	if gitDir == "" || !dirExists(gitDir) {
-		gitDir = repo.Path
-	}
-	if err := agent.PushBranch(ctx, gitDir, task.Branch); err != nil {
-		return gen.Task{}, "", fmt.Errorf("failed to push branch: %w", err)
-	}
-
-	// The compare/PR base wants a branch name, not a remote-tracking ref.
-	base := strings.TrimPrefix(task.BaseRef, "origin/")
-	body := buildPRBody(task, collectBranchCommits(ctx, gitDir, task.BaseRef, task.Branch))
-
-	state, prURL, err := f.CreatePR(ctx, ghName, task.Branch, base, task.Title, body)
-	if err != nil {
-		return gen.Task{}, "", fmt.Errorf("%w: %s", errPRBadGateway, err.Error())
-	}
-
-	updated, err = q.SetTaskPR(ctx, gen.SetTaskPRParams{
-		GitState: state,
-		PrUrl:    prURL,
-		ID:       task.ID,
-	})
-	if err != nil {
-		return gen.Task{}, "", err
-	}
-
-	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
-	// the task wasn't imported or the repo doesn't have it enabled).
-	if wb != nil {
-		wb.OnPROpened(ctx, updated, repo)
-		wb.OnPRMerged(ctx, updated, repo)
-	}
-
-	return updated, prURL, nil
-}
-
-// buildPRBody assembles a markdown PR description from the task and its commits.
-func buildPRBody(task gen.Task, commits []string) string {
-	var b strings.Builder
-	if task.Description != "" {
-		b.WriteString(task.Description)
-		b.WriteString("\n\n")
-	}
-	if task.AgentNotes != "" {
-		b.WriteString("### What changed\n\n")
-		b.WriteString(task.AgentNotes)
-		b.WriteString("\n\n")
-	}
-	if len(commits) > 0 {
-		b.WriteString("### Commits\n\n")
-		for _, c := range commits {
-			b.WriteString("- ")
-			b.WriteString(c)
-			b.WriteString("\n")
-		}
-	}
-	return strings.TrimSpace(b.String())
 }
 
 // GitHubStatus fetches live GitHub PR state for the task's branch using the gh

@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, type Workflow } from '../api/client'
+import { buildChipRows } from '../lib/dashboardChips'
 import { useDashboard } from '../lib/useDashboard'
+import { humanActionsFor } from '../lib/humanGate'
+import { useNeedsMeStore } from '../stores/needsMe'
+import { needsMeReasonLabel } from '../lib/needsMe'
+import { escalationInfo } from '../lib/escalation'
 import { useWorkflowStore } from '../stores/workflow'
 import TaskFactory from '../components/TaskFactory'
 import FactoryLine from '../components/FactoryLine'
@@ -32,21 +37,50 @@ const MODES: { value: VizMode; label: string }[] = [
   { value: 'factory', label: 'Factory' },
 ]
 
-const LABEL_COLORS: Record<string, string> = {
-  not_ready:    '#6B7280',
-  plan:         '#8B5CF6',
-  'review-plan': '#3B82F6',
-  work:         '#F59E0B',
-  testing:      '#F97316',
-  'agent-review': '#6366F1',
-  review:       '#EC4899',
-  done:         '#10B981',
+function LabelChipRows({
+  workflows,
+  labelCounts,
+  workflowLabelCounts,
+}: {
+  workflows: Workflow[]
+  labelCounts: Record<string, number>
+  workflowLabelCounts?: Record<string, Record<string, number>>
+}) {
+  const rows = buildChipRows(workflows, labelCounts, workflowLabelCounts)
+  return (
+    <div className="flex flex-col gap-3">
+      {rows.map((row) => (
+        <div key={row.key}>
+          {row.title && <p className="text-xs text-slate-500 mb-1.5">{row.title}</p>}
+          <div className="flex flex-wrap gap-2">
+            {row.chips.map((c) => (
+              <div
+                key={c.key}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-medium"
+                style={{ backgroundColor: c.color }}
+              >
+                <span>{c.name}</span>
+                <span className="bg-black/20 rounded-full px-1.5 py-0.5 text-xs">{c.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { dash, refresh } = useDashboard()
+  const { dash, refresh: refreshDash } = useDashboard()
+  const needsMe = useNeedsMeStore((st) => st.items)
+  const refreshNeedsMe = useNeedsMeStore((st) => st.refresh)
+  const refresh = () => {
+    refreshDash()
+    void refreshNeedsMe()
+  }
   const [rejectNote, setRejectNote] = useState<Record<string, string>>({})
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<Record<string, boolean>>({})
   const [visualize, setVisualize] = useState(() => {
     try { return localStorage.getItem(VISUALIZE_KEY) === '1' } catch { return false }
@@ -74,12 +108,27 @@ export default function DashboardPage() {
   }
 
   const handleApprove = async (taskId: string) => {
+    setActionErrors((m) => ({ ...m, [taskId]: '' }))
     setPending((p) => ({ ...p, [taskId]: true }))
     try {
       await api.tasks.approve(taskId)
       refresh()
     } catch (e: any) {
-      alert(e.message)
+      setActionErrors((m) => ({ ...m, [taskId]: e.message ?? String(e) }))
+    } finally {
+      setPending((p) => ({ ...p, [taskId]: false }))
+    }
+  }
+
+  // Retry an escalated task (clears its lock so the dispatcher re-runs it).
+  const handleRetry = async (taskId: string) => {
+    setActionErrors((m) => ({ ...m, [taskId]: '' }))
+    setPending((p) => ({ ...p, [taskId]: true }))
+    try {
+      await api.tasks.rerun(taskId)
+      refresh()
+    } catch (e: any) {
+      setActionErrors((m) => ({ ...m, [taskId]: e.message ?? String(e) }))
     } finally {
       setPending((p) => ({ ...p, [taskId]: false }))
     }
@@ -88,13 +137,14 @@ export default function DashboardPage() {
   const handleReject = async (taskId: string) => {
     const note = rejectNote[taskId] ?? ''
     if (!note.trim()) return
+    setActionErrors((m) => ({ ...m, [taskId]: '' }))
     setPending((p) => ({ ...p, [taskId]: true }))
     try {
       await api.tasks.reject(taskId, note)
       setRejectNote((n) => ({ ...n, [taskId]: '' }))
       refresh()
     } catch (e: any) {
-      alert(e.message)
+      setActionErrors((m) => ({ ...m, [taskId]: e.message ?? String(e) }))
     } finally {
       setPending((p) => ({ ...p, [taskId]: false }))
     }
@@ -163,18 +213,11 @@ export default function DashboardPage() {
               <TaskFactory workflow={workflow} labelCounts={dash.label_counts} robots={mode === 'robots'} />
             )
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(dash.label_counts).map(([label, count]) => (
-                <div
-                  key={label}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white text-xs font-medium"
-                  style={{ backgroundColor: LABEL_COLORS[label] ?? '#6B7280' }}
-                >
-                  <span>{label}</span>
-                  <span className="bg-black/20 rounded-full px-1.5 py-0.5 text-xs">{count}</span>
-                </div>
-              ))}
-            </div>
+            <LabelChipRows
+              workflows={workflows}
+              labelCounts={dash.label_counts}
+              workflowLabelCounts={dash.workflow_label_counts}
+            />
           )}
         </section>
       )}
@@ -258,14 +301,14 @@ export default function DashboardPage() {
       )}
 
       {/* Intervention queue */}
-      {dash && dash.intervention_queue.length > 0 && (
+      {needsMe.length > 0 && (
         <section className="mb-8">
           <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
-            Needs your input ({dash.intervention_queue.length})
+            Needs your input ({needsMe.length})
           </h2>
           <div className="flex flex-col gap-3">
-            {dash.intervention_queue.map((item) => (
-              <div key={item.run_id} className="bg-slate-900 border border-pink-900/50 rounded-lg p-4">
+            {needsMe.map((item) => (
+              <div key={item.task_id} className="bg-slate-900 border border-pink-900/50 rounded-lg p-4">
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div>
                     <button
@@ -274,46 +317,114 @@ export default function DashboardPage() {
                     >
                       {item.task_title}
                     </button>
+                    <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200 font-medium">
+                      {needsMeReasonLabel(item.reason, item.escalation_reason)}
+                    </span>
                     {item.message && (
                       <p className="text-xs text-slate-400 mt-1">{item.message}</p>
                     )}
                   </div>
                   <span className="shrink-0 text-xs text-slate-500">
-                    {new Date(item.created_at).toLocaleTimeString()}
+                    {new Date(item.since).toLocaleTimeString()}
                   </span>
                 </div>
-                <div className="flex gap-2 items-start">
-                  <input
-                    type="text"
-                    value={rejectNote[item.task_id] ?? ''}
-                    onChange={(e) =>
-                      setRejectNote((n) => ({ ...n, [item.task_id]: e.target.value }))
+                {item.reason !== 'pr_conflict' && (() => {
+                  const { canApprove, canReject } = humanActionsFor(
+                    workflows.find((w) => w.id === item.workflow_id),
+                    item.label,
+                  )
+                  if (!canApprove && !canReject) {
+                    const esc = escalationInfo(item.escalation_reason)
+                    if (item.reason === 'waiting_human' && esc.action !== 'reply') {
+                      return (
+                        <div className="flex items-center gap-2">
+                          <p className="flex-1 text-xs text-slate-500">
+                            {esc.action === 'fix'
+                              ? 'Fix the cause first, then retry.'
+                              : 'Retry re-runs the task as is; open it to reply with guidance instead.'}
+                          </p>
+                          {esc.action === 'fix' && esc.fix && (
+                            <button
+                              onClick={() => navigate(esc.fix!.to)}
+                              className="px-3 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white"
+                            >
+                              {esc.fix.text}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleRetry(item.task_id)}
+                            disabled={pending[item.task_id]}
+                            className={
+                              esc.action === 'retry'
+                                ? 'px-3 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-50'
+                                : 'px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-100 disabled:opacity-50'
+                            }
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )
                     }
-                    placeholder="Rejection note…"
-                    className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
-                  />
-                  <button
-                    onClick={() => handleApprove(item.task_id)}
-                    disabled={pending[item.task_id]}
-                    className="px-3 py-1.5 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleReject(item.task_id)}
-                    disabled={pending[item.task_id] || !(rejectNote[item.task_id] ?? '').trim()}
-                    className="px-3 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                </div>
+                    return (
+                      <div className="flex items-center gap-2">
+                        <p className="flex-1 text-xs text-slate-500">
+                          This task is on an agent label, so there is nothing to approve or reject. Reply to the agent on the task page.
+                        </p>
+                        <button
+                          onClick={() => navigate(`/tasks/${item.task_id}`)}
+                          className="px-3 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white"
+                        >
+                          Reply
+                        </button>
+                      </div>
+                    )
+                  }
+                  return (
+                    <div className="flex gap-2 items-start">
+                      {canReject ? (
+                        <input
+                          type="text"
+                          value={rejectNote[item.task_id] ?? ''}
+                          onChange={(e) =>
+                            setRejectNote((n) => ({ ...n, [item.task_id]: e.target.value }))
+                          }
+                          placeholder="Rejection note…"
+                          className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
+                        />
+                      ) : (
+                        <div className="flex-1" />
+                      )}
+                      {canApprove && (
+                        <button
+                          onClick={() => handleApprove(item.task_id)}
+                          disabled={pending[item.task_id]}
+                          className="px-3 py-1.5 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                      )}
+                      {canReject && (
+                        <button
+                          onClick={() => handleReject(item.task_id)}
+                          disabled={pending[item.task_id] || !(rejectNote[item.task_id] ?? '').trim()}
+                          className="px-3 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      )}
+                    </div>
+                  )
+                })()}
+                {actionErrors[item.task_id] && (
+                  <p role="alert" className="text-xs text-red-400 mt-2">{actionErrors[item.task_id]}</p>
+                )}
               </div>
             ))}
           </div>
         </section>
       )}
 
-      {dash && !dash.active_agents.length && !dash.intervention_queue.length && (
+      {dash && !dash.active_agents.length && !needsMe.length && (
         <p className="text-sm text-slate-500">No active agents or pending reviews.</p>
       )}
 

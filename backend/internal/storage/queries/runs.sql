@@ -56,7 +56,7 @@ LIMIT 1;
 
 -- name: SetAgentRunCompleted :one
 UPDATE agent_runs
-SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, turns_used = ?, completed_at = CURRENT_TIMESTAMP
+SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, turns_used = ?, escalation_reason = ?, completed_at = CURRENT_TIMESTAMP
 WHERE id = ?
 RETURNING *;
 
@@ -105,7 +105,7 @@ VALUES (?, ?, ?, ?, ?);
 
 -- name: DeleteOldAgentLogs :execrows
 -- Deletes agent_logs rows belonging to runs in a terminal status
--- (completed/failed/waiting_human) whose run completed_at is older than the
+-- (completed/failed/waiting_human/interrupted) whose run completed_at is older than the
 -- cutoff. Never touches logs for a run that is still pending/running (no
 -- completed_at, or non-terminal status), so the active run and the WS
 -- replay path (which reads the live run's logs) are unaffected. cutoff is
@@ -115,7 +115,7 @@ VALUES (?, ?, ?, ?, ?);
 DELETE FROM agent_logs
 WHERE agent_run_id IN (
   SELECT id FROM agent_runs
-  WHERE status IN ('completed','failed','waiting_human')
+  WHERE status IN ('completed','failed','waiting_human','interrupted')
     AND completed_at IS NOT NULL
     AND completed_at < ?1
 );
@@ -143,7 +143,7 @@ ORDER BY ar.started_at DESC;
 -- comment in task_runs.go); without this join, that superseded run would
 -- keep showing up in the dashboard's "needs your input" queue forever, even
 -- after a new run for the same task is already active/running.
-SELECT ar.*, t.title as task_title
+SELECT ar.*, t.title as task_title, t.label as task_label, t.workflow_id as task_workflow_id
 FROM agent_runs ar
 JOIN tasks t ON t.id = ar.task_id
 WHERE ar.status = 'waiting_human'

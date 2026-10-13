@@ -37,6 +37,7 @@ export default function DependenciesPanel({
   useEffect(() => {
     return wsClient.on((e) => {
       if (
+        e.type === 'resync' ||
         e.type === 'task.updated' ||
         e.type === 'task.label_changed' ||
         e.type === 'task.agent_done'

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -20,7 +22,7 @@ import (
 
 // Publisher is satisfied by *ws.Hub — it sends events to all connected clients.
 type Publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // Syncer polls all eligible tasks on a fixed interval and refreshes their
@@ -72,6 +74,17 @@ type Syncer struct {
 	// directly, bypassing New.
 	backoffMu sync.Mutex
 	backoff   map[string]*repoBackoff
+
+	// syncMu serializes syncTask between the polling sweep and
+	// webhook-triggered refreshes so they never process one task concurrently.
+	syncMu sync.Mutex
+	// webhookMu guards lastWebhook and pending (see webhook.go).
+	webhookMu   sync.Mutex
+	lastWebhook time.Time
+	pending     map[string]bool
+	// debounce delays webhook-triggered refreshes (webhookDebounce in
+	// production; zero in tests).
+	debounce time.Duration
 }
 
 // New creates a Syncer that polls on the given interval. engine may be nil,
@@ -94,6 +107,7 @@ func New(db *sql.DB, hub Publisher, interval time.Duration, engine *workflow.Eng
 		interval: interval,
 		wb:       writeback.New(gen.New(db)),
 		engine:   engine,
+		debounce: webhookDebounce,
 		backoff:  map[string]*repoBackoff{},
 		getPRHead: func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
 			return repo.forge.PRHead(ctx, repo.ghName, branch)
@@ -114,11 +128,19 @@ func New(db *sql.DB, hub Publisher, interval time.Duration, engine *workflow.Eng
 func (s *Syncer) Run(ctx context.Context) {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
+	var lastSweep time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// While webhooks are arriving, polling is only the fallback for
+			// missed deliveries, so sweep at a longer interval.
+			now := time.Now()
+			if s.webhookRecent(now) && now.Sub(lastSweep) < webhookFallbackFactor*s.interval {
+				continue
+			}
+			lastSweep = now
 			s.sweep(ctx)
 		}
 	}
@@ -181,7 +203,9 @@ func (s *Syncer) sweep(ctx context.Context) {
 		}
 
 		checked++
+		s.syncMu.Lock()
 		ok = s.syncTask(ctx, task, info)
+		s.syncMu.Unlock()
 		if !recordedThisSweep[task.RepoID] {
 			recordedThisSweep[task.RepoID] = true
 			if ok {
@@ -285,10 +309,10 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 
 	log.Info("ghsync: git state updated", "old_state", task.GitState, "new_state", state)
 
-	s.hub.Publish("task.git_state_changed", map[string]any{
-		"task_id":   task.ID,
-		"git_state": state,
-		"pr_url":    storeURL,
+	s.hub.Publish(wsevent.TypeTaskGitStateChanged, wsevent.TaskGitStateChanged{
+		TaskID:   task.ID,
+		GitState: state,
+		PRURL:    storeURL,
 	})
 
 	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
@@ -324,7 +348,11 @@ func (s *Syncer) cleanupMergedBranch(ctx context.Context, task gen.Task, repoPat
 	// OnTerminal hook by the time a PR is confirmed merged, but ghsync runs
 	// independently of the workflow engine, so don't assume that happened.
 	if task.WorktreePath != "" {
-		if err := agent.RemoveWorktree(ctx, repoPath, task.WorktreePath); err != nil {
+		lock := agent.RepoGitLock(repoPath)
+		lock.Lock()
+		err := agent.RemoveWorktree(ctx, repoPath, task.WorktreePath)
+		lock.Unlock()
+		if err != nil {
 			log.Warn("ghsync: remove worktree before branch delete", "err", err)
 			// Continue anyway — branch delete below will fail loudly (and be
 			// logged) if the worktree is in fact still attached.

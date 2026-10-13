@@ -38,7 +38,7 @@ This is safe to run at any time, including while the app is under active
 write load — unlike a raw file copy, `VACUUM INTO` always produces a
 complete, self-consistent snapshot.
 
-The frontend's **Health** page (`/health`) also has a "Download backup"
+The frontend's **Health** page (`/settings/health`) also has a "Download backup"
 button that triggers the same endpoint for a one-click manual snapshot from
 the browser.
 
@@ -132,6 +132,37 @@ offsite/durable retention, either:
   (S3, rsync, etc.), or
 - Use the Litestream sidecar described below, which continuously replicates
   the *live* database (not just periodic snapshots) to S3-compatible storage.
+
+## Pre-migration snapshots
+
+Migrations run without a wrapping transaction (some table rebuilds require
+that), so a failure partway through leaves the migration state "dirty" and the
+server refuses to start. To make that recoverable, **before applying any
+pending migrations** the server automatically writes a `VACUUM INTO` snapshot
+of the database — regardless of whether `BACKUP_DIR` is set.
+
+- **When:** only if the database already has a schema version older than the
+  latest one in the binary. A fresh/empty database, or one already up to date,
+  gets no snapshot. In-memory and `file:` URI databases are never snapshotted.
+- **Where/name:** next to the database file, as
+  `<DB_PATH>.pre-migrate-v<from>-to-v<to>-<UTC timestamp>.sqlite`, e.g.
+  `/data/agent-task-editor.db.pre-migrate-v55-to-v56-20261011T040007Z.sqlite`.
+  This is the same directory (and volume) as the DB, so it needs free space
+  roughly equal to the database size.
+- **Retention:** the 3 newest pre-migration snapshots are kept; older ones are
+  deleted after each new snapshot. Other files are never touched.
+- **If the snapshot fails** (disk full, read-only directory, ...), startup is
+  aborted rather than migrating without a safety net. The error names
+  `SKIP_PREMIGRATE_SNAPSHOT`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SKIP_PREMIGRATE_SNAPSHOT` | `false` | Set to `true` to skip the pre-migration snapshot (and to start anyway when it cannot be written). Not recommended. |
+
+**If a migration fails**, the startup error and log name the snapshot. To
+restore: stop the server, delete any `<DB_PATH>-wal`/`<DB_PATH>-shm` files,
+copy the snapshot over `DB_PATH`, and start the previous version of the
+server (see the restore procedure below).
 
 ## Agent log retention
 

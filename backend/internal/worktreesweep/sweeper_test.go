@@ -71,6 +71,16 @@ func addWorktree(t *testing.T, repo, id string) string {
 	return wtPath
 }
 
+// backdate makes a worktree dir look old enough to clear the sweeper's
+// recent-modification grace period.
+func backdate(t *testing.T, path string) {
+	t.Helper()
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+}
+
 func TestRunOnce_ReclaimsArchivedTaskWorktree(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
@@ -111,6 +121,8 @@ func TestRunOnce_ReclaimsArchivedTaskWorktree(t *testing.T) {
 
 	liveWt := addWorktree(t, repoPath, liveID)
 	archivedWt := addWorktree(t, repoPath, archivedID)
+	backdate(t, liveWt)
+	backdate(t, archivedWt)
 
 	s := worktreesweep.New(q, time.Hour)
 	if err := s.RunOnce(ctx); err != nil {
@@ -160,6 +172,8 @@ func TestRunOnce_KeepsChatSessionWorktree(t *testing.T) {
 	sessWt := addWorktree(t, repoPath, sess.ID)
 	orphanID := uuid.NewString()
 	orphanWt := addWorktree(t, repoPath, orphanID) // no task/session owns this id
+	backdate(t, sessWt)
+	backdate(t, orphanWt)
 
 	s := worktreesweep.New(q, time.Hour)
 	if err := s.RunOnce(ctx); err != nil {
@@ -199,6 +213,7 @@ func TestRunOnce_RemovesCrashOrphanedDirNotRegisteredAsWorktree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "junk.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
+	backdate(t, dir)
 
 	s := worktreesweep.New(q, time.Hour)
 	if err := s.RunOnce(ctx); err != nil {

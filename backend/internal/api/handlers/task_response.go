@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -50,6 +51,12 @@ type taskResponse struct {
 	// simply next in line — see QueuePosition, a separate concern). Only the
 	// first reason the dispatcher would hit is reported, not the full set.
 	BlockReason *agent.BlockReason `json:"block_reason,omitempty"`
+	// ActiveRunStatus is the derived, read-time status of the run holding the
+	// task's re-dispatch lock (active_agent_run_id): pending, running or
+	// waiting_human. active_agent_run_id stays set for waiting_human runs by
+	// design, so clients use this to tell "agent working" from "needs a
+	// human". Omitted when the task has no active run.
+	ActiveRunStatus string `json:"active_run_status,omitempty"`
 	// MatchedRuleName is the display name of the intake rule referenced by
 	// MatchedRuleID (embedded via gen.Task), resolved at read time so the UI
 	// can show "Created by rule <name>" without a second round trip. Nil
@@ -59,6 +66,82 @@ type taskResponse struct {
 	// erroring the whole task response). Only populated on the single-task
 	// GET, mirroring CumulativeCostUsd.
 	MatchedRuleName *string `json:"matched_rule_name,omitempty"`
+	// SideEffects lists the task's outstanding post-transition side effects
+	// (push, PR creation, issue write-back) from the durable outbox: waiting,
+	// retrying after a failure, or failed for good. Always an array; empty
+	// when nothing is outstanding. Populated on the list and single-task GET.
+	SideEffects []sideEffectResponse `json:"side_effects"`
+	// SourcePendingUpdate is an upstream issue edit the importer held back
+	// because a human had already approved the task. Nil when none is pending.
+	// Applied or discarded via /tasks/{id}/source-update.
+	SourcePendingUpdate *sourcePendingResponse `json:"source_pending_update"`
+}
+
+// sourcePendingResponse is the wire form of one task_source_pending row.
+type sourcePendingResponse struct {
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Type        string    `json:"type"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// sourcePendingMap fetches the undismissed held source edits for the given
+// task ids in one query, keyed by task id.
+func (h *TasksHandler) sourcePendingMap(ctx context.Context, ids []string) map[string]sourcePendingResponse {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListTaskSourcePendingForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]sourcePendingResponse, len(rows))
+	for _, r := range rows {
+		m[r.TaskID] = sourcePendingResponse{Title: r.Title, Description: r.Description, Type: r.Type, CreatedAt: r.CreatedAt}
+	}
+	return m
+}
+
+// applySourcePending sets the held source edit on a response.
+func applySourcePending(resp taskResponse, m map[string]sourcePendingResponse) taskResponse {
+	if p, ok := m[resp.ID]; ok {
+		resp.SourcePendingUpdate = &p
+	}
+	return resp
+}
+
+// sideEffectResponse is the wire form of one outstanding task_side_effects row.
+type sideEffectResponse struct {
+	Kind      string    `json:"kind"`
+	Status    string    `json:"status"`
+	Attempts  int64     `json:"attempts"`
+	NextAt    time.Time `json:"next_at"`
+	LastError *string   `json:"last_error"`
+}
+
+// sideEffectMap fetches the outstanding side effects for the given task ids in
+// one query, keyed by task id.
+func (h *TasksHandler) sideEffectMap(ctx context.Context, ids []string) map[string][]sideEffectResponse {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListTaskSideEffectsForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string][]sideEffectResponse)
+	for _, r := range rows {
+		m[r.TaskID] = append(m[r.TaskID], sideEffectResponse{Kind: r.Kind, Status: r.Status, Attempts: r.Attempts, NextAt: r.NextAt, LastError: r.LastError})
+	}
+	return m
+}
+
+// applySideEffects sets the outstanding side effects on a response.
+func applySideEffects(resp taskResponse, m map[string][]sideEffectResponse) taskResponse {
+	if effects, ok := m[resp.ID]; ok {
+		resp.SideEffects = effects
+	}
+	return resp
 }
 
 // toTaskResponse converts a gen.Task to its wire representation.  If the
@@ -74,7 +157,7 @@ func toTaskResponse(t gen.Task) taskResponse {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		raw = json.RawMessage("[]")
 	}
-	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0}
+	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, SideEffects: []sideEffectResponse{}}
 }
 
 // toTaskResponses converts a slice of gen.Task values.
@@ -236,6 +319,31 @@ func (h *TasksHandler) blockReasonMap(ctx context.Context, tasks []gen.Task) map
 func applyBlockReason(resp taskResponse, reasons map[string]*agent.BlockReason) taskResponse {
 	if reason, ok := reasons[resp.ID]; ok {
 		resp.BlockReason = reason
+	}
+	return resp
+}
+
+// activeRunStatusMap fetches the status of each given task's active agent run
+// in one query, keyed by task id. Tasks with no active run are absent.
+func (h *TasksHandler) activeRunStatusMap(ctx context.Context, ids []string) map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListActiveRunStatusesForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(rows))
+	for _, row := range rows {
+		m[row.TaskID] = row.Status
+	}
+	return m
+}
+
+// applyActiveRunStatus sets the derived active run status on a response.
+func applyActiveRunStatus(resp taskResponse, statuses map[string]string) taskResponse {
+	if s, ok := statuses[resp.ID]; ok {
+		resp.ActiveRunStatus = s
 	}
 	return resp
 }

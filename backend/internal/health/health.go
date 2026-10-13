@@ -52,11 +52,10 @@ type Check struct {
 type Input struct {
 	MCPBinary   string
 	RepoBaseDir string
-	LLMBaseURL  string
-	LLMAPIKey   string
 	// Providers is the set of provider strings used by enabled agent configs
-	// (e.g. "claude", "anthropic", "llm", "qwen_code", "opencode",
-	// "codex_cli").
+	// (e.g. "claude", "qwen_code", "opencode", "codex_cli"). Removed
+	// providers (anthropic, llm, openai) that legacy configs still reference
+	// surface as an error check instead.
 	Providers map[string]bool
 
 	// BackupDir/BackupInterval/BackupKeep mirror config.Config's automatic
@@ -86,6 +85,12 @@ type Input struct {
 	// it (UPDATE_CHECK_ENABLED). Best-effort: network/gh failures degrade to
 	// StatusWarn, never StatusError.
 	CheckForUpdates bool
+
+	// AuthConfigured is true when API_TOKEN or API_TOKENS is set; ListenAddr
+	// is the address the HTTP server binds (e.g. ":8080"). Used only by the
+	// api_auth check.
+	AuthConfigured bool
+	ListenAddr     string
 }
 
 // Deps are the environment interactions the checks depend on, injectable so the
@@ -120,6 +125,57 @@ func DefaultDeps() Deps {
 	}
 }
 
+// providerCheckOrder is the stable order provider-specific checks are emitted
+// in by Checks (claude is always first and handled separately).
+var providerCheckOrder = []string{"qwen_code", "opencode", "codex_cli"}
+
+// removedProviderOrder is the stable order removed-provider errors are emitted in.
+var removedProviderOrder = []string{"anthropic", "llm", "openai"}
+
+// removedProviderCheck flags an enabled agent config that still references a
+// provider removed in v0.17.0. Runs for that config fail until it is switched.
+func removedProviderCheck(provider string) Check {
+	return Check{
+		ID:     "removed_provider_" + provider,
+		Name:   "Removed provider: " + provider,
+		Status: StatusError,
+		Detail: "an enabled agent config still uses the removed " + provider + " provider; its runs fail at dispatch",
+		Hint:   "Provider " + provider + " was removed in v0.17.0. Switch the provider config to claude, codex_cli, opencode or qwen_code.",
+	}
+}
+
+// ProviderCheck runs the single readiness check for a provider kind (e.g.
+// "claude", "codex_cli"). ok is false when the kind has no check. It is the
+// same check Checks emits, exposed so the provider circuit breaker can re-test
+// one provider cheaply while dispatch is paused.
+func ProviderCheck(provider string, in Input, d Deps) (Check, bool) {
+	switch provider {
+	case "claude":
+		return claudeCheck(d), true
+	case "qwen_code":
+		return binaryCheck(d, "qwen", "Qwen CLI", "qwen_code provider",
+			"Install the qwen CLI and ensure it's on the server's PATH."), true
+	case "opencode":
+		return binaryCheck(d, "opencode", "opencode CLI", "opencode provider",
+			"Install the opencode CLI and ensure it's on the server's PATH."), true
+	case "codex_cli":
+		return codexCheck(d), true
+	}
+	return Check{}, false
+}
+
+// ProviderReady reports whether provider's health check currently passes
+// (StatusOK). A kind with no check is reported ready, since there is nothing
+// to re-test.
+func ProviderReady(provider string, in Input, d *Deps) bool {
+	deps := DefaultDeps()
+	if d != nil {
+		deps = *d
+	}
+	c, ok := ProviderCheck(provider, in, deps)
+	return !ok || c.Status == StatusOK
+}
+
 // Checks runs all applicable health checks and returns them in a stable order.
 // A nil Deps uses DefaultDeps.
 func Checks(in Input, d *Deps) []Check {
@@ -132,26 +188,23 @@ func Checks(in Input, d *Deps) []Check {
 
 	checks = append(checks, claudeCheck(deps))
 
-	if in.Providers["anthropic"] {
-		checks = append(checks, anthropicCheck(in, deps))
+	for _, provider := range removedProviderOrder {
+		if in.Providers[provider] {
+			checks = append(checks, removedProviderCheck(provider))
+		}
 	}
-	if in.Providers["llm"] {
-		checks = append(checks, llmCheck(in))
-	}
-	if in.Providers["qwen_code"] {
-		checks = append(checks, binaryCheck(deps, "qwen", "Qwen CLI", "qwen_code provider",
-			"Install the qwen CLI and ensure it's on the server's PATH."))
-	}
-	if in.Providers["opencode"] {
-		checks = append(checks, binaryCheck(deps, "opencode", "opencode CLI", "opencode provider",
-			"Install the opencode CLI and ensure it's on the server's PATH."))
-	}
-	if in.Providers["codex_cli"] {
-		checks = append(checks, codexCheck(deps))
+
+	for _, provider := range providerCheckOrder {
+		if in.Providers[provider] {
+			if c, ok := ProviderCheck(provider, in, deps); ok {
+				checks = append(checks, c)
+			}
+		}
 	}
 
 	checks = append(checks, mcpCheck(in, deps))
 	checks = append(checks, ghCheck(deps))
+	checks = append(checks, apiAuthCheck(in))
 	checks = append(checks, repoBaseDirCheck(in, deps))
 	checks = append(checks, autoBackupCheck(in))
 	checks = append(checks, dbSizeCheck(in))

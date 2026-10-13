@@ -33,6 +33,7 @@ vi.mock('../api/ws', () => ({
 
 const dashboard: Dashboard = {
   label_counts: {},
+  workflow_label_counts: {},
   active_agents: [],
   intervention_queue: [],
   cost_total: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },

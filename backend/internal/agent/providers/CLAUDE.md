@@ -1,1 +1,1 @@
-@backend/internal/agent/providers/AGENTS.md
+@AGENTS.md

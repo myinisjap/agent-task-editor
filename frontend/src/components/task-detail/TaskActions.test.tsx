@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
+import type { AgentRun } from '../../api/client'
 import TaskActions from './TaskActions'
 
 function renderActions(overrides: Partial<React.ComponentProps<typeof TaskActions>> = {}) {
@@ -15,11 +17,17 @@ function renderActions(overrides: Partial<React.ComponentProps<typeof TaskAction
     setRejectNote: vi.fn(),
     onReject: vi.fn(),
     onApprove: vi.fn(),
+    canApprove: true,
+    canReject: true,
     actionPending: false,
     onJumpToDiffTab: vi.fn(),
     ...overrides,
   }
-  render(<TaskActions {...props} />)
+  render(
+    <MemoryRouter>
+      <TaskActions {...props} />
+    </MemoryRouter>,
+  )
   return props
 }
 
@@ -89,3 +97,75 @@ describe('TaskActions enablement rules', () => {
 function renderActionsCleanup() {
   document.body.innerHTML = ''
 }
+
+describe('TaskActions human-transition gating', () => {
+  it('hides Approve and Reject when no human transition exists, leaving Reply', () => {
+    renderActions({ needsHuman: true, replyText: 'x', canApprove: false, canReject: false })
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reply & Continue' })).toBeEnabled()
+  })
+
+  it('shows only Approve when only a success transition exists', () => {
+    renderActions({ canApprove: true, canReject: false })
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+  })
+
+  it('shows only Reject when only a failure transition exists', () => {
+    renderActions({ canApprove: false, canReject: true, rejectNote: 'n' })
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument()
+  })
+
+  it('renders an action error inline without calling window.alert', () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    renderActions({ needsHuman: true, actionError: 'boom' })
+    expect(screen.getByRole('alert')).toHaveTextContent('boom')
+    expect(alertSpy).not.toHaveBeenCalled()
+    alertSpy.mockRestore()
+  })
+})
+
+function waitingRun(over: Partial<AgentRun>): AgentRun {
+  return { id: 'r1', task_id: 't1', status: 'waiting_human', created_at: '2026-01-01T00:00:00Z', ...over } as AgentRun
+}
+
+describe('TaskActions escalation reason', () => {
+  it('shows the reason heading and stored notes for a failure escalation', () => {
+    renderActions({
+      needsHuman: true,
+      onRetry: vi.fn(),
+      activeRun: waitingRun({ escalation_reason: 'auth_required', notes: 'Agent failed: not logged in.' }),
+    })
+    expect(screen.getByText('Agent CLI is not logged in')).toBeInTheDocument()
+    expect(screen.getByText('Agent failed: not logged in.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open Health' })).toHaveAttribute('href', '/settings/health')
+    // Reply is demoted but still available.
+    expect(screen.getByRole('button', { name: 'Reply & Continue' })).toBeInTheDocument()
+  })
+
+  it('offers Retry as the primary action for a retryable failure', async () => {
+    const user = userEvent.setup()
+    const props = renderActions({
+      needsHuman: true,
+      onRetry: vi.fn(),
+      activeRun: waitingRun({ escalation_reason: 'transient_exhausted', notes: 'gave up' }),
+    })
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(props.onRetry).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('keeps Reply primary, with no Retry, for an agent question or an unrecorded reason', () => {
+    renderActions({ needsHuman: true, onRetry: vi.fn(), activeRun: waitingRun({ escalation_reason: 'agent_question', feedback: 'which db?' }) })
+    expect(screen.getByText('Agent asked a question')).toBeInTheDocument()
+    expect(screen.getByText('which db?')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Retry/ })).not.toBeInTheDocument()
+
+    renderActionsCleanup()
+    renderActions({ needsHuman: true, onRetry: vi.fn(), activeRun: waitingRun({ escalation_reason: null }) })
+    expect(screen.getByText('Agent is waiting for your input')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Retry/ })).not.toBeInTheDocument()
+  })
+})

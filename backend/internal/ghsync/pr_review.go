@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -363,10 +365,10 @@ func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo r
 			continue
 		}
 		inserted = true
-		s.hub.Publish("task.review_comment_added", map[string]any{
-			"task_id":    task.ID,
-			"comment_id": created.ID,
-			"source":     sourceName,
+		s.hub.Publish(wsevent.TypeTaskReviewCommentAdded, wsevent.TaskReviewCommentAdded{
+			TaskID:    task.ID,
+			CommentID: created.ID,
+			Source:    sourceName,
 		})
 	}
 	if inserted {
@@ -505,9 +507,9 @@ func (s *Syncer) setPRMergeable(ctx context.Context, task gen.Task, mergeable st
 		return
 	}
 	if s.hub != nil {
-		s.hub.Publish("task.pr_mergeable_changed", map[string]any{
-			"task_id":      task.ID,
-			"pr_mergeable": mergeable,
+		s.hub.Publish(wsevent.TypeTaskPRMergeableChanged, wsevent.TaskPRMergeableChanged{
+			TaskID:      task.ID,
+			PRMergeable: mergeable,
 		})
 	}
 }

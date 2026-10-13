@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -32,14 +33,20 @@ type GlobalCostReporter interface {
 	GlobalCostStatus() agent.GlobalCostStatus
 }
 
+// ProviderPauseController exposes the provider circuit breaker (see
+// agent.ProviderPauseRegistry): the providers whose dispatch is paused after an
+// auth-classified run, and a manual resume. *agent.Dispatcher satisfies it.
+type ProviderPauseController interface {
+	PausedProviders() []agent.PausedProvider
+	ResumeProvider(provider string) bool
+}
+
 // HealthHandler serves provider/onboarding readiness checks.
 type HealthHandler struct {
 	q               *gen.Queries
 	db              *storage.DB
 	mcpBinary       string
 	repoBaseDir     string
-	llmBaseURL      string
-	llmAPIKey       string
 	backupDir       string
 	backupInterval  time.Duration
 	backupKeep      int
@@ -54,6 +61,20 @@ type HealthHandler struct {
 	// doesn't also need a GlobalCostStatus method. May be nil, in which case
 	// both Readyz and Providers omit the global_cost block entirely.
 	globalCost GlobalCostReporter
+	// pauses supplies the provider circuit breaker state; same optional
+	// capability pattern as globalCost. May be nil.
+	pauses ProviderPauseController
+	// authConfigured/listenAddr feed the api_auth check; set via SetAuthInfo.
+	authConfigured bool
+	listenAddr     string
+}
+
+// SetAuthInfo records whether bearer auth is configured and the address the
+// server listens on, for the api_auth warning on the Providers report. Kept
+// off the constructor so its many callers don't change.
+func (h *HealthHandler) SetAuthInfo(authConfigured bool, listenAddr string) {
+	h.authConfigured = authConfigured
+	h.listenAddr = listenAddr
 }
 
 // NewHealthHandler constructs a HealthHandler from the relevant server config.
@@ -67,14 +88,12 @@ type HealthHandler struct {
 // if it also implements GlobalCostReporter (as *agent.Dispatcher does), the
 // global cost-ceiling snapshot surfaced on Readyz/Providers; it may be nil
 // (e.g. in tests), in which case those checks are skipped/omitted.
-func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, backupDir string, backupInterval time.Duration, backupKeep int, version string, checkForUpdates bool, dispatcher DispatcherLiveness) *HealthHandler {
+func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, backupDir string, backupInterval time.Duration, backupKeep int, version string, checkForUpdates bool, dispatcher DispatcherLiveness) *HealthHandler {
 	h := &HealthHandler{
 		q:               q,
 		db:              db,
 		mcpBinary:       mcpBinary,
 		repoBaseDir:     repoBaseDir,
-		llmBaseURL:      llmBaseURL,
-		llmAPIKey:       llmAPIKey,
 		backupDir:       backupDir,
 		backupInterval:  backupInterval,
 		backupKeep:      backupKeep,
@@ -84,6 +103,9 @@ func NewHealthHandler(q *gen.Queries, db *storage.DB, mcpBinary, repoBaseDir, ll
 	}
 	if gc, ok := dispatcher.(GlobalCostReporter); ok {
 		h.globalCost = gc
+	}
+	if pc, ok := dispatcher.(ProviderPauseController); ok {
+		h.pauses = pc
 	}
 	return h
 }
@@ -134,8 +156,6 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 	checks := health.Checks(health.Input{
 		MCPBinary:       h.mcpBinary,
 		RepoBaseDir:     h.repoBaseDir,
-		LLMBaseURL:      h.llmBaseURL,
-		LLMAPIKey:       h.llmAPIKey,
 		Providers:       providers,
 		BackupDir:       h.backupDir,
 		BackupInterval:  backupInterval,
@@ -144,6 +164,8 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		AgentLogsCount:  logCount,
 		Version:         h.version,
 		CheckForUpdates: h.checkForUpdates,
+		AuthConfigured:  h.authConfigured,
+		ListenAddr:      h.listenAddr,
 	}, nil)
 
 	resp := map[string]any{"checks": checks}
@@ -155,5 +177,28 @@ func (h *HealthHandler) Providers(w http.ResponseWriter, r *http.Request) {
 		resp["global_cost"] = h.globalCost.GlobalCostStatus()
 	}
 
+	// Always present (empty when nothing is paused) so the UI can render one
+	// banner per paused provider without a nil check.
+	paused := []agent.PausedProvider{}
+	if h.pauses != nil {
+		paused = h.pauses.PausedProviders()
+	}
+	resp["paused_providers"] = paused
+
 	JSON(w, http.StatusOK, resp)
+}
+
+// ResumeProvider manually clears a provider's circuit-breaker pause so
+// dispatch resumes immediately. If the provider is still broken the next
+// auth-classified run pauses it again. Idempotent: resuming a provider that is
+// not paused returns 200 with resumed=false.
+//
+// POST /api/v1/health/providers/{provider}/resume
+func (h *HealthHandler) ResumeProvider(w http.ResponseWriter, r *http.Request) {
+	if h.pauses == nil {
+		JSON(w, http.StatusOK, map[string]any{"resumed": false})
+		return
+	}
+	resumed := h.pauses.ResumeProvider(chi.URLParam(r, "provider"))
+	JSON(w, http.StatusOK, map[string]any{"resumed": resumed})
 }

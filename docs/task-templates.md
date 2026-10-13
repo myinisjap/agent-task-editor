@@ -16,7 +16,7 @@ the new-task form from that one task rather than a saved reusable shape.
 
 ## Task templates
 
-Managed on the **Templates** page in the UI, or via the API:
+Managed on the **Settings → Templates** page in the UI (`/settings/templates`), or via the API:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/templates \

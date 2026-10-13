@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import BoardPage from './BoardPage'
 import type { Task, Workflow } from '../api/client'
 import { useTasksStore } from '../stores/tasks'
@@ -87,8 +87,8 @@ function workflow(): Workflow {
     name: 'Default',
     description: '',
     labels: [
-      { id: 'l1', workflow_id: 'wf', name: 'todo', color: '#000', sort_order: 0, agent_ignore: 0, is_terminal: 0, create_pr: 0, wip_limit: null, wip_limit_hard: 0 },
-      { id: 'l2', workflow_id: 'wf', name: 'doing', color: '#000', sort_order: 1, agent_ignore: 0, is_terminal: 0, create_pr: 0, wip_limit: null, wip_limit_hard: 0 },
+      { id: 'l1', workflow_id: 'wf', name: 'todo', color: '#000', sort_order: 0, agent_ignore: 0, is_terminal: 0, create_pr: 0, wip_limit: null, wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '' },
+      { id: 'l2', workflow_id: 'wf', name: 'doing', color: '#000', sort_order: 1, agent_ignore: 0, is_terminal: 0, create_pr: 0, wip_limit: null, wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '' },
     ],
     transitions: [],
     created_at: new Date().toISOString(),
@@ -261,6 +261,33 @@ describe('BoardPage task.created_bulk handling', () => {
       )
     })
   })
+
+  it('a resync event (dropped WS events or reconnect) refetches the board once', async () => {
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(wsOnHandler).not.toBeNull()
+    })
+    const callsAfterMount = tasksListMock.mock.calls.length
+
+    tasksListMock.mockResolvedValue({
+      items: [task({ id: 'task-1' }), task({ id: 'task-9', title: 'Missed' })],
+      nextCursor: null,
+    })
+
+    wsOnHandler!({ type: 'resync', payload: {} })
+
+    await waitFor(() => {
+      expect(tasksListMock.mock.calls.length).toBe(callsAfterMount + 1)
+    })
+    await waitFor(() => {
+      expect(useTasksStore.getState().tasks.map((t) => t.id)).toContain('task-9')
+    })
+  })
 })
 
 // Regression guard for #249 — runningTaskIds was dead state and the "Agent
@@ -308,7 +335,7 @@ describe('BoardPage running indicator (#249)', () => {
   })
 
   it('seeds the running dot from active_agent_run_id on load, without any WS event', async () => {
-    seedStores([task({ id: 'task-1', title: 'Task one', active_agent_run_id: 'run-9' })])
+    seedStores([task({ id: 'task-1', title: 'Task one', active_agent_run_id: 'run-9', active_run_status: 'running' })])
 
     render(
       <MemoryRouter>
@@ -317,6 +344,19 @@ describe('BoardPage running indicator (#249)', () => {
     )
 
     expect(await screen.findByTitle('Agent running')).toBeInTheDocument()
+  })
+
+  it('shows "Needs you" instead of the running dot for a waiting_human active run', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one', active_agent_run_id: 'run-9', active_run_status: 'waiting_human' })])
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Needs you')).toBeInTheDocument()
+    expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
   })
 
   it('clears the running dot when the WS connection drops', async () => {
@@ -429,6 +469,34 @@ describe('BoardPage WS refetch coalescing (#350)', () => {
     expect(tasksGetMock).toHaveBeenCalledWith('task-1')
   })
 
+  it('task.updated with an id-only payload refetches instead of replacing the stored task with a stub', async () => {
+    seedStores([task({ id: 'task-1', title: 'Task one', label: 'todo' })])
+    tasksGetMock.mockResolvedValue(task({ id: 'task-1', title: 'Task one', label: 'todo' }))
+
+    render(
+      <MemoryRouter>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+
+    await vi.waitFor(() => expect(wsOnHandler).not.toBeNull())
+    await vi.waitFor(() => expect(useTasksStore.getState().tasks).toHaveLength(1))
+
+    wsOnHandler!({ type: 'task.updated', payload: { id: 'task-1' } })
+
+    // The stored task is untouched synchronously (no stub upsert)...
+    const stored = useTasksStore.getState().tasks.find(t => t.id === 'task-1')
+    expect(stored?.title).toBe('Task one')
+    expect(stored?.label).toBe('todo')
+    expect(tasksGetMock).not.toHaveBeenCalled()
+
+    // ...and the debounced refetch fetches the full task.
+    await vi.advanceTimersByTimeAsync(250)
+    expect(tasksGetMock).toHaveBeenCalledWith('task-1')
+    const after = useTasksStore.getState().tasks.find(t => t.id === 'task-1')
+    expect(after?.title).toBe('Task one')
+  })
+
   it('a small burst of distinct task ids (at/under the threshold) coalesces into one get per id, not one per event', async () => {
     seedStores([
       task({ id: 'task-1', title: 'Task one' }),
@@ -505,7 +573,7 @@ describe('BoardPage cost rollup debounce (#350)', () => {
     costByTaskMock.mockReset().mockResolvedValue([])
     tasksListMock.mockReset()
     workflowsListMock.mockReset()
-    tasksGetMock.mockReset()
+    tasksGetMock.mockReset().mockResolvedValue(task({ id: 'task-1' }))
     wsOnHandler = null
   })
 
@@ -543,5 +611,54 @@ describe('BoardPage cost rollup debounce (#350)', () => {
     await vi.advanceTimersByTimeAsync(250)
 
     expect(costByTaskMock.mock.calls.length).toBe(callsAfterMount + 1)
+  })
+})
+
+function LocationProbe() {
+  const loc = useLocation()
+  return <div data-testid="loc">{loc.pathname + loc.search}</div>
+}
+
+describe('BoardPage URL-persisted filters', () => {
+  beforeEach(() => {
+    costByTaskMock.mockReset().mockResolvedValue([])
+    tasksListMock.mockReset()
+    workflowsListMock.mockReset()
+    seedStores([
+      task({ id: 'task-1', title: 'Alpha thing', type: 'feature' }),
+      task({ id: 'task-2', title: 'Beta thing', type: 'bug' }),
+    ])
+  })
+
+  it('restores the search and type filters from the URL', async () => {
+    render(
+      <MemoryRouter initialEntries={['/board?q=beta&type=bug']}>
+        <BoardPage />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('Beta thing')).toBeInTheDocument()
+    expect(screen.queryByText('Alpha thing')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Search tasks…')).toHaveValue('beta')
+    expect(screen.getByDisplayValue('bug')).toBeInTheDocument()
+  })
+
+  it('writes filter changes to the URL with replace and clears them', async () => {
+    const user = userEvent.setup()
+    render(
+      <MemoryRouter initialEntries={['/board']}>
+        <BoardPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Alpha thing')
+
+    await user.type(screen.getByPlaceholderText('Search tasks…'), 'alp')
+    await user.selectOptions(screen.getByDisplayValue('All types'), 'feature')
+    expect(screen.getByTestId('loc')).toHaveTextContent('/board?q=alp&type=feature')
+    expect(screen.queryByText('Beta thing')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByTestId('loc')).toHaveTextContent(/^\/board$/)
+    expect(await screen.findByText('Beta thing')).toBeInTheDocument()
   })
 })

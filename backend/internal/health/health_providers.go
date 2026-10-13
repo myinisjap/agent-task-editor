@@ -37,40 +37,6 @@ func claudeAuthenticated(d Deps) bool {
 	return false
 }
 
-// anthropicCheck verifies the direct Anthropic Messages API provider has a key.
-func anthropicCheck(in Input, _ Deps) Check {
-	c := Check{ID: "anthropic_api", Name: "Anthropic API key"}
-	if in.LLMAPIKey == "" {
-		c.Status = StatusError
-		c.Detail = "LLM_API_KEY is not set"
-		c.Hint = "Set LLM_API_KEY to an Anthropic API key; the anthropic provider bills per-token."
-		return c
-	}
-	c.Status = StatusOK
-	c.Detail = "LLM_API_KEY is set"
-	return c
-}
-
-// llmCheck verifies the OpenAI-compatible provider has a key and base URL.
-func llmCheck(in Input) Check {
-	c := Check{ID: "llm_api", Name: "LLM API (OpenAI-compatible)"}
-	if in.LLMAPIKey == "" {
-		c.Status = StatusError
-		c.Detail = "LLM_API_KEY is not set"
-		c.Hint = "Set LLM_API_KEY for the llm provider's OpenAI-compatible endpoint."
-		return c
-	}
-	if in.LLMBaseURL == "" {
-		c.Status = StatusWarn
-		c.Detail = "LLM_API_KEY set, but LLM_BASE_URL is empty"
-		c.Hint = "Set LLM_BASE_URL to your provider's endpoint (defaults to https://api.openai.com/v1)."
-		return c
-	}
-	c.Status = StatusOK
-	c.Detail = "LLM_API_KEY set; base URL " + in.LLMBaseURL
-	return c
-}
-
 // codexCheck verifies the codex CLI is installed and appears authenticated.
 // Authentication is detected heuristically (env var or the auth cache file
 // the CLI itself writes on `codex login`) rather than by invoking the CLI.

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -32,7 +33,7 @@ type DB struct {
 
 // Open opens (or creates) the SQLite database at path and runs all pending migrations.
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite3", path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
+	sqlDB, err := sql.Open(utcDriverName, path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -60,7 +61,7 @@ func Open(path string) (*DB, error) {
 	sqlDB.SetMaxOpenConns(maxPoolConns)
 	sqlDB.SetMaxIdleConns(maxPoolConns)
 
-	if err := runMigrations(sqlDB); err != nil {
+	if err := runMigrations(sqlDB, path); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
@@ -112,13 +113,17 @@ func (db *DB) Backup(ctx context.Context, dstPath string) error {
 	if _, err := os.Stat(dstPath); err == nil {
 		return fmt.Errorf("backup destination already exists: %s", dstPath)
 	}
-	if _, err := db.sql.ExecContext(ctx, "VACUUM INTO ?", dstPath); err != nil {
+	return vacuumInto(ctx, db.sql, dstPath)
+}
+
+func vacuumInto(ctx context.Context, sqlDB *sql.DB, dstPath string) error {
+	if _, err := sqlDB.ExecContext(ctx, "VACUUM INTO ?", dstPath); err != nil {
 		return fmt.Errorf("vacuum into %s: %w", dstPath, err)
 	}
 	return nil
 }
 
-func runMigrations(db *sql.DB) error {
+func runMigrations(db *sql.DB, dbPath string) error {
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("create migration source: %w", err)
@@ -143,7 +148,18 @@ func runMigrations(db *sql.DB) error {
 		return fmt.Errorf("create migrator: %w", err)
 	}
 
+	snapshotPath, err := preMigrateSnapshot(context.Background(), db, src, m, dbPath)
+	if err != nil {
+		return err
+	}
+
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		if snapshotPath != "" {
+			slog.Error("migration failed; a pre-migration snapshot is available",
+				"snapshot", snapshotPath, "db", dbPath, "error", err)
+			return fmt.Errorf("run migrations: %w (pre-migration snapshot: %s; to restore, stop the server, delete any %s-wal/%s-shm files, copy the snapshot over %s, and start a previous version of the server)",
+				err, snapshotPath, dbPath, dbPath, dbPath)
+		}
 		return fmt.Errorf("run migrations: %w", err)
 	}
 

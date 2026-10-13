@@ -84,7 +84,7 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
     if (!taskId) return
     const off = wsClient.on((event) => {
       if (event.type === 'agent.log' && event.payload.task_id === taskId) {
-        const entry = event.payload.entry as AgentLog
+        const entry = event.payload.entry
         if (entry && event.payload.run_id === runId) {
           // entry.id is the persisted agent_logs row id (see toLog's doc
           // comment), matching what agent.log_replay/REST pages return for

@@ -8,7 +8,7 @@ import (
 )
 
 // ModelPricingHandler owns the user-editable per-model USD pricing table
-// (model_pricing, see migration 042) used to estimate anthropic/llm run
+// (model_pricing, see migration 042) used to estimate codex_cli run
 // costs (internal/agent/providers/pricing.go's DBPriceResolver). Any model
 // not present here falls back to the hardcoded map in pricing.go; a run
 // whose model matches neither has its cost flagged unknown (AgentRun.
