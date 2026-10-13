@@ -43,7 +43,7 @@ function label(name: string, sortOrder: number, overrides: Partial<WorkflowLabel
     is_terminal: 0,
     create_pr: 0,
     wip_limit: null,
-    wip_limit_hard: 0,
+    wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '',
     ...overrides,
   }
 }
@@ -201,6 +201,42 @@ describe('TaskBoard drag-to-move', () => {
     expect(moveLabelMock).not.toHaveBeenCalled()
 
     confirmSpy.mockRestore()
+  })
+
+  it('surfaces the server error when a move is rejected', async () => {
+    moveLabelMock.mockRejectedValue(new Error('a run is currently active on this task'))
+    const transitions = [
+      { id: 't1', workflow_id: 'wf', from_label: 'todo', to_label: 'doing', trigger_type: 'human' as const },
+    ]
+
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task()]} runningTaskIds={new Set()} transitions={transitions} />
+      </MemoryRouter>,
+    )
+
+    await dragCardToColumn('Move me', 'doing')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('a run is currently active on this task')
+  })
+
+  it('does not move optimistically or call the API when dropping on a column with no transition', async () => {
+    useTasksStore.setState({ tasks: [task()], loading: false, error: null })
+    const transitions = [
+      { id: 't1', workflow_id: 'wf', from_label: 'todo', to_label: 'doing', trigger_type: 'human' as const },
+    ]
+
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task()]} runningTaskIds={new Set()} transitions={transitions} />
+      </MemoryRouter>,
+    )
+
+    await dragCardToColumn('Move me', 'done')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no transition defined/i)
+    expect(moveLabelMock).not.toHaveBeenCalled()
+    expect(useTasksStore.getState().tasks[0].label).toBe('todo')
   })
 })
 

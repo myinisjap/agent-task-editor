@@ -43,23 +43,31 @@ type AgentLog struct {
 	Content    string    `json:"content"`
 }
 
+type AgentRateLimit struct {
+	AgentConfigID string    `json:"agent_config_id"`
+	BlockedUntil  time.Time `json:"blocked_until"`
+	Attempts      int64     `json:"attempts"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type AgentRun struct {
-	ID            string     `json:"id"`
-	TaskID        string     `json:"task_id"`
-	AgentConfigID *string    `json:"agent_config_id"`
-	Status        string     `json:"status"`
-	Feedback      *string    `json:"feedback"`
-	StoredInfo    *string    `json:"stored_info"`
-	StartedAt     *time.Time `json:"started_at"`
-	CompletedAt   *time.Time `json:"completed_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	Notes         *string    `json:"notes"`
-	InputTokens   int64      `json:"input_tokens"`
-	OutputTokens  int64      `json:"output_tokens"`
-	CostUsd       float64    `json:"cost_usd"`
-	SessionID     string     `json:"session_id"`
-	CostUnknown   int64      `json:"cost_unknown"`
-	TurnsUsed     int64      `json:"turns_used"`
+	ID               string     `json:"id"`
+	TaskID           string     `json:"task_id"`
+	AgentConfigID    *string    `json:"agent_config_id"`
+	Status           string     `json:"status"`
+	Feedback         *string    `json:"feedback"`
+	StoredInfo       *string    `json:"stored_info"`
+	StartedAt        *time.Time `json:"started_at"`
+	CompletedAt      *time.Time `json:"completed_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	Notes            *string    `json:"notes"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	CostUsd          float64    `json:"cost_usd"`
+	SessionID        string     `json:"session_id"`
+	CostUnknown      int64      `json:"cost_unknown"`
+	TurnsUsed        int64      `json:"turns_used"`
+	EscalationReason *string    `json:"escalation_reason"`
 }
 
 type BackupSetting struct {
@@ -151,6 +159,20 @@ type Repo struct {
 	MaxConcurrentRuns             *int64    `json:"max_concurrent_runs"`
 	IssueWritebackLabel           string    `json:"issue_writeback_label"`
 	RuntimeLanguages              string    `json:"runtime_languages"`
+	VerifyCommand                 string    `json:"verify_command"`
+	VerifyTimeoutSeconds          int64     `json:"verify_timeout_seconds"`
+}
+
+type RunVerification struct {
+	RunID      string    `json:"run_id"`
+	TaskID     string    `json:"task_id"`
+	Command    string    `json:"command"`
+	Status     string    `json:"status"`
+	ExitCode   *int64    `json:"exit_code"`
+	Output     string    `json:"output"`
+	Truncated  int64     `json:"truncated"`
+	DurationMs int64     `json:"duration_ms"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type Task struct {
@@ -191,12 +213,55 @@ type Task struct {
 	PrMergeable             string     `json:"pr_mergeable"`
 	CostWarned              int64      `json:"cost_warned"`
 	MatchedRuleID           *string    `json:"matched_rule_id"`
+	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
+}
+
+type TaskBase struct {
+	ID                      string     `json:"id"`
+	Title                   string     `json:"title"`
+	Description             string     `json:"description"`
+	Type                    string     `json:"type"`
+	Label                   string     `json:"label"`
+	RepoID                  string     `json:"repo_id"`
+	WorkflowID              string     `json:"workflow_id"`
+	CurrentAgentRunID       *string    `json:"current_agent_run_id"`
+	AgentNotes              string     `json:"agent_notes"`
+	ActiveAgentRunID        *string    `json:"active_agent_run_id"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	Attachments             string     `json:"attachments"`
+	Paused                  int64      `json:"paused"`
+	TransientRetryCount     int64      `json:"transient_retry_count"`
+	NextRetryAt             *time.Time `json:"next_retry_at"`
+	Source                  string     `json:"source"`
+	SourceRef               string     `json:"source_ref"`
+	Archived                int64      `json:"archived"`
+	ParentTaskID            *string    `json:"parent_task_id"`
+	CreatedByRunID          *string    `json:"created_by_run_id"`
+	MergeStatus             string     `json:"merge_status"`
+	MaxCostUsd              float64    `json:"max_cost_usd"`
+	Priority                int64      `json:"priority"`
+	SourceState             string     `json:"source_state"`
+	SourceStateAt           *time.Time `json:"source_state_at"`
+	CostWarned              int64      `json:"cost_warned"`
+	MatchedRuleID           *string    `json:"matched_rule_id"`
+	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
 }
 
 type TaskDependency struct {
 	TaskID          string    `json:"task_id"`
 	DependsOnTaskID string    `json:"depends_on_task_id"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+type TaskGit struct {
+	TaskID       string `json:"task_id"`
+	Branch       string `json:"branch"`
+	WorktreePath string `json:"worktree_path"`
+	BaseRef      string `json:"base_ref"`
+	GitState     string `json:"git_state"`
+	PrUrl        string `json:"pr_url"`
+	PrMergeable  string `json:"pr_mergeable"`
 }
 
 type TaskLabelHistory struct {
@@ -251,6 +316,18 @@ type TaskSchedule struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
+type TaskSideEffect struct {
+	ID        string    `json:"id"`
+	TaskID    string    `json:"task_id"`
+	Kind      string    `json:"kind"`
+	Status    string    `json:"status"`
+	Attempts  int64     `json:"attempts"`
+	NextAt    time.Time `json:"next_at"`
+	LastError *string   `json:"last_error"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type TaskSourceComment struct {
 	ID                string    `json:"id"`
 	TaskID            string    `json:"task_id"`
@@ -259,6 +336,16 @@ type TaskSourceComment struct {
 	Body              string    `json:"body"`
 	ExternalCreatedAt string    `json:"external_created_at"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type TaskSourcePending struct {
+	TaskID      string    `json:"task_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Type        string    `json:"type"`
+	Dismissed   int64     `json:"dismissed"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type TaskTemplate struct {
@@ -271,6 +358,13 @@ type TaskTemplate struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type TaskWriteback struct {
+	TaskID                  string `json:"task_id"`
+	WritebackInProgressSent int64  `json:"writeback_in_progress_sent"`
+	WritebackPrCommented    int64  `json:"writeback_pr_commented"`
+	WritebackClosed         int64  `json:"writeback_closed"`
+}
+
 type Workflow struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
@@ -280,16 +374,18 @@ type Workflow struct {
 }
 
 type WorkflowLabel struct {
-	ID           string `json:"id"`
-	WorkflowID   string `json:"workflow_id"`
-	Name         string `json:"name"`
-	Color        string `json:"color"`
-	SortOrder    int64  `json:"sort_order"`
-	AgentIgnore  int64  `json:"agent_ignore"`
-	IsTerminal   int64  `json:"is_terminal"`
-	CreatePr     int64  `json:"create_pr"`
-	WipLimit     *int64 `json:"wip_limit"`
-	WipLimitHard int64  `json:"wip_limit_hard"`
+	ID            string `json:"id"`
+	WorkflowID    string `json:"workflow_id"`
+	Name          string `json:"name"`
+	Color         string `json:"color"`
+	SortOrder     int64  `json:"sort_order"`
+	AgentIgnore   int64  `json:"agent_ignore"`
+	IsTerminal    int64  `json:"is_terminal"`
+	CreatePr      int64  `json:"create_pr"`
+	WipLimit      *int64 `json:"wip_limit"`
+	WipLimitHard  int64  `json:"wip_limit_hard"`
+	VerifyMode    string `json:"verify_mode"`
+	VerifyCommand string `json:"verify_command"`
 }
 
 type WorkflowTransition struct {

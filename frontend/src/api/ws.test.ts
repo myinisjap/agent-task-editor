@@ -184,6 +184,40 @@ describe('WSClient', () => {
     expect(handler).toHaveBeenCalledWith({ type: 'task.label_changed', payload: { task_id: 't1', from: 'a', to: 'b' } })
   })
 
+  it('delivers a server-sent resync frame to handlers', async () => {
+    const { wsClient } = await import('./ws')
+    const handler = vi.fn()
+    wsClient.on(handler)
+
+    await wsClient.connect()
+    const sock = FakeWebSocket.instances[0]
+    sock.triggerOpen()
+    handler.mockClear()
+
+    sock.triggerMessage({ type: 'resync', payload: {} })
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith({ type: 'resync', payload: {} })
+  })
+
+  it('emits resync on reconnect (reopen) but not on the first open', async () => {
+    const { wsClient } = await import('./ws')
+    const handler = vi.fn()
+    wsClient.on(handler)
+
+    await wsClient.connect()
+    let sock = FakeWebSocket.instances[0]
+    sock.triggerOpen()
+    expect(handler).not.toHaveBeenCalled()
+
+    sock.triggerClose()
+    await vi.runOnlyPendingTimersAsync()
+    sock = FakeWebSocket.instances[1]
+    sock.triggerOpen()
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith({ type: 'resync', payload: {} })
+  })
+
   it('on() returns an unsubscribe function that stops future delivery', async () => {
     const { wsClient } = await import('./ws')
     const handler = vi.fn()

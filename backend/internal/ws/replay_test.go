@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 
@@ -97,7 +99,7 @@ func seedTaskWithLogs(t *testing.T, q *gen.Queries, logs []string) (taskID strin
 func newTestWSServerWithQueries(t *testing.T, hub *Hub, q *gen.Queries) (*httptest.Server, string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ServeWS(hub, w, r, "", "*", q)
+		ServeWS(hub, w, r, false, "*", q)
 	}))
 	t.Cleanup(srv.Close)
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -141,7 +143,7 @@ func TestReplayTaskLogs_SubscribeSendsBatchedReplay(t *testing.T) {
 		t.Fatalf("expected type agent.log_replay, got %q (payload=%v)", evt.Type, evt.Payload)
 	}
 
-	payload := evt.Payload
+	payload := wsevent.ToMap(evt.Payload)
 	if payload["task_id"] != taskID {
 		t.Errorf("expected task_id %q, got %v", taskID, payload["task_id"])
 	}
@@ -225,7 +227,7 @@ func TestReplayTaskLogs_RepeatSubscribe_ReplaysOnce(t *testing.T) {
 // cap check (the id is only counted once), and the map must settle at size 1.
 func TestServeWS_SubscriptionCap_RepeatedSameID_DoesNotGrowMap(t *testing.T) {
 	hub := NewHub()
-	_, wsURL := newTestWSServer(t, hub, "", "*")
+	_, wsURL := newTestWSServer(t, hub, false, "*")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

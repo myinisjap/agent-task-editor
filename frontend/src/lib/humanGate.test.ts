@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isHumanGateLabel, findLabel } from './humanGate'
+import { isHumanGateLabel, findLabel, humanActionsFor } from './humanGate'
 import type { Workflow, WorkflowLabel, WorkflowTransition } from '../api/client'
 
 function label(name: string, opts: { agentIgnore?: boolean; isTerminal?: boolean } = {}): WorkflowLabel {
@@ -13,7 +13,7 @@ function label(name: string, opts: { agentIgnore?: boolean; isTerminal?: boolean
     is_terminal: opts.isTerminal ? 1 : 0,
     create_pr: 0,
     wip_limit: null,
-    wip_limit_hard: 0,
+    wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '',
   }
 }
 
@@ -98,5 +98,33 @@ describe('findLabel', () => {
     expect(findLabel(undefined, 'review')).toBeUndefined()
     const wf = workflow([label('review')], [])
     expect(findLabel(wf, 'missing')).toBeUndefined()
+  })
+})
+
+describe('humanActionsFor', () => {
+  const t = (from: string, trigger: WorkflowTransition['trigger_type'], path?: 'success' | 'failure' | 'either'): WorkflowTransition => ({
+    ...transition(from, 'x', trigger),
+    id: `${from}-${trigger}-${path}`,
+    path,
+  })
+  const wf = workflow([label('plan'), label('review')], [
+    t('plan', 'agent', 'success'),
+    t('review', 'human', 'success'),
+    t('review', 'human', 'failure'),
+  ])
+
+  it('is false/false from an agent label', () => {
+    expect(humanActionsFor(wf, 'plan')).toEqual({ canApprove: false, canReject: false })
+  })
+  it('detects human success and failure transitions', () => {
+    expect(humanActionsFor(wf, 'review')).toEqual({ canApprove: true, canReject: true })
+  })
+  it('detects only one side', () => {
+    const w = workflow([label('r')], [t('r', 'human', 'success')])
+    expect(humanActionsFor(w, 'r')).toEqual({ canApprove: true, canReject: false })
+  })
+  it('is false/false with no workflow or label', () => {
+    expect(humanActionsFor(undefined, 'review')).toEqual({ canApprove: false, canReject: false })
+    expect(humanActionsFor(wf, undefined)).toEqual({ canApprove: false, canReject: false })
   })
 })

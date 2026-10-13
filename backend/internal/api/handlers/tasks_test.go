@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -46,12 +47,13 @@ type apiTask struct {
 	QueuePosition     *int               `json:"queue_position"`
 	CumulativeCostUsd float64            `json:"cumulative_cost_usd"`
 	BlockReason       *agent.BlockReason `json:"block_reason"`
+	ActiveRunStatus   string             `json:"active_run_status"`
 }
 
 // noopPub satisfies agent.Publisher / workflow.Publisher without doing anything.
 type noopPub struct{}
 
-func (noopPub) Publish(string, map[string]any) {}
+func (noopPub) Publish(string, any) {}
 
 // fakeCanceller records the run IDs it was asked to cancel and reports whether
 // each was "active" via the found map. saturated controls what Saturated()
@@ -127,6 +129,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Delete("/tasks/{id}", h.Delete)
 	r.Patch("/tasks/{id}/label", h.MoveLabel)
 	r.Get("/tasks/{id}/runs", h.ListRuns)
+	r.Get("/tasks/{id}/verifications", h.ListVerifications)
 	r.Get("/tasks/{id}/runs/{run_id}", h.GetRun)
 	r.Get("/tasks/{id}/runs/{run_id}/logs", h.GetRunLogs)
 	r.Post("/tasks/{id}/runs/{run_id}/cancel", h.CancelRun)
@@ -141,6 +144,9 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Patch("/tasks/{id}/notes", h.UpdateNotes)
 	r.Post("/tasks/{id}/rerun", h.Rerun)
 	r.Get("/tasks/{id}/diff", h.Diff)
+	r.Post("/tasks/{id}/side-effects/retry", h.RetrySideEffects)
+	r.Post("/tasks/{id}/source-update/apply", h.ApplySourceUpdate)
+	r.Delete("/tasks/{id}/source-update", h.DiscardSourceUpdate)
 
 	return r, q, wfID, repoID
 }
@@ -946,6 +952,92 @@ func TestTasks_Delete_OK(t *testing.T) {
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusNotFound {
 		t.Errorf("expected 404 after delete, got %d", w2.Code)
+	}
+}
+
+// TestTasks_Delete_RunLive_Returns409 guards against deleting a task (and
+// tearing down its worktree) out from under a live agent run.
+func TestTasks_Delete_RunLive_Returns409(t *testing.T) {
+	for _, started := range []bool{false, true} { // pending, running
+		r, q, wfID, repoID := setupTaskRouter(t)
+		ctx := context.Background()
+		task, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+			ID: uuid.NewString(), Title: "Busy", WorkflowID: wfID, RepoID: repoID, Label: "work",
+		})
+		runID := uuid.NewString()
+		if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if started {
+			if _, err := q.SetAgentRunStarted(ctx, runID); err != nil {
+				t.Fatalf("start run: %v", err)
+			}
+		}
+		if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+			CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: task.ID,
+		}); err != nil {
+			t.Fatalf("set active run: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodDelete, "/tasks/"+task.ID, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("started=%v: expected 409, got %d: %s", started, w.Code, w.Body)
+		}
+		if _, err := q.GetTask(ctx, task.ID); err != nil {
+			t.Errorf("started=%v: task should still exist: %v", started, err)
+		}
+		if _, err := q.GetAgentRun(ctx, runID); err != nil {
+			t.Errorf("started=%v: run should still exist: %v", started, err)
+		}
+	}
+}
+
+// TestTasks_Delete_IdleTask_RemovesWorktreeAndRow verifies delete of an idle
+// task tears down its worktree (keeping the branch) and removes the row.
+func TestTasks_Delete_IdleTask_RemovesWorktreeAndRow(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Idle delete", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	wtPath, branch, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: branch, WorktreePath: wtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/tasks/"+task.ID, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree dir removed, stat err=%v", err)
+	}
+	if _, err := q.GetTask(ctx, task.ID); err == nil {
+		t.Error("expected task row to be deleted")
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "branch", "--list", branch).CombinedOutput(); err != nil || strings.TrimSpace(string(out)) == "" {
+		t.Errorf("expected branch kept (err=%v out=%q)", err, out)
 	}
 }
 
@@ -2482,6 +2574,54 @@ func TestTasks_List_BlockReason(t *testing.T) {
 	}
 }
 
+func TestTasks_List_ActiveRunStatus(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+
+	want := map[string]string{}
+	for _, status := range []string{"running", "waiting_human"} {
+		taskID, runID := seedRunningRun(t, q, wfID, repoID, status)
+		if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
+			CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: taskID,
+		}); err != nil {
+			t.Fatalf("set active run: %v", err)
+		}
+		want[taskID] = status
+	}
+	idle, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Idle", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	want[idle.ID] = ""
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var got []apiTask
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	seen := 0
+	for _, tk := range got {
+		exp, ok := want[tk.ID]
+		if !ok {
+			continue
+		}
+		seen++
+		if tk.ActiveRunStatus != exp {
+			t.Errorf("task %s: active_run_status = %q, want %q", tk.ID, tk.ActiveRunStatus, exp)
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("saw %d of %d seeded tasks", seen, len(want))
+	}
+}
+
 // ---------- CreatePR (POST /tasks/{id}/pr) ----------
 
 func TestCreatePR_TaskNotFound_Returns404(t *testing.T) {
@@ -3483,5 +3623,354 @@ func TestTasks_Create_DefaultsToAlphabeticallyFirstWorkflow_WhenNoneNamedDefault
 	}
 	if task.WorkflowID != alpha.ID {
 		t.Errorf("expected task to default to the alphabetically-first workflow %s (Alpha), got %s", alpha.ID, task.WorkflowID)
+	}
+}
+
+// TestTasks_SetArchived_ReclaimWaitsForRepoGitLock asserts the archive-time
+// worktree removal serializes on agent.RepoGitLock(repo.Path): while another
+// git op holds the lock the worktree must survive, and once released the
+// removal proceeds.
+func TestTasks_SetArchived_ReclaimWaitsForRepoGitLock(t *testing.T) {
+	r, q, wfID, _ := setupTaskRouter(t)
+	ctx := context.Background()
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: repoID, Name: "git-repo", Path: repoDir, WorkflowID: &wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Locked archive", WorkflowID: wfID, RepoID: repoID, Label: "plan",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	wtPath, branch, _, err := agent.ProvisionChatWorktree(ctx, repoDir, task.ID, task.Title)
+	if err != nil {
+		t.Fatalf("provision worktree: %v", err)
+	}
+	if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+		Branch: branch, WorktreePath: wtPath, BaseRef: "main", ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set worktree: %v", err)
+	}
+
+	lock := agent.RepoGitLock(repoDir)
+	lock.Lock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			lock.Unlock()
+		}
+	}()
+
+	done := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPatch, "/tasks/"+task.ID+"/archive", jsonBody(t, map[string]bool{"archived": true}))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		done <- w.Code
+	}()
+
+	select {
+	case code := <-done:
+		t.Fatalf("archive finished (%d) while the repo git lock was held", code)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("worktree removed while the repo git lock was held: %v", err)
+	}
+
+	lock.Unlock()
+	unlocked = true
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("archive did not finish after the lock was released")
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree removed after lock release, stat err=%v", err)
+	}
+}
+
+// ---------- MoveLabel (force) ----------
+
+func forceMove(t *testing.T, h http.Handler, taskID string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID+"/label", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok-alice")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestTasks_MoveLabel_Force_BypassesTransitionTable(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	h := middleware.BearerAuth("", map[string]string{"alice": "tok-alice"})(r)
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Wedged", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+
+	// Without force, work -> not_ready is rejected.
+	if w := forceMove(t, h, task.ID, map[string]any{"to_label": "not_ready"}); w.Code != http.StatusBadRequest {
+		t.Fatalf("non-forced illegal move: expected 400, got %d: %s", w.Code, w.Body)
+	}
+
+	w := forceMove(t, h, task.ID, map[string]any{"to_label": "not_ready", "note": "stuck", "force": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("forced move: expected 200, got %d: %s", w.Code, w.Body)
+	}
+	var updated apiTask
+	_ = json.NewDecoder(w.Body).Decode(&updated)
+	if updated.Label != "not_ready" {
+		t.Errorf("expected label not_ready, got %q", updated.Label)
+	}
+
+	hist, err := q.ListTaskLabelHistory(context.Background(), task.ID)
+	if err != nil || len(hist) != 1 {
+		t.Fatalf("history: %v len=%d", err, len(hist))
+	}
+	e := hist[0]
+	if e.ActorID == nil || *e.ActorID != "alice" {
+		t.Errorf("expected actor alice, got %v", e.ActorID)
+	}
+	if e.Note == nil || *e.Note != "Forced move: stuck" {
+		t.Errorf("unexpected note %v", e.Note)
+	}
+	if e.Trigger != "human" || e.ToLabel != "not_ready" {
+		t.Errorf("unexpected history row %+v", e)
+	}
+}
+
+func TestTasks_MoveLabel_Force_UnknownLabel_Returns400(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Wedged", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	w := forceMove(t, r, task.ID, map[string]any{"to_label": "no_such_label", "force": true})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body)
+	}
+	got, _ := q.GetTask(context.Background(), task.ID)
+	if got.Label != "work" {
+		t.Errorf("label should be unchanged, got %q", got.Label)
+	}
+}
+
+func TestTasks_MoveLabel_Force_LiveRun_Returns409(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	task, _ := q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Busy", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if _, err := q.SetAgentRunStarted(context.Background(), runID); err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: task.ID,
+	}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+	w := forceMove(t, r, task.ID, map[string]any{"to_label": "not_ready", "force": true})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body)
+	}
+	got, _ := q.GetTask(context.Background(), task.ID)
+	if got.Label != "work" || got.ActiveAgentRunID == nil {
+		t.Errorf("task should be untouched, got label=%q active=%v", got.Label, got.ActiveAgentRunID)
+	}
+}
+
+// ---------- Side effects (outbox) ----------
+
+type sideEffectsView struct {
+	ID          string `json:"id"`
+	SideEffects []struct {
+		Kind      string  `json:"kind"`
+		Status    string  `json:"status"`
+		Attempts  int     `json:"attempts"`
+		LastError *string `json:"last_error"`
+	} `json:"side_effects"`
+}
+
+func TestTasks_SideEffects_GetListAndRetry(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+	task, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "T", WorkflowID: wfID, RepoID: repoID, Label: "review",
+	})
+	other, _ := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Other", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+
+	get := func(id string) sideEffectsView {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/tasks/"+id, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("get: %d %s", w.Code, w.Body)
+		}
+		var v sideEffectsView
+		_ = json.NewDecoder(w.Body).Decode(&v)
+		return v
+	}
+
+	// Empty outbox serializes as an array, not null.
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID, nil))
+	if !strings.Contains(w.Body.String(), `"side_effects":[]`) {
+		t.Fatalf("expected empty side_effects array, got %s", w.Body)
+	}
+
+	if err := q.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{ID: uuid.NewString(), TaskID: task.ID, Kind: "create_pr"}); err != nil {
+		t.Fatal(err)
+	}
+	msg := "gh: not authenticated"
+	row, _ := q.ListDueTaskSideEffects(ctx, gen.ListDueTaskSideEffectsParams{NextAt: time.Now().Add(time.Hour), Limit: 10})
+	if err := q.FailTaskSideEffect(ctx, gen.FailTaskSideEffectParams{ID: row[0].ID, Attempts: 8, LastError: &msg}); err != nil {
+		t.Fatal(err)
+	}
+
+	v := get(task.ID)
+	if len(v.SideEffects) != 1 || v.SideEffects[0].Kind != "create_pr" || v.SideEffects[0].Status != "failed" ||
+		v.SideEffects[0].LastError == nil || *v.SideEffects[0].LastError != msg {
+		t.Fatalf("unexpected side_effects: %+v", v.SideEffects)
+	}
+	if got := get(other.ID); len(got.SideEffects) != 0 {
+		t.Fatalf("other task should have none, got %+v", got.SideEffects)
+	}
+
+	// List includes it too.
+	lw := httptest.NewRecorder()
+	r.ServeHTTP(lw, httptest.NewRequest(http.MethodGet, "/tasks", nil))
+	var list []sideEffectsView
+	_ = json.NewDecoder(lw.Body).Decode(&list)
+	found := false
+	for _, it := range list {
+		if it.ID == task.ID && len(it.SideEffects) == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("list did not include side_effects: %s", lw.Body)
+	}
+
+	// Retry requeues the failed row.
+	rw := httptest.NewRecorder()
+	r.ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/tasks/"+task.ID+"/side-effects/retry", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("retry: %d %s", rw.Code, rw.Body)
+	}
+	if v := get(task.ID); len(v.SideEffects) != 1 || v.SideEffects[0].Status != "pending" || v.SideEffects[0].Attempts != 0 {
+		t.Fatalf("expected pending after retry, got %+v", v.SideEffects)
+	}
+
+	// Nothing failed now: 409. Unknown task: 404.
+	rw = httptest.NewRecorder()
+	r.ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/tasks/"+task.ID+"/side-effects/retry", nil))
+	if rw.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rw.Code)
+	}
+	rw = httptest.NewRecorder()
+	r.ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/tasks/nope/side-effects/retry", nil))
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestTasks_SourceUpdate_ApplyAndDiscard(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "Old", Description: "old body", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	do := func(method, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+		return w
+	}
+	hold := func() {
+		if err := q.UpsertTaskSourcePending(ctx, gen.UpsertTaskSourcePendingParams{
+			TaskID: task.ID, Title: "New", Description: "new body", Type: "bug",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Nothing pending: both are conflicts; unknown task is 404.
+	if w := do(http.MethodPost, "/tasks/"+task.ID+"/source-update/apply"); w.Code != http.StatusConflict {
+		t.Errorf("apply with none pending: %d", w.Code)
+	}
+	if w := do(http.MethodDelete, "/tasks/"+task.ID+"/source-update"); w.Code != http.StatusConflict {
+		t.Errorf("discard with none pending: %d", w.Code)
+	}
+	if w := do(http.MethodPost, "/tasks/nope/source-update/apply"); w.Code != http.StatusNotFound {
+		t.Errorf("apply unknown task: %d", w.Code)
+	}
+
+	// The pending edit is surfaced on GET and in the list.
+	hold()
+	gw := do(http.MethodGet, "/tasks/"+task.ID)
+	var got struct {
+		SourcePendingUpdate *struct {
+			Title string `json:"title"`
+			Type  string `json:"type"`
+		} `json:"source_pending_update"`
+	}
+	if err := json.NewDecoder(gw.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SourcePendingUpdate == nil || got.SourcePendingUpdate.Title != "New" {
+		t.Fatalf("source_pending_update = %+v", got.SourcePendingUpdate)
+	}
+	if lw := do(http.MethodGet, "/tasks"); !strings.Contains(lw.Body.String(), `"source_pending_update":{`) {
+		t.Errorf("list missing source_pending_update: %s", lw.Body)
+	}
+
+	// Apply overwrites the task and clears the pending row.
+	aw := do(http.MethodPost, "/tasks/"+task.ID+"/source-update/apply")
+	if aw.Code != http.StatusOK {
+		t.Fatalf("apply: %d %s", aw.Code, aw.Body)
+	}
+	updated, _ := q.GetTask(ctx, task.ID)
+	if updated.Title != "New" || updated.Description != "new body" || updated.Type != "bug" {
+		t.Errorf("task after apply = %+v", updated)
+	}
+	if _, err := q.GetTaskSourcePending(ctx, task.ID); err == nil {
+		t.Errorf("pending row should be gone after apply")
+	}
+
+	// Discard leaves the task alone and hides the edit.
+	if err := q.UpsertTaskSourcePending(ctx, gen.UpsertTaskSourcePendingParams{
+		TaskID: task.ID, Title: "Newer", Description: "x", Type: "bug",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dw := do(http.MethodDelete, "/tasks/"+task.ID+"/source-update")
+	if dw.Code != http.StatusOK {
+		t.Fatalf("discard: %d %s", dw.Code, dw.Body)
+	}
+	if !strings.Contains(dw.Body.String(), `"source_pending_update":null`) {
+		t.Errorf("discard response still has pending: %s", dw.Body)
+	}
+	after, _ := q.GetTask(ctx, task.ID)
+	if after.Title != "New" {
+		t.Errorf("discard changed the task: %q", after.Title)
+	}
+	if w := do(http.MethodPost, "/tasks/"+task.ID+"/source-update/apply"); w.Code != http.StatusConflict {
+		t.Errorf("apply after discard: %d", w.Code)
 	}
 }

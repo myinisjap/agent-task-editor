@@ -3,7 +3,8 @@ package health
 import (
 	"context"
 	"fmt"
-	"os/exec"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ const latestGitHubReleaseRepo = "myinisjap/agent-task-editor"
 func latestGitHubReleaseViaGH() (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "gh", "release", "view",
+	out, err := agentuser.ServerCommandContext(ctx, "gh", "release", "view",
 		"--repo", latestGitHubReleaseRepo,
 		"--json", "tagName",
 		"-q", ".tagName",
@@ -46,6 +47,54 @@ func ghCheck(d Deps) Check {
 	c.Detail = "gh credentials not found"
 	c.Hint = "Mount ~/.config/gh or set GITHUB_TOKEN to enable PR creation and PR-state sync."
 	return c
+}
+
+// IsLoopbackListen reports whether a net/http-style listen address (e.g.
+// ":8080", "127.0.0.1:8080", "[::1]:8080") only accepts local connections. An
+// empty host (":8080") binds every interface and is NOT loopback.
+func IsLoopbackListen(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// apiAuthCheck warns when the API has no bearer token configured while the
+// server listens on a non-loopback address: every host that can reach the port
+// (other containers on a shared Docker network, LAN peers) can then drive the
+// API, including shell-executing agent runs. It is a warning, never an error,
+// and deliberately independent of /healthz and /readyz so container
+// healthchecks are unaffected.
+func apiAuthCheck(in Input) Check {
+	c := Check{ID: "api_auth", Name: "API authentication"}
+	switch {
+	case in.AuthConfigured:
+		c.Status = StatusOK
+		c.Detail = "bearer token authentication is enabled"
+	case IsLoopbackListen(in.ListenAddr):
+		c.Status = StatusOK
+		c.Detail = "no API token set, but the server listens on loopback only (" + in.ListenAddr + ")"
+	default:
+		c.Status = StatusWarn
+		c.Detail = "API is unauthenticated and listening on " + listenDesc(in.ListenAddr) + " — anything that can reach this port can create agent runs that execute shell commands"
+		c.Hint = "Set API_TOKEN (or API_TOKENS) and restart; see docs/getting-started.md#set-an-api-token-in-production."
+	}
+	return c
+}
+
+func listenDesc(addr string) string {
+	if addr == "" {
+		return "all interfaces"
+	}
+	if strings.HasPrefix(addr, ":") {
+		return "all interfaces (" + addr + ")"
+	}
+	return addr
 }
 
 // repoBaseDirCheck surfaces the REPO_BASE_DIR sandbox setting (startup-only warning today).

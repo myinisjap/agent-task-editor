@@ -115,8 +115,26 @@ export default function AgentConfigForm({
             ))}
           </select>
           <p className="mt-1 text-xs text-slate-500">
-            <Link to="/providers" className="text-indigo-400 hover:text-indigo-300">Manage provider configs →</Link>
+            <Link to="/settings/providers" className="text-indigo-400 hover:text-indigo-300">Manage provider configs →</Link>
           </p>
+        </Field>
+
+        <Field label="Labels" className="sm:col-span-2">
+          <LabelPicker
+            selected={(() => { try { return JSON.parse(form.labels) } catch { return [] } })()}
+            available={availableLabels}
+            onChange={(lbls) => setForm((f) => ({ ...f, labels: JSON.stringify(lbls) }))}
+          />
+        </Field>
+
+        <Field label="System prompt" className="sm:col-span-2">
+          <textarea
+            value={form.system_prompt}
+            onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}
+            rows={8}
+            className="input resize-none font-mono text-xs"
+            placeholder="You are an expert software engineer…"
+          />
         </Field>
 
         <Field label="Timeout (secs)">
@@ -243,7 +261,7 @@ export default function AgentConfigForm({
           />
         </Field>
 
-        <Field label="Max cost per run (USD)" hint="Advisory per-task budget cap in USD, checked by the dispatcher before each dispatch against the task's cumulative run cost so far. 0 disables the cap (unlimited). On claude/qwen_code, a mid-run watchdog also projects cost from incremental token usage and cancels an in-flight run that crosses this cap (escalating to waiting_human) — an estimate, not the provider's own authoritative billed cost. Other providers only enforce the cap before the next dispatch.">
+        <Field label="Max cost per task (USD)" hint="Advisory budget cap in USD, cumulative across all runs of a task (not per run): checked by the dispatcher before each dispatch against the task's total run cost so far. 0 disables the cap (unlimited). On claude/qwen_code, a mid-run watchdog also projects cost from incremental token usage and cancels an in-flight run that crosses this cap (escalating to waiting_human) — an estimate, not the provider's own authoritative billed cost. Other providers only enforce the cap before the next dispatch.">
           <input
             type="number"
             step="0.01"
@@ -310,14 +328,6 @@ export default function AgentConfigForm({
           )}
         </Field>
 
-        <Field label="Labels" className="sm:col-span-2">
-          <LabelPicker
-            selected={(() => { try { return JSON.parse(form.labels) } catch { return [] } })()}
-            available={availableLabels}
-            onChange={(lbls) => setForm((f) => ({ ...f, labels: JSON.stringify(lbls) }))}
-          />
-        </Field>
-
         {providerStr === 'claude' ? (
           <PluginMcpPicker
             claudeOptions={claudeOptions}
@@ -333,16 +343,6 @@ export default function AgentConfigForm({
             </p>
           </Field>
         ) : null}
-
-        <Field label="System prompt" className="sm:col-span-2">
-          <textarea
-            value={form.system_prompt}
-            onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}
-            rows={8}
-            className="input resize-none font-mono text-xs"
-            placeholder="You are an expert software engineer…"
-          />
-        </Field>
 
         <CommandFilterEditor
           provider={providerStr}

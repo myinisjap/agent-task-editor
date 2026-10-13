@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, authedRawFetch, type Task, type Repo, type WorkflowLabel } from '../../api/client'
+import { api, authedRawFetch, type Task, type Repo, type WorkflowLabel, type WorkflowTransition } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
+import SideEffectBadge from '../shared/SideEffectBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
 import AgentNotesModal from './AgentNotesModal'
 import { useIsMobile } from '../../lib/useIsMobile'
 import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
 import { formatRelativeCountdown } from '../../lib/format'
+import { canHumanMove } from '../../lib/humanMoves'
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -51,6 +53,7 @@ export default function TaskHeader({
   onSyncGitState,
   onBack,
   labels,
+  transitions,
   onMoveLabel,
   onDuplicate,
 }: {
@@ -83,6 +86,8 @@ export default function TaskHeader({
   onSyncGitState: () => void
   onBack: () => void
   labels: WorkflowLabel[]
+  /** Workflow transitions; "Move to…" lists only labels a human can legally move to. */
+  transitions?: WorkflowTransition[]
   onMoveLabel: (toLabel: string) => void
   /** When set, renders a "Duplicate" button that opens a pre-filled New Task modal for this task. */
   onDuplicate?: () => void
@@ -94,6 +99,12 @@ export default function TaskHeader({
   // SUM over one page of runs would silently undercount once a task has more
   // runs than fit on a page.
   const cumulativeCost = task.cumulative_cost_usd ?? 0
+
+  // Labels a human can legally move this task to (mirrors the backend's rule;
+  // see lib/humanMoves.ts), in board order.
+  const moveTargets = [...labels]
+    .filter((l) => canHumanMove(transitions ?? [], task.label, l.name))
+    .sort((a, b) => a.sort_order - b.sort_order)
 
   // Attachments are fetched through the authed client and rendered as blob
   // URLs — a bare <img src="/api/v1/uploads/..."> can't carry the
@@ -358,7 +369,7 @@ export default function TaskHeader({
           <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white bg-slate-600">
             {task.label}
           </span>
-          {labels.length > 1 && (
+          {moveTargets.length > 0 && (
             <select
               defaultValue=""
               disabled={actionPending}
@@ -371,12 +382,9 @@ export default function TaskHeader({
               className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
             >
               <option value="" disabled>Move to…</option>
-              {[...labels]
-                .filter((l) => l.name !== task.label)
-                .sort((a, b) => a.sort_order - b.sort_order)
-                .map((l) => (
-                  <option key={l.id} value={l.name}>{l.name}</option>
-                ))}
+              {moveTargets.map((l) => (
+                <option key={l.id} value={l.name}>{l.name}</option>
+              ))}
             </select>
           )}
         </Row>
@@ -400,6 +408,14 @@ export default function TaskHeader({
             {task.max_cost_usd ? ` / $${task.max_cost_usd.toFixed(2)} budget` : ''}
           </span>
         </Row>
+        {task.side_effects && task.side_effects.length > 0 && (
+          <Row label="Pending work">
+            <SideEffectBadge
+              effects={task.side_effects}
+              onRetry={() => { void api.tasks.retrySideEffects(task.id).catch(() => {}) }}
+            />
+          </Row>
+        )}
         {task.branch && (
           <>
             <Row label="Branch">
@@ -491,9 +507,9 @@ export default function TaskHeader({
         {task.matched_rule_id && (
           <Row label="Intake rule">
             <Link
-              to="/intake-rules"
+              to="/settings/intake-rules"
               className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-              title="This task's label/priority/template/workflow were shaped by this intake rule at creation — see Configuration → Intake Rules."
+              title="This task's label/priority/template/workflow were shaped by this intake rule at creation — see Settings → Intake Rules."
             >
               {task.matched_rule_name || task.matched_rule_id}
             </Link>

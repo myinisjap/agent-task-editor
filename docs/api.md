@@ -131,10 +131,21 @@ Delete a task and all associated runs/logs. Also tears down the per-task git wor
 Move the task to a different label via the workflow engine. Goes through normal transition validation — `to_label` must be a valid transition from the current label.
 
 ```json
-{ "to_label": "label-name", "note": "optional note" }
+{ "to_label": "label-name", "note": "optional note", "force": false }
 ```
 
+Set `"force": true` for a **force move**: an escape hatch for a wedged task that bypasses the workflow's transition table and moves the task to *any* label of its workflow (including back to `not_ready`). It is for human API callers only (agents move labels in-process, not through this endpoint). It still refuses with `409` while the task's agent run is live, returns `400` if `to_label` is not a label of the task's workflow, and otherwise behaves like a normal move: `active_agent_run_id` is cleared, `task.label_changed` is published, and terminal / create-PR hooks fire. The history row is recorded with trigger `human`, the token's actor, and a note of `Forced move` (or `Forced move: <your note>`).
+
 Returns `400` if no transition exists, `403` if the transition requires human auth or the target label is `agent_ignore`, `409` if the task's active agent run is still live (`pending`/`running`) — cancel the run first (see issue #244).
+
+### `POST /tasks/{id}/side-effects/retry`
+Re-queues the task's failed side effects (branch push, PR creation, source-issue write-back). These run from a durable outbox after the label change commits, with up to 8 retries and exponential backoff; once exhausted they show as `failed`. This makes the failed rows pending again with a fresh attempt budget and the background worker picks them up immediately. Returns the task, including its `side_effects` array (the outstanding or failed effects, also returned by `GET /tasks` and `GET /tasks/{id}`). `404` if the task does not exist, `409` if it has no failed side effects. Progress is published as the `task.side_effect` WebSocket event.
+
+### `POST /tasks/{id}/source-update/apply`
+With `issue_sync_update_policy: always`, an edit to the source issue made *after* a human approved the task is held in `source_pending_update` instead of overwriting the task. This applies the held title, description and type to the task, clears the hold and publishes `task.updated`. Returns the task. `404` if the task does not exist, `409` if nothing is pending. See [task-sources.md](task-sources.md).
+
+### `DELETE /tasks/{id}/source-update`
+Discards the held source-issue edit without applying it. The same upstream text is not held again; a further edit to the issue is. Returns the task. `404` / `409` as above.
 
 ### `GET /tasks/{id}/label-history`
 Returns the task's label-transition audit trail (`task_label_history`), oldest first:
@@ -551,10 +562,10 @@ using the same matcher the importer/scheduler call at runtime.
 | `completed_at` | RFC3339? | When the run finished |
 | `input_tokens` | integer | Total input/prompt tokens consumed across the run (summed across all turns); `0` if the provider doesn't report usage |
 | `output_tokens` | integer | Total output/completion tokens consumed across the run |
-| `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`opencode`; estimated from tokens against the user-editable pricing table (falling back to an internal hardcoded table) for `codex_cli`/`anthropic`/`llm`; always `0` for `qwen_code`, which reports tokens but no cost figure at all. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
-| `cost_unknown` | integer | `1` if tokens were consumed but no pricing table row matched the model, so `cost_usd` was left at `0` as a placeholder rather than a computed figure. Only applies to the `codex_cli`/`anthropic`/`llm` estimation path. `0` otherwise — including for `claude`/`opencode` (whose `cost_usd`, even a legitimate `0` under a subscription plan, is always authoritative) and for `qwen_code` (which never reports a cost figure to estimate against). |
+| `cost_usd` | number | Cost of the run in USD. Authoritative (CLI-reported) for `claude`/`opencode`; estimated from tokens against the user-editable pricing table (falling back to an internal hardcoded table) for `codex_cli`; always `0` for `qwen_code`, which reports tokens but no cost figure at all. See [agents.md § Cost & Usage Tracking](agents.md#cost--usage-tracking) |
+| `cost_unknown` | integer | `1` if tokens were consumed but no pricing table row matched the model, so `cost_usd` was left at `0` as a placeholder rather than a computed figure. Only applies to the `codex_cli` estimation path. `0` otherwise — including for `claude`/`opencode` (whose `cost_usd`, even a legitimate `0` under a subscription plan, is always authoritative) and for `qwen_code` (which never reports a cost figure to estimate against). |
 | `session_id` | string | Provider-side conversation session for this run (claude/qwen stream-json `session_id`); used to resume the session on a later run (see [agents.md § Session Resume](agents.md#session-resume)). Empty when the provider has no session |
-| `turns_used` | integer | Internal agent turns this run actually consumed, to compare against the agent config's `max_turns` cap. `0` means *not reported*, never "zero turns": only `claude`/`qwen_code` (from the CLI stream-json result event's `num_turns`) and `anthropic`/`llm` (from their own agentic loop counter) report a real count; `codex_cli`/`opencode` expose no comparable figure and always leave it `0`. The count is never estimated |
+| `turns_used` | integer | Internal agent turns this run actually consumed, to compare against the agent config's `max_turns` cap. `0` means *not reported*, never "zero turns": only `claude`/`qwen_code` (from the CLI stream-json result event's `num_turns`) report a real count; `codex_cli`/`opencode` expose no comparable figure and always leave it `0`. The count is never estimated |
 
 ### `GET /tasks/{id}/runs`
 List a page of agent runs for a task (newest first) — cursor-paginated on
@@ -576,6 +587,16 @@ which is computed server-side across every run.
 
 ### `GET /tasks/{id}/runs/{run_id}`
 Get a single run record.
+
+### `GET /tasks/{id}/verifications`
+The task's repo verify-command results, newest first (at most 20); `[]` when
+none. Each element is a `RunVerification`: `run_id`, `task_id`, `command`,
+`status` (`pass`, `fail`, `timeout`, `error`), `exit_code` (null unless the
+process exited on its own), `output` (tail of combined stdout/stderr, max
+16 KiB), `truncated`, `duration_ms`, `created_at`. See
+[workflows.md § Verify commands](workflows.md#verify-commands). Repos carry
+`verify_command` and `verify_timeout_seconds`; workflow labels carry
+`verify_mode` and `verify_command`.
 
 ### `POST /tasks/{id}/runs/{run_id}/cancel`
 Stop a running agent run (kill switch). The pool cancels the run's context —
@@ -889,6 +910,9 @@ List files in the repository (recursive, respects `.gitignore`).
 ### `GET /github/auth-status`
 Returns whether GitHub CLI credentials are present (used by the frontend to show/hide GitHub-related UI). Not a hard auth check.
 
+### `POST /github/webhook`
+Optional receiver for GitHub webhook deliveries, so PR state refreshes immediately instead of waiting for the next poll. **Not behind bearer auth** (GitHub cannot send the API token): it is authenticated by the HMAC-SHA256 `X-Hub-Signature-256` header, computed with `GITHUB_WEBHOOK_SECRET`. It returns `404` while that variable is unset. Request bodies are capped at 2 MB and must be `application/json`. Responses: `200` (`pong` for a ping, `duplicate` for a repeated `X-GitHub-Delivery`), `202` accepted (matching tasks refresh in the background), `204` event not handled, `400` bad body, `401` bad signature. The payload only selects which tasks to refresh; state is always re-fetched from GitHub. Setup and the handled event list are in [task-sources.md](task-sources.md#github-webhook-optional).
+
 ---
 
 ## Dashboard
@@ -962,7 +986,7 @@ Returns aggregated statistics:
 
 - `label_counts` — number of tasks currently in each workflow label.
 - `active_agents` — agent runs currently in progress.
-- `intervention_queue` — runs in `waiting_human`, awaiting approve/reject.
+- `intervention_queue` — runs in `waiting_human`, awaiting a human. Each item includes the task's current `task_label` and `workflow_id` so clients can tell whether approve/reject apply (a human `success`/`failure` transition from that label) or only a reply does. (The Dashboard UI now uses [`GET /needs-me`](#get-needs-me) instead, which also covers human gates and PR conflicts.)
 - `cost_total` / `cost_by_provider` — aggregate token/cost usage across all
   runs in a terminal state (completed, failed, waiting_human), computed
   from data already recorded in this app's own database.
@@ -982,7 +1006,7 @@ Returns aggregated statistics:
   (`avg_turns_used` / `p90_turns_used`), alongside the config's current
   `max_turns` cap, so the cap can be tuned against real usage rather than
   guesswork. Both turn aggregates average only over runs that actually
-  reported a count: `claude`/`qwen_code` and `anthropic`/`llm` report one,
+  reported a count: `claude`/`qwen_code` report one,
   while `codex_cli`/`opencode` expose no comparable figure and are excluded
   rather than counted as zero (see `turns_used` on the run object);
   a transient-retry snapshot (`avg_transient_retries`, `tasks_with_retries`);
@@ -1036,6 +1060,34 @@ Returns aggregated statistics:
   (`"daily"` or `"monthly"`) is present only when `tripped` is `true`.
   `daily_forecast_usd`/`monthly_forecast_usd` are present only when the
   corresponding limit is configured.
+
+### `GET /needs-me`
+
+The single server-side definition of "needs me". Returns `{ "items": [...] }`,
+oldest first (`since` ascending). Each task appears at most once with one
+primary `reason`; precedence is `waiting_human` > `pr_conflict` > `human_gate`.
+
+```json
+{ "items": [
+  { "task_id": "...", "task_title": "...", "repo_id": "...", "workflow_id": "...", "label": "review",
+    "reason": "human_gate", "since": "2026-01-01T12:00:00Z" },
+  { "task_id": "...", "task_title": "...", "repo_id": "...", "workflow_id": "...", "label": "work",
+    "reason": "waiting_human", "run_id": "...", "message": "Which DB?",
+    "since": "2026-01-01T12:05:00Z" }
+] }
+```
+
+- `waiting_human` — the task's active run is `waiting_human`; `run_id` and
+  `message` (run feedback, else notes) are set when present.
+- `pr_conflict` — `git_state` is `pr_open` and `pr_mergeable` is `conflicting`.
+- `human_gate` — the task is on a non-terminal label with no agent-triggerable
+  outbound transition and at least one human transition (same rule as
+  `workflow.IsHumanGateLabel`), with no pending/running run. `agent_ignore`
+  backlog labels (e.g. `not_ready`) are not gates here.
+
+Archived tasks are excluded; paused tasks are excluded except for
+`waiting_human`. The Dashboard queue, the board's "Needs you" badge and the
+nav count are all driven by this endpoint.
 
 ### `GET /dashboard/cost-by-task`
 Returns the full per-task cost rollup (no top-20 cap, no `task_title`) as a
@@ -1193,6 +1245,11 @@ list of checks:
 - `status` is `ok` (green — ready), `warn` (yellow — optional/degraded, or a
   credential we couldn't detect heuristically), or `error` (red — a required
   item is missing and runs using it will fail).
+- `paused_providers` — provider kinds paused by the provider circuit breaker
+  (`[{provider, reason, paused_at}]`, empty when none). See
+  [agents.md#provider-circuit-breaker](agents.md#provider-circuit-breaker).
+  `POST /health/providers/{provider}/resume` lifts a pause manually and returns
+  `{"resumed": true|false}`.
 - `global_cost` — same global daily/monthly spend-ceiling snapshot as
   `GET /dashboard`'s `global_cost_budget` (minus the forecast fields) — see
   [agents.md#global-cost-ceiling](agents.md#global-cost-ceiling). Present
@@ -1203,8 +1260,9 @@ list of checks:
   fields read `0` when that cap isn't configured, and `tripped` is always
   `false` in that case.
 - `hint` is a one-line fix, present whenever `status` is not `ok`.
-- Checks covered: the `claude` CLI (present + authenticated), API keys for the
-  `anthropic`/`llm` providers, `qwen`/`opencode` binaries (only emitted for
+- Checks covered: the `claude` CLI (present + authenticated), an error per removed
+  provider (`removed_provider_anthropic`/`_llm`/`_openai`) still used by an enabled
+  agent config, `qwen`/`opencode` binaries (only emitted for
   providers actually referenced by an **enabled** agent config or a chat
   session, via their Provider Config — an unused/disabled Provider Config
   doesn't produce a check), the MCP sidecar binary
@@ -1227,14 +1285,21 @@ list of checks:
 
 ### `GET /metrics`
 Prometheus text-exposition-format metrics for scraping (served at the server
-root, **not** under `/api/v1`). Not gated by `API_TOKEN` — independently
-gated by the optional `METRICS_TOKEN` env var (unset by default, i.e.
-unauthenticated, since most Prometheus scrape configs can't easily carry a
-second, endpoint-specific token). When `METRICS_TOKEN` is set, requests must
-carry `Authorization: Bearer $METRICS_TOKEN`.
+root, **not** under `/api/v1`). Auth modes, in order:
+
+1. `METRICS_TOKEN` set: requests must carry `Authorization: Bearer $METRICS_TOKEN`
+   (the API tokens are not accepted).
+2. `METRICS_TOKEN` unset and API auth configured (`API_TOKEN` / `API_TOKENS`):
+   requests must carry one of the API tokens. Set `METRICS_TOKEN` to give
+   Prometheus a dedicated token instead.
+3. `METRICS_PUBLIC=true` (and no `METRICS_TOKEN`): `/metrics` is unauthenticated
+   even though API auth is configured.
+4. No auth configured at all: open, as before.
+
+The active mode is logged at startup.
 
 ```bash
-curl http://localhost:8080/metrics
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/metrics
 # or, if METRICS_TOKEN is set:
 curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:8080/metrics
 ```
@@ -1318,13 +1383,13 @@ calls these endpoints. See [backup.md](backup.md#changing-the-intervalretention-
 
 ### `GET /settings/pricing` / `PUT /settings/pricing`
 Reads/replaces the user-editable per-model USD-per-1M-token pricing table
-used to estimate `anthropic`/`llm` run costs (see [agents.md § Editable
+used to estimate `codex_cli` run costs (see [agents.md § Editable
 pricing table](agents.md#editable-pricing-table)). `GET` returns every row,
 ordered by model. `PUT` replaces the *entire* table with the submitted array
 in a single transaction — add/remove/edit a model are all expressed
 client-side as a new full list. Rejects an empty or duplicate `model`, or a
 negative `input_per_1m`/`output_per_1m`, with `400`. Takes effect on the very
-next `anthropic`/`llm` run completion without a restart. A model not listed
+next run completion without a restart. A model not listed
 here falls back to a small hardcoded table; a model matching neither has
 that run's `cost_unknown` flag set to `1` instead of a silent `$0` (see the
 `AgentRun` object above).
@@ -1336,7 +1401,7 @@ curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/
   http://localhost:8080/api/v1/settings/pricing
 ```
 
-The frontend's **Configuration → Pricing** page provides an editable table
+The frontend's **Settings → Pricing** page provides an editable table
 UI (add/remove rows, Save) for this endpoint.
 
 ### `GET /settings/cost-warning` / `PUT /settings/cost-warning`
@@ -1383,4 +1448,5 @@ curl -X POST -H "Authorization: Bearer $API_TOKEN" http://localhost:8080/api/v1/
 The ticket is valid for ~30 seconds and is consumed on first use — connect
 with `ws://host/ws?ticket=<ticket>` before it expires; a replayed or expired
 ticket is rejected with `401`. See [websocket.md](websocket.md) for the full
-connection flow, including the deprecated `?token=` fallback.
+connection flow. The former `?token=<API_TOKEN>` query-string fallback has
+been removed; `/ws?token=...` now returns `401`.

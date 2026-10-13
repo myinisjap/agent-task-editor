@@ -218,6 +218,13 @@ export interface paths {
                     };
                     content?: never;
                 };
+                /** @description An agent run on this task is `pending` or `running`. Cancel the run (POST /tasks/{id}/runs/{run_id}/cancel) before deleting. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         options?: never;
@@ -294,6 +301,11 @@ export interface paths {
                     "application/json": {
                         to_label: string;
                         note?: string;
+                        /**
+                         * @description Force move: bypass the workflow's transition table and move the task to any label of its workflow (escape hatch for wedged tasks). Recorded in label history with the note prefixed "Forced move". Still refused with 409 while an agent run is live; 400 if to_label is not a label of the task's workflow.
+                         * @default false
+                         */
+                        force?: boolean;
                     };
                 };
             };
@@ -1129,6 +1141,171 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/side-effects/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry a task's failed side effects
+         * @description Makes the task's failed outbox rows (see TaskSideEffect) pending again with a fresh attempt budget; the background worker picks them up immediately. Returns the task with its current side_effects.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Requeued */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The task has no failed side effects */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/source-update/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply the held source-issue edit to the task
+         * @description With issue_sync_update_policy "always", an edit to the source issue made after a human approved the task is not written to the task; it is held as source_pending_update. This overwrites the task's title, description and type with the held text and clears it. Emits task.updated. Returns the task.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Applied */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The task has no pending source update */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/source-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Discard the held source-issue edit
+         * @description Dismisses the held edit without applying it. The same upstream text is not held again; a further edit to the issue is. Emits task.updated. Returns the task.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Discarded */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The task has no pending source update */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/github-status": {
         parameters: {
             query?: never;
@@ -1362,6 +1539,46 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["AgentRun"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/verifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the task's verification results
+         * @description Verify-command results for the task's runs, newest first (at most 20). Empty when the repo has no verify_command or no run has signalled success since one was configured. The first element is the latest result shown beside the diff on the review view.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunVerification"][];
                     };
                 };
             };
@@ -3026,7 +3243,10 @@ export interface paths {
             };
         };
         put?: never;
-        /** Register a repo */
+        /**
+         * Register a repo
+         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -3141,6 +3361,10 @@ export interface paths {
                         issue_comment_sync_enabled?: boolean;
                         /** @description Replaces the repo's toolchain pins. Omit the field to leave existing pins untouched; pass an empty array to clear them back to unconfigured. */
                         runtime_languages?: components["schemas"]["RuntimeLanguagePin"][];
+                        /** @description Replaces the repo's verify command; empty string disables verification. Omit to leave unchanged. */
+                        verify_command?: string;
+                        /** @description Replaces the verify timeout. Omit to leave unchanged. */
+                        verify_timeout_seconds?: number;
                     };
                 };
             };
@@ -3217,7 +3441,7 @@ export interface paths {
         put?: never;
         /**
          * Detect suggested toolchain pins from the repo's manifest files
-         * @description Scans the repo's root directory (never a task worktree) for well-known toolchain manifest files (go.mod, .nvmrc/.node-version, .python-version, rust-toolchain(.toml), .ruby-version, .java-version) and returns a suggested pin for each one found. A symlinked manifest is skipped and reads are capped at 64KB. Detection NEVER writes to the repo's saved runtime_languages — the UI pre-fills the runtime form with these suggestions and a human must still save explicitly. No LLM fallback; manifest scan only.
+         * @description Scans the repo's root directory (never a task worktree) for well-known toolchain manifest files (go.mod, .nvmrc/.node-version, .python-version, rust-toolchain(.toml), .ruby-version, .java-version, project.godot) and returns a suggested pin for each one found. A symlinked manifest is skipped and reads are capped at 64KB. Detection NEVER writes to the repo's saved runtime_languages — the UI pre-fills the runtime form with these suggestions and a human must still save explicitly. No LLM fallback; manifest scan only.
          */
         post: {
             parameters: {
@@ -3252,6 +3476,45 @@ export interface paths {
                 };
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/needs-me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tasks that need a human, oldest first
+         * @description The single server-side definition of "needs me". Each task appears at most once with one primary reason; precedence is waiting_human > pr_conflict > human_gate. waiting_human: the task's active run is waiting for input (run_id and message set). pr_conflict: the task has an open PR marked as conflicting. human_gate: the task sits on a non-terminal, non-agent_ignore label with no agent-triggerable outbound transition and at least one human transition, with no live run. Archived and (for pr_conflict/human_gate) paused tasks are excluded.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NeedsMeResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3463,6 +3726,105 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/github/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive a GitHub webhook delivery
+         * @description Optional push channel that refreshes task PR state immediately instead of waiting for the next ghsync poll. NOT behind bearer auth (GitHub cannot send the API token); authenticated instead by the HMAC-SHA256 `X-Hub-Signature-256` header computed with `GITHUB_WEBHOOK_SECRET` (constant-time compare). Returns 404 when `GITHUB_WEBHOOK_SECRET` is unset. Body capped at 2 MB. Handled events: `ping`, `pull_request` (opened, closed, reopened, synchronize, edited, ready_for_review, converted_to_draft), `pull_request_review`, `pull_request_review_comment`, `issue_comment` (on PRs), `check_suite` / `check_run` (completed) and `status`. Payload fields only select which tasks to refresh; state is re-fetched from the forge. Deliveries are deduplicated by `X-GitHub-Delivery` and refreshes are debounced per task; work runs asynchronously after the response. Content type must be `application/json`. See docs/task-sources.md.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-GitHub-Event": string;
+                    "X-GitHub-Delivery"?: string;
+                    "X-Hub-Signature-256": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description ping answered, or duplicate delivery ignored */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            status?: "pong" | "duplicate";
+                        };
+                    };
+                };
+                /** @description Accepted; matching tasks are refreshed in the background */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            status?: "accepted";
+                        };
+                    };
+                };
+                /** @description Event or action not handled */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unreadable body or invalid JSON */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing or invalid signature */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Webhook receiver disabled (GITHUB_WEBHOOK_SECRET unset) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body too large */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/providers": {
         parameters: {
             query?: never;
@@ -3472,7 +3834,7 @@ export interface paths {
         };
         /**
          * Provider / onboarding readiness checks
-         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), API keys for the anthropic/llm providers, qwen/opencode binaries (only for providers actually referenced by an enabled agent config or a chat session, via their Provider Config — an unused/disabled Provider Config produces no check), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md), and version (the running build's version — see /healthz). Also includes an opt-in update_check row (UPDATE_CHECK_ENABLED, default false) that compares the running version against the latest GitHub release tag; best-effort and never fails the response (degrades to warn when offline or gh is unavailable). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation.
+         * @description Reports the readiness of each agent provider and supporting piece of infrastructure so first-run misconfiguration is visible at a glance instead of surfacing as a failed agent run. Checks the claude CLI (present + authenticated), qwen/opencode binaries (only for providers actually referenced by an enabled agent config or a chat session, via their Provider Config — an unused/disabled Provider Config produces no check), the MCP sidecar binary (MCP_SERVER_PATH), gh auth, REPO_BASE_DIR, auto_backup (whether the automatic local-snapshot scheduler is enabled via BACKUP_DIR — see docs/backup.md), and version (the running build's version — see /healthz). Also includes an opt-in update_check row (UPDATE_CHECK_ENABLED, default false) that compares the running version against the latest GitHub release tag; best-effort and never fails the response (degrades to warn when offline or gh is unavailable). Checks are cheap and side-effect free (PATH lookups, credential/config-file existence, env/config values) — no real agent invocation is performed, so a green result means "ready as far as we can tell", not a live token validation. Also lists paused_providers: provider kinds whose dispatch the provider circuit breaker paused after a run was classified as an auth failure (CLI not logged in). Queued tasks for a paused provider are left untouched; the pause lifts automatically once that provider's health check passes again, or manually via POST /health/providers/{provider}/resume. The pause state is held in memory and resets on restart. Changes are broadcast as the provider.pause_changed WebSocket event ({provider, paused}).
          */
         get: {
             parameters: {
@@ -3491,6 +3853,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             checks?: components["schemas"]["ProviderCheck"][];
+                            paused_providers?: components["schemas"]["PausedProvider"][];
                         };
                     };
                 };
@@ -3498,6 +3861,49 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/providers/{provider}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Manually resume a paused provider
+         * @description Clears the provider circuit breaker for a provider kind (e.g. claude) so dispatch resumes on the next sweep. If the provider is still not logged in, the next auth-classified run pauses it again. Idempotent.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    provider: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Whether the provider was paused before this call */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            resumed: boolean;
+                        };
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -3845,7 +4251,7 @@ export interface paths {
         };
         /**
          * List user-editable model pricing rows
-         * @description Returns every row of the user-editable USD-per-1M-token pricing table used to estimate anthropic/llm/codex_cli run costs, ordered by model. Models with no row here fall back to an internal, approximate hardcoded table. See ModelPricing and AgentRun.cost_unknown.
+         * @description Returns every row of the user-editable USD-per-1M-token pricing table used to estimate codex_cli run costs, ordered by model. Models with no row here fall back to an internal, approximate hardcoded table. See ModelPricing and AgentRun.cost_unknown.
          */
         get: {
             parameters: {
@@ -3868,7 +4274,7 @@ export interface paths {
         };
         /**
          * Replace the entire model pricing table
-         * @description Replaces the whole pricing table with the submitted rows in a single transaction — add/remove/edit a model are all expressed client-side as a new full list. Takes effect on the very next anthropic/llm run completion without a restart. Rejects an empty/duplicate model or a negative price.
+         * @description Replaces the whole pricing table with the submitted rows in a single transaction — add/remove/edit a model are all expressed client-side as a new full list. Takes effect on the very next run completion without a restart. Rejects an empty/duplicate model or a negative price.
          */
         put: {
             parameters: {
@@ -3930,7 +4336,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a short-lived WebSocket auth ticket
-         * @description Returns a random, single-use ticket valid for ~30 seconds, used to authenticate the GET /ws upgrade (?ticket=<ticket>) without putting the long-lived API token in the URL. Requires the same Bearer auth as the rest of /api/v1 — minting a ticket already requires holding the token. The ticket is consumed on first use; a replayed or expired ticket is rejected with 401. See docs/websocket.md for the full connection flow, including the deprecated ?token= fallback.
+         * @description Returns a random, single-use ticket valid for ~30 seconds, used to authenticate the GET /ws upgrade (?ticket=<ticket>) without putting the long-lived API token in the URL. Requires the same Bearer auth as the rest of /api/v1 — minting a ticket already requires holding the token. The ticket is consumed on first use; a replayed or expired ticket is rejected with 401. See docs/websocket.md for the full connection flow. The former ?token= fallback was removed (401).
          */
         post: {
             parameters: {
@@ -4191,15 +4597,41 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        NeedsMeResponse: {
+            items: components["schemas"]["NeedsMeItem"][];
+        };
+        NeedsMeItem: {
+            task_id: string;
+            task_title: string;
+            repo_id: string;
+            workflow_id: string;
+            label: string;
+            /** @enum {string} */
+            reason: "waiting_human" | "pr_conflict" | "human_gate";
+            /** @description Waiting run feedback or notes text, when present. */
+            message?: string;
+            /** @description Set when reason is waiting_human. */
+            run_id?: string;
+            /**
+             * @description Why the waiting run escalated to a human (the run's escalation_reason). Present only when reason is waiting_human and a code was recorded; runs from before the column existed omit it.
+             * @enum {string}
+             */
+            escalation_reason?: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition" | "verify_error";
+            /**
+             * Format: date-time
+             * @description When the task started needing a human; the list is sorted by this ascending.
+             */
+            since: string;
+        };
         /** @description The provider/model/API-key (env vars) triple, split out of AgentConfig so it can be shared/reused by chat sessions and agent configs alike. */
         ProviderConfig: {
             id: string;
             name: string;
             /**
-             * @description `anthropic` and `llm` are deprecated: disabled for new/updated provider configs (POST/PATCH using either returns 400) and may be removed in a future release. Both remain valid enum values here only because existing provider configs already using them are still returned by GET/list endpoints and continue to dispatch and run.
+             * @description The `anthropic` and `llm` (alias `openai`) providers were removed in v0.17.0. POST/PATCH using either returns 400. Legacy rows that still reference them are kept (never deleted) and may be returned by GET/list endpoints as these raw strings; runs of such configs fail at dispatch (the task escalates to waiting_human with a "provider X was removed" message) and GET /health/providers reports an error check `removed_provider_<name>`.
              * @enum {string}
              */
-            provider: "claude" | "anthropic" | "llm" | "opencode" | "qwen_code" | "codex_cli";
+            provider: "claude" | "opencode" | "qwen_code" | "codex_cli";
             model: string;
             /** @description JSON object of environment variables (e.g. API keys) merged into the provider CLI's environment. **Write-only.** Every read (GET/list, and everywhere this schema is embedded — AgentConfig.provider_config, ChatSession's provider_config) returns each key with its value replaced by the literal string `"***"`; key names are preserved, real values are never returned. On write (POST/PUT), a value of `"***"` means "keep the currently stored value for that key"; any other value (including `""`) overwrites it; a key present in the stored env but omitted from the request body's `env` object is deleted. Omitting `env` from the request body entirely (rather than sending an empty object) means "leave env unchanged". This is response redaction only, not encryption — values remain in cleartext in the underlying SQLite database and in `GET /backup` snapshots. */
             env: string;
@@ -4313,10 +4745,49 @@ export interface components {
             cumulative_cost_usd?: number;
             /** @description Derived, read-time explanation of why this task isn't currently being dispatched (see BlockReason). Computed on every GET /tasks and GET /tasks/{id} response by re-evaluating the same predicates the dispatcher itself uses, in the same order, so it never drifts from actual dispatch behavior and never goes stale. Only the FIRST reason the dispatcher would hit is reported — clearing it may simply expose the next one, so this is not an exhaustive list. Absent/null when the task isn't currently a dispatch candidate at all (e.g. archived, already running, or not on an agent-triggerable label), or when it IS a candidate but has no active block (i.e. it's simply next in line — see queue_position, a separate, unrelated concern). */
             block_reason?: components["schemas"]["BlockReason"] | null;
+            /**
+             * @description Derived, read-time status of the run holding the task's re-dispatch lock (active_agent_run_id). That lock intentionally stays set for waiting_human runs (and for synthetic escalation runs such as cost-cap), so clients use this field to tell an agent that is actually working (pending/running) from a task that needs a human (waiting_human). Computed on GET /tasks and GET /tasks/{id}; absent when the task has no active run.
+             * @enum {string}
+             */
+            active_run_status?: "pending" | "running" | "waiting_human";
+            /** @description Outstanding post-transition side effects (branch push, PR creation, source-issue write-back) from the durable outbox: rows that are waiting, being retried after a failure, or failed for good. Populated on GET /tasks and GET /tasks/{id}; always an array, empty when nothing is outstanding or on mutation responses. */
+            side_effects?: components["schemas"]["TaskSideEffect"][];
+            /** @description An edit to the source issue that the sync importer held back because a human had already approved the task (it passed a human gate). Null when none is pending. Apply or discard it via /tasks/{id}/source-update. Populated on GET /tasks and GET /tasks/{id} and the source-update responses. */
+            source_pending_update?: components["schemas"]["TaskSourcePendingUpdate"] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description Issue text held for a human to apply or discard, stored exactly as the importer would have written it to the task. */
+        TaskSourcePendingUpdate: {
+            title: string;
+            description: string;
+            type: string;
+            /**
+             * Format: date-time
+             * @description When this edit was first held
+             */
+            created_at: string;
+        };
+        /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
+        TaskSideEffect: {
+            /**
+             * @description terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue.
+             * @enum {string}
+             */
+            kind: "terminal" | "create_pr" | "leave_not_ready";
+            /** @enum {string} */
+            status: "pending" | "running" | "failed";
+            /** @description Failed attempts so far */
+            attempts: number;
+            /**
+             * Format: date-time
+             * @description When the next attempt is due
+             */
+            next_at: string;
+            /** @description Error from the most recent failed attempt */
+            last_error?: string | null;
         };
         /** @description Explains why a pickup-eligible task is not currently being dispatched. Mirrors the non-dispatch paths in the agent dispatcher (see docs/agents.md#dispatch): a task paused, the server's global daily/monthly spend ceiling tripped (halting ALL dispatch, not just this task), its repo at its concurrency limit, no enabled agent config matching its label, every matching config rate-limited, its own cost budget exhausted, the target label's WIP limit full, an unmet dependency, transient-retry backoff, or its label excluded via agent_ignore. */
         BlockReason: {
@@ -4457,7 +4928,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        /** @description One user-editable USD-per-1M-token pricing row (see 042_model_pricing and internal/agent/providers/pricing.go's DBPriceResolver), used to estimate anthropic/llm/codex_cli run costs. A model with no row here falls back to an internal, approximate hardcoded table; a model matching neither has its cost flagged unknown (AgentRun.cost_unknown) instead of being silently reported as free. Read fresh on every run completion, so an edit here takes effect on the very next run without a restart. */
+        /** @description One user-editable USD-per-1M-token pricing row (see 042_model_pricing and internal/agent/providers/pricing.go's DBPriceResolver), used to estimate codex_cli run costs. A model with no row here falls back to an internal, approximate hardcoded table; a model matching neither has its cost flagged unknown (AgentRun.cost_unknown) instead of being silently reported as free. Read fresh on every run completion, so an edit here takes effect on the very next run without a restart. */
         ModelPricing: {
             /** @description Model ID, matched exactly first, then by longest-prefix (e.g. a row for "claude-sonnet-4-5" also prices "claude-sonnet-4-5-20260101"). */
             model: string;
@@ -4489,6 +4960,13 @@ export interface components {
             wip_limit?: number | null;
             /** @description When non-zero, the dispatcher stops picking up tasks whose success target is this label once it is at its wip_limit (backpressure). */
             wip_limit_hard: number;
+            /**
+             * @description Per-label override of the repo's verify_command, applied to the label a task is on when its run signals success. inherit (the default) uses the repo command; custom runs verify_command below instead; disabled skips verification on this label. The repo's verify_timeout_seconds applies in every mode. Set via the workflow YAML (verify_mode / verify_command) or the labels array of PUT /workflows/{id}.
+             * @enum {string}
+             */
+            verify_mode: "inherit" | "custom" | "disabled";
+            /** @description The label's own command; only meaningful (and required) when verify_mode is custom, else empty. */
+            verify_command: string;
         };
         WorkflowTransition: {
             id: string;
@@ -4546,17 +5024,17 @@ export interface components {
             enabled_plugins?: string;
             /** @description JSON array of Claude user-level MCP server names (from ~/.claude.json's global mcpServers) enabled for this agent config. Claude-provider only; defaults to "[]" (all MCP servers off). */
             enabled_mcp_servers?: string;
-            /** @description JSON array of shell-command glob patterns ("*" wildcard). If non-empty, only commands matching at least one pattern may run via run_bash/Bash. Fully enforced for anthropic, llm, and qwen_code. NOT an effective restriction for claude (the CLI only auto-approves matches; non-matching commands still run — see docs/providers/claude.md). Not enforced for opencode. Defaults to "[]" (no restriction). */
+            /** @description JSON array of shell-command glob patterns ("*" wildcard). If non-empty, only commands matching at least one pattern may run via run_bash/Bash. Fully enforced for qwen_code. NOT an effective restriction for claude (the CLI only auto-approves matches; non-matching commands still run — see docs/providers/claude.md). Not enforced for opencode. Defaults to "[]" (no restriction). */
             command_allowlist?: string;
-            /** @description JSON array of shell-command glob patterns ("*" wildcard). Commands matching any pattern here are always denied, regardless of command_allowlist. Checked first. Fully enforced for anthropic, llm, and claude. NOT enforced for qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]" (no restriction). */
+            /** @description JSON array of shell-command glob patterns ("*" wildcard). Commands matching any pattern here are always denied, regardless of command_allowlist. Checked first. Fully enforced for claude. NOT enforced for qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]" (no restriction). */
             command_denylist?: string;
             /**
              * Format: double
-             * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost so far (across every run for the task, any status). 0 disables the cap (unlimited). Default 0. If the task itself also has a nonzero max_cost_usd, the effective budget is the lower of the two. Providers with a mid-run cost watchdog (claude, always; qwen_code, when the configured model is priced) additionally enforce this as a kill switch: they project cost from incremental token usage as the run progresses and cancel an in-flight run that crosses the cap, escalating to waiting_human — this projection is an *estimate* via the pricing table, not the provider's own authoritative billed cost. Other providers (codex_cli, opencode, anthropic, llm) only block the *next* dispatch once the budget is already exhausted. See docs/agents.md#cost-budgets.
+             * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost so far (across every run for the task, any status). 0 disables the cap (unlimited). Default 0. If the task itself also has a nonzero max_cost_usd, the effective budget is the lower of the two. Providers with a mid-run cost watchdog (claude, always; qwen_code, when the configured model is priced) additionally enforce this as a kill switch: they project cost from incremental token usage as the run progresses and cancel an in-flight run that crosses the cap, escalating to waiting_human — this projection is an *estimate* via the pricing table, not the provider's own authoritative billed cost. Other providers (codex_cli, opencode) only block the *next* dispatch once the budget is already exhausted. See docs/agents.md#cost-budgets.
              */
             max_cost_usd: number;
             /**
-             * @description Optional reasoning effort level. Empty string (default) leaves the provider's own default effort in place. Passed as claude's --effort flag (accepts exactly low/medium/high/xhigh/max — an unrecognized model or an organization-side restriction can make the CLI silently ignore it) and mapped to codex_cli's model_reasoning_effort config override (xhigh/max clamp down to high, since codex has no higher tier). Ignored by qwen_code, opencode, anthropic, and llm. See docs/agents.md#effort.
+             * @description Optional reasoning effort level. Empty string (default) leaves the provider's own default effort in place. Passed as claude's --effort flag (accepts exactly low/medium/high/xhigh/max — an unrecognized model or an organization-side restriction can make the CLI silently ignore it) and mapped to codex_cli's model_reasoning_effort config override (xhigh/max clamp down to high, since codex has no higher tier). Ignored by qwen_code and opencode. See docs/agents.md#effort.
              * @enum {string}
              */
             effort: "" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -4591,19 +5069,19 @@ export interface components {
             path: string;
             remote_url?: string | null;
             workflow_id?: string | null;
-            /** @description 1 = open GitHub issues matching issue_sync_label are periodically imported as tasks (requires remote_url and workflow_id). 0 = off. */
-            issue_sync_enabled?: number;
+            /** @description true = open GitHub issues matching issue_sync_label are periodically imported as tasks (requires remote_url and workflow_id). false = off. */
+            issue_sync_enabled?: boolean;
             /**
              * @deprecated
              * @description DEPRECATED — narrows the issue-import fetch to issues carrying this label (empty = all open issues fetched). Prefer an IntakeRule (see /intake-rules) with a match_labels condition, which additionally lets you shape (template/priority/target label/cost) the resulting task, not just filter which issues are fetched. Still honoured for one more release: it continues to control which issues are FETCHED, while any matching rule continues to control how the fetched issue is SHAPED — the two layer, they don't compete. See docs/task-sources.md.
              */
             issue_sync_label?: string;
-            /** @description 1 = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the issue_writeback_label (or the "agent-in-progress" default) when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. 0 = off. See docs/task-sources.md. */
-            issue_writeback_enabled?: number;
+            /** @description true = status write-back to the source GitHub issue is enabled for this repo's imported tasks (requires remote_url; independent of issue_sync_enabled): comments on the issue when a task's PR opens, applies the issue_writeback_label (or the "agent-in-progress" default) when a task first leaves the workflow's human-gate label ("not_ready" in the default workflow), and closes the issue with a comment when the PR merges. false = off. See docs/task-sources.md. */
+            issue_writeback_enabled?: boolean;
             /** @description Label applied to the source GitHub issue when a task first leaves the workflow's human-gate label. Empty (the default) falls back to "agent-in-progress". The label must already exist on the GitHub repo, or the write-back silently no-ops. See docs/task-sources.md. */
             issue_writeback_label?: string;
-            /** @description 1 = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. 0 = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
-            pr_review_auto_transition_enabled?: number;
+            /** @description true = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. false = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
+            pr_review_auto_transition_enabled?: boolean;
             /**
              * @description Conflict policy for propagating upstream title/body/label drift (and, when issue_comment_sync_enabled is on, comment ingestion) to an already-imported task. 'gate' (default; empty string is treated the same as 'gate') applies updates only while the task is still on its workflow's human-gate label; 'always' applies them regardless of label; 'never' detects drift but never writes it to the task. See docs/task-sources.md.
              * @enum {string}
@@ -4616,8 +5094,8 @@ export interface components {
             issue_sync_gone_action?: "flag" | "archive" | "move";
             /** @description Target label for issue_sync_gone_action 'move'. Required (rejected with 400) when issue_sync_gone_action is 'move'. */
             issue_sync_gone_label?: string;
-            /** @description 1 = ingest the source GitHub issue's comment thread (write-access authors only: OWNER/MEMBER/COLLABORATOR; this system's own write-back comments are filtered out) into task_source_comments and pass it to the agent prompt as clearly delimited untrusted context. Follows the same issue_sync_update_policy gate as field updates. 0 = off (default). */
-            issue_comment_sync_enabled?: number;
+            /** @description true = ingest the source GitHub issue's comment thread (write-access authors only: OWNER/MEMBER/COLLABORATOR; this system's own write-back comments are filtered out) into task_source_comments and pass it to the agent prompt as clearly delimited untrusted context. Follows the same issue_sync_update_policy gate as field updates. false = off (default). */
+            issue_comment_sync_enabled?: boolean;
             /**
              * @description State of the repo's initial auto-clone. 'ready' for local repos and finished clones; 'cloning' while an async git clone is in progress (POST /repos returns immediately with this status); 'error' if the clone failed (see clone_error). Watch the repo.clone_done / repo.clone_failed WebSocket events for transitions out of 'cloning'.
              * @enum {string}
@@ -4629,13 +5107,38 @@ export interface components {
             max_concurrent_runs?: number | null;
             /** @description Serialized JSON array of this repo's agent toolchain pins (see RuntimeLanguagePin) — stored and returned as a JSON string, not a structured array, matching the DB column. Empty string (the default) means unconfigured: tasks on this repo spawn their agent CLI exactly as they did before this feature existed. When non-empty, the dispatcher runs `mise install` for every pin before invoking the provider and wraps the CLI command with `mise x`; a python pin instead gets a per-worktree virtualenv on PATH. Prep failure escalates the task to waiting_human — it never falls back to a plain spawn. See docs/runtime.md. */
             runtime_languages?: string;
+            /** @description Shell command (run with `sh -c` in the task's worktree, as the unprivileged agent user, with the repo's runtime pins applied) that independently verifies an agent's claimed success. Empty (the default) disables verification. When set it is authoritative: a run that signals success only takes the success transition if the command exits 0; otherwise the failure transition fires (or the task keeps its label) and the capped output is fed to the next run as a `VERIFICATION FAILED:` section. See RunVerification and docs/workflows.md. */
+            verify_command?: string;
+            /** @description Timeout for verify_command in seconds (1-3600, default 600). */
+            verify_timeout_seconds?: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description The result of a repo's verify_command for one agent run that signalled success. At most one per run. */
+        RunVerification: {
+            run_id: string;
+            task_id: string;
+            /** @description The command that was run (snapshot of repo.verify_command). */
+            command: string;
+            /**
+             * @description pass = exit 0; fail = non-zero exit; timeout = exceeded verify_timeout_seconds; error = the command could not be run (the task is escalated to waiting_human).
+             * @enum {string}
+             */
+            status: "pass" | "fail" | "timeout" | "error";
+            /** @description Null unless the process exited on its own. */
+            exit_code: number | null;
+            /** @description Tail of the combined stdout and stderr, capped at 16 KiB. */
+            output: string;
+            /** @description True when earlier output was dropped from output. */
+            truncated: boolean;
+            duration_ms: number;
             /** Format: date-time */
             created_at: string;
         };
         /** @description One toolchain pin in a repo's runtime_languages array (the wire shape used by POST /repos, PATCH /repos/{id}, and the runtime/detect suggestions — the DB column itself stores this array serialized to JSON text). */
         RuntimeLanguagePin: {
             /** @enum {string} */
-            id: "go" | "node" | "python" | "rust" | "ruby" | "java";
+            id: "go" | "node" | "python" | "rust" | "ruby" | "java" | "godot";
             /** @description A mise-installable version string, e.g. "1.21", "22", "3.12". Validated server-side against ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ (no "@", no spaces, no leading "-") since it becomes an argv element passed to mise/uv subprocesses. */
             version: string;
         };
@@ -4689,12 +5192,17 @@ export interface components {
             /** @description Agent config that ran this task; set NULL if that config is later deleted. */
             agent_config_id: string | null;
             /** @enum {string} */
-            status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled";
+            status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
             feedback?: string | null;
             /** @description Free-form info the agent stored for this run (via the MCP store_info tool); null when none. */
             stored_info?: string | null;
             /** @description Human/agent notes attached to the run; null when none. */
             notes?: string | null;
+            /**
+             * @description Why the run ended in waiting_human; null for runs in any other status and for waiting_human runs that predate this field. The human-readable explanation is in notes (or feedback for agent_question). agent_question = the agent called request_human; auth_required = provider CLI not logged in; repeated_failure = consecutive failures hit the cap; rework_loop = the same rework transition fired repeatedly; cost_budget / cost_unknown = task cost budget exhausted / unenforceable; provider_missing = the agent config's provider is disabled or unknown; runtime_prep = toolchain install failed; verify_error = the verify command could not be run; max_turns = turn cap hit; transient_exhausted = transient-retry budget exhausted; no_outcome = finished without a usable outcome; rejected_transition = requested move refused repeatedly.
+             * @enum {string|null}
+             */
+            escalation_reason?: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition" | "verify_error" | null;
             /** Format: date-time */
             started_at?: string | null;
             /** Format: date-time */
@@ -4707,14 +5215,14 @@ export interface components {
             output_tokens?: number;
             /**
              * Format: double
-             * @description USD cost of the run. For the `claude`/`qwen_code`/`opencode` providers this is the CLI's own authoritative reported cost (which may legitimately be 0, e.g. under a Claude Max subscription); for anthropic/llm/codex_cli providers it is *estimated* by computing input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported — see cost_unknown to distinguish that from a genuinely free run.
+             * @description USD cost of the run. For the `claude`/`qwen_code`/`opencode` providers this is the CLI's own authoritative reported cost (which may legitimately be 0, e.g. under a Claude Max subscription); for the codex_cli provider it is *estimated* by computing input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported — see cost_unknown to distinguish that from a genuinely free run.
              */
             cost_usd?: number;
-            /** @description 1 if tokens were consumed but no price entry (user-edited or hardcoded fallback) matched the model, so cost_usd was left at 0 as a placeholder rather than a computed figure — add a row for this model at /settings/pricing to get a real estimate. Only applies to the anthropic/llm/codex_cli estimation path described under cost_usd. 0 otherwise, including for claude/qwen_code/opencode (which never set this; their cost_usd, including a legitimate 0 under a Claude Max subscription, is always authoritative). */
+            /** @description 1 if tokens were consumed but no price entry (user-edited or hardcoded fallback) matched the model, so cost_usd was left at 0 as a placeholder rather than a computed figure — add a row for this model at /settings/pricing to get a real estimate. Only applies to the codex_cli estimation path described under cost_usd. 0 otherwise, including for claude/qwen_code/opencode (which never set this; their cost_usd, including a legitimate 0 under a Claude Max subscription, is always authoritative). */
             cost_unknown?: number;
             /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */
             session_id?: string;
-            /** @description Number of internal agent turns the run actually consumed, for comparison against the agent config's configured `max_turns` cap. 0 means "not reported": only providers that expose a real count set it (`claude`/`qwen_code` from the CLI stream-json result event's `num_turns`; `anthropic`/`llm` from their own agentic loop counter). `codex_cli` and `opencode` report no comparable figure and always leave it 0 — the count is never estimated. */
+            /** @description Number of internal agent turns the run actually consumed, for comparison against the agent config's configured `max_turns` cap. 0 means "not reported": only providers that expose a real count set it (`claude`/`qwen_code` from the CLI stream-json result event's `num_turns`). `codex_cli` and `opencode` report no comparable figure and always leave it 0 — the count is never estimated. */
             turns_used?: number;
         };
         /** @description One row of a task's label-transition audit trail (task_label_history), oldest first. */
@@ -4741,8 +5249,15 @@ export interface components {
             content: string;
         };
         Dashboard: {
+            /** @description Non-archived task counts by label name, summed across all workflows. */
             label_counts: {
                 [key: string]: number;
+            };
+            /** @description The same non-archived counts broken out per workflow: workflow id -> label name -> count. Use this when more than one workflow exists, since label names can repeat across workflows. */
+            workflow_label_counts: {
+                [key: string]: {
+                    [key: string]: number;
+                };
             };
             active_agents: {
                 run_id: string;
@@ -4755,6 +5270,10 @@ export interface components {
                 run_id: string;
                 task_id: string;
                 task_title: string;
+                /** @description The task's current label. */
+                task_label: string;
+                /** @description The task's workflow; used to check which human transitions exist from task_label. */
+                workflow_id: string;
                 message: string | null;
                 created_at: string;
             }[];
@@ -4952,9 +5471,388 @@ export interface components {
             /** @description How to fix it; present when status is not ok. */
             hint?: string;
         };
+        /** @description A provider kind whose dispatch is paused by the provider circuit breaker after an auth-classified run. */
+        PausedProvider: {
+            /** @description Provider kind, matching provider_configs.provider (e.g. claude). */
+            provider: string;
+            /** @description Human-readable cause. */
+            reason: string;
+            /** Format: date-time */
+            paused_at: string;
+        };
         Error: {
             error: string;
         };
+        /** @description Envelope of every message the server pushes on the /ws socket (and the locally synthesised `resync` after a reconnect). Discriminated by `type`. */
+        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
+        WsTaskLabelChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.label_changed";
+            payload: components["schemas"]["WsTaskLabelChangedPayload"];
+        };
+        /** @description A task moved to a new label. */
+        WsTaskLabelChangedPayload: {
+            task_id: string;
+            from: string;
+            to: string;
+            /** @description Transition note; empty string when none. */
+            note: string;
+        };
+        WsTaskUpdatedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.updated";
+            payload: components["schemas"]["WsTaskUpdatedPayload"];
+        };
+        /** @description Lightweight "something about this task changed, refetch it" signal. Carries only the id; never treat it as a full Task. */
+        WsTaskUpdatedPayload: {
+            id: string;
+        };
+        WsTaskSideEffectEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.side_effect";
+            payload: components["schemas"]["WsTaskSideEffectPayload"];
+        };
+        /** @description A post-transition side effect (push, PR creation, issue write-back) ran or failed. A task.updated follows each one. */
+        WsTaskSideEffectPayload: {
+            task_id: string;
+            /** @description Side-effect kind, e.g. create_pr, terminal, leave_not_ready. */
+            kind: string;
+            /**
+             * @description pending = the attempt failed and will be retried.
+             * @enum {string}
+             */
+            status: "done" | "pending" | "failed";
+            /** @description Empty string when there is no error. */
+            last_error: string;
+        };
+        WsTaskAgentStartedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.agent_started";
+            payload: components["schemas"]["WsTaskAgentStartedPayload"];
+        };
+        /** @description An agent run began. */
+        WsTaskAgentStartedPayload: {
+            task_id: string;
+            run_id: string;
+            agent_name: string;
+        };
+        WsTaskAgentDoneEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.agent_done";
+            payload: components["schemas"]["WsTaskAgentDonePayload"];
+        };
+        /** @description An agent run reached a terminal (or waiting_human) status. */
+        WsTaskAgentDonePayload: {
+            task_id: string;
+            run_id: string;
+            /** @enum {string} */
+            status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
+        };
+        WsTaskNeedsHumanEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.needs_human";
+            payload: components["schemas"]["WsTaskNeedsHumanPayload"];
+        };
+        /** @description A run escalated to a human (request_human, cost-budget exhaustion, retry exhaustion, ...). */
+        WsTaskNeedsHumanPayload: {
+            task_id: string;
+            run_id: string;
+            /**
+             * @description Same code as AgentRun.escalation_reason.
+             * @enum {string}
+             */
+            reason: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition" | "verify_error";
+            message: string;
+        };
+        WsTaskCostWarningEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.cost_warning";
+            payload: components["schemas"]["WsTaskCostWarningPayload"];
+        };
+        /** @description A task's cumulative cost crossed the early-warning threshold of its effective cost budget (see GET/PUT /settings/cost-warning). Sent either by a provider's mid-run watchdog (run_id present) or by the dispatcher's pre-dispatch check (run_id omitted; no run in flight yet). */
+        WsTaskCostWarningPayload: {
+            task_id: string;
+            /** @description Omitted for the dispatcher's pre-dispatch variant. */
+            run_id?: string;
+            spent_usd: number;
+            budget_usd: number;
+        };
+        WsSystemCostBudgetTrippedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "system.cost_budget_tripped";
+            payload: components["schemas"]["WsSystemCostBudgetTrippedPayload"];
+        };
+        /** @description The global daily/monthly spend ceiling was reached and dispatch is halted. Not task-scoped; fired once on the transition into the tripped state. */
+        WsSystemCostBudgetTrippedPayload: {
+            /** @enum {string} */
+            reason: "daily" | "monthly";
+            message: string;
+            daily_spent_usd: number;
+            daily_limit_usd: number;
+            monthly_spent_usd: number;
+            monthly_limit_usd: number;
+        };
+        WsTaskReviewCommentsChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.review_comments_changed";
+            payload: components["schemas"]["WsTaskReviewCommentsChangedPayload"];
+        };
+        /** @description A completed run resolved one or more review comments (only sent when resolved > 0). */
+        WsTaskReviewCommentsChangedPayload: {
+            task_id: string;
+            run_id: string;
+            resolved: number;
+        };
+        WsTaskVerificationEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.verification";
+            payload: components["schemas"]["WsTaskVerificationPayload"];
+        };
+        /** @description A run's repo verify command finished (refetch GET /tasks/{id}/verifications). */
+        WsTaskVerificationPayload: {
+            task_id: string;
+            run_id: string;
+            /** @enum {string} */
+            status: "pass" | "fail" | "timeout" | "error";
+        };
+        WsTaskRateLimitedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.rate_limited";
+            payload: components["schemas"]["WsTaskRateLimitedPayload"];
+        };
+        /** @description A run was rate-limited by the provider and will be retried automatically. */
+        WsTaskRateLimitedPayload: {
+            task_id: string;
+            run_id: string;
+            agent_config_id: string;
+            /** @description RFC3339 time retries resume; empty string when unknown. */
+            unblocked_at: string;
+        };
+        WsProviderPauseChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "provider.pause_changed";
+            payload: components["schemas"]["WsProviderPauseChangedPayload"];
+        };
+        /** @description The provider circuit breaker tripped (paused true) or lifted (paused false). */
+        WsProviderPauseChangedPayload: {
+            provider: string;
+            paused: boolean;
+        };
+        WsTaskGitStateChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.git_state_changed";
+            payload: components["schemas"]["WsTaskGitStateChangedPayload"];
+        };
+        /** @description The task's PR/git state changed (fired by the background forge sync). */
+        WsTaskGitStateChangedPayload: {
+            task_id: string;
+            /** @enum {string} */
+            git_state: "" | "pushed" | "pr_open" | "pr_merged" | "pr_closed";
+            pr_url: string;
+        };
+        WsTaskPrMergeableChangedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.pr_mergeable_changed";
+            payload: components["schemas"]["WsTaskPrMergeableChangedPayload"];
+        };
+        /** @description The forge's merge-conflict verdict for the task's PR changed (sent only on a change). */
+        WsTaskPrMergeableChangedPayload: {
+            task_id: string;
+            /** @enum {string} */
+            pr_mergeable: "" | "mergeable" | "conflicting" | "unknown";
+        };
+        WsTaskReviewCommentAddedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.review_comment_added";
+            payload: components["schemas"]["WsTaskReviewCommentAddedPayload"];
+        };
+        /** @description The forge sync ingested a new PR review comment for the task. */
+        WsTaskReviewCommentAddedPayload: {
+            task_id: string;
+            comment_id: string;
+            /** @description Forge/source name, e.g. github. */
+            source: string;
+        };
+        WsTaskSubtaskConflictEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.subtask_conflict";
+            payload: components["schemas"]["WsTaskSubtaskConflictPayload"];
+        };
+        /** @description A subtask's branch conflicted on merge into its parent. task_id is the child task. */
+        WsTaskSubtaskConflictPayload: {
+            task_id: string;
+            parent_id: string;
+            files: string[];
+        };
+        WsTaskSourceCommentAddedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.source_comment_added";
+            payload: components["schemas"]["WsTaskSourceCommentAddedPayload"];
+        };
+        /** @description The importer ingested a new comment from the task's source issue thread. */
+        WsTaskSourceCommentAddedPayload: {
+            task_id: string;
+            comment_id: string;
+        };
+        WsTaskCreatedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.created";
+            payload: components["schemas"]["WsTaskCreatedPayload"];
+        };
+        /** @description A task was created by a schedule or as a subtask. A subset of Task fields; refetch the task for full data. */
+        WsTaskCreatedPayload: {
+            id: string;
+            title: string;
+            label: string;
+            repo_id: string;
+            /** @description Present for schedule-created tasks. */
+            source?: string;
+            /** @description Present for schedule-created tasks. */
+            source_ref?: string;
+            /** @description Present for subtasks. */
+            parent_id?: string;
+        };
+        WsTaskCreatedBulkEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.created_bulk";
+            payload: components["schemas"]["WsTaskCreatedBulkPayload"];
+        };
+        /** @description Sent by the issue importer instead of one task.created per item. count is exact; ids is capped server-side. Do a single list refresh. */
+        WsTaskCreatedBulkPayload: {
+            repo_id: string;
+            source: string;
+            count: number;
+            ids: string[];
+        };
+        WsRepoCloneDoneEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "repo.clone_done";
+            payload: components["schemas"]["WsRepoClonePayload"];
+        };
+        WsRepoCloneFailedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "repo.clone_failed";
+            payload: components["schemas"]["WsRepoClonePayload"];
+        };
+        /** @description Outcome of an async repo clone (repo.clone_done / repo.clone_failed). */
+        WsRepoClonePayload: {
+            repo_id: string;
+            /** @enum {string} */
+            clone_status: "ready" | "error";
+            /** @description Empty string on success. */
+            clone_error: string;
+        };
+        /** @description A log line as pushed over the WebSocket. Note this is not AgentLog: the timestamp key is `at` and there is no agent_run_id (the enclosing payload carries run_id). `id` is the persisted agent_logs row id. */
+        WsAgentLogEntry: {
+            id: string;
+            /** @enum {string} */
+            type: "stdout" | "stderr" | "system" | "tool_call" | "tool_result";
+            content: string;
+            /** Format: date-time */
+            at: string;
+        };
+        WsAgentLogEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "agent.log";
+            payload: components["schemas"]["WsAgentLogPayload"];
+        };
+        /** @description One live log entry. Delivered only to clients subscribed to task_id. */
+        WsAgentLogPayload: {
+            run_id: string;
+            task_id: string;
+            entry: components["schemas"]["WsAgentLogEntry"];
+        };
+        WsAgentLogReplayEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "agent.log_replay";
+            payload: components["schemas"]["WsAgentLogReplayPayload"];
+        };
+        /** @description Sent once on subscribe: the newest (capped) tail of the current run's persisted log, chronological. has_more means earlier entries exist. */
+        WsAgentLogReplayPayload: {
+            run_id: string;
+            task_id: string;
+            has_more: boolean;
+            entries: components["schemas"]["WsAgentLogEntry"][];
+        };
+        WsResyncEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "resync";
+            payload: components["schemas"]["WsResyncPayload"];
+        };
+        /** @description Events were dropped for this client (or it reconnected); refetch any state derived from WebSocket events. Always empty. */
+        WsResyncPayload: Record<string, never>;
     };
     responses: never;
     parameters: never;

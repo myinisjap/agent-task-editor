@@ -85,7 +85,7 @@ func TestParsePins_Valid(t *testing.T) {
 }
 
 func TestParsePins_AllAllowedLanguages(t *testing.T) {
-	for _, lang := range []string{"go", "node", "python", "rust", "ruby", "java"} {
+	for _, lang := range []string{"go", "node", "python", "rust", "ruby", "java", "godot"} {
 		if _, err := ParsePins(`[{"id":"` + lang + `","version":"1.0.0"}]`); err != nil {
 			t.Errorf("language %q should be allowed: %v", lang, err)
 		}

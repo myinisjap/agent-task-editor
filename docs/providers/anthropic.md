@@ -1,104 +1,11 @@
-# Provider: `anthropic`
+# Provider: `anthropic` (removed)
 
-> **Deprecated — disabled for now and may be removed in a future release.** `POST`/`PATCH` of a provider config
-> with `provider: "anthropic"` is rejected; it's no longer offered in the UI's provider dropdown. Existing
-> provider/agent configs already using it continue to dispatch and run as described below — this page remains for
-> anyone maintaining one of those configs.
-
-The `anthropic` provider calls the Anthropic Messages API directly — no CLI binary required. It uses a native Go tool-use loop instead of the MCP sidecar.
-
-## Provider String
-
-```
-"provider": "anthropic"
-```
-
-## How It Works
-
-Makes direct HTTP calls to `https://api.anthropic.com/v1/messages` in a multi-turn tool-use loop (up to `max_turns` turns, default `50`). Tool calls are executed server-side in Go; the model is sent tool results and continues until it calls `signal_complete` or `request_human`, or runs out of turns. The turn limit is configurable per agent config via the `max_turns` field (`0`/unset falls back to `50`).
-
-The provider string and model come from the agent config's referenced [Provider Config](../agents.md#provider-configs) (`provider_config_id`), not the agent config itself.
-
-## Credentials
-
-**Required:** `LLM_API_KEY` set to an Anthropic API key.
-
-```bash
-LLM_API_KEY=sk-ant-...
-```
-
-This is billed per-token — separate from a Claude Max subscription. The `claude` provider is billed under Claude Max; `anthropic` is billed as API usage.
-
-## MCP Tools
-
-**Not supported.** No `--mcp-config` flag is used. Instead, equivalent functionality is provided natively, with the same call shape as the MCP version:
-
-| Native Tool | Equivalent MCP Tool |
-|---|---|
-| `get_task_transitions()` | `mcp__task-editor__get_task_transitions` |
-| `signal_complete(outcome, summary)` | `mcp__task-editor__signal_complete` |
-| `request_human(message)` | `mcp__task-editor__request_human` |
-| `update_task_notes(notes, append?)` | `mcp__task-editor__update_task_notes` |
-| `store_info(info)` | `mcp__task-editor__store_info` |
-
-`resolve_comment` and `create_subtask` are not available natively. See [agents.md](../agents.md) for full MCP-vs-native parity across providers.
-
-## Native Tools Available to Agent
-
-| Tool | Description |
-|---|---|
-| `read_file(path)` | Read a file from the repo |
-| `write_file(path, content)` | Write/overwrite a file |
-| `str_replace(path, old, new)` | Replace a substring in a file; `old` must match exactly once, or the call fails |
-| `list_files(path?)` | List a single directory's immediate contents |
-| `list_dir(path?)` | Recursively list files/dirs under path (skips `.git`, `node_modules`, and other dotdirs; capped at 2000 entries) |
-| `search(pattern, glob?)` | Search the repo with ripgrep (`rg`), optionally restricted to files matching `glob`; capped at 1&nbsp;MB of output |
-| `run_bash(command)` | Run a shell command |
-| `get_task_transitions()` | List available workflow transitions from the task's current label |
-| `store_info(info)` | Store run summary |
-| `update_task_notes(notes, append?)` | Write agent notes |
-| `signal_complete(outcome, summary)` | Complete the run; `outcome` is `"success"` or `"failure"` and the label is resolved automatically, same as MCP |
-| `request_human(message)` | Pause for human input |
-
-`search` requires `ripgrep` (`rg`) on `PATH`; the backend Docker image installs it by default. If `rg` isn't found, the tool returns `error: ripgrep (rg) not found on PATH` rather than failing the run. `search`, `list_dir`, and `list_files` are read-only and are **not** gated by the command allowlist/denylist (same treatment as `read_file`); `run_bash` is the only tool subject to that policy.
-
-## Command Allowlist / Denylist
-
-`command_allowlist` and `command_denylist` (JSON arrays of `"*"`-wildcard glob
-patterns on the agent config — workflow-behavior fields, not part of the
-Provider Config — both defaulting to `[]`/no restriction) are enforced
-server-side, in Go, immediately before a `run_bash` call is executed: the denylist is
-checked first and always wins; if the allowlist is non-empty, the command must also
-match at least one allow pattern. A denied command returns an `error: ...` string to
-the model instead of running.
-
-This is **best-effort string matching against the full command line, not a sandbox**
-— it does not prevent constructing a denied command indirectly (e.g. via `$()`,
-backticks, string concatenation, or encoded payloads). It reduces the blast radius of
-a straightforwardly misbehaving or prompt-injected agent, not a determined one.
-
-## Image Attachments
-
-Not yet supported.
-
-## Model Selection
-
-Pass `model` on the referenced [Provider Config](../agents.md#provider-configs) (e.g. `claude-sonnet-4-6`, `claude-opus-4`). Defaults to `claude-sonnet-4-6` if not set.
-
-## Cost & Usage Reporting
-
-Token usage (`input_tokens`/`output_tokens`) is summed from the Messages API's `usage` field across every turn of the tool-use loop; `cost_usd` is an *estimate* computed from those tokens against the user-editable pricing table (`GET`/`PUT /api/v1/settings/pricing`, Configuration → Pricing in the UI), falling back to a small hardcoded map (`internal/agent/providers/pricing.go`) for any model with no matching row. A model matching neither has that run's `cost_unknown` flag set instead of silently showing `$0`. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
-
-**Mid-run cost kill switch: not supported.** No watchdog wiring for this (deprecated) provider — `max_cost_usd` only prevents the *next* dispatch once already exhausted. See [agents.md § Cost Budgets](../agents.md#cost-budgets).
-
-## When to Use
-
-- Direct API access without the Claude CLI installed
-- Environments where the CLI isn't available (e.g. minimal containers)
-- Per-token billing scenarios (not Claude Max)
-
-## Setup Checklist
-
-1. Set `LLM_API_KEY` to your Anthropic API key
-2. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "anthropic"`, then an agent config referencing it via `provider_config_id`
-3. `MCP_SERVER_PATH` is not needed for this provider
+> **Removed in v0.17.0.** The `anthropic` provider no longer exists. Creating or switching a provider config to it is
+> rejected with `400`. Existing provider/agent configs that still reference it are kept in the database (nothing
+> is deleted), but any run for such a config fails at dispatch: the task escalates to `waiting_human` with
+> "provider anthropic was removed in v0.17.0; switch this agent config to claude/codex_cli/opencode/qwen_code", the Health
+> page shows a `removed_provider_anthropic` error, and the provider dropdown flags the config as removed.
+>
+> To migrate, open the config on the Providers page and switch it to [`claude`](claude.md),
+> [`codex_cli`](codex_cli.md), [`opencode`](opencode.md) or [`qwen_code`](qwen_code.md), then reply to the
+> escalated task to resume it. `LLM_API_KEY` and `LLM_BASE_URL` are no longer read by the backend.

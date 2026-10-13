@@ -52,18 +52,21 @@ func NewDashboardHandler(q *gen.Queries, maxWorkers int, globalCost GlobalCostRe
 }
 
 type dashboardResponse struct {
-	LabelCounts       map[string]int        `json:"label_counts"`
-	ActiveAgents      []activeAgentRow      `json:"active_agents"`
-	InterventionQueue []interventionRow     `json:"intervention_queue"`
-	CostTotal         costTotals            `json:"cost_total"`
-	CostByProvider    []providerCostRow     `json:"cost_by_provider"`
-	AgentConfigStats  []agentConfigStatRow  `json:"agent_config_stats"`
-	CostByDay         []costByDayRow        `json:"cost_by_day"`
-	CostByTask        []taskCostRow         `json:"cost_by_task"`
-	CostByRepo        []repoCostRow         `json:"cost_by_repo"`
-	ClaudeUsage       claudeUsageResponse   `json:"claude_usage"`
-	RepoConcurrency   []repoConcurrencyRow  `json:"repo_concurrency"`
-	GlobalCostBudget  *globalCostBudgetView `json:"global_cost_budget,omitempty"`
+	LabelCounts map[string]int `json:"label_counts"`
+	// WorkflowLabelCounts is the same non-archived count broken out per
+	// workflow id, so clients can avoid mixing workflows that share label names.
+	WorkflowLabelCounts map[string]map[string]int `json:"workflow_label_counts"`
+	ActiveAgents        []activeAgentRow          `json:"active_agents"`
+	InterventionQueue   []interventionRow         `json:"intervention_queue"`
+	CostTotal           costTotals                `json:"cost_total"`
+	CostByProvider      []providerCostRow         `json:"cost_by_provider"`
+	AgentConfigStats    []agentConfigStatRow      `json:"agent_config_stats"`
+	CostByDay           []costByDayRow            `json:"cost_by_day"`
+	CostByTask          []taskCostRow             `json:"cost_by_task"`
+	CostByRepo          []repoCostRow             `json:"cost_by_repo"`
+	ClaudeUsage         claudeUsageResponse       `json:"claude_usage"`
+	RepoConcurrency     []repoConcurrencyRow      `json:"repo_concurrency"`
+	GlobalCostBudget    *globalCostBudgetView     `json:"global_cost_budget,omitempty"`
 }
 
 // repoCostRow is a per-repo token/cost rollup (see SumUsageByRepo), the
@@ -215,11 +218,15 @@ type activeAgentRow struct {
 }
 
 type interventionRow struct {
-	RunID     string  `json:"run_id"`
-	TaskID    string  `json:"task_id"`
-	TaskTitle string  `json:"task_title"`
-	Message   *string `json:"message"`
-	CreatedAt string  `json:"created_at"`
+	RunID     string `json:"run_id"`
+	TaskID    string `json:"task_id"`
+	TaskTitle string `json:"task_title"`
+	// TaskLabel / WorkflowID let the UI decide which human actions
+	// (approve/reject) the task's current label actually defines.
+	TaskLabel  string  `json:"task_label"`
+	WorkflowID string  `json:"workflow_id"`
+	Message    *string `json:"message"`
+	CreatedAt  string  `json:"created_at"`
 }
 
 func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -234,8 +241,13 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	counts := make(map[string]int, len(labelCounts))
+	wfCounts := make(map[string]map[string]int)
 	for _, lc := range labelCounts {
-		counts[lc.Label] = int(lc.Count)
+		counts[lc.Label] += int(lc.Count)
+		if wfCounts[lc.WorkflowID] == nil {
+			wfCounts[lc.WorkflowID] = make(map[string]int)
+		}
+		wfCounts[lc.WorkflowID][lc.Label] = int(lc.Count)
 	}
 
 	activeRuns, err := h.q.ListActiveAgentRuns(ctx)
@@ -266,11 +278,13 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 	interventionRows := make([]interventionRow, 0, len(waitingRuns))
 	for _, r := range waitingRuns {
 		interventionRows = append(interventionRows, interventionRow{
-			RunID:     r.ID,
-			TaskID:    r.TaskID,
-			TaskTitle: r.TaskTitle,
-			Message:   r.Feedback,
-			CreatedAt: r.CreatedAt.String(),
+			RunID:      r.ID,
+			TaskID:     r.TaskID,
+			TaskTitle:  r.TaskTitle,
+			TaskLabel:  r.TaskLabel,
+			WorkflowID: r.TaskWorkflowID,
+			Message:    r.Feedback,
+			CreatedAt:  r.CreatedAt.String(),
 		})
 	}
 
@@ -392,9 +406,10 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSON(w, http.StatusOK, dashboardResponse{
-		LabelCounts:       counts,
-		ActiveAgents:      activeRows,
-		InterventionQueue: interventionRows,
+		LabelCounts:         counts,
+		WorkflowLabelCounts: wfCounts,
+		ActiveAgents:        activeRows,
+		InterventionQueue:   interventionRows,
 		CostTotal: costTotals{
 			InputTokens:  usageTotal.InputTokens,
 			OutputTokens: usageTotal.OutputTokens,
@@ -482,7 +497,8 @@ func daysRemainingInMonth(now time.Time) int {
 
 // repoConcurrency builds the per-repo worker-slot breakdown (see
 // repoConcurrencyRow) from the same in-flight-run signal the dispatcher uses
-// to enforce repos.max_concurrent_runs (CountActiveRunsByRepo). Only repos
+// to enforce repos.max_concurrent_runs (CountActiveRunsByRepo: pending or
+// running runs only; waiting_human locks hold no worker). Only repos
 // with at least one in-flight run are returned, sorted by in-use descending
 // so the busiest repos surface first.
 func (h *DashboardHandler) repoConcurrency(ctx context.Context) ([]repoConcurrencyRow, error) {

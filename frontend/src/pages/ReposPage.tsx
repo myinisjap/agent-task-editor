@@ -8,7 +8,7 @@ type IssueSyncUpdatePolicy = 'gate' | 'always' | 'never'
 type IssueSyncGoneAction = 'flag' | 'archive' | 'move'
 
 // Mirrors the backend allowlist (backend/internal/agent/runtime/runtime.go).
-const RUNTIME_LANGUAGE_IDS = ['go', 'node', 'python', 'rust', 'ruby', 'java'] as const
+const RUNTIME_LANGUAGE_IDS = ['go', 'node', 'python', 'rust', 'ruby', 'java', 'godot'] as const
 type RuntimeLanguageId = (typeof RUNTIME_LANGUAGE_IDS)[number]
 
 // Mirrors the backend version regex (^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$).
@@ -62,6 +62,10 @@ type EditForm = {
   // MAX_WORKERS). Kept as a string so the input can be blank rather than 0.
   max_concurrent_runs: string
   runtimeRows: RuntimeRow[]
+  // Authoritative post-run verification (blank command = disabled). The
+  // timeout is a string so the input can be blank (server default 600s).
+  verify_command: string
+  verify_timeout_seconds: string
 }
 
 const BLANK_FORM: EditForm = {
@@ -80,6 +84,8 @@ const BLANK_FORM: EditForm = {
   issue_comment_sync_enabled: false,
   max_concurrent_runs: '',
   runtimeRows: [],
+  verify_command: '',
+  verify_timeout_seconds: '',
 }
 
 export default function ReposPage() {
@@ -166,6 +172,8 @@ export default function ReposPage() {
         issue_comment_sync_enabled: form.issue_comment_sync_enabled,
         max_concurrent_runs: form.max_concurrent_runs.trim() ? Number(form.max_concurrent_runs) : undefined,
         runtime_languages: form.runtimeRows.map(({ id, version }) => ({ id, version })),
+        verify_command: form.verify_command.trim() || undefined,
+        verify_timeout_seconds: form.verify_timeout_seconds.trim() ? Number(form.verify_timeout_seconds) : undefined,
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -195,6 +203,8 @@ export default function ReposPage() {
       issue_comment_sync_enabled: !!repo.issue_comment_sync_enabled,
       max_concurrent_runs: repo.max_concurrent_runs != null ? String(repo.max_concurrent_runs) : '',
       runtimeRows: parseRuntimeLanguages(repo.runtime_languages),
+      verify_command: repo.verify_command ?? '',
+      verify_timeout_seconds: repo.verify_timeout_seconds ? String(repo.verify_timeout_seconds) : '',
     })
     setEditError('')
     setEditDetectNote('')
@@ -234,6 +244,8 @@ export default function ReposPage() {
         issue_comment_sync_enabled: editForm.issue_comment_sync_enabled,
         max_concurrent_runs: editForm.max_concurrent_runs.trim() ? Number(editForm.max_concurrent_runs) : null,
         runtime_languages: editForm.runtimeRows.map(({ id, version }) => ({ id, version })),
+        verify_command: editForm.verify_command.trim(),
+        verify_timeout_seconds: editForm.verify_timeout_seconds.trim() ? Number(editForm.verify_timeout_seconds) : undefined,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       cancelEdit()
@@ -304,6 +316,50 @@ export default function ReposPage() {
 
   const inputCls =
     'bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500'
+
+  // Renders the "Verification" section shared by the create and edit forms.
+  function renderVerifySection(opts: {
+    command: string
+    timeout: string
+    setter: React.Dispatch<React.SetStateAction<EditForm>>
+  }) {
+    const { command, timeout, setter } = opts
+    return (
+      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-slate-800 pt-4">
+        <label className="text-xs font-medium text-slate-400">
+          Verify command <span className="text-slate-600">(blank = no verification)</span>
+        </label>
+        <input
+          type="text"
+          value={command}
+          onChange={(e) => setter((f) => ({ ...f, verify_command: e.target.value }))}
+          placeholder="go test ./..."
+          aria-label="Verify command"
+          className={`${inputCls} font-mono`}
+        />
+        <span className="text-xs text-slate-600">
+          Runs in the task worktree as the agent user when a run reports success. It is authoritative: a non-zero exit
+          or timeout overrides the agent&apos;s claim, the success transition is not taken, and the output is fed back
+          to the next run. Individual workflow labels can override or disable it in the workflow YAML.
+        </span>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-slate-400">
+            Verify timeout (seconds) <span className="text-slate-600">(blank = 600)</span>
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={3600}
+            value={timeout}
+            onChange={(e) => setter((f) => ({ ...f, verify_timeout_seconds: e.target.value }))}
+            placeholder="600"
+            aria-label="Verify timeout seconds"
+            className={`${inputCls} max-w-[10rem]`}
+          />
+        </div>
+      </div>
+    )
+  }
 
   // Renders the "Agent runtime" section shared by the create and edit forms.
   // `repoId`/`onDetect` are omitted on the create form since detection needs
@@ -611,6 +667,8 @@ export default function ReposPage() {
               rows: form.runtimeRows,
               setter: setForm,
             })}
+
+            {renderVerifySection({ command: form.verify_command, timeout: form.verify_timeout_seconds, setter: setForm })}
           </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -899,6 +957,8 @@ export default function ReposPage() {
                       detectNote: editDetectNote,
                       onDetect: () => detectRuntime(repo.id, setEditForm, setEditDetecting, setEditDetectNote),
                     })}
+
+                    {renderVerifySection({ command: editForm.verify_command, timeout: editForm.verify_timeout_seconds, setter: setEditForm })}
                   </div>
 
                   {editError && <p className="text-xs text-red-400">{editError}</p>}

@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -34,6 +36,9 @@ type Dispatcher struct {
 	ProviderFactory func(cfg AgentConfig) Provider
 	// RateLimits is the shared rate-limit registry (optional — no-op when nil).
 	RateLimits *RateLimitRegistry
+	// ProviderPauses is the provider circuit breaker (optional — no-op when
+	// nil). Sweep dispatch skips agent configs whose provider kind is paused.
+	ProviderPauses *ProviderPauseRegistry
 	// Subtasks coordinates child→parent merge-back (optional — nil disables the
 	// subtask branching model). Used here to branch a child off its parent's
 	// branch and to inject merge-conflict context into a parent's run.
@@ -174,8 +179,9 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 	}
 }
 
-// repoInUseCounts returns the current number of in-flight agent runs per
-// repo (see CountActiveRunsByRepo), keyed by repo_id.
+// repoInUseCounts returns the current number of pending/running agent runs
+// per repo (see CountActiveRunsByRepo), keyed by repo_id. Tasks locked on a
+// waiting_human run are deliberately excluded: they hold no worker.
 func (d *Dispatcher) repoInUseCounts(ctx context.Context) (map[string]int64, error) {
 	rows, err := d.q.CountActiveRunsByRepo(ctx)
 	if err != nil {
@@ -238,18 +244,28 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 				continue
 			}
 		}
+		if d.providerPaused(ctx, cand) {
+			log.Info("dispatcher: skipping config whose provider is paused, trying next", "agent_config_id", cand.ID)
+			continue
+		}
 		matched = cand
 		break
 	}
 	if matched == nil {
-		log.Info("dispatcher: all matching configs rate-limited, skipping dispatch", "label", t.Label)
+		log.Info("dispatcher: all matching configs rate-limited or provider-paused, skipping dispatch", "label", t.Label)
 		return
 	}
 
 	// Cost-budget guard: only gates the sweep path. DispatchReply (a human
 	// actively replying/intervening) is intentionally never budget-gated.
+	//
+	// Fails closed (#336): escalateCostBudget returns (true, err) when the
+	// phantom-run write fails, and a read failure while computing spend
+	// returns (false, err). Either way an unverifiable budget must not let a
+	// run start, so any error skips dispatch this sweep (retried next sweep).
 	if blocked, err := d.checkCostBudget(ctx, t, *matched); err != nil {
-		log.Error("dispatcher: cost budget check", "err", err)
+		log.Error("dispatcher: cost budget check failed, skipping dispatch this sweep", "err", err, "blocked", blocked)
+		return
 	} else if blocked {
 		return
 	}
@@ -259,13 +275,21 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// dispatched into this sweep — the task stays on its current label and is
 	// re-evaluated next sweep. This never blocks a run that is already in
 	// flight from completing into a full column (that stays soft/visual).
-	if blocked, err := d.checkWIPLimit(ctx, t); err != nil {
+	// A read failure stays fail-open (WIP is only backpressure, not a spend
+	// cap), but a blocked result is honored regardless of err.
+	blocked, err := d.checkWIPLimit(ctx, t)
+	if err != nil {
 		log.Error("dispatcher: wip limit check", "err", err)
-	} else if blocked {
+	}
+	if blocked {
 		return
 	}
 
 	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
+		if errors.Is(err, ErrDispatchConflict) {
+			log.Debug("dispatcher: skipping, task changed since it was listed (lost dispatch claim)")
+			return
+		}
 		var transientErr transientErr
 		log.Error("dispatcher: start run", "err", err, "transient", errors.As(err, &transientErr))
 		return
@@ -275,6 +299,38 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// this same sweep, not just re-evaluated on the next tick.
 	inUse[repo.ID]++
 }
+
+// providerPaused reports whether cfg's provider kind is paused by the provider
+// circuit breaker. The task is simply left queued (not escalated). A failed
+// provider-config lookup is treated as not paused: startRun surfaces that
+// error through its own path.
+func (d *Dispatcher) providerPaused(ctx context.Context, cfg *gen.AgentConfig) bool {
+	if d.ProviderPauses == nil {
+		return false
+	}
+	paused := d.ProviderPauses.List()
+	if len(paused) == 0 {
+		return false
+	}
+	pc, err := d.q.GetProviderConfig(ctx, cfg.ProviderConfigID)
+	if err != nil {
+		return false
+	}
+	for _, p := range paused {
+		if p.Provider == pc.Provider {
+			return true
+		}
+	}
+	return false
+}
+
+// PausedProviders returns the providers currently paused by the circuit
+// breaker (for GET /health/providers).
+func (d *Dispatcher) PausedProviders() []PausedProvider { return d.ProviderPauses.List() }
+
+// ResumeProvider manually clears a provider's pause and reports whether it
+// was paused.
+func (d *Dispatcher) ResumeProvider(provider string) bool { return d.ProviderPauses.Resume(provider) }
 
 // effectiveBudget resolves the effective cost budget for a task from its
 // own max_cost_usd and its matched agent config's max_cost_usd. A value of
@@ -370,7 +426,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 		if unknownRuns > 0 {
 			msg := fmt.Sprintf("cost budget cannot be enforced: %d run(s) have unknown cost - add pricing for the model at Configuration -> Pricing", unknownRuns)
 			log.Warn("dispatcher: skipping dispatch, task has cost-unknown runs under an active budget", "spent", spent, "budget", budget, "unknown_runs", unknownRuns)
-			return d.escalateCostBudget(ctx, t, matched, msg, "cost-unknown")
+			return d.escalateCostBudget(ctx, t, matched, ReasonCostUnknown, msg, "cost-unknown")
 		}
 
 		warnRatio := d.resolveCostWarnRatio(ctx)
@@ -380,10 +436,10 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 				log.Warn("dispatcher: set task cost_warned", "err", err)
 			}
 			if d.Publisher != nil {
-				d.Publisher.Publish("task.cost_warning", map[string]any{
-					"task_id":    t.ID,
-					"spent_usd":  spent,
-					"budget_usd": budget,
+				d.Publisher.Publish(wsevent.TypeTaskCostWarning, wsevent.TaskCostWarning{
+					TaskID:    t.ID,
+					SpentUSD:  spent,
+					BudgetUSD: budget,
 				})
 			}
 		}
@@ -391,7 +447,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	}
 	msg := fmt.Sprintf("budget exhausted: $%.2f of $%.2f", spent, budget)
 	log.Warn("dispatcher: skipping dispatch, cost budget exhausted", "spent", spent, "budget", budget)
-	return d.escalateCostBudget(ctx, t, matched, msg, "budget-exhausted")
+	return d.escalateCostBudget(ctx, t, matched, ReasonCostBudget, msg, "budget-exhausted")
 }
 
 // escalateCostBudget creates a "phantom" agent_runs row directly in
@@ -403,7 +459,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 // Returns true (skip dispatch) alongside any error, matching
 // checkCostBudget's contract that a failure here should still prevent
 // dispatch this sweep.
-func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, msg, reason string) (bool, error) {
+func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, code EscalationReason, msg, reason string) (bool, error) {
 	runID := uuid.NewString()
 	if _, err := d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:            runID,
@@ -411,13 +467,6 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 		AgentConfigID: &matched.ID,
 	}); err != nil {
 		return true, fmt.Errorf("create %s run: %w", reason, err)
-	}
-	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status: "waiting_human",
-		Notes:  &msg,
-		ID:     runID,
-	}); err != nil {
-		return true, fmt.Errorf("set %s run status: %w", reason, err)
 	}
 	// Lock the task on this run, same as a real waiting_human escalation —
 	// stays locked until a human acts (raises the budget, or replies via
@@ -428,19 +477,10 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 	// dispatch reads rework feedback from (startRun's prior-feedback lookup
 	// also keys off current_agent_run_id). Leaving current_agent_run_id
 	// pointing at the last real run fixes both. See issue #344.
-	if err := d.q.SetTaskActiveRunOnly(ctx, gen.SetTaskActiveRunOnlyParams{
-		ActiveAgentRunID: &runID,
-		ID:               t.ID,
+	if err := d.lifecycle().escalate(ctx, escalation{
+		TaskID: t.ID, RunID: runID, Reason: code, Message: msg, Lock: lockPhantomOnly, FailFast: true,
 	}); err != nil {
-		return true, fmt.Errorf("lock task on %s run: %w", reason, err)
-	}
-
-	if d.Publisher != nil {
-		d.Publisher.Publish("task.needs_human", map[string]any{
-			"task_id": t.ID,
-			"run_id":  runID,
-			"message": msg,
-		})
+		return true, fmt.Errorf("escalate %s run: %w", reason, err)
 	}
 
 	return true, nil
@@ -560,13 +600,13 @@ func (d *Dispatcher) refreshGlobalCostStatus(ctx context.Context) bool {
 		msg := fmt.Sprintf("global cost budget tripped (%s): $%.2f of $%.2f", status.TrippedReason, dailySpentOrMonthly(status), limitFor(status))
 		slog.Warn("dispatcher: global cost budget tripped, halting all new dispatch", "component", "dispatcher", "reason", status.TrippedReason, "daily_spent", dailySpent, "daily_limit", d.MaxDailyCostUSD, "monthly_spent", monthlySpent, "monthly_limit", d.MaxMonthlyCostUSD)
 		if d.Publisher != nil {
-			d.Publisher.Publish("system.cost_budget_tripped", map[string]any{
-				"reason":            status.TrippedReason,
-				"message":           msg,
-				"daily_spent_usd":   status.DailySpentUSD,
-				"daily_limit_usd":   status.DailyLimitUSD,
-				"monthly_spent_usd": status.MonthlySpentUSD,
-				"monthly_limit_usd": status.MonthlyLimitUSD,
+			d.Publisher.Publish(wsevent.TypeSystemCostBudgetTripped, wsevent.SystemCostBudgetTripped{
+				Reason:          status.TrippedReason,
+				Message:         msg,
+				DailySpentUSD:   status.DailySpentUSD,
+				DailyLimitUSD:   status.DailyLimitUSD,
+				MonthlySpentUSD: status.MonthlySpentUSD,
+				MonthlyLimitUSD: status.MonthlyLimitUSD,
 			})
 		}
 	}
@@ -664,6 +704,10 @@ var (
 	// python pin, uv venv) before the provider could be invoked. See
 	// prepareRuntime.
 	ErrRuntimePrepFailed = errors.New("runtime toolchain prep failed")
+	// ErrDispatchConflict means the task's dispatch lock or label changed
+	// between the dispatcher reading the task and claiming it (a concurrent
+	// reply/dispatch won, or a human moved the task), so no run was started.
+	ErrDispatchConflict = errors.New("task changed concurrently; dispatch lock was not acquired")
 )
 
 // DispatchReply starts a new run for a task whose active run is waiting_human,
@@ -708,6 +752,10 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 		return "", ErrNoMatchingConfig
 	}
 
+	// A human reply is a human acting: give the task a fresh failure budget.
+	if err := d.q.ResetTaskFailureCount(ctx, taskID); err != nil {
+		slog.Warn("dispatcher: reset failure count on reply", "component", "dispatcher", "task_id", taskID, "err", err)
+	}
 	return d.startRun(ctx, t, *matched, runOptions{humanReply: &message})
 }
 
@@ -717,7 +765,7 @@ type runOptions struct {
 	humanReply *string
 }
 
-// startRun provisions the task's worktree if needed, creates the run row,
+// startRun creates the run row,
 // marks it as the task's active run, and submits the job to the pool. Shared
 // by the sweep dispatch path and DispatchReply. It reads as a sequence of
 // phases, each delegated to a helper below.
@@ -729,10 +777,11 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", fmt.Errorf("get repo: %w", err)
 	}
 
-	workDir, err := d.ensureWorktree(ctx, t, repo)
-	if err != nil {
-		return "", err
-	}
+	// Only a local stat happens here. A missing worktree is provisioned later,
+	// from the pool worker (see worktreeSetup / Pool.setupWorktree), because
+	// provisioning runs `git fetch --prune`, which can block on the network and
+	// must never stall the single-threaded sweep or a DispatchReply request.
+	workDir, haveWorktree := existingWorktree(t)
 
 	runID := uuid.NewString()
 	log = log.With("run_id", runID)
@@ -778,6 +827,10 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	}
 
 	attachmentRels, attachmentAbsPaths := d.resolveAttachments(t, workDir, log)
+	var setup func(context.Context) (WorktreeResult, error)
+	if !haveWorktree {
+		setup = d.worktreeSetup(t, repo, attachmentAbsPaths, log)
+	}
 	reviewComments := d.loadReviewComments(ctx, t.ID, log)
 	sourceComments := d.loadSourceComments(ctx, t.ID, log)
 
@@ -805,15 +858,8 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		// Instead, escalate straight to waiting_human (same shape as
 		// checkCostBudget's exhausted-budget escalation) so the task stays
 		// locked on this run until a human fixes the config and replies.
-		msg := fmt.Sprintf("agent config's provider is disabled or unknown: %q", agentCfg.Provider)
+		msg := ProviderUnavailableMessage(agentCfg.Provider)
 		log.Error("dispatcher: no runner for provider", "provider", agentCfg.Provider)
-		if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-			Status: "waiting_human",
-			Notes:  &msg,
-			ID:     runID,
-		}); err != nil {
-			log.Warn("dispatcher: mark nil-provider run waiting_human", "err", err)
-		}
 		// persistRunRow (above) already set BOTH current_agent_run_id and
 		// active_agent_run_id to this phantom run before the provider was
 		// resolved. This run has no logs and no feedback, so — same reasoning
@@ -823,19 +869,14 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		// phantom row. active_agent_run_id is deliberately left pointing at
 		// runID: it still needs to hold the re-dispatch lock until a human
 		// fixes the config. See issue #344.
-		if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-			CurrentAgentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
-			ActiveAgentRunID:  &runID,
-			ID:                t.ID,
+		if err := d.lifecycle().escalate(ctx, escalation{
+			TaskID: t.ID, RunID: runID, Reason: ReasonProviderMissing, Message: msg,
+			Lock: lockRestoreCurrent, CurrentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
 		}); err != nil {
-			log.Warn("dispatcher: restore current_agent_run_id after nil-provider escalation", "err", err)
+			log.Warn("dispatcher: nil-provider escalation", "err", err)
 		}
-		if d.Publisher != nil {
-			d.Publisher.Publish("task.needs_human", map[string]any{
-				"task_id": t.ID,
-				"run_id":  runID,
-				"message": msg,
-			})
+		if IsRemovedProvider(agentCfg.Provider) {
+			return "", fmt.Errorf("%w: %s", ErrProviderUnavailable, msg)
 		}
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
 	}
@@ -866,8 +907,9 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	}
 
 	enqueued := d.pool.Submit(Job{
-		RunID:    runID,
-		Provider: provider,
+		RunID:         runID,
+		Provider:      provider,
+		SetupWorktree: setup,
 		Input: RunInput{
 			RunID:              runID,
 			Task:               Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), RepoPath: repo.Path, Attachments: attachmentRels},
@@ -890,8 +932,13 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		},
 	})
 	if !enqueued {
+		// Refused because the server is shutting down: not a failure.
+		dropStatus := "failed"
+		if d.pool.Draining() {
+			dropStatus = "interrupted"
+		}
 		_, _ = d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-			Status: "failed",
+			Status: dropStatus,
 			ID:     runID,
 		})
 		// Owner-scoped: this run just claimed the lock (SetTaskActiveRun above),
@@ -955,84 +1002,86 @@ func (d *Dispatcher) resolveRuntimeSpec(repo gen.Repo, worktreeDir string) (*Run
 func (d *Dispatcher) escalateRuntimePrepFailure(ctx context.Context, t gen.Task, runID string, prepErr error, log *slog.Logger) error {
 	msg := fmt.Sprintf("agent runtime prep failed: %v", prepErr)
 	log.Error("dispatcher: runtime prep failed", "err", prepErr)
-	if _, err := d.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status: "waiting_human",
-		Notes:  &msg,
-		ID:     runID,
+	if err := d.lifecycle().escalate(ctx, escalation{
+		TaskID: t.ID, RunID: runID, Reason: ReasonRuntimePrep, Message: msg,
+		Lock: lockRestoreCurrent, CurrentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
 	}); err != nil {
-		log.Warn("dispatcher: mark runtime-prep-failed run waiting_human", "err", err)
-	}
-	if err := d.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-		CurrentAgentRunID: t.CurrentAgentRunID, // may be nil if this was the task's first run - that's correct
-		ActiveAgentRunID:  &runID,
-		ID:                t.ID,
-	}); err != nil {
-		log.Warn("dispatcher: restore current_agent_run_id after runtime-prep escalation", "err", err)
-	}
-	if d.Publisher != nil {
-		d.Publisher.Publish("task.needs_human", map[string]any{
-			"task_id": t.ID,
-			"run_id":  runID,
-			"message": msg,
-		})
+		log.Warn("dispatcher: runtime-prep escalation", "err", err)
 	}
 	return fmt.Errorf("%w: %v", ErrRuntimePrepFailed, prepErr)
 }
 
-// ensureWorktree returns the task's working directory, provisioning a git
-// worktree on first dispatch and reusing it across re-runs. Each task works in
-// its own worktree on its own branch so concurrent agents on the same repo don't
-// conflict. A subtask's branch is cut from its parent's branch (not the repo
-// base) so its work merges back cleanly.
+// existingWorktree returns the task's recorded worktree directory when it is
+// still present on disk. It only stats the filesystem (no git, no network), so
+// it is safe to call from the sweep.
 //
-// t.WorktreePath can be stale — pointing at a directory that no longer exists
-// — for a task that was archived (worktree reclaimed; see
+// t.WorktreePath can be stale -- pointing at a directory that no longer exists
+// -- for a task that was archived (worktree reclaimed; see
 // api/handlers.reclaimWorktreeOnArchive) and later unarchived, or one whose
 // worktree the periodic sweeper reclaimed out from under it (see
-// internal/worktreesweep, which never touches the DB row). Treating a
-// missing directory the same as an empty WorktreePath reprovisions it here
+// internal/worktreesweep, which never touches the DB row). A missing directory
+// is treated the same as an empty WorktreePath: the worker reprovisions it
 // rather than handing the agent a nonexistent cwd.
-func (d *Dispatcher) ensureWorktree(ctx context.Context, t gen.Task, repo gen.Repo) (string, error) {
-	if workDir := t.WorktreePath; workDir != "" {
-		if fi, statErr := os.Stat(workDir); statErr == nil && fi.IsDir() {
-			return workDir, nil
+func existingWorktree(t gen.Task) (string, bool) {
+	workDir := t.WorktreePath
+	if workDir == "" {
+		return "", false
+	}
+	if fi, statErr := os.Stat(workDir); statErr == nil && fi.IsDir() {
+		return workDir, true
+	}
+	slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
+	return "", false
+}
+
+// worktreeSetup returns the closure the pool worker runs (see
+// Pool.setupWorktree) to provision the task's git worktree. Each task works in
+// its own worktree on its own branch so concurrent agents on the same repo
+// don't conflict. A subtask's branch is cut from its parent's branch (not the
+// repo base) so its work merges back cleanly.
+//
+// The closure runs `git fetch --prune` and `git worktree add -b`, both of
+// which mutate the repo's shared ref store, so it serializes against sibling
+// worktrees' commits/merges/branch-deletes/worktree-adds -- and the worktree
+// sweeper -- via the per-repo lock (see worktree.go's repoGitLocks doc comment
+// / issue #344). The lock is a plain, non-reentrant mutex, never taken inside
+// provisionWorktree itself, since subtasks.go already holds it around calls to
+// provisionWorktree/RemoveWorktree. The task row is updated while the lock is
+// still held so the sweeper never sees a directory without its recorded owner.
+func (d *Dispatcher) worktreeSetup(t gen.Task, repo gen.Repo, attachmentAbsPaths []string, log *slog.Logger) func(context.Context) (WorktreeResult, error) {
+	return func(ctx context.Context) (WorktreeResult, error) {
+		// parentBranchBase does a DB read; resolve it before taking the repo git
+		// lock so a slow DB doesn't hold the lock.
+		base := d.parentBranchBase(ctx, t)
+
+		var wtPath, branch, baseRef string
+		var perr error
+		lock := RepoGitLock(repo.Path)
+		lock.Lock()
+		defer lock.Unlock()
+		if base != "" {
+			wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
+		} else {
+			wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
 		}
-		slog.Warn("dispatcher: task's recorded worktree is missing; reprovisioning", "task_id", t.ID, "worktree_path", workDir)
+		if perr != nil {
+			return WorktreeResult{}, fmt.Errorf("provision worktree: %w", perr)
+		}
+		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+			Branch:       branch,
+			WorktreePath: wtPath,
+			BaseRef:      baseRef,
+			ID:           t.ID,
+		}); err != nil {
+			return WorktreeResult{}, fmt.Errorf("persist worktree: %w", err)
+		}
+		if len(attachmentAbsPaths) > 0 {
+			if err := copyAttachmentsToWorktree(wtPath, attachmentAbsPaths); err != nil {
+				log.Warn("dispatcher: copy attachments to worktree", "err", err)
+			}
+		}
+		return WorktreeResult{Path: wtPath, Branch: branch}, nil
 	}
-
-	// parentBranchBase does a DB read; resolve it before taking the repo git
-	// lock so a slow DB doesn't hold the lock.
-	base := d.parentBranchBase(ctx, t)
-
-	var wtPath, branch, baseRef string
-	var perr error
-	// provisionWorktree(From) runs `git fetch --prune` and `git worktree add
-	// -b`, both of which mutate the repo's shared ref store. Serialize against
-	// sibling worktrees' commits/merges/branch-deletes/worktree-adds via the
-	// per-repo lock (see worktree.go's repoGitLocks doc comment / issue #344).
-	// The lock is a plain, non-reentrant mutex — never taken inside
-	// provisionWorktree itself, since subtasks.go already holds it around
-	// calls to provisionWorktree/RemoveWorktree.
-	lock := RepoGitLock(repo.Path)
-	lock.Lock()
-	if base != "" {
-		wtPath, branch, baseRef, perr = provisionWorktreeFrom(ctx, repo.Path, t.ID, t.Title, base)
-	} else {
-		wtPath, branch, baseRef, perr = provisionWorktree(ctx, repo.Path, t.ID, t.Title)
-	}
-	lock.Unlock()
-	if perr != nil {
-		return "", fmt.Errorf("provision worktree: %w", perr)
-	}
-	if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
-		Branch:       branch,
-		WorktreePath: wtPath,
-		BaseRef:      baseRef,
-		ID:           t.ID,
-	}); err != nil {
-		return "", fmt.Errorf("persist worktree: %w", err)
-	}
-	return wtPath, nil
 }
 
 // providerSupportsResume reports whether the given provider's session-resume
@@ -1071,11 +1120,18 @@ func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched
 	return agentCfg, resumeSessionID, nil
 }
 
-// persistRunRow creates the run row and marks the task's active run in a single
-// transaction. These two writes must be atomic: if the run were created but the
-// task never pointed at it (a crash or error between the statements), an orphaned
-// 'pending' run would linger with nothing gating re-dispatch. Committing them
-// together means either both land or neither does.
+// persistRunRow creates the run row and claims the task's dispatch lock in a
+// single transaction. These two writes must be atomic: if the run were created
+// but the task never pointed at it (a crash or error between the statements), an
+// orphaned 'pending' run would linger with nothing gating re-dispatch.
+//
+// The claim is a compare-and-swap against the task state the caller read (t):
+// the task must still be on t.Label and its lock must still be exactly what t
+// saw (free for a sweep dispatch, held by the waiting run for a human reply).
+// If another dispatch/reply took the lock, or a human moved the task, in the
+// meantime, zero rows are affected, the transaction (including the just-created
+// run row) is rolled back, and ErrDispatchConflict is returned so the caller
+// does not start the run.
 func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, runID string, feedback *string) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1091,14 +1147,31 @@ func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.
 		_ = tx.Rollback()
 		return fmt.Errorf("create agent run: %w", err)
 	}
-	// Mark the task's active run so the next sweep skips it.
-	if err := tq.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{
-		CurrentAgentRunID: &runID,
-		ActiveAgentRunID:  &runID,
-		ID:                t.ID,
-	}); err != nil {
+	// Claim the task's active run so the next sweep skips it.
+	var claimed int64
+	if t.ActiveAgentRunID == nil {
+		claimed, err = tq.ClaimTaskActiveRunIfFree(ctx, gen.ClaimTaskActiveRunIfFreeParams{
+			CurrentAgentRunID: &runID,
+			ActiveAgentRunID:  &runID,
+			ID:                t.ID,
+			Label:             t.Label,
+		})
+	} else {
+		claimed, err = tq.ClaimTaskActiveRunIfHeldBy(ctx, gen.ClaimTaskActiveRunIfHeldByParams{
+			CurrentAgentRunID:  &runID,
+			ActiveAgentRunID:   &runID,
+			ID:                 t.ID,
+			Label:              t.Label,
+			ActiveAgentRunID_2: t.ActiveAgentRunID,
+		})
+	}
+	if err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("set task active run: %w", err)
+	}
+	if claimed == 0 {
+		_ = tx.Rollback()
+		return ErrDispatchConflict
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit run creation: %w", err)
@@ -1311,4 +1384,10 @@ func toAgentConfig(cfg gen.AgentConfig, pc gen.ProviderConfig) AgentConfig {
 		CommandAllowlist:  commandAllowlist,
 		CommandDenylist:   commandDenylist,
 	}
+}
+
+// lifecycle returns the run-lifecycle helper that owns escalation (see
+// escalate.go).
+func (d *Dispatcher) lifecycle() runLifecycle {
+	return runLifecycle{q: d.q, pub: d.Publisher}
 }

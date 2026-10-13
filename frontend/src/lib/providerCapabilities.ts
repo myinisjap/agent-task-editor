@@ -39,21 +39,14 @@ export type ProviderCapabilities = Partial<Record<Capability, CapabilityEntry>>
 
 // Ordered list of known providers, matching docs/agents.md's Capability
 // Matrix column order. `agentTemplates.ts`'s PROVIDERS list is the
-// UI-selectable dropdown; it no longer includes `anthropic`, `llm`, or the
-// `openai` alias for the same OpenAI-compatible path — all three are
-// deprecated (see DEPRECATED_PROVIDERS below) and no longer selectable for
-// new/updated configs. They're kept here so existing configs on those
-// providers still get their capability rows and warnings rendered.
-export const KNOWN_PROVIDERS = ['claude', 'qwen_code', 'codex_cli', 'anthropic', 'llm', 'opencode'] as const
+// UI-selectable dropdown.
+export const KNOWN_PROVIDERS = ['claude', 'qwen_code', 'codex_cli', 'opencode'] as const
 
-// Providers disabled for new/updated provider configs (rejected by the
-// backend) and hidden from agentTemplates.ts's PROVIDERS dropdown, but still
-// present in PROVIDER_CAPABILITIES above so existing configs on these
-// providers keep rendering accurate capability warnings and model lists.
-// "openai" was a dead dropdown alias for the same deprecated `llm` path and
-// never had its own capability row. See docs/providers/anthropic.md and
-// docs/providers/llm.md for the deprecation notice.
-export const DEPRECATED_PROVIDERS = new Set(['anthropic', 'llm', 'openai'])
+// Providers that were removed (v0.17.0). The backend rejects them for new or
+// updated configs and fails any run of a legacy config that still references
+// one; the UI flags such configs so they can be switched. "openai" was a dead
+// dropdown alias of `llm`. See docs/providers/README.md.
+export const REMOVED_PROVIDERS = new Set(['anthropic', 'llm', 'openai'])
 
 export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
   claude: {
@@ -148,36 +141,6 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       note: 'Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high.',
     },
     permissionMode: { support: 'none', note: 'codex_cli always runs with --dangerously-bypass-approvals-and-sandbox — always full bypass, not configurable per agent config.' },
-  },
-  anthropic: {
-    taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
-    labelTransitions: { support: 'full', note: 'signal_complete implemented natively.' },
-    mcpServers: { support: 'none' },
-    commandAllowlist: { support: 'full', note: 'Enforced in Go.' },
-    commandDenylist: { support: 'full', note: 'Enforced in Go.' },
-    costTracking: { support: 'partial', note: 'Estimated from a pricing table, not authoritative.' },
-    costWatchdog: { support: 'none', note: 'No mid-run kill switch implemented — only the pre-dispatch budget guard applies.' },
-    imageAttachments: { support: 'none', note: 'Not yet implemented.' },
-    maxTurns: { support: 'full', note: 'Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying.' },
-    sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
-    subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
-    effort: { support: 'none', note: 'Not implemented for this provider.' },
-    permissionMode: { support: 'none', note: 'Not applicable — this provider has no claude-CLI-style permission mode concept.' },
-  },
-  llm: {
-    taskEditorTools: { support: 'partial', note: '5 of 7 task-editor tools implemented natively (no resolve_comment/create_subtask).' },
-    labelTransitions: { support: 'full', note: 'signal_complete implemented natively.' },
-    mcpServers: { support: 'none' },
-    commandAllowlist: { support: 'full', note: 'Enforced in Go.' },
-    commandDenylist: { support: 'full', note: 'Enforced in Go.' },
-    costTracking: { support: 'partial', note: 'Estimated from a pricing table, not authoritative.' },
-    costWatchdog: { support: 'none', note: 'No mid-run kill switch implemented — only the pre-dispatch budget guard applies.' },
-    imageAttachments: { support: 'none', note: 'Not yet implemented (backend-dependent).' },
-    maxTurns: { support: 'full', note: 'Enforced via the tool-use loop. Hitting the cap escalates the run to waiting_human instead of retrying.' },
-    sessionResume: { support: 'none', note: 'Achievable (persist messages) but not yet implemented.' },
-    subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
-    effort: { support: 'none', note: 'Not implemented for this provider.' },
-    permissionMode: { support: 'none', note: 'Not applicable — this provider has no claude-CLI-style permission mode concept.' },
   },
   opencode: {
     taskEditorTools: {

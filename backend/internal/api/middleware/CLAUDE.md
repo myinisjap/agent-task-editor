@@ -1,1 +1,1 @@
-@backend/internal/api/middleware/AGENTS.md
+@AGENTS.md

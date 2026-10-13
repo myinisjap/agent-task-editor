@@ -1,1 +1,1 @@
-@frontend/AGENTS.md
+@AGENTS.md

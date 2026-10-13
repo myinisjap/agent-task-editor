@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 )
 
 // newTestClient creates a minimal Client wired to hub without a real WS conn.
@@ -148,7 +150,8 @@ func TestHub_EventPayload_Roundtrips(t *testing.T) {
 	if evt.Type != "test.event" {
 		t.Errorf("expected type 'test.event', got %q", evt.Type)
 	}
-	if evt.Payload["task_id"] != "abc" {
-		t.Errorf("expected task_id 'abc', got %v", evt.Payload["task_id"])
+	got := wsevent.ToMap(evt.Payload)
+	if got["task_id"] != "abc" {
+		t.Errorf("expected task_id 'abc', got %v", got["task_id"])
 	}
 }

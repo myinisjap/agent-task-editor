@@ -4,7 +4,7 @@ package notify
 // codebase depends on (workflow.Publisher, agent.Publisher, ghsync.Publisher,
 // tasksource.Publisher, schedule.Publisher all have this exact method set).
 type publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // MultiPublisher fans a single Publish call out to every publisher it wraps.
@@ -36,7 +36,7 @@ func FanOut(targets ...publisher) *MultiPublisher {
 // Publish forwards to every wrapped publisher. Each target is responsible
 // for its own non-blocking behavior (both ws.Hub.Publish and
 // Notifier.Publish already are), so this itself never blocks.
-func (mp *MultiPublisher) Publish(eventType string, payload map[string]any) {
+func (mp *MultiPublisher) Publish(eventType string, payload any) {
 	for _, t := range mp.targets {
 		t.Publish(eventType, payload)
 	}

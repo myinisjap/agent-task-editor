@@ -7,7 +7,11 @@ import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { useReposStore } from '../../stores/repos'
 import GitStateBadge from './GitStateBadge'
+import SideEffectBadge from '../shared/SideEffectBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
+import { useNeedsMeStore } from '../../stores/needsMe'
+import { needsMeReasonLabel } from '../../lib/needsMe'
+import { escalationInfo } from '../../lib/escalation'
 import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
 import { formatRelativeCountdown } from '../../lib/format'
 
@@ -48,6 +52,7 @@ function TaskCard({
   onToggleSelect?: (taskId: string, shiftKey: boolean) => void
 }) {
   const navigate = useNavigate()
+  const needsMe = useNeedsMeStore((st) => st.byTask[task.id])
   const upsert = useTasksStore((s) => s.upsert)
   const repoName = useReposStore((s) => s.byId(task.repo_id))?.name
   // A task with any unsatisfied blocker is gated from dispatch; mute it and show
@@ -384,8 +389,24 @@ function TaskCard({
               ⏸ Paused
             </span>
           )}
-          {isRunning && (
+          {needsMe && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-pink-900/70 text-pink-200 font-semibold"
+              title={needsMeReasonLabel(needsMe.reason, needsMe.escalation_reason)}
+            >
+              {needsMe.escalation_reason ? escalationInfo(needsMe.escalation_reason).short : 'Needs you'}
+            </span>
+          )}
+          {isRunning && !needsMe && (
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
+          )}
+          {!isRunning && task.active_run_status === 'waiting_human' && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
+              title="The agent is waiting for a human to respond"
+            >
+              Needs you
+            </span>
           )}
           {rateLimitedUntil && !isRunning && (
             <span
@@ -395,6 +416,7 @@ function TaskCard({
               ⏸ API limit
             </span>
           )}
+          <SideEffectBadge effects={task.side_effects} />
           {costWarned && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"

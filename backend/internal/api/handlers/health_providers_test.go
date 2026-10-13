@@ -13,11 +13,11 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
-func setupHealthRouter(t *testing.T, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey string) (http.Handler, *gen.Queries) {
+func setupHealthRouter(t *testing.T, mcpBinary, repoBaseDir string) (http.Handler, *gen.Queries) {
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, llmBaseURL, llmAPIKey, "", 24*time.Hour, 7, "dev", false, nil)
+	h := handlers.NewHealthHandler(q, db, mcpBinary, repoBaseDir, "", 24*time.Hour, 7, "dev", false, nil)
 
 	// Register the agents and provider-configs create routes too, so tests
 	// can seed configs and observe how provider-specific checks are
@@ -72,7 +72,7 @@ func (r providersResp) has(id string) bool {
 // TestProvidersEndpoint_NoConfigs verifies the always-present rows are emitted
 // and no provider-specific rows appear when there are no agent configs.
 func TestProvidersEndpoint_NoConfigs(t *testing.T) {
-	router, _ := setupHealthRouter(t, "", "", "", "")
+	router, _ := setupHealthRouter(t, "", "")
 	resp := getProviders(t, router)
 
 	for _, id := range []string{"claude_cli", "mcp_sidecar", "gh_auth", "repo_base_dir", "auto_backup", "db_size"} {
@@ -98,7 +98,7 @@ func TestProvidersEndpoint_SurfacesGlobalCostStatus(t *testing.T) {
 		last:   time.Now(),
 		status: agent.GlobalCostStatus{Tripped: true, TrippedReason: "monthly", MonthlySpentUSD: 550, MonthlyLimitUSD: 500},
 	}
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", false, disp)
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "dev", false, disp)
 
 	req := httptest.NewRequest(http.MethodGet, "/health/providers", nil)
 	w := httptest.NewRecorder()
@@ -125,7 +125,7 @@ func TestProvidersEndpoint_SurfacesGlobalCostStatus(t *testing.T) {
 // a provider_configs row, so an unused/disabled config doesn't trigger a
 // false-positive readiness warning.
 func TestProvidersEndpoint_EmitsChecksForConfiguredProviders(t *testing.T) {
-	router, _ := setupHealthRouter(t, "", "", "", "")
+	router, _ := setupHealthRouter(t, "", "")
 
 	var pcResp struct {
 		ID string `json:"id"`
@@ -190,7 +190,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 	q := gen.New(db.SQL())
 
 	t.Run("disabled when BackupDir is empty", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", false, nil)
+		h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "dev", false, nil)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -209,7 +209,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 	})
 
 	t.Run("ok when BackupDir is set", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "/data/backups", 24*time.Hour, 7, "dev", false, nil)
+		h := handlers.NewHealthHandler(q, db, "", "", "/data/backups", 24*time.Hour, 7, "dev", false, nil)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -232,7 +232,7 @@ func TestProvidersEndpoint_AutoBackupCheck(t *testing.T) {
 // on-disk database file size (necessarily > 0 bytes since Open() runs
 // migrations, which write to the file).
 func TestProvidersEndpoint_DBSizeCheck(t *testing.T) {
-	router, _ := setupHealthRouter(t, "", "", "", "")
+	router, _ := setupHealthRouter(t, "", "")
 	resp := getProviders(t, router)
 
 	var found bool
@@ -260,7 +260,7 @@ func TestProvidersEndpoint_VersionCheck(t *testing.T) {
 	q := gen.New(db.SQL())
 
 	t.Run("version row present with configured version", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
+		h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
@@ -286,7 +286,7 @@ func TestProvidersEndpoint_VersionCheck(t *testing.T) {
 	})
 
 	t.Run("update_check row present when checkForUpdates is enabled", func(t *testing.T) {
-		h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "dev", true, nil)
+		h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "dev", true, nil)
 		r := chi.NewRouter()
 		r.Get("/health/providers", h.Providers)
 		resp := getProviders(t, r)
