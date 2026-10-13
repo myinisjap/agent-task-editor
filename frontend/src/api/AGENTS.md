@@ -1,10 +1,10 @@
 # frontend/src/api
 
-Four files that form the complete backend communication layer.
+The backend communication layer: `types.ts`, `client.ts`, `authToken.ts`, `ws.ts`.
 
 ## `types.ts`
 
-Shared TypeScript interfaces mirroring backend JSON shapes. All API functions and WS events use types from here. When backend models change, update types here first, then fix call sites.
+Generated from the root `openapi.yaml` (`npm run gen:api`) — **do not hand-edit**; CI fails on drift. When backend models change, edit `openapi.yaml`, regenerate, then fix call sites.
 
 Key types: `Task`, `AgentConfig`, `Repo`, `Workflow`, `WorkflowLabel`, `WorkflowTransition`, `AgentRun`, `AgentLog`, `DashboardStats`.
 
@@ -24,23 +24,14 @@ Typed fetch wrappers for every REST endpoint. Each function:
 
 Function names mirror HTTP semantics: `getTasks`, `createTask`, `updateTask`, `deleteTask`, `approveTask`, `rejectTask`, `getRunLogs`, etc.
 
-## `authToken.ts`
+## `authToken.ts` (ADR 0032)
 
-Single source of truth for the runtime API bearer token — there's no
-user/session model, just one shared token (or a named token from
-`API_TOKENS`) stored in `localStorage`.
+Single source of truth for the runtime API bearer token (one shared or named token in `localStorage`, key `ate_api_token`; no session model).
 
-- `getApiToken()` — reads the stored token; if nothing is stored yet, seeds
-  `localStorage` from the build-time `VITE_API_TOKEN` (if set) so existing
-  `.env.local` dev setups keep working without a prompt, then returns that.
-  This fallback only applies once — after that, whatever's in `localStorage`
-  wins (including an empty value explicitly saved via the token prompt).
-- `setApiToken(token)` / `clearApiToken()` — write/remove the stored token.
-- `authHeaders()` — returns `{}` or `{ Authorization: 'Bearer <token>' }` to
-  spread into a `fetch()` call's headers.
-- `onUnauthorized(fn)` / `notifyUnauthorized()` — a tiny pub/sub used by the
-  shared fetch helpers to tell `ApiTokenGate` "show the token prompt" on any
-  401, without every call site needing its own error UI.
+- `getApiToken()` reads it, seeding once from build-time `VITE_API_TOKEN` if nothing is stored; after that `localStorage` wins, including an empty value saved via the prompt.
+- `setApiToken(token)` / `clearApiToken()` write/remove it.
+- `authHeaders()` returns `{}` or `{ Authorization: 'Bearer <token>' }`; use it for any new raw `fetch()`.
+- `onUnauthorized(fn)` / `notifyUnauthorized()` — tiny pub/sub telling `ApiTokenGate` to show the prompt on any 401.
 
 ## `ws.ts`
 
@@ -57,12 +48,12 @@ wsClient.unsubscribeTask(taskId)     // send unsubscribe message
 
 ### Reconnect Behaviour
 
-On `close`, reconnects using capped exponential backoff with full jitter: `delay = min(30s, 1s * 2^attempts)`, then jittered to `[delay/2, delay]`, with `attempts` incrementing on every close and resetting to 0 only on a confirmed `open`. This avoids every open tab hammering `/ws-ticket` + `/ws` in lockstep on a server restart. On `open`, re-sends all active subscriptions so no events are missed. `wsClient.getStatus()` / `wsClient.onStatusChange(fn)` expose `'connecting' | 'open' | 'closed'` for UI (see `lib/useWsStatus.ts`, rendered in `NavSidebar`).
+On `close`, reconnect with capped exponential backoff and full jitter (`min(30s, 1s * 2^attempts)`, jittered to `[delay/2, delay]`; `attempts` resets only on a confirmed `open`) so tabs don't hammer the server in lockstep. On `open`, re-send all active subscriptions. `getStatus()` / `onStatusChange(fn)` expose `'connecting' | 'open' | 'closed'` (see `lib/useWsStatus.ts`, `NavSidebar`). Handle the server's `resync` frame by refetching state (ADR 0023).
 
 ### Event Routing
 
 All events are delivered to every handler registered via `on()`; callers filter by `event.type` themselves (see `TaskDetailPage`, `BoardPage`, `useRunLogs`, etc. for examples).
 
-### Auth
+### Auth (ADR 0022)
 
-If a runtime token is present (`getApiToken()` from `authToken.ts`), `connect()` first `POST`s `/api/v1/ws-ticket` (with the token as a Bearer header) to mint a short-lived, single-use ticket, then opens the socket as `?ticket=<ticket>`. This keeps the long-lived token out of the WS URL — query strings leak into reverse-proxy/access logs and browser history. `connect()` is therefore `async`; callers that fire-and-forget it (e.g. `main.tsx`) are unaffected. If the ticket fetch fails, `connect()` falls through and opens the socket without a ticket — the server rejects with 401 and the existing reconnect loop retries. If the ticket fetch itself comes back 401 (wrong/expired token), `notifyUnauthorized()` is called immediately so `ApiTokenGate` prompts for a new token even on a WS-only page.
+With a runtime token, `connect()` first `POST`s `/api/v1/ws-ticket` (Bearer) to mint a short-lived single-use ticket and opens the socket as `?ticket=<ticket>`, keeping the long-lived token out of the URL. `connect()` is async; fire-and-forget callers are fine. If the mint fails it falls through and the server's 401 plus the reconnect loop handle it; if the mint itself returns 401, `notifyUnauthorized()` fires so `ApiTokenGate` prompts even on a WS-only page.

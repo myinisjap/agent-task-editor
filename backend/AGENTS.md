@@ -1,6 +1,6 @@
 # Backend
 
-Go 1.24 HTTP server. Module: `github.com/myinisjap/agent-task-editor/backend`.
+Go HTTP server (language floor in `go.mod`; CI and the Docker builder use a newer toolchain). Module: `github.com/myinisjap/agent-task-editor/backend`.
 
 ## Build & Run
 
@@ -26,15 +26,17 @@ go generate ./...              # regenerate sqlc code after SQL changes
 ```
 cmd/server/       Main binary — wires config, DB, engine, pool, dispatcher, router
 cmd/mcp-server/   Standalone MCP sidecar — stdio JSON-RPC 2.0
-internal/agent/   Provider interface, ClaudeRunner, AnthropicRunner, LLMRunner, Pool, Dispatcher
+internal/agent/   Provider interface, Pool, Dispatcher (concrete runners in `providers/`)
 internal/api/     Chi router, all HTTP handlers, middleware
 internal/backup/  Optional scheduler: periodic rotated local DB snapshots. Enabled via BACKUP_DIR (restart required); interval/keep are DB-backed (backup_settings table, seeded from BACKUP_INTERVAL/BACKUP_KEEP) and editable at runtime via PUT /api/v1/backup/settings, no restart needed
 internal/boardtools/ Board MCP tools as thin REST wrappers, shared by cmd/mcp-board (stdio) and internal/remotemcp
 internal/config/  Config struct; loaded from YAML file then env vars override
+internal/gitcmd/   The one place the server runs `git` (Output/Run/Combined/CombinedNoPrompt over agentuser.ServerCommandContext) plus the shared `IsValidRef` ref validator and `DirExists`; leaf (agentuser + stdlib only). New git calls go here, not raw agentuser/exec
 internal/ghclient/ Thin wrapper around the `gh` CLI (PR create/lookup, PR head/mergeability, issue listing, PR reviews/review comments/check runs, GitHub URL parsing)
 internal/ghsync/  Background PR-state poller — refreshes task git_state + pr_mergeable from GitHub, cleans up merged branches, ingests PR review/GHA/merge-conflict feedback into task_review_comments + run Feedback (optional auto-transition; see pr_review.go)
 internal/health/  Provider readiness checks (used by GET /health/providers)
 internal/remotemcp/ Remote MCP endpoint (POST /mcp) + Google-backed OAuth server; calls the router in-process via middleware.WithTrustedActor
+internal/prflow/  Push a task's branch and create/find its PR (forge resolution, PR body, SetTaskPR persist, issue write-back); shared by the HTTP CreatePR handler and the workflow OnCreatePR hook wired in cmd/server. Must not import api/handlers
 internal/storage/ SQLite DB, migrations, sqlc-generated queries, seed data
 internal/tasksource/ GitHub Issues importer — polls opted-in repos, creates tasks for new issues, updates tasks whose issue drifted, reconciles tasks whose issue closed/unlabeled, and (opt-in) ingests the issue comment thread
 internal/workflow/ State machine engine — validates/executes label transitions
@@ -51,16 +53,7 @@ sqlc generate   # or: go generate ./...
 
 Generated output goes to `internal/storage/gen/`. Do not hand-edit files in `gen/`.
 
-CI runs `sqlc generate` (pinned to the sqlc version that produced the committed
-`gen/` output) and fails the build if `git diff` finds any drift — always run
-`sqlc generate` and commit the result after editing queries or migrations.
-
-CI also runs `govulncheck ./...` against the backend module (blocking). The
-stdlib CVEs that previously kept it non-blocking were fixed in Go 1.25.8+, and
-the CI/Docker toolchain is now Go 1.26, so govulncheck analyzes against a
-patched stdlib — see the comment in `.github/workflows/ci.yml`. (The go.mod
-`go 1.24` directive stays as the language floor; the stdlib version govulncheck
-sees comes from the running toolchain, not that directive.)
+CI runs `sqlc generate` (pinned version) and fails on any `git diff` — always run it and commit the result after editing queries or migrations. CI also runs `govulncheck ./...` (blocking); it analyzes the stdlib of the running toolchain, not the `go.mod` directive (see `.github/workflows/ci.yml`). Query-writing constraints (ASCII only, positional params, new `tasks` columns) are in `internal/storage/AGENTS.md` (ADR 0020, 0035, 0037).
 
 ## Database Migrations
 
@@ -69,7 +62,11 @@ Files in `internal/storage/migrations/` follow the `NNN_name.up.sql` / `NNN_name
 1. Create `NNN_description.up.sql` and `NNN_description.down.sql`
 2. Update `internal/storage/queries/*.sql` if new columns/tables are involved
 3. Run `sqlc generate` to update `gen/`
-4. Update `gen/models.go` struct if adding columns (sqlc handles this, but verify)
+4. Update `gen/models.go` struct if adding columns (sqlc handles this, but verify). Task columns: see ADR 0037 (`tasks_full` view, `gen/tasks_compat.go`)
+
+## Timestamps
+
+All DATETIME/TIMESTAMP columns are UTC `YYYY-MM-DD HH:MM:SS`; `storage.Open` converts bound `time.Time` args via `storage.FormatTime`. Compare and `ORDER BY` as plain strings (no `datetime()` wrapping); build hand-made strings with `storage.FormatTime(t)`. ADR 0021.
 
 ## Testing
 
@@ -80,22 +77,7 @@ go test ./internal/workflow/...
 go test -v ./internal/api/handlers/...
 ```
 
-CI measures coverage with `go test -race -coverprofile=coverage.out -covermode=atomic ./...`
-and enforces a floor (see `.github/workflows/ci.yml`, "Enforce coverage
-floor"). The metric excludes two things that would distort it rather than
-reflect real test gaps, filtered out of the profile before computing the
-total:
-
-- `internal/storage/gen/` — sqlc-generated code (`// Code generated by sqlc.
-  DO NOT EDIT.`), exercised only indirectly through the packages that call it.
-- `cmd/server` — `main()`'s config/DB/HTTP wiring and graceful-shutdown glue,
-  same category as the other `cmd/*` entry points; it isn't meaningfully
-  unit-testable and shouldn't be hand-driven just to move the number.
-
-Because of this, the percentage `go test -coverprofile=coverage.out ./...`
-reports locally (which includes both of the above) will read a few points
-lower than the number CI reports and gates on. To reproduce CI's number
-locally:
+CI enforces a coverage floor (`.github/workflows/ci.yml`, "Enforce coverage floor") computed without `internal/storage/gen/` and `cmd/server` (ADR 0035), so local totals read a few points lower. Reproduce CI's number:
 
 ```bash
 go test -race -coverprofile=coverage.out -covermode=atomic ./...
@@ -105,11 +87,4 @@ go tool cover -func=coverage.filtered.out | tail -1
 
 ## Container Toolchain
 
-`Dockerfile`'s final stage (`FROM node:26-bookworm-slim`) is what executes agent `Bash`/`run_bash` commands against bind-mounted repos in production — not just this project's own build. It currently includes:
-
-- **Go 1.26**, copied from this same Dockerfile's `golang:1.26-bookworm` builder stage (`COPY --from=builder /usr/local/go /usr/local/go`) so the Go version agents see always matches what builds `bin/server`/`bin/mcp-server`. `GOPATH`/`GOCACHE`/`GOMODCACHE` point at writable dirs under `/home/node`.
-- **Node 26 / npm**, inherited from the base image — covers Vite/React/TS repos (`npm ci`, `npm run build`, `npm test`).
-- **`build-essential`** (gcc/g++/make/libc-dev) for cgo (this backend's `mattn/go-sqlite3` dependency) and native npm addon compilation.
-- **`mise` / `uv`**, pinned prebuilt binaries backing the per-repo runtime pin feature (`internal/agent/runtime/`) — see `../docs/runtime.md`.
-
-To add another language for *every* agent to use regardless of repo, edit the *final* stage of `Dockerfile` (not the builder stage — that only compiles this repo's own Go binaries) and rebuild with `docker compose build backend`. See `../docs/getting-started.md#supported-languages--extending-the-toolchain` for the full guide. For a single repo needing a specific version, prefer a runtime pin (`../docs/runtime.md`) over editing the image.
+`Dockerfile`'s **final** stage (not the builder) is what executes agent `Bash` commands against bind-mounted repos. It carries Go (copied from the builder stage for version parity), Node/npm, `build-essential`, and pinned `mise`/`uv` (per-repo runtime pins, `internal/agent/runtime/`). To add a language for every agent, edit the final stage and run `docker compose build backend` (`../docs/getting-started.md#supported-languages--extending-the-toolchain`); for one repo prefer a runtime pin (`../docs/runtime.md`). ADR 0006.

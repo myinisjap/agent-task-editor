@@ -35,8 +35,8 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **First-run onboarding checklist** — a dismissible setup checklist on the Board for unconfigured instances, sequencing add a repo → configure a provider → create an agent config → create your first task, checking each off live and surfacing failing readiness checks inline
 - **Configurable database cleanup** — automatic pruning of old agent logs (retention days + how often it runs) is DB-backed and editable at runtime from the Health page, no restart required — see [docs/backup.md#agent-log-retention](docs/backup.md#agent-log-retention)
-- **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; independently gated by optional `METRICS_TOKEN`
-- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), with `?token=` kept as a deprecated fallback
+- **Prometheus `/metrics` endpoint** — dispatcher/pool, run, cost/token, WebSocket, and GitHub-sync metrics, plus standard Go runtime metrics; gated by `METRICS_TOKEN`, or by the API tokens when API auth is on (`METRICS_PUBLIC=true` opts out)
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions record *who* approved them in the label history audit trail; WebSocket auth via short-lived, single-use tickets (`POST /ws-ticket`), (the old `?token=` query fallback was removed)
 - **Docker Compose deployment** — prebuilt multi-arch GHCR images; a single `./run.sh` to run everything
 - **Installable as a PWA** — add the board to your phone's home screen for quick access
 - **Browser notifications when a human is needed** — opt-in (off by default; enable from the sidebar); fires whenever an agent calls the `request_human` MCP tool, or a task lands on a label only a human can move it out of, driven by the existing WebSocket event stream, no extra backend or push infrastructure required
@@ -113,7 +113,7 @@ list — it doesn't print env vars, so here's what `run.sh` itself reads
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set `true` to disable SSL verification (git/npm/Node) behind a corporate TLS proxy |
 | `SSL_CA_CERT_PATH` | _(empty)_ | Path to a corporate CA `.pem` file to trust instead — safer alternative to `INSECURE_SKIP_SSL_VERIFY` |
 
-Backend app config (`API_TOKEN`, `LLM_API_KEY`, etc.) is a separate set — see
+Backend app config (`API_TOKEN`, etc.) is a separate set — see
 [Key Environment Variables](#key-environment-variables) below.
 
 > **Repo file ownership.** The backend container remaps its runtime user to your
@@ -177,13 +177,11 @@ See [docs/getting-started.md](docs/getting-started.md) for the full setup guide,
 
 ## Agent Provider Comparison
 
-Seven providers are available. Choose based on your auth setup, billing preference, and tool requirements.
+Four providers are available (`anthropic` and `llm` were removed in v0.17.0 — see [docs/providers/](docs/providers/)). Choose based on your auth setup, billing preference, and tool requirements.
 
 | Provider | Auth Required | CLI Dependency | Built-in Tools | Label Transitions | Notes |
 |---|---|---|---|---|---|
 | **`claude`** | Claude Max subscription (authenticated via `~/.claude`) | ✅ `claude` CLI must be installed & authenticated on the host/container | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Without MCP, runs always complete with no label transition. Dangerous env vars (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, etc.) are blocked for security. |
-| **`anthropic`** | Anthropic API key (`LLM_API_KEY`) | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Billed per-token — separate from a Claude Max subscription. No `Glob`/`Grep` tools. |
-| **`llm`** | API key (`LLM_API_KEY`) + `LLM_BASE_URL` | ❌ No CLI needed | `read_file`, `write_file`, `run_bash`, `signal_complete`, `request_human` | ✅ Built-in (no MCP needed) | Works with OpenAI, Azure OpenAI, Ollama, LM Studio, and any OpenAI-compatible endpoint. Same tool set as `anthropic`. Output quality varies by model/endpoint. |
 | **`opencode`** | Provider-specific (configured in `opencode` CLI) | ✅ `opencode` binary must be installed | Depends on opencode config | ❌ MCP tools not available | Label transitions require MCP, which opencode does not support. Runs complete without transitioning the task label. |
 | **`qwen_code`** | Qwen auth (configured in `qwen` CLI) | ✅ `qwen` binary must be installed (see `INSTALL_QWEN_CLI` build arg) | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Same MCP setup as the `claude` provider. |
 | **`codex_cli`** | ChatGPT account login (`codex login`) or `OPENAI_API_KEY` | ✅ `codex` CLI must be installed (see `INSTALL_CODEX_CLI` build arg) | Codex's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via a per-run isolated `CODEX_HOME`, not a CLI flag. Runs fully unsandboxed/unattended (`--dangerously-bypass-approvals-and-sandbox`); command allowlist/denylist not enforced — Codex's own sandbox/approval system is bypassed instead. No cost figure reported (token counts only). |
@@ -192,7 +190,6 @@ Seven providers are available. Choose based on your auth setup, billing preferen
 
 - **`claude` without MCP** — If `MCP_SERVER_PATH` is not set, the agent has no way to call `signal_complete` or `request_human`. Every run will finish with status `completed` but the task label will **not** change. Always build and configure the MCP sidecar when using the `claude` provider.
 - **`claude` env var restrictions** — The `env` field on a provider config cannot override system-critical variables (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, and others). Attempts are blocked and logged as warnings.
-- **`llm` model quality** — The `llm` provider sends the same tool definitions and prompts regardless of endpoint, but smaller or instruction-tuned models may not reliably follow tool-use conventions. Test your chosen model before relying on it for automated workflows.
 
 ---
 
@@ -204,7 +201,7 @@ Agent shell commands run inside the **backend** Docker container, against your b
 
 ## Security
 
-> **This tool executes arbitrary shell commands by design.** AI agents run `Bash` (claude provider) or `run_bash` (anthropic/llm providers) with full shell access as the server user. The security boundary is the container and the `REPO_BASE_DIR` mount — not the application itself.
+> **This tool executes arbitrary shell commands by design.** AI agents run `Bash` (claude provider, or the equivalent shell tool of the other providers) with full shell access as the server user. The security boundary is the container and the `REPO_BASE_DIR` mount — not the application itself.
 
 **Default settings are for localhost only.** Before exposing this to any non-localhost network:
 
@@ -218,6 +215,11 @@ Agent shell commands run inside the **backend** Docker container, against your b
 the box. Set `ATE_BIND_ADDR=0.0.0.0` in `.env` (or the environment) to publish on all
 interfaces — only do this alongside `API_TOKEN` and `CORS_ORIGINS` above.
 
+Even on localhost, a web page open in your browser can try to reach the API. Without a token the
+backend therefore rejects cross-origin state-changing requests (`Origin` must be in `CORS_ORIGINS`
+or same-origin), non-JSON request bodies, and unexpected `Host` headers (DNS rebinding). If you
+reach an unauthenticated instance by a custom hostname, add it to `ALLOWED_HOSTS`.
+
 ---
 
 ## Key Environment Variables
@@ -226,11 +228,10 @@ interfaces — only do this alongside `API_TOKEN` and `CORS_ORIGINS` above.
 |---|---|---|
 | `API_TOKEN` | _(empty)_ | Bearer token for API auth; empty = no auth required |
 | `API_TOKENS` | _(empty)_ | Named bearer tokens (`name1:token1,name2:token2`) — resolves to an actor name recorded in the label history audit trail; see [docs/getting-started.md](docs/getting-started.md#authentication) |
-| `METRICS_TOKEN` | _(empty)_ | Bearer token gating `GET /metrics` independently of `API_TOKEN`; empty = unauthenticated |
+| `METRICS_TOKEN` | _(empty)_ | Dedicated bearer token for `GET /metrics`; empty = API token(s) required when API auth is configured, else open |
+| `METRICS_PUBLIC` | `false` | `true` leaves `GET /metrics` unauthenticated even when API auth is configured |
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory |
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary; required for label transitions with the `claude` provider |
-| `LLM_API_KEY` | _(empty)_ | API key for the `anthropic` or `llm` provider |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL for the `llm` (OpenAI-compatible) provider |
 | `MAX_WORKERS` | `5` | Maximum number of concurrent agent runs |
 | `MAX_DAILY_COST_USD` | `0` (unlimited) | Global cap on total recorded spend per UTC calendar day, across every task/provider; once reached, the dispatcher stops starting new runs system-wide until the next UTC day — see [docs/agents.md#global-cost-ceiling](docs/agents.md#global-cost-ceiling) |
 | `MAX_MONTHLY_COST_USD` | `0` (unlimited) | Same as above, per UTC calendar month |
@@ -271,7 +272,7 @@ cd backend && go build -o mcp-server ./cmd/mcp-server
 | [docs/getting-started.md](docs/getting-started.md) | Installation, environment variables, local dev setup |
 | [docs/workflows.md](docs/workflows.md) | State machine format, labels, transitions, YAML import/export |
 | [docs/agents.md](docs/agents.md) | Providers, dispatcher, worker pool, run lifecycle, prompt construction |
-| [docs/providers/](docs/providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code`, plus the deprecated `anthropic`/`llm` |
+| [docs/providers/](docs/providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code` |
 | [docs/task-sources.md](docs/task-sources.md) | Importing GitHub Issues as tasks |
 | [docs/task-templates.md](docs/task-templates.md) | Task templates and recurring cron-scheduled task creation |
 | [docs/api.md](docs/api.md) | Full REST API endpoint reference |

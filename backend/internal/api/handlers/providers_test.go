@@ -74,7 +74,7 @@ func TestProviderConfigsCreate_RejectsDeprecatedProvider(t *testing.T) {
 			t.Fatalf("provider %q: expected 400, got %d: %s", p, w.Code, w.Body.String())
 		}
 		body := w.Body.String()
-		if !strings.Contains(body, "deprecated") || !strings.Contains(body, p) {
+		if !strings.Contains(body, "removed") || !strings.Contains(body, p) {
 			t.Errorf("provider %q: expected deprecation message mentioning provider, got %q", p, body)
 		}
 	}
@@ -479,7 +479,7 @@ func TestProviderConfigsUpdate_OmittedModelPreserved(t *testing.T) {
 }
 
 // TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider verifies a
-// config on a non-deprecated provider cannot be switched to anthropic/llm.
+// config on a non-removed provider cannot be switched to anthropic/llm.
 func TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider(t *testing.T) {
 	router, _ := setupProvidersRouter(t)
 
@@ -493,7 +493,7 @@ func TestProviderConfigsUpdate_RejectsChangingToDeprecatedProvider(t *testing.T)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 changing to deprecated provider, got %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "deprecated") {
+	if !strings.Contains(w.Body.String(), "removed") {
 		t.Errorf("expected deprecation message, got %q", w.Body.String())
 	}
 }

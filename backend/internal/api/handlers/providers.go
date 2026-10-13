@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -75,12 +76,12 @@ func (h *ProviderConfigsHandler) Create(w http.ResponseWriter, r *http.Request) 
 		Err(w, http.StatusBadRequest, "name and provider are required")
 		return
 	}
-	if !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, codex_cli", body.Provider))
+	if agent.IsRemovedProvider(body.Provider) {
+		Err(w, http.StatusBadRequest, agent.RemovedProviderMessage(body.Provider))
 		return
 	}
-	if deprecatedProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("provider %q is deprecated and disabled for new configs; existing configs continue to run", body.Provider))
+	if !knownProviders[body.Provider] {
+		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, codex_cli", body.Provider))
 		return
 	}
 	if body.Env == "" {
@@ -122,25 +123,24 @@ func (h *ProviderConfigsHandler) Update(w http.ResponseWriter, r *http.Request) 
 		Err(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.Provider != "" && !knownProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, codex_cli", body.Provider))
-		return
-	}
-
 	existing, err := h.q.GetProviderConfig(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		Err(w, http.StatusNotFound, "provider config not found")
 		return
 	}
 
-	// Only reject the deprecated provider when it's actually changing to (or
-	// being set to) a deprecated value. An existing deprecated config that
-	// PATCHes with its own provider unchanged (or omits provider entirely,
-	// meaning "unchanged") must keep working — that's the whole point of
-	// deprecating rather than removing these providers.
-	if body.Provider != "" && body.Provider != existing.Provider && deprecatedProviders[body.Provider] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("provider %q is deprecated and disabled for new configs; existing configs continue to run", body.Provider))
-		return
+	// A legacy config on a removed provider may still be edited (name, env,
+	// ...) with its provider omitted/unchanged so it can be cleaned up, but
+	// switching *to* a removed or unknown provider is rejected.
+	if body.Provider != "" && body.Provider != existing.Provider {
+		if agent.IsRemovedProvider(body.Provider) {
+			Err(w, http.StatusBadRequest, agent.RemovedProviderMessage(body.Provider))
+			return
+		}
+		if !knownProviders[body.Provider] {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("unknown provider %q; valid: claude, opencode, qwen_code, codex_cli", body.Provider))
+			return
+		}
 	}
 
 	if body.Name == "" {

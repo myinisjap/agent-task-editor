@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -14,14 +14,17 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
-	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
+	"github.com/myinisjap/agent-task-editor/backend/internal/health"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
+	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/remotemcp"
 	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -48,6 +51,10 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
 	cfgPath := os.Getenv("CONFIG_FILE")
+	// Decide whether agent subprocesses run as a separate unprivileged user
+	// (must precede anything that spawns an agent). Never fails startup.
+	agentuser.Init()
+
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		slog.Error("failed to load config", "err", err)
@@ -57,15 +64,33 @@ func main() {
 
 	startTime := time.Now()
 	slog.Info("agent-task-editor starting", "version", Version)
-	if cfg.APIToken != "" {
+	if cfg.APIToken == "" && len(cfg.APITokens) == 0 && !health.IsLoopbackListen(fmt.Sprintf(":%s", cfg.Port)) {
+		slog.Warn("SECURITY: no API_TOKEN/API_TOKENS configured and the server listens on all interfaces (:" + cfg.Port + "). Every host that can reach this port (other containers on shared Docker networks, LAN peers, local agent processes) can use the full API, including creating agent runs that execute shell commands. Set API_TOKEN, and keep the backend off shared networks; see docs/getting-started.md#set-an-api-token-in-production. This is also shown on the Health page (api_auth).")
+	}
+	if cfg.APIToken != "" || len(cfg.APITokens) > 0 {
 		slog.Info("bearer auth enabled")
 	} else if cfg.CORSOrigins == "*" {
 		slog.Warn("API is unauthenticated (API_TOKEN not set) and CORS_ORIGINS=* — any website open in your browser can call this API from localhost (drive-by CSRF-style request execution, no auth needed). Set API_TOKEN and a specific CORS_ORIGINS before exposing this beyond a trusted single-user machine; see README.md#security")
 	} else {
 		slog.Warn("API is unauthenticated (API_TOKEN not set); anyone who can reach this port can register repos, create agent configs, and trigger shell-executing agent runs. Set API_TOKEN before exposing this beyond a trusted single-user machine; see README.md#security")
 	}
-	if cfg.MetricsToken != "" {
-		slog.Info("metrics endpoint bearer auth enabled")
+	{
+		hp := middleware.NewHostPolicy(cfg.AllowedHosts, cfg.CORSOrigins, cfg.APIToken != "" || len(cfg.APITokens) > 0)
+		if hp.Enforced {
+			slog.Info("host header check enforced (DNS-rebinding protection)", "allowed_hosts", hp.Hosts, "note", "literal IP hosts always allowed; extend with ALLOWED_HOSTS, or '*' to disable")
+		} else {
+			slog.Info("host header check not enforced", "reason", hp.Reason)
+		}
+	}
+	switch {
+	case cfg.MetricsToken != "":
+		slog.Info("metrics endpoint auth: METRICS_TOKEN bearer token required")
+	case cfg.MetricsPublic:
+		slog.Warn("metrics endpoint auth: public (METRICS_PUBLIC=true); /metrics is unauthenticated")
+	case cfg.APIToken != "" || len(cfg.APITokens) > 0:
+		slog.Info("metrics endpoint auth: API token required (set METRICS_TOKEN for a dedicated scrape token, or METRICS_PUBLIC=true to leave it open)")
+	default:
+		slog.Info("metrics endpoint auth: open (no API auth configured)")
 	}
 	if cfg.RepoBaseDir == "" {
 		slog.Warn("REPO_BASE_DIR is not set; any host path can be registered as a repo")
@@ -108,26 +133,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Mark any runs left in 'running' or 'pending' from a previous crash as
-	// 'failed'. 'pending' runs are ones the dispatcher created but the pool never
-	// started (or the process died between creating the run and enqueuing it);
-	// without this sweep they'd linger forever. The following statement then
-	// clears every task's active_agent_run_id, so these tasks become dispatchable
-	// again on the next sweep.
-	if res, err := db.SQL().ExecContext(seedCtx,
-		`UPDATE agent_runs SET status='failed', completed_at=CURRENT_TIMESTAMP WHERE status IN ('running','pending')`); err != nil {
-		slog.Error("failed to sweep stuck runs", "err", err)
+	// Mark runs left 'running'/'pending' by a previous crash as 'interrupted'
+	// (not 'failed') and clear every task's dispatch lock so they re-dispatch;
+	// see storage.RecoverInterruptedRuns.
+	if n, err := storage.RecoverInterruptedRuns(seedCtx, db); err != nil {
+		slog.Error("failed to recover interrupted runs", "err", err)
 		os.Exit(1)
-	} else if n, _ := res.RowsAffected(); n > 0 {
-		slog.Warn("marked stuck runs as failed", "count", n)
-	}
-
-	// Clear active_agent_run_id for all tasks — the worker pool has restarted
-	// so nothing is genuinely active from the previous process.
-	if _, err := db.SQL().ExecContext(seedCtx,
-		`UPDATE tasks SET active_agent_run_id = NULL WHERE active_agent_run_id IS NOT NULL`); err != nil {
-		slog.Error("failed to clear active agent runs", "err", err)
-		os.Exit(1)
+	} else if n > 0 {
+		slog.Warn("marked stuck runs as interrupted", "count", n)
 	}
 
 	// WebSocket hub — satisfies workflow.Publisher and agent.Publisher
@@ -160,24 +173,29 @@ func main() {
 	// auto-advance (Mechanism 2). Git identity is filled in once resolved below.
 	subtaskCoord := agent.NewSubtaskCoordinator(termQ, engine, pub, "", "")
 
-	// On reaching a terminal label: for a subtask, merge its branch back into the
-	// parent's branch (see SubtaskCoordinator). For an ordinary task, push the
-	// branch (if the repo has a remote) and tear down its worktree to reclaim
-	// disk — the branch is kept for human review/PR. Best-effort.
-	engine.OnTerminal = func(ctx context.Context, task gen.Task) {
+	// The three hooks below are the bodies of the engine's durable side-effect
+	// outbox (see workflow.Engine.RunSideEffects): a transition only records
+	// that the work is owed, and a background worker runs it with a background
+	// context, retrying with backoff when it returns an error.
+	//
+	// OnTerminal, on reaching a terminal label: for a subtask, merge its branch
+	// back into the parent's branch (see SubtaskCoordinator). For an ordinary
+	// task, push the branch (if the repo has a remote) and tear down its
+	// worktree to reclaim disk — the branch is kept for human review/PR. The
+	// worktree is only removed once the push succeeded, so a retry can push again.
+	engine.OnTerminal = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			slog.Warn("onTerminal: get repo", "task_id", task.ID, "err", err)
-			return
+			return fmt.Errorf("get repo: %w", err)
 		}
 		if agent.IsSubtask(task) {
 			// Children merge back into the parent's branch instead of pushing to
 			// origin / keeping their branch.
 			subtaskCoord.OnChildTerminal(ctx, task, repo.Path)
-			return
+			return nil
 		}
 		if task.WorktreePath == "" {
-			return
+			return nil
 		}
 		// PushBranch and RemoveWorktree mutate the repo's shared ref store;
 		// serialize against sibling worktrees' concurrent git writes (safety-net
@@ -188,53 +206,59 @@ func main() {
 		// ordering. See worktree.go's repoGitLocks doc comment / issue #344.
 		lock := agent.RepoGitLock(repo.Path)
 		lock.Lock()
+		defer lock.Unlock()
 		if repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
 			if err := agent.PushBranch(ctx, task.WorktreePath, task.Branch); err != nil {
-				slog.Warn("onTerminal: push branch", "task_id", task.ID, "branch", task.Branch, "err", err)
+				return fmt.Errorf("push branch %s: %w", task.Branch, err)
 			}
 		}
 		if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
-			slog.Warn("onTerminal: remove worktree", "task_id", task.ID, "err", err)
+			return fmt.Errorf("remove worktree: %w", err)
 		}
-		lock.Unlock()
+		return nil
 	}
 
 	// Status write-back to the source GitHub issue for imported tasks (opt-in
-	// per repo via issue_writeback_enabled). This instance backs the workflow
-	// engine's OnLeaveNotReady hook below; ghsync and the tasks handler
-	// construct their own writeback.Writeback internally (see ghsync.New and
+	// per repo via issue_writeback_enabled). This instance backs the
+	// OnLeaveNotReady hook below; ghsync and the tasks handler construct their
+	// own writeback.Writeback internally (see ghsync.New and
 	// handlers.NewTasksHandler) since they own their own *gen.Queries.
 	// See docs/task-sources.md.
 	issueWriteback := writeback.New(termQ)
-	engine.OnLeaveNotReady = func(ctx context.Context, task gen.Task) {
+	engine.OnLeaveNotReady = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			slog.Warn("onLeaveNotReady: get repo", "task_id", task.ID, "err", err)
-			return
+			return fmt.Errorf("get repo: %w", err)
 		}
 		issueWriteback.OnLeaveNotReady(ctx, task, repo)
+		return nil
 	}
 
 	// On reaching a label marked create_pr: push the branch and open (or reuse) a
-	// GitHub PR, reusing the same path as the manual "Create PR" endpoint so both
-	// produce an identical PR and issue write-back. Best-effort — a failure here
-	// (no remote, gh unauthenticated, push rejected) is logged, not fatal; the
-	// transition has already committed and a human can still open the PR manually.
-	engine.OnCreatePR = func(ctx context.Context, task gen.Task) {
+	// PR, reusing the same path as the manual "Create PR" endpoint so both
+	// produce an identical PR and issue write-back. A failure (gh
+	// unauthenticated, push rejected, forge down) is retried with backoff and
+	// surfaced on the task; a missing remote or branch is a precondition, not a
+	// failure, and is skipped as before.
+	engine.OnCreatePR = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
-			slog.Warn("onCreatePR: get repo", "task_id", task.ID, "err", err)
-			return
+			return fmt.Errorf("get repo: %w", err)
 		}
-		if _, _, err := handlers.CreatePRForTask(ctx, termQ, issueWriteback, task, repo); err != nil {
-			slog.Warn("onCreatePR: create pr", "task_id", task.ID, "err", err)
+		if _, _, err := prflow.New(termQ, issueWriteback).CreateForTask(ctx, task, repo); err != nil {
+			if prflow.IsPrecondition(err) {
+				slog.Warn("onCreatePR: skipped", "task_id", task.ID, "err", err)
+				return nil
+			}
+			return err
 		}
+		return nil
 	}
 
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
 	backendURL := "http://localhost:" + cfg.Port
 
-	// priceResolver resolves anthropic/llm model pricing from the
+	// priceResolver resolves model pricing from the
 	// user-editable model_pricing table (GET/PUT /api/v1/settings/pricing),
 	// falling back to the hardcoded map in providers/pricing.go for any
 	// model not present in the DB. It reads the DB fresh on every run
@@ -249,14 +273,7 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
-		case "anthropic":
-			// Deprecated: disabled for new/updated provider configs (see
-			// deprecatedProviders in handlers/providers.go), retained here so
-			// existing configs keep dispatching. Calls the Anthropic Messages
-			// API directly — no CLI binary needed. Requires LLM_API_KEY to be
-			// set. Billed per-token (not Claude Max).
-			return &providers.AnthropicRunner{APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
+			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		case "opencode":
 			return &providers.OpencodeRunner{}
 		case "qwen_code":
@@ -264,22 +281,17 @@ func main() {
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
+			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		case "codex_cli":
 			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
-			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, APIToken: cfg.APIToken, PriceResolver: priceResolver}
-		case "llm", "openai":
-			// Deprecated: disabled for new/updated provider configs (see
-			// deprecatedProviders in handlers/providers.go), retained here so
-			// existing configs keep dispatching. "openai" is the historical
-			// dead dropdown alias for this same OpenAI-compatible path.
-			return &providers.LLMRunner{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, PriceResolver: priceResolver}
+			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		default:
-			// Unrecognized provider string: fail explicitly instead of
-			// silently falling back to an OpenAI-compatible call.
+			// Unrecognized or removed provider string (incl. the removed
+			// anthropic/llm/openai providers): the dispatcher fails the run
+			// with agent.ProviderUnavailableMessage instead of crashing.
 			return nil
 		}
 	}
@@ -288,21 +300,28 @@ func main() {
 	if maxWorkers <= 0 {
 		maxWorkers = 5
 	}
-	rateLimits := agent.NewRateLimitRegistry()
+	// Blocks are persisted so a restart does not forget a provider 429.
+	rateLimits := agent.NewRateLimitRegistryWithStore(agent.NewSQLRateLimitStore(gen.New(db.SQL())))
 	pool := agent.NewPool(maxWorkers, db.SQL(), engine, pub)
 	pool.RateLimits = rateLimits
+	// Provider circuit breaker: a run classified auth pauses dispatch for its
+	// provider kind; in-memory (resets safely on restart), re-checked below.
+	providerPauses := agent.NewProviderPauseRegistry(pub)
+	pool.ProviderPauses = providerPauses
 	// Register gh as git's credential helper for github.com so push/fetch over
 	// HTTPS authenticate with GITHUB_TOKEN/gh auth instead of failing with
 	// "could not read Username". Best-effort — no-op if gh isn't authenticated.
-	if out, err := exec.Command("gh", "auth", "setup-git").CombinedOutput(); err != nil {
+	if out, err := agentuser.ServerCommand("gh", "auth", "setup-git").CombinedOutput(); err != nil {
 		slog.Warn("gh auth setup-git failed; git push to github.com will not be authenticated", "err", err, "out", strings.TrimSpace(string(out)))
 	}
 
 	pool.GitName, pool.GitEmail = resolveGitIdentity()
 	subtaskCoord.GitName, subtaskCoord.GitEmail = pool.GitName, pool.GitEmail
 	pool.Subtasks = subtaskCoord
+	pool.Verifier = providers.CommandVerifier{}
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 	dispatcher.RateLimits = rateLimits
+	dispatcher.ProviderPauses = providerPauses
 	dispatcher.SetUploadDir(uploadDir)
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = pub
@@ -324,15 +343,15 @@ func main() {
 	// allowlist instead of the backend's full environment — the interactive
 	// terminal launches the same claude/codex/qwen/opencode binaries (with
 	// the same Bash access) as the headless runners, so it needs the same
-	// #321 protection against leaking backend-only secrets (LLM_API_KEY,
-	// API_TOKEN, DB creds, etc.) to the CLI's shell.
+	// #321 protection against leaking backend-only secrets (API_TOKEN,
+	// DB creds, etc.) to the CLI's shell.
 	terminal.EnvAllowlist = providers.EnvAllowlistFor
 	// Expose the board MCP tools (list_repos/list_workflows/create_task) to chat
 	// sessions when MCP_BOARD_PATH points at the mcp-board binary. This is a
 	// human-driven surface (the chat tab), deliberately separate from the in-flow
 	// kanban agents, which never get task-creation tools. Nil when unset.
 	if cfg.MCPBoardBinary != "" {
-		terminal.ChatMCP = providers.NewChatMCPProvisioner(cfg.MCPBoardBinary, backendURL, cfg.APIToken)
+		terminal.ChatMCP = providers.NewChatMCPProvisioner(cfg.MCPBoardBinary, backendURL)
 		slog.Info("board MCP enabled for chat sessions", "binary", cfg.MCPBoardBinary)
 	}
 	// CHAT_MAX_SESSIONS/CHAT_IDLE_TIMEOUT bound the otherwise-unbounded growth
@@ -348,12 +367,58 @@ func main() {
 		slog.Info("chat terminal idle reaper enabled", "idle_timeout", cfg.ChatIdleTimeout)
 	}
 
-	router := api.NewRouter(db, engine, hub, cfg.CORSOrigins, cfg.APIToken, cfg.APITokens, cfg.RepoBaseDir, uploadDir, cfg.MCPBinary, cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.BackupDir, cfg.BackupInterval, cfg.BackupKeep, pool, dispatcher, cfg.MetricsToken, Version, cfg.UpdateCheckEnabled, terminal, maxWorkers, dispatcher, blockReasons)
+	// GitHub PR status auto-sync: polls all eligible tasks on a configurable
+	// interval and pushes "task.git_state_changed" WebSocket events so the
+	// board refreshes automatically without a page reload. Also ingests PR
+	// review feedback / failed GHA checks (see internal/ghsync/pr_review.go);
+	// engine is passed through so a repo can opt into auto-transitioning a
+	// task back to its failure-path label when new feedback arrives.
+	ghSyncer := ghsync.New(db.SQL(), pub, cfg.GitHubSyncInterval, engine)
+	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
+	if cfg.GitHubWebhookSecret != "" {
+		slog.Info("github webhook receiver enabled", "path", "/api/v1/github/webhook")
+	}
+
+	listenAddr := fmt.Sprintf(":%s", cfg.Port)
+	router := api.NewRouter(api.RouterDeps{
+		DB:                  db,
+		Engine:              engine,
+		Hub:                 hub,
+		CORSOrigins:         cfg.CORSOrigins,
+		AllowedHosts:        cfg.AllowedHosts,
+		BearerToken:         cfg.APIToken,
+		NamedTokens:         cfg.APITokens,
+		MetricsToken:        cfg.MetricsToken,
+		MetricsPublic:       cfg.MetricsPublic,
+		GitHubWebhookSecret: cfg.GitHubWebhookSecret,
+		PRRefresher:         ghSyncer,
+		RepoBaseDir:         cfg.RepoBaseDir,
+		ListenAddr:          listenAddr,
+		UploadDir:           uploadDir,
+		MCPBinary:           cfg.MCPBinary,
+		BackupDir:           cfg.BackupDir,
+		BackupInterval:      cfg.BackupInterval,
+		BackupKeep:          cfg.BackupKeep,
+		Version:             Version,
+		CheckForUpdates:     cfg.UpdateCheckEnabled,
+		MaxWorkers:          maxWorkers,
+		Canceller:           pool,
+		ReplyDispatcher:     dispatcher,
+		DispatcherLiveness:  dispatcher,
+		BlockReasons:        blockReasons,
+		Terminal:            terminal,
+	})
 
 	// Remote MCP endpoint (claude.ai custom connectors etc.): board tools over
 	// streamable HTTP behind a Google-backed OAuth server. Off unless
-	// MCP_PUBLIC_URL is set; see docs/board-mcp.md.
-	if cfg.MCPPublicURL != "" {
+	// MCP_REMOTE_ENABLED=true (never implied by MCP_PUBLIC_URL); see docs/board-mcp.md.
+	if !cfg.MCPRemoteEnabled {
+		if cfg.MCPPublicURL != "" {
+			slog.Warn("remote MCP is OFF: MCP_PUBLIC_URL is set but MCP_REMOTE_ENABLED is not true")
+		} else {
+			slog.Info("remote MCP is off (MCP_REMOTE_ENABLED not set)")
+		}
+	} else {
 		remote, err := remotemcp.New(remotemcp.Config{
 			PublicURL:          cfg.MCPPublicURL,
 			GoogleClientID:     cfg.MCPGoogleClientID,
@@ -374,7 +439,7 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%s", cfg.Port),
+		Addr:         listenAddr,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 60 * time.Second,
@@ -384,15 +449,6 @@ func main() {
 	// Root context cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	// GitHub PR status auto-sync: polls all eligible tasks on a configurable
-	// interval and pushes "task.git_state_changed" WebSocket events so the
-	// board refreshes automatically without a page reload. Also ingests PR
-	// review feedback / failed GHA checks (see internal/ghsync/pr_review.go);
-	// engine is passed through so a repo can opt into auto-transitioning a
-	// task back to its failure-path label when new feedback arrives.
-	ghSyncer := ghsync.New(db.SQL(), pub, cfg.GitHubSyncInterval, engine)
-	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 
 	// Issue import: polls repos with issue sync enabled, creates tasks from
 	// matching open issues (deduped by tasks.source/source_ref), keeps
@@ -477,9 +533,31 @@ func main() {
 	worktreeSweeper := worktreesweep.New(termQ, cfg.WorktreeSweepInterval)
 	slog.Info("worktree sweeper starting", "interval", cfg.WorktreeSweepInterval)
 
-	go pool.Start(ctx)
+	poolDone := make(chan struct{})
+	go func() {
+		defer close(poolDone)
+		pool.Start(ctx)
+	}()
+	// Durable side-effect outbox worker (push, PR creation, write-back); it
+	// stops when ctx is cancelled on shutdown.
+	sideEffectsDone := make(chan struct{})
+	go func() {
+		defer close(sideEffectsDone)
+		engine.RunSideEffects(ctx)
+	}()
 	go memguard.New(pool).Run(ctx)
-	go dispatcher.Run(ctx)
+	// The dispatcher has its own context so shutdown can stop it starting new
+	// runs while in-flight ones drain (the root ctx stays live until then).
+	dispatchCtx, stopDispatch := context.WithCancel(ctx)
+	dispatchDone := make(chan struct{})
+	go func() {
+		defer close(dispatchDone)
+		dispatcher.Run(dispatchCtx)
+	}()
+	// Auto-resume paused providers once their existing health check passes.
+	go providerPauses.RunRecheck(ctx, 30*time.Second, func(provider string) bool {
+		return health.ProviderReady(provider, health.Input{}, nil)
+	})
 	go ghSyncer.Run(ctx)
 	go issueImporter.Run(ctx)
 	go taskScheduler.Run(ctx)
@@ -511,6 +589,20 @@ func main() {
 	// restart loop can be traced to its source (docker stop, OOM, an external
 	// kill) instead of just showing a bare "shutting down".
 	slog.Info("shutting down...", "signal", sig.String(), "uptime", time.Since(startTime).Round(time.Second).String())
+
+	// Shutdown order:
+	//  1. stop the dispatcher (no new runs) and wait for its sweep to finish;
+	//  2. drain the pool: in-flight runs keep going for SHUTDOWN_DRAIN_TIMEOUT
+	//     with HTTP (agent MCP sidecars post to it) and the side-effect worker
+	//     still up, then the rest are cancelled and recorded as interrupted;
+	//  3. cancel the root context, stopping every other background loop;
+	//  4. shut down HTTP, wait for the side-effect worker to record its state;
+	//  5. wait for the pool's workers, so nothing touches the DB after the
+	//     deferred db.Close().
+	stopDispatch()
+	<-dispatchDone
+	slog.Info("draining in-flight agent runs", "timeout", cfg.ShutdownDrainTimeout.String())
+	pool.Shutdown(cfg.ShutdownDrainTimeout)
 	cancel()
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -518,14 +610,25 @@ func main() {
 	if err := srv.Shutdown(shutCtx); err != nil {
 		slog.Error("shutdown error", "err", err)
 	}
+	// An interrupted side effect is left pending in the outbox and resumes on
+	// the next start; give the worker a moment to record that.
+	select {
+	case <-sideEffectsDone:
+	case <-shutCtx.Done():
+	}
+	select {
+	case <-poolDone:
+	case <-shutCtx.Done():
+		slog.Warn("agent pool workers did not exit before the shutdown deadline")
+	}
 }
 
 // resolveGitIdentity returns (name, email) for safety-net commits.
 // Tries `git config` first (covers local dev), then `gh api user` (covers containers with gh auth).
 // Falls back to ("ate", "ate") if neither works.
 func resolveGitIdentity() (string, string) {
-	name := strings.TrimSpace(runOutput("git", "config", "user.name"))
-	email := strings.TrimSpace(runOutput("git", "config", "user.email"))
+	name := strings.TrimSpace(gitConfig("user.name"))
+	email := strings.TrimSpace(gitConfig("user.email"))
 	if name != "" && email != "" {
 		slog.Info("git identity resolved from git config", "name", name, "email", email)
 		return name, email
@@ -558,8 +661,16 @@ func resolveGitIdentity() (string, string) {
 	return name, email
 }
 
+func gitConfig(key string) string {
+	out, err := gitcmd.Output(context.Background(), "", "config", key)
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
 func runOutput(name string, args ...string) string {
-	out, err := exec.Command(name, args...).Output()
+	out, err := agentuser.ServerCommand(name, args...).Output()
 	if err != nil {
 		return ""
 	}

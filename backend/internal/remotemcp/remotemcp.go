@@ -1,7 +1,7 @@
 // Package remotemcp serves the board MCP tools (internal/boardtools) over the
 // MCP streamable-HTTP transport, so a remote client such as a claude.ai
-// custom connector can manage the board. It is disabled unless MCP_PUBLIC_URL
-// is set.
+// custom connector can manage the board. It is disabled unless MCP_REMOTE_ENABLED=true
+// (see internal/config; main only constructs it then).
 //
 // Remote clients can't send the backend's static API_TOKEN, so the endpoint is
 // guarded by its own small OAuth 2.1 authorization server (oauth.go) that signs
@@ -142,7 +142,7 @@ func New(cfg Config, api http.Handler) (*Server, error) {
 		}
 	}
 	if len(allowed) == 0 {
-		return nil, errors.New("MCP_ALLOWED_EMAILS is required when MCP_PUBLIC_URL is set")
+		return nil, errors.New("MCP_ALLOWED_EMAILS is required when MCP_REMOTE_ENABLED=true")
 	}
 	if len(cfg.SigningKey) < MinSigningKeyLen {
 		return nil, fmt.Errorf("MCP_SIGNING_KEY is required when MCP_PUBLIC_URL is set and must be at least %d characters (generate one with: openssl rand -base64 48)", MinSigningKeyLen)

@@ -6,12 +6,20 @@ import (
 	"sync"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 )
 
-// Event is the JSON envelope sent to every WebSocket client.
+// resyncFrame is the pre-marshalled "resync" frame sent to a client that missed
+// one or more events because its send buffer was full; it tells the client to
+// refetch its state over REST. See Client.markLagged.
+var resyncFrame = []byte(`{"type":"` + wsevent.TypeResync + `","payload":{}}`)
+
+// Event is the JSON envelope sent to every WebSocket client. Payload is one of
+// the typed structs in package wsevent; the wire contract is the WsEvent schema
+// in openapi.yaml.
 type Event struct {
-	Type    string         `json:"type"`
-	Payload map[string]any `json:"payload"`
+	Type    string `json:"type"`
+	Payload any    `json:"payload"`
 }
 
 // Hub fan-outs events to all connected clients.
@@ -43,20 +51,37 @@ func (h *Hub) unregister(c *Client) {
 	metrics.WSConnectedClients.Dec()
 }
 
+// logTaskID extracts the task_id of an agent.log payload so the hub can route
+// it to subscribed clients only. Typed payloads take the fast path; anything
+// else is inspected through its JSON form.
+func logTaskID(payload any) string {
+	switch p := payload.(type) {
+	case wsevent.AgentLog:
+		return p.TaskID
+	case *wsevent.AgentLog:
+		return p.TaskID
+	}
+	id, _ := wsevent.ToMap(payload)["task_id"].(string)
+	return id
+}
+
 // Publish sends an event to connected clients.
 //
 // Events that carry a "task_id" in the payload AND have type "agent.log" are
 // delivered only to clients subscribed to that task; all other events are
 // broadcast to every client.
-func (h *Hub) Publish(eventType string, payload map[string]any) {
+func (h *Hub) Publish(eventType string, payload any) {
 	msg, err := json.Marshal(Event{Type: eventType, Payload: payload})
 	if err != nil {
 		slog.Error("ws marshal event", "err", err)
 		return
 	}
 
-	taskID, _ := payload["task_id"].(string)
-	perTask := eventType == "agent.log" && taskID != ""
+	var taskID string
+	if eventType == wsevent.TypeAgentLog {
+		taskID = logTaskID(payload)
+	}
+	perTask := taskID != ""
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -75,6 +100,9 @@ func (h *Hub) Publish(eventType string, payload map[string]any) {
 		default:
 			metrics.WSBroadcastDroppedTotal.Inc()
 			slog.Warn("ws client send buffer full, dropping event", "type", eventType)
+			// The client has missed an event and cannot tell. Flag it so the
+			// write pump sends a "resync" frame once the buffer drains.
+			c.markLagged()
 		}
 	}
 }

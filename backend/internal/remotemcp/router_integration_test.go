@@ -34,7 +34,12 @@ func TestToolsAgainstRealRouter(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub := ws.NewHub()
-	router := api.NewRouter(db, workflow.New(db.SQL(), hub), hub, "*", "static-api-token", nil, "", t.TempDir(), "", "", "", "", 24*time.Hour, 7, nil, nil, "", "dev", false, nil, 5, nil, nil)
+	router := api.NewRouter(api.RouterDeps{
+		DB: db, Engine: workflow.New(db.SQL(), hub), Hub: hub,
+		CORSOrigins: "*", BearerToken: "static-api-token",
+		UploadDir: t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
+		Version: "dev", MaxWorkers: 5,
+	})
 
 	email := allowedEmail
 	g := fakeGoogle(t, &email)

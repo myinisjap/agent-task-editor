@@ -31,8 +31,8 @@ type transientErr interface {
 }
 
 // ErrMaxTurns marks a run as having exhausted its configured turn budget
-// (AgentConfig.MaxTurns) without finishing. Providers that enforce the cap in
-// a Go-side loop (anthropic, llm) return this instead of a bare error so
+// (AgentConfig.MaxTurns) without finishing. Providers that enforce the cap
+// themselves (claude, qwen_code) return this instead of a bare error so
 // pool.handleProviderError can detect it via errors.As and escalate to
 // waiting_human — re-dispatching would hand the next run a fresh turn budget,
 // silently voiding the cap.

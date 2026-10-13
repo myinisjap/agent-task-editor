@@ -5,7 +5,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -232,76 +231,5 @@ func TestDBPriceResolver_NilQueriesFallsBackToMap(t *testing.T) {
 	}
 	if inPer1M != 2.5 || outPer1M != 10 {
 		t.Errorf("expected hardcoded map pricing, got in=%v out=%v", inPer1M, outPer1M)
-	}
-}
-
-// TestRunAccumulators_Attach_KnownModel verifies attach computes cost and
-// leaves CostUnknown false when the model is known.
-func TestRunAccumulators_Attach_KnownModel(t *testing.T) {
-	acc := runAccumulators{model: "gpt-4o"}
-	acc.addUsage(1_000_000, 1_000_000)
-
-	var res agent.Result
-	acc.attach(context.Background(), &res)
-
-	want := 2.5 + 10.0
-	if res.CostUSD != want {
-		t.Errorf("want cost %v, got %v", want, res.CostUSD)
-	}
-	if res.CostUnknown {
-		t.Error("expected CostUnknown=false for a known model")
-	}
-}
-
-// TestRunAccumulators_Attach_UnknownModelWithTokens verifies attach flags
-// CostUnknown when tokens were consumed but the model has no price entry,
-// rather than silently reporting cost 0 indistinguishable from a free run.
-func TestRunAccumulators_Attach_UnknownModelWithTokens(t *testing.T) {
-	acc := runAccumulators{model: "some-totally-unknown-model"}
-	acc.addUsage(1000, 1000)
-
-	var res agent.Result
-	acc.attach(context.Background(), &res)
-
-	if res.CostUSD != 0 {
-		t.Errorf("want cost 0 for unknown model, got %v", res.CostUSD)
-	}
-	if !res.CostUnknown {
-		t.Error("expected CostUnknown=true when tokens were consumed but pricing is unknown")
-	}
-}
-
-// TestRunAccumulators_Attach_UnknownModelNoTokens verifies a run that
-// consumed no tokens at all is never flagged CostUnknown even for an
-// unpriced model — there is nothing to have gotten a real estimate for.
-func TestRunAccumulators_Attach_UnknownModelNoTokens(t *testing.T) {
-	acc := runAccumulators{model: "some-totally-unknown-model"}
-
-	var res agent.Result
-	acc.attach(context.Background(), &res)
-
-	if res.CostUnknown {
-		t.Error("expected CostUnknown=false when no tokens were consumed")
-	}
-}
-
-// TestRunAccumulators_Attach_UsesPriceResolver verifies attach uses the
-// accumulator's priceResolver (not just the hardcoded map) when set.
-func TestRunAccumulators_Attach_UsesPriceResolver(t *testing.T) {
-	acc := runAccumulators{
-		model:         "anything",
-		priceResolver: fakePriceResolver{inPer1M: 4, outPer1M: 8, known: true},
-	}
-	acc.addUsage(1_000_000, 1_000_000)
-
-	var res agent.Result
-	acc.attach(context.Background(), &res)
-
-	want := 4.0 + 8.0
-	if res.CostUSD != want {
-		t.Errorf("want cost %v, got %v", want, res.CostUSD)
-	}
-	if res.CostUnknown {
-		t.Error("expected CostUnknown=false when the resolver reports known=true")
 	}
 }

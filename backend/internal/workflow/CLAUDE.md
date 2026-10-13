@@ -1,1 +1,1 @@
-@backend/internal/workflow/AGENTS.md
+@AGENTS.md

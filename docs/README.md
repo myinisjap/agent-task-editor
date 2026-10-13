@@ -10,7 +10,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [getting-started.md](getting-started.md) | Installation, environment variables, and first steps |
 | [workflows.md](workflows.md) | Workflow state machine: labels, transitions, approve/reject |
 | [agents.md](agents.md) | Agent configs, providers, dispatcher, worker pool, prompt construction |
-| [providers/](providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code`, plus the deprecated `anthropic`/`llm` (credentials, MCP support, limitations) |
+| [providers/](providers/) | Per-provider deep-dives — `claude`, `codex_cli`, `opencode`, `qwen_code`, (credentials, MCP support, limitations) |
 | [mcp-tools.md](mcp-tools.md) | MCP sidecar tool reference (for `claude`, `qwen_code`, and `codex_cli` providers) |
 | [runtime.md](runtime.md) | Per-repo agent toolchains via `mise`/`uv` — language version pins, detection, fail-closed behavior |
 | [board-mcp.md](board-mcp.md) | Board MCP tools: in-app chat, a local chat client (e.g. Claude Desktop), or a claude.ai remote connector |
@@ -19,6 +19,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [api.md](api.md) | REST API reference |
 | [websocket.md](websocket.md) | WebSocket protocol and event types |
 | [backup.md](backup.md) | Backup, restore, and continuous replication |
+| [adr/](adr/README.md) | Architecture Decision Records: why the runtime, storage and API work the way they do |
 | [screenshots.md](screenshots.md) | Runbook for regenerating the README/docs screenshots and hero GIF |
 
 ## Quick Start

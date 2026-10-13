@@ -1,15 +1,15 @@
 -- name: ListTasks :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id FROM tasks ORDER BY created_at DESC;
+SELECT * FROM tasks_full ORDER BY created_at DESC;
 
 -- name: CountAllTasksByLabel :many
--- Per-label counts of non-archived tasks across all workflows, for the
--- dashboard's label_counts map. Scans only (label, archived) instead of
--- pulling every column (including the full description text) of every task
--- row via ListTasks.
-SELECT label, COUNT(*) AS count
+-- Per-(workflow, label) counts of non-archived tasks, for the dashboard's
+-- label_counts and workflow_label_counts maps. Scans only (workflow_id,
+-- label, archived) instead of pulling every column (including the full
+-- description text) of every task row via ListTasks.
+SELECT workflow_id, label, COUNT(*) AS count
 FROM tasks
 WHERE archived = 0
-GROUP BY label;
+GROUP BY workflow_id, label;
 
 -- name: ListTaskTitlesByIDs :many
 -- Titles for a specific set of task ids, e.g. resolving the top-N-by-cost
@@ -21,7 +21,7 @@ SELECT id, title FROM tasks WHERE id IN (sqlc.slice('task_ids'));
 -- "no filter" for that dimension. @archived is tri-state: '' hides archived
 -- tasks (the default board view), 'only' returns just archived tasks, and
 -- 'all' returns everything.
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id FROM tasks
+SELECT * FROM tasks_full
 WHERE (@query = '' OR title LIKE '%' || @query || '%' OR description LIKE '%' || @query || '%')
   AND (@label = '' OR label = @label)
   AND (@repo_id = '' OR repo_id = @repo_id)
@@ -42,7 +42,7 @@ ORDER BY created_at DESC;
 --   git_state, git_state, archived, archived, archived,
 --   after, after (cursor: created_at then id of the last row), limit.
 -- Ordering is (created_at, id) descending so the cursor is a stable total order.
-SELECT t.* FROM tasks t
+SELECT t.* FROM tasks_full t
 WHERE (?1 = '' OR t.title LIKE '%' || ?1 || '%' OR t.description LIKE '%' || ?1 || '%')
   AND (?2 = '' OR t.label = ?2)
   AND (?3 = '' OR t.repo_id = ?3)
@@ -62,21 +62,19 @@ ORDER BY t.created_at DESC, t.id DESC
 LIMIT ?8;
 
 -- name: GetTask :one
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id FROM tasks WHERE id = ?;
+SELECT * FROM tasks_full WHERE id = ?;
 
--- name: CreateTask :one
+-- name: createTask :exec
 INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id, attachments, priority)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
--- name: CreateSourcedTask :one
+-- name: createSourcedTask :exec
 -- priority and max_cost_usd default to the normal/unset zero values when a
 -- caller has no intake rule to apply (0 is PriorityNormal, 0 is no budget
 -- cap); matched_rule_id is NULL unless an intake rule matched this item,
 -- see internal/intake.
 INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id, attachments, source, source_ref, priority, max_cost_usd, matched_rule_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: CountTasksBySource :one
 SELECT COUNT(*) FROM tasks WHERE source = ? AND source_ref = ?;
@@ -85,15 +83,15 @@ SELECT COUNT(*) FROM tasks WHERE source = ? AND source_ref = ?;
 -- The fetching counterpart to CountTasksBySource: looks up the task already
 -- imported for a given external item, so the importer can diff it against a
 -- freshly fetched Source.Fetch item instead of only detecting duplicates.
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id FROM tasks WHERE source = ? AND source_ref = ?;
+SELECT * FROM tasks_full WHERE source = ? AND source_ref = ?;
 
 -- name: ListTasksBySourceRepo :many
 -- Every imported task for a given source + repo, including archived ones (an
 -- archived task whose issue reopens should be un-flagged) -- the reconciliation
 -- pass's candidate set for "did this task's item disappear from the fetch".
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id FROM tasks WHERE source = ? AND repo_id = ? AND source_ref != '';
+SELECT * FROM tasks_full WHERE source = ? AND repo_id = ? AND source_ref != '';
 
--- name: UpdateTask :one
+-- name: updateTask :exec
 -- cost_warned is unconditionally reset to 0 here: any edit through this path
 -- (including a raised max_cost_usd) should let the one-shot pre-dispatch
 -- cost-warning fire again if spend later approaches the (possibly new)
@@ -101,8 +99,7 @@ SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_
 -- against a since-changed budget.
 UPDATE tasks
 SET title = ?, description = ?, type = ?, repo_id = ?, max_cost_usd = ?, priority = ?, cost_warned = 0, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
 -- name: SetTaskCostWarned :exec
 -- One-shot guard for the dispatcher's pre-dispatch cost-warning (see
@@ -111,26 +108,43 @@ RETURNING id, title, description, type, label, repo_id, workflow_id, current_age
 -- "generation" (reset by UpdateTask above whenever max_cost_usd changes).
 UPDATE tasks SET cost_warned = 1 WHERE id = ?;
 
--- name: UpdateTaskFromSource :one
+-- name: updateTaskFromSource :exec
 -- Applies upstream title/description/type drift detected by the issue-sync
 -- importer. Deliberately narrow: never touches label, archived, or any
 -- writeback_* flag, so reconciliation can never move a task or interfere
 -- with write-back idempotency.
 UPDATE tasks
 SET title = ?, description = ?, type = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
--- name: UpdateTaskLabel :one
+-- name: updateTaskLabel :exec
 UPDATE tasks
 SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
 -- name: SetTaskActiveRun :exec
 UPDATE tasks
 SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
+
+-- name: ClaimTaskActiveRunIfFree :execrows
+-- Compare-and-swap acquire of the dispatch lock for the sweep: succeeds only
+-- while the task is still on the label the caller read AND still has no active
+-- run. Zero rows affected means the race was lost (a human moved the task, or
+-- another dispatch took the lock first). Escalation bookkeeping uses
+-- SetTaskActiveRun / SetTaskActiveRunOnly instead, which are unconditional.
+UPDATE tasks
+SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND label = ? AND active_agent_run_id IS NULL;
+
+-- name: ClaimTaskActiveRunIfHeldBy :execrows
+-- Compare-and-swap hand-off of the dispatch lock for a human reply: succeeds
+-- only while the task is still on the label the caller read AND the lock is
+-- still held by the waiting run being replied to. Zero rows affected means the
+-- race was lost (a concurrent reply already moved the lock, or the task moved).
+UPDATE tasks
+SET current_agent_run_id = ?, active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND label = ? AND active_agent_run_id = ?;
 
 -- name: SetTaskActiveRunOnly :exec
 -- Sets ONLY active_agent_run_id, leaving current_agent_run_id pointing at the
@@ -143,17 +157,20 @@ UPDATE tasks
 SET active_agent_run_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
--- name: SetTaskWorktree :exec
-UPDATE tasks
-SET branch = ?, worktree_path = ?, base_ref = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?;
+-- name: upsertTaskWorktree :exec
+INSERT INTO task_git (task_id, branch, worktree_path, base_ref)
+SELECT id, CAST(sqlc.arg(branch) AS TEXT), CAST(sqlc.arg(worktree_path) AS TEXT), CAST(sqlc.arg(base_ref) AS TEXT) FROM tasks WHERE id = sqlc.arg(id)
+ON CONFLICT(task_id) DO UPDATE SET branch = excluded.branch, worktree_path = excluded.worktree_path, base_ref = excluded.base_ref;
 
--- name: ClearTaskWorktreePath :exec
+-- name: touchTask :exec
+-- Bumps updated_at. The task_git writers above live in a side table, so the
+-- wrappers in gen/tasks_compat.go pair them with this call.
+UPDATE tasks SET updated_at = CURRENT_TIMESTAMP WHERE id = ?;
+
+-- name: clearTaskWorktreePath :exec
 -- Clears only worktree_path (branch/base_ref are kept: the branch survives
 -- in the repo's main clone after the worktree dir is removed).
-UPDATE tasks
-SET worktree_path = '', updated_at = CURRENT_TIMESTAMP
-WHERE id = ?;
+UPDATE task_git SET worktree_path = '' WHERE task_id = ?;
 
 -- name: ClearActiveAgentRun :exec
 -- Unconditional clear, keyed only on task id. Reserved for Rerun (an explicit
@@ -183,10 +200,10 @@ DELETE FROM tasks WHERE id = ?;
 -- Tasks worth polling GitHub for PR status: branch-bearing, not archived, and
 -- not in a terminal PR state (pr_merged / pr_closed). Filtering here instead of
 -- in Go keeps the number of `gh` calls per sweep bounded by open work.
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id FROM tasks WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') ORDER BY created_at DESC;
+SELECT * FROM tasks_full WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') ORDER BY created_at DESC;
 
 -- name: ListTasksByLabel :many
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id FROM tasks WHERE label = ? ORDER BY created_at DESC;
+SELECT * FROM tasks_full WHERE label = ? ORDER BY created_at DESC;
 
 -- name: CountTasksByLabel :one
 -- Occupancy of a label column for WIP-limit purposes; mirrors the board's
@@ -194,7 +211,7 @@ SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_
 SELECT COUNT(*) FROM tasks WHERE workflow_id = ? AND label = ? AND archived = 0;
 
 -- name: ListAgentPickupTasks :many
-SELECT t.id, t.title, t.description, t.type, t.label, t.repo_id, t.workflow_id, t.current_agent_run_id, t.agent_notes, t.active_agent_run_id, t.created_at, t.updated_at, t.branch, t.worktree_path, t.base_ref, t.attachments, t.git_state, t.paused, t.transient_retry_count, t.next_retry_at, t.source, t.source_ref, t.archived, t.pr_url, t.parent_task_id, t.created_by_run_id, t.merge_status, t.max_cost_usd, t.priority, t.writeback_in_progress_sent, t.writeback_pr_commented, t.writeback_closed, t.source_state, t.source_state_at, t.pr_mergeable, t.cost_warned, t.matched_rule_id FROM tasks t
+SELECT t.* FROM tasks_full t
 WHERE t.label IN (
     SELECT wt.from_label FROM workflow_transitions wt
     WHERE wt.workflow_id = t.workflow_id
@@ -208,13 +225,10 @@ AND t.label NOT IN (
 AND t.active_agent_run_id IS NULL
 AND t.paused = 0
 AND t.archived = 0
--- Compare through datetime(): the sqlite3 driver stores time.Time as RFC3339
--- with a timezone offset (e.g. 2026-07-13T20:57:44-05:00), while
--- CURRENT_TIMESTAMP is a space-separated UTC string. A raw string comparison of
--- the two formats is wrong (a future local time can sort below a UTC now),
--- letting a backed-off task be re-dispatched immediately. datetime() normalizes
--- both to canonical UTC 'YYYY-MM-DD HH:MM:SS' so the comparison is correct.
-AND (t.next_retry_at IS NULL OR datetime(t.next_retry_at) <= datetime('now'))
+-- next_retry_at and CURRENT_TIMESTAMP are both canonical UTC
+-- 'YYYY-MM-DD HH:MM:SS' (see storage.FormatTime and migration 058), so a plain
+-- string comparison is correct and can use indexes.
+AND (t.next_retry_at IS NULL OR t.next_retry_at <= CURRENT_TIMESTAMP)
 -- Dependency gate: never dispatch a task that still has an unsatisfied blocker.
 -- A blocker is satisfied once it is archived or sits on a terminal label.
 AND NOT EXISTS (
@@ -232,88 +246,91 @@ AND NOT EXISTS (
 ORDER BY t.priority DESC, t.created_at ASC;
 
 -- name: CountActiveRunsByRepo :many
--- Per-repo in-flight run counts, used by the dispatcher to enforce
--- repos.max_concurrent_runs. A task counts as "in flight" for a repo while
--- it holds an active run lock (active_agent_run_id IS NOT NULL), the same
--- signal ListAgentPickupTasks already excludes on, so this is consistent
--- with "pickup-eligible" meaning "not already running".
-SELECT repo_id, COUNT(*) AS in_use
-FROM tasks
-WHERE active_agent_run_id IS NOT NULL
-  AND archived = 0
-GROUP BY repo_id;
+-- Per-repo worker-slot usage, used by the dispatcher to enforce
+-- repos.max_concurrent_runs (and by the block-reason resolver and Dashboard).
+-- Only a task whose active run lock points at a run that is actually executing
+-- or queued (status pending or running) consumes a slot. active_agent_run_id also
+-- stays set for waiting_human runs and for phantom escalation runs (cost
+-- budget, unknown provider, runtime prep failure) so they block re-dispatch,
+-- but those occupy no worker, so they must not count against capacity,
+-- otherwise enough tasks waiting on a human stall the whole repo.
+SELECT t.repo_id, COUNT(*) AS in_use
+FROM tasks t
+JOIN agent_runs ar ON ar.id = t.active_agent_run_id
+WHERE t.archived = 0
+  AND ar.status IN ('pending', 'running')
+GROUP BY t.repo_id;
 
--- name: SetTaskTransientRetry :one
+-- name: setTaskTransientRetry :exec
 UPDATE tasks
 SET transient_retry_count = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
--- name: ResetTaskTransientRetry :one
+-- name: resetTaskTransientRetry :exec
 UPDATE tasks
 SET transient_retry_count = 0, next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
--- name: UpdateTaskNotes :one
+-- name: updateTaskNotes :exec
 UPDATE tasks
 SET agent_notes = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
--- name: UpdateTaskAttachments :one
+-- name: updateTaskAttachments :exec
 UPDATE tasks
 SET attachments = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
--- name: UpdateTaskGitState :one
-UPDATE tasks
-SET git_state = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+-- name: upsertTaskGitState :exec
+-- git_state lives in task_git (rows are created lazily). The SELECT source
+-- keeps an unknown task id a silent no-op instead of a foreign key error.
+INSERT INTO task_git (task_id, git_state)
+SELECT id, CAST(sqlc.arg(git_state) AS TEXT) FROM tasks WHERE id = sqlc.arg(id)
+ON CONFLICT(task_id) DO UPDATE SET git_state = excluded.git_state;
 
--- name: SetTaskPaused :one
+-- name: setTaskPaused :exec
 UPDATE tasks
 SET paused = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
--- name: SetTaskArchived :one
+-- name: setTaskArchived :exec
 UPDATE tasks
 SET archived = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
--- name: SetTaskPR :one
-UPDATE tasks
-SET git_state = ?, pr_url = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+-- name: upsertTaskPR :exec
+INSERT INTO task_git (task_id, git_state, pr_url)
+SELECT id, CAST(sqlc.arg(git_state) AS TEXT), CAST(sqlc.arg(pr_url) AS TEXT) FROM tasks WHERE id = sqlc.arg(id)
+ON CONFLICT(task_id) DO UPDATE SET git_state = excluded.git_state, pr_url = excluded.pr_url;
 
--- name: SetTaskPRMergeable :one
+-- name: upsertTaskPRMergeable :exec
 -- Records GitHub's mergeability verdict for the task's PR: mergeable,
 -- conflicting, unknown, or empty when there is no PR / it has not been
 -- checked. Deliberately does not touch updated_at: ghsync refreshes this on
 -- every sweep and a background poll should not make a task look freshly edited.
-UPDATE tasks
-SET pr_mergeable = ?
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+INSERT INTO task_git (task_id, pr_mergeable)
+SELECT id, CAST(sqlc.arg(pr_mergeable) AS TEXT) FROM tasks WHERE id = sqlc.arg(id)
+ON CONFLICT(task_id) DO UPDATE SET pr_mergeable = excluded.pr_mergeable;
 
 -- name: SetTaskWritebackInProgress :exec
 -- Marks that the "agent-in-progress" label write-back has been applied (or
 -- best-effort attempted) for this task, so it is never retried.
-UPDATE tasks SET writeback_in_progress_sent = 1 WHERE id = ?;
+INSERT INTO task_writeback (task_id, writeback_in_progress_sent)
+SELECT id, 1 FROM tasks WHERE id = ?
+ON CONFLICT(task_id) DO UPDATE SET writeback_in_progress_sent = 1;
 
 -- name: SetTaskWritebackPRCommented :exec
 -- Marks that the "PR opened" comment write-back has been posted for this task.
-UPDATE tasks SET writeback_pr_commented = 1 WHERE id = ?;
+INSERT INTO task_writeback (task_id, writeback_pr_commented)
+SELECT id, 1 FROM tasks WHERE id = ?
+ON CONFLICT(task_id) DO UPDATE SET writeback_pr_commented = 1;
 
 -- name: SetTaskWritebackClosed :exec
 -- Marks that the source issue has been closed (with a comment) after this
 -- task's PR merged.
-UPDATE tasks SET writeback_closed = 1 WHERE id = ?;
+INSERT INTO task_writeback (task_id, writeback_closed)
+SELECT id, 1 FROM tasks WHERE id = ?
+ON CONFLICT(task_id) DO UPDATE SET writeback_closed = 1;
 
 -- name: SetTaskSourceState :exec
 -- Records the issue-sync reconciliation state: '' means the item was present
@@ -322,25 +339,23 @@ UPDATE tasks SET writeback_closed = 1 WHERE id = ?;
 -- reappears in a later fetch.
 UPDATE tasks SET source_state = ?, source_state_at = CURRENT_TIMESTAMP WHERE id = ?;
 
--- name: CreateSubtask :one
+-- name: createSubtask :exec
 -- Creates a child task under a parent. parent_task_id groups it; created_by_run_id
 -- records the agent run that requested it. Inherits the parent's repo + workflow.
 INSERT INTO tasks (id, title, description, type, label, repo_id, workflow_id, attachments, parent_task_id, created_by_run_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?);
 
 -- name: ListSubtasks :many
 -- Direct children of a parent task, newest first.
-SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id FROM tasks WHERE parent_task_id = ? ORDER BY created_at DESC;
+SELECT * FROM tasks_full WHERE parent_task_id = ? ORDER BY created_at DESC;
 
 -- name: CountSubtasks :one
 SELECT COUNT(*) FROM tasks WHERE parent_task_id = ?;
 
--- name: SetTaskMergeStatus :one
+-- name: setTaskMergeStatus :exec
 UPDATE tasks
 SET merge_status = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id;
+WHERE id = ?;
 
 -- name: ListSubtaskRollups :many
 -- Per-parent rollup counts, restricted to tasks that actually have children so
@@ -375,3 +390,29 @@ FROM tasks p
 JOIN tasks c ON c.parent_task_id = p.id
 WHERE p.id IN (sqlc.slice('parent_ids'))
 GROUP BY p.id;
+
+-- name: IncrementTaskFailureCount :one
+-- Bumps the consecutive genuine-failure counter and returns the new value. The
+-- pool escalates to waiting_human once it reaches the threshold so a task that
+-- keeps failing is not re-dispatched forever.
+UPDATE tasks
+SET consecutive_failure_count = consecutive_failure_count + 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+RETURNING consecutive_failure_count;
+
+-- name: ResetTaskFailureCount :exec
+-- Zeroes the consecutive genuine-failure counter. Called on a successful run,
+-- on any label transition, and when a human replies or force re-runs.
+UPDATE tasks
+SET consecutive_failure_count = 0
+WHERE id = ? AND consecutive_failure_count != 0;
+
+-- name: ListActiveRunStatusesForTasks :many
+-- Status of each given task's active agent run (the re-dispatch lock holder),
+-- so list responses can tell a live pending/running run apart from a
+-- waiting_human one without a query per task. Tasks with no active run, or
+-- whose active run row is missing, are absent from the result.
+SELECT t.id AS task_id, r.status AS status
+FROM tasks t
+JOIN agent_runs r ON r.id = t.active_agent_run_id
+WHERE t.id IN (sqlc.slice('task_ids'));

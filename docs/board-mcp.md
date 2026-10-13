@@ -125,7 +125,17 @@ To create tickets from a chat client outside the app (e.g. Claude Desktop), run
 
 ## Remote connector
 
-With `MCP_PUBLIC_URL` set, the backend serves the board tools over the MCP
+> **Off by default, strictly opt-in.** Nothing here is active unless you do
+> both of these: **(1)** set `MCP_REMOTE_ENABLED=true` plus the required
+> `MCP_*` settings below (setting `MCP_PUBLIC_URL` and friends alone does
+> *not* enable it, and `MCP_REMOTE_ENABLED=true` with a required setting
+> missing fails startup), and **(2)** include the public-route override
+> `docker-compose.mcp-remote.yml` when you use Traefik. `./run.sh` and
+> `./dev.sh` do both with `--with-remote-mcp`; without that flag they force
+> `MCP_REMOTE_ENABLED=false`. Without step 2 the backend feature can be on but
+> no public, auth-free route exists. Startup logs whether remote MCP is on.
+
+With `MCP_REMOTE_ENABLED=true`, the backend serves the board tools over the MCP
 streamable-HTTP transport at `<MCP_PUBLIC_URL>/mcp`, so a remote client such as
 a [claude.ai custom connector](https://support.claude.com/en/articles/11175166)
 can use them. Remote clients can't send your static `API_TOKEN`, so the
@@ -169,6 +179,7 @@ deliberately not exposed.
    (e.g. `https://example.com/tasks/oauth/callback`).
 2. **Backend env:**
    ```bash
+   MCP_REMOTE_ENABLED=true                      # the explicit opt-in
    MCP_PUBLIC_URL=https://example.com/tasks   # where /mcp is reachable from the internet
    MCP_GOOGLE_CLIENT_ID=...apps.googleusercontent.com
    MCP_GOOGLE_CLIENT_SECRET=...
@@ -184,12 +195,18 @@ deliberately not exposed.
    browser): `/tasks/mcp`, `/tasks/oauth/*`,
    `/.well-known/oauth-protected-resource*` and
    `/.well-known/oauth-authorization-server*`. The bundled nginx forwards them
-   to the backend. `docker-compose.traefik.yml` adds a second Traefik router
+   to the backend. The opt-in override `docker-compose.mcp-remote.yml` (not
+   part of `docker-compose.traefik.yml`) adds a second Traefik router
    for exactly these paths, without the `forward-auth` middleware, that goes
    straight to the backend (stripping `/tasks`) rather than through nginx, so
    it can't reach any other part of the app. The rest of the UI stays behind
    forward-auth. Keep `API_TOKEN` set anyway: it's what protects the API if a
    proxy rule is ever wrong.
+
+   Include the override explicitly:
+   `docker compose -f docker-compose.yml -f docker-compose.traefik.yml -f docker-compose.mcp-remote.yml up -d`
+   (or `./run.sh --with-remote-mcp` / `./dev.sh --with-remote-mcp`, which need
+   `TRAEFIK_HOST` set). Without the file, no auth-free route exists.
 
    The two `/.well-known/` paths sit at the host root. If another app on the
    same host serves its own OAuth metadata there, give this app its own host.
@@ -278,7 +295,8 @@ on the backend itself:
 
 | Variable | Required | Description |
 |---|---|---|
-| `MCP_PUBLIC_URL` | ✅ to enable | Public base URL `/mcp` and `/oauth/*` are served under, e.g. `https://example.com/tasks`. Unset = remote endpoint off |
+| `MCP_REMOTE_ENABLED` | ✅ to enable | Explicit opt-in, default `false`. Other `MCP_*` values alone never enable the endpoint; `true` with a required value missing fails startup |
+| `MCP_PUBLIC_URL` | ✅ | Public base URL `/mcp` and `/oauth/*` are served under, e.g. `https://example.com/tasks` |
 | `MCP_GOOGLE_CLIENT_ID` | ✅ | Google OAuth client ID |
 | `MCP_GOOGLE_CLIENT_SECRET` | ✅ | Google OAuth client secret |
 | `MCP_SIGNING_KEY` | ✅ | Token-signing key, at least 32 characters (`openssl rand -base64 48`). Independent of the Google secret |

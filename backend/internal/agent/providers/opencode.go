@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // OpencodeRunner runs the opencode CLI in headless mode (run --format json).
@@ -48,7 +49,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	}
 	cmd := newCLICommand(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
-	cmd.Env = env
+	cmd.Env = agentuser.Env(env) // HOME etc. of the agent account when isolated
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

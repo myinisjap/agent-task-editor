@@ -4,6 +4,8 @@ import { api, type AgentConfig, type ModelList, type ClaudeOptions } from '../ap
 type AgentsState = {
   configs: AgentConfig[]
   loading: boolean
+  /** True once configs have been fetched successfully at least once. */
+  loaded: boolean
   modelList: ModelList | null
   fetchingModels: boolean
   claudeOptions: ClaudeOptions | null
@@ -18,6 +20,7 @@ type AgentsState = {
 export const useAgentsStore = create<AgentsState>((set) => ({
   configs: [],
   loading: false,
+  loaded: false,
   modelList: null,
   fetchingModels: false,
   claudeOptions: null,
@@ -26,7 +29,7 @@ export const useAgentsStore = create<AgentsState>((set) => ({
     set({ loading: true })
     try {
       const configs = await api.agents.list()
-      set({ configs: configs ?? [], loading: false })
+      set({ configs: configs ?? [], loading: false, loaded: true })
     } catch {
       set({ loading: false })
     }

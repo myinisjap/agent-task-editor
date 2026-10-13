@@ -186,6 +186,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if run.Status != "waiting_human" {
 			t.Fatalf("expected phantom run status 'waiting_human', got %q", run.Status)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 		wantMsg := "budget exhausted: $1.50 of $1.00"
 		if run.Notes == nil || *run.Notes != wantMsg {
 			t.Errorf("expected notes %q, got %v", wantMsg, run.Notes)
@@ -212,6 +213,47 @@ func TestE2E_CostBudget(t *testing.T) {
 		}
 	})
 
+	// Regression (#336): when the phantom-run write fails, the guard used to
+	// discard its "blocked" result and start the run against an exhausted
+	// budget, repeating every sweep. It must fail closed instead.
+	t.Run("escalation write fails: fails closed, never dispatches", func(t *testing.T) {
+		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
+		h := newE2EHarness(t, fp)
+		wfID := seedE2EWorkflow(t, h.q)
+		taskID, cfgID := h.seedTaskWithBudgets(t, wfID, 1.00, 0)
+		// Fail the phantom run's move to waiting_human (the escalation write).
+		// Its CreateAgentRun insert succeeds, so escalateCostBudget returns
+		// (true, err); a real fake-provider run never waits for a human.
+		if _, err := h.sqlDB.Exec(`CREATE TRIGGER fail_escalate BEFORE UPDATE OF status ON agent_runs
+			WHEN NEW.status = 'waiting_human'
+			BEGIN SELECT RAISE(ABORT, 'forced escalation failure'); END`); err != nil {
+			t.Fatalf("create trigger: %v", err)
+		}
+		h.seedRunWithCost(t, taskID, cfgID, 1.50)
+
+		h.waitForSweeps(t, 5)
+
+		if len(fp.inputs) != 0 {
+			t.Errorf("expected no provider run when the budget escalation fails, got %d", len(fp.inputs))
+		}
+		runs, err := h.q.ListAgentRuns(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("list runs: %v", err)
+		}
+		for _, r := range runs {
+			if r.Status == "running" || r.Status == "completed" && r.CostUsd == 0 {
+				t.Errorf("unexpected real run %s (status %s)", r.ID, r.Status)
+			}
+		}
+		task, err := h.q.GetTask(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		if task.Label != "ready" || task.ActiveAgentRunID != nil {
+			t.Errorf("expected task untouched on ready, got label=%q active=%v", task.Label, task.ActiveAgentRunID)
+		}
+	})
+
 	t.Run("task budget exceeded: escalates without dispatching", func(t *testing.T) {
 		fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
 		h := newE2EHarness(t, fp)
@@ -229,6 +271,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if run.Status != "waiting_human" {
 			t.Fatalf("expected phantom run status 'waiting_human', got %q", run.Status)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 		if len(fp.inputs) != 0 {
 			t.Errorf("expected the provider to never be invoked, got %d invocations", len(fp.inputs))
 		}
@@ -249,6 +292,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get agent run: %v", err)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 		wantMsg := "budget exhausted: $1.00 of $1.00"
 		if run.Notes == nil || *run.Notes != wantMsg {
 			t.Errorf("expected notes %q (effective budget = min(5.00, 1.00)), got %v", wantMsg, run.Notes)
@@ -390,6 +434,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if run.Status != "waiting_human" {
 			t.Fatalf("expected phantom run status 'waiting_human', got %q", run.Status)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostUnknown)
 		if run.Notes == nil {
 			t.Fatal("expected phantom run to carry an explanatory notes message")
 		}
@@ -428,6 +473,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get agent run: %v", err)
 		}
+		assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 		wantMsg := "budget exhausted: $1.50 of $1.00"
 		if run.Notes == nil || *run.Notes != wantMsg {
 			t.Errorf("expected the ordinary exhaustion message %q, got %v", wantMsg, run.Notes)
@@ -519,6 +565,7 @@ func TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked(t *testing.T) {
 	run := h.pollAgentRun(t, *esc.ActiveAgentRunID, func(r gen.AgentRun) bool {
 		return r.Status == "waiting_human"
 	}, "run to be persisted as waiting_human after the cost-budget kill")
+	assertEscalationReason(t, h.q, run.ID, ReasonCostBudget)
 	wantMsg := "mid-run cost budget exceeded: $12.34 of $10.00"
 	if run.Notes == nil || *run.Notes != wantMsg {
 		t.Errorf("expected notes %q, got %v", wantMsg, run.Notes)

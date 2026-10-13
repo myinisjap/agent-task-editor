@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -15,10 +15,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 )
 
 // Task priority levels. Stored as a plain INTEGER column (tasks.priority) so
@@ -91,10 +93,17 @@ type TasksHandler struct {
 	dispatcher   ReplyDispatcher
 	blockReasons BlockReasonResolver
 	wb           *writeback.Writeback
+	pub          TaskEventPublisher
 }
 
 func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher, blockReasons BlockReasonResolver) *TasksHandler {
 	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller, dispatcher: dispatcher, blockReasons: blockReasons, wb: writeback.New(q)}
+}
+
+// SetPublisher sets the WebSocket publisher used to emit task.updated events
+// from handlers that change a task outside the workflow engine. Nil-safe.
+func (h *TasksHandler) SetPublisher(pub TaskEventPublisher) {
+	h.pub = pub
 }
 
 // SetWriteback overrides the handler's writeback instance. Exported only for
@@ -141,9 +150,14 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		rollups := h.subtaskRollupMap(r.Context(), ids)
 		positions := h.queuePositionMap(r.Context())
 		blockReasons := h.blockReasonMap(r.Context(), children)
+		runStatuses := h.activeRunStatusMap(r.Context(), ids)
+		effects := h.sideEffectMap(r.Context(), ids)
+		pendings := h.sourcePendingMap(r.Context(), ids)
 		resp := toTaskResponses(children)
 		for i := range resp {
-			resp[i] = applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons)
+			resp[i] = applySideEffects(resp[i], effects)
+			resp[i] = applySourcePending(resp[i], pendings)
+			resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 		}
 		JSON(w, http.StatusOK, resp)
 		return
@@ -174,9 +188,14 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	rollups := h.subtaskRollupMap(r.Context(), ids)
 	positions := h.queuePositionMap(r.Context())
 	blockReasons := h.blockReasonMap(r.Context(), tasks)
+	runStatuses := h.activeRunStatusMap(r.Context(), ids)
+	effects := h.sideEffectMap(r.Context(), ids)
+	pendings := h.sourcePendingMap(r.Context(), ids)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
-		resp[i] = applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons)
+		resp[i] = applySideEffects(resp[i], effects)
+		resp[i] = applySourcePending(resp[i], pendings)
+		resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 	}
 	JSON(w, http.StatusOK, resp)
 }
@@ -401,6 +420,9 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp = applyRollup(resp, h.subtaskRollupMap(r.Context(), ids))
 	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
 	resp = applyBlockReason(resp, h.blockReasonMap(r.Context(), []gen.Task{task}))
+	resp = applyActiveRunStatus(resp, h.activeRunStatusMap(r.Context(), ids))
+	resp = applySideEffects(resp, h.sideEffectMap(r.Context(), ids))
+	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost
 	}
@@ -506,10 +528,23 @@ func (h *TasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Best-effort: tear down the task's worktree before deleting the row. The
 	// branch is kept for review. Look up the repo path for the worktree-remove.
 	if task, err := h.q.GetTask(r.Context(), taskID); err == nil {
+		// Refuse while a run is live: removing the worktree out from under it
+		// would break the agent, and deleting the row cascades to its runs and
+		// logs, making the run's later writes fail on foreign keys.
+		if h.taskRunIsLive(r.Context(), task) {
+			Err(w, http.StatusConflict, errRunLiveDelete.Error())
+			return
+		}
 		if task.WorktreePath != "" {
 			if repo, rerr := h.q.GetRepo(r.Context(), task.RepoID); rerr == nil {
-				if out, gerr := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "worktree", "remove", "--force", task.WorktreePath).CombinedOutput(); gerr != nil {
-					logger.Warn("delete task: remove worktree", "err", gerr, "out", strings.TrimSpace(string(out)))
+				// Serialize with other git operations on the same clone
+				// (worktree setup, push); RemoveWorktree doesn't lock itself.
+				lock := agent.RepoGitLock(repo.Path)
+				lock.Lock()
+				gerr := agent.RemoveWorktree(r.Context(), repo.Path, task.WorktreePath)
+				lock.Unlock()
+				if gerr != nil {
+					logger.Warn("delete task: remove worktree", "err", gerr)
 				}
 			}
 		}
@@ -532,6 +567,7 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ToLabel string `json:"to_label"`
 		Note    string `json:"note"`
+		Force   bool   `json:"force"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -551,7 +587,16 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
 		return
 	}
-	if err := h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, middleware.ActorFromContext(r.Context()), body.Note); err != nil {
+	actor := middleware.ActorFromContext(r.Context())
+	if body.Force {
+		// Every authenticated API caller is a human token holder today (there
+		// are no agent-scoped tokens; agents move labels in-process, not via
+		// this endpoint), so no extra actor check is possible or needed.
+		err = h.engine.ForceTransition(r.Context(), taskID, body.ToLabel, actor, body.Note)
+	} else {
+		err = h.engine.Transition(r.Context(), taskID, body.ToLabel, workflow.TriggerHuman, actor, body.Note)
+	}
+	if err != nil {
 		handleTransitionError(w, err)
 		return
 	}
@@ -588,6 +633,10 @@ var runLiveStatuses = map[string]bool{
 // render this as a 409 with the same text; the bulk endpoint records it as a
 // per-task failure in bulkResult.
 var errRunLive = errors.New("a run is currently active on this task; cancel the run before moving its label")
+
+// errRunLiveDelete is the 409 Delete returns while the task's active run is
+// still live (same definition of "live" as errRunLive).
+var errRunLiveDelete = errors.New("a run is currently active on this task; cancel the run before deleting it")
 
 // taskRunIsLive reports whether task's active agent run (if any) is in a
 // status (see runLiveStatuses) during which clearing active_agent_run_id
@@ -765,6 +814,34 @@ func (h *TasksHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
+// RetrySideEffects makes the task's failed side effects (push, PR creation,
+// write-back) pending again with a fresh attempt budget; the background worker
+// picks them up immediately. 404 for an unknown task; 409 when nothing is in
+// the failed state.
+func (h *TasksHandler) RetrySideEffects(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	n, err := h.engine.RetrySideEffects(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n == 0 {
+		Err(w, http.StatusConflict, "task has no failed side effects")
+		return
+	}
+	task, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to fetch task")
+		return
+	}
+	resp := applySideEffects(toTaskResponse(task), h.sideEffectMap(r.Context(), []string{taskID}))
+	JSON(w, http.StatusOK, resp)
+}
+
 func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
@@ -775,7 +852,83 @@ func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// An explicit human re-run starts with a fresh consecutive-failure budget.
+	if err := h.q.ResetTaskFailureCount(r.Context(), taskID); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ApplySourceUpdate applies the issue edit held by the importer after the task
+// was approved (see tasksource), overwriting the task's title, description and
+// type with the held text and clearing it. 404 for an unknown task; 409 when
+// no edit is pending. Responds with the updated task.
+func (h *TasksHandler) ApplySourceUpdate(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	pending, err := h.q.GetTaskSourcePending(r.Context(), taskID)
+	if err != nil || pending.Dismissed != 0 {
+		Err(w, http.StatusConflict, "task has no pending source update")
+		return
+	}
+	if _, err := h.q.UpdateTaskFromSource(r.Context(), gen.UpdateTaskFromSourceParams{
+		Title: pending.Title, Description: pending.Description, Type: pending.Type, ID: taskID,
+	}); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := h.q.DeleteTaskSourcePending(r.Context(), taskID); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	slog.Info("source update applied", "task_id", taskID, "actor", middleware.ActorFromContext(r.Context()))
+	h.publishTaskUpdated(taskID)
+	h.respondTask(w, r, taskID)
+}
+
+// DiscardSourceUpdate dismisses the held issue edit without applying it. The
+// same upstream text is not held again; a further edit is. 404 for an unknown
+// task; 409 when no edit is pending. Responds with the task.
+func (h *TasksHandler) DiscardSourceUpdate(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	n, err := h.q.DismissTaskSourcePending(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n == 0 {
+		Err(w, http.StatusConflict, "task has no pending source update")
+		return
+	}
+	slog.Info("source update discarded", "task_id", taskID, "actor", middleware.ActorFromContext(r.Context()))
+	h.publishTaskUpdated(taskID)
+	h.respondTask(w, r, taskID)
+}
+
+func (h *TasksHandler) publishTaskUpdated(taskID string) {
+	if h.pub != nil {
+		h.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: taskID})
+	}
+}
+
+func (h *TasksHandler) respondTask(w http.ResponseWriter, r *http.Request, taskID string) {
+	task, err := h.q.GetTask(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to fetch task")
+		return
+	}
+	ids := []string{taskID}
+	resp := applySideEffects(toTaskResponse(task), h.sideEffectMap(r.Context(), ids))
+	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
+	JSON(w, http.StatusOK, resp)
 }
 
 // ListLabelHistory returns the task's label-transition audit trail, oldest
@@ -820,6 +973,8 @@ func handleTransitionError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, workflow.ErrNoTransition):
 		Err(w, http.StatusBadRequest, "no transition defined between these labels")
+	case errors.Is(err, workflow.ErrUnknownLabel):
+		Err(w, http.StatusBadRequest, "label does not exist in the task's workflow")
 	case errors.Is(err, workflow.ErrGateRequired):
 		Err(w, http.StatusForbidden, "transition requires human approval")
 	case errors.Is(err, workflow.ErrAgentIgnored):

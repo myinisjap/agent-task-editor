@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -82,6 +85,9 @@ var (
 	ErrGateRequired = errors.New("transition requires human approval")
 	ErrAgentIgnored = errors.New("label is marked agent_ignore; agents cannot move tasks here")
 	ErrTaskNotFound = errors.New("task not found")
+	// ErrUnknownLabel means a forced move targeted a label that does not exist
+	// in the task's workflow.
+	ErrUnknownLabel = errors.New("label does not exist in the task's workflow")
 	// ErrStale means the task's label changed out from under this transition
 	// between validation and the compare-and-swap write — a concurrent transition
 	// won the race. Callers should refresh and retry.
@@ -102,7 +108,7 @@ type querier interface {
 // Publisher publishes a workflow event (e.g. to the WebSocket hub).
 // The payload is a map that can be JSON-encoded by the caller.
 type Publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // Engine validates and executes workflow label transitions.
@@ -110,28 +116,37 @@ type Engine struct {
 	db  *sql.DB
 	q   querier
 	pub Publisher
-	// OnTerminal, if set, is called after a task successfully transitions into a
-	// terminal label. Used to push the task's branch and tear down its worktree.
-	// Failures are the callback's concern; the transition has already committed.
-	OnTerminal func(ctx context.Context, task gen.Task)
-	// OnLeaveNotReady, if set, is called after a task successfully transitions
-	// off the workflow's human-gate label — the label GateLabel resolves to,
-	// which is "not_ready" for the default workflow but generalizes to any
-	// workflow — for the first time (i.e. fromLabel is the gate label and
-	// toLabel is not). Used to apply an "agent is already working on this" signal
-	// to an imported task's source GitHub issue. Failures are the callback's
-	// concern; the transition has already committed.
-	OnLeaveNotReady func(ctx context.Context, task gen.Task)
-	// OnCreatePR, if set, is called after a task transitions into a label marked
-	// create_pr, regardless of who triggered the move. Used to push the task's
-	// branch and open a GitHub pull request. Failures are the callback's concern;
-	// the transition has already committed.
-	OnCreatePR func(ctx context.Context, task gen.Task)
+	sq  *gen.Queries
+	// wake nudges the side-effect worker right after a transition enqueues work.
+	wake chan struct{}
+
+	// OnTerminal, if set, makes a transition into a terminal label enqueue a
+	// "terminal" side effect, which the worker (RunSideEffects) runs shortly
+	// after the transition commits. Used to push the task's branch and tear down
+	// its worktree. The task passed in is re-read when the effect runs. A
+	// returned error is recorded and the effect retried with backoff.
+	OnTerminal func(ctx context.Context, task gen.Task) error
+	// OnLeaveNotReady, if set, makes a transition off the workflow's human-gate
+	// label (the label GateLabel resolves to, "not_ready" for the default
+	// workflow) enqueue a "leave_not_ready" side effect. Used to apply an "agent
+	// is already working on this" signal to an imported task's source issue.
+	OnLeaveNotReady func(ctx context.Context, task gen.Task) error
+	// OnCreatePR, if set, makes a transition into a label marked create_pr
+	// enqueue a "create_pr" side effect, regardless of who triggered the move.
+	// Used to push the task's branch and open a pull request.
+	OnCreatePR func(ctx context.Context, task gen.Task) error
+
+	// SideEffectBackoff returns the delay before the next attempt after the given
+	// number of failed attempts (1-based). Nil uses DefaultSideEffectBackoff.
+	SideEffectBackoff func(attempts int) time.Duration
+	// SideEffectTimeout bounds one execution of a hook. Zero uses
+	// DefaultSideEffectTimeout.
+	SideEffectTimeout time.Duration
 }
 
 // New creates a new Engine.
 func New(db *sql.DB, pub Publisher) *Engine {
-	return &Engine{db: db, q: gen.New(db), pub: pub}
+	return &Engine{db: db, q: gen.New(db), sq: gen.New(db), pub: pub, wake: make(chan struct{}, 1)}
 }
 
 // Transition validates and executes a label change for a task.
@@ -140,22 +155,64 @@ func New(db *sql.DB, pub Publisher) *Engine {
 //   - Returns ErrGateRequired if the transition requires human input but trigger is agent.
 //   - Returns ErrAgentIgnored if the destination label has agent_ignore set.
 func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger TransitionTrigger, actorID, note string) error {
+	return e.TransitionExpecting(ctx, taskID, toLabel, trigger, actorID, note, "")
+}
+
+// TransitionExpecting is Transition with an optional expected from-label. When
+// expectedFrom is non-empty and the task is no longer on that label, the
+// transition is refused with ErrStale instead of being resolved against
+// whatever label the task is on now. Agent-triggered transitions use this to
+// pass the label the run was dispatched on, so an agent outcome can never be
+// applied on top of a human move that landed after the run finished. The
+// final UPDATE is already a compare-and-swap on the label, so the check is
+// atomic. An empty expectedFrom behaves exactly like Transition.
+func (e *Engine) TransitionExpecting(ctx context.Context, taskID, toLabel string, trigger TransitionTrigger, actorID, note, expectedFrom string) error {
+	return e.transition(ctx, taskID, toLabel, trigger, actorID, note, expectedFrom, false)
+}
+
+// ForcedNotePrefix is prepended to the note of every label move made through
+// ForceTransition, so the forced move is visible in task_label_history.
+const ForcedNotePrefix = "Forced move"
+
+// ForceTransition moves a task to any label of its workflow, bypassing the
+// transition table (an escape hatch for wedged tasks). It is human-only by
+// construction: the trigger recorded is always TriggerHuman. Everything else
+// matches Transition: the compare-and-swap label update, clearing
+// active_agent_run_id, the history row, the task.label_changed event, and the
+// side-effect outbox rows (see OnTerminal / OnCreatePR / OnLeaveNotReady). The history note is
+// ForcedNotePrefix, followed by ": " and the caller's note when non-empty.
+// Returns ErrUnknownLabel if toLabel is not a label of the task's workflow.
+// Callers are responsible for refusing the move while an agent run is live.
+func (e *Engine) ForceTransition(ctx context.Context, taskID, toLabel, actorID, note string) error {
+	n := ForcedNotePrefix
+	if note != "" {
+		n += ": " + note
+	}
+	return e.transition(ctx, taskID, toLabel, TriggerHuman, actorID, n, "", true)
+}
+
+func (e *Engine) transition(ctx context.Context, taskID, toLabel string, trigger TransitionTrigger, actorID, note, expectedFrom string, force bool) error {
 	task, err := e.q.GetTask(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
 	}
-
-	trans, err := e.q.GetWorkflowTransition(ctx, gen.GetWorkflowTransitionParams{
-		WorkflowID: task.WorkflowID,
-		FromLabel:  task.Label,
-		ToLabel:    toLabel,
-	})
-	if err != nil {
-		return ErrNoTransition
+	if expectedFrom != "" && task.Label != expectedFrom {
+		return fmt.Errorf("%w: task is on %q, expected %q", ErrStale, task.Label, expectedFrom)
 	}
 
-	if trigger == TriggerAgent && trans.TriggerType == "human" {
-		return ErrGateRequired
+	if !force {
+		trans, err := e.q.GetWorkflowTransition(ctx, gen.GetWorkflowTransitionParams{
+			WorkflowID: task.WorkflowID,
+			FromLabel:  task.Label,
+			ToLabel:    toLabel,
+		})
+		if err != nil {
+			return ErrNoTransition
+		}
+
+		if trigger == TriggerAgent && trans.TriggerType == "human" {
+			return ErrGateRequired
+		}
 	}
 
 	labels, err := e.q.ListWorkflowLabels(ctx, task.WorkflowID)
@@ -164,14 +221,19 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	}
 	toIsTerminal := false
 	toCreatePR := false
+	found := false
 	for _, l := range labels {
 		if l.Name == toLabel {
+			found = true
 			if l.AgentIgnore != 0 && trigger == TriggerAgent {
 				return ErrAgentIgnored
 			}
 			toIsTerminal = l.IsTerminal != 0
 			toCreatePR = l.CreatePr != 0
 		}
+	}
+	if force && !found {
+		return ErrUnknownLabel
 	}
 
 	fromLabel := task.Label
@@ -211,7 +273,7 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	// be a no-op (human transitions carry no run id) or wrongly reject the
 	// agent's own transition.
 	res, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND label = ?`,
+		`UPDATE tasks SET label = ?, current_agent_run_id = ?, active_agent_run_id = NULL, consecutive_failure_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND label = ?`,
 		toLabel, task.CurrentAgentRunID, taskID, fromLabel)
 	if err != nil {
 		return fmt.Errorf("update task label: %w", err)
@@ -232,47 +294,55 @@ func (e *Engine) Transition(ctx context.Context, taskID, toLabel string, trigger
 	}); err != nil {
 		return fmt.Errorf("record history: %w", err)
 	}
+	// Side effects are written to the outbox in the same transaction as the
+	// label change, so they exist if and only if the move committed. The worker
+	// runs them out of band; nothing here waits on git or the forge.
+	var effects []string
+	if toIsTerminal && e.OnTerminal != nil {
+		effects = append(effects, SideEffectTerminal)
+	}
+	if toCreatePR && e.OnCreatePR != nil {
+		effects = append(effects, SideEffectCreatePR)
+	}
+	// Enqueue leave_not_ready when a task first moves off the workflow's
+	// human-gate label (GateLabel). We deliberately key only on the real
+	// agent_ignore gate, not GateLabel's first-label fallback: the
+	// "agent-in-progress" write-back signals that a task has left a human-review
+	// column, which is only meaningful when such a column exists.
+	if gate, _ := GateLabel(labels); gate != "" && fromLabel == gate && toLabel != gate && e.OnLeaveNotReady != nil {
+		effects = append(effects, SideEffectLeaveNotReady)
+	}
+	for _, kind := range effects {
+		if err := tq.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{
+			ID:     uuid.NewString(),
+			TaskID: taskID,
+			Kind:   kind,
+		}); err != nil {
+			return fmt.Errorf("enqueue %s side effect: %w", kind, err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
+	if len(effects) > 0 {
+		e.nudgeWorker()
+	}
 
 	if e.pub != nil {
-		e.pub.Publish("task.label_changed", map[string]any{
-			"task_id": taskID,
-			"from":    fromLabel,
-			"to":      toLabel,
-			"note":    note,
+		e.pub.Publish(wsevent.TypeTaskLabelChanged, wsevent.TaskLabelChanged{
+			TaskID: taskID,
+			From:   fromLabel,
+			To:     toLabel,
+			Note:   note,
 		})
 		// A label change can satisfy or un-satisfy edges that point at this task
 		// (e.g. moving into or out of a terminal label). Nudge dependents so their
 		// "blocked by N" badges refresh live instead of going stale on the board.
 		if deps, derr := e.q.ListTaskDependents(ctx, taskID); derr == nil {
 			for _, d := range deps {
-				e.pub.Publish("task.updated", map[string]any{"id": d.TaskID})
+				e.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: d.TaskID})
 			}
 		}
-	}
-
-	if toIsTerminal && e.OnTerminal != nil {
-		task.Label = toLabel
-		e.OnTerminal(ctx, task)
-	}
-
-	if toCreatePR && e.OnCreatePR != nil {
-		task.Label = toLabel
-		e.OnCreatePR(ctx, task)
-	}
-
-	// Fire OnLeaveNotReady when a task first moves off the workflow's human-gate
-	// label (GateLabel — "not_ready" for the default workflow, the equivalent
-	// gate for any custom one). We deliberately key only on the real agent_ignore
-	// gate, not GateLabel's first-label fallback: the "agent-in-progress"
-	// write-back signals that a task has left a human-review column, which is
-	// only meaningful when such a column exists. A workflow with no agent_ignore
-	// label has no human gate to leave, so the hook stays a no-op there.
-	if gate, _ := GateLabel(labels); gate != "" && fromLabel == gate && toLabel != gate && e.OnLeaveNotReady != nil {
-		task.Label = toLabel
-		e.OnLeaveNotReady(ctx, task)
 	}
 
 	return nil

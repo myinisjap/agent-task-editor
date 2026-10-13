@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -32,8 +34,8 @@ type publishCall struct {
 	payload   map[string]any
 }
 
-func (f *fakeHub) Publish(eventType string, payload map[string]any) {
-	f.calls = append(f.calls, publishCall{eventType: eventType, payload: payload})
+func (f *fakeHub) Publish(eventType string, payload any) {
+	f.calls = append(f.calls, publishCall{eventType: eventType, payload: wsevent.ToMap(payload)})
 }
 
 // initRepo creates a minimal git repo with one commit, mirroring

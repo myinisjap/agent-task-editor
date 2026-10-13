@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -33,11 +35,11 @@ type recordingPub struct {
 	payloads []map[string]any
 }
 
-func (p *recordingPub) Publish(eventType string, payload map[string]any) {
+func (p *recordingPub) Publish(eventType string, payload any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
-	p.payloads = append(p.payloads, payload)
+	p.payloads = append(p.payloads, wsevent.ToMap(payload))
 }
 
 func openTestDB(t *testing.T) *storage.DB {
@@ -127,10 +129,10 @@ func TestSweepImportsAndDedupes(t *testing.T) {
 		t.Fatalf("expected 1 task.created_bulk event, got %v", pub.events)
 	}
 	bulkPayload := pub.payloads[0]
-	if count, _ := bulkPayload["count"].(int); count != 2 {
+	if count, _ := bulkPayload["count"].(float64); count != 2 {
 		t.Fatalf("expected count=2 in task.created_bulk payload, got %v", bulkPayload["count"])
 	}
-	ids, _ := bulkPayload["ids"].([]string)
+	ids, _ := bulkPayload["ids"].([]any)
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 ids in task.created_bulk payload, got %v", bulkPayload["ids"])
 	}
@@ -259,7 +261,8 @@ func TestSweepCreateTransactionSurvivesMidBatchConflict(t *testing.T) {
 		switch e {
 		case "task.created_bulk":
 			sawCreatedBulk = true
-			createdCount, _ = pub.payloads[i]["count"].(int)
+			n, _ := pub.payloads[i]["count"].(float64)
+			createdCount = int(n)
 		case "task.updated":
 			sawUpdated = true
 		}
@@ -310,7 +313,7 @@ func TestCreateNewTasksSkipsConflictingRowWithoutAbortingBatch(t *testing.T) {
 	if len(pub.events) != 1 || pub.events[0] != "task.created_bulk" {
 		t.Fatalf("expected 1 task.created_bulk event, got %v", pub.events)
 	}
-	if count, _ := pub.payloads[0]["count"].(int); count != 2 {
+	if count, _ := pub.payloads[0]["count"].(float64); count != 2 {
 		t.Fatalf("expected count=2, got %v", pub.payloads[0]["count"])
 	}
 }

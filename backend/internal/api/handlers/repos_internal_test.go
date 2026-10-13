@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,8 +110,8 @@ func TestIsValidGitRef(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isValidGitRef(tc.ref); got != tc.want {
-				t.Errorf("isValidGitRef(%q) = %v, want %v", tc.ref, got, tc.want)
+			if got := gitcmd.IsValidRef(tc.ref); got != tc.want {
+				t.Errorf("gitcmd.IsValidRef(%q) = %v, want %v", tc.ref, got, tc.want)
 			}
 		})
 	}

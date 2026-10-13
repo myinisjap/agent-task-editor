@@ -8,7 +8,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import type { DragEndEvent } from '@dnd-kit/core'
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import type { Task, WorkflowLabel, WorkflowTransition } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
@@ -17,6 +17,8 @@ import AgentGroupColumn from './AgentGroupColumn'
 import { computeCondensedGroups } from '../../lib/condensedBoard'
 import { useIsMobile } from '../../lib/useIsMobile'
 import { useSwipe } from '../../lib/useSwipe'
+import { canHumanMove } from '../../lib/humanMoves'
+import type { DropState } from './dropState'
 
 // Shared empty array so byLabel()/byLabels() returns a referentially-stable
 // value for labels with no tasks, instead of a fresh [] every render (which
@@ -92,7 +94,7 @@ type Props = {
   onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
 }
 
-export default function TaskBoard({
+function TaskBoardInner({
   labels,
   tasks,
   runningTaskIds,
@@ -104,9 +106,14 @@ export default function TaskBoard({
   transitions = [],
   selectedIds,
   onToggleSelect,
-}: Props) {
+  onMoveError,
+}: Props & { onMoveError: (message: string) => void }) {
   const upsert = useTasksStore((s) => s.upsert)
   const isMobile = useIsMobile()
+
+  // Label of the card currently being dragged (null when idle); drives the
+  // legal/illegal drop-column highlighting.
+  const [dragFromLabel, setDragFromLabel] = useState<string | null>(null)
 
   // Require 5px movement to start a drag so clicks still navigate. KeyboardSensor
   // uses its default coordinate getter (arrow keys) — the board uses
@@ -163,7 +170,25 @@ export default function TaskBoard({
       .map((l) => l.name),
   )
 
+  // Drag feedback for the column that drops onto `dropLabel`. The dragged
+  // card's own column gets no styling; every other column is either a legal
+  // human-move target (highlighted) or not (dimmed).
+  const dropStateFor = (dropLabel: string): DropState | undefined => {
+    if (dragFromLabel == null || dropLabel === dragFromLabel) return undefined
+    return canHumanMove(transitions, dragFromLabel, dropLabel) ? 'legal' : 'illegal'
+  }
+
+  function handleDragStart(event: DragStartEvent) {
+    const task = tasks.find((t) => t.id === String(event.active.id))
+    setDragFromLabel(task?.label ?? null)
+  }
+
+  function handleDragCancel() {
+    setDragFromLabel(null)
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setDragFromLabel(null)
     const { active, over } = event
     if (!over) return
 
@@ -184,14 +209,22 @@ export default function TaskBoard({
       if (!ok) return
     }
 
+    // The workflow has no transition for this move: the server would reject it
+    // anyway, so don't move the card optimistically — just say why.
+    if (!canHumanMove(transitions, task.label, toLabel)) {
+      onMoveError(`Can't move "${task.title}" from "${task.label}" to "${toLabel}": no transition defined between these labels.`)
+      return
+    }
+
     const snapshot = { ...task }
 
     // Optimistic update
     upsert({ ...task, label: toLabel })
 
-    api.tasks.moveLabel(taskId, toLabel).catch(() => {
-      // Snap back on engine rejection
+    api.tasks.moveLabel(taskId, toLabel).catch((e: unknown) => {
+      // Snap back on engine rejection and surface the server's reason
       upsert(snapshot)
+      onMoveError(e instanceof Error && e.message ? e.message : 'Failed to move task')
     })
   }
 
@@ -236,7 +269,7 @@ export default function TaskBoard({
           : 'Agent'
 
       return (
-        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
           <div className="flex flex-col h-full">
             <MobileColumnNav
               currentIndex={clampedCondensed}
@@ -265,6 +298,7 @@ export default function TaskBoard({
                   onAddTask={clampedCondensed === 0 ? onAddTask : undefined}
                   isStartingColumn={clampedCondensed === 0}
                   isTerminal={!!currentGroup.label.is_terminal}
+                  dropState={dropStateFor(currentGroup.label.name)}
                   className="w-full"
                 />
               ) : (
@@ -277,6 +311,7 @@ export default function TaskBoard({
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
                   onDuplicate={onDuplicate}
+                  dropState={dropStateFor(currentGroup.labels[0]?.name ?? '')}
                   className="w-full"
                 />
               )}
@@ -288,7 +323,7 @@ export default function TaskBoard({
 
     // Desktop condensed view
     return (
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
         <div className="flex gap-5 overflow-x-auto h-full pb-4">
           {groups.map((group, i) => {
             if (group.kind === 'single') {
@@ -306,6 +341,7 @@ export default function TaskBoard({
                   onAddTask={i === 0 ? onAddTask : undefined}
                   isStartingColumn={i === 0}
                   isTerminal={!!group.label.is_terminal}
+                  dropState={dropStateFor(group.label.name)}
                 />
               )
             } else {
@@ -323,6 +359,7 @@ export default function TaskBoard({
                   selectedIds={selectedIds}
                   onToggleSelect={onToggleSelect}
                   onDuplicate={onDuplicate}
+                  dropState={dropStateFor(group.labels[0]?.name ?? '')}
                 />
               )
             }
@@ -336,7 +373,7 @@ export default function TaskBoard({
   if (isMobile && sortedLabels.length > 0) {
     const currentLabel = sortedLabels[clampedNormal]
     return (
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
         <div className="flex flex-col h-full">
           <MobileColumnNav
             currentIndex={clampedNormal}
@@ -364,6 +401,7 @@ export default function TaskBoard({
               onAddTask={clampedNormal === 0 ? onAddTask : undefined}
               isStartingColumn={clampedNormal === 0}
               isTerminal={!!currentLabel.is_terminal}
+              dropState={dropStateFor(currentLabel.name)}
               className="w-full"
             />
           </div>
@@ -374,7 +412,7 @@ export default function TaskBoard({
 
   // Desktop normal (expanded) view
   return (
-    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
       <div className="flex gap-5 overflow-x-auto h-full pb-4">
         {sortedLabels.map((label, i) => (
           <TaskColumn
@@ -390,9 +428,45 @@ export default function TaskBoard({
             onAddTask={i === 0 ? onAddTask : undefined}
             isStartingColumn={i === 0}
             isTerminal={!!label.is_terminal}
+            dropState={dropStateFor(label.name)}
           />
         ))}
       </div>
     </DndContext>
+  )
+}
+
+// How long the rejected-move notice stays up before dismissing itself.
+const MOVE_ERROR_MS = 6000
+
+export default function TaskBoard(props: Props) {
+  const [moveError, setMoveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!moveError) return
+    const timer = setTimeout(() => setMoveError(null), MOVE_ERROR_MS)
+    return () => clearTimeout(timer)
+  }, [moveError])
+
+  return (
+    <>
+      <TaskBoardInner {...props} onMoveError={setMoveError} />
+      {moveError && (
+        <div
+          role="alert"
+          className="fixed bottom-4 right-4 z-50 max-w-sm flex items-start gap-3 rounded-lg border border-red-700 bg-red-950 px-4 py-3 text-sm text-red-200 shadow-lg"
+        >
+          <span className="flex-1">{moveError}</span>
+          <button
+            type="button"
+            onClick={() => setMoveError(null)}
+            aria-label="Dismiss"
+            className="text-red-300 hover:text-red-100"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+    </>
   )
 }

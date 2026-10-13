@@ -1,5 +1,8 @@
 services:
   backend:
+    # Must exceed SHUTDOWN_DRAIN_TIMEOUT (default 60s) plus a few seconds for
+    # HTTP/outbox shutdown, or the runtime SIGKILLs mid-drain.
+    stop_grace_period: 90s
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -15,7 +18,7 @@ services:
         # only ships the Claude CLI.
         INSTALL_CODEX_CLI: ${INSTALL_CODEX_CLI:-false}
         INSTALL_QWEN_CLI: ${INSTALL_QWEN_CLI:-false}
-    # Bound to loopback by default: API_TOKEN ships commented out, so a
+    # Bound to loopback by default: API_TOKEN may be empty, so a
     # 0.0.0.0 binding would expose the board and the agent-dispatch path to
     # the whole LAN. Set ATE_BIND_ADDR=0.0.0.0 (and set API_TOKEN!) to expose
     # it deliberately; see the Security section in the README.
@@ -55,22 +58,35 @@ services:
       - PORT=8080
       - DB_PATH=/data/agent-task-editor.db
       - CORS_ORIGINS=http://localhost:5173
+      # Optional: extra Host header values accepted while API_TOKEN is unset
+      # (DNS-rebinding protection), e.g. ALLOWED_HOSTS=ate.lan. See
+      # docs/getting-started.md.
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-}
       # Run agents as your host user so files they write to bind-mounted repos
       # are owned by you, not root. dev.sh sets these from `id -u`/`id -g`.
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # Agent processes (provider CLIs, chat terminals) run as a separate
+      # unprivileged 'agent' user so they can't read the server's DB, env
+      # secrets or gh credentials. AGENT_ISOLATION=false opts out; AGENT_UID
+      # overrides the default uid (10001); AGENT_FIX_REPO_PERMS=never stops the
+      # entrypoint from adding group-write to mounted repos. See
+      # docs/getting-started.md#agent-user-isolation.
+      - AGENT_ISOLATION=${AGENT_ISOLATION:-true}
+      - AGENT_UID=${AGENT_UID:-}
+      - AGENT_FIX_REPO_PERMS=${AGENT_FIX_REPO_PERMS:-auto}
       # Path to the MCP sidecar binary built into the image
       - MCP_SERVER_PATH=/app/mcp-server
       # Path to the board MCP binary; enables the create-task tools in chat sessions
       - MCP_BOARD_PATH=/app/mcp-board
-      # Optional: set API_TOKEN to require a Bearer token on all API requests
-      # - API_TOKEN=change-me
-      # Optional: use provider=anthropic in agent configs to call the API directly
-      # instead of the CLI (different billing — pay-per-token vs Claude Max)
-      # - LLM_API_KEY=sk-ant-...
-      # Local model via a separate container (OpenAI-compatible API, e.g. llama.cpp
-      # server). host.docker.internal reaches ports the model publishes on the host.
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8081/v1}
+      # Bearer token auth. Empty = no auth (the backend then logs a warning and
+      # the Health page shows an "API authentication" warning). ./run.sh
+      # generates API_TOKEN into .env on first run; otherwise set it in .env.
+      - API_TOKEN=${API_TOKEN:-}
+      - API_TOKENS=${API_TOKENS:-}
+      # Optional: enables POST /api/v1/github/webhook (HMAC-signed GitHub
+      # webhooks refresh PR state immediately; polling stays as fallback).
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
       # qwen_code provider config. Not the shared host ~/.qwen (whose baseUrl is
       # localhost:8081 — the backend itself, from in here). QWEN_HOME points qwen
       # at the mounted /etc/qwen/settings.json instead; QWEN_RUNTIME_DIR sends
@@ -121,7 +137,9 @@ services:
       - NOTIFY_WEBHOOK_URL=${NOTIFY_WEBHOOK_URL:-}
       - NOTIFY_BASE_URL=${NOTIFY_BASE_URL:-}
       # Optional: remote MCP endpoint for claude.ai custom connectors, signed in
-      # with Google. Off unless MCP_PUBLIC_URL is set. See docs/board-mcp.md#remote-connector.
+      # with Google. Off unless MCP_REMOTE_ENABLED=true (./dev.sh --with-remote-mcp);
+      # MCP_PUBLIC_URL etc. alone do nothing. See docs/board-mcp.md#remote-connector.
+      - MCP_REMOTE_ENABLED=${MCP_REMOTE_ENABLED:-false}
       - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
       - MCP_GOOGLE_CLIENT_ID=${MCP_GOOGLE_CLIENT_ID:-}
       - MCP_GOOGLE_CLIENT_SECRET=${MCP_GOOGLE_CLIENT_SECRET:-}
@@ -141,6 +159,12 @@ services:
       # then this mount shares that session with the container.
       - ${HOME}/.claude:/home/node/.claude
       - ${HOME}/.claude.json:/home/node/.claude.json
+      # The same two paths again under the agent user's HOME: provider CLIs run
+      # as a separate unprivileged 'agent' user (see AGENT_ISOLATION below), so
+      # ~/.claude and ~/.claude.json stay fully read-write for them. Without
+      # these lines the entrypoint falls back to symlinks into /home/node.
+      - ${HOME}/.claude:/home/agent/.claude
+      - ${HOME}/.claude.json:/home/agent/.claude.json
       # GitHub CLI auth — run 'gh auth login' on your host machine first,
       # then this mount shares that credential with the container.
       # The :ro flag makes it read-only (the container never writes new auth).
