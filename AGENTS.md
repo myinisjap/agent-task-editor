@@ -28,7 +28,7 @@ agent-task-editor/
 │   ├── runtime.md            # Per-repo agent toolchains via mise/uv
 │   ├── backup.md
 │   └── screenshots.md
-├── backend/                  # Go server (go.mod: 1.25; CI + Docker builder: 1.26.9)
+├── backend/                  # Go server (go.mod: 1.25; CI + Docker builder: 1.27.2)
 │   ├── cmd/server/           # Main entrypoint
 │   ├── cmd/mcp-server/       # MCP sidecar (signal_complete / request_human)
 │   ├── cmd/mcp-board/        # Standalone MCP server for creating board tickets from a chat client (see docs/board-mcp.md)
@@ -186,5 +186,5 @@ Rationale and history live in [`docs/adr/`](docs/adr/README.md); this file and t
 - Claim and release the lock only with the compare-and-swap / owner-scoped queries, never unconditionally. ([ADR 0003](docs/adr/0003-dispatch-lock-compare-and-swap.md))
 - The MCP sidecar returns results through the `RESULT_FILE` temp file, read by the runner after the subprocess exits (only `create_subtask` POSTs live). ([ADR 0004](docs/adr/0004-mcp-sidecar-result-file-handoff.md))
 - `REPO_BASE_DIR` and API auth are optional (startup warnings only). Keep new safety config permissive-by-default with a loud warning. ([ADR 0005](docs/adr/0005-repo-base-dir-and-auth-are-warn-only.md))
-- Agent `Bash` calls run inside the **backend** container. A compiler/runtime an agent needs must be in the *final* stage of `backend/Dockerfile` (baseline: Go 1.26, Node 26/npm, build-essential, `mise`/`uv`) or pinned per repo via the runtime feature (`docs/runtime.md`). `frontend/Dockerfile` is unrelated. To extend the baseline see `docs/getting-started.md#supported-languages--extending-the-toolchain`. ([ADR 0006](docs/adr/0006-agent-toolchain-and-runtime-pins.md))
+- Agent `Bash` calls run inside the **backend** container. A compiler/runtime an agent needs must be in the *final* stage of `backend/Dockerfile` (baseline: Go 1.27, Node 26/npm, build-essential, `mise`/`uv`) or pinned per repo via the runtime feature (`docs/runtime.md`). `frontend/Dockerfile` is unrelated. To extend the baseline see `docs/getting-started.md#supported-languages--extending-the-toolchain`. ([ADR 0006](docs/adr/0006-agent-toolchain-and-runtime-pins.md))
 - `frontend/src/lib/providerCapabilities.ts` is the single source of truth for per-provider capability gaps. After editing it, run `npm run gen:capability-docs` (from `frontend/`) to regenerate the table between the `<!-- BEGIN/END capability-matrix (generated) -->` markers in `docs/agents.md`. Don't hand-edit that table; CI re-runs the generator and fails on any diff. ([ADR 0007](docs/adr/0007-provider-capabilities-single-source-of-truth.md))

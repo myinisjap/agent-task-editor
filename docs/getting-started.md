@@ -353,7 +353,7 @@ Agent `Bash`/`run_bash` tool calls execute *inside the backend container*, again
 
 The backend image (`backend/Dockerfile`) ships with:
 
-- **Go 1.26** — the same toolchain version used to build this project's own `server`/`mcp-server` binaries, copied from the Dockerfile's `golang:1.26-bookworm` builder stage into the final image (rather than installed via `apt`) so the agent-visible `go version` always matches exactly. `GOPATH`/`GOCACHE`/`GOMODCACHE` are set to writable locations under `/home/node` for the non-root `node` user.
+- **Go 1.27** — the same toolchain version used to build this project's own `server`/`mcp-server` binaries, copied from the Dockerfile's `golang:1.27-bookworm` builder stage into the final image (rather than installed via `apt`) so the agent-visible `go version` always matches exactly. `GOPATH`/`GOCACHE`/`GOMODCACHE` are set to writable locations under `/home/node` for the non-root `node` user.
 - **Node.js 26 / npm** — inherited from the `node:26-bookworm-slim` base image. Covers Vite, React, TypeScript projects and their usual workflows out of the box: `npm ci`, `npm run build`, `npm test`, `npx vitest`, etc.
 - **`build-essential`** (gcc, g++, make, libc-dev) — needed for `cgo` builds (this repo's own backend depends on `mattn/go-sqlite3`, which is cgo) and for any npm packages with native addons that need `node-gyp` compilation.
 - **`git`, `bash`, `gh`** — for cloning, diffing, committing, and interacting with GitHub from inside agent runs.

@@ -198,7 +198,7 @@ Four providers are available (`anthropic` and `llm` were removed in v0.17.0 — 
 
 ## Supported Languages
 
-Agent shell commands run inside the **backend** Docker container, against your bind-mounted repos — so the languages agents can build/test are whatever's installed in `backend/Dockerfile`'s runtime image. Out of the box that's **Go 1.26** and **Node.js 26 / npm** (covering Vite/React/TypeScript projects), plus `git`, `gh`, `bash`, and `build-base` for cgo/native-module compilation. To add another language/compiler (Python, Rust, Java, Ruby, etc.), edit the final stage of `backend/Dockerfile` and rebuild — see [docs/getting-started.md](docs/getting-started.md#supported-languages--extending-the-toolchain) for step-by-step instructions and caveats.
+Agent shell commands run inside the **backend** Docker container, against your bind-mounted repos — so the languages agents can build/test are whatever's installed in `backend/Dockerfile`'s runtime image. Out of the box that's **Go 1.27** and **Node.js 26 / npm** (covering Vite/React/TypeScript projects), plus `git`, `gh`, `bash`, and `build-base` for cgo/native-module compilation. To add another language/compiler (Python, Rust, Java, Ruby, etc.), edit the final stage of `backend/Dockerfile` and rebuild — see [docs/getting-started.md](docs/getting-started.md#supported-languages--extending-the-toolchain) for step-by-step instructions and caveats.
 
 ---
 
