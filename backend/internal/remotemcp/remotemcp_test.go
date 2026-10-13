@@ -270,7 +270,7 @@ func TestFullFlow(t *testing.T) {
 		t.Errorf("notification: got %d", rec.Code)
 	}
 	rec = rpc(h, access, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
-	for _, name := range []string{"create_task", "list_tasks", "reply_to_run", "approve_task", "move_task"} {
+	for _, name := range []string{"create_task", "list_tasks", "reply_to_run", "approve_task", "move_task", "archive_task"} {
 		if !strings.Contains(rec.Body.String(), `"name":"`+name+`"`) {
 			t.Errorf("tools/list missing %s", name)
 		}

@@ -78,6 +78,26 @@ func TestTransitions(t *testing.T) {
 	}
 }
 
+func TestArchiveTask(t *testing.T) {
+	tools := Select(RemoteTools)
+	for _, tc := range []struct {
+		args, resp, want string
+		wantArchived     bool
+	}{
+		{`{"task_id":"t1"}`, `{"archived":true}`, "archived", true},
+		{`{"task_id":"t1","archived":false}`, `{"archived":false}`, "unarchived", false},
+	} {
+		c, calls := stubAPI(t, map[string]string{"PATCH /api/v1/tasks/t1/archive": tc.resp})
+		text, isErr := c.Call(tools, "archive_task", json.RawMessage(tc.args))
+		if isErr || !strings.HasSuffix(text, "is "+tc.want+".") {
+			t.Errorf("%s: got %q (err=%v)", tc.args, text, isErr)
+		}
+		if got := (*calls)[0].body["archived"]; got != tc.wantArchived {
+			t.Errorf("%s: body archived = %v", tc.args, got)
+		}
+	}
+}
+
 func TestListTasks_PassesFilters(t *testing.T) {
 	c, calls := stubAPI(t, map[string]string{"GET /api/v1/tasks": `[{"id":"t1","title":"x","label":"review","description":"long"}]`})
 	text, isErr := c.Call(Select(RemoteTools), "list_tasks", json.RawMessage(`{"label":"review","limit":999}`))
@@ -134,7 +154,7 @@ func TestReadTools(t *testing.T) {
 	if last := (*calls)[len(*calls)-1]; last.body["label"] != "not_ready" || last.body["workflow_id"] != nil {
 		t.Errorf("create_task body = %v", last.body)
 	}
-	for _, tool := range []string{"get_task", "list_runs", "get_run_logs", "get_diff", "reply_to_run", "approve_task", "move_task"} {
+	for _, tool := range []string{"get_task", "list_runs", "get_run_logs", "get_diff", "reply_to_run", "approve_task", "move_task", "archive_task"} {
 		if _, isErr := c.Call(tools, tool, nil); !isErr {
 			t.Errorf("%s accepted missing task_id", tool)
 		}
@@ -157,7 +177,7 @@ func TestDefsAndTruncate(t *testing.T) {
 }
 
 func TestReadOnlyRemoteToolsDoNotMutate(t *testing.T) {
-	mutating := map[string]bool{"create_task": true, "reply_to_run": true, "approve_task": true, "reject_task": true, "move_task": true}
+	mutating := map[string]bool{"create_task": true, "reply_to_run": true, "approve_task": true, "reject_task": true, "move_task": true, "archive_task": true}
 	for _, tl := range Select(ReadOnlyRemoteTools) {
 		if mutating[tl.Name] {
 			t.Errorf("read-only profile exposes mutating tool %q", tl.Name)

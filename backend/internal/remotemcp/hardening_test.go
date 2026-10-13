@@ -80,7 +80,7 @@ func TestToolProfiles(t *testing.T) {
 	list := func(h http.Handler, access string) string {
 		return rpc(h, access, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`).Body.String()
 	}
-	mutating := []string{"create_task", "reply_to_run", "approve_task", "reject_task", "move_task"}
+	mutating := []string{"create_task", "reply_to_run", "approve_task", "reject_task", "move_task", "archive_task"}
 
 	// Default is read-only.
 	h, _ := newHardeningServer(t, func(c *Config) { c.ToolProfile = "" })

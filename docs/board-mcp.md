@@ -147,7 +147,7 @@ admits the emails in `MCP_ALLOWED_EMAILS`.
 By default the remote endpoint is **read-only** (`MCP_TOOL_PROFILE=readonly`):
 it exposes `list_repos`, `list_workflows` and the five read tools below (`list_tasks` … `get_diff`).
 Set `MCP_TOOL_PROFILE=full` to also expose `create_task` and the write tools
-(`reply_to_run`, `approve_task`, `reject_task`, `move_task`).
+(`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`).
 
 The full profile has everything the stdio server has, plus (read tools first):
 
@@ -161,6 +161,7 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `reply_to_run` | Answer an agent waiting on a human (defaults to the task's active run) |
 | `approve_task` / `reject_task` | Follow the workflow's `success` / `failure` human transition, with a note |
 | `move_task` | Move a task to another label (must be an allowed transition) |
+| `archive_task` | Archive a task (or unarchive it with `archived: false`); works on any label and removes the task's worktree |
 
 Read-only tools are annotated `readOnlyHint: true`; the rest aren't, so clients
 that confirm writes (claude.ai does by default) ask before creating, moving,
@@ -241,7 +242,7 @@ deliberately not exposed.
   `get_run_logs`, `get_diff`) are exposed, because run logs, diffs and task
   bodies contain text an attacker can influence and could steer a model into
   calling write tools. `MCP_TOOL_PROFILE=full` also exposes `create_task`,
-  `reply_to_run`, `approve_task`, `reject_task` and `move_task`; if you enable
+  `reply_to_run`, `approve_task`, `reject_task`, `move_task` and `archive_task`; if you enable
   it, keep claude.ai's per-tool "ask before running" and avoid "always allow"
   on those tools. The consent page states which profile is active.
 - Tool calls reach the API in-process under a trusted-actor mark that only the
