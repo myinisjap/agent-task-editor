@@ -6,7 +6,7 @@
 # under debian:bookworm-slim: "exec: no such file or directory" (the ELF
 # interpreter path musl wrote into the binary doesn't exist on glibc). The
 # builder's libc must match the runtime's libc.
-FROM golang:1.26.9-bookworm AS builder
+FROM golang:1.27.2-bookworm AS builder
 # gcc + libc6-dev (needed for mattn/go-sqlite3's CGO) already ship in the
 # golang:*-bookworm image, unlike golang:*-alpine — no apk-style install step
 # needed here.
@@ -145,7 +145,7 @@ RUN if [ "$INSTALL_QWEN_CLI" = "true" ]; then npm install -g @qwen-code/qwen-cod
 ENV SHELL=/bin/sh
 
 # Bring in the same Go toolchain used to build this image's own server binary
-# (golang:1.26-bookworm builder stage above) so agents can build/test/vet Go
+# (golang:1.27-bookworm builder stage above) so agents can build/test/vet Go
 # repos they're assigned to work on. Copying from the builder stage (rather
 # than an apt install) guarantees the agent-visible Go version matches exactly
 # what compiled bin/server and bin/mcp-server.
