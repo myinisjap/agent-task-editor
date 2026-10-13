@@ -30,7 +30,10 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **GitHub PR state sync** — auto-sync task git state with GitHub PR state; once a PR is detected as merged, the task's local branch and worktree are automatically cleaned up
 - **GitHub Issues import** — per repo, opt-in: open issues (optionally filtered by a label) are periodically imported as tasks, and (opt-in, independently) status is written back to the source issue as the imported task progresses — a comment when its PR opens, an `agent-in-progress` label when it first leaves `not_ready`, and the issue closed with a comment when the PR merges — see [docs/task-sources.md](docs/task-sources.md)
 - **Recurring task schedules** — turn a task template into a cron job: fire a pre-filled task against a repo on a schedule (hourly/daily/weekly presets or raw cron), skipping a firing while a prior unfinished task from the same schedule is still open; can target `not_ready` (human review) or a live agent label for fully unattended maintenance loops, pairing with cost budgets as a safety net — see [docs/task-templates.md](docs/task-templates.md)
-- **Dashboard** — split into three focused pages: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
+- **Inbox** — one page (`/inbox`, with a sidebar count badge) listing everything waiting on you: agent questions and escalations (with the reason), approvals at human gates, PR conflicts, failed side effects and paused providers, each with a one-click action
+- **Pipeline** — a graph of the workflow showing who works each stage (agent, human gate, or a warning when a stage is unstaffed), with click-to-assign agents and a no-YAML graph editor (YAML stays available as the Advanced view); see [docs/workflows.md](docs/workflows.md)
+- **Repo verify command** — an independent check (`go test ./...`, `npm test`, …) run in the task's worktree before an agent's success is accepted, with a per-label override; see [docs/workflows.md#verify-commands](docs/workflows.md#verify-commands)
+- **Insights (formerly the Dashboard)** — split into three focused pages under a collapsed sidebar group: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Task priority** — low/normal/high/urgent priority per task; the dispatcher's pickup queue is ordered priority-first, then oldest-first, with an "N in queue" hint on cards waiting for a free worker
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **First-run onboarding checklist** — a dismissible setup checklist on the Board for unconfigured instances, sequencing add a repo → configure a provider → create an agent config → create your first task, checking each off live and surfacing failing readiness checks inline
@@ -54,7 +57,7 @@ See [docs/overview.md](docs/overview.md) for the full concepts and architecture 
 | ![Board](docs/img/board.png) | ![Task detail with live logs](docs/img/task-logs.png) |
 | **Diff viewer** — per-task diff with inline review comments | **Workflow editor** — visual + YAML, edit labels and transitions |
 | ![Diff viewer with inline comment](docs/img/diff-viewer.png) | ![Workflow editor](docs/img/workflow-editor.png) |
-| **Dashboard overview** — label counts, active agents, and the intervention queue | **Health** — provider and infrastructure readiness checks |
+| **Insights overview** — label counts, active agents, and the intervention queue | **Health** — provider and infrastructure readiness checks |
 | ![Dashboard](docs/img/dashboard.png) | ![Health page](docs/img/health.png) |
 
 ---
@@ -166,9 +169,9 @@ See [docs/getting-started.md](docs/getting-started.md) for the full setup guide,
 
 ## First Steps After Startup
 
-1. **Register a repository** — Settings → Repos → Add Repo. Enter the local filesystem path agents should work in.
+1. **Register a repository** — Repos → Add Repo. Enter the local filesystem path agents should work in.
 2. **Create a provider config** — Settings → Providers → New Provider Config. Select a provider, enter a model, and add any required env vars/API keys. Provider configs are reusable — the same one can back multiple agent configs and/or chat sessions.
-3. **Create an agent config** — Settings → Agents → New Agent. Select the provider config you just created, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
+3. **Create an agent config** — Pipeline → Agents → New Agent. Select the provider config you just created, set target labels (e.g. `["plan", "work"]`), and optionally write a system prompt.
 4. **Create a task** — Board → New Task. Select the repo and fill in the title and description.
 5. **Move it to `plan`** — drag it or use the label selector. The dispatcher picks it up within 5 seconds.
 6. **Watch the logs** — click the task to open the detail view; logs stream live as the agent works.
@@ -235,6 +238,8 @@ reach an unauthenticated instance by a custom hostname, add it to `ALLOWED_HOSTS
 | `MAX_WORKERS` | `5` | Maximum number of concurrent agent runs |
 | `MAX_DAILY_COST_USD` | `0` (unlimited) | Global cap on total recorded spend per UTC calendar day, across every task/provider; once reached, the dispatcher stops starting new runs system-wide until the next UTC day — see [docs/agents.md#global-cost-ceiling](docs/agents.md#global-cost-ceiling) |
 | `MAX_MONTHLY_COST_USD` | `0` (unlimited) | Same as above, per UTC calendar month |
+| `GITHUB_WEBHOOK_SECRET` | _(empty, disabled)_ | Enables `POST /api/v1/github/webhook` (HMAC-SHA256 signed) for instant PR-state refresh; polling remains the fallback — see [docs/task-sources.md](docs/task-sources.md#github-webhook-optional) |
+| `SHUTDOWN_DRAIN_TIMEOUT` | `60s` | On SIGTERM, how long in-flight runs may finish before the rest are cancelled and marked `interrupted` (not `failed`); `0` = no drain — see [docs/getting-started.md](docs/getting-started.md) |
 | `NOTIFY_WEBHOOK_URL` | _(empty, disabled)_ | Target URL for outbound "task needs a human" notifications — see [docs/websocket.md#outbound-webhook](docs/websocket.md#outbound-webhook) |
 
 See [docs/getting-started.md](docs/getting-started.md) for the full variable reference.

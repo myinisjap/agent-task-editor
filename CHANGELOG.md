@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Documentation
+- Docs: brought README, `AGENTS.md` and `docs/` in line with the review-driven work (first-run navigation paths, Inbox/Pipeline/verify command in the feature list, `GITHUB_WEBHOOK_SECRET` and `SHUTDOWN_DRAIN_TIMEOUT` in the README env table, side-effect retry, source-update apply/discard and GitHub webhook endpoints in `docs/api.md`, rate-limit persistence, removed-provider leftovers in `codex_cli.md`, new internal packages in the layout).
+
 ### Added
 - **Pipeline graph editor**: the Pipeline overview now has an **Edit workflow** mode for basic graph editing without YAML. Add, rename and delete labels (blocked while tasks are on them), drag or use a form to connect labels and pick each transition's type (agent success / failure / human), delete transitions, set a human approval gate, mark a label terminal / open-PR, set a WIP limit and choose its verify mode. Edits are staged with an unsaved indicator and Save / Discard, validated client-side, saved via the existing workflow YAML endpoint, and a change made on the server in the meantime is surfaced as a conflict instead of overwritten. The YAML tab remains as the Advanced view. See `docs/workflows.md#editing-the-workflow-graph`.
 - **Pipeline overview**: `/pipeline` now opens on a read-only graph of the workflow (labels as nodes, transitions as edges) showing who works each stage (agent name and provider, "Human gate", or a "No agent assigned" warning chip), plus verify-mode, terminal and open-PR markers. Click a stage to assign or unassign agent configs, which edits their `labels`. A workflow selector appears when several workflows exist. Board column headers show the same "No agent assigned" chip for unstaffed agent-triggerable labels. The workflow graph now follows the light/dark theme.
