@@ -429,3 +429,26 @@ func TestUnknownToolIsRPCError(t *testing.T) {
 		t.Errorf("got %s", rec.Body)
 	}
 }
+
+// Unmatched paths under the prefixes the public proxy route forwards must not
+// fall through to the main API handler.
+func TestWrap_UnmatchedPublicPrefixesDoNotReachAPI(t *testing.T) {
+	g := fakeGoogle(t, new(string))
+	t.Cleanup(g.Close)
+	s, err := New(testConfig(t, g.URL), fakeAPI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached := false
+	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true }))
+	for _, p := range []string{"/oauth/other", "/.well-known/oauth-extra", "/mcp/x"} {
+		rec := do(h, http.MethodGet, p, "", "")
+		if rec.Code != http.StatusNotFound || reached {
+			t.Errorf("%s: code %d reached=%v", p, rec.Code, reached)
+		}
+	}
+	do(h, http.MethodGet, "/api/v1/tasks", "", "")
+	if !reached {
+		t.Error("normal paths must still reach the wrapped handler")
+	}
+}

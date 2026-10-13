@@ -229,6 +229,13 @@ func (s *Server) Wrap(next http.Handler) http.Handler {
 			own.ServeHTTP(w, r)
 			return
 		}
+		// The public auth-free proxy route forwards path prefixes (e.g.
+		// /oauth/*, /.well-known/oauth-*), so an unmatched path under one of
+		// them must 404 here instead of falling through to the main API.
+		if p := r.URL.Path; strings.HasPrefix(p, "/oauth/") || strings.HasPrefix(p, "/.well-known/oauth-") || strings.HasPrefix(p, "/mcp") {
+			http.NotFound(w, r)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
