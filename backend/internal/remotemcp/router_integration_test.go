@@ -82,3 +82,63 @@ func TestToolsAgainstRealRouter(t *testing.T) {
 		t.Errorf("approve_task on missing task: %s", out)
 	}
 }
+
+// TestToolsAgainstUnauthenticatedRouter is TestToolsAgainstRealRouter without
+// an API_TOKEN. That turns on the API's DNS-rebinding Host check, which
+// rejects an empty Host — so a path-only in-process request URL fails every
+// tool call with a 403 ("Host is not allowed while the API is
+// unauthenticated"). Regression test for that: tool calls must work whether or
+// not the deployment sets a token.
+func TestToolsAgainstUnauthenticatedRouter(t *testing.T) {
+	f, err := os.CreateTemp("", "remotemcp-noauth-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+	db, err := storage.Open(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := storage.SeedDefaultWorkflow(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	hub := ws.NewHub()
+	// No BearerToken: the Host policy is enforced in this mode.
+	router := api.NewRouter(api.RouterDeps{
+		DB: db, Engine: workflow.New(db.SQL(), hub), Hub: hub,
+		UploadDir: t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
+		Version: "dev", MaxWorkers: 5,
+	})
+
+	email := allowedEmail
+	g := fakeGoogle(t, &email)
+	t.Cleanup(g.Close)
+	s, err := New(func() Config {
+		c := testConfig(t, g.URL)
+		c.PublicURL = "https://board.example.com/tasks"
+		c.DB = db.SQL()
+		return c
+	}(), router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.Wrap(router)
+
+	clientID, _ := register(t, h, "https://claude.ai/api/mcp/auth_callback")
+	back := authorize(t, h, clientID, pkce("v"))
+	tok, status := token(h, url.Values{"grant_type": {"authorization_code"}, "client_id": {clientID}, "code": {back.Query().Get("code")}, "code_verifier": {"v"}})
+	if status != http.StatusOK {
+		t.Fatalf("token: %d %v", status, tok)
+	}
+	access := tok["access_token"].(string)
+
+	out := rpc(h, access, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_workflows","arguments":{}}}`).Body.String()
+	if strings.Contains(out, "DNS-rebinding") {
+		t.Fatalf("in-process call blocked by Host check: %s", out)
+	}
+	if !strings.Contains(out, "Default") || !strings.Contains(out, `"isError":false`) {
+		t.Errorf("list_workflows: %s", out)
+	}
+}

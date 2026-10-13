@@ -374,7 +374,12 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) (rpcResponse, boo
 			resp.Error = &rpcError{Code: -32602, Message: "unknown tool: " + p.Name}
 			break
 		}
-		c := &boardtools.Client{HTTP: inProcess{h: s.api, ctx: ctx}}
+		// BaseURL gives the in-process request a Host the API's DNS-rebinding
+		// guard accepts: with no API_TOKEN set the guard enforces a Host
+		// allowlist, and a path-only URL leaves Host empty, which it always
+		// rejects. "localhost" is in the guard's built-in allowlist, so this
+		// needs no ALLOWED_HOSTS config. The request never leaves the process.
+		c := &boardtools.Client{BaseURL: "http://localhost", HTTP: inProcess{h: s.api, ctx: ctx}}
 		text, isErr := c.Call(s.tools, p.Name, p.Arguments)
 		resp.Result = map[string]any{
 			"content": []map[string]any{{"type": "text", "text": text}},
