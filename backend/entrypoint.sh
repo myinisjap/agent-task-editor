@@ -144,8 +144,14 @@ else
   chmod g+x /home/node 2>/dev/null || true               # traverse to the shared caches
   # Shared toolchain caches, qwen home and the Claude auth dir/file must be
   # usable by the agent. (Host-owned; this adds the group-write bit.)
-  group_rw auto /home/node/go /home/node/.cache /home/node/.local /home/node/qwen-home \
-      /home/node/.claude /home/node/.claude.json
+  group_rw auto /home/node/go /home/node/.cache /home/node/.local /home/node/qwen-home
+  # The Claude auth dir is checked file by file: the host's Claude Code and
+  # dev.sh/run.sh's keychain sync rewrite files in it owner-only (0600) while
+  # ~/.claude itself stays group-writable, so the top-level check above would
+  # skip them and the agent's claude fails reading ~/.claude/settings.json.
+  for p in /home/node/.claude /home/node/.claude.json; do
+    [ -e "$p" ] && find "$p" \( -type f -o -type d \) ! -perm -060 -exec chmod g+rwX {} + 2>/dev/null || true
+  done
   chmod g+rwx /home/node/qwen-home 2>/dev/null || true
   # Bind-mounted repos are owned by the host user (PUID); give the group write
   # access so agent-created commits/edits work. AGENT_FIX_REPO_PERMS=never skips

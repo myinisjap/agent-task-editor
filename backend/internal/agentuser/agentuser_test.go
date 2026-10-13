@@ -1,7 +1,9 @@
 package agentuser
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -118,5 +120,54 @@ func TestParseProbe(t *testing.T) {
 	}
 	if err := ParseProbe("10001\nName: x\n", 10001); err == nil {
 		t.Fatal("missing sets should fail")
+	}
+}
+
+func TestShareGroupRW(t *testing.T) {
+	home := t.TempDir()
+	mk := func(rel string, mode os.FileMode, dir bool) string {
+		p := filepath.Join(home, rel)
+		if dir {
+			if err := os.Mkdir(p, mode); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(p, []byte("{}"), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil { // bypass umask
+			t.Fatal(err)
+		}
+		return p
+	}
+	dir := mk(".claude", 0o700, true)
+	settings := mk(".claude/settings.json", 0o600, false)
+	creds := mk(".claude/.credentials.json", 0o640, false)
+	global := mk(".claude.json", 0o664, false)
+	if err := os.Symlink(settings, filepath.Join(home, ".claude", "settings.local.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	shareGroupRW(home, claudeConfigPaths)
+
+	for p, want := range map[string]os.FileMode{dir: 0o770, settings: 0o660, creds: 0o660, global: 0o664} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != want {
+			t.Errorf("%s: mode %o, want %o", p, got, want)
+		}
+	}
+}
+
+func TestShareClaudeConfigDisabledIsNoop(t *testing.T) {
+	home := t.TempDir()
+	p := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(p, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ShareClaudeConfig(home) // Current() is disabled in tests
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode changed to %o", fi.Mode().Perm())
 	}
 }

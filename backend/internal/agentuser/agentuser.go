@@ -304,6 +304,58 @@ func ShareFile(path string) error {
 	return os.Chmod(path, 0o640)
 }
 
+// claudeConfigPaths are the host-mounted Claude CLI files the agent user's
+// claude reads at startup (relative to the shared home). The same host
+// ~/.claude and ~/.claude.json are mounted at both /home/node and /home/agent.
+var claudeConfigPaths = []string{
+	".claude",
+	".claude/settings.json",
+	".claude/settings.local.json",
+	".claude/.credentials.json",
+	".claude.json",
+}
+
+// ShareClaudeConfig re-grants the agent user (via the shared group) read/write
+// on the Claude CLI's config files under home (the server's HOME, which holds
+// the same host-mounted files as the agent's). The entrypoint does this once at
+// start, but the host's own Claude Code, or dev.sh/run.sh's keychain sync,
+// rewrite these files owner-only (0600) while the container runs; the agent's
+// claude then fails with "Settings file could not be read: EACCES". Called
+// before each claude spawn. Best effort and a no-op when isolation is off.
+func ShareClaudeConfig(home string) {
+	if !Enabled() || home == "" {
+		return
+	}
+	shareGroupRW(home, claudeConfigPaths)
+}
+
+// shareGroupRW adds group read/write (and search, for directories) to each
+// existing rel path under home that lacks it. Symlinks are skipped (the bind
+// mounts are real files) and errors, e.g. a file the agent itself created and
+// so the server does not own, are logged and ignored.
+func shareGroupRW(home string, rels []string) {
+	for _, rel := range rels {
+		p := home + "/" + rel
+		fi, err := os.Lstat(p)
+		if err != nil || fi.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		mode := fi.Mode().Perm()
+		want := mode | 0o060
+		if fi.IsDir() {
+			want |= 0o010
+		} else if !fi.Mode().IsRegular() {
+			continue
+		}
+		if want == mode {
+			continue
+		}
+		if err := os.Chmod(p, want); err != nil {
+			slog.Debug("could not share claude config with the agent user", "path", p, "err", err)
+		}
+	}
+}
+
 // Init resolves the configuration, verifies it with a live probe and logs the
 // outcome. It never fails: on any problem agents keep running as the server
 // user, with a warning.
