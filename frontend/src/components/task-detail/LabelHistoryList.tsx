@@ -45,6 +45,8 @@ function NotePanel({ note }: { note: string }) {
   )
 }
 
+// Human-triggered entries show the named API token's actor, or "you" when no
+// named tokens (API_TOKENS) are configured and the actor is empty.
 export default function LabelHistoryList({ history }: { history: TaskLabelHistoryEntry[] }) {
   if (history.length === 0) return null
 
@@ -71,7 +73,7 @@ export default function LabelHistoryList({ history }: { history: TaskLabelHistor
             <div className="text-slate-500 text-[11px] mt-0.5 flex items-center gap-1">
               <span>{formatTimestamp(entry.created_at)}</span>
               {entry.trigger === 'human' && (
-                <span>· by {entry.actor_id ? entry.actor_id : 'unknown'}</span>
+                <span>· by {entry.actor_id ? entry.actor_id : 'you'}</span>
               )}
               {entry.trigger !== 'human' && entry.actor_id && (
                 <span className="font-mono">· {entry.actor_id.slice(0, 8)}</span>

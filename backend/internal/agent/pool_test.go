@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -37,11 +40,11 @@ type testPub struct {
 	payloads []map[string]any
 }
 
-func (p *testPub) Publish(eventType string, payload map[string]any) {
+func (p *testPub) Publish(eventType string, payload any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
-	p.payloads = append(p.payloads, payload)
+	p.payloads = append(p.payloads, wsevent.ToMap(payload))
 }
 
 func (p *testPub) hasEvent(name string) bool {
@@ -202,6 +205,21 @@ func waitForStatus(t *testing.T, q *gen.Queries, runID, want string) {
 	}
 	run, _ := q.GetAgentRun(context.Background(), runID)
 	t.Errorf("timed out waiting for run %s to reach status %q; current: %q", runID, want, run.Status)
+}
+
+// waitForActiveRunCleared polls until the task's dispatch lock
+// (active_agent_run_id) is released or times out.
+func waitForActiveRunCleared(t *testing.T, q *gen.Queries, taskID string) {
+	t.Helper()
+	deadline := time.Now().Add(pollDeadline)
+	for time.Now().Before(deadline) {
+		task, err := q.GetTask(context.Background(), taskID)
+		if err == nil && task.ActiveAgentRunID == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("timed out waiting for task %s active_agent_run_id to clear", taskID)
 }
 
 // waitForLabel polls until the task has the expected label or times out.
@@ -822,6 +840,9 @@ func TestPool_CancelForResourceConstraint_LeavesTaskUnpausedWithReasonNote(t *te
 	}
 
 	waitForStatus(t, q, runID, "cancelled")
+	// The run row flips to "cancelled" before the pool releases the dispatch
+	// lock, so wait for the lock itself rather than racing that cleanup.
+	waitForActiveRunCleared(t, q, taskID)
 
 	task, err := q.GetTask(context.Background(), taskID)
 	if err != nil {
@@ -1504,7 +1525,7 @@ func TestPool_Success_ResetsRetryCount(t *testing.T) {
 		t.Fatalf("seed retry count: %v", err)
 	}
 
-	provider := &mockProvider{result: agent.Result{Status: "completed"}}
+	provider := &mockProvider{result: agent.Result{Status: "completed", Outcome: "success"}}
 
 	_, stop := startPool(t, pool)
 
@@ -1549,12 +1570,12 @@ func TestListAgentPickupTasks_ExcludesFutureNextRetryAt(t *testing.T) {
 	//
 	// Store the timestamp in a negative-offset zone (America/Chicago) rather
 	// than the runner's local zone. This is the adversarial case that regressed:
-	// the sqlite3 driver serializes time.Time in its zone (e.g.
+	// the stock sqlite3 driver serialized time.Time in its zone (e.g.
 	// "2026-07-13T20:00:00-05:00"), while CURRENT_TIMESTAMP is space-separated
-	// UTC ("2026-07-14 01:00:00"). A future-in-UTC instant stored this way has a
-	// wall-clock string that sorts lexically BEFORE the UTC "now" string, so the
-	// old raw-string comparison wrongly treated it as already-due. Pinning the
-	// zone here makes the test fail if the datetime() normalization is reverted,
+	// UTC ("2026-07-14 01:00:00"), so a future instant could sort lexically
+	// BEFORE the UTC "now" string. storage now converts every bound time.Time to
+	// canonical UTC. Pinning the zone here makes the test fail if that
+	// normalization is reverted,
 	// regardless of the CI runner's own timezone (which would otherwise mask it).
 	chicago, err := time.LoadLocation("America/Chicago")
 	if err != nil {
@@ -1840,5 +1861,62 @@ func TestPool_PersistLogs_PublishedEntryIDMatchesPersistedRow(t *testing.T) {
 	}
 	if publishedID != persistedID {
 		t.Errorf("published entry id %q does not match persisted row id %q", publishedID, persistedID)
+	}
+}
+
+// humanMovingProvider simulates a human MoveLabel landing after the run is
+// done: it moves the task (and clears the lock, as UpdateTaskLabel does)
+// before returning its completed result.
+type humanMovingProvider struct {
+	db     *sql.DB
+	taskID string
+	to     string
+	result agent.Result
+}
+
+func (p *humanMovingProvider) Run(ctx context.Context, _ agent.RunInput, _ chan<- agent.LogEntry) (agent.Result, error) {
+	_, err := p.db.ExecContext(ctx, `UPDATE tasks SET label = ?, active_agent_run_id = NULL WHERE id = ?`, p.to, p.taskID)
+	return p.result, err
+}
+
+// TestPool_HumanMoveBeforeOutcome_OutcomeNotApplied: a human moves the task to
+// a label that also has a matching agent edge; the agent's outcome (resolved
+// against the dispatch label) must not be applied on top of it.
+func TestPool_HumanMoveBeforeOutcome_OutcomeNotApplied(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+	ctx := context.Background()
+
+	wfs, _ := q.ListWorkflows(ctx)
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+	// plan --success--> review-plan is the dispatch-label edge; add the same
+	// target from "work" so the stale outcome would be valid there.
+	if _, err := q.CreateWorkflowTransition(ctx, gen.CreateWorkflowTransitionParams{
+		ID: uuid.NewString(), WorkflowID: wfs[0].ID, FromLabel: "work", ToLabel: "review-plan", TriggerType: "agent",
+	}); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{ID: taskID, CurrentAgentRunID: &runID, ActiveAgentRunID: &runID}); err != nil {
+		t.Fatalf("set active run: %v", err)
+	}
+
+	provider := &humanMovingProvider{db: db.SQL(), taskID: taskID, to: "work",
+		result: agent.Result{Status: "completed", Outcome: "success"}}
+	_, stop := startPool(t, pool)
+	pool.Submit(buildJob(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider))
+	waitForStatus(t, q, runID, "completed")
+	waitForActiveRunCleared(t, q, taskID)
+	time.Sleep(200 * time.Millisecond) // give a (wrong) transition time to land
+	stop()
+
+	task, _ := q.GetTask(ctx, taskID)
+	if task.Label != "work" {
+		t.Errorf("task must stay on the human's label 'work', got %q", task.Label)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Errorf("expected lock cleared, got %q", *task.ActiveAgentRunID)
 	}
 }

@@ -15,10 +15,13 @@ import (
 
 // noopPublisher satisfies the Publisher interface without doing anything.
 type noopPublisher struct {
+	mu     sync.Mutex // Publish is called from the side-effect goroutine and the test goroutine
 	events []string
 }
 
-func (p *noopPublisher) Publish(eventType string, _ map[string]any) {
+func (p *noopPublisher) Publish(eventType string, _ any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.events = append(p.events, eventType)
 }
 
@@ -422,8 +425,9 @@ func TestTransition_OnLeaveNotReady_FiresOnceWhenLeavingNotReady(t *testing.T) {
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	var calls []string
-	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) {
+	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) error {
 		calls = append(calls, task.ID)
+		return nil
 	}
 
 	task := createTestTask(t, db, "not_ready", wfID)
@@ -431,6 +435,12 @@ func TestTransition_OnLeaveNotReady_FiresOnceWhenLeavingNotReady(t *testing.T) {
 	if err := engine.Transition(context.Background(), task.ID, "plan", workflow.TriggerHuman, "human-1", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
 	}
+
+	// The hook runs from the outbox worker, not inline in Transition.
+	if len(calls) != 0 {
+		t.Fatalf("hook ran inline: %v", calls)
+	}
+	engine.DrainSideEffects(context.Background())
 
 	if len(calls) != 1 || calls[0] != task.ID {
 		t.Fatalf("expected OnLeaveNotReady to fire once for task %s, got %v", task.ID, calls)
@@ -443,8 +453,9 @@ func TestTransition_OnLeaveNotReady_DoesNotFireOnOtherTransitions(t *testing.T) 
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	var calls []string
-	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) {
+	engine.OnLeaveNotReady = func(_ context.Context, task gen.Task) error {
 		calls = append(calls, task.ID)
+		return nil
 	}
 
 	// review -> work is a feedback-loop transition unrelated to not_ready.
@@ -452,6 +463,12 @@ func TestTransition_OnLeaveNotReady_DoesNotFireOnOtherTransitions(t *testing.T) 
 	if err := engine.Transition(context.Background(), task.ID, "work", workflow.TriggerHuman, "reviewer-1", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
 	}
+
+	// The hook runs from the outbox worker, not inline in Transition.
+	if len(calls) != 0 {
+		t.Fatalf("hook ran inline: %v", calls)
+	}
+	engine.DrainSideEffects(context.Background())
 
 	if len(calls) != 0 {
 		t.Fatalf("expected OnLeaveNotReady not to fire for review->work, got %v", calls)
@@ -488,14 +505,21 @@ func TestTransition_OnCreatePR_FiresWhenEnteringCreatePRLabel(t *testing.T) {
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	var calls []string
-	engine.OnCreatePR = func(_ context.Context, task gen.Task) {
+	engine.OnCreatePR = func(_ context.Context, task gen.Task) error {
 		calls = append(calls, task.Label) // label should already be the destination
+		return nil
 	}
 
 	task := createTestTask(t, db, "agent-review", wfID)
 	if err := engine.Transition(context.Background(), task.ID, "review", workflow.TriggerAgent, "", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
 	}
+
+	// The hook runs from the outbox worker, not inline in Transition.
+	if len(calls) != 0 {
+		t.Fatalf("hook ran inline: %v", calls)
+	}
+	engine.DrainSideEffects(context.Background())
 
 	if len(calls) != 1 || calls[0] != "review" {
 		t.Fatalf("expected OnCreatePR to fire once with label review, got %v", calls)
@@ -509,14 +533,21 @@ func TestTransition_OnCreatePR_DoesNotFireForNonCreatePRLabel(t *testing.T) {
 	engine := workflow.New(db.SQL(), &noopPublisher{})
 
 	var calls []string
-	engine.OnCreatePR = func(_ context.Context, task gen.Task) {
+	engine.OnCreatePR = func(_ context.Context, task gen.Task) error {
 		calls = append(calls, task.ID)
+		return nil
 	}
 
 	task := createTestTask(t, db, "work", wfID)
 	if err := engine.Transition(context.Background(), task.ID, "testing", workflow.TriggerAgent, "", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
 	}
+
+	// The hook runs from the outbox worker, not inline in Transition.
+	if len(calls) != 0 {
+		t.Fatalf("hook ran inline: %v", calls)
+	}
+	engine.DrainSideEffects(context.Background())
 
 	if len(calls) != 0 {
 		t.Fatalf("expected OnCreatePR not to fire, got %v", calls)
@@ -533,5 +564,132 @@ func TestTransition_OnCreatePR_NilCallbackIsSafe(t *testing.T) {
 	task := createTestTask(t, db, "agent-review", wfID)
 	if err := engine.Transition(context.Background(), task.ID, "review", workflow.TriggerAgent, "", ""); err != nil {
 		t.Fatalf("transition failed: %v", err)
+	}
+}
+
+// TestTransitionExpecting_RefusesWhenTaskMoved verifies an agent-style
+// transition that carries the dispatch-time label is rejected with ErrStale,
+// and leaves the human's label untouched, even when an edge to the target
+// exists from the label the task is on now. A matching expected label works.
+func TestTransitionExpecting_RefusesWhenTaskMoved(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	// Extra edge so "review-plan" -> "testing" would be valid for an agent.
+	if _, err := q.CreateWorkflowTransition(ctx, gen.CreateWorkflowTransitionParams{
+		ID: uuid.NewString(), WorkflowID: wfID, FromLabel: "review-plan", ToLabel: "testing", TriggerType: "agent",
+	}); err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+
+	task := createTestTask(t, db, "review-plan", wfID) // a human already moved it here
+	err := engine.TransitionExpecting(ctx, task.ID, "testing", workflow.TriggerAgent, "run", "", "work")
+	if !errors.Is(err, workflow.ErrStale) {
+		t.Fatalf("expected ErrStale, got %v", err)
+	}
+	got, _ := q.GetTask(ctx, task.ID)
+	if got.Label != "review-plan" {
+		t.Fatalf("task must stay on the human's label, got %q", got.Label)
+	}
+
+	// Matching expected label still transitions.
+	if err := engine.TransitionExpecting(ctx, task.ID, "testing", workflow.TriggerAgent, "run", "", "review-plan"); err != nil {
+		t.Fatalf("expected success with matching expected label, got %v", err)
+	}
+	got, _ = q.GetTask(ctx, task.ID)
+	if got.Label != "testing" {
+		t.Fatalf("expected testing, got %q", got.Label)
+	}
+}
+
+func TestForceTransition_BypassesTableAndRecordsHistory(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	task := createTestTask(t, db, "work", wfID)
+	q := gen.New(db.SQL())
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: runID, TaskID: task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: task.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pub := &noopPublisher{}
+	eng := workflow.New(db.SQL(), pub)
+	ctx := context.Background()
+
+	if err := eng.Transition(ctx, task.ID, "not_ready", workflow.TriggerHuman, "alice", ""); !errors.Is(err, workflow.ErrNoTransition) {
+		t.Fatalf("precondition: expected ErrNoTransition, got %v", err)
+	}
+	if err := eng.ForceTransition(ctx, task.ID, "not_ready", "alice", "stuck"); err != nil {
+		t.Fatalf("ForceTransition: %v", err)
+	}
+	got, _ := q.GetTask(ctx, task.ID)
+	if got.Label != "not_ready" {
+		t.Errorf("label = %q", got.Label)
+	}
+	if got.ActiveAgentRunID != nil {
+		t.Errorf("active_agent_run_id should be cleared")
+	}
+	hist, _ := q.ListTaskLabelHistory(ctx, task.ID)
+	if len(hist) != 1 || hist[0].Trigger != "human" || hist[0].ActorID == nil || *hist[0].ActorID != "alice" ||
+		hist[0].Note == nil || *hist[0].Note != "Forced move: stuck" {
+		t.Errorf("unexpected history %+v", hist)
+	}
+	found := false
+	for _, e := range pub.events {
+		if e == "task.label_changed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected task.label_changed event, got %v", pub.events)
+	}
+}
+
+func TestForceTransition_NoNoteUsesBareMarker(t *testing.T) {
+	db := setupTestDB(t)
+	task := createTestTask(t, db, "work", defaultWorkflowID(t, db))
+	eng := workflow.New(db.SQL(), &noopPublisher{})
+	if err := eng.ForceTransition(context.Background(), task.ID, "not_ready", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	hist, _ := gen.New(db.SQL()).ListTaskLabelHistory(context.Background(), task.ID)
+	if len(hist) != 1 || hist[0].Note == nil || *hist[0].Note != workflow.ForcedNotePrefix || hist[0].ActorID != nil {
+		t.Errorf("unexpected history %+v", hist)
+	}
+}
+
+func TestForceTransition_UnknownLabel(t *testing.T) {
+	db := setupTestDB(t)
+	task := createTestTask(t, db, "work", defaultWorkflowID(t, db))
+	eng := workflow.New(db.SQL(), &noopPublisher{})
+	err := eng.ForceTransition(context.Background(), task.ID, "bogus", "alice", "")
+	if !errors.Is(err, workflow.ErrUnknownLabel) {
+		t.Fatalf("expected ErrUnknownLabel, got %v", err)
+	}
+	got, _ := gen.New(db.SQL()).GetTask(context.Background(), task.ID)
+	if got.Label != "work" {
+		t.Errorf("label changed to %q", got.Label)
+	}
+}
+
+func TestForceTransition_FiresOnTerminal(t *testing.T) {
+	db := setupTestDB(t)
+	task := createTestTask(t, db, "work", defaultWorkflowID(t, db))
+	eng := workflow.New(db.SQL(), &noopPublisher{})
+	called := ""
+	eng.OnTerminal = func(_ context.Context, tk gen.Task) error { called = tk.Label; return nil }
+	if err := eng.ForceTransition(context.Background(), task.ID, "done", "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	eng.DrainSideEffects(context.Background())
+	if called != "done" {
+		t.Errorf("OnTerminal not fired for done, got %q", called)
 	}
 }

@@ -16,6 +16,7 @@ import TaskCard from './TaskCard'
 import type { Task } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { useReposStore } from '../../stores/repos'
+import { useNeedsMeStore } from '../../stores/needsMe'
 
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client')
@@ -153,6 +154,28 @@ describe('TaskCard running indicator (#249)', () => {
     )
 
     expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
+  })
+})
+
+describe('TaskCard needs-you badge', () => {
+  it('shows "Needs you" for a waiting_human active run when not running', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ active_agent_run_id: 'r1', active_run_status: 'waiting_human' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Needs you')).toBeInTheDocument()
+    expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
+  })
+
+  it('does not show "Needs you" for a running run or no active run', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ active_agent_run_id: 'r1', active_run_status: 'running' })} isRunning />
+        <TaskCard task={baseTask({ id: 'other' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('Needs you')).not.toBeInTheDocument()
   })
 })
 
@@ -409,5 +432,26 @@ describe('TaskCard action buttons keyboard reachability (#350)', () => {
 
     fireEvent.mouseLeave(card)
     expect(deleteButton).toHaveAttribute('tabindex', '-1')
+  })
+})
+
+describe('TaskCard escalation badge', () => {
+  it('names the escalation reason from the needs-me item', () => {
+    useNeedsMeStore.setState({
+      byTask: {
+        'task-esc': {
+          task_id: 'task-esc', task_title: 't', repo_id: 'r', workflow_id: 'w', label: 'work',
+          reason: 'waiting_human', escalation_reason: 'cost_budget', since: '2026-01-01T00:00:00Z',
+        },
+      },
+    })
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ id: 'task-esc' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Budget reached')).toBeInTheDocument()
+    expect(screen.getByTitle('Cost budget reached')).toBeInTheDocument()
+    useNeedsMeStore.setState({ byTask: {} })
   })
 })

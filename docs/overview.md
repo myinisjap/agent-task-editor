@@ -80,11 +80,9 @@ Browser ──── REST + WebSocket ──── Backend (Go)
                           SQLite DB        Agent Provider
                                           ┌──────────────────┐
                                           │ ClaudeRunner      │ (claude CLI + MCP)
-                                          │ AnthropicRunner   │ (Messages API)
                                           │ OpencodeRunner    │ (opencode CLI)
                                           │ QwenRunner        │ (qwen CLI + MCP)
                                           │ CodexRunner       │ (codex CLI + MCP)
-                                          │ LLMRunner         │ (OpenAI-compat)
                                           └──────────────────┘
 ```
 
@@ -124,9 +122,11 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
   first leaves `not_ready`, and the issue closed with a comment when the PR
   merges — see [task-sources.md](task-sources.md)
 - **Task templates & recurring schedules** — reusable pre-filled title/description/type snippets for recurring shapes of work; a schedule fires a template as a new task on a repo on a cron expression (hourly/daily/weekly presets or raw cron), skipping a firing while an open task from a prior firing of the same schedule still exists — see [task-templates.md](task-templates.md)
-- **Dashboard** — split across three pages: an Overview (label counts, active agents, and the human intervention queue) at `/`, a Cost & Usage page at `/dashboard/usage` (Claude rate-limit usage, plus cost/token tracking by provider, day, and task), and an Agent Performance page at `/dashboard/performance` (per-agent-config success rate, duration, retries)
-- **Provider health page** — readiness checks for the Claude/Qwen/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
-- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions (approve/reject/move label) record *who* performed them in the `task_label_history` audit trail (`GET /tasks/{id}/label-history`); WebSocket auth via `?token=` query param
+- **Inbox** — `/inbox` lists everything waiting on you in one place (agent questions and escalations, approvals at human gates, PR conflicts, failed side effects with Retry, paused providers with Resume); the sidebar badge shows the total.
+- **Dashboard** — split across three pages: an Overview (label counts, active agents, and the "Needs your input" queue, driven by `GET /needs-me`: agent questions, human review gates and PR conflicts, each labelled with its reason) at `/dashboard` (`/` redirects to the Board until first-run setup is complete); board cards show a "Needs you" badge for the same set, a Cost & Usage page at `/dashboard/usage` (Claude rate-limit usage, plus cost/token tracking by provider, day, and task), and an Agent Performance page at `/dashboard/performance` (per-agent-config success rate, duration, retries)
+- **Navigation** — the sidebar shows Inbox, Board, Chat, Pipeline (Workflow + Agents tabs), Repos and Settings (Providers, Pricing, Intake Rules, Templates, Health tabs, e.g. `/settings/pricing`); Overview, Cost & Usage and Performance live under a collapsed Insights group. Pre-existing URLs such as `/workflow` or `/health` redirect to the new tab locations.
+- **Provider health page** (Settings → Health) — readiness checks for the Claude/Qwen/Codex CLIs, MCP sidecar, GitHub auth, and repo base directory
+- **Bearer token auth** — optional `API_TOKEN`, or multiple named tokens via `API_TOKENS` so human-triggered transitions (approve/reject/move label) record *who* performed them in the `task_label_history` audit trail (`GET /tasks/{id}/label-history`); WebSocket auth via short-lived single-use tickets (`POST /ws-ticket`)
 - **Docker Compose deployment** — single `docker compose up` to run everything
 
 ## Screenshots

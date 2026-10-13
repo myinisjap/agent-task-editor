@@ -1,0 +1,28 @@
+# OPT-IN override: publicly routes the remote MCP / OAuth endpoints for
+# claude.ai custom connectors (docs/board-mcp.md#remote-connector).
+#
+# Off by default. Use it only together with docker-compose.traefik.yml and
+# MCP_REMOTE_ENABLED=true (plus the other MCP_* settings) in .env:
+#   docker compose -f docker-compose.yml -f docker-compose.traefik.yml \
+#     -f docker-compose.mcp-remote.yml up -d
+# ./run.sh / ./dev.sh --with-remote-mcp does both of these for you.
+#
+# claude.ai calls these paths from its own servers, so they can't sit behind
+# Traefik forward-auth; the backend guards them with its own Google-backed
+# OAuth. This router goes straight to the backend (not the frontend's nginx,
+# which serves the rest of the app) so the auth-free router can only ever
+# reach the MCP/OAuth routes. /tasks is stripped because the backend serves
+# them at /mcp and /oauth/*.
+services:
+  backend:
+    environment:
+      - MCP_REMOTE_ENABLED=true
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.agent-task-editor-mcp.rule=Host(`${TRAEFIK_HOST}`) && (Path(`/tasks/mcp`) || PathPrefix(`/tasks/oauth/`) || PathPrefix(`/.well-known/oauth-protected-resource`) || PathPrefix(`/.well-known/oauth-authorization-server`))
+      - traefik.http.routers.agent-task-editor-mcp.entrypoints=websecure
+      - traefik.http.routers.agent-task-editor-mcp.tls.certresolver=le
+      - traefik.http.routers.agent-task-editor-mcp.middlewares=agent-task-editor-mcp-strip
+      - traefik.http.routers.agent-task-editor-mcp.service=agent-task-editor-backend
+      - traefik.http.middlewares.agent-task-editor-mcp-strip.stripprefix.prefixes=/tasks
+      - traefik.http.services.agent-task-editor-backend.loadbalancer.server.port=8080

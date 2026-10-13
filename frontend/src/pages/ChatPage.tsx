@@ -97,7 +97,7 @@ export default function ChatPage() {
           </select>
           {providerConfigs.length === 0 && (
             <p className="text-[11px] text-slate-500">
-              <Link to="/providers" className="text-indigo-400 hover:text-indigo-300">Create a provider config →</Link> before starting a terminal.
+              <Link to="/settings/providers" className="text-indigo-400 hover:text-indigo-300">Create a provider config →</Link> before starting a terminal.
             </p>
           )}
           <button

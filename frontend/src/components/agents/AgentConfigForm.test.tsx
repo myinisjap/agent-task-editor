@@ -152,6 +152,12 @@ describe('AgentConfigForm permission mode field', () => {
     expect(screen.getByText(/this mode skips approval prompts entirely/i)).toBeInTheDocument()
   })
 
+  it('always shows the guardrail-not-sandbox note on the command filters', () => {
+    renderForm(baseForm(), [providerConfig('pc-claude', 'claude')])
+
+    expect(screen.getByText(/these lists are guardrails, not a sandbox/i)).toBeInTheDocument()
+  })
+
   it('notes the denylist is still enforced under bypassPermissions when a denylist is set', () => {
     const form = baseForm({
       provider_config_id: 'pc-claude',
@@ -180,5 +186,31 @@ describe('AgentConfigForm permission mode field', () => {
 
     expect(screen.queryByText(/transiently deny harmless commands/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/this mode skips approval prompts entirely/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('AgentConfigForm labels and field order', () => {
+  it('labels the cost field as a cumulative per-task budget', () => {
+    renderForm(baseForm(), [providerConfig('pc-1', 'claude')])
+    expect(screen.getByText('Max cost per task (USD)')).toBeInTheDocument()
+    expect(screen.queryByText(/max cost per run/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/cumulative across all runs of a task/i)).toBeInTheDocument()
+  })
+
+  it('renders labels and system prompt before the tuning fields', () => {
+    renderForm(baseForm(), [providerConfig('pc-1', 'claude')])
+    const pos = (text: string) => {
+      const el = screen.getByText(text, { selector: 'label' })
+      return el
+    }
+    const before = (a: HTMLElement, b: HTMLElement) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    const labels = pos('Labels')
+    const prompt = pos('System prompt')
+    expect(before(pos('Provider config'), labels)).toBe(true)
+    expect(before(labels, prompt)).toBe(true)
+    for (const knob of ['Timeout (secs)', 'Max tokens', 'Max turns', 'Max retries', 'Max cost per task (USD)']) {
+      expect(before(prompt, pos(knob))).toBe(true)
+    }
   })
 })

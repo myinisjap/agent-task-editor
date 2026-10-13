@@ -2,7 +2,7 @@
 
 The `opencode` provider runs the [opencode](https://opencode.ai) CLI. **MCP tools are not supported** — opencode has no `--mcp-config` flag. Agents must signal completion by printing `OUTCOME: success` or `OUTCOME: failure` in their text output.
 
-**Status: chat-grade / experimental** relative to `claude`/`qwen_code`/`codex_cli`/`anthropic`/`llm` — see the [capability matrix in agents.md](../agents.md#capability-matrix). Whether opencode's project-scoped config (`opencode.json`) can be used to inject the same `mcp-server` sidecar used by the other CLI providers (closing the MCP-tools and command-policy gaps below) is an open question that has not yet been investigated; until it is, treat this provider as second-class for task-editor integration purposes even though its own repo-editing toolset is otherwise capable.
+**Status: chat-grade / experimental** relative to `claude`/`qwen_code`/`codex_cli` — see the [capability matrix in agents.md](../agents.md#capability-matrix). Whether opencode's project-scoped config (`opencode.json`) can be used to inject the same `mcp-server` sidecar used by the other CLI providers (closing the MCP-tools and command-policy gaps below) is an open question that has not yet been investigated; until it is, treat this provider as second-class for task-editor integration purposes even though its own repo-editing toolset is otherwise capable.
 
 ## Provider String
 
@@ -80,7 +80,7 @@ The `max_turns` agent config field is accepted but **not currently enforced** by
 no effect for this provider — opencode has no Bash tool wired up server-side (it
 manages its own tool permissions via its own global config, outside task-editor's
 control). If you need to restrict shell command execution for an agent config, use
-the `claude`, `qwen_code`, `anthropic`, or `llm` providers instead.
+the `claude`, `qwen_code` or `codex_cli` providers instead.
 
 ## Session Resume
 

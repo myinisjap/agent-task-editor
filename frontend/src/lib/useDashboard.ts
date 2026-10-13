@@ -32,6 +32,7 @@ export function useDashboard() {
   useEffect(() => {
     return wsClient.on((event) => {
       if (
+        event.type === 'resync' ||
         event.type === 'task.label_changed' ||
         event.type === 'task.agent_started' ||
         event.type === 'task.agent_done' ||

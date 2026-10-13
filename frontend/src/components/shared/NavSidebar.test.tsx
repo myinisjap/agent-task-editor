@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import NavSidebar from './NavSidebar'
 import { useNotificationsStore } from '../../stores/notifications'
+import { useHealthStore } from '../../stores/health'
 
 class FakeNotification {
   static permission: NotificationPermission = 'default'
@@ -20,60 +21,72 @@ describe('NavSidebar', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders all top-level and grouped destinations', () => {
+  it('renders the trimmed top-level destinations', () => {
     render(
-      <MemoryRouter initialEntries={['/health']}>
+      <MemoryRouter initialEntries={['/board']}>
         <NavSidebar />
       </MemoryRouter>,
     )
 
-    // Dashboard is always visible (top-level link, not inside a group).
-    expect(screen.getByRole('link', { name: 'Dashboard' })).toBeInTheDocument()
-
-    // The group containing the active route (System -> Health) is expanded
-    // by default, so its link is visible without any interaction.
-    expect(screen.getByRole('link', { name: 'Health' })).toBeInTheDocument()
-
-    // A group that does not contain the active route starts collapsed, so
-    // its links are not present in the DOM.
-    expect(screen.queryByRole('link', { name: 'Board' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Work/i })).toHaveAttribute('aria-expanded', 'false')
+    for (const name of ['Inbox', 'Board', 'Chat', 'Pipeline', 'Repos', 'Settings']) {
+      expect(screen.getByRole('link', { name })).toBeInTheDocument()
+    }
+    // Folded into Pipeline / Settings tabs, so no longer top-level links.
+    for (const name of ['Workflow', 'Agents', 'Providers', 'Pricing', 'Templates', 'Intake Rules', 'Health']) {
+      expect(screen.queryByRole('link', { name })).not.toBeInTheDocument()
+    }
+    expect(screen.getByRole('link', { name: 'Pipeline' })).toHaveAttribute('href', '/pipeline')
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings')
   })
 
-  it('toggles a collapsed group open to reveal its links', () => {
+  it('keeps the Overview dashboard reachable inside a collapsed Insights group', () => {
     render(
-      <MemoryRouter initialEntries={['/health']}>
+      <MemoryRouter initialEntries={['/board']}>
         <NavSidebar />
       </MemoryRouter>,
     )
 
-    const workToggle = screen.getByRole('button', { name: /Work/i })
-    expect(workToggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('link', { name: 'Board' })).not.toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: /Insights/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('link', { name: 'Overview' })).not.toBeInTheDocument()
 
-    fireEvent.click(workToggle)
+    fireEvent.click(toggle)
 
-    expect(workToggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByRole('link', { name: 'Board' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Chat' })).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '/dashboard')
+    expect(screen.getByRole('link', { name: 'Cost & Usage' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Performance' })).toBeInTheDocument()
+  })
+
+  it('shows a failing-health dot on the Settings item', () => {
+    useHealthStore.setState({
+      checks: [{ name: 'claude_cli', status: 'error', message: 'not authenticated' }] as never,
+    })
+    render(
+      <MemoryRouter initialEntries={['/board']}>
+        <NavSidebar />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('link', { name: /Settings/ })).toContainElement(
+      screen.getByRole('img', { name: 'Health check failing' }),
+    )
+    useHealthStore.setState({ checks: [] })
   })
 
   it('closes the mobile drawer when a nav link is clicked', () => {
     render(
-      <MemoryRouter initialEntries={['/health']}>
+      <MemoryRouter initialEntries={['/board']}>
         <NavSidebar />
       </MemoryRouter>,
     )
 
     // Open the mobile drawer.
     fireEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(screen.getByRole('button', { name: 'Close menu' }).closest('aside')?.className)
+      .toEqual(expect.stringContaining('translate-x-0'))
 
-    const healthLink = screen.getByRole('link', { name: 'Health' })
-    fireEvent.click(healthLink)
+    fireEvent.click(screen.getByRole('link', { name: 'Settings' }))
 
-    // The hamburger button should be usable again (i.e. drawer closed state
-    // is reflected by the "Open menu" button still being present/clickable,
-    // and the backdrop being removed).
     expect(screen.queryByRole('button', { name: 'Close menu' })?.closest('aside')?.className)
       .toEqual(expect.stringContaining('-translate-x-full'))
   })
@@ -89,7 +102,7 @@ describe('NavSidebar', () => {
     it('requests permission and enables on click when currently off', async () => {
       FakeNotification.permission = 'granted'
       render(
-        <MemoryRouter initialEntries={['/health']}>
+        <MemoryRouter initialEntries={['/settings/health']}>
           <NavSidebar />
         </MemoryRouter>,
       )
@@ -106,7 +119,7 @@ describe('NavSidebar', () => {
     it('disables without re-requesting permission when currently on', () => {
       useNotificationsStore.setState({ enabled: true, permission: 'granted' })
       render(
-        <MemoryRouter initialEntries={['/health']}>
+        <MemoryRouter initialEntries={['/settings/health']}>
           <NavSidebar />
         </MemoryRouter>,
       )
@@ -121,7 +134,7 @@ describe('NavSidebar', () => {
     it('shows a disabled, blocked state when permission is denied', () => {
       useNotificationsStore.setState({ enabled: false, permission: 'denied' })
       render(
-        <MemoryRouter initialEntries={['/health']}>
+        <MemoryRouter initialEntries={['/settings/health']}>
           <NavSidebar />
         </MemoryRouter>,
       )
@@ -136,7 +149,7 @@ describe('NavSidebar', () => {
       delete (window as unknown as Record<string, unknown>).Notification
 
       render(
-        <MemoryRouter initialEntries={['/health']}>
+        <MemoryRouter initialEntries={['/settings/health']}>
           <NavSidebar />
         </MemoryRouter>,
       )

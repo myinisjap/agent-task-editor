@@ -1,8 +1,15 @@
 package worktreesweep
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
 // TestNew_WiresIntervalAndQueries verifies the trivial constructor stores
@@ -38,5 +45,87 @@ func TestCurrentInterval(t *testing.T) {
 				t.Errorf("currentInterval() with configured %v = %v, want %v", tc.interval, got, tc.want)
 			}
 		})
+	}
+}
+
+func openInternalDB(t *testing.T) *storage.DB {
+	t.Helper()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "sweep.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := storage.SeedDefaultWorkflow(context.Background(), db); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	return db
+}
+
+// TestReconcileRepo_KeepsWorktreeOfTaskCreatedAfterSnapshot simulates a task
+// row appearing after the keep-set snapshot but before removal: reconcileRepo
+// is handed a stale (empty) keep-set, and the DB re-check must save the dir.
+// An archived task's dir with the same stale keep-set is still reclaimed.
+func TestReconcileRepo_KeepsWorktreeOfTaskCreatedAfterSnapshot(t *testing.T) {
+	db := openInternalDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+	wfs, _ := q.ListWorkflows(ctx)
+	wfID := wfs[0].ID
+	repoPath := t.TempDir()
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoID, Name: "r", Path: repoPath, WorkflowID: &wfID}); err != nil {
+		t.Fatal(err)
+	}
+
+	mk := func(archived bool) string {
+		id := uuid.NewString()
+		if _, err := q.CreateTask(ctx, gen.CreateTaskParams{ID: id, Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "plan"}); err != nil {
+			t.Fatal(err)
+		}
+		if archived {
+			if _, err := q.SetTaskArchived(ctx, gen.SetTaskArchivedParams{Archived: 1, ID: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		dir := filepath.Join(repoPath, worktreesSubdir, id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	freshDir := mk(false)
+	archivedDir := mk(true)
+
+	s := New(q, time.Hour)
+	s.minAge = 0                                          // isolate the DB re-check from the mtime guard
+	s.reconcileRepo(ctx, repoPath, map[string]struct{}{}) // stale snapshot: nothing kept
+
+	if _, err := os.Stat(freshDir); err != nil {
+		t.Errorf("worktree of a task created after the snapshot must survive: %v", err)
+	}
+	if _, err := os.Stat(archivedDir); !os.IsNotExist(err) {
+		t.Errorf("archived task's dir should still be reclaimed, stat err=%v", err)
+	}
+}
+
+// TestReconcileRepo_SkipsRecentlyModifiedDir covers the mtime guard.
+func TestReconcileRepo_SkipsRecentlyModifiedDir(t *testing.T) {
+	db := openInternalDB(t)
+	q := gen.New(db.SQL())
+	repoPath := t.TempDir()
+	dir := filepath.Join(repoPath, worktreesSubdir, uuid.NewString())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := New(q, time.Hour)
+	s.reconcileRepo(context.Background(), repoPath, map[string]struct{}{})
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("fresh orphan dir should be left for a later sweep: %v", err)
+	}
+	old := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(dir, old, old)
+	s.reconcileRepo(context.Background(), repoPath, map[string]struct{}{})
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("old orphan dir should be reclaimed, stat err=%v", err)
 	}
 }

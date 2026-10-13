@@ -7,9 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
@@ -103,7 +103,7 @@ type ghRunner interface {
 // runGH constructs the command used to invoke the gh CLI with the given
 // args. Overridable in tests.
 var runGH = func(ctx context.Context, args ...string) ghRunner {
-	return exec.CommandContext(ctx, "gh", args...)
+	return agentuser.ServerCommandContext(ctx, "gh", args...)
 }
 
 // GHAuthStatus returns whether the gh CLI has valid auth credentials.
@@ -112,7 +112,7 @@ var runGH = func(ctx context.Context, args ...string) ghRunner {
 // Fallback: checks the GITHUB_TOKEN env var (gh picks it up automatically).
 func GHAuthStatus() (authed bool, note string) {
 	metrics.GhCallsTotal.WithLabelValues("auth_status").Inc()
-	cmd := exec.Command("gh", "auth", "status")
+	cmd := agentuser.ServerCommand("gh", "auth", "status")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return true, "gh auth"

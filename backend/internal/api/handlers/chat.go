@@ -36,13 +36,13 @@ type ChatHandler struct {
 	term Terminal
 	// auth mirrors the /ws endpoint: WS handshakes can't carry the bearer header,
 	// so a single-use ?ticket= (minted by the bearer-gated POST /ws-ticket) is
-	// validated here. Empty bearerToken = open (no auth), same as ServeWS.
-	bearerToken string
-	corsOrigins string
+	// validated here. false = open (no auth), same as ServeWS.
+	authRequired bool
+	corsOrigins  string
 }
 
-func NewChatHandler(q *gen.Queries, hub *ws.Hub, term Terminal, bearerToken, corsOrigins string) *ChatHandler {
-	return &ChatHandler{q: q, hub: hub, term: term, bearerToken: bearerToken, corsOrigins: corsOrigins}
+func NewChatHandler(q *gen.Queries, hub *ws.Hub, term Terminal, authRequired bool, corsOrigins string) *ChatHandler {
+	return &ChatHandler{q: q, hub: hub, term: term, authRequired: authRequired, corsOrigins: corsOrigins}
 }
 
 func (h *ChatHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +125,10 @@ func (h *ChatHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if sess.WorktreePath != "" {
 		if repo, rerr := h.q.GetRepo(r.Context(), sess.RepoID); rerr == nil {
+			lock := agent.RepoGitLock(repo.Path)
+			lock.Lock()
 			_ = agent.RemoveWorktree(r.Context(), repo.Path, sess.WorktreePath)
+			lock.Unlock()
 		}
 	}
 	if err := h.q.DeleteChatSession(r.Context(), id); err != nil {
@@ -143,7 +146,7 @@ func (h *ChatHandler) Terminal(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusServiceUnavailable, "terminal is not available")
 		return
 	}
-	if h.bearerToken != "" && !h.hub.ConsumeTicket(r.URL.Query().Get("ticket")) {
+	if h.authRequired && !h.hub.ConsumeTicket(r.URL.Query().Get("ticket")) {
 		Err(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}

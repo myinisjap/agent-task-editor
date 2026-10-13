@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,26 +19,36 @@ type Config struct {
 	DBPath      string `yaml:"db_path"`
 	Port        string `yaml:"port"`
 	CORSOrigins string `yaml:"cors_origins"`
-	APIToken    string `yaml:"api_token"`
+	// AllowedHosts is a comma-separated list of extra Host header values
+	// (hostname or host:port) accepted while the API is unauthenticated, on top
+	// of loopback names and the CORS_ORIGINS hostnames. "*" disables the check.
+	// Ignored when API_TOKEN/API_TOKENS is set. See middleware.NewHostPolicy.
+	AllowedHosts string `yaml:"allowed_hosts"`
+	APIToken     string `yaml:"api_token"`
 	// APITokens maps an actor name to a bearer token, allowing multiple
 	// named credentials so human-triggered transitions can record *who*
 	// approved them (see task_label_history.actor_id). APIToken above
 	// remains supported as a legacy/anonymous fallback (actor name "").
 	APITokens map[string]string `yaml:"api_tokens"`
-	// MetricsToken optionally gates GET /metrics with its own bearer token,
-	// independent of APIToken. Empty (the default) leaves /metrics
-	// unauthenticated, matching most Prometheus scrape setups that can't
-	// easily carry a different token than other tooling.
-	MetricsToken       string        `yaml:"metrics_token"`
-	MCPBinary          string        `yaml:"mcp_server_path"`
-	MCPBoardBinary     string        `yaml:"mcp_board_path"`
-	LLMBaseURL         string        `yaml:"llm_base_url"`
-	LLMAPIKey          string        `yaml:"llm_api_key"`
-	MaxWorkers         int           `yaml:"max_workers"`
-	RepoBaseDir        string        `yaml:"repo_base_dir"`
-	UploadDir          string        `yaml:"upload_dir"`
-	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
-	IssueSyncInterval  time.Duration `yaml:"issue_sync_interval"`
+	// MetricsToken optionally gates GET /metrics with its own bearer token.
+	// When empty, /metrics falls back to the API tokens if API auth is
+	// configured (see MetricsPublic for the opt-out), and is open otherwise.
+	MetricsToken string `yaml:"metrics_token"`
+	// MetricsPublic (METRICS_PUBLIC=true) opts /metrics out of API-token
+	// auth when MetricsToken is unset, for scrapers that can't carry a
+	// token. Ignored when MetricsToken is set.
+	MetricsPublic bool `yaml:"metrics_public"`
+	// GitHubWebhookSecret (GITHUB_WEBHOOK_SECRET) enables POST
+	// /api/v1/github/webhook, authenticated by HMAC-SHA256 signature. Empty
+	// leaves the route disabled (404).
+	GitHubWebhookSecret string        `yaml:"github_webhook_secret"`
+	MCPBinary           string        `yaml:"mcp_server_path"`
+	MCPBoardBinary      string        `yaml:"mcp_board_path"`
+	MaxWorkers          int           `yaml:"max_workers"`
+	RepoBaseDir         string        `yaml:"repo_base_dir"`
+	UploadDir           string        `yaml:"upload_dir"`
+	GitHubSyncInterval  time.Duration `yaml:"github_sync_interval"`
+	IssueSyncInterval   time.Duration `yaml:"issue_sync_interval"`
 	// ScheduleInterval is how often the task-schedule sweep runs (see
 	// internal/schedule.Scheduler), checking every enabled task_schedule for
 	// due firings. Cron expressions are minute-granularity, so this only
@@ -92,6 +103,13 @@ type Config struct {
 	// killed, scrollback released). 0 (the default) disables idle reaping.
 	ChatIdleTimeout time.Duration `yaml:"chat_idle_timeout"`
 
+	// ShutdownDrainTimeout is how long SIGTERM/SIGINT lets in-flight agent
+	// runs keep going (dispatch stopped, HTTP still up) before the remaining
+	// runs are cancelled and recorded as "interrupted". 0 skips the drain and
+	// interrupts runs immediately. Default 60s. Container orchestrators must
+	// allow at least this long before SIGKILL (docker stop_grace_period).
+	ShutdownDrainTimeout time.Duration `yaml:"shutdown_drain_timeout"`
+
 	// GitTimeout bounds each individual shell-out to `git` performed by the
 	// agent package (worktree provisioning, fetch, commit, push, merge,
 	// branch cleanup). Without a bound, a stalled remote or an interactive
@@ -138,6 +156,38 @@ type Config struct {
 	// storm from spamming the webhook. Only meaningful when
 	// NotifyWebhookURL is set.
 	NotifyDebounce time.Duration `yaml:"notify_debounce"`
+	// MCPRemoteEnabled (MCP_REMOTE_ENABLED, default false) is the explicit
+	// opt-in for the remote MCP endpoint (internal/remotemcp). Setting
+	// MCPPublicURL and the other MCP* values alone does NOT enable it. When
+	// true, Load fails unless every required MCP* setting is present.
+	MCPRemoteEnabled bool `yaml:"mcp_remote_enabled"`
+	// MCPPublicURL is the externally reachable base URL the remote MCP
+	// endpoint's /mcp and /oauth/* routes are served under (e.g.
+	// "https://example.com/tasks" behind the bundled nginx, or
+	// "https://ate.example.com" when the backend is exposed directly). Only
+	// used when MCPRemoteEnabled is true.
+	// Requires the MCPGoogle* and MCPAllowedEmails settings below.
+	MCPPublicURL string `yaml:"mcp_public_url"`
+	// MCPGoogleClientID/MCPGoogleClientSecret are the Google OAuth client the
+	// remote MCP endpoint signs users in with. Its authorized redirect URIs
+	// must include <MCPPublicURL>/oauth/callback.
+	MCPGoogleClientID     string `yaml:"mcp_google_client_id"`
+	MCPGoogleClientSecret string `yaml:"mcp_google_client_secret"`
+	// MCPAllowedEmails lists the Google accounts allowed to connect. Each
+	// connected user acts on the board under their email, recorded in
+	// task_label_history.actor_id like a named API token.
+	MCPAllowedEmails []string `yaml:"mcp_allowed_emails"`
+	// MCPSigningKey signs the remote MCP's tokens and client ids. Required
+	// (>= 32 chars) when MCPPublicURL is set; independent of the Google secret.
+	MCPSigningKey string `yaml:"mcp_signing_key"`
+	// MCPRedirectURIs is the exact set of OAuth redirect URIs the remote MCP
+	// will register and redirect to. Defaults to claude.ai's connector callbacks.
+	MCPRedirectURIs []string `yaml:"mcp_redirect_uris"`
+	// MCPAllowedClientIDs, when set, restricts the remote MCP to these OAuth
+	// client ids. Empty accepts any client with an allowed redirect URI.
+	MCPAllowedClientIDs []string `yaml:"mcp_allowed_client_ids"`
+	// MCPToolProfile is "readonly" (default) or "full"; see docs/board-mcp.md.
+	MCPToolProfile string `yaml:"mcp_tool_profile"`
 }
 
 // Defaults returns a Config populated with safe defaults.
@@ -146,7 +196,6 @@ func Defaults() Config {
 		DBPath:                "agent-task-editor.db",
 		Port:                  "8080",
 		CORSOrigins:           "http://localhost:5173,http://localhost:8080",
-		LLMBaseURL:            "https://api.openai.com/v1",
 		MaxWorkers:            5,
 		GitHubSyncInterval:    30 * time.Second,
 		IssueSyncInterval:     60 * time.Second,
@@ -158,8 +207,11 @@ func Defaults() Config {
 		WorktreeSweepInterval: 10 * time.Minute,
 		ChatMaxSessions:       0,
 		ChatIdleTimeout:       0,
+		ShutdownDrainTimeout:  60 * time.Second,
 		GitTimeout:            120 * time.Second,
 		NotifyDebounce:        5 * time.Minute,
+		MCPRedirectURIs:       []string{"https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"},
+		MCPToolProfile:        "readonly",
 	}
 }
 
@@ -186,6 +238,9 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("CORS_ORIGINS"); v != "" {
 		cfg.CORSOrigins = v
 	}
+	if v := os.Getenv("ALLOWED_HOSTS"); v != "" {
+		cfg.AllowedHosts = v
+	}
 	if v := os.Getenv("API_TOKEN"); v != "" {
 		cfg.APIToken = v
 	}
@@ -211,17 +266,21 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("METRICS_TOKEN"); v != "" {
 		cfg.MetricsToken = v
 	}
+	if v := os.Getenv("GITHUB_WEBHOOK_SECRET"); v != "" {
+		cfg.GitHubWebhookSecret = v
+	}
+	if v := os.Getenv("METRICS_PUBLIC"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.MetricsPublic = b
+		} else {
+			slog.Warn("ignoring invalid METRICS_PUBLIC", "value", v)
+		}
+	}
 	if v := os.Getenv("MCP_SERVER_PATH"); v != "" {
 		cfg.MCPBinary = v
 	}
 	if v := os.Getenv("MCP_BOARD_PATH"); v != "" {
 		cfg.MCPBoardBinary = v
-	}
-	if v := os.Getenv("LLM_BASE_URL"); v != "" {
-		cfg.LLMBaseURL = v
-	}
-	if v := os.Getenv("LLM_API_KEY"); v != "" {
-		cfg.LLMAPIKey = v
 	}
 	if v := os.Getenv("MAX_WORKERS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -324,6 +383,13 @@ func Load(path string) (Config, error) {
 			slog.Warn("invalid CHAT_IDLE_TIMEOUT; using default", "value", v, "default", cfg.ChatIdleTimeout)
 		}
 	}
+	if v := os.Getenv("SHUTDOWN_DRAIN_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			cfg.ShutdownDrainTimeout = d
+		} else {
+			slog.Warn("invalid SHUTDOWN_DRAIN_TIMEOUT; using default", "value", v, "default", cfg.ShutdownDrainTimeout)
+		}
+	}
 	if v := os.Getenv("GIT_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			cfg.GitTimeout = d
@@ -359,5 +425,78 @@ func Load(path string) (Config, error) {
 		}
 	}
 
+	if v := os.Getenv("MCP_REMOTE_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("MCP_REMOTE_ENABLED must be a boolean, got %q", v)
+		}
+		cfg.MCPRemoteEnabled = b
+	}
+	if v := os.Getenv("MCP_PUBLIC_URL"); v != "" {
+		cfg.MCPPublicURL = v
+	}
+	if v := os.Getenv("MCP_GOOGLE_CLIENT_ID"); v != "" {
+		cfg.MCPGoogleClientID = v
+	}
+	if v := os.Getenv("MCP_GOOGLE_CLIENT_SECRET"); v != "" {
+		cfg.MCPGoogleClientSecret = v
+	}
+	if v := os.Getenv("MCP_ALLOWED_EMAILS"); v != "" {
+		cfg.MCPAllowedEmails = splitList(v)
+	}
+	if v := os.Getenv("MCP_SIGNING_KEY"); v != "" {
+		cfg.MCPSigningKey = v
+	}
+	if v := os.Getenv("MCP_REDIRECT_URIS"); v != "" {
+		cfg.MCPRedirectURIs = splitList(v)
+	}
+	if v := os.Getenv("MCP_ALLOWED_CLIENT_IDS"); v != "" {
+		cfg.MCPAllowedClientIDs = splitList(v)
+	}
+	if v := os.Getenv("MCP_TOOL_PROFILE"); v != "" {
+		cfg.MCPToolProfile = v
+	}
+	if cfg.MCPRemoteEnabled {
+		if err := cfg.validateRemoteMCP(); err != nil {
+			return cfg, err
+		}
+	}
+
 	return cfg, nil
+}
+
+// validateRemoteMCP fails fast when MCP_REMOTE_ENABLED=true but a required
+// setting is missing, rather than silently leaving the feature off.
+func (c Config) validateRemoteMCP() error {
+	var missing []string
+	if c.MCPPublicURL == "" {
+		missing = append(missing, "MCP_PUBLIC_URL")
+	}
+	if c.MCPGoogleClientID == "" {
+		missing = append(missing, "MCP_GOOGLE_CLIENT_ID")
+	}
+	if c.MCPGoogleClientSecret == "" {
+		missing = append(missing, "MCP_GOOGLE_CLIENT_SECRET")
+	}
+	if len(c.MCPAllowedEmails) == 0 {
+		missing = append(missing, "MCP_ALLOWED_EMAILS")
+	}
+	if c.MCPSigningKey == "" {
+		missing = append(missing, "MCP_SIGNING_KEY")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("MCP_REMOTE_ENABLED=true but required settings are missing: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// splitList parses a comma-separated env value, dropping blanks.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
