@@ -4,15 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -22,18 +24,10 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
-// validGitRef matches HEAD, HEAD~N, HEAD^N, 40/64-char hex SHAs, and safe branch/tag names.
-// First char must be alphanumeric to prevent flag injection (e.g. --no-index).
-var validGitRef = regexp.MustCompile(`^(HEAD([~^][0-9]+)?|[0-9a-f]{40,64}|[a-zA-Z0-9][a-zA-Z0-9._/-]*)$`)
-
-func isValidGitRef(ref string) bool {
-	return validGitRef.MatchString(ref) && !strings.Contains(ref, "..")
-}
-
 // RepoEventPublisher publishes repo lifecycle events (e.g. async clone
 // completion) to connected WebSocket clients. Satisfied by *ws.Hub.
 type RepoEventPublisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 type ReposHandler struct {
@@ -66,7 +60,11 @@ func (h *ReposHandler) List(w http.ResponseWriter, r *http.Request) {
 		repos = repos[:limit]
 		w.Header().Set("X-Next-Cursor", repos[len(repos)-1].ID)
 	}
-	JSON(w, http.StatusOK, repos)
+	out := make([]repoResponse, len(repos))
+	for i, rp := range repos {
+		out[i] = newRepoResponse(rp)
+	}
+	JSON(w, http.StatusOK, out)
 }
 
 func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +73,29 @@ func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "repo not found")
 		return
 	}
-	JSON(w, http.StatusOK, repo)
+	JSON(w, http.StatusOK, newRepoResponse(repo))
+}
+
+// repoResponse is the JSON wire format for gen.Repo. The embedded sqlc row
+// stores boolean columns as int64 (0/1); the shadowing bool fields below make
+// the API emit real JSON true/false, matching what request bodies accept.
+type repoResponse struct {
+	gen.Repo
+	IssueSyncEnabled              bool `json:"issue_sync_enabled"`
+	IssueWritebackEnabled         bool `json:"issue_writeback_enabled"`
+	PrReviewAutoTransitionEnabled bool `json:"pr_review_auto_transition_enabled"`
+	IssueCommentSyncEnabled       bool `json:"issue_comment_sync_enabled"`
+}
+
+// newRepoResponse converts a stored repo row into its API representation.
+func newRepoResponse(r gen.Repo) repoResponse {
+	return repoResponse{
+		Repo:                          r,
+		IssueSyncEnabled:              r.IssueSyncEnabled != 0,
+		IssueWritebackEnabled:         r.IssueWritebackEnabled != 0,
+		PrReviewAutoTransitionEnabled: r.PrReviewAutoTransitionEnabled != 0,
+		IssueCommentSyncEnabled:       r.IssueCommentSyncEnabled != 0,
+	}
 }
 
 // createRepoBody is the decoded request payload for ReposHandler.Create.
@@ -102,6 +122,11 @@ type createRepoBody struct {
 	// spawn behavior exactly (§4.1 byte-identical). Validated and
 	// re-serialized to JSON for storage by resolveRuntimeLanguages.
 	RuntimeLanguages []runtime.Pin `json:"runtime_languages"`
+	// VerifyCommand / VerifyTimeoutSeconds configure the authoritative
+	// post-run verification (see resolveVerify). Omitted = no command / the
+	// default timeout.
+	VerifyCommand        *string `json:"verify_command"`
+	VerifyTimeoutSeconds *int64  `json:"verify_timeout_seconds"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +217,11 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verifyCommand, verifyTimeout, ok := resolveVerify(w, body.VerifyCommand, body.VerifyTimeoutSeconds, "", defaultVerifyTimeoutSeconds)
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -209,6 +239,8 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeLanguages:              runtimeLanguages,
+		VerifyCommand:                 verifyCommand,
+		VerifyTimeoutSeconds:          verifyTimeout,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -223,7 +255,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if runtimeLanguages != "" {
 		h.prewarmRuntime(repo.ID, repo.Path, runtimeLanguages)
 	}
-	JSON(w, http.StatusCreated, repo)
+	JSON(w, http.StatusCreated, newRepoResponse(repo))
 }
 
 // resolveCloneDestination validates the auto-clone inputs and derives the clone
@@ -287,7 +319,7 @@ func (h *ReposHandler) validateExistingRepoPath(w http.ResponseWriter, r *http.R
 		Err(w, http.StatusBadRequest, "repo path is outside the allowed base directory")
 		return false
 	}
-	if err := exec.CommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+	if err := gitcmd.Run(r.Context(), path, "rev-parse", "--git-dir"); err != nil {
 		Err(w, http.StatusBadRequest, "path is not a git repository")
 		return false
 	}
@@ -379,6 +411,66 @@ func resolveMaxConcurrentRuns(w http.ResponseWriter, v *int64) (resolved *int64,
 	return v, true
 }
 
+const (
+	defaultVerifyTimeoutSeconds = 600
+	maxVerifyTimeoutSeconds     = 3600
+	maxVerifyCommandLen         = 4096
+)
+
+// resolveVerify validates the verify_command / verify_timeout_seconds request
+// fields. A nil field keeps the supplied current value (the default on create).
+// The command is run through `sh -c` by the pool (as the agent user), so it is
+// only length- and NUL-checked here; it is trusted repo configuration.
+func resolveVerify(w http.ResponseWriter, cmd *string, timeout *int64, curCmd string, curTimeout int64) (string, int64, bool) {
+	command, secs := curCmd, curTimeout
+	if secs <= 0 {
+		secs = defaultVerifyTimeoutSeconds
+	}
+	if cmd != nil {
+		command = strings.TrimSpace(*cmd)
+		if len(command) > maxVerifyCommandLen || strings.ContainsRune(command, 0) {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("verify_command must be at most %d characters and contain no NUL bytes", maxVerifyCommandLen))
+			return "", 0, false
+		}
+	}
+	if timeout != nil {
+		if *timeout < 1 || *timeout > maxVerifyTimeoutSeconds {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("verify_timeout_seconds must be between 1 and %d", maxVerifyTimeoutSeconds))
+			return "", 0, false
+		}
+		secs = *timeout
+	}
+	return command, secs, true
+}
+
+const (
+	verifyModeInherit  = "inherit"
+	verifyModeCustom   = "custom"
+	verifyModeDisabled = "disabled"
+)
+
+// resolveLabelVerify validates a workflow label's verify override and returns
+// the normalised (mode, command) to store: an empty mode is inherit; custom
+// requires a command; inherit and disabled drop any command.
+func resolveLabelVerify(label, mode, command string) (string, string, error) {
+	command = strings.TrimSpace(command)
+	switch mode {
+	case "", verifyModeInherit:
+		return verifyModeInherit, "", nil
+	case verifyModeDisabled:
+		return verifyModeDisabled, "", nil
+	case verifyModeCustom:
+		if command == "" {
+			return "", "", fmt.Errorf("label %q: verify_mode custom requires a verify_command", label)
+		}
+		if len(command) > maxVerifyCommandLen || strings.ContainsRune(command, 0) {
+			return "", "", fmt.Errorf("label %q: verify_command must be at most %d characters and contain no NUL bytes", label, maxVerifyCommandLen)
+		}
+		return verifyModeCustom, command, nil
+	}
+	return "", "", fmt.Errorf("label %q: verify_mode must be one of inherit, custom, disabled", label)
+}
+
 // resolveRuntimeLanguages validates the wire-shape runtime_languages pins
 // (each against runtime.ParsePins' language allowlist + version regex, via a
 // round-trip through JSON so both API and DB share one validator) and
@@ -439,7 +531,7 @@ func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
 		}); err != nil {
 			slog.Warn("cloneRepoAsync: mark error", "repo_id", repoID, "err", err)
 		}
-		h.publishRepoEvent("repo.clone_failed", repoID, "error", msg)
+		h.publishRepoEvent(wsevent.TypeRepoCloneFailed, repoID, "error", msg)
 	}
 
 	// Create parent directory structure (e.g. repoBaseDir/org/).
@@ -447,7 +539,7 @@ func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
 		fail(fmt.Sprintf("failed to create parent directory: %v", err))
 		return
 	}
-	if out, err := exec.CommandContext(ctx, "git", "clone", remoteURL, destPath).CombinedOutput(); err != nil {
+	if out, err := gitcmd.Combined(ctx, "", "clone", remoteURL, destPath); err != nil {
 		fail(fmt.Sprintf("git clone failed: %s", strings.TrimSpace(string(out))))
 		return
 	}
@@ -460,7 +552,7 @@ func (h *ReposHandler) cloneRepoAsync(repoID, remoteURL, destPath string) {
 		slog.Warn("cloneRepoAsync: mark ready", "repo_id", repoID, "err", err)
 	}
 	setClaudeTrust(ctx, destPath)
-	h.publishRepoEvent("repo.clone_done", repoID, "ready", "")
+	h.publishRepoEvent(wsevent.TypeRepoCloneDone, repoID, "ready", "")
 }
 
 // publishRepoEvent broadcasts a repo clone lifecycle event to WS clients.
@@ -468,10 +560,10 @@ func (h *ReposHandler) publishRepoEvent(event, repoID, status, errMsg string) {
 	if h.pub == nil {
 		return
 	}
-	h.pub.Publish(event, map[string]any{
-		"repo_id":      repoID,
-		"clone_status": status,
-		"clone_error":  errMsg,
+	h.pub.Publish(event, wsevent.RepoClone{
+		RepoID:      repoID,
+		CloneStatus: status,
+		CloneError:  errMsg,
 	})
 }
 
@@ -561,6 +653,9 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// array is a valid, meaningful value (clears the pins back to
 		// unconfigured), so it can't reuse a nil-means-omitted convention.
 		RuntimeLanguages []runtime.Pin `json:"runtime_languages"`
+		// Verify fields: nil (omitted) leaves the stored value untouched.
+		VerifyCommand        *string `json:"verify_command"`
+		VerifyTimeoutSeconds *int64  `json:"verify_timeout_seconds"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -716,6 +811,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		runtimeLanguages = resolved
 	}
 
+	verifyCommand, verifyTimeout, ok := resolveVerify(w, body.VerifyCommand, body.VerifyTimeoutSeconds, existing.VerifyCommand, existing.VerifyTimeoutSeconds)
+	if !ok {
+		return
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -765,7 +865,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the path is still a valid git repository.
-	if err := exec.CommandContext(r.Context(), "git", "-C", path, "rev-parse", "--git-dir").Run(); err != nil {
+	if err := gitcmd.Run(r.Context(), path, "rev-parse", "--git-dir"); err != nil {
 		Err(w, http.StatusBadRequest, "path is not a git repository")
 		return
 	}
@@ -787,6 +887,8 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueCommentSyncEnabled:       issueCommentSyncEnabled,
 		MaxConcurrentRuns:             maxConcurrentRuns,
 		RuntimeLanguages:              runtimeLanguages,
+		VerifyCommand:                 verifyCommand,
+		VerifyTimeoutSeconds:          verifyTimeout,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -796,7 +898,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if runtimeChanged && runtimeLanguages != "" {
 		h.prewarmRuntime(repo.ID, repo.Path, runtimeLanguages)
 	}
-	JSON(w, http.StatusOK, repo)
+	JSON(w, http.StatusOK, newRepoResponse(repo))
 }
 
 // Delete removes a repo. Returns 404 if the repo doesn't exist and 409 (with
@@ -834,12 +936,12 @@ func (h *ReposHandler) Tree(w http.ResponseWriter, r *http.Request) {
 	if ref == "" {
 		ref = "HEAD"
 	}
-	if !isValidGitRef(ref) {
+	if !gitcmd.IsValidRef(ref) {
 		Err(w, http.StatusBadRequest, "invalid git ref")
 		return
 	}
 
-	out, err := exec.CommandContext(r.Context(), "git", "-C", repo.Path, "ls-tree", "-r", "--name-only", "--", ref).Output()
+	out, err := gitcmd.Output(r.Context(), repo.Path, "ls-tree", "-r", "--name-only", "--", ref)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to read git tree")
 		return
@@ -912,7 +1014,7 @@ func setClaudeTrust(ctx context.Context, repoPath string) {
 	// directory and rename over the original — os.Rename is atomic on the same
 	// filesystem, so readers see either the old or the new file, never a
 	// half-written one. A crash mid-write leaves only an orphaned temp file.
-	if err := atomicWriteFile(claudeJSON, out, 0o600); err != nil {
+	if err := atomicWriteFile(claudeJSON, out, agentuser.SharedFileMode()); err != nil {
 		middleware.LoggerFromContext(ctx).Warn("failed to update claude trust dialog", "path", repoPath, "err", err)
 	}
 }

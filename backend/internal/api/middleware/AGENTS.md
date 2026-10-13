@@ -1,29 +1,25 @@
 # internal/api/middleware
 
-Four middleware functions used by the Chi router.
+Middleware used by the Chi router (order and rationale: `../AGENTS.md`, ADR 0030).
 
-## `Recover`
+- `Recover` — deferred recover; logs stack and returns 500.
+- `Logger` — slog request log: method, path, status, duration, `request_id`.
+- `CORS` — sets Allow-Origin/Methods/Headers and answers `OPTIONS` with 204. `CORS_ORIGINS`: `*` or empty = allow all; a comma list echoes the request `Origin` only if it matches.
 
-Wraps each request in a deferred recover. On panic, logs the stack trace and returns `500 Internal Server Error`. Prevents a single bad handler from crashing the server.
+## Request guards (`requestguard.go`)
 
-## `Logger`
+CORS only shapes response headers; these stop the request.
 
-Structured request logging via `log/slog`. Logs method, path, status code, and duration on each request completion.
+- `RequireTrustedOrigin(corsOrigins)`: 403 on POST/PUT/PATCH/DELETE when `Origin` is neither listed nor same-origin (host:port == `r.Host`, default ports normalised). **`X-Forwarded-Host` is deliberately not trusted.** No `Origin`, or a safe method (incl. preflight), passes; `*` is permissive.
+- `RequireJSON`: 415 on a non-empty POST/PUT/PATCH body that isn't `application/json` (charset allowed). Exemptions live in `jsonExemptions`.
+- `NewHostPolicy(allowedHosts, corsOrigins, authEnabled).Middleware()`: Host allowlist enforced only without any API token. Built-ins: localhost, 127.0.0.1, ::1, backend, IP literals, CORS origin hostnames, plus `ALLOWED_HOSTS` (`*` disables).
 
-## `CORS`
+## `BearerAuth(bearerToken, namedTokens)`
 
-Sets `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods`, and `Access-Control-Allow-Headers`. Handles `OPTIONS` preflight requests with `204`.
+Requires `Authorization: Bearer <token>` when either is non-empty; skips auth when both are empty (development mode). Use `crypto/subtle.ConstantTimeCompare`; check every named token without short-circuiting, then the legacy token. A named match is stored in the request context and read with `ActorFromContext(ctx)` (recorded in `task_label_history.actor_id`); the legacy token or no auth yields `""`. The 401 inlines `{"error":"unauthorized"}` instead of importing `handlers` (import cycle).
 
-Configured from the `CORS_ORIGINS` env var:
-- `*` or empty → allow all origins
-- Comma-separated list → set the header to the request's `Origin` if it matches, otherwise omit
+`/ws` is not behind this middleware and does not resolve named actors (ADR 0022).
 
-## `BearerAuth`
+### `WithTrustedActor`
 
-`BearerAuth(bearerToken string, namedTokens map[string]string)` requires `Authorization: Bearer <token>` on every request when either `bearerToken` (the legacy single shared token, from `API_TOKEN`) or `namedTokens` (from `API_TOKENS`, a `name -> token` map) is non-empty. Skips auth entirely when both are empty (development mode). Uses `crypto/subtle.ConstantTimeCompare` to prevent timing attacks; a request's token is checked against every `namedTokens` candidate (without short-circuiting on the first match) and then, if unmatched, against the legacy `bearerToken`.
-
-When a request's token matches an entry in `namedTokens`, that name is stored in the request context and exposed via `ActorFromContext(ctx) string`. Handlers use this to record *who* performed a human-triggered transition in `task_label_history.actor_id` (see `handlers/tasks.go`). A match against the legacy `bearerToken` (or no auth configured at all) resolves to actor `""`, matching prior anonymous behavior — this keeps existing deployments that only set `API_TOKEN` working unchanged.
-
-Note: the `/ws` WebSocket route does not resolve named actors — it only supports the single legacy `bearerToken`, checked via a single-use `?ticket=` (minted by the bearer-gated `POST /ws-ticket`) or, as a deprecated fallback, a constant-time compare against `?token=`, since browsers can't set request headers on a WS handshake and `ws.ServeWS`'s signature wasn't extended in this pass.
-
-The `/ws` route is mounted *outside* this middleware (see `router.go`) rather than bypassed via a request header — an earlier `Upgrade: websocket` header check let any route skip auth. WebSocket auth is handled by `ws.ServeWS` via the ticket-first flow (`?ticket=`), with a deprecated `?token=` query-param fallback, since browsers can't set request headers on a WS handshake. See `router.go` and `docs/websocket.md` for details.
+`WithTrustedActor(ctx, actor)` marks a request context as already authenticated by an in-process caller. Only chains built with `BearerAuthTrusted` (the `/api/v1` group in `router.go`) let such requests through without a token and record `actor` for `ActorFromContext`; plain `BearerAuth` (used for `/metrics`) ignores the mark and still demands its token. Only `internal/remotemcp` uses it: its `/mcp` endpoint verifies its own OAuth access tokens, then serves tool calls by invoking the router in-process as the signed-in email. Context values can't be set by a network client, so this is not reachable from outside the process.

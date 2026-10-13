@@ -1,28 +1,15 @@
 # cmd/server
 
-Main server entrypoint. Reads config, opens the database, wires all subsystems together, and starts the HTTP server.
+Main entrypoint: reads config, opens the database, wires all subsystems, starts HTTP.
 
 ## Startup Sequence
 
-1. Load config from `CONFIG_FILE` (YAML) then env var overrides
-2. Open SQLite database with WAL mode enabled
-3. Run database migrations
-4. Seed default workflow if no workflows exist
-5. Mark any `running` or `pending` agent runs as `failed` (crash recovery — `pending` covers a run the dispatcher created but never enqueued before the crash)
-6. Clear all `active_agent_run_id` values (pool has restarted; nothing is genuinely active)
-7. Create the WebSocket hub
-8. Create the workflow engine (hub is the Publisher)
-9. Create the agent worker pool + dispatcher
-10. Build the Chi router
-11. Start pool goroutine, dispatcher goroutine, HTTP server goroutine
-12. Wait for SIGINT/SIGTERM, then graceful shutdown (10s timeout)
+1. Load config from `CONFIG_FILE` (YAML), then env var overrides (`internal/config/AGENTS.md`)
+2. Open SQLite (WAL); take the pre-migration snapshot if migrations are pending; run migrations
+3. Seed the default workflow if none exist
+4. Crash recovery: mark `running`/`pending` runs `interrupted` (`storage.RecoverInterruptedRuns`) and clear all `active_agent_run_id` values (ADR 0026)
+5. Create the WS hub, workflow engine (hub is the Publisher), worker pool and dispatcher, then the Chi router
+6. Start pool, dispatcher and HTTP goroutines
+7. On SIGINT/SIGTERM: stop dispatch, drain in-flight runs for `SHUTDOWN_DRAIN_TIMEOUT`, cancel the rest as `interrupted`, wait for the pool, then close the DB (ADR 0026)
 
-## Crash Recovery
-
-Steps 5 and 6 ensure a clean state after an unclean shutdown:
-- Runs stuck in `running` or `pending` become `failed` so the dispatcher can re-dispatch
-- `active_agent_run_id` is cleared so no tasks are permanently locked
-
-## Configuration
-
-Loaded by `internal/config`. See `backend/internal/config/CLAUDE.md` for the full field list.
+Don't reintroduce `failed` for crash or shutdown recovery. `cmd/server` is excluded from the CI coverage metric (ADR 0035); keep logic that needs tests in `internal/` packages.

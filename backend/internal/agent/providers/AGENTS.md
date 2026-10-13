@@ -1,87 +1,57 @@
 # internal/agent/providers
 
-The `providers` package implements the concrete agent backends (claude, anthropic, llm, opencode, qwen_code, codex_cli) and the MCP sidecar manager. It imports the sibling `agent` package for the shared runtime types (`Provider`, `RunInput`, `Result`, `LogEntry`, `LogEntryType`, `Classification`, `ClassifyLine`, `ErrRateLimit`, `ErrTransient`, `BackoffDuration`, `TransitionHint`, `ReviewComment`, `SourceComment`, `AgentConfig`, `Task`) — the dependency is one-directional: `agent` never imports `providers`. Concrete runners (`ClaudeRunner`, `AnthropicRunner`, `LLMRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`.
+Concrete agent backends (claude, opencode, qwen_code, codex_cli) and the MCP sidecar manager. Imports `agent` for the shared types; `agent` never imports this package (ADR 0017). Runners are constructed only in `cmd/server/main.go`'s `providerFactory`.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `claude.go` | `ClaudeRunner` only — `binary`, `buildClaudeArgs`, `Run`, `runAttempt`, `shouldFallBackToColdStart`, `buildClaudeSettingsJSON`. Runs `claude` CLI subprocess with stream-json output |
-| `claude_credentials.go` | `ClaudeOAuthAccessToken` — reads the OAuth access token from `~/.claude/.credentials.json` and **auto-refreshes it** (Anthropic OAuth token endpoint + stored refresh token) when expired/expiring within 5 min, persisting rotated tokens back to the file atomically; used by the claude subprocess env injection and the dashboard usage widget. Returns "" when expired-and-unrefreshable so the CLI falls back to its own refresh flow |
-| `claude_discovery.go` | `ListInstalledClaudePlugins`/`ListAvailableClaudeMCPServers` — discovers Claude plugins (`~/.claude/plugins/installed_plugins.json`) and user-level MCP servers (`~/.claude.json`'s global `mcpServers`) installed/configured on the machine, for per-agent-config selection (`enabled_plugins`/`enabled_mcp_servers`); `claude`-provider only |
-| `claude_reset.go` | `parseClaudeResetTime` — parses Claude's "resets 6pm (America/Chicago)"-style session/usage-limit text into an exact `agent.ErrRateLimit.ResetAt` (+1min retry buffer), so the pool can schedule an exact retry instead of falling back to `BlockWithBackoff`. Blank-imports `time/tzdata` (embeds IANA tzdata into the binary — the prod container has no `/usr/share/zoneinfo`) |
-| `claude_usage.go` | `FetchClaudeUsage`, `ErrNoClaudeCredentials` — fetches the Claude Max usage widget data (5-hour/weekly percentages) from Anthropic's OAuth usage endpoint; used by the dashboard |
-| `anthropic.go` | `AnthropicRunner` — calls the Anthropic Messages API directly. **Deprecated provider** (disabled for new/updated configs; existing configs still dispatch through this runner) — see "Adding a New Provider" below |
-| `llm.go` | `LLMRunner` — calls any OpenAI-compatible API. **Deprecated provider**, same as above; also backs the retired `openai` dropdown alias |
-| `qwen.go` | `QwenRunner` — runs the Qwen Code CLI; reuses `MCPManager` and the claude stream-json envelope via `parse_qwen.go` |
-| `codex.go` | `CodexRunner` — runs the Codex CLI (`codex exec --json`); own event schema, parsed via `parse_codex.go` |
-| `opencode.go` | `OpencodeRunner` — runs the opencode CLI; own event schema, parsed via `parse_opencode.go`. No MCP support (`ponytail`-marked known gap) |
-| `tools.go` | Shared tool implementations for `anthropic` and `llm` providers (read_file, write_file, run_bash, list_dir, search, str_replace, `CommandPolicy`, `runAccumulators`) |
-| `mcp.go` | `MCPManager`, `SubtaskEnv` — prepares/cleans up the MCP sidecar config and result file |
-| `pricing.go` | `estimateCostUSD`/`estimateCostUSDWithResolver`, `PriceResolver` — manually maintained USD-per-1M-token pricing table used by the `anthropic`/`llm` providers for their authoritative `cost_usd`, and by `claude`/`qwen_code`'s mid-run cost watchdog (`cost_watchdog.go`) to *project* cost from incremental tokens (those two CLIs report their own authoritative total cost, but only at run end — too late for a mid-run kill switch) |
-| `cost_watchdog.go` | `costWatchdog`/`newCostWatchdog` — pure accumulator that projects total task cost (prior spend + this run's cumulative token usage, priced via `pricing.go`) as incremental usage arrives and reports when it crosses the warning ratio or hard budget; used by `claude.go`/`qwen.go`'s stdout scan loops, which own actually cancelling the subprocess and constructing `agent.ErrCostBudgetExceeded` |
-| `prompt.go` | `buildPrompt`, `buildResumePrompt`, `buildSystemPrompt`, `writeHumanReplySection`, `writeSubtaskConflictSection`, `writeFeedbackSection`, `writeReviewCommentsSection`, `writeSourceCommentsSection`, `stripSourceCommentsMarker` — prompt assembly shared by every provider. `stripSourceCommentsMarker` (the `>>>END UNTRUSTED SOURCE COMMENTS` fence-escape guard `writeSourceCommentsSection` always applied) is now also applied to `writeFeedbackSection`'s `Feedback` body and `writeReviewCommentsSection`'s comment bodies/quoted text, plus the task title/description in `buildPrompt` — defence in depth for content that, while trust-filtered upstream (issue comments in `tasksource`, PR reviews/review-comments in `ghsync`, #331), still ultimately originates from a third party and must never be able to forge the fence's closing delimiter |
-| `cli.go` | `mergeEnv`, `rawDump`/`openRawDump`/`WriteLine`/`Close` — infrastructure shared by every CLI-subprocess runner (env sanitization, dev-only raw stdout capture gated by `AGENT_RAW_LOG_DIR`) |
-| `parse.go` | Generic parser helpers shared across providers: `runUsage`, `applyUsage`, `extractOutcome`, `is429Line`/`isTransientLine` (thin wrappers over `agent.ClassifyLine`) — `opencode.go` guards these with `classifyOpencodeJSON`'s `parsedJSON` return so they only sniff lines that didn't parse as JSON (issue #335) |
-| `parse_streamjson.go` | Wire-format helpers for the claude-style stream-json format: `classifyStreamJSON`, `classifyResultMessage`, `extractResultUsage`, `extractAssistantUsage`, `assistantHasToolUse`. Classifies each line's `LogType` and passes the **raw line** through as `Content` — display shaping (extracting text, summarizing tool calls) is the frontend's job (`parseAgentLog.ts`). This is a format library owned by **no provider** — nothing provider-specific lives here. `streamEvent.Usage` is populated for both `"result"` messages (authoritative final total, `IsResult=true`) *and* `"assistant"` messages (per-turn-incremental, no cost — callers must sum across messages themselves; feeds the cost watchdog). `streamEvent.Parsed` is true for every event type parsed as JSON (false only when the line wasn't JSON at all) — `claude.go`/`qwen.go` use it to scope `agent.ClassifyLine`'s raw-line fallback to lines that never parsed as stream-json, since a parsed event's Content is the agent's own prose/tool output and re-sniffing it false-positives on short patterns like `429`/`eof` appearing incidentally (issue #335) |
-| `parse_claude.go` | Claude's parse entry point: `isResumeErrorLine` and claude-specific result handling. `claude.go` calls `classifyStreamJSON` directly (stream-json is claude's native format) |
-| `parse_qwen.go` | `classifyQwenJSON` — qwen's parse entry point, a thin delegation to `parse_streamjson.go`'s `classifyStreamJSON` (qwen reuses claude's exact envelope today). `qwen.go` calls this, never `classifyStreamJSON` directly. Intentionally near-trivial — the home for future qwen-specific parsing divergence |
-| `parse_codex.go` | `classifyCodexJSON`, `classifyCodexItem` + envelope types (`codexItemEnvelope`) — codex's own JSONL event schema (`{"type":"thread.started"\|"turn.started"\|"turn.completed"\|"turn.failed"\|"item.started"\|"item.updated"\|"item.completed"\|"error",...}`). `classifyCodexJSON`'s 6th return value, `parsedJSON`, mirrors `streamEvent.Parsed` above — `codex.go` uses it the same way to scope its `agent.ClassifyLine` fallback to non-JSON lines |
-| `parse_opencode.go` | `classifyOpencodeJSON` — opencode's own NDJSON event schema (text/tool_use/tool_result/step_finish/step_start). Its 5th return value, `parsedJSON`, mirrors `streamEvent.Parsed` above; opencode has no typed error `Classification` at all (unlike claude/qwen/codex), so `opencode.go` guards its raw `is429Line`/`isTransientLine` sniff with `parsedJSON` instead — a rate limit reported only inside a structured event body is no longer caught on stdout, but still surfaces via stderr (unconditionally sniffed) and non-zero exit (issue #335) |
+| `claude.go` | `ClaudeRunner` only (`buildClaudeArgs`, `Run`, `runAttempt`, `shouldFallBackToColdStart`, `buildClaudeSettingsJSON`); `claude` CLI with stream-json output |
+| `claude_credentials.go` | `ClaudeOAuthAccessToken` — reads `~/.claude/.credentials.json` and auto-refreshes the token when expired/expiring within 5 min (atomic write-back); returns "" when unrefreshable so the CLI uses its own flow |
+| `claude_discovery.go` | Lists installed Claude plugins / user-level MCP servers for per-agent-config selection (`enabled_plugins`/`enabled_mcp_servers`); claude only |
+| `claude_reset.go` | `parseClaudeResetTime` — turns "resets 6pm (TZ)" text into `ErrRateLimit.ResetAt`; blank-imports `time/tzdata` (prod image has no zoneinfo) |
+| `claude_usage.go` | `FetchClaudeUsage`, `ErrNoClaudeCredentials` — Claude Max usage widget data for the dashboard |
+| `qwen.go` | `QwenRunner` — Qwen Code CLI; reuses `MCPManager` and the claude stream-json envelope |
+| `codex.go` | `CodexRunner` — `codex exec --json`; own event schema |
+| `opencode.go` | `OpencodeRunner` — opencode CLI; own event schema; no MCP support (known gap) |
+| `mcp.go` | `MCPManager`, `SubtaskEnv` — prepares/cleans up the MCP sidecar config and result file (ADR 0004) |
+| `pricing.go` | `estimateCostUSD(WithResolver)`, `PriceResolver` — manually maintained USD/1M-token table. Cost estimation for `codex_cli`; *projection* source for the claude/qwen cost watchdog |
+| `cost_watchdog.go` | `costWatchdog` — pure accumulator projecting total task cost from incremental usage; `claude.go`/`qwen.go` own cancelling the subprocess and building `agent.ErrCostBudgetExceeded` (ADR 0013) |
+| `prompt.go` | `buildPrompt`, `buildResumePrompt`, `buildSystemPrompt`, `write*Section` helpers, `stripSourceCommentsMarker` — prompt assembly for every provider. Apply `stripSourceCommentsMarker` to every third-party string (ADR 0014) |
+| `cli.go` | `allowlistEnv`, `mergeEnv`, `rawDump` (dev-only raw stdout capture via `AGENT_RAW_LOG_DIR`) — shared CLI-runner infrastructure |
+| `parse.go` | Generic helpers: `runUsage`, `applyUsage`, `extractOutcome`, `is429Line`/`isTransientLine` (wrappers over `agent.ClassifyLine`) |
+| `parse_streamjson.go` | Shared claude-style stream-json wire format owned by **no provider**: `classifyStreamJSON`, `classifyResultMessage`, `extractResultUsage`, `extractAssistantUsage`. Passes the raw line through as `Content` (display shaping is the frontend's `parseAgentLog.ts`). `Usage` is set for `result` (authoritative total) and `assistant` messages (per-turn increments, no cost — callers sum). `streamEvent.Parsed` scopes raw-line sniffing to unparsed lines |
+| `parse_claude.go` | `isResumeErrorLine` and claude-specific result handling |
+| `parse_qwen.go` | `classifyQwenJSON` — thin delegation to `classifyStreamJSON`; home for future qwen divergence |
+| `parse_codex.go` | `classifyCodexJSON`, `classifyCodexItem` — codex JSONL schema; its `parsedJSON` return scopes sniffing like `Parsed` |
+| `parse_opencode.go` | `classifyOpencodeJSON` — opencode NDJSON schema (no typed `Classification`); `parsedJSON` guards its raw sniff |
 
-### One parser file per provider
+## Rules
 
-Each provider's parsing logic lives in exactly one `parse_<name>.go` file — no file may contain parsing logic for more than one provider. `parse_streamjson.go` is the sole exception: it is shared wire-format code owned by no provider, reached only through a provider's own parser (`claude.go` calling `classifyStreamJSON` directly since that *is* claude's format; `parse_qwen.go`'s `classifyQwenJSON` delegating to it since qwen reuses claude's envelope). A runner file (`claude.go`, `qwen.go`, `codex.go`, `opencode.go`) calls only its own `parse_<name>.go` entry point — never another provider's parser and never `parse_streamjson.go` directly (except `claude.go`, per above). This layout exists so future per-provider parsing changes land in one file each, without touching siblings.
+- **One parser file per provider.** A runner calls only its own `parse_<name>.go`; never another provider's parser, and never `parse_streamjson.go` directly except `claude.go`. (ADR 0017)
+- **Raw-line sniffing (`ClassifyLine`) is applied to stdout only for lines that did not parse as a structured event**; stderr is always sniffed. (ADR 0010)
+- **Mid-run cost watchdog**: only `claude.go`/`qwen.go` wire it. Don't add it to a provider unless it has *priced, incremental* usage before the terminal event (codex prices at `turn.completed`; opencode's `step_finish` is a cumulative snapshot). (ADR 0013)
+- Runtime mechanisms (worktrees, cancellation, retry, cost budgets, resume, review comments, locking, subtasks) are owned by `pool.go`/`dispatcher.go`/`worktree.go`/`subtasks.go`; see `../AGENTS.md`.
 
-## Branch-per-task / Worktrees, Run Cancellation, Retry Policy, Cost Budgets, Session Resume, Review Comments, Rework-Loop, Dispatch Locking, Subtask Coordinator
+## Environment Variable Security (ADR 0019)
 
-These runtime mechanisms are documented in `../AGENTS.md` (the core `agent` package) — they're owned by `pool.go`/`dispatcher.go`/`worktree.go`/`subtasks.go`, not by this package. This package only supplies the `Provider` implementations those mechanisms drive.
+Agent subprocesses get an allow-listed env built by `allowlistEnv(<provider>EnvAllowlist)` in `cli.go`, never the full `os.Environ()`. `commonBaseEnvKeys` holds what every provider needs (`PATH`, `HOME`, locale/proxy/TLS trust, `GITHUB_TOKEN`/`GH_TOKEN`); each provider list adds its own.
 
-For the mid-run cost kill switch specifically (see `../AGENTS.md`'s "Cost
-Budgets" section for the full picture): only `claude.go` and `qwen.go` wire
-`cost_watchdog.go` into their stdout scan loop, since only they get
-per-message token usage from a claude-style stream-json envelope
-(`parse_streamjson.go`'s `extractAssistantUsage`) that can be priced via
-`pricing.go`. `codex.go`/`opencode.go` intentionally do not — `codex` prices
-its tokens via `applyUsageWithCost` (see `parse.go`), but only once the full
-`turn.completed` event arrives at the end of a run, not incrementally (fixed
-in #245; there is nothing to project against mid-run), and `opencode`'s
-`step_finish` event only carries a cumulative-to-date cost/tokens snapshot
-(see `parse_opencode.go`), not the per-turn incremental usage a watchdog
-needs to project a running total; it's read at end-of-run only (see #287),
-with no mid-run watchdog
-wired up. Do not add watchdog wiring to a provider without first confirming
-it has *priced, incremental* usage available before the run's terminal event
-— otherwise it either can't project a cost (no-op) or would have to guess.
+> **If an agent needs a new env var, you MUST add it to the allowlist** (`commonBaseEnvKeys` if all providers need it, else the provider's list), or it silently won't reach the subprocess. Never add a real backend secret (`API_TOKEN`, `DATABASE_URL`, ...). Guards: `TestAllowlistEnv_EveryProviderHasGitHubToken`, `...HasPathAndHome`, `...NoProviderLeaksBackendSecrets`.
 
-## Environment Variable Security
-
-**Agent subprocesses get an allow-listed subset of the backend environment, not the full `os.Environ()` (see #321).** The base env is built by `allowlistEnv(<provider>EnvAllowlist)` in `cli.go`: only keys present in the allowlist are passed through. This is deliberate — the backend process env holds secrets an agent must never see (`API_TOKEN`, `LLM_API_KEY`, `DATABASE_URL`/`DB_PASSWORD`, etc.), so the default is to withhold and explicitly admit. `commonBaseEnvKeys` holds the vars every provider needs (`PATH`, `HOME`, locale/proxy/TLS trust, **`GITHUB_TOKEN`/`GH_TOKEN`** for the agent's own `git push`/`gh` auth via the container's `gh auth git-credential` helper); each provider allowlist adds its own (e.g. `ANTHROPIC_*` for claude).
-
-> ⚠️ **If an agent needs a new env var to do its job, you MUST add it to the allowlist** (`commonBaseEnvKeys` if all providers need it, else the specific `<provider>EnvAllowlist`) — otherwise it silently won't reach the agent subprocess and the failure is easy to misdiagnose. The `GITHUB_TOKEN` case is the cautionary tale: it was absent from the allowlist, so agents couldn't authenticate `git push` (`could not read Username for 'https://github.com'`) *even though the backend's own post-run `PushBranch` worked* (it runs with the full `os.Environ()`), which masked the gap as a "non-fast-forward" divergence. Regression guard: `TestAllowlistEnv_EveryProviderHasGitHubToken` / `...HasPathAndHome`. Never add a real backend secret to the allowlist — `TestAllowlistEnv_NoProviderLeaksBackendSecrets` guards that boundary.
-
-`mergeEnv` (`cli.go`) then merges in operator-supplied `input.AgentConfig.Env` on top of the allow-listed base, blocking keys that could hijack the subprocess: `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`. Blocked keys are logged as warnings, not silently dropped. `input.AgentConfig.Env` (the map `mergeEnv` merges in) comes from the referenced `ProviderConfig`'s `env` JSON column rather than directly off `agent_configs` — `mergeEnv` itself is unaffected by that split, it only ever sees the already-resolved map.
+`mergeEnv` layers `input.AgentConfig.Env` (from the `ProviderConfig`) on top, blocking `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `HOME`, `SHELL`, `IFS`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH` with a logged warning.
 
 ## Adding a New Provider
 
-1. Implement `agent.Provider` in a new file here (e.g. `providers/newthing.go`); if it needs its own event-parsing logic, give it a dedicated `parse_newthing.go` per the one-parser-per-provider rule above.
-2. Add a new case to `providerFactory` in `cmd/server/main.go`.
-3. Add the provider string to `knownProviders` in `internal/api/handlers/agents.go` (validated on both agent-config and provider-config create/update — see `internal/api/handlers/providers.go`).
+1. Implement `agent.Provider` here (plus `parse_<name>.go` if it has its own event format).
+2. Add a case to `providerFactory` in `cmd/server/main.go`.
+3. Add the string to `knownProviders` in `internal/api/handlers/agents.go`.
+4. Declare capabilities in `frontend/src/lib/providerCapabilities.ts` and regenerate docs (root `AGENTS.md`).
 
-**`anthropic` and `llm` are deprecated** (disabled for new/updated provider configs; may be removed in a future
-release — see `docs/providers/anthropic.md`/`docs/providers/llm.md`). They're deliberately still registered at all
-three points above — `providerFactory`'s explicit `case "anthropic"` / `case "llm", "openai"`, and `knownProviders`
-— because existing configs on them must keep dispatching. What's new is `deprecatedProviders` in
-`internal/api/handlers/agents.go`, checked only by `providers.go`'s `Create`/`Update` write paths to reject
-*new* configs (or an existing config's provider *changing* to a deprecated one) without touching reads, model
-lists, or dispatch. Don't remove `anthropic`/`llm` from `providerFactory`'s `case` list or `knownProviders` to
-"finish" the deprecation — that would break existing configs. Also don't let `providerFactory`'s `default` branch
-silently resolve to a runner again (it now returns `nil`, and the dispatcher fails the run cleanly on a nil
-provider — see `dispatcher.go`'s `startRun` nil-provider guard) — that was the pre-deprecation landmine that made
-`llm`, `openai`, and any unrecognized provider string all silently become OpenAI-compatible calls.
+**`anthropic`, `llm` (and the `openai` alias) were removed in v0.17.0** (ADR 0018 note). They are absent from `providerFactory` and `knownProviders`; `agent.IsRemovedProvider` (`internal/agent/removed_providers.go`) drives the clear write-path 400 in `handlers/providers.go`, the dispatcher's `waiting_human` escalation message, and the `removed_provider_*` health check for legacy rows (never deleted). `providerFactory`'s `default` must keep returning `nil` (the dispatcher fails the run cleanly on nil); never let it resolve to a runner.
 
-`AgentConfig.Provider`/`.Model`/`.Env` (the fields providers actually read off `input.AgentConfig`) are populated from the joined `ProviderConfig` — see `../AGENTS.md` § Adding a New Provider and [docs/agents.md § Provider Configs](../../../../docs/agents.md#provider-configs) for the full resolution path. A new provider implementation never needs to know about that split; it only ever reads `Provider`/`.Model`/`.Env` off `input.AgentConfig` the same way every other provider does.
+Providers read only the flat `input.AgentConfig.Provider/.Model/.Env`; the `ProviderConfig` split is resolved upstream (`../AGENTS.md`).
 
-## Logging Conventions
+## Logging
 
-Same as the core `agent` package (stdlib `log/slog`, no third-party logging libraries) — see `../AGENTS.md` § Logging Conventions.
+stdlib `log/slog` only; see `../AGENTS.md` § Logging Conventions.

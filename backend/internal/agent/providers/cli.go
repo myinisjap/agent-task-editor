@@ -14,6 +14,7 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // newCLICommand builds the exec.Cmd for a provider's CLI subprocess. The CLI
@@ -35,6 +36,10 @@ func newCLICommand(ctx context.Context, name string, args ...string) *exec.Cmd {
 	// Cancel is best-effort (e.g. the process already exited); give Wait a
 	// bounded grace period afterward instead of blocking forever.
 	cmd.WaitDelay = 5 * time.Second
+	// Run the provider CLI (and everything it spawns) as the unprivileged
+	// agent user when available; no-op otherwise. Callers must also pass the
+	// env they assign to cmd.Env through agentuser.Env (the HOME override).
+	agentuser.Apply(cmd)
 	return cmd
 }
 
@@ -56,11 +61,51 @@ func sanitizeArgs(args []string) []string {
 	return out
 }
 
-// dangerousEnvKeys blocks user-supplied agent env vars from hijacking process execution.
+// dangerousEnvKeys are exact (upper-cased) names of user-supplied agent env
+// vars that could hijack process execution, interpreter startup or TLS trust.
+// Matching is case-insensitive; see isDangerousEnvKey.
+//
+// This filter applies ONLY to AgentConfig.Env (the provider config's env,
+// i.e. user-supplied values) inside mergeEnv. It never touches the backend's
+// inherited env (providerBaseEnv allowlist) or values the backend injects
+// itself (ANTHROPIC_AUTH_TOKEN, CODEX_HOME, DISABLE_AUTOUPDATER, ...), which
+// are appended outside mergeEnv.
+//
+// *_BASE_URL / *_API_BASE are deliberately NOT blocked here: the provider
+// config env is the only place an operator can point a CLI at LiteLLM,
+// OpenRouter, etc. Credential exfiltration through a custom base URL is
+// instead handled in claude.go by withholding backend-held Anthropic
+// credentials when the env overrides ANTHROPIC_BASE_URL.
 var dangerousEnvKeys = map[string]bool{
-	"PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true,
-	"HOME": true, "SHELL": true, "IFS": true,
-	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
+	"PATH": true, "HOME": true, "SHELL": true, "IFS": true,
+	"BASH_ENV": true, "ENV": true,
+	"NODE_OPTIONS": true, "NODE_PATH": true,
+	"PYTHONPATH": true, "PYTHONSTARTUP": true, "PYTHONHOME": true,
+	"PERL5LIB": true, "PERL5OPT": true,
+	"RUBYOPT": true, "RUBYLIB": true,
+	"JAVA_TOOL_OPTIONS": true, "_JAVA_OPTIONS": true,
+	// Trust-store hijack.
+	"SSL_CERT_FILE": true, "SSL_CERT_DIR": true, "NODE_EXTRA_CA_CERTS": true,
+	"REQUESTS_CA_BUNDLE": true, "CURL_CA_BUNDLE": true,
+}
+
+// dangerousEnvPrefixes are upper-case key prefixes that are always blocked
+// (dynamic-loader hooks and every git config/exec knob, e.g. GIT_SSH_COMMAND,
+// GIT_CONFIG_*, GIT_EXEC_PATH).
+var dangerousEnvPrefixes = []string{"LD_", "DYLD_", "GIT_"}
+
+// isDangerousEnvKey reports whether a user-supplied env key is blocked.
+func isDangerousEnvKey(k string) bool {
+	u := strings.ToUpper(k)
+	if dangerousEnvKeys[u] {
+		return true
+	}
+	for _, p := range dangerousEnvPrefixes {
+		if strings.HasPrefix(u, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultTestPoolEnv caps common JS test-runner worker/thread pools so a
@@ -90,7 +135,7 @@ func mergeEnv(base []string, extra map[string]string) []string {
 	out := make([]string, len(base))
 	copy(out, base)
 	for k, v := range extra {
-		if dangerousEnvKeys[strings.ToUpper(k)] {
+		if isDangerousEnvKey(k) {
 			slog.Warn("agent env: blocked dangerous key", "key", k)
 			continue
 		}
@@ -106,7 +151,7 @@ func mergeEnv(base []string, extra map[string]string) []string {
 // (~/.claude, ~/.codex, ~/.qwen, opencode's XDG/HOME-based auth store), and
 // a handful of locale/proxy/TLS-trust vars that CLIs or their Node/Python
 // runtimes commonly consult. This is intentionally NOT os.Environ() — see
-// #321: the full backend process environment (including LLM_API_KEY,
+// #321: the full backend process environment (including
 // API_TOKEN, DB credentials, etc.) must never reach an agent subprocess.
 var commonBaseEnvKeys = map[string]bool{
 	"PATH": true,
@@ -154,7 +199,7 @@ var commonBaseEnvKeys = map[string]bool{
 	// Username for 'https://github.com'" — even though the backend's own
 	// post-run PushBranch (which runs with the full os.Environ()) succeeds,
 	// masking the gap. Unlike the secrets #321 deliberately withholds
-	// (API_TOKEN, LLM_API_KEY, DB creds), this is a credential the agent is
+	// (API_TOKEN, DB creds), this is a credential the agent is
 	// meant to use, so it belongs in the allowlist.
 	"GITHUB_TOKEN": true,
 	"GH_TOKEN":     true,

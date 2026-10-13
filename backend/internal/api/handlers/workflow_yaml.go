@@ -27,6 +27,9 @@ type yamlLabel struct {
 	CreatePR     bool   `yaml:"create_pr,omitempty"`
 	WipLimit     *int   `yaml:"wip_limit,omitempty"`
 	WipLimitHard bool   `yaml:"wip_limit_hard,omitempty"`
+	// VerifyMode is inherit (omitted) | custom | disabled; see resolveLabelVerify.
+	VerifyMode    string `yaml:"verify_mode,omitempty"`
+	VerifyCommand string `yaml:"verify_command,omitempty"`
 }
 
 type yamlTransition struct {
@@ -59,6 +62,9 @@ func (wf yamlWorkflow) validate() error {
 		if err := validateLabelColor(l.Name, l.Color); err != nil {
 			return err
 		}
+		if _, _, err := resolveLabelVerify(l.Name, l.VerifyMode, l.VerifyCommand); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -88,7 +94,7 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			v := int(*l.WipLimit)
 			wipLimit = &v
 		}
-		out.Labels = append(out.Labels, yamlLabel{
+		yl := yamlLabel{
 			Name:         l.Name,
 			Color:        l.Color,
 			SortOrder:    int(l.SortOrder),
@@ -97,7 +103,11 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			CreatePR:     l.CreatePr != 0,
 			WipLimit:     wipLimit,
 			WipLimitHard: l.WipLimitHard != 0,
-		})
+		}
+		if l.VerifyMode != "" && l.VerifyMode != verifyModeInherit {
+			yl.VerifyMode, yl.VerifyCommand = l.VerifyMode, l.VerifyCommand
+		}
+		out.Labels = append(out.Labels, yl)
 	}
 	for _, t := range transitions {
 		out.Transitions = append(out.Transitions, yamlTransition{
@@ -188,17 +198,24 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 			v := int64(*l.WipLimit)
 			wipLimit = &v
 		}
+		verifyMode, verifyCmd, err := resolveLabelVerify(l.Name, l.VerifyMode, l.VerifyCommand)
+		if err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if _, err := tq.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
-			ID:           uuid.NewString(),
-			WorkflowID:   wfID,
-			Name:         l.Name,
-			Color:        l.Color,
-			SortOrder:    int64(l.SortOrder),
-			AgentIgnore:  agentIgnore,
-			IsTerminal:   isTerminal,
-			CreatePr:     createPR,
-			WipLimit:     wipLimit,
-			WipLimitHard: wipLimitHard,
+			ID:            uuid.NewString(),
+			WorkflowID:    wfID,
+			Name:          l.Name,
+			Color:         l.Color,
+			SortOrder:     int64(l.SortOrder),
+			AgentIgnore:   agentIgnore,
+			IsTerminal:    isTerminal,
+			CreatePr:      createPR,
+			WipLimit:      wipLimit,
+			WipLimitHard:  wipLimitHard,
+			VerifyMode:    verifyMode,
+			VerifyCommand: verifyCmd,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
@@ -293,17 +310,24 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			v := int64(*l.WipLimit)
 			wipLimit = &v
 		}
+		verifyMode, verifyCmd, err := resolveLabelVerify(l.Name, l.VerifyMode, l.VerifyCommand)
+		if err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if _, err := h.q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
-			ID:           uuid.NewString(),
-			WorkflowID:   wfID,
-			Name:         l.Name,
-			Color:        l.Color,
-			SortOrder:    int64(l.SortOrder),
-			AgentIgnore:  agentIgnore,
-			IsTerminal:   isTerminal,
-			CreatePr:     createPR,
-			WipLimit:     wipLimit,
-			WipLimitHard: wipLimitHard,
+			ID:            uuid.NewString(),
+			WorkflowID:    wfID,
+			Name:          l.Name,
+			Color:         l.Color,
+			SortOrder:     int64(l.SortOrder),
+			AgentIgnore:   agentIgnore,
+			IsTerminal:    isTerminal,
+			CreatePr:      createPR,
+			WipLimit:      wipLimit,
+			WipLimitHard:  wipLimitHard,
+			VerifyMode:    verifyMode,
+			VerifyCommand: verifyCmd,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return

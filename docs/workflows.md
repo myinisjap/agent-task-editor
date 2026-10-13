@@ -2,7 +2,7 @@
 
 A workflow is the state machine that governs how tasks progress. Each workflow contains **labels** (columns) and **transitions** (allowed moves between labels).
 
-> A condensed version of this reference is also available in the app: click the ⓘ button in the Workflow page header.
+> A condensed version of this reference is also available in the app: click the ⓘ button in the Workflow page header (Pipeline → Workflow tab).
 
 ## Labels
 
@@ -13,9 +13,46 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 | `sort_order` | int | Column order on the board |
 | `agent_ignore` | bool | Agents cannot move tasks to this label; dispatcher skips tasks already here |
 | `is_terminal` | bool | No further transitions; task is complete |
-| `create_pr` | bool | Any transition into this label pushes the task's branch and auto-opens (or reuses) a GitHub PR. Requires a GitHub remote and an authenticated `gh`; best-effort, so a failure is logged and the transition still commits. Equivalent to clicking "Create PR" manually. **At most one label per workflow may set this** — saving a workflow with two is rejected. |
+| `create_pr` | bool | Any transition into this label pushes the task's branch and auto-opens (or reuses) a PR on the repo's forge (GitHub via `gh`, or Gitea). Requires a repo `remote_url` on a supported forge and working push/auth; best-effort, so a failure is logged and the transition still commits. Equivalent to clicking "Create PR" manually. The seeded Default workflow sets it on `review`. **At most one label per workflow may set this** — saving a workflow with two is rejected. |
 | `wip_limit` | int, nullable | Max number of (non-archived) tasks allowed on this label. `null`/unset = unlimited — a label with no limit behaves exactly as before this feature existed. Must be a positive integer when set; `0` or negative is rejected. |
 | `wip_limit_hard` | bool | Enforcement mode for `wip_limit`. **Soft (default, `false`)**: the board column header shows `count / limit` and flags the column once its count reaches or exceeds the limit, but nothing is blocked. **Hard (`true`)**: in addition to the visual flag, the dispatcher will not pick up a task whose agent "success" transition would land it on this label while the label's count is already at or over its limit — the task simply stays where it is and is re-evaluated on the next sweep (a few seconds later), so work queues upstream instead of erroring mid-run. Hard mode never blocks a run that is already in flight from landing in a full column; that stays visual-only. Setting `wip_limit_hard` without a `wip_limit` has no effect (there's nothing to enforce). |
+| `verify_mode` | `inherit` \| `custom` \| `disabled` | Per-label override of the repo's [verify command](#verify-commands). `inherit` (default, may be omitted) uses the repo command; `custom` runs this label's `verify_command` instead; `disabled` skips verification for runs that succeed on this label. |
+| `verify_command` | string | The label's own command. Required when `verify_mode` is `custom`; ignored (and cleared) otherwise. The repo's `verify_timeout_seconds` applies. |
+
+## Pipeline overview
+
+The **Pipeline** page (`/pipeline`, Overview tab) draws the selected workflow as a graph: labels are nodes, transitions are edges (green success, red failure, dashed for agent-triggered). Each node shows who works it: the enabled agent config(s) whose `labels` include it, **Human gate** for labels only a human can move, or an amber **No agent assigned** chip for agent-triggerable labels nobody covers. Nodes also show a non-default verify mode, `terminal`, and `opens PR` markers. The Board shows the same chip in the header of unstaffed columns.
+
+Click a node to open the assign panel: tick or untick an agent config to add or remove that label from its `labels` (the same update the Agents tab performs). Use **Edit workflow** (see below) or the Workflow tab to change the labels and transitions themselves. With several workflows, a selector above the graph switches between them.
+
+## Editing the workflow graph
+
+The Pipeline Overview graph has an **Edit workflow** button. Edits are staged locally (an "Unsaved changes" indicator shows, with **Save** and **Discard** buttons) and nothing is written until you save. The YAML editor on the Workflow tab stays available as the Advanced view; both write the same model.
+
+Supported edits:
+
+- **Add a label** (name and color) from the side panel; **rename** or **delete** the selected label. Renaming rewrites its transitions; deleting also removes the transitions touching it. Labels that currently have tasks on them cannot be renamed or deleted (tasks reference labels by name).
+- **Connect two labels**: drag from a stage's bottom dot to another stage's top dot (creates an agent-on-success transition), or use the **Connect labels** form (from, to, type) for keyboard use. Each transition in the **Transitions** list has a type selector (agent on success, agent on failure, agent either outcome, human, agent or human) and a delete button.
+- **Per-label settings** (select a stage): whether agents work it (`agent_ignore`), **terminal**, **open a PR on entry** (`create_pr`, at most one label), **WIP limit** (and hard limit), and **verify mode** (inherit / custom with a command / disabled).
+- **Human approval gate**: the "Human approval gate" checkbox makes every non-failure transition out of the label human-triggered (and turns them back into agent-on-success when unticked).
+
+Validation mirrors the server: unique non-empty names, hex colors, positive WIP limits, one `create_pr` label, a command for custom verify, transitions that reference existing labels, and no transitions out of terminal labels. Errors block Save; unreachable labels only warn. Server errors show inline.
+
+Saving uses `PUT /workflows/{id}/yaml` (the only write path that round-trips `create_pr`, WIP and verify settings together), which, like the YAML tab, does not keep a per-transition `agent_config_id`; assign agents to labels instead. The API has no ETag, so Save re-reads the workflow first and, if it changed on the server since you started editing (different `updated_at` or content), shows a conflict banner with **Reload and discard my edits** or **Overwrite with my edits** rather than silently overwriting.
+
+## Verify commands
+
+An agent's `signal_complete(outcome="success")` (or the parsed `OUTCOME: success` marker) is only a *claim*. A repo can configure an independent check that decides whether that claim is believed.
+
+- **Repo config** (Repos page, or `verify_command` / `verify_timeout_seconds` on `POST`/`PATCH /repos`): a shell command such as `go test ./...` or `npm test`, and a timeout (1-3600 s, default 600). Empty command = no verification; behaviour is exactly as before.
+- **Per-label override** (workflow YAML or the `labels` array of `PUT /workflows/{id}`): `verify_mode: inherit | custom | disabled` plus `verify_command` (see the label fields above). The label that applies is the one the task was on when the run succeeded.
+- **When it runs**: after the run is recorded as completed and the safety-net commit has captured the final tree, but **before** the success transition. It runs with `sh -c` in the task's worktree (falling back to the repo path), as the unprivileged agent user with the allow-listed agent environment and the repo's `mise`/`uv` runtime pins ([runtime.md](runtime.md)), in its own process group that is killed on timeout. Output (stdout and stderr combined) is capped at 16 KiB, keeping the tail.
+- **Authoritative**: exit 0 lets the success transition proceed. A non-zero exit or a timeout overrides the agent's self-report. The success transition is **not** taken: if the label has an agent failure path (e.g. `testing` to `work`) it fires with a note like `Verification failed: command exited with code 1`; if not, the task keeps its label, is unlocked, and the attempt counts toward the consecutive-failure limit (3), after which the run escalates to `waiting_human`. The failure path is also subject to the usual rework-loop circuit breaker.
+- **Feedback**: the next run's prompt starts with a delimited section, `VERIFICATION FAILED:` (command, exit code or timeout, then the output between `--- BEGIN VERIFY OUTPUT ---` and `--- END VERIFY OUTPUT ---` fences, treated as untrusted). The agent sees the real error, not its own recollection.
+- **Could not run** (no verifier wired, spawn failure, missing directory): the status is `error`, the run is escalated to `waiting_human` and the task stays on its label; nothing is sent back to the agent.
+- **Record**: one `RunVerification` per run (`status` `pass | fail | timeout | error`, `exit_code`, output tail, `duration_ms`, the `command` used) via `GET /tasks/{id}/verifications`, a system line in the run log, and a `task.verification` WebSocket event. The Diff tab of the task page shows the latest result (badge, command, collapsible output) above the diff.
+
+Only `success` outcomes are verified; a run that reports `failure` is not.
 
 ## WIP limits and the dispatcher
 
@@ -97,7 +134,7 @@ If no matching transition is defined for the current label, the endpoint returns
 
 ## Custom Workflows
 
-Create additional workflows via Settings → Workflows in the UI, or via the REST API:
+Create additional workflows via Pipeline → Workflow → New Workflow in the UI, or via the REST API:
 
 ```http
 POST /api/v1/workflows
@@ -159,6 +196,15 @@ transitions:
 3. If the destination label has `agent_ignore = true`, agents cannot move tasks there (`ErrAgentIgnored`).
 4. Every successful transition is recorded in `task_label_history` with the trigger, actor ID, and optional note.
 5. Whenever `UpdateTaskLabel` runs (any transition), `active_agent_run_id` is automatically cleared — preventing stale dispatch locks.
+
+## Force move (escape hatch)
+
+Nothing in the default workflow routes back to `not_ready`, so a task wedged in `plan` or `work` could otherwise not be parked. A human can **force move** a task to any label of its workflow, bypassing the transition table, via `PATCH /tasks/{id}/label` with `"force": true` or the "Force move…" button on Task Detail (which opens a confirmation dialog with a warning and an optional note).
+
+- The target must be a label of the task's workflow (else `400`).
+- Refused with `409` while an agent run on the task is `pending`/`running`; cancel the run first. Runs are never cancelled silently.
+- It goes through the engine's `ForceTransition`, so everything that normally happens on entering a label still does: `active_agent_run_id` is cleared, `task.label_changed` is published, and terminal / create-PR / leave-`not_ready` hooks fire.
+- Label history records it with trigger `human`, the actor, and a note starting with `Forced move`.
 
 ## Task Dependencies
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -12,7 +14,7 @@ import (
 // TaskEventPublisher publishes task lifecycle events to connected WebSocket
 // clients. Satisfied by *ws.Hub; may be nil in tests.
 type TaskEventPublisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // DependenciesHandler manages peer task dependency edges (Mechanism 1). Edges
@@ -222,7 +224,7 @@ func (h *DependenciesHandler) publishUpdated(ids ...string) {
 		return
 	}
 	for _, id := range ids {
-		h.pub.Publish("task.updated", map[string]any{"id": id})
+		h.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: id})
 	}
 }
 

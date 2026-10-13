@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
@@ -49,14 +51,14 @@ func (n notification) debounceKey() string {
 // error.
 func (n *Notifier) classify(ctx context.Context, ev rawEvent) (notification, bool) {
 	switch ev.eventType {
-	case "task.needs_human":
-		return n.classifyNeedsHuman(ctx, ev.payload)
-	case "task.label_changed":
-		return n.classifyLabelChanged(ctx, ev.payload)
-	case "task.cost_warning":
-		return n.classifyCostWarning(ctx, ev.payload)
-	case "system.cost_budget_tripped":
-		return n.classifyCostBudgetTripped(ev.payload)
+	case wsevent.TypeTaskNeedsHuman:
+		return n.classifyNeedsHuman(ctx, wsevent.ToMap(ev.payload))
+	case wsevent.TypeTaskLabelChanged:
+		return n.classifyLabelChanged(ctx, wsevent.ToMap(ev.payload))
+	case wsevent.TypeTaskCostWarning:
+		return n.classifyCostWarning(ctx, wsevent.ToMap(ev.payload))
+	case wsevent.TypeSystemCostBudgetTripped:
+		return n.classifyCostBudgetTripped(wsevent.ToMap(ev.payload))
 	default:
 		return notification{}, false
 	}

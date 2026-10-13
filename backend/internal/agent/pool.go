@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
+
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -27,7 +29,7 @@ var runtimePrep = runtime.Prep
 
 // Publisher broadcasts events to connected WebSocket clients.
 type Publisher interface {
-	Publish(eventType string, payload map[string]any)
+	Publish(eventType string, payload any)
 }
 
 // Job is a single unit of work submitted to the pool.
@@ -35,6 +37,20 @@ type Job struct {
 	RunID    string
 	Provider Provider
 	Input    RunInput
+	// SetupWorktree, when non-nil, provisions the task's git worktree. The
+	// pool worker calls it before toolchain prep and the provider, so the
+	// network-bound `git fetch` never runs in the dispatcher's sweep. On
+	// success the worker fills in Input.RepoPath, Input.Task.Branch and
+	// Input.Runtime.WorktreeDir from the result. Nil means the worktree already
+	// exists and Input.RepoPath is final.
+	SetupWorktree func(ctx context.Context) (WorktreeResult, error)
+}
+
+// WorktreeResult is what Job.SetupWorktree reports about the provisioned
+// worktree.
+type WorktreeResult struct {
+	Path   string
+	Branch string
 }
 
 // Pool manages a bounded set of concurrent agent runs.
@@ -48,6 +64,9 @@ type Pool struct {
 	wg         sync.WaitGroup
 	// RateLimits tracks per-agent-config rate-limit blocks. Optional — no-op when nil.
 	RateLimits *RateLimitRegistry
+	// ProviderPauses is the provider circuit breaker, tripped when a run is
+	// classified ClassAuth. Optional — no-op when nil.
+	ProviderPauses *ProviderPauseRegistry
 	// GitName/GitEmail are used for safety-net commits when the container has no git identity.
 	GitName  string
 	GitEmail string
@@ -55,11 +74,27 @@ type Pool struct {
 	// Used here to skip pushing child branches and to flush/resolve merges once a
 	// parent's run completes.
 	Subtasks *SubtaskCoordinator
+	// Verifier runs the repo verify command when a run reports success (see
+	// verify.go). Optional: with it nil, a repo that has a verify command
+	// configured fails closed (the task is escalated to a human).
+	Verifier Verifier
 
 	// running tracks the cancel func for each in-flight run so a human can stop
 	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
 	mu      sync.Mutex
 	running map[string]*runControl
+
+	// draining is set by Shutdown: Submit refuses new jobs and workers stop
+	// picking queued ones. stop wakes idle workers; hardStop is set once the
+	// drain window has expired so a run registering late is cancelled too.
+	draining atomic.Bool
+	hardStop atomic.Bool
+	stop     chan struct{}
+	stopOnce sync.Once
+	// ShutdownGrace bounds how long Shutdown waits, after cancelling the
+	// remaining runs, for them to record their interrupted status. Defaults
+	// to 30s; a field so tests can shorten it.
+	ShutdownGrace time.Duration
 }
 
 // CancelReason distinguishes why a run was cancelled, so handleCancelled can
@@ -77,10 +112,17 @@ const (
 	// container memory crossed its critical threshold — not the task's
 	// fault. Leaves the task unpaused so it's re-dispatched normally.
 	CancelReasonResourceConstraint
+	// CancelReasonShutdown is the server shutting down (drain window expired,
+	// or the root context was cancelled). The run ends "interrupted", not
+	// failed or cancelled: it consumes no retry budget, leaves the task
+	// unpaused with its lock released, and re-dispatches after restart.
+	CancelReasonShutdown
 )
 
 func (r CancelReason) note() string {
 	switch r {
+	case CancelReasonShutdown:
+		return "Run interrupted by server shutdown. Not a failure of this task: it will be re-dispatched (resuming the prior session when supported) after restart."
 	case CancelReasonResourceConstraint:
 		return "Run stopped: container was low on memory (likely a runaway subprocess, e.g. a test run). Not a failure of this task — it will be retried."
 	default:
@@ -90,6 +132,8 @@ func (r CancelReason) note() string {
 
 func (r CancelReason) String() string {
 	switch r {
+	case CancelReasonShutdown:
+		return "shutdown"
 	case CancelReasonResourceConstraint:
 		return "resource_constraint"
 	default:
@@ -118,7 +162,88 @@ func NewPool(maxWorkers int, db *sql.DB, engine *workflow.Engine, pub Publisher)
 		engine:     engine,
 		pub:        pub,
 		running:    make(map[string]*runControl),
+		stop:       make(chan struct{}),
+
+		ShutdownGrace: 30 * time.Second,
 	}
+}
+
+// Draining reports whether Shutdown has begun, i.e. the pool no longer
+// accepts new jobs.
+func (p *Pool) Draining() bool {
+	return p.draining.Load()
+}
+
+// Shutdown stops the pool gracefully and blocks until every worker has
+// exited. It stops accepting jobs (Submit returns false), records jobs still
+// queued but never started as interrupted, and lets in-flight runs keep going
+// for up to drain. Runs still going after that are cancelled with
+// CancelReasonShutdown, so they end "interrupted" with their dispatch lock
+// released, and are given ShutdownGrace to record that. Callers must keep the
+// pool's context alive (and the DB open) until Shutdown returns, and only then
+// cancel it. Safe to call more than once.
+func (p *Pool) Shutdown(drain time.Duration) {
+	p.draining.Store(true)
+	p.stopOnce.Do(func() { close(p.stop) })
+
+	// Queued jobs hold a pending run row and the task lock but never started.
+	for {
+		select {
+		case job := <-p.jobs:
+			p.handleCancelled(job, Result{}, time.Now(), CancelReasonShutdown)
+			continue
+		default:
+		}
+		break
+	}
+	metrics.PoolQueueDepth.Set(0)
+
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(drain)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return
+	case <-timer.C:
+	}
+
+	p.hardStop.Store(true)
+	p.mu.Lock()
+	ids := make([]string, 0, len(p.running))
+	for id := range p.running {
+		ids = append(ids, id)
+	}
+	p.mu.Unlock()
+	slog.Warn("pool: drain window expired, interrupting remaining runs", "component", "pool", "count", len(ids))
+	for _, id := range ids {
+		p.cancelWithReason(id, CancelReasonShutdown)
+	}
+
+	grace := time.NewTimer(p.ShutdownGrace)
+	defer grace.Stop()
+	select {
+	case <-done:
+	case <-grace.C:
+		slog.Warn("pool: runs did not stop within the shutdown grace period; boot recovery will mark them interrupted", "component", "pool")
+	}
+}
+
+// cancelledBy reports whether the run's context was cancelled and why: an
+// explicit Cancel* call carries its own reason, while a context cancelled
+// without one is the pool's parent context going away (process shutdown).
+func cancelledBy(rc *runControl, runCtx context.Context) (CancelReason, bool) {
+	if rc.cancelled.Load() {
+		return CancelReason(rc.reason.Load()), true
+	}
+	if runCtx.Err() != nil {
+		return CancelReasonShutdown, true
+	}
+	return 0, false
 }
 
 // Cancel signals the in-flight run identified by runID to stop, as a
@@ -212,6 +337,9 @@ func (p *Pool) Start(ctx context.Context) {
 
 // Submit enqueues a job. Returns false if the queue is full (job was not enqueued).
 func (p *Pool) Submit(job Job) bool {
+	if p.draining.Load() {
+		return false
+	}
 	select {
 	case p.jobs <- job:
 		metrics.PoolQueueDepth.Set(float64(len(p.jobs)))
@@ -229,17 +357,13 @@ func (p *Pool) Submit(job Job) bool {
 // worktree (see issue #244). If the lock has already moved on to another
 // run, this logs and does nothing.
 func (p *Pool) releaseLock(ctx context.Context, taskID, runID string) {
-	n, err := p.q.ClearActiveAgentRunIfOwner(ctx, gen.ClearActiveAgentRunIfOwnerParams{
-		ID:               taskID,
-		ActiveAgentRunID: &runID,
-	})
-	if err != nil {
-		slog.Warn("pool: release lock", "component", "pool", "task_id", taskID, "run_id", runID, "err", err)
-		return
-	}
-	if n == 0 {
-		slog.Warn("pool: skipped clearing dispatch lock owned by another run", "component", "pool", "task_id", taskID, "run_id", runID)
-	}
+	p.lifecycle().releaseLock(ctx, taskID, runID)
+}
+
+// lifecycle returns the run-lifecycle helper that owns escalation and lock
+// release (see escalate.go).
+func (p *Pool) lifecycle() runLifecycle {
+	return runLifecycle{q: p.q, pub: p.pub}
 }
 
 func (p *Pool) worker(ctx context.Context) {
@@ -248,7 +372,13 @@ func (p *Pool) worker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-p.stop:
+			return
 		case job := <-p.jobs:
+			if p.draining.Load() {
+				p.handleCancelled(job, Result{}, time.Now(), CancelReasonShutdown)
+				continue
+			}
 			p.runGuarded(ctx, job)
 		}
 	}
@@ -281,6 +411,10 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// It also inherits the worker ctx, so pool shutdown still tears the run down.
 	runCtx, cancel := context.WithCancel(ctx)
 	rc := p.registerRun(job.RunID, cancel)
+	if p.hardStop.Load() {
+		// Registered after Shutdown's cancel sweep; make sure it is stopped too.
+		p.cancelWithReason(job.RunID, CancelReasonShutdown)
+	}
 	metrics.PoolBusyWorkers.Inc()
 	defer func() {
 		metrics.PoolBusyWorkers.Dec()
@@ -290,6 +424,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	ctx = runCtx
 
 	if !p.startRun(ctx, job, log, startedAt) {
+		return
+	}
+
+	var ok bool
+	if job, ok = p.setupWorktree(ctx, job, rc, log, startedAt); !ok {
 		return
 	}
 
@@ -311,8 +450,12 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// marked "cancelled" (not failed), consumes no retry budget, and is not
 	// re-dispatched. Checked before error classification because a cancelled
 	// provider typically returns a context/transient-looking error.
-	if rc.cancelled.Load() {
-		p.handleCancelled(job, result, startedAt, CancelReason(rc.reason.Load()))
+	if reason, ok := cancelledBy(rc, ctx); ok {
+		if reason == CancelReasonShutdown {
+			// Keep the provider session so the re-dispatch can resume it.
+			p.persistRunSession(job, result, log)
+		}
+		p.handleCancelled(job, result, startedAt, reason)
 		return
 	}
 
@@ -324,11 +467,11 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// needs_human escalation) — the watchdog observed projected cost cross
 	// CostWarnRatio*budget at some point during the run.
 	if result.CostWarned && p.pub != nil {
-		p.pub.Publish("task.cost_warning", map[string]any{
-			"task_id":    job.Input.Task.ID,
-			"run_id":     job.RunID,
-			"spent_usd":  job.Input.CostSpentUSD + result.CostUSD,
-			"budget_usd": job.Input.CostBudgetUSD,
+		p.pub.Publish(wsevent.TypeTaskCostWarning, wsevent.TaskCostWarning{
+			TaskID:    job.Input.Task.ID,
+			RunID:     job.RunID,
+			SpentUSD:  job.Input.CostSpentUSD + result.CostUSD,
+			BudgetUSD: job.Input.CostBudgetUSD,
 		})
 	}
 
@@ -361,6 +504,17 @@ func (p *Pool) run(ctx context.Context, job Job) {
 
 	p.safetyNetCommit(ctx, job, finalStatus, log)
 
+	// A configured repo verify command is authoritative over the agent's
+	// self-reported success: it runs after the safety-net commit (so it sees
+	// the final tree) and before the success transition is resolved.
+	if finalStatus == "completed" && result.Outcome == "success" {
+		if p.verifyOutcome(ctx, job, &result, log) {
+			reason, _ := cancelledBy(rc, ctx)
+			p.handleCancelled(job, result, startedAt, reason)
+			return
+		}
+	}
+
 	// Resolve outcome → next label via workflow transitions.
 	var resolvedLabel string
 	if finalStatus == "completed" && result.Outcome != "" {
@@ -368,10 +522,10 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	if p.pub != nil {
-		p.pub.Publish("task.agent_done", map[string]any{
-			"task_id": job.Input.Task.ID,
-			"run_id":  job.RunID,
-			"status":  finalStatus,
+		p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
+			TaskID: job.Input.Task.ID,
+			RunID:  job.RunID,
+			Status: finalStatus,
 		})
 	}
 
@@ -413,13 +567,44 @@ func (p *Pool) startRun(ctx context.Context, job Job, log *slog.Logger, startedA
 		return false
 	}
 	if p.pub != nil {
-		p.pub.Publish("task.agent_started", map[string]any{
-			"task_id":    job.Input.Task.ID,
-			"run_id":     job.RunID,
-			"agent_name": job.Input.AgentConfig.Name,
+		p.pub.Publish(wsevent.TypeTaskAgentStarted, wsevent.TaskAgentStarted{
+			TaskID:    job.Input.Task.ID,
+			RunID:     job.RunID,
+			AgentName: job.Input.AgentConfig.Name,
 		})
 	}
 	return true
+}
+
+// setupWorktree provisions the task's worktree (job.SetupWorktree) in this
+// run's own goroutine, so the network-bound `git fetch --prune` never blocks
+// the dispatcher's sweep. It returns the job with the worktree-dependent input
+// fields filled in, or false after ending the run: a human cancel is recorded
+// as cancelled, and any other failure goes through handleTransientFailure
+// (bounded backed-off retry, then waiting_human), which releases the dispatch
+// lock only if this run still owns it. No-op when the worktree already existed.
+func (p *Pool) setupWorktree(ctx context.Context, job Job, rc *runControl, log *slog.Logger, startedAt time.Time) (Job, bool) {
+	if job.SetupWorktree == nil {
+		return job, true
+	}
+	res, err := job.SetupWorktree(ctx)
+	if err != nil {
+		if reason, ok := cancelledBy(rc, ctx); ok {
+			p.handleCancelled(job, Result{}, startedAt, reason)
+			return job, false
+		}
+		log.Error("pool: worktree setup failed", "err", err)
+		p.handleTransientFailure(ctx, job, Result{}, fmt.Sprintf("worktree setup failed: %v", err), startedAt)
+		return job, false
+	}
+	job.Input.RepoPath = res.Path
+	job.Input.Task.Branch = res.Branch
+	if spec := job.Input.Runtime; spec != nil {
+		cp := *spec
+		cp.WorktreeDir = res.Path
+		job.Input.Runtime = &cp
+	}
+	return job, true
 }
 
 // prepareRuntime installs the repo's pinned toolchains (job.Input.Runtime,
@@ -447,27 +632,11 @@ func (p *Pool) prepareRuntime(ctx context.Context, job Job, log *slog.Logger, st
 	if err := runtimePrep(ctx, spec.Pins, spec.WorktreeDir); err != nil {
 		msg := fmt.Sprintf("agent runtime prep failed: %v", err)
 		log.Error("pool: runtime prep failed", "err", err)
-		if _, serr := p.q.SetAgentRunCompleted(context.Background(), gen.SetAgentRunCompletedParams{
-			Status: "waiting_human",
-			Notes:  &msg,
-			ID:     job.RunID,
-		}); serr != nil {
-			log.Warn("pool: mark runtime-prep-failed run waiting_human", "err", serr)
-		}
+		_ = p.lifecycle().escalate(context.Background(), escalation{
+			TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonRuntimePrep, Message: msg, PublishDone: true,
+		})
 		metrics.RunTerminalTotal.WithLabelValues("waiting_human").Inc()
 		metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
-		if p.pub != nil {
-			p.pub.Publish("task.needs_human", map[string]any{
-				"task_id": job.Input.Task.ID,
-				"run_id":  job.RunID,
-				"message": msg,
-			})
-			p.pub.Publish("task.agent_done", map[string]any{
-				"task_id": job.Input.Task.ID,
-				"run_id":  job.RunID,
-				"status":  "waiting_human",
-			})
-		}
 		return false
 	}
 	return true
@@ -567,11 +736,11 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 					unblockStr = until.Format(time.RFC3339)
 				}
 			}
-			p.pub.Publish("task.rate_limited", map[string]any{
-				"task_id":         job.Input.Task.ID,
-				"run_id":          job.RunID,
-				"agent_config_id": job.Input.AgentConfig.ID,
-				"unblocked_at":    unblockStr,
+			p.pub.Publish(wsevent.TypeTaskRateLimited, wsevent.TaskRateLimited{
+				TaskID:        job.Input.Task.ID,
+				RunID:         job.RunID,
+				AgentConfigID: job.Input.AgentConfig.ID,
+				UnblockedAt:   unblockStr,
 			})
 		}
 		p.handleTransientFailure(ctx, job, result, "rate limited: "+rl.Message, startedAt)
@@ -604,40 +773,98 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 	// silently retrying forever. Logged below as the `classification` field so
 	// misclassifications are diagnosable from logs alone (see errclass.go).
 	classification := ClassGenuine
+	var authNotes *string
 	if finalStatus == "failed" && p.hasLoginError(ctx, job.RunID) {
 		finalStatus = "waiting_human"
 		classification = ClassAuth
 		msg := "Agent failed: not logged in. Please re-authenticate and re-run."
 		result.Message = &msg
+		result.EscalationReason = ReasonAuthRequired
+		authNotes = &msg
+		// One broken login would otherwise escalate every task the dispatcher
+		// starts next: pause dispatch for this provider kind until its health
+		// check passes again (or a human resumes it).
+		if p.ProviderPauses.Pause(job.Input.AgentConfig.Provider, "Not logged in: re-authenticate the "+job.Input.AgentConfig.Provider+" provider.") {
+			log.Warn("pool: auth failure, pausing dispatch for provider", "provider", job.Input.AgentConfig.Provider)
+		}
 	}
 	if result.Status == "failed" {
 		log.Warn("pool: agent run failed", "classification", string(classification), "final_status", finalStatus)
 		metrics.RunClassificationTotal.WithLabelValues(string(classification)).Inc()
 	}
 
+	// Genuine failures release the dispatch lock, so without a cap the next 5s
+	// sweep would re-run a persistently failing task forever. Count them and,
+	// once maxConsecutiveFailures is reached, escalate to waiting_human (lock
+	// kept) instead. Auth failures are already escalated above and don't count.
+	genuineFailure := finalStatus == "failed"
+	runNotes := result.Notes // run-row notes only; task agent_notes keeps the agent's own text
+	if authNotes != nil {
+		// Store the reason on the run so the UI can show it (previously a
+		// login failure left the run with no notes or feedback at all).
+		runNotes = authNotes
+	}
+	if genuineFailure {
+		n, err := p.q.IncrementTaskFailureCount(ctx, job.Input.Task.ID)
+		switch {
+		case err != nil:
+			slog.Warn("pool: increment failure count", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
+		case n >= maxConsecutiveFailures:
+			finalStatus = "waiting_human"
+			msg := fmt.Sprintf("Agent failed %d times in a row without completing. Review the run logs, then re-dispatch or intervene manually.", n)
+			result.Message = &msg
+			runNotes = &msg
+			result.EscalationReason = ReasonRepeatedFailure
+			log.Warn("pool: consecutive failure limit reached, escalating to waiting_human", "count", n, "limit", maxConsecutiveFailures)
+		}
+	}
+
 	// A genuine (non-transient) failure or a successful completion resets the
 	// task's transient-retry budget so a later unrelated transient blip
 	// starts counting fresh.
-	if finalStatus == "failed" || finalStatus == "completed" {
+	//
+	// The transient reset on genuine failure is kept deliberately: a run that
+	// executed and failed on its own merits shows the infra is reachable, so an
+	// earlier blip shouldn't count against a later one. It can't defeat
+	// escalation because the genuine-failure counter above is separate and is
+	// NOT reset by transient failures, so alternating transient/genuine
+	// failures still hit maxConsecutiveFailures.
+	if genuineFailure || finalStatus == "completed" {
 		if _, err := p.q.ResetTaskTransientRetry(ctx, job.Input.Task.ID); err != nil {
 			slog.Warn("pool: reset transient retry count", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "err", err)
 		}
 	}
+	// The genuine-failure streak is deliberately NOT reset here for a completed
+	// run: a completed run whose requested transition is then rejected counts as
+	// a failed attempt (see handleRejectedTransition). The streak is cleared
+	// instead by the successful label transition itself (engine.Transition
+	// zeroes consecutive_failure_count), which is what "completed and advanced"
+	// means.
 
 	costUnknown := int64(0)
 	if result.CostUnknown {
 		costUnknown = 1
 	}
+	var escReason *string
+	if finalStatus == "waiting_human" {
+		if result.EscalationReason == "" {
+			// A provider-reported waiting_human is the request_human tool.
+			result.EscalationReason = ReasonAgentQuestion
+		}
+		r := string(result.EscalationReason)
+		escReason = &r
+	}
 	if _, err := p.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{
-		Status:       finalStatus,
-		StoredInfo:   result.StoredInfo,
-		Notes:        result.Notes,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		CostUsd:      result.CostUSD,
-		CostUnknown:  costUnknown,
-		TurnsUsed:    result.TurnsUsed,
-		ID:           job.RunID,
+		Status:           finalStatus,
+		StoredInfo:       result.StoredInfo,
+		Notes:            runNotes,
+		InputTokens:      result.InputTokens,
+		OutputTokens:     result.OutputTokens,
+		CostUsd:          result.CostUSD,
+		CostUnknown:      costUnknown,
+		TurnsUsed:        result.TurnsUsed,
+		EscalationReason: escReason,
+		ID:               job.RunID,
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)
 	}
@@ -673,10 +900,10 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 			applied++
 		}
 		if applied > 0 && p.pub != nil {
-			p.pub.Publish("task.review_comments_changed", map[string]any{
-				"task_id":  job.Input.Task.ID,
-				"run_id":   job.RunID,
-				"resolved": applied,
+			p.pub.Publish(wsevent.TypeTaskReviewCommentsChange, wsevent.TaskReviewCommentsChanged{
+				TaskID:   job.Input.Task.ID,
+				RunID:    job.RunID,
+				Resolved: applied,
 			})
 		}
 	}
@@ -741,6 +968,16 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 	switch finalStatus {
 	case "completed":
 		if resolvedLabel != "" {
+			// The outcome was resolved against the label the run was dispatched
+			// on. If a human has since moved the task (possible once the run is
+			// marked completed), applying it would act on the wrong column, and
+			// the failure-loop bookkeeping below would escalate a task the human
+			// already took over. Leave the task where the human put it; the move
+			// already cleared the lock, and releaseLock is owner-scoped.
+			if p.humanMovedTask(ctx, job, log) {
+				p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
+				return
+			}
 			note := ""
 			if result.Message != nil {
 				note = *result.Message
@@ -759,9 +996,13 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 			//      so a reviewer stuck on the same finding re-triggers a Worker
 			//      forever until a human pauses it.
 			if result.Outcome == "failure" {
-				if result.Message != nil && *result.Message != "" {
+				feedback := result.Message
+				if result.verify != nil && result.verify.feedback != "" {
+					feedback = &result.verify.feedback
+				}
+				if feedback != nil && *feedback != "" {
 					if err := p.q.SetAgentRunFeedback(ctx, gen.SetAgentRunFeedbackParams{
-						Feedback: result.Message,
+						Feedback: feedback,
 						ID:       job.RunID,
 					}); err != nil {
 						log.Warn("pool: route failure feedback", "err", err)
@@ -774,29 +1015,33 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 					return
 				}
 			}
-			if err := p.engine.Transition(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note); err != nil {
-				// The transition didn't land (e.g. rejected or a concurrent move),
-				// so it did not clear the lock — clear it here so the finished run
-				// doesn't leave the task stuck locked.
+			// Pass the dispatch-time label so the engine's compare-and-swap
+			// refuses (ErrStale) if a human moved the task since the check above.
+			if err := p.engine.TransitionExpecting(ctx, job.Input.Task.ID, resolvedLabel, workflow.TriggerAgent, job.RunID, note, job.Input.Task.Label); err != nil {
+				// The transition didn't land, so it did not clear the lock.
 				log.Warn("pool: agent-requested transition rejected", "to", resolvedLabel, "err", err)
-				p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
+				p.handleRejectedTransition(ctx, job, result, resolvedLabel, err, log)
 			}
+		} else if result.verify != nil && result.verify.errMsg != "" {
+			p.escalateVerifyError(ctx, job, result, log)
+		} else if result.verify != nil {
+			// Verification failed and the label has no agent failure path.
+			p.holdOnVerifyFailure(ctx, job, result, log)
 		} else {
-			// No resolved label — unlock and block re-dispatch until a human acts.
-			p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
-			if p.pub != nil {
-				p.pub.Publish("task.needs_human", map[string]any{
-					"task_id": job.Input.Task.ID,
-					"run_id":  job.RunID,
-					"message": "Agent completed but outcome could not be resolved to a transition. Please review and move the task manually.",
-				})
-			}
+			// No resolved label: the agent finished without reporting an outcome
+			// (no signal_complete / OUTCOME: line) or reported one that maps to no
+			// unambiguous transition. Re-running would just repeat the same thing
+			// every sweep, so escalate: mark the run waiting_human and KEEP the
+			// lock until a human acts.
+			p.escalateNoOutcome(ctx, job, result, log)
 		}
 
 	case "failed":
-		// Genuine failure — the task stays on its current label; unlock it so the
-		// next sweep re-picks it (transient failures never reach here; they are
-		// handled by handleTransientFailure, which owns their lock/backoff).
+		// Genuine failure below the consecutive-failure limit — the task stays on
+		// its current label; unlock it so the next sweep re-picks it. Reaching
+		// the limit turns finalStatus into waiting_human in persistRunResult, so
+		// it never gets here. (Transient failures never reach here either; they
+		// are handled by handleTransientFailure, which owns their lock/backoff.)
 		p.releaseLock(ctx, job.Input.Task.ID, job.RunID)
 
 	case "waiting_human":
@@ -804,14 +1049,27 @@ func (p *Pool) applyTerminalTransition(ctx context.Context, job Job, result Resu
 		if result.Message != nil {
 			msg = *result.Message
 		}
-		if p.pub != nil {
-			p.pub.Publish("task.needs_human", map[string]any{
-				"task_id": job.Input.Task.ID,
-				"run_id":  job.RunID,
-				"message": msg,
-			})
-		}
+		p.lifecycle().announceNeedsHuman(job.Input.Task.ID, job.RunID, result.EscalationReason, msg)
 	}
+}
+
+// humanMovedTask reports whether the task is no longer on the label this run
+// was dispatched on, logging when so. A lookup error is treated as "not moved"
+// so the transition (which re-checks atomically) decides.
+func (p *Pool) humanMovedTask(ctx context.Context, job Job, log *slog.Logger) bool {
+	if job.Input.Task.Label == "" {
+		return false
+	}
+	t, err := p.q.GetTask(ctx, job.Input.Task.ID)
+	if err != nil {
+		return false
+	}
+	if t.Label != job.Input.Task.Label {
+		log.Warn("pool: task moved since dispatch; skipping agent outcome",
+			"dispatched_label", job.Input.Task.Label, "current_label", t.Label)
+		return true
+	}
+	return false
 }
 
 // persistLogs drains logCh and writes to SQLite in batches wrapped in a transaction.
@@ -869,14 +1127,14 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 			// clients can dedupe live entries against agent.log_replay and
 			// GET /tasks/{id}/runs/{run_id}/logs pages by id alone.
 			if p.pub != nil {
-				p.pub.Publish("agent.log", map[string]any{
-					"run_id":  runID,
-					"task_id": taskID,
-					"entry": map[string]any{
-						"id":      logID,
-						"type":    entry.Type,
-						"content": entry.Content,
-						"at":      entry.At,
+				p.pub.Publish(wsevent.TypeAgentLog, wsevent.AgentLog{
+					RunID:  runID,
+					TaskID: taskID,
+					Entry: wsevent.AgentLogEntry{
+						ID:      logID,
+						Type:    string(entry.Type),
+						Content: entry.Content,
+						At:      entry.At,
 					},
 				})
 			}

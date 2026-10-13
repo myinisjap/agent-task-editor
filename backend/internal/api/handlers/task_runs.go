@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -70,6 +71,43 @@ func (h *TasksHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Next-Cursor", runs[len(runs)-1].ID)
 	}
 	JSON(w, http.StatusOK, runs)
+}
+
+// runVerificationJSON is the wire shape of a run_verifications row
+// (RunVerification in openapi.yaml): truncated is a real boolean there.
+type runVerificationJSON struct {
+	RunID      string    `json:"run_id"`
+	TaskID     string    `json:"task_id"`
+	Command    string    `json:"command"`
+	Status     string    `json:"status"`
+	ExitCode   *int64    `json:"exit_code"`
+	Output     string    `json:"output"`
+	Truncated  bool      `json:"truncated"`
+	DurationMs int64     `json:"duration_ms"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+const maxTaskVerifications = 20
+
+// ListVerifications returns the task's verify-command results, newest first.
+func (h *TasksHandler) ListVerifications(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.q.ListTaskVerifications(r.Context(), gen.ListTaskVerificationsParams{
+		TaskID: chi.URLParam(r, "id"),
+		Limit:  maxTaskVerifications,
+	})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]runVerificationJSON, 0, len(rows))
+	for _, v := range rows {
+		out = append(out, runVerificationJSON{
+			RunID: v.RunID, TaskID: v.TaskID, Command: v.Command, Status: v.Status,
+			ExitCode: v.ExitCode, Output: v.Output, Truncated: v.Truncated != 0,
+			DurationMs: v.DurationMs, CreatedAt: v.CreatedAt,
+		})
+	}
+	JSON(w, http.StatusOK, out)
 }
 
 func (h *TasksHandler) GetRun(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +189,7 @@ func (h *TasksHandler) ReplyRun(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		JSON(w, http.StatusAccepted, map[string]string{"run_id": newRunID})
-	case errors.Is(err, agent.ErrRunNotWaiting), errors.Is(err, agent.ErrNoMatchingConfig):
+	case errors.Is(err, agent.ErrRunNotWaiting), errors.Is(err, agent.ErrNoMatchingConfig), errors.Is(err, agent.ErrDispatchConflict):
 		Err(w, http.StatusConflict, err.Error())
 	case errors.Is(err, agent.ErrPoolSaturated):
 		Err(w, http.StatusServiceUnavailable, err.Error())

@@ -110,7 +110,13 @@ func (h *TasksHandler) reclaimWorktreeOnArchive(ctx context.Context, task *gen.T
 		slog.Warn("archive: get repo for worktree removal", "task_id", task.ID, "err", err)
 		return
 	}
-	if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
+	// Serialize on the per-repo git lock (same key as dispatcher/pool: repo.Path)
+	// so `git worktree remove` can't race a concurrent worktree add/commit/merge.
+	lock := agent.RepoGitLock(repo.Path)
+	lock.Lock()
+	err = agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath)
+	lock.Unlock()
+	if err != nil {
 		slog.Warn("archive: remove worktree", "task_id", task.ID, "err", err)
 	}
 	if err := h.q.ClearTaskWorktreePath(ctx, task.ID); err != nil {

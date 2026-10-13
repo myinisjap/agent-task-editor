@@ -1,9 +1,13 @@
 package agent
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
 // ErrRateLimit is returned by providers when the upstream API responds with 429.
@@ -52,6 +56,116 @@ type RateLimitRegistry struct {
 	blocked   map[string]time.Time // agentConfigID → unblock time
 	attempts  map[string]int       // agentConfigID → consecutive 429 count
 	blockedAt map[string]time.Time // agentConfigID → wall-clock time of most recent Block/BlockWithBackoff
+	store     RateLimitStore       // optional write-through persistence; nil = in-memory only
+}
+
+// RateLimitStore persists registry blocks so they survive a restart. All
+// methods are best-effort from the registry's point of view: errors are
+// logged and never affect dispatch.
+type RateLimitStore interface {
+	Save(ctx context.Context, agentConfigID string, until time.Time, attempts int) error
+	Delete(ctx context.Context, agentConfigID string) error
+	// LoadActive returns blocks whose unblock time is after now.
+	LoadActive(ctx context.Context, now time.Time) ([]PersistedRateLimit, error)
+	// PruneExpired removes rows whose unblock time is at or before now.
+	PruneExpired(ctx context.Context, now time.Time) error
+}
+
+// PersistedRateLimit is one stored block.
+type PersistedRateLimit struct {
+	AgentConfigID string
+	Until         time.Time
+	Attempts      int
+}
+
+const rateLimitStoreTimeout = 5 * time.Second
+
+// SQLRateLimitStore is the sqlite-backed RateLimitStore.
+type SQLRateLimitStore struct{ q *gen.Queries }
+
+// NewSQLRateLimitStore wraps sqlc queries as a RateLimitStore.
+func NewSQLRateLimitStore(q *gen.Queries) *SQLRateLimitStore { return &SQLRateLimitStore{q: q} }
+
+func (s *SQLRateLimitStore) Save(ctx context.Context, id string, until time.Time, attempts int) error {
+	return s.q.UpsertAgentRateLimit(ctx, gen.UpsertAgentRateLimitParams{
+		AgentConfigID: id, BlockedUntil: until, Attempts: int64(attempts),
+	})
+}
+
+func (s *SQLRateLimitStore) Delete(ctx context.Context, id string) error {
+	return s.q.DeleteAgentRateLimit(ctx, id)
+}
+
+func (s *SQLRateLimitStore) LoadActive(ctx context.Context, now time.Time) ([]PersistedRateLimit, error) {
+	rows, err := s.q.ListActiveAgentRateLimits(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PersistedRateLimit, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, PersistedRateLimit{AgentConfigID: r.AgentConfigID, Until: r.BlockedUntil, Attempts: int(r.Attempts)})
+	}
+	return out, nil
+}
+
+func (s *SQLRateLimitStore) PruneExpired(ctx context.Context, now time.Time) error {
+	_, err := s.q.PruneExpiredAgentRateLimits(ctx, now)
+	return err
+}
+
+// NewRateLimitRegistryWithStore creates a registry backed by store: expired
+// rows are pruned, unexpired ones are loaded, and every later Block/Unblock
+// is written through. A nil store behaves like NewRateLimitRegistry.
+func NewRateLimitRegistryWithStore(store RateLimitStore) *RateLimitRegistry {
+	r := NewRateLimitRegistry()
+	if store == nil {
+		return r
+	}
+	r.store = store
+	ctx, cancel := context.WithTimeout(context.Background(), rateLimitStoreTimeout)
+	defer cancel()
+	now := time.Now()
+	if err := store.PruneExpired(ctx, now); err != nil {
+		slog.Warn("rate limit registry: prune expired failed", "err", err)
+	}
+	rows, err := store.LoadActive(ctx, now)
+	if err != nil {
+		slog.Warn("rate limit registry: load persisted blocks failed", "err", err)
+		return r
+	}
+	for _, row := range rows {
+		if !row.Until.After(now) {
+			continue
+		}
+		r.blocked[row.AgentConfigID] = row.Until
+		r.attempts[row.AgentConfigID] = row.Attempts
+	}
+	if len(rows) > 0 {
+		slog.Info("rate limit registry: restored blocks", "count", len(rows))
+	}
+	return r
+}
+
+func (r *RateLimitRegistry) persistSave(id string, until time.Time, attempts int) {
+	if r.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), rateLimitStoreTimeout)
+	defer cancel()
+	if err := r.store.Save(ctx, id, until, attempts); err != nil {
+		slog.Warn("rate limit registry: persist block failed", "agent_config_id", id, "err", err)
+	}
+}
+
+func (r *RateLimitRegistry) persistDelete(id string) {
+	if r.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), rateLimitStoreTimeout)
+	defer cancel()
+	if err := r.store.Delete(ctx, id); err != nil {
+		slog.Warn("rate limit registry: clear persisted block failed", "agent_config_id", id, "err", err)
+	}
 }
 
 // NewRateLimitRegistry creates a new registry.
@@ -70,6 +184,7 @@ func (r *RateLimitRegistry) Block(agentConfigID string, resetAt time.Time) {
 	r.blocked[agentConfigID] = resetAt
 	r.attempts[agentConfigID]++
 	r.blockedAt[agentConfigID] = time.Now()
+	r.persistSave(agentConfigID, resetAt, r.attempts[agentConfigID])
 }
 
 // BlockWithBackoff marks agentConfigID as rate-limited using exponential backoff
@@ -79,9 +194,11 @@ func (r *RateLimitRegistry) BlockWithBackoff(agentConfigID string) {
 	defer r.mu.Unlock()
 	attempt := r.attempts[agentConfigID]
 	d := BackoffDuration(attempt)
-	r.blocked[agentConfigID] = time.Now().Add(d)
+	until := time.Now().Add(d)
+	r.blocked[agentConfigID] = until
 	r.attempts[agentConfigID] = attempt + 1
 	r.blockedAt[agentConfigID] = time.Now()
+	r.persistSave(agentConfigID, until, attempt+1)
 }
 
 // IsBlocked returns (true, unblockTime) if agentConfigID is currently rate-limited.
@@ -117,6 +234,7 @@ func (r *RateLimitRegistry) Unblock(agentConfigID string) {
 	delete(r.blocked, agentConfigID)
 	delete(r.attempts, agentConfigID)
 	delete(r.blockedAt, agentConfigID)
+	r.persistDelete(agentConfigID)
 }
 
 // UnblockIfNotBlockedSince clears rate-limit state for agentConfigID only if no
@@ -138,5 +256,6 @@ func (r *RateLimitRegistry) UnblockIfNotBlockedSince(agentConfigID string, since
 	delete(r.blocked, agentConfigID)
 	delete(r.attempts, agentConfigID)
 	delete(r.blockedAt, agentConfigID)
+	r.persistDelete(agentConfigID)
 	return true
 }

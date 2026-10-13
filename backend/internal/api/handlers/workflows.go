@@ -152,6 +152,10 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			IsTerminal   bool   `json:"is_terminal"`
 			WipLimit     *int64 `json:"wip_limit"`
 			WipLimitHard bool   `json:"wip_limit_hard"`
+			// VerifyMode: inherit (default) | custom | disabled; see
+			// resolveLabelVerify.
+			VerifyMode    string `json:"verify_mode"`
+			VerifyCommand string `json:"verify_command"`
 		} `json:"labels"`
 		Transitions []struct {
 			FromLabel     string  `json:"from_label"`
@@ -197,11 +201,19 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Validate label colors before opening the transaction, so a bad payload
 	// never causes a half-applied delete/recreate of the labels (see #343).
-	for _, l := range body.Labels {
+	verifyModes := make([]string, len(body.Labels))
+	verifyCmds := make([]string, len(body.Labels))
+	for i, l := range body.Labels {
 		if err := validateLabelColor(l.Name, l.Color); err != nil {
 			Err(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		mode, cmd, err := resolveLabelVerify(l.Name, l.VerifyMode, l.VerifyCommand)
+		if err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		verifyModes[i], verifyCmds[i] = mode, cmd
 	}
 
 	// Rename plus replace labels and transitions atomically inside a single
@@ -231,7 +243,7 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	for _, l := range body.Labels {
+	for i, l := range body.Labels {
 		agentIgnore := int64(0)
 		if l.AgentIgnore {
 			agentIgnore = 1
@@ -245,15 +257,17 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			wipLimitHard = 1
 		}
 		if _, err := tq.CreateWorkflowLabel(r.Context(), gen.CreateWorkflowLabelParams{
-			ID:           uuid.NewString(),
-			WorkflowID:   wfID,
-			Name:         l.Name,
-			Color:        l.Color,
-			SortOrder:    l.SortOrder,
-			AgentIgnore:  agentIgnore,
-			IsTerminal:   isTerminal,
-			WipLimit:     l.WipLimit,
-			WipLimitHard: wipLimitHard,
+			ID:            uuid.NewString(),
+			WorkflowID:    wfID,
+			Name:          l.Name,
+			Color:         l.Color,
+			SortOrder:     l.SortOrder,
+			AgentIgnore:   agentIgnore,
+			IsTerminal:    isTerminal,
+			WipLimit:      l.WipLimit,
+			WipLimitHard:  wipLimitHard,
+			VerifyMode:    verifyModes[i],
+			VerifyCommand: verifyCmds[i],
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return

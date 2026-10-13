@@ -40,7 +40,7 @@ const queueCap = 256
 // later, on the Run goroutine.
 type rawEvent struct {
 	eventType string
-	payload   map[string]any
+	payload   any
 }
 
 // Notifier POSTs a JSON payload to a configured webhook URL whenever a
@@ -113,7 +113,7 @@ func (n *Notifier) enabled() bool {
 // serially (see package doc). A blocking Publish here would stall the whole
 // board behind a hung webhook endpoint, so buffering + drop-on-full is
 // non-negotiable.
-func (n *Notifier) Publish(eventType string, payload map[string]any) {
+func (n *Notifier) Publish(eventType string, payload any) {
 	if !n.enabled() {
 		return
 	}

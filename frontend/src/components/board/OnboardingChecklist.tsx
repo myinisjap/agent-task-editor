@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type ProviderCheck } from '../../api/client'
-import { useReposStore } from '../../stores/repos'
 import { useTasksStore } from '../../stores/tasks'
-import { useProviderConfigsStore } from '../../stores/providerConfigs'
-import { useAgentsStore } from '../../stores/agents'
-
-// DISMISSED_STORAGE_KEY follows the CONDENSED_STORAGE_KEY naming
-// convention used elsewhere on the board (see BoardPage.tsx).
-const DISMISSED_STORAGE_KEY = 'board.onboarding.dismissed'
+import { useSetupStatus } from '../../lib/useSetupStatus'
+import { ONBOARDING_DISMISSED_KEY, readOnboardingDismissed } from '../../lib/setupStatus'
+import StaffAgentsButton from './StaffAgentsButton'
 
 type Step = {
   key: string
@@ -25,28 +21,17 @@ const STATUS_STYLES: Record<ProviderCheck['status'], string> = {
   error: 'bg-red-900/40 border-red-700 text-red-200',
 }
 
-function readDismissed(): boolean {
-  try {
-    return localStorage.getItem(DISMISSED_STORAGE_KEY) === 'true'
-  } catch {
-    return false
-  }
-}
-
 export default function OnboardingChecklist() {
-  const { repos, fetch: fetchRepos } = useReposStore()
   // Tasks come from BoardPage's own fetch + WS subscription — this
   // component is always rendered as a BoardPage child, so it never needs
   // (and must not run) its own competing fetchTasks() sweep; doing so raced
   // BoardPage's own fetch on every mount (#341). Read via a selector rather
   // than destructuring the whole store so this component doesn't re-render
   // on unrelated store field changes (loading/reqId/etc.).
-  const tasks = useTasksStore((s) => s.tasks)
   const tasksLoaded = useTasksStore((s) => s.loaded)
-  const { configs: providerConfigs, fetch: fetchProviderConfigs } = useProviderConfigsStore()
-  const { configs: agentConfigs, fetch: fetchAgentConfigs } = useAgentsStore()
+  const setup = useSetupStatus()
   const [checks, setChecks] = useState<ProviderCheck[]>([])
-  const [dismissed, setDismissed] = useState<boolean>(readDismissed)
+  const [dismissed, setDismissed] = useState<boolean>(readOnboardingDismissed)
   // All store data starts out empty until the first fetch resolves, which
   // would otherwise make every step look incomplete for a frame on each
   // reload/login — showing the checklist in a flash even when onboarding
@@ -61,9 +46,7 @@ export default function OnboardingChecklist() {
     if (refreshing.current) return
     refreshing.current = true
     Promise.allSettled([
-      fetchRepos(),
-      fetchProviderConfigs(),
-      fetchAgentConfigs(),
+      setup.refresh(),
       api.health.providers().then((r) => setChecks(r.checks ?? [])).catch(() => setChecks([])),
     ]).finally(() => {
       refreshing.current = false
@@ -86,7 +69,7 @@ export default function OnboardingChecklist() {
 
   const dismiss = () => {
     try {
-      localStorage.setItem(DISMISSED_STORAGE_KEY, 'true')
+      localStorage.setItem(ONBOARDING_DISMISSED_KEY, 'true')
     } catch {
       // ignore storage errors
     }
@@ -99,7 +82,7 @@ export default function OnboardingChecklist() {
     {
       key: 'repo',
       label: 'Add a repo',
-      complete: repos.length > 0,
+      complete: setup.hasRepo,
       to: '/repos',
       linkLabel: 'Add a repo →',
       checkIds: ['repo_base_dir', 'gh_auth'],
@@ -107,23 +90,23 @@ export default function OnboardingChecklist() {
     {
       key: 'provider',
       label: 'Configure a provider',
-      complete: providerConfigs.length > 0,
-      to: '/providers',
+      complete: setup.hasProvider,
+      to: '/settings/providers',
       linkLabel: 'Configure a provider →',
       checkIds: ['claude_cli', 'mcp_sidecar'],
     },
     {
       key: 'agent',
-      label: 'Create an agent config',
-      complete: agentConfigs.some((c) => c.enabled),
-      to: '/agents',
-      linkLabel: 'Create an agent config →',
+      label: 'Staff the default workflow',
+      complete: setup.staffed,
+      to: '/pipeline/agents',
+      linkLabel: 'Set up agents manually →',
       checkIds: [],
     },
     {
       key: 'task',
       label: 'Create your first task',
-      complete: tasks.length > 0,
+      complete: setup.hasTask,
       to: '/board',
       linkLabel: 'Use "+ Add task" below →',
       checkIds: [],
@@ -132,6 +115,8 @@ export default function OnboardingChecklist() {
 
   const allComplete = steps.every((s) => s.complete)
 
+  // Health problems are surfaced app-wide by HealthWarningBanner, so hiding
+  // the completed checklist no longer hides a failing check.
   if (dismissed || !initialLoadDone || !tasksLoaded || allComplete) return null
 
   const firstIncompleteKey = steps.find((s) => !s.complete)?.key
@@ -166,6 +151,9 @@ export default function OnboardingChecklist() {
                   </Link>
                 )}
               </div>
+              {step.key === 'agent' && !step.complete && (
+                <StaffAgentsButton missingLabels={setup.missingAgentLabels} />
+              )}
               {relevantChecks.length > 0 && (
                 <div className="mt-1 ml-6 space-y-1">
                   {relevantChecks.map((check) => (

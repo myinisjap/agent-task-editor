@@ -1,11 +1,12 @@
 package agent
 
 import (
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
+
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -29,7 +30,7 @@ var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 //   - the pool's safety-net commit / push (pool.go)
 //   - the subtask coordinator's merge-back / branch teardown (subtasks.go)
 //   - the dispatcher's worktree provisioning — `git fetch --prune` + `git
-//     worktree add -b` (dispatcher.go's ensureWorktree)
+//     worktree add -b` (dispatcher.go's worktreeSetup, run from the pool worker)
 //   - cmd/server/main.go's engine.OnTerminal — branch push + worktree teardown
 //     for non-subtask tasks
 //   - the worktree sweeper's reclaim pass — `git worktree remove --force` and
@@ -332,12 +333,5 @@ func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
 // suppressed so an interactive auth prompt fails fast instead of blocking on
 // stdin forever.
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ASKPASS=",
-		"SSH_ASKPASS=",
-		"GCM_INTERACTIVE=never",
-	)
-	return cmd.CombinedOutput()
+	return gitcmd.CombinedNoPrompt(ctx, dir, args...)
 }

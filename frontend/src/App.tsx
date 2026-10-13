@@ -1,8 +1,11 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import NavSidebar from './components/shared/NavSidebar'
 import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
+import HomeRoute from './components/shared/HomeRoute'
+import HealthWarningBanner from './components/shared/HealthWarningBanner'
+import ProviderPausedBanner from './components/shared/ProviderPausedBanner'
 import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
 
 // Lazy-loaded so heavy per-route dependencies (@xterm/xterm for ChatPage,
@@ -21,7 +24,17 @@ const PricingSettingsPage = lazy(() => import('./pages/PricingSettingsPage'))
 const ReposPage = lazy(() => import('./pages/ReposPage'))
 const TemplatesPage = lazy(() => import('./pages/TemplatesPage'))
 const IntakeRulesPage = lazy(() => import('./pages/IntakeRulesPage'))
+const InboxPage = lazy(() => import('./pages/InboxPage'))
 const HealthPage = lazy(() => import('./pages/HealthPage'))
+const PipelinePage = lazy(() => import('./pages/PipelinePage'))
+const PipelineOverviewPage = lazy(() => import('./pages/PipelineOverviewPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+
+/** Redirect a retired path to its new home, keeping query string and hash. */
+function Redirect({ to }: { to: string }) {
+  const { search, hash } = useLocation()
+  return <Navigate to={`${to}${search}${hash}`} replace />
+}
 
 function AppRoutes() {
   // Remount the boundary (and the lazy Suspense subtree) per route so a
@@ -33,20 +46,38 @@ function AppRoutes() {
     <ErrorBoundary key={location.pathname}>
       <Suspense fallback={<div className="p-6 text-slate-400 text-sm">Loading…</div>}>
         <Routes>
-          <Route path="/"                      element={<DashboardPage />} />
+          <Route path="/"                      element={<HomeRoute><DashboardPage /></HomeRoute>} />
+          <Route path="/dashboard"             element={<DashboardPage />} />
           <Route path="/dashboard/usage"       element={<UsagePage />} />
           <Route path="/dashboard/performance" element={<AgentPerformancePage />} />
+          <Route path="/inbox"                 element={<InboxPage />} />
           <Route path="/board"                 element={<BoardPage />} />
           <Route path="/chat"                  element={<ChatPage />} />
           <Route path="/tasks/:id"             element={<TaskDetailPage />} />
-          <Route path="/workflow"              element={<WorkflowPage />} />
-          <Route path="/agents"                element={<AgentConfigPage />} />
-          <Route path="/providers"             element={<ProviderConfigPage />} />
-          <Route path="/settings/pricing"      element={<PricingSettingsPage />} />
+          <Route path="/pipeline" element={<PipelinePage />}>
+            <Route index element={<Redirect to="/pipeline/overview" />} />
+            <Route path="overview" element={<PipelineOverviewPage />} />
+            <Route path="workflow" element={<WorkflowPage />} />
+            <Route path="agents"   element={<AgentConfigPage />} />
+          </Route>
+          <Route path="/settings" element={<SettingsPage />}>
+            <Route index element={<Redirect to="/settings/providers" />} />
+            <Route path="providers"    element={<ProviderConfigPage />} />
+            <Route path="pricing"      element={<PricingSettingsPage />} />
+            <Route path="intake-rules" element={<IntakeRulesPage />} />
+            <Route path="templates"    element={<TemplatesPage />} />
+            <Route path="health"       element={<HealthPage />} />
+          </Route>
           <Route path="/repos"                 element={<ReposPage />} />
-          <Route path="/templates"             element={<TemplatesPage />} />
-          <Route path="/intake-rules"          element={<IntakeRulesPage />} />
-          <Route path="/health"                element={<HealthPage />} />
+
+          {/* Retired top-level routes: keep bookmarks and old links working. */}
+          <Route path="/workflow"     element={<Redirect to="/pipeline/workflow" />} />
+          <Route path="/agents"       element={<Redirect to="/pipeline/agents" />} />
+          <Route path="/providers"    element={<Redirect to="/settings/providers" />} />
+          <Route path="/pricing"      element={<Redirect to="/settings/pricing" />} />
+          <Route path="/templates"    element={<Redirect to="/settings/templates" />} />
+          <Route path="/intake-rules" element={<Redirect to="/settings/intake-rules" />} />
+          <Route path="/health"       element={<Redirect to="/settings/health" />} />
         </Routes>
       </Suspense>
     </ErrorBoundary>
@@ -68,6 +99,8 @@ export default function App() {
         <div className="flex h-dvh overflow-hidden">
           <NavSidebar />
           <main className="flex-1 overflow-auto bg-slate-950 pt-12 md:pt-0">
+            <ProviderPausedBanner />
+            <HealthWarningBanner />
             <AppRoutes />
           </main>
         </div>
