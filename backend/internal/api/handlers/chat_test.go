@@ -23,7 +23,7 @@ func setupChatRouter(t *testing.T, bearerToken string, term handlers.Terminal) (
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
 	hub := ws.NewHub()
-	h := handlers.NewChatHandler(q, hub, term, bearerToken, "")
+	h := handlers.NewChatHandler(q, hub, term, bearerToken != "", "")
 
 	r := chi.NewRouter()
 	r.Get("/chat", h.List)

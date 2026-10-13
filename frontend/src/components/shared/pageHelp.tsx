@@ -50,6 +50,7 @@ export function WorkflowHelp() {
           <li><code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> — agents cannot move tasks here; the dispatcher skips tasks already on this label</li>
           <li><code className="bg-slate-800 rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
           <li><code className="bg-slate-800 rounded px-1 font-mono">create_pr</code> — entering this label pushes the branch and auto-opens a GitHub PR (needs a GitHub remote and gh auth); at most one label per workflow may set this</li>
+          <li><code className="bg-slate-800 rounded px-1 font-mono">verify_mode</code> / <code className="bg-slate-800 rounded px-1 font-mono">verify_command</code> — per-label override of the repo&apos;s verify command (set on the Repos page), applied when a run on this label reports success. Omit (or <code className="bg-slate-800 rounded px-1 font-mono">inherit</code>) to use the repo command; <code className="bg-slate-800 rounded px-1 font-mono">custom</code> (with a <code className="bg-slate-800 rounded px-1 font-mono">verify_command</code>) replaces it; <code className="bg-slate-800 rounded px-1 font-mono">disabled</code> skips verification on this label</li>
         </ul>
         <p>
           Tasks created without an explicit label — GitHub Issue imports, scheduled tasks, and API
@@ -137,9 +138,7 @@ export function UsageHelp() {
           <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> CLIs report their
           own authoritative cost (which may be legitimately $0 under a subscription plan). The{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider (and the
-          deprecated <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers) have no
+          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider has no
           cost figure of their own, so their tokens are priced from the table you configure on the{' '}
           <strong>Pricing</strong> page instead. The{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code> CLI reports tokens
@@ -316,8 +315,8 @@ export function AgentsHelp() {
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Budgets, subtasks &amp; effort</h3>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">max_cost_usd</code> sets a per-run
-          spending cap (pre-dispatch guard on every provider; a mid-run kill switch too, on
+          <code className="bg-slate-800 rounded px-1 font-mono">max_cost_usd</code> sets a per-task
+          spending cap, cumulative across all of a task's runs (pre-dispatch guard on every provider; a mid-run kill switch too, on
           providers that support it — see the <strong>Pricing</strong> page's help). Enabling{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">subtasks_enabled</code> lets the
           agent split its work into child tasks via the <code className="bg-slate-800 rounded px-1 font-mono">create_subtask</code>{' '}
@@ -359,7 +358,10 @@ export function AgentsHelp() {
           The command denylist stays enforced in every mode, including{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">bypassPermissions</code> — verified
           against a live claude CLI, a denylisted command is still refused even with approval prompts
-          bypassed.
+          bypassed. It is still a guardrail, not a sandbox: it matches command prefixes, so an agent
+          can get around it with <code className="bg-slate-800 rounded px-1 font-mono">sh -c</code>,{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">env</code>, an interpreter or a
+          script, and it won't contain an untrusted or prompt-injected agent.
         </p>
       </section>
     </>
@@ -385,10 +387,10 @@ export function ProvidersHelp() {
           <li><code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code>, <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code>, <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> — other CLI-based providers</li>
         </ul>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code> (direct Anthropic API calls) and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> (any OpenAI-compatible API) are{' '}
-          <strong>deprecated and disabled for new configs</strong> — they're no longer offered here, but existing
-          configs on them keep running.
+          The <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code> and{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers were{' '}
+          <strong>removed</strong> in v0.17.0. Configs still on them fail at dispatch — switch them to a
+          supported provider.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
@@ -409,10 +411,8 @@ export function PricingHelp() {
         <h3 className="text-slate-100 font-semibold">What this configures</h3>
         <p>
           USD price per 1M input/output tokens. It's the sole cost source for the{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider (and the
-          deprecated <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers), none of which
-          report their own cost. The{' '}
+          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider, which
+          reports no cost of its own. The{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> CLIs report their
           own authoritative final cost and never read this table for that. However,{' '}
@@ -501,7 +501,7 @@ export function ReposHelp() {
         </p>
         <p>
           The label filter here is deprecated in favor of <strong>Intake Rules</strong>{' '}
-          (Configuration → Intake Rules), which can match on more than one label and shape the
+          (Settings → Intake Rules), which can match on more than one label and shape the
           resulting task (template, priority, target label, cost budget) rather than just
           filtering which issues come in. It's still honoured for one more release; existing
           values were migrated into equivalent rules automatically.
@@ -681,8 +681,7 @@ export function HealthHelp() {
         <p>
           Provider readiness — the <code className="bg-slate-800 rounded px-1 font-mono">claude</code>{' '}
           and <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> CLI logins,
-          and the <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code>/
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> API keys — plus
+          and any leftover configs on removed providers — plus
           supporting infrastructure: GitHub auth for PRs/issue sync, the configured repo base
           directory, the MCP sidecar the task-editor tools depend on, automatic local backups,
           database size, and the app's own version/update-available status. Green means ready;

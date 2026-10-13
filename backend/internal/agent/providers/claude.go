@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 )
 
 // ClaudeRunner runs the claude CLI in headless mode (-p + stream-json).
@@ -20,12 +22,12 @@ type ClaudeRunner struct {
 	// UploadDir is the server-side directory where task attachments are stored.
 	// Reserved for future use.
 	UploadDir string
-	// BackendURL / APIToken let the create_subtask MCP tool post children live to
-	// the backend REST API (same container). Set from server config.
+	// BackendURL lets the create_subtask MCP tool post children live to the
+	// backend REST API (same container). Set from server config. The bearer
+	// token is a per-run scoped one minted in MCPManager.Prepare.
 	BackendURL string
-	APIToken   string
 	// PriceResolver resolves model to USD-per-1M pricing for the mid-run cost
-	// watchdog (see cost_watchdog.go). Unlike anthropic/llm, claude's own
+	// watchdog (see cost_watchdog.go). claude's own
 	// terminal total_cost_usd is authoritative and always used for the final
 	// persisted Result.CostUSD — this resolver is only consulted to *project*
 	// cost from incremental token usage while the run is still in flight.
@@ -157,7 +159,6 @@ func (r *ClaudeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan
 		var err error
 		mcpCfg, err = mgr.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, extraServers, &SubtaskEnv{
 			BackendURL:  r.BackendURL,
-			APIToken:    r.APIToken,
 			TaskID:      input.Task.ID,
 			Enabled:     input.AgentConfig.SubtasksEnabled,
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
@@ -245,7 +246,13 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	defer cancel()
 
 	env := mergeEnv(providerBaseEnv(claudeEnvAllowlist), input.AgentConfig.Env)
-	if tok := ClaudeOAuthAccessToken(); tok != "" {
+	if envOverridesKey(input.AgentConfig.Env, "ANTHROPIC_BASE_URL") {
+		// The provider config redirects the CLI to a custom endpoint
+		// (LiteLLM, OpenRouter, ...). Never send backend-held Anthropic
+		// credentials there: drop the inherited ones and skip the host OAuth
+		// token. Credentials the provider config itself supplies are kept.
+		env = dropInheritedEnv(env, input.AgentConfig.Env, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+	} else if tok := ClaudeOAuthAccessToken(); tok != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+tok)
 	}
 	// Force-disabled: the CLI self-updating mid-run inside a container we
@@ -262,7 +269,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	}
 	cmd := newCLICommand(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
-	cmd.Env = env
+	cmd.Env = agentuser.Env(env) // HOME etc. of the agent account when isolated
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -667,4 +674,39 @@ func buildClaudeSettingsJSON(enabledPlugins, commandAllowlist, commandDenylist [
 		return "", err
 	}
 	return string(data), nil
+}
+
+// envOverridesKey reports whether the user-supplied env sets key (given
+// upper-case) to a non-empty value, matching the key case-insensitively.
+func envOverridesKey(userEnv map[string]string, key string) bool {
+	for k, v := range userEnv {
+		if strings.EqualFold(k, key) && strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// dropInheritedEnv removes the named keys from env unless the user-supplied
+// env sets them itself (those entries are the operator's explicit choice).
+func dropInheritedEnv(env []string, userEnv map[string]string, keys ...string) []string {
+	userSet := map[string]bool{}
+	for k := range userEnv {
+		userSet[strings.ToUpper(k)] = true
+	}
+	drop := map[string]bool{}
+	for _, k := range keys {
+		if !userSet[k] {
+			drop[k] = true
+		}
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if drop[strings.ToUpper(name)] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }

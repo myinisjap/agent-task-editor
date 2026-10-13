@@ -70,7 +70,7 @@ API):
 
 | Repo field | Meaning |
 |---|---|
-| `issue_sync_enabled` | `1` to turn the importer on for this repo |
+| `issue_sync_enabled` | `true` to turn the importer on for this repo |
 | `issue_sync_label` | **Deprecated** (see [Intake routing rules](#intake-routing-rules) below) — only import open issues carrying this label (e.g. `agent-ok`). Empty = **all** open issues |
 
 Two prerequisites are enforced when enabling:
@@ -131,8 +131,8 @@ both create tasks. Before intake rules, the only shaping either path could do
 was land the task on the workflow's gate label (issue import) or a single
 fixed `target_label` (schedules) — there was no way to say "an issue labeled
 `bug` from repo X should get the triage template, priority 1, and start on
-`work` instead of the gate." Intake rules (`/intake-rules`, "Intake Rules" in
-Configuration) close that gap: a small match→apply table evaluated at
+`work` instead of the gate." Intake rules (`/settings/intake-rules`, "Intake Rules" in
+Settings) close that gap: a small match→apply table evaluated at
 task-creation time for the `issue` and `schedule` sources.
 
 Rules are evaluated **first-match-wins**, in `sort_order` (then `created_at`)
@@ -291,6 +291,36 @@ All three are governed per repo:
 | `issue_sync_gone_label` | _(empty)_ | Destination label when the action is `move`. Required when setting `move` |
 | `issue_comment_sync_enabled` | `0` | `1` to ingest the issue's comment thread |
 
+#### Block after approval
+
+Once a human has approved a task, an edit to the source issue no longer
+overwrites the task's title, description or type, whatever
+`issue_sync_update_policy` says (it matters in practice for `always`, which
+would otherwise let anyone who can edit the issue change what an agent does
+after a human signed off). A task counts as approved when its label history
+contains a human-triggered move off a human-gate label (an `agent_ignore` label,
+or a non-terminal label whose every outgoing transition is human-triggered; the
+same rule as the Inbox's "Awaiting approval"). If the history cannot be read the
+task is treated as approved. Before approval, behaviour is exactly as described
+above.
+
+Instead the importer stores the text it would have written (including any
+intake-rule or template shaping) in the `task_source_pending` table, logs it at
+info level, and publishes `task.updated`. The task then carries
+`source_pending_update` (`title`, `description`, `type`, `created_at`) on
+`GET /tasks` and `GET /tasks/{id}`, and the task detail page shows a notice
+"The source issue was edited after approval" with the current and new text. The
+Inbox lists it under "Source issue edited". A human then chooses:
+
+- `POST /api/v1/tasks/{id}/source-update/apply` writes the held text to the task
+  and clears it.
+- `DELETE /api/v1/tasks/{id}/source-update` discards it. The same upstream text
+  is not held again; a further edit is. If the issue is edited back to match
+  the task, the held edit is dropped automatically.
+
+Both return the task, or `409` when nothing is pending. A newer edit replaces an
+unapplied one. Comment ingestion is unaffected.
+
 ```bash
 curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
   -H "Content-Type: application/json" \
@@ -395,7 +425,7 @@ to check the board.
 
 | Repo field | Meaning |
 |---|---|
-| `issue_writeback_enabled` | `1` to turn write-back on for this repo's imported tasks |
+| `issue_writeback_enabled` | `true` to turn write-back on for this repo's imported tasks |
 | `issue_writeback_label` | Label applied when a task first leaves the human-gate label. Empty (default) = `agent-in-progress`. Must already exist on the GitHub repo. |
 
 Only one prerequisite is enforced when enabling write-back:
@@ -596,7 +626,7 @@ The feedback is deduped on `"<head sha>|<base ref>"`, so:
 By default, newly-ingested PR feedback is surfaced in the prompt but the task
 stays wherever a human put it — someone still has to click Reject (or
 whatever the workflow's manual transition is) to send it back to an agent.
-Setting `pr_review_auto_transition_enabled: 1` on the repo skips that click:
+Setting `pr_review_auto_transition_enabled: true` on the repo skips that click:
 the first time a sweep ingests new feedback for a task (a changes-requested
 review, a new inline comment, a newly-failing check, or a newly-detected merge
 conflict), the task is
@@ -622,3 +652,46 @@ review comment (e.g. via the `resolve_comment` MCP tool), replying on the
 originating GitHub review thread — is intentionally out of scope for v1. The
 `external_id`/`source` columns on `task_review_comments` are structured to
 make that a natural follow-up without a schema change.
+
+## GitHub webhook (optional)
+
+By default `ghsync` polls GitHub every `GITHUB_SYNC_INTERVAL` (30s). A webhook
+makes PR state (merged/closed, reviews, comments, CI results) refresh within a
+couple of seconds of the event instead. Polling is never turned off: it is the
+fallback for missed deliveries. While webhooks are arriving (one received in
+the last 10 minutes) the sweep simply runs at 4x its normal interval.
+
+Setup:
+
+1. Pick a random secret and set `GITHUB_WEBHOOK_SECRET` on the backend
+   (`.env` is passed through by both compose files). While it is unset the
+   route returns 404.
+2. In the GitHub repo (or org) go to **Settings > Webhooks > Add webhook**:
+   - **Payload URL:** `https://<your-host>/api/v1/github/webhook` directly to
+     the backend, or `https://<your-host>/tasks/api/v1/github/webhook` behind
+     the bundled frontend nginx (its `/tasks/api/` location already proxies it;
+     no nginx change is needed). GitHub must be able to reach this URL, so it
+     usually needs a public hostname or tunnel.
+   - **Content type:** `application/json` (form-encoded is rejected with 415).
+   - **Secret:** the same value as `GITHUB_WEBHOOK_SECRET`.
+   - **Events:** "Let me select individual events": **Pull requests**,
+     **Pull request reviews**, **Pull request review comments**,
+     **Issue comments**, **Check suites**, **Check runs**, **Statuses**.
+3. If no `API_TOKEN`/`API_TOKENS` is set, the DNS-rebinding Host check applies
+   to this route too; add the public hostname to `ALLOWED_HOSTS`.
+4. Check **Recent Deliveries** in GitHub: a `ping` returns 200, real events
+   202 (or 204 for ignored actions).
+
+How it behaves: the route is outside bearer auth (GitHub cannot send the
+token) and authenticated only by the `X-Hub-Signature-256` HMAC-SHA256 of the
+body, compared in constant time; bad or missing signatures get 401. Bodies are
+capped at 2 MB. The payload is used only to find the affected tasks (same
+repository plus PR number, head branch, or head SHA); the actual state is
+re-fetched through the same forge call and code path the poller uses, so a
+spoofed or stale field cannot change task state. Responses are immediate and
+the refresh runs in the background. Repeated `X-GitHub-Delivery` IDs are
+dropped, and bursts of events for one task coalesce into a single refresh
+(2s debounce). The `ate_github_webhook_events_total{event,result}` metric
+counts deliveries.
+
+Gitea has no equivalent receiver yet; Gitea repos keep using polling only.

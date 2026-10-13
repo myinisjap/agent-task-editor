@@ -51,8 +51,8 @@ function workflow(overrides: Partial<Workflow> = {}): Workflow {
     name: 'Default',
     description: '',
     labels: [
-      { id: 'l1', workflow_id: 'wf-1', name: 'not_ready', color: '#333', sort_order: 0, agent_ignore: 1, is_terminal: 0, create_pr: 0, wip_limit_hard: 0 },
-      { id: 'l2', workflow_id: 'wf-1', name: 'work', color: '#333', sort_order: 1, agent_ignore: 0, is_terminal: 0, create_pr: 0, wip_limit_hard: 0 },
+      { id: 'l1', workflow_id: 'wf-1', name: 'not_ready', color: '#333', sort_order: 0, agent_ignore: 1, is_terminal: 0, create_pr: 0, wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '' },
+      { id: 'l2', workflow_id: 'wf-1', name: 'work', color: '#333', sort_order: 1, agent_ignore: 0, is_terminal: 0, create_pr: 0, wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '' },
     ],
     transitions: [],
     created_at: new Date().toISOString(),

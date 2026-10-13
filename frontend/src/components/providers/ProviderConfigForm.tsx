@@ -1,7 +1,7 @@
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import type { ModelList, ProviderConfig } from '../../api/client'
 import { PROVIDERS } from '../../lib/agentTemplates'
-import { DEPRECATED_PROVIDERS, PROVIDER_CAPABILITIES, type Capability } from '../../lib/providerCapabilities'
+import { REMOVED_PROVIDERS, PROVIDER_CAPABILITIES, type Capability } from '../../lib/providerCapabilities'
 import Field from '../agents/Field'
 import ModelSelector from '../agents/ModelSelector'
 
@@ -50,14 +50,14 @@ export default function ProviderConfigForm({
     : []
 
   // An existing config may carry a provider that's been removed from the
-  // dropdown (anthropic/llm/openai, deprecated) or that's otherwise unknown.
+  // dropdown (anthropic/llm/openai, removed) or that's otherwise unknown.
   // If we only ever render <option>s from PROVIDERS, the <select>'s value
   // matches none of them, the browser blanks it or snaps to the first entry,
   // and saving any unrelated field silently rewrites provider to whatever
   // that first entry is. Render an extra, disabled option for the current
   // value so it round-trips instead.
   const isKnownDropdownProvider = PROVIDERS.includes(form.provider)
-  const isDeprecated = DEPRECATED_PROVIDERS.has(form.provider)
+  const isRemoved = REMOVED_PROVIDERS.has(form.provider)
 
   // Env values the server returned as the redacted "***" sentinel (see
   // provider_env.go) — the only thing we can safely show for a set-but-
@@ -114,17 +114,17 @@ export default function ProviderConfigForm({
           >
             {!isKnownDropdownProvider && form.provider && (
               <option key={form.provider} value={form.provider} disabled>
-                {form.provider} (deprecated)
+                {form.provider} (removed)
               </option>
             )}
             {PROVIDERS.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
-          {isDeprecated && (
+          {isRemoved && (
             <p className="mt-1 text-xs text-amber-400">
-              ⚠️ The <code>{form.provider}</code> provider is deprecated, disabled for new configs, and may be removed
-              in a future release. This config will keep running, but should be migrated to a supported provider.
+              ⚠️ The <code>{form.provider}</code> provider was removed in v0.17.0. Runs using this config fail until you
+              switch it to claude, codex_cli, opencode or qwen_code.
             </p>
           )}
           {gaps.length > 0 && (

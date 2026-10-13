@@ -64,6 +64,12 @@ func TestSeedDefaultWorkflow_CreatesExpectedLabelsAndTransitions(t *testing.T) {
 		t.Errorf("expected work to be neither agent-ignored nor terminal, got %+v", byName["work"])
 	}
 
+	for name, l := range byName {
+		if want := name == "review"; (l.CreatePr != 0) != want {
+			t.Errorf("label %q: create_pr=%d, want set only on review", name, l.CreatePr)
+		}
+	}
+
 	transitions, err := q.ListWorkflowTransitions(ctx, wf.ID)
 	if err != nil {
 		t.Fatalf("list transitions: %v", err)

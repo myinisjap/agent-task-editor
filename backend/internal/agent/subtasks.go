@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
+
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -80,7 +83,10 @@ func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task
 		// Parent gone (deleted/orphaned): nothing to merge back into. Tear the
 		// child's worktree down so we don't leak it.
 		if child.WorktreePath != "" {
+			gl := RepoGitLock(repoPath)
+			gl.Lock()
 			_ = RemoveWorktree(ctx, repoPath, child.WorktreePath)
+			gl.Unlock()
 		}
 		return
 	}
@@ -162,7 +168,7 @@ func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, pa
 	// Ensure the parent has a worktree to merge into (it was provisioned at plan
 	// dispatch; re-provision defensively if it was pruned).
 	parentDir := parent.WorktreePath
-	if parentDir == "" || !dirExistsAgent(parentDir) {
+	if parentDir == "" || !gitcmd.DirExists(parentDir) {
 		wtPath, _, baseRef, perr := provisionWorktree(ctx, repoPath, parent.ID, parent.Title)
 		if perr != nil {
 			log.Warn("subtasks: provision parent worktree", "err", perr)
@@ -308,7 +314,7 @@ func (c *SubtaskCoordinator) publishUpdated(ids ...string) {
 		return
 	}
 	for _, id := range ids {
-		c.pub.Publish("task.updated", map[string]any{"id": id})
+		c.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: id})
 	}
 }
 
@@ -316,10 +322,10 @@ func (c *SubtaskCoordinator) publishConflict(childID, parentID string, files []s
 	if c.pub == nil {
 		return
 	}
-	c.pub.Publish("task.subtask_conflict", map[string]any{
-		"task_id":   childID,
-		"parent_id": parentID,
-		"files":     files,
+	c.pub.Publish(wsevent.TypeTaskSubtaskConflict, wsevent.TaskSubtaskConflict{
+		TaskID:   childID,
+		ParentID: parentID,
+		Files:    files,
 	})
 	c.publishUpdated(childID, parentID)
 }
@@ -331,11 +337,6 @@ func short8(id string) string {
 		return id[:8]
 	}
 	return id
-}
-
-func dirExistsAgent(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.IsDir()
 }
 
 func terminalLabelSet(labels []gen.WorkflowLabel) map[string]bool {

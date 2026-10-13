@@ -504,8 +504,8 @@ func TestReposUpdate_IssueSyncRoundTrip(t *testing.T) {
 		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["issue_sync_enabled"]; got != float64(1) {
-		t.Errorf("issue_sync_enabled = %v, want 1", got)
+	if got := repo["issue_sync_enabled"]; got != true {
+		t.Errorf("issue_sync_enabled = %v, want true", got)
 	}
 	if got := repo["issue_sync_label"]; got != "agent-ok" {
 		t.Errorf("issue_sync_label = %q, want trimmed 'agent-ok'", got)
@@ -517,8 +517,8 @@ func TestReposUpdate_IssueSyncRoundTrip(t *testing.T) {
 		t.Fatalf("patch 2: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["issue_sync_enabled"]; got != float64(1) {
-		t.Errorf("issue_sync_enabled after unrelated patch = %v, want 1", got)
+	if got := repo["issue_sync_enabled"]; got != true {
+		t.Errorf("issue_sync_enabled after unrelated patch = %v, want true", got)
 	}
 	if got := repo["issue_sync_label"]; got != "agent-ok" {
 		t.Errorf("issue_sync_label after unrelated patch = %q, want 'agent-ok'", got)
@@ -530,8 +530,8 @@ func TestReposUpdate_IssueSyncRoundTrip(t *testing.T) {
 		t.Fatalf("patch 3: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["issue_sync_enabled"]; got != float64(0) {
-		t.Errorf("issue_sync_enabled after disable = %v, want 0", got)
+	if got := repo["issue_sync_enabled"]; got != false {
+		t.Errorf("issue_sync_enabled after disable = %v, want false", got)
 	}
 }
 
@@ -602,8 +602,8 @@ func TestReposUpdate_IssueWritebackRoundTrip(t *testing.T) {
 		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["issue_writeback_enabled"]; got != float64(1) {
-		t.Errorf("issue_writeback_enabled = %v, want 1", got)
+	if got := repo["issue_writeback_enabled"]; got != true {
+		t.Errorf("issue_writeback_enabled = %v, want true", got)
 	}
 
 	// A PATCH that doesn't mention the field must not reset it.
@@ -612,8 +612,8 @@ func TestReposUpdate_IssueWritebackRoundTrip(t *testing.T) {
 		t.Fatalf("patch 2: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["issue_writeback_enabled"]; got != float64(1) {
-		t.Errorf("issue_writeback_enabled after unrelated patch = %v, want 1", got)
+	if got := repo["issue_writeback_enabled"]; got != true {
+		t.Errorf("issue_writeback_enabled after unrelated patch = %v, want true", got)
 	}
 
 	// Disabling clears the flag.
@@ -622,8 +622,8 @@ func TestReposUpdate_IssueWritebackRoundTrip(t *testing.T) {
 		t.Fatalf("patch 3: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["issue_writeback_enabled"]; got != float64(0) {
-		t.Errorf("issue_writeback_enabled after disable = %v, want 0", got)
+	if got := repo["issue_writeback_enabled"]; got != false {
+		t.Errorf("issue_writeback_enabled after disable = %v, want false", got)
 	}
 }
 
@@ -721,8 +721,8 @@ func TestReposCreate_PrReviewAutoTransitionRequiresRemote(t *testing.T) {
 	}
 	var repo map[string]any
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["pr_review_auto_transition_enabled"]; got != float64(1) {
-		t.Errorf("pr_review_auto_transition_enabled = %v, want 1", got)
+	if got := repo["pr_review_auto_transition_enabled"]; got != true {
+		t.Errorf("pr_review_auto_transition_enabled = %v, want true", got)
 	}
 }
 
@@ -752,8 +752,8 @@ func TestReposUpdate_PrReviewAutoTransitionRoundTrip(t *testing.T) {
 	var repo map[string]any
 	_ = json.NewDecoder(w.Body).Decode(&repo)
 	id := repo["id"].(string)
-	if got := repo["pr_review_auto_transition_enabled"]; got != float64(0) {
-		t.Errorf("pr_review_auto_transition_enabled default = %v, want 0", got)
+	if got := repo["pr_review_auto_transition_enabled"]; got != false {
+		t.Errorf("pr_review_auto_transition_enabled default = %v, want false", got)
 	}
 
 	// Enable PR-review auto-transition.
@@ -764,8 +764,8 @@ func TestReposUpdate_PrReviewAutoTransitionRoundTrip(t *testing.T) {
 		t.Fatalf("patch: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["pr_review_auto_transition_enabled"]; got != float64(1) {
-		t.Errorf("pr_review_auto_transition_enabled = %v, want 1", got)
+	if got := repo["pr_review_auto_transition_enabled"]; got != true {
+		t.Errorf("pr_review_auto_transition_enabled = %v, want true", got)
 	}
 
 	// A PATCH that doesn't mention the field must not reset it.
@@ -774,8 +774,8 @@ func TestReposUpdate_PrReviewAutoTransitionRoundTrip(t *testing.T) {
 		t.Fatalf("patch 2: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["pr_review_auto_transition_enabled"]; got != float64(1) {
-		t.Errorf("pr_review_auto_transition_enabled after unrelated patch = %v, want 1", got)
+	if got := repo["pr_review_auto_transition_enabled"]; got != true {
+		t.Errorf("pr_review_auto_transition_enabled after unrelated patch = %v, want true", got)
 	}
 
 	// Disabling clears the flag.
@@ -784,8 +784,8 @@ func TestReposUpdate_PrReviewAutoTransitionRoundTrip(t *testing.T) {
 		t.Fatalf("patch 3: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	_ = json.NewDecoder(w.Body).Decode(&repo)
-	if got := repo["pr_review_auto_transition_enabled"]; got != float64(0) {
-		t.Errorf("pr_review_auto_transition_enabled after disable = %v, want 0", got)
+	if got := repo["pr_review_auto_transition_enabled"]; got != false {
+		t.Errorf("pr_review_auto_transition_enabled after disable = %v, want false", got)
 	}
 }
 
@@ -838,7 +838,9 @@ func TestReposList_Pagination(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("GET repos%s: expected 200, got %d: %s", qs, w.Code, w.Body)
 		}
-		var page []gen.Repo
+		var page []struct {
+			ID string `json:"id"`
+		}
 		if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
 			t.Fatal(err)
 		}
@@ -901,8 +903,8 @@ func TestReposCreate_IssueSyncPolicyFieldsRoundTrip(t *testing.T) {
 	if got := repo["issue_sync_gone_label"]; got != "" {
 		t.Errorf("issue_sync_gone_label default = %v, want empty", got)
 	}
-	if got := repo["issue_comment_sync_enabled"]; got != float64(0) {
-		t.Errorf("issue_comment_sync_enabled default = %v, want 0", got)
+	if got := repo["issue_comment_sync_enabled"]; got != false {
+		t.Errorf("issue_comment_sync_enabled default = %v, want false", got)
 	}
 
 	// Explicit values round-trip.
@@ -929,8 +931,8 @@ func TestReposCreate_IssueSyncPolicyFieldsRoundTrip(t *testing.T) {
 	if got := repo["issue_sync_gone_label"]; got != "triage" {
 		t.Errorf("issue_sync_gone_label = %v, want %q", got, "triage")
 	}
-	if got := repo["issue_comment_sync_enabled"]; got != float64(1) {
-		t.Errorf("issue_comment_sync_enabled = %v, want 1", got)
+	if got := repo["issue_comment_sync_enabled"]; got != true {
+		t.Errorf("issue_comment_sync_enabled = %v, want true", got)
 	}
 }
 
@@ -1055,8 +1057,8 @@ func TestReposUpdate_IssueSyncPolicyFieldsRoundTripAndSurviveUnrelatedPatch(t *t
 	if got := repo["issue_sync_gone_label"]; got != "triage" {
 		t.Errorf("issue_sync_gone_label = %v, want %q", got, "triage")
 	}
-	if got := repo["issue_comment_sync_enabled"]; got != float64(1) {
-		t.Errorf("issue_comment_sync_enabled = %v, want 1", got)
+	if got := repo["issue_comment_sync_enabled"]; got != true {
+		t.Errorf("issue_comment_sync_enabled = %v, want true", got)
 	}
 
 	// THE HAZARD: an unrelated PATCH (renaming the repo) must not reset these
@@ -1080,7 +1082,7 @@ func TestReposUpdate_IssueSyncPolicyFieldsRoundTripAndSurviveUnrelatedPatch(t *t
 	if got := repo["issue_sync_gone_label"]; got != "triage" {
 		t.Errorf("issue_sync_gone_label after unrelated patch = %v, want %q (preserved)", got, "triage")
 	}
-	if got := repo["issue_comment_sync_enabled"]; got != float64(1) {
+	if got := repo["issue_comment_sync_enabled"]; got != true {
 		t.Errorf("issue_comment_sync_enabled after unrelated patch = %v, want 1 (preserved)", got)
 	}
 }
@@ -1784,4 +1786,59 @@ func TestReposDetect_ScansManifestsAndSkipsSymlinks(t *testing.T) {
 	if stored.RuntimeLanguages != "" {
 		t.Errorf("detect must not write config, but runtime_languages = %q", stored.RuntimeLanguages)
 	}
+}
+
+// TestReposResponse_BooleansAreJSONBooleans verifies the repo boolean flags
+// are emitted as JSON true/false (not the stored 0/1 ints) on create, get and
+// list responses.
+func TestReposResponse_BooleansAreJSONBooleans(t *testing.T) {
+	base := t.TempDir()
+	router, _ := setupReposRouter(t, base)
+
+	repoDir := filepath.Join(base, "myorg", "boolrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{
+		"name":                       "myorg/boolrepo",
+		"path":                       repoDir,
+		"issue_comment_sync_enabled": true,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&created)
+
+	check := func(where string, repo map[string]any) {
+		t.Helper()
+		want := map[string]bool{
+			"issue_sync_enabled":                false,
+			"issue_writeback_enabled":           false,
+			"pr_review_auto_transition_enabled": false,
+			"issue_comment_sync_enabled":        true,
+		}
+		for k, v := range want {
+			if got, ok := repo[k].(bool); !ok || got != v {
+				t.Errorf("%s: %s = %#v, want JSON bool %v", where, k, repo[k], v)
+			}
+		}
+	}
+	check("create", created)
+
+	id := created["id"].(string)
+	req := httptest.NewRequest(http.MethodGet, "/repos/"+id, nil)
+	gw := httptest.NewRecorder()
+	router.ServeHTTP(gw, req)
+	var got map[string]any
+	_ = json.NewDecoder(gw.Body).Decode(&got)
+	check("get", got)
+
+	lreq := httptest.NewRequest(http.MethodGet, "/repos", nil)
+	lw := httptest.NewRecorder()
+	router.ServeHTTP(lw, lreq)
+	var list []map[string]any
+	if err := json.NewDecoder(lw.Body).Decode(&list); err != nil || len(list) == 0 {
+		t.Fatalf("list decode: %v (len %d)", err, len(list))
+	}
+	check("list", list[0])
 }

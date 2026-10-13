@@ -15,8 +15,8 @@ type modelPrice struct {
 }
 
 // modelPricing is a small, manually maintained table of approximate USD
-// prices per 1M tokens for common models used by the anthropic/llm
-// providers. It is intentionally approximate — pricing changes over time
+// prices per 1M tokens for common models used by the
+// providers that estimate cost from tokens. It is intentionally approximate — pricing changes over time
 // and varies by tier/region — and is only used to produce an *estimated*
 // cost figure for budgeting purposes, not an authoritative bill. The
 // `claude` CLI provider does not use this table; it reports its own

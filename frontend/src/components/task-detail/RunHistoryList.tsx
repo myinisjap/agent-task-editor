@@ -101,6 +101,8 @@ export default function RunHistoryList({
                       run.status === 'failed'        ? 'text-red-400' :
                       run.status === 'waiting_human' ? 'text-pink-400' :
                       run.status === 'cancelled'     ? 'text-orange-400' :
+                      // Interrupted by a server restart: not a failure, so neutral grey.
+                      run.status === 'interrupted'   ? 'text-slate-400' :
                       'text-slate-500'
                     }`}>{run.status}</span>
                   </div>
@@ -111,7 +113,7 @@ export default function RunHistoryList({
                         // or hardcoded fallback) matched the model — surface that
                         // distinctly from a genuine $0 (e.g. under a Claude Max
                         // subscription) so users know to add a row at /settings/pricing.
-                        ? <span title="Model not found in the pricing table — add it at Configuration → Pricing">cost unknown</span>
+                        ? <span title="Model not found in the pricing table — add it at Settings → Pricing">cost unknown</span>
                         : <>${(run.cost_usd ?? 0).toFixed(4)}</>}
                       {' '}· {formatTokenCount(run.input_tokens ?? 0)}/{formatTokenCount(run.output_tokens ?? 0)} tok
                       {/* turns_used is 0 for providers that report no turn count

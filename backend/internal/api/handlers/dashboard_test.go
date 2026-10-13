@@ -763,7 +763,8 @@ func TestDashboardGet_LabelCounts(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var body struct {
-		LabelCounts map[string]int `json:"label_counts"`
+		LabelCounts         map[string]int            `json:"label_counts"`
+		WorkflowLabelCounts map[string]map[string]int `json:"workflow_label_counts"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -773,6 +774,9 @@ func TestDashboardGet_LabelCounts(t *testing.T) {
 	}
 	if got := body.LabelCounts["in_progress"]; got != 1 {
 		t.Errorf("expected 1 'in_progress' task, got %d (full map: %+v)", got, body.LabelCounts)
+	}
+	if got := body.WorkflowLabelCounts[wfID]["backlog"]; got != 2 {
+		t.Errorf("expected 2 'backlog' tasks under workflow %s, got %d (full map: %+v)", wfID, got, body.WorkflowLabelCounts)
 	}
 }
 

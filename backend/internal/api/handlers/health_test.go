@@ -15,7 +15,7 @@ import (
 func TestHealth_ReturnsOKJSON(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
@@ -45,7 +45,7 @@ func TestHealth_ReturnsOKJSON(t *testing.T) {
 func TestHealth_DefaultsVersionToDev(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "", false, nil)
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "", false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
@@ -84,7 +84,7 @@ func (f fakeDispatcherWithCost) GlobalCostStatus() agent.GlobalCostStatus { retu
 func TestReadyz_OKWhenDBUpAndDispatcherFresh(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now()})
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now()})
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	w := httptest.NewRecorder()
@@ -107,7 +107,7 @@ func TestReadyz_OKWhenDBUpAndDispatcherFresh(t *testing.T) {
 func TestReadyz_UnhealthyWhenDispatcherStale(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now().Add(-time.Hour)})
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now().Add(-time.Hour)})
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	w := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestReadyz_UnhealthyWhenDispatcherStale(t *testing.T) {
 func TestReadyz_UnhealthyWhenDispatcherNeverSwept(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{})
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{})
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	w := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestReadyz_UnhealthyWhenDispatcherNeverSwept(t *testing.T) {
 func TestReadyz_OKWithNilDispatcher(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	w := httptest.NewRecorder()
@@ -166,7 +166,7 @@ func TestReadyz_OKWithNilDispatcher(t *testing.T) {
 func TestReadyz_UnhealthyWhenDBClosed(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now()})
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, fakeDispatcherLiveness{last: time.Now()})
 
 	if err := db.SQL().Close(); err != nil {
 		t.Fatalf("close db: %v", err)
@@ -199,7 +199,7 @@ func TestReadyz_SurfacesTrippedGlobalCostBudget(t *testing.T) {
 		last:   time.Now(),
 		status: agent.GlobalCostStatus{Tripped: true, TrippedReason: "daily", DailySpentUSD: 12, DailyLimitUSD: 10},
 	}
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, disp)
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, disp)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	w := httptest.NewRecorder()
@@ -227,7 +227,7 @@ func TestReadyz_OmitsGlobalCostFieldsWhenNotTripped(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
 	disp := fakeDispatcherWithCost{last: time.Now(), status: agent.GlobalCostStatus{}}
-	h := handlers.NewHealthHandler(q, db, "", "", "", "", "", 24*time.Hour, 7, "v1.2.3", false, disp)
+	h := handlers.NewHealthHandler(q, db, "", "", "", 24*time.Hour, 7, "v1.2.3", false, disp)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	w := httptest.NewRecorder()

@@ -35,8 +35,8 @@ func applyUsage(res *agent.Result, u *runUsage) {
 // provider-reported cost (u.CostUSD > 0 — e.g. opencode's step_finish
 // "cost" field), that value is kept as-is and res.CostUnknown is left
 // false. Otherwise the tokens are priced via resolver/model using
-// estimateCostUSDWithResolver (the same DB-backed pricing table the
-// anthropic/llm path uses — see runAccumulators.attach in tools.go), and
+// estimateCostUSDWithResolver (the same DB-backed pricing table used
+// for cost estimation), and
 // res.CostUnknown is set when tokens were actually consumed but no price
 // was found, so the UI can render "cost unknown" instead of a misleading
 // $0 (see providers.PriceResolver).

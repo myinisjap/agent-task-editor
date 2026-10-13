@@ -38,6 +38,7 @@ describe('UsagePage global spend ceiling', () => {
   it('renders daily and monthly progress bars with the forecast when a cap is configured', async () => {
     dashboardGetMock.mockResolvedValue({
       label_counts: {},
+      workflow_label_counts: {},
       active_agents: [],
       intervention_queue: [],
       cost_total: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },
@@ -73,6 +74,7 @@ describe('UsagePage global spend ceiling', () => {
   it('surfaces the tripped banner when the cap has been reached', async () => {
     dashboardGetMock.mockResolvedValue({
       label_counts: {},
+      workflow_label_counts: {},
       active_agents: [],
       intervention_queue: [],
       cost_total: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },
@@ -103,6 +105,7 @@ describe('UsagePage global spend ceiling', () => {
   it('omits the global spend ceiling section entirely when no cap is configured', async () => {
     dashboardGetMock.mockResolvedValue({
       label_counts: {},
+      workflow_label_counts: {},
       active_agents: [],
       intervention_queue: [],
       cost_total: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },
@@ -124,6 +127,7 @@ describe('UsagePage global spend ceiling', () => {
   it('renders the cost-by-repo table', async () => {
     dashboardGetMock.mockResolvedValue({
       label_counts: {},
+      workflow_label_counts: {},
       active_agents: [],
       intervention_queue: [],
       cost_total: { input_tokens: 100, output_tokens: 50, cost_usd: 1.5 },
@@ -147,6 +151,7 @@ describe('UsagePage global spend ceiling', () => {
   it('shows a temporarily-unavailable note instead of hiding the section when rate limited', async () => {
     dashboardGetMock.mockResolvedValue({
       label_counts: {},
+      workflow_label_counts: {},
       active_agents: [],
       intervention_queue: [],
       cost_total: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },
