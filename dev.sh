@@ -4,12 +4,23 @@
 # binary from a previous run.
 set -euo pipefail
 
-# Load .env if present (without overriding existing shell vars)
-if [[ -f "$(dirname "$0")/.env" ]]; then
-  set -o allexport
-  source "$(dirname "$0")/.env"
-  set +o allexport
-fi
+# Load .env files, lowest precedence first: the shared parent dir, then the
+# traefik-proxy stack (shared proxy/DNS settings), then this project's own
+# .env, which wins on any key the earlier files also set.
+# ponytail: plain `source` means a later file overrides an earlier one, which
+# is exactly the precedence we want; no merge logic needed.
+for _envfile in \
+  "$(dirname "$0")/../.env" \
+  "$(dirname "$0")/../traefik-proxy/.env" \
+  "$(dirname "$0")/.env"
+do
+  if [[ -f "$_envfile" ]]; then
+    set -o allexport
+    source "$_envfile"
+    set +o allexport
+  fi
+done
+unset _envfile
 
 # Parse optional --repo-dir <path> / --all-cli flags before the command.
 ALL_CLI=false
