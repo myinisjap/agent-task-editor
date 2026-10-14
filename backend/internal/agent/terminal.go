@@ -339,7 +339,13 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	}
 
 	// Run the chat CLI as the unprivileged agent user (no-op when unavailable).
-	// pty.Start merges Setsid/Setctty into the SysProcAttr set here.
+	// pty.Start merges Setsid/Setctty into the SysProcAttr set here. The
+	// interactive claude reads the user's settings.json (task runs use --bare),
+	// so make sure the host hasn't left it owner-only since the last spawn.
+	if provider == "claude" {
+		home, _ := os.UserHomeDir()
+		agentuser.ShareClaudeConfig(home)
+	}
 	agentuser.Apply(cmd)
 
 	tty, err := pty.Start(cmd)

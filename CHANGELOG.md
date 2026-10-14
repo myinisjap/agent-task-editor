@@ -33,6 +33,7 @@ triggers the "Release" workflow the same way.
 - Backend image and CI now use Go 1.27.2 (the agents' baseline Go toolchain moves from 1.26 to 1.27).
 
 ### Fixed
+- Chat: the Claude chat terminal no longer fails with "Settings file could not be read: EACCES" on `/home/agent/.claude/settings.json` under agent-user isolation. The entrypoint now grants the shared group read/write on owner-only files inside `~/.claude` (it previously skipped the folder whenever the folder itself was already group-writable), and the server re-grants it on `~/.claude/settings.json`, `settings.local.json`, `.credentials.json` and `~/.claude.json` before each claude spawn, since the host rewrites them owner-only while the container runs.
 - **Dedicated `verify_error` escalation reason.** When a repo/label verify command cannot be run, the run now escalates with `verify_error` instead of the generic `runtime_prep`; it is exposed in the API enums, `GET /needs-me`, `task.needs_human` and the UI (links to Repos).
 - **Cost-budget guard no longer fails open (#336).** When an exhausted budget could not be escalated (the phantom-run or escalation write failed), the dispatcher discarded the "blocked" result and started the run anyway, repeating every sweep. It now skips dispatch for that sweep and retries; a failure to read spend likewise skips dispatch rather than running unchecked. WIP-limit backpressure also honors its blocked result regardless of error.
 

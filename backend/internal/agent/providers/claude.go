@@ -132,6 +132,12 @@ func buildClaudeArgs(input agent.RunInput, sidecarEnabled bool, mcpCfg *MCPRunCo
 }
 
 func (r *ClaudeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
+	// The agent-user claude reads ~/.claude/.credentials.json, which the host
+	// may have rewritten owner-only since the last run.
+	if home, err := os.UserHomeDir(); err == nil {
+		agentuser.ShareClaudeConfig(home)
+	}
+
 	// Set up MCP sidecar if manager is configured. Additionally, if the agent
 	// config has user-selected Claude MCP servers (from ~/.claude.json), merge
 	// their raw config entries into the same --mcp-config file — even if the
