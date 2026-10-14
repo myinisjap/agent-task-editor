@@ -9,20 +9,31 @@
 #
 # claude.ai calls these paths from its own servers, so they can't sit behind
 # Traefik forward-auth; the backend guards them with its own Google-backed
-# OAuth. This router goes straight to the backend (not the frontend's nginx,
-# which serves the rest of the app) so the auth-free router can only ever
-# reach the MCP/OAuth routes. /tasks is stripped because the backend serves
-# them at /mcp and /oauth/*.
+# OAuth. The router therefore carries no forward-auth middleware, unlike the
+# main app router in docker-compose.traefik.yml.
+#
+# It routes to the *frontend* nginx, which already proxies exactly these paths
+# to the backend (frontend/nginx.conf: `location = /tasks/mcp`,
+# `location /tasks/oauth/`, and the root well-known docs). Routing straight to
+# the backend would need the backend on proxy_net, which would expose its
+# whole unauthenticated API to every other container on that network — the
+# thing docker-compose.traefik.yml's trailing comment warns against. nginx
+# only forwards the MCP/OAuth paths, so the auth-free router still can't reach
+# anything else. No /tasks strip: nginx matches the /tasks-prefixed paths and
+# rewrites them to the backend's /mcp and /oauth/* itself.
 services:
   backend:
     environment:
       - MCP_REMOTE_ENABLED=true
+
+  frontend:
     labels:
       - traefik.enable=true
       - traefik.http.routers.agent-task-editor-mcp.rule=Host(`${TRAEFIK_HOST}`) && (Path(`/tasks/mcp`) || PathPrefix(`/tasks/oauth/`) || PathPrefix(`/.well-known/oauth-protected-resource`) || PathPrefix(`/.well-known/oauth-authorization-server`))
       - traefik.http.routers.agent-task-editor-mcp.entrypoints=websecure
       - traefik.http.routers.agent-task-editor-mcp.tls.certresolver=le
-      - traefik.http.routers.agent-task-editor-mcp.middlewares=agent-task-editor-mcp-strip
-      - traefik.http.routers.agent-task-editor-mcp.service=agent-task-editor-backend
-      - traefik.http.middlewares.agent-task-editor-mcp-strip.stripprefix.prefixes=/tasks
-      - traefik.http.services.agent-task-editor-backend.loadbalancer.server.port=8080
+      - traefik.http.routers.agent-task-editor-mcp.service=agent-task-editor-mcp
+      - traefik.http.services.agent-task-editor-mcp.loadbalancer.server.port=80
+      # With two routers on this one container, Traefik no longer auto-binds a
+      # service to the main app router, so name it explicitly or /tasks 404s.
+      - traefik.http.routers.agent-task-editor.service=agent-task-editor
