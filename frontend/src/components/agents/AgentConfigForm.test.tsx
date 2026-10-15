@@ -66,13 +66,11 @@ function renderForm(form: FormState, providerConfigs: ProviderConfig[]) {
 }
 
 describe('AgentConfigForm max_turns capability warning', () => {
-  it('warns when max_turns is set on codex_cli, which does not enforce it', () => {
+  it('does not warn when max_turns is set on codex_cli, whose runner enforces it', () => {
     const form = baseForm({ provider_config_id: 'pc-codex', max_turns: 20 })
     renderForm(form, [providerConfig('pc-codex', 'codex_cli')])
 
-    expect(
-      screen.getByText(/codex exec has no turn-cap flag/i),
-    ).toBeInTheDocument()
+    expect(screen.queryByText(/turn-cap flag/i)).not.toBeInTheDocument()
   })
 
   it('warns when max_turns is set on opencode, which does not enforce it', () => {

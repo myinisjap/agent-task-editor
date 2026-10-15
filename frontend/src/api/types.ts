@@ -4297,6 +4297,11 @@ export interface paths {
                          * @description Must be >= 0.
                          */
                         output_per_1m: number;
+                        /**
+                         * Format: double
+                         * @description Optional; null or omitted bills cached input tokens at input_per_1m. Must be >= 0.
+                         */
+                        cached_input_per_1m?: number | null;
                     }[];
                 };
             };
@@ -4942,6 +4947,11 @@ export interface components {
              * @description USD price per 1M output/completion tokens. Must be >= 0.
              */
             output_per_1m: number;
+            /**
+             * Format: double
+             * @description USD price per 1M cached (prompt-cache hit) input tokens, used for codex_cli runs, which report cached tokens as part of their input tokens. null bills cached tokens at input_per_1m. Must be >= 0.
+             */
+            cached_input_per_1m: number | null;
             /** Format: date-time */
             updated_at: string;
         };

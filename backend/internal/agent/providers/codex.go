@@ -213,7 +213,29 @@ func codexImagePaths(input agent.RunInput) []string {
 	return paths
 }
 
+// codexMissingRolloutMarker is the error codex prints when `exec resume`
+// names a thread it has no session file for (verified against 0.163.0:
+// "thread/resume failed: no rollout found for thread id <id>").
+const codexMissingRolloutMarker = "no rollout found for thread id"
+
 func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
+	res, resumeMissing, err := r.runAttempt(ctx, input, logCh)
+	if resumeMissing && input.ResumeSessionID != "" && ctx.Err() == nil {
+		// The thread to resume is gone (e.g. its session was written to a
+		// per-run CODEX_HOME by an older version of this runner, or pruned):
+		// start a fresh session once instead of failing every retry the
+		// same way, as the claude runner does.
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex has no saved session %q to resume; starting a fresh session", input.ResumeSessionID), At: time.Now()}
+		input.ResumeSessionID = ""
+		res, _, err = r.runAttempt(ctx, input, logCh)
+	}
+	return res, err
+}
+
+// runAttempt runs codex once. resumeMissing reports that codex rejected the
+// resume because the thread's session file doesn't exist.
+func (r *CodexRunner) runAttempt(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, bool, error) {
+	var resumeMissing bool // set by the stderr scanner; read after wg.Wait()
 	// Set up MCP sidecar if manager is configured. Unlike claude/qwen (which
 	// take a per-invocation --mcp-config JSON file), codex reads MCP servers
 	// from its config, so the sidecar is wired in through `-c` overrides (see
@@ -231,7 +253,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
 		})
 		if err != nil {
-			return agent.Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
+			return agent.Result{Status: "failed"}, resumeMissing, fmt.Errorf("prepare mcp: %w", err)
 		}
 		defer mcpCfg.Cleanup()
 
@@ -250,6 +272,14 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 	}
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
+	// procCtx is cancelled to stop codex at the max_turns cap; kept separate
+	// from runCtx so a cap hit isn't mistaken for the run timeout.
+	procCtx, stopProc := context.WithCancel(runCtx)
+	defer stopProc()
+	maxTurns := input.AgentConfig.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 50 // same default as the claude/qwen_code runners
+	}
 
 	env := mergeEnv(providerBaseEnv(codexEnvAllowlist), input.AgentConfig.Env)
 	if envOverridesKey(input.AgentConfig.Env, "OPENAI_BASE_URL") {
@@ -260,23 +290,56 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
 	if err != nil {
-		return agent.Result{Status: "failed"}, err
+		return agent.Result{Status: "failed"}, resumeMissing, err
 	}
-	cmd := newCLICommand(runCtx, runBinary, runArgs...)
+	cmd := newCLICommand(procCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
 	cmd.Env = agentuser.Env(env) // HOME etc. of the agent account when isolated
 
+	// Pricing inputs read back from codex's own session file (best-effort,
+	// see codex_rollout.go): the session's cumulative usage before a resumed
+	// run, and after the run the model codex actually used when the config
+	// leaves it unset.
+	codexHome := codexHomeDir(cmd.Env)
+	var baseline *runUsage
+	if input.ResumeSessionID != "" {
+		baseline = readCodexRollout(findCodexRollout(codexHome, input.ResumeSessionID)).Total
+	}
+	var (
+		rolloutOnce sync.Once
+		rollout     codexRolloutInfo
+	)
+	price := func(res *agent.Result, u *runUsage, threadID string) {
+		model := input.AgentConfig.Model
+		if threadID == "" {
+			threadID = input.ResumeSessionID
+		}
+		if threadID != "" && (model == "" || baseline != nil || u == nil) {
+			// Read once per attempt: some exit paths price two results.
+			rolloutOnce.Do(func() {
+				rollout = readCodexRollout(findCodexRollout(codexHome, threadID))
+				if model == "" && rollout.Model != "" {
+					logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex used its default model %q (no model set on the provider config); pricing the run against it", rollout.Model), At: time.Now()}
+				}
+			})
+		}
+		if model == "" {
+			model = rollout.Model
+		}
+		applyUsageWithCost(ctx, res, codexRunUsage(u, baseline, rollout.Total), r.PriceResolver, model)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("stdout pipe: %w", err)
+		return agent.Result{Status: "failed"}, resumeMissing, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("stderr pipe: %w", err)
+		return agent.Result{Status: "failed"}, resumeMissing, fmt.Errorf("stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("start codex: %w", err)
+		return agent.Result{Status: "failed"}, resumeMissing, fmt.Errorf("start codex: %w", err)
 	}
 
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started codex pid=%d", cmd.Process.Pid), At: time.Now()}
@@ -288,6 +351,8 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		rateLimited     bool
 		transient       bool
 		usage           *runUsage
+		toolSteps       int64
+		maxTurnsHit     bool
 		stdoutTruncated bool
 		stderrTruncated bool
 		mu              sync.Mutex
@@ -313,6 +378,17 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 			rawDump.WriteLine(line)
 			entry, parsed, u, class, sid, isJSON := classifyCodexJSON(line)
 			logCh <- entry
+			if isJSON && codexCompletedToolStep(line) {
+				mu.Lock()
+				toolSteps++
+				if toolSteps > maxTurns && !maxTurnsHit {
+					// Stop at the cap, like claude's --max-turns: the run
+					// escalates to waiting_human instead of retrying.
+					maxTurnsHit = true
+					stopProc()
+				}
+				mu.Unlock()
+			}
 			if parsed != "" {
 				mu.Lock()
 				outcome = parsed
@@ -353,6 +429,11 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		defer wg.Done()
 		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
+			if input.ResumeSessionID != "" && strings.Contains(line, codexMissingRolloutMarker) {
+				mu.Lock()
+				resumeMissing = true
+				mu.Unlock()
+			}
 			if is429Line(line) {
 				mu.Lock()
 				rateLimited = true
@@ -375,7 +456,26 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 
 	mu.Lock()
 	truncated := stdoutTruncated || stderrTruncated
+	hitCap := maxTurnsHit
+	steps := toolSteps
 	mu.Unlock()
+
+	// price records usage on res and reports the tool steps as turns used.
+	priceRun := func(res *agent.Result, u *runUsage, threadID string) {
+		price(res, u, threadID)
+		res.TurnsUsed = steps
+	}
+
+	if hitCap {
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex reached max_turns (%d tool steps); stopping the run", maxTurns), At: time.Now()}
+		mu.Lock()
+		finalUsage := usage
+		finalSession := sessionID
+		mu.Unlock()
+		res := agent.Result{Status: "failed", SessionID: finalSession}
+		priceRun(&res, finalUsage, finalSession)
+		return res, resumeMissing, &agent.ErrMaxTurns{MaxTurns: int(maxTurns)}
+	}
 
 	if truncated {
 		// A single line exceeded the scan buffer limit — the rest of that
@@ -388,8 +488,8 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		finalSession := sessionID
 		mu.Unlock()
 		res := agent.Result{Status: "failed", SessionID: finalSession}
-		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
-		return res, &agent.ErrTransient{Cause: fmt.Errorf("codex output truncated at scan buffer limit")}
+		priceRun(&res, finalUsage, finalSession)
+		return res, resumeMissing, &agent.ErrTransient{Cause: fmt.Errorf("codex output truncated at scan buffer limit")}
 	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
@@ -399,8 +499,8 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		finalSession := sessionID
 		mu.Unlock()
 		res := agent.Result{Status: "failed", SessionID: finalSession}
-		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
-		return res, &agent.ErrTransient{Cause: fmt.Errorf("codex run timed out")}
+		priceRun(&res, finalUsage, finalSession)
+		return res, resumeMissing, &agent.ErrTransient{Cause: fmt.Errorf("codex run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex exited: %v", err), At: time.Now()}
@@ -412,13 +512,13 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		mu.Unlock()
 		if rl {
 			res := agent.Result{Status: "failed", SessionID: finalSession}
-			applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
-			return res, &agent.ErrRateLimit{Message: "codex CLI 429: Request rejected by API rate limit"}
+			priceRun(&res, finalUsage, finalSession)
+			return res, resumeMissing, &agent.ErrRateLimit{Message: "codex CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
 			res := agent.Result{Status: "failed", SessionID: finalSession}
-			applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
-			return res, &agent.ErrTransient{Cause: fmt.Errorf("codex CLI exited with transient infra error: %w", err)}
+			priceRun(&res, finalUsage, finalSession)
+			return res, resumeMissing, &agent.ErrTransient{Cause: fmt.Errorf("codex CLI exited with transient infra error: %w", err)}
 		}
 	}
 
@@ -434,7 +534,7 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		if res.Outcome == "" && outcome != "" {
 			res.Outcome = outcome
 		}
-		applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
+		priceRun(&res, finalUsage, finalSession)
 		res.SessionID = finalSession
 		// Any non-zero exit from the codex binary means something went wrong
 		// (e.g. auth error, crash, bad config). Even if a signal_complete outcome
@@ -445,10 +545,10 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex exited with error but had outcome %q — treating as failed", res.Outcome), At: time.Now()}
 			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession}
-			applyUsageWithCost(ctx, &failed, finalUsage, r.PriceResolver, input.AgentConfig.Model)
-			return failed, nil
+			priceRun(&failed, finalUsage, finalSession)
+			return failed, resumeMissing, nil
 		}
-		return res, nil
+		return res, resumeMissing, nil
 	}
 
 	// Non-zero exit means the agent failed regardless of any parsed outcome.
@@ -457,12 +557,12 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("codex exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
 		}
 		failed := agent.Result{Status: "failed", SessionID: finalSession}
-		applyUsageWithCost(ctx, &failed, finalUsage, r.PriceResolver, input.AgentConfig.Model)
-		return failed, nil
+		priceRun(&failed, finalUsage, finalSession)
+		return failed, resumeMissing, nil
 	}
 	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
-	applyUsageWithCost(ctx, &res, finalUsage, r.PriceResolver, input.AgentConfig.Model)
-	return res, nil
+	priceRun(&res, finalUsage, finalSession)
+	return res, resumeMissing, nil
 }
 
 // mcpSidecarEnv builds the env vars the mcp-server sidecar binary expects,

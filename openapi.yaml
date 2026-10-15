@@ -615,8 +615,13 @@ components:
         model:         { type: string, description: "Model ID, matched exactly first, then by longest-prefix (e.g. a row for \"claude-sonnet-4-5\" also prices \"claude-sonnet-4-5-20260101\")." }
         input_per_1m:  { type: number, format: double, description: "USD price per 1M input/prompt tokens. Must be >= 0." }
         output_per_1m: { type: number, format: double, description: "USD price per 1M output/completion tokens. Must be >= 0." }
+        cached_input_per_1m:
+          type: number
+          format: double
+          nullable: true
+          description: "USD price per 1M cached (prompt-cache hit) input tokens, used for codex_cli runs, which report cached tokens as part of their input tokens. null bills cached tokens at input_per_1m. Must be >= 0."
         updated_at:    { type: string, format: date-time }
-      required: [model, input_per_1m, output_per_1m, updated_at]
+      required: [model, input_per_1m, output_per_1m, cached_input_per_1m, updated_at]
 
     WorkflowLabel:
       type: object
@@ -4297,6 +4302,7 @@ paths:
                   model:         { type: string }
                   input_per_1m:  { type: number, format: double, description: "Must be >= 0." }
                   output_per_1m: { type: number, format: double, description: "Must be >= 0." }
+                  cached_input_per_1m: { type: number, format: double, nullable: true, description: "Optional; null or omitted bills cached input tokens at input_per_1m. Must be >= 0." }
       responses:
         "200":
           content:

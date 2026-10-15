@@ -120,7 +120,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     costTracking: {
       support: 'partial',
-      note: 'Tokens captured from turn.completed are priced via the pricing table (DB-backed, with a hardcoded fallback) — estimated, not authoritative like claude/opencode. The pre-dispatch max_cost_usd guard now works. Runs on an unpriced model are flagged "cost unknown" instead of $0.',
+      note: 'Estimated, not authoritative like claude/opencode: tokens from turn.completed are priced via the pricing table (DB-backed, with a hardcoded fallback), with cached input tokens at the cached rate. With no model set, the model codex actually used is read from its session file. The pre-dispatch max_cost_usd guard works. Runs on an unpriced model are flagged "cost unknown" instead of $0.',
     },
     costWatchdog: {
       support: 'none',
@@ -131,8 +131,8 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       note: 'Passed to codex exec as --image (from the worktree copies under .task_attachments/), so the model sees them visually. Also listed in the prompt as files.',
     },
     maxTurns: {
-      support: 'none',
-      note: 'Not enforced — codex exec has no turn-cap flag, so only the run timeout bounds a run.',
+      support: 'full',
+      note: 'Enforced by the runner (codex exec has no turn-cap flag): each completed tool step (command, file edit, MCP call, web search) counts as a turn, and passing the cap stops the run and escalates it to waiting_human instead of retrying.',
     },
     sessionResume: { support: 'full', note: 'thread_id + codex exec resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },

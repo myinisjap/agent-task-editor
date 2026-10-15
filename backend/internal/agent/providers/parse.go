@@ -12,7 +12,11 @@ import (
 type runUsage struct {
 	InputTokens  int64
 	OutputTokens int64
-	CostUSD      float64
+	// CachedInputTokens is the part of InputTokens served from the prompt
+	// cache, for providers that report it (codex_cli). Priced at the model's
+	// cached-input rate when one is known (see estimateCachedCostUSD).
+	CachedInputTokens int64
+	CostUSD           float64
 	// Turns is the run's actual turn count as reported by the provider
 	// (claude/qwen stream-json's result-event num_turns). 0 when the message
 	// carries no turn count — never estimated. See agent.Result.TurnsUsed.
@@ -35,8 +39,8 @@ func applyUsage(res *agent.Result, u *runUsage) {
 // provider-reported cost (u.CostUSD > 0 — e.g. opencode's step_finish
 // "cost" field), that value is kept as-is and res.CostUnknown is left
 // false. Otherwise the tokens are priced via resolver/model using
-// estimateCostUSDWithResolver (the same DB-backed pricing table used
-// for cost estimation), and
+// estimateCachedCostUSD (the same DB-backed pricing table used for cost
+// estimation, with u.CachedInputTokens at the cached-input rate), and
 // res.CostUnknown is set when tokens were actually consumed but no price
 // was found, so the UI can render "cost unknown" instead of a misleading
 // $0 (see providers.PriceResolver).
@@ -55,7 +59,7 @@ func applyUsageWithCost(ctx context.Context, res *agent.Result, u *runUsage, res
 		res.CostUSD = u.CostUSD
 		return
 	}
-	cost, known := estimateCostUSDWithResolver(ctx, resolver, model, u.InputTokens, u.OutputTokens)
+	cost, known := estimateCachedCostUSD(ctx, resolver, model, u.InputTokens, u.CachedInputTokens, u.OutputTokens)
 	res.CostUSD = cost
 	res.CostUnknown = (u.InputTokens > 0 || u.OutputTokens > 0) && !known
 }

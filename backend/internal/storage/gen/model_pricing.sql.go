@@ -31,7 +31,7 @@ func (q *Queries) DeleteModelPricing(ctx context.Context, model string) error {
 }
 
 const getModelPricing = `-- name: GetModelPricing :one
-SELECT model, input_per_1m, output_per_1m, updated_at FROM model_pricing WHERE model = ?
+SELECT model, input_per_1m, output_per_1m, updated_at, cached_input_per_1m FROM model_pricing WHERE model = ?
 `
 
 func (q *Queries) GetModelPricing(ctx context.Context, model string) (ModelPricing, error) {
@@ -42,13 +42,14 @@ func (q *Queries) GetModelPricing(ctx context.Context, model string) (ModelPrici
 		&i.InputPer1m,
 		&i.OutputPer1m,
 		&i.UpdatedAt,
+		&i.CachedInputPer1m,
 	)
 	return i, err
 }
 
 const listModelPricing = `-- name: ListModelPricing :many
 
-SELECT model, input_per_1m, output_per_1m, updated_at FROM model_pricing ORDER BY model
+SELECT model, input_per_1m, output_per_1m, updated_at, cached_input_per_1m FROM model_pricing ORDER BY model
 `
 
 // User-editable per-model USD pricing (see 042_model_pricing and
@@ -69,6 +70,7 @@ func (q *Queries) ListModelPricing(ctx context.Context) ([]ModelPricing, error) 
 			&i.InputPer1m,
 			&i.OutputPer1m,
 			&i.UpdatedAt,
+			&i.CachedInputPer1m,
 		); err != nil {
 			return nil, err
 		}
@@ -84,29 +86,37 @@ func (q *Queries) ListModelPricing(ctx context.Context) ([]ModelPricing, error) 
 }
 
 const upsertModelPricing = `-- name: UpsertModelPricing :one
-INSERT INTO model_pricing (model, input_per_1m, output_per_1m, updated_at)
-VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+INSERT INTO model_pricing (model, input_per_1m, output_per_1m, cached_input_per_1m, updated_at)
+VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 ON CONFLICT (model) DO UPDATE SET
-    input_per_1m  = excluded.input_per_1m,
-    output_per_1m = excluded.output_per_1m,
-    updated_at    = CURRENT_TIMESTAMP
-RETURNING model, input_per_1m, output_per_1m, updated_at
+    input_per_1m        = excluded.input_per_1m,
+    output_per_1m       = excluded.output_per_1m,
+    cached_input_per_1m = excluded.cached_input_per_1m,
+    updated_at          = CURRENT_TIMESTAMP
+RETURNING model, input_per_1m, output_per_1m, updated_at, cached_input_per_1m
 `
 
 type UpsertModelPricingParams struct {
-	Model       string  `json:"model"`
-	InputPer1m  float64 `json:"input_per_1m"`
-	OutputPer1m float64 `json:"output_per_1m"`
+	Model            string   `json:"model"`
+	InputPer1m       float64  `json:"input_per_1m"`
+	OutputPer1m      float64  `json:"output_per_1m"`
+	CachedInputPer1m *float64 `json:"cached_input_per_1m"`
 }
 
 func (q *Queries) UpsertModelPricing(ctx context.Context, arg UpsertModelPricingParams) (ModelPricing, error) {
-	row := q.db.QueryRowContext(ctx, upsertModelPricing, arg.Model, arg.InputPer1m, arg.OutputPer1m)
+	row := q.db.QueryRowContext(ctx, upsertModelPricing,
+		arg.Model,
+		arg.InputPer1m,
+		arg.OutputPer1m,
+		arg.CachedInputPer1m,
+	)
 	var i ModelPricing
 	err := row.Scan(
 		&i.Model,
 		&i.InputPer1m,
 		&i.OutputPer1m,
 		&i.UpdatedAt,
+		&i.CachedInputPer1m,
 	)
 	return i, err
 }

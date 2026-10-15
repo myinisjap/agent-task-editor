@@ -710,3 +710,127 @@ func TestBuildCodexArgs_NoAttachmentsNoImages(t *testing.T) {
 		}
 	}
 }
+
+// collectLogs drains a log channel in the background; the returned func
+// waits for the channel to close and returns everything sent on it.
+func collectLogs(ch <-chan agent.LogEntry) func() []agent.LogEntry {
+	var logs []agent.LogEntry
+	done := make(chan struct{})
+	go func() {
+		logs = drainLogs(ch)
+		close(done)
+	}()
+	return func() []agent.LogEntry { <-done; return logs }
+}
+
+// TestCodexRunner_Run_MaxTurnsStopsRun verifies the runner enforces max_turns
+// itself (codex has no flag for it): once completed tool steps pass the cap
+// the process is stopped and *agent.ErrMaxTurns is returned with the steps
+// reported as turns used, without waiting for the run timeout.
+func TestCodexRunner_Run_MaxTurnsStopsRun(t *testing.T) {
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	input := codexHelperInput("max_turns")
+	input.AgentConfig.MaxTurns = 2
+	input.AgentConfig.TimeoutSecs = 20
+	logCh := make(chan agent.LogEntry, 256)
+	wait := collectLogs(logCh)
+	start := time.Now()
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	wait()
+	var mt *agent.ErrMaxTurns
+	if !errors.As(err, &mt) || mt.MaxTurns != 2 {
+		t.Fatalf("err = %v, want *agent.ErrMaxTurns{2}", err)
+	}
+	if result.TurnsUsed != 3 {
+		t.Errorf("TurnsUsed = %d, want 3", result.TurnsUsed)
+	}
+	if result.SessionID != "thread-mt" {
+		t.Errorf("SessionID = %q, want thread-mt", result.SessionID)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("run took %v; the cap should stop it immediately", elapsed)
+	}
+}
+
+// TestCodexRunner_Run_ResumeMissingFallsBackToColdStart verifies a resume
+// whose thread has no session file is retried once as a fresh session.
+func TestCodexRunner_Run_ResumeMissingFallsBackToColdStart(t *testing.T) {
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	input := codexHelperInput("resume_missing")
+	input.ResumeSessionID = "gone-thread"
+	logCh := make(chan agent.LogEntry, 256)
+	wait := collectLogs(logCh)
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	logs := wait()
+	if err != nil || result.Status != "completed" || result.Outcome != "success" {
+		t.Fatalf("Run = (%+v, %v), want completed/success after a cold start", result, err)
+	}
+	if result.SessionID != "thread-new" {
+		t.Errorf("SessionID = %q, want the fresh thread", result.SessionID)
+	}
+	var sawNote bool
+	for _, l := range logs {
+		if strings.Contains(l.Content, "starting a fresh session") {
+			sawNote = true
+		}
+	}
+	if !sawNote {
+		t.Error("expected a log line explaining the cold start")
+	}
+}
+
+// TestCodexRunner_Run_PricesCachedTokens verifies turn.completed's
+// cached_input_tokens are billed at the model's cached rate.
+func TestCodexRunner_Run_PricesCachedTokens(t *testing.T) {
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	input := codexHelperInput("cached_usage")
+	input.AgentConfig.Model = "gpt-4o"
+	logCh := make(chan agent.LogEntry, 256)
+	wait := collectLogs(logCh)
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 0.2M uncached at $2.50 + 0.8M cached at $1.25 + 0.1M output at $10.
+	if want := 0.5 + 1.0 + 1.0; result.CostUSD < want-1e-9 || result.CostUSD > want+1e-9 {
+		t.Errorf("CostUSD = %v, want %v", result.CostUSD, want)
+	}
+	if result.TurnsUsed != 1 {
+		t.Errorf("TurnsUsed = %d, want 1", result.TurnsUsed)
+	}
+}
+
+// TestCodexRunner_Run_UnsetModelPricedFromRollout verifies a run whose config
+// leaves the model unset is priced against the model codex recorded in its
+// session file, instead of being flagged cost-unknown.
+func TestCodexRunner_Run_UnsetModelPricedFromRollout(t *testing.T) {
+	home := t.TempDir()
+	writeCodexRollout(t, home, "thread-cu", `{"type":"turn_context","payload":{"model":"gpt-4o"}}`+"\n")
+	runner := &CodexRunner{BinaryPath: os.Args[0]}
+	input := codexHelperInput("cached_usage")
+	input.AgentConfig.Env["CODEX_HOME"] = home
+	logCh := make(chan agent.LogEntry, 256)
+	wait := collectLogs(logCh)
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	logs := wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CostUnknown || result.CostUSD < 2.5-1e-9 || result.CostUSD > 2.5+1e-9 {
+		t.Errorf("result = %+v, want cost 2.5 priced as gpt-4o", result)
+	}
+	var sawNote bool
+	for _, l := range logs {
+		if strings.Contains(l.Content, `default model "gpt-4o"`) {
+			sawNote = true
+		}
+	}
+	if !sawNote {
+		t.Error("expected a log line naming the model codex used")
+	}
+}

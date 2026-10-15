@@ -12,10 +12,11 @@ Concrete agent backends (claude, opencode, qwen_code, codex_cli) and the MCP sid
 | `claude_reset.go` | `parseClaudeResetTime` — turns "resets 6pm (TZ)" text into `ErrRateLimit.ResetAt`; blank-imports `time/tzdata` (prod image has no zoneinfo) |
 | `claude_usage.go` | `FetchClaudeUsage`, `ErrNoClaudeCredentials` — Claude Max usage widget data for the dashboard |
 | `qwen.go` | `QwenRunner` — Qwen Code CLI; reuses `MCPManager` and the claude stream-json envelope |
-| `codex.go` | `CodexRunner` — `codex exec --json`; own event schema |
+| `codex.go` | `CodexRunner` — `codex exec --json`; own event schema. MCP sidecar via `-c mcp_servers.*` overrides (never replace `CODEX_HOME`: it holds the login and sessions); runner-enforced `max_turns` (completed tool steps); one cold-start retry when the resume thread is gone |
+| `codex_rollout.go` | Best-effort reads of codex's session file (`$CODEX_HOME/sessions/.../rollout-*-<thread>.jsonl`): the model used when the config leaves it unset, and cumulative usage so resumed or interrupted runs are priced for their own tokens only |
 | `opencode.go` | `OpencodeRunner` — opencode CLI; own event schema; no MCP support (known gap) |
 | `mcp.go` | `MCPManager`, `SubtaskEnv` — prepares/cleans up the MCP sidecar config and result file (ADR 0004) |
-| `pricing.go` | `estimateCostUSD(WithResolver)`, `PriceResolver` — manually maintained USD/1M-token table. Cost estimation for `codex_cli`; *projection* source for the claude/qwen cost watchdog |
+| `pricing.go` | `estimateCostUSD(WithResolver)`, `estimateCachedCostUSD`, `PriceResolver` (+ optional `CachedPriceResolver`) — manually maintained USD/1M-token table. Cost estimation for `codex_cli`; *projection* source for the claude/qwen cost watchdog |
 | `cost_watchdog.go` | `costWatchdog` — pure accumulator projecting total task cost from incremental usage; `claude.go`/`qwen.go` own cancelling the subprocess and building `agent.ErrCostBudgetExceeded` (ADR 0013) |
 | `prompt.go` | `buildPrompt`, `buildResumePrompt`, `buildSystemPrompt`, `write*Section` helpers, `stripSourceCommentsMarker` — prompt assembly for every provider. Apply `stripSourceCommentsMarker` to every third-party string (ADR 0014) |
 | `cli.go` | `allowlistEnv`, `mergeEnv`, `rawDump` (dev-only raw stdout capture via `AGENT_RAW_LOG_DIR`) — shared CLI-runner infrastructure |

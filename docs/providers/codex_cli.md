@@ -23,7 +23,7 @@ codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandb
 - `--skip-git-repo-check` allows running inside a git worktree the CLI might not otherwise recognize as a "real" repo.
 - `--dangerously-bypass-approvals-and-sandbox` skips **all** confirmation prompts and disables Codex's sandbox for the run. This is required for a headless run — without it, Codex pauses for interactive approval on every shell command the model wants to run. See "Command Allowlist / Denylist" below for the tradeoffs of this flag.
 - `-c model_reasoning_effort="<level>"` is only appended when the agent config's `effort` field is set — see [Effort](#effort) below.
-- There is no confirmed `--max-turns`-equivalent flag for `codex exec`, so no turn cap is passed.
+- There is no `--max-turns`-equivalent flag for `codex exec` (re-checked against 0.163.0), so the runner enforces `max_turns` itself; see [Max Turns](#max-turns).
 - There is no separate `--system-prompt` flag; the system prompt is appended to the same trailing prompt argument as the task prompt.
 
 ## Credentials
@@ -75,7 +75,13 @@ Codex has its own, arguably stronger, native safety system instead of a glob all
 
 ## Session Resume
 
-The `thread.started` event carries a `thread_id`, which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes `codex exec ... resume <thread_id> "<prompt>"` (Codex 0.145.0's `codex exec resume` subcommand), so prior context carries forward instead of starting cold. The runner's flag-before-subcommand argument order (flags, then `resume <id>`, then the prompt) parses correctly against a live CLI — confirmed by observing it reach the resume lookup and fail only on a nonexistent thread id, not on argument parsing.
+The `thread.started` event carries a `thread_id`, which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes `codex exec ... resume <thread_id> "<prompt>"`, so prior context carries forward instead of starting cold. Flags go before the `resume` subcommand and the prompt last; this parses correctly against a live CLI.
+
+If Codex has no session file for that thread (it prints `no rollout found for thread id <id>`), the runner retries once as a fresh session instead of failing. That covers threads recorded before this provider stopped replacing `CODEX_HOME` per run, whose session files were deleted with the temp directory.
+
+## Max Turns
+
+`codex exec` has no turn-cap flag, so the runner enforces `max_turns` itself (0 means the same default of 50 as the other providers). Each completed tool step in the JSON stream counts as one turn: a `command_execution`, `file_change`, `mcp_tool_call` or `web_search` item. Once the count passes the cap, the runner stops Codex and the run escalates to `waiting_human` instead of retrying, just as when `claude` hits `--max-turns`. The count is recorded as the run's `turns_used`, so the Dashboard's turns column covers Codex too. A tool step is a little finer-grained than a claude turn (a claude turn can hold several parallel tool calls), so a Codex cap may need to be somewhat higher for the same task.
 
 ## Model Selection
 
@@ -100,11 +106,18 @@ If the agent completes without calling `signal_complete`, the runner scans the f
 
 ## Cost & Usage Reporting
 
-The `turn.completed` event reports `usage.input_tokens` / `usage.output_tokens` (also `cached_input_tokens` and `reasoning_output_tokens`, not currently surfaced). **No total-cost figure is reported by the Codex CLI's JSON output**, so these tokens are priced by `CodexRunner.Run` against the same pricing table the `qwen_code` provider uses (`applyUsageWithCost`, DB-backed via Settings → Pricing, with a hardcoded fallback table — see `providers/pricing.go`). This produces an *estimated*, not authoritative, `cost_usd`. When the configured model isn't in the pricing table, `cost_usd` stays `0` but the run is flagged `cost_unknown` so the UI shows "cost unknown" instead of a misleading `$0`. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+The `turn.completed` event reports `usage.input_tokens`, `usage.cached_input_tokens` (the part of the input served from the prompt cache) and `usage.output_tokens`. **The Codex CLI reports no cost figure**, and its model catalog (`codex debug models`) carries no prices, so these tokens are priced by `CodexRunner.Run` against the same pricing table the cost watchdog uses (DB-backed via Settings → Pricing, with a hardcoded fallback table; see `providers/pricing.go`). The result is an *estimated*, not authoritative, `cost_usd`:
 
-**Pre-dispatch `max_cost_usd` guard: supported**, for models in the pricing table — the task's accumulated estimated spend across `codex_cli` runs now blocks the next dispatch once the budget is exhausted, the same as `qwen_code`. If any run's cost is unknown (unpriced model), the accumulated spend can't be trusted; see [agents.md § Cost Budgets](../agents.md#cost-budgets) for how that's handled.
+- **Cached input** is billed at the pricing row's cached rate (`cached_input_per_1m`) when it has one, else at the input rate. Agent runs are mostly cache hits, so this is the biggest accuracy factor.
+- **No model set.** When the provider config leaves the model empty, Codex picks its own default. The runner reads the model Codex actually used from the thread's session file (`$CODEX_HOME/sessions/.../rollout-*-<thread_id>.jsonl`, the last `turn_context` entry), logs it, and prices against it.
+- **Resumed runs.** If Codex reports the session's running total rather than this run's own usage, the runner subtracts the total recorded in the session file before the run, so a resumed run never re-bills the earlier runs' tokens.
+- **Runs stopped mid-turn** (max turns, timeout, crash) never emit `turn.completed`; the session file's last `token_count` total is used instead, so the tokens they did spend are still priced.
 
-**Mid-run cost kill switch: not supported.** Codex's usage is only known once a full `turn.completed` event arrives at the end of a run, not incrementally, so a mid-run cost projection isn't possible for this provider. Only the pre-dispatch guard above applies.
+Reading the session file is best-effort: if it can't be found or read, pricing falls back to the configured model and the reported usage. When the model isn't in the pricing table, `cost_usd` stays `0` but the run is flagged `cost_unknown` so the UI shows "cost unknown" instead of a misleading `$0`. Under a ChatGPT plan there is no per-token bill, so the figure is an API-price equivalent, useful for budgets and comparisons. See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+
+**Pre-dispatch `max_cost_usd` guard: supported** for models in the pricing table. The task's accumulated estimated spend across `codex_cli` runs blocks the next dispatch once the budget is exhausted. If any run's cost is unknown (unpriced model), the accumulated spend can't be trusted; see [agents.md § Cost Budgets](../agents.md#cost-budgets) for how that's handled.
+
+**Mid-run cost kill switch: not supported.** The JSON stream carries usage only at `turn.completed`, so a mid-run cost projection isn't possible from it. Only the pre-dispatch guard above applies.
 
 ## Setup Checklist
 

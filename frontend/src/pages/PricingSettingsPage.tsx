@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '../api/client'
+import { api, type ModelPricing } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { PricingHelp } from '../components/shared/pageHelp'
@@ -12,6 +12,17 @@ interface PricingRow {
   model: string
   inputPer1M: string
   outputPer1M: string
+  // Empty means "no cached rate": cached input tokens bill at the input price.
+  cachedInputPer1M: string
+}
+
+function toFormRow(r: ModelPricing): PricingRow {
+  return {
+    model: r.model,
+    inputPer1M: String(r.input_per_1m),
+    outputPer1M: String(r.output_per_1m),
+    cachedInputPer1M: r.cached_input_per_1m == null ? '' : String(r.cached_input_per_1m),
+  }
 }
 
 export default function PricingSettingsPage() {
@@ -28,15 +39,7 @@ export default function PricingSettingsPage() {
     setSaved(false)
     api.modelPricing
       .list()
-      .then((data) =>
-        setRows(
-          (data ?? []).map((r) => ({
-            model: r.model,
-            inputPer1M: String(r.input_per_1m),
-            outputPer1M: String(r.output_per_1m),
-          })),
-        ),
-      )
+      .then((data) => setRows((data ?? []).map(toFormRow)))
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))
   }, [])
@@ -50,7 +53,7 @@ export default function PricingSettingsPage() {
   }
 
   function addRow() {
-    setRows((rs) => [...rs, { model: '', inputPer1M: '0', outputPer1M: '0' }])
+    setRows((rs) => [...rs, { model: '', inputPer1M: '0', outputPer1M: '0', cachedInputPer1M: '' }])
   }
 
   function removeRow(i: number) {
@@ -76,16 +79,17 @@ export default function PricingSettingsPage() {
         if (!Number.isFinite(outputPer1M) || outputPer1M < 0) {
           throw new Error(`Output price for "${model}" must be a number >= 0`)
         }
-        return { model, input_per_1m: inputPer1M, output_per_1m: outputPer1M }
+        let cachedInputPer1M: number | null = null
+        if (r.cachedInputPer1M.trim() !== '') {
+          cachedInputPer1M = Number(r.cachedInputPer1M)
+          if (!Number.isFinite(cachedInputPer1M) || cachedInputPer1M < 0) {
+            throw new Error(`Cached input price for "${model}" must be a number >= 0, or empty`)
+          }
+        }
+        return { model, input_per_1m: inputPer1M, output_per_1m: outputPer1M, cached_input_per_1m: cachedInputPer1M }
       })
       const updated = await api.modelPricing.update(payload)
-      setRows(
-        updated.map((r) => ({
-          model: r.model,
-          inputPer1M: String(r.input_per_1m),
-          outputPer1M: String(r.output_per_1m),
-        })),
-      )
+      setRows(updated.map(toFormRow))
       setSaved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -107,7 +111,9 @@ export default function PricingSettingsPage() {
         <code className="text-slate-300">claude</code> and <code className="text-slate-300">opencode</code> CLIs'
         own final reported cost is authoritative and unaffected. A model with no row here falls back to an internal,
         approximate hardcoded table; a run whose model matches neither is flagged "cost unknown" in its run history
-        instead of silently showing $0. Changes take effect on the very next run — no restart needed.
+        instead of silently showing $0. Cached $/1M prices the prompt-cache hits{' '}
+        <code className="text-slate-300">codex_cli</code> reports; leave it empty to bill them at the input price.
+        Changes take effect on the very next run — no restart needed.
       </p>
 
       {showHelp && (
@@ -131,15 +137,16 @@ export default function PricingSettingsPage() {
         <div className="text-sm text-slate-500">Loading…</div>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-[1fr_88px_88px_auto] sm:grid-cols-[1fr_140px_140px_auto] gap-2 text-xs text-slate-500 px-1">
+          <div className="grid grid-cols-[1fr_72px_72px_72px_auto] sm:grid-cols-[1fr_120px_120px_120px_auto] gap-2 text-xs text-slate-500 px-1">
             <span>Model</span>
             <span>Input $/1M</span>
             <span>Output $/1M</span>
+            <span>Cached $/1M</span>
             <span />
           </div>
 
           {rows.map((row, i) => (
-            <div key={i} className="grid grid-cols-[1fr_88px_88px_auto] sm:grid-cols-[1fr_140px_140px_auto] gap-2 items-center">
+            <div key={i} className="grid grid-cols-[1fr_72px_72px_72px_auto] sm:grid-cols-[1fr_120px_120px_120px_auto] gap-2 items-center">
               <input
                 type="text"
                 value={row.model}
@@ -163,6 +170,17 @@ export default function PricingSettingsPage() {
                 step="any"
                 value={row.outputPer1M}
                 onChange={(e) => updateRow(i, { outputPer1M: e.target.value })}
+                disabled={saving}
+                className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+              />
+              <input
+                type="number"
+                min={0}
+                step="any"
+                value={row.cachedInputPer1M}
+                onChange={(e) => updateRow(i, { cachedInputPer1M: e.target.value })}
+                placeholder="= input"
+                aria-label={`Cached input price for ${row.model || 'row'}`}
                 disabled={saving}
                 className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
               />

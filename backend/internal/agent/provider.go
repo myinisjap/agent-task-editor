@@ -61,7 +61,8 @@ type Result struct {
 	// CostUSD is the (estimated, unless otherwise noted) USD cost of the
 	// run. For the `claude` CLI provider this is the CLI's own authoritative
 	// total_cost_usd figure; for providers without their own figure (codex_cli) it is computed
-	// from InputTokens/OutputTokens via the internal pricing table. Zero if
+	// from InputTokens/OutputTokens (and cached input tokens, when reported)
+	// via the internal pricing table. Zero if
 	// unknown/unreported — not necessarily a free run.
 	CostUSD float64
 	// CostUnknown is true only when a pricing-table provider (codex_cli) consumed
@@ -87,10 +88,11 @@ type Result struct {
 	// TurnsUsed is the number of internal agent turns the run actually
 	// consumed, for comparison against the configured AgentConfig.MaxTurns
 	// cap. 0 means "not reported" — only providers that expose a real count
-	// set it (claude/qwen_code from the stream-json result event's num_turns).
-	// codex_cli and
-	// opencode report no comparable figure and leave it 0; it is never
-	// estimated, since an invented count is worse than an absent one.
+	// set it (claude/qwen_code from the stream-json result event's num_turns;
+	// codex_cli from its count of completed tool steps, which is also what
+	// its runner caps). opencode reports no comparable figure and leaves it
+	// 0; it is never estimated, since an invented count is worse than an
+	// absent one.
 	TurnsUsed int64
 }
 

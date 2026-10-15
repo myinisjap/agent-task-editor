@@ -123,10 +123,11 @@ type LogRetentionSetting struct {
 }
 
 type ModelPricing struct {
-	Model       string    `json:"model"`
-	InputPer1m  float64   `json:"input_per_1m"`
-	OutputPer1m float64   `json:"output_per_1m"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Model            string    `json:"model"`
+	InputPer1m       float64   `json:"input_per_1m"`
+	OutputPer1m      float64   `json:"output_per_1m"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	CachedInputPer1m *float64  `json:"cached_input_per_1m"`
 }
 
 type ProviderConfig struct {

@@ -4,19 +4,20 @@
 -- effect on the very next run.
 
 -- name: ListModelPricing :many
-SELECT model, input_per_1m, output_per_1m, updated_at FROM model_pricing ORDER BY model;
+SELECT model, input_per_1m, output_per_1m, updated_at, cached_input_per_1m FROM model_pricing ORDER BY model;
 
 -- name: GetModelPricing :one
-SELECT model, input_per_1m, output_per_1m, updated_at FROM model_pricing WHERE model = ?;
+SELECT model, input_per_1m, output_per_1m, updated_at, cached_input_per_1m FROM model_pricing WHERE model = ?;
 
 -- name: UpsertModelPricing :one
-INSERT INTO model_pricing (model, input_per_1m, output_per_1m, updated_at)
-VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+INSERT INTO model_pricing (model, input_per_1m, output_per_1m, cached_input_per_1m, updated_at)
+VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 ON CONFLICT (model) DO UPDATE SET
-    input_per_1m  = excluded.input_per_1m,
-    output_per_1m = excluded.output_per_1m,
-    updated_at    = CURRENT_TIMESTAMP
-RETURNING model, input_per_1m, output_per_1m, updated_at;
+    input_per_1m        = excluded.input_per_1m,
+    output_per_1m       = excluded.output_per_1m,
+    cached_input_per_1m = excluded.cached_input_per_1m,
+    updated_at          = CURRENT_TIMESTAMP
+RETURNING model, input_per_1m, output_per_1m, updated_at, cached_input_per_1m;
 
 -- name: DeleteModelPricing :exec
 DELETE FROM model_pricing WHERE model = ?;

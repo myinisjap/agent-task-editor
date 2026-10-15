@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -47,8 +48,9 @@ func classifyCodexJSON(line string) (agent.LogEntry, string, *runUsage, agent.Cl
 		Type     string `json:"type"`
 		ThreadID string `json:"thread_id"`
 		Usage    struct {
-			InputTokens  int64 `json:"input_tokens"`
-			OutputTokens int64 `json:"output_tokens"`
+			InputTokens       int64 `json:"input_tokens"`
+			CachedInputTokens int64 `json:"cached_input_tokens"`
+			OutputTokens      int64 `json:"output_tokens"`
 		} `json:"usage"`
 		Error *struct {
 			Message string `json:"message"`
@@ -69,7 +71,7 @@ func classifyCodexJSON(line string) (agent.LogEntry, string, *runUsage, agent.Cl
 	case "turn.started":
 		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", nil, agent.ClassNone, "", true
 	case "turn.completed":
-		usage := &runUsage{InputTokens: envelope.Usage.InputTokens, OutputTokens: envelope.Usage.OutputTokens}
+		usage := &runUsage{InputTokens: envelope.Usage.InputTokens, CachedInputTokens: envelope.Usage.CachedInputTokens, OutputTokens: envelope.Usage.OutputTokens}
 		return agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, "", usage, agent.ClassNone, "", true
 	case "turn.failed":
 		msg := ""
@@ -159,4 +161,29 @@ func classifyCodexItem(item *codexItemEnvelope, line string, completed bool) (ag
 	default:
 		return agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, "", nil, agent.ClassNone, ""
 	}
+}
+
+// codexCompletedToolStep reports whether line is the completion of one agent
+// tool step (a shell command, file edit, MCP tool call or web search). Codex
+// has no turn-cap flag, so CodexRunner counts these to enforce max_turns and
+// report turns_used: one completed tool step is the closest codex equivalent
+// of a claude/qwen agent turn.
+func codexCompletedToolStep(line string) bool {
+	if !strings.Contains(line, `"item.completed"`) {
+		return false
+	}
+	var ev struct {
+		Type string `json:"type"`
+		Item *struct {
+			Type string `json:"type"`
+		} `json:"item"`
+	}
+	if json.Unmarshal([]byte(line), &ev) != nil || ev.Type != "item.completed" || ev.Item == nil {
+		return false
+	}
+	switch ev.Item.Type {
+	case "command_execution", "file_change", "mcp_tool_call", "web_search":
+		return true
+	}
+	return false
 }
