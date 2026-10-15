@@ -82,15 +82,12 @@ func TestChatMCPProvisioner_NeverEmbedsAdminToken(t *testing.T) {
 			t.Fatal(err)
 		}
 		var blob string
-		if len(args) == 2 {
+		if prov == "codex_cli" {
+			// codex carries the config inline as -c overrides.
+			blob = strings.Join(args, " ") + strings.Join(env, " ")
+		} else if len(args) == 2 {
 			b, _ := os.ReadFile(args[1])
 			blob = string(b)
-		}
-		for _, e := range env {
-			if strings.HasPrefix(e, "CODEX_HOME=") {
-				b, _ := os.ReadFile(filepath.Join(strings.TrimPrefix(e, "CODEX_HOME="), "config.toml"))
-				blob += string(b)
-			}
 		}
 		if blob == "" || strings.Contains(blob, "admin-secret") {
 			t.Errorf("%s: config missing or contains admin token: %q", prov, blob)
@@ -99,7 +96,7 @@ func TestChatMCPProvisioner_NeverEmbedsAdminToken(t *testing.T) {
 	}
 }
 
-func TestChatMCPProvisioner_Codex_WritesConfigToml(t *testing.T) {
+func TestChatMCPProvisioner_Codex_UsesConfigOverrides(t *testing.T) {
 	p := NewChatMCPProvisioner("/app/mcp-board", "http://localhost:8080")
 	args, env, cleanup, err := p("codex_cli", "sess-4")
 	if err != nil {
@@ -107,27 +104,17 @@ func TestChatMCPProvisioner_Codex_WritesConfigToml(t *testing.T) {
 	}
 	defer cleanup()
 
-	if len(args) != 0 {
-		t.Errorf("codex should use env only, got args %v", args)
+	if len(env) != 0 {
+		t.Errorf("codex must not override env (CODEX_HOME holds the user's login), got %v", env)
 	}
-	var home string
-	for _, e := range env {
-		if strings.HasPrefix(e, "CODEX_HOME=") {
-			home = strings.TrimPrefix(e, "CODEX_HOME=")
-		}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-c mcp_servers."+boardMCPServerName+`.command="/app/mcp-board"`) {
+		t.Errorf("missing board server command override, args %v", args)
 	}
-	if home == "" {
-		t.Fatalf("CODEX_HOME not set; env %v", env)
-	}
-	data, rerr := os.ReadFile(filepath.Join(home, "config.toml"))
-	if rerr != nil {
-		t.Fatalf("read config.toml: %v", rerr)
-	}
-	if !strings.Contains(string(data), "[mcp_servers."+boardMCPServerName+"]") {
-		t.Errorf("config.toml missing board server section:\n%s", data)
+	if !strings.Contains(joined, "mcp_servers."+boardMCPServerName+".env.API_TOKEN=") {
+		t.Errorf("missing scoped API token override, args %v", args)
 	}
 }
-
 func TestChatMCPProvisioner_UnsupportedProvider_NoInjection(t *testing.T) {
 	p := NewChatMCPProvisioner("/app/mcp-board", "http://localhost:8080")
 	args, env, cleanup, err := p("opencode", "sess-5")

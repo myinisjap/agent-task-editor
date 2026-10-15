@@ -270,7 +270,7 @@ func ServerCommandContext(ctx context.Context, name string, args ...string) *exe
 // ShareDir makes a server-created private temp directory (MkdirTemp, 0700)
 // usable by the agent user, which shares the server's primary group but not its
 // uid and so could not otherwise enter it. writable=true is for directories the
-// agent must create files in (the MCP sidecar's result file, CODEX_HOME). The
+// agent must create files in (the MCP sidecar's result file). The
 // server cannot chown to the agent uid (it only holds CAP_SETUID/SETGID), so
 // access is granted via the shared group. A no-op when isolation is off.
 func ShareDir(dir string, writable bool) error {

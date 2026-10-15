@@ -132,6 +132,22 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	switch os.Getenv("CODEX_TEST_HELPER") {
+	case "assert_mcp_args":
+		// Fails unless the MCP sidecar arrived as -c overrides and the
+		// runner left CODEX_HOME alone (see
+		// TestCodexRunner_Run_WithMCP_PassesConfigOverrides).
+		joined := strings.Join(os.Args, "\n")
+		if !strings.Contains(joined, "-c\nmcp_servers.task-editor.command=\"/opt/mcp-server\"") ||
+			!strings.Contains(joined, "-c\nmcp_servers.task-editor.env.RUN_ID=\"codex-test-run\"") {
+			fmt.Fprintf(os.Stderr, "missing mcp overrides in args: %q\n", os.Args)
+			os.Exit(1)
+		}
+		if h, ok := os.LookupEnv("CODEX_HOME"); ok && strings.Contains(h, "ate-codex-home") {
+			fmt.Fprintf(os.Stderr, "CODEX_HOME was replaced: %s\n", h)
+			os.Exit(1)
+		}
+		fmt.Println(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OUTCOME: success"}}`)
+		os.Exit(0)
 	case "exit0_success":
 		fmt.Println(`{"type":"thread.started","thread_id":"thread-1"}`)
 		fmt.Println(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OUTCOME: success"}}`)

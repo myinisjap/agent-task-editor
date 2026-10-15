@@ -127,8 +127,8 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       note: 'Not implemented — usage is only known at end-of-run for this provider, so mid-run cost can\'t be projected. Only the pre-dispatch budget guard applies.',
     },
     imageAttachments: {
-      support: 'none',
-      note: 'codex exec has an -i/--image flag, but attachments are not wired through to it yet. See docs/providers/codex_cli.md.',
+      support: 'full',
+      note: 'Passed to codex exec as --image (from the worktree copies under .task_attachments/), so the model sees them visually. Also listed in the prompt as files.',
     },
     maxTurns: {
       support: 'none',

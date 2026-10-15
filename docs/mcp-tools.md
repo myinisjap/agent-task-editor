@@ -10,14 +10,14 @@ The MCP (Model Context Protocol) sidecar is a small process (`mcp-server`) that 
 |---|---|
 | `claude` | ✅ Yes (when `MCP_SERVER_PATH` is set) |
 | `qwen_code` | ✅ Yes (when `MCP_SERVER_PATH` is set) |
-| `codex_cli` | ✅ Yes (when `MCP_SERVER_PATH` is set) — via a per-run `CODEX_HOME` config.toml, not a CLI flag |
+| `codex_cli` | ✅ Yes (when `MCP_SERVER_PATH` is set) — via per-invocation `-c mcp_servers.*` config overrides |
 | `opencode` | ❌ No — opencode has no `--mcp-config` flag |
 
 ## How It Works
 
 1. The runner (ClaudeRunner / QwenRunner / CodexRunner) calls `MCPManager.Prepare()` before starting the agent subprocess.
 2. `Prepare()` writes a JSON config file that registers the `mcp-server` binary as an MCP server under the name `task-editor`.
-3. For `claude`/`qwen_code`, the CLI receives `--mcp-config <tempfile>`, causing it to launch `mcp-server` as a child process. For `codex_cli`, which has no per-invocation MCP flag, the runner instead writes the same server entry into a fresh, per-run isolated home directory (`CODEX_HOME`'s `config.toml`) and points the subprocess's environment at it, so the CLI picks it up as if it were configured globally — without touching any shared host config or clobbering concurrent runs.
+3. For `claude`/`qwen_code`, the CLI receives `--mcp-config <tempfile>`, causing it to launch `mcp-server` as a child process. For `codex_cli`, which has no `--mcp-config` flag, the runner passes the same server entry as `-c mcp_servers.task-editor.*` config overrides on the command line, so no config file is written, concurrent runs can't clobber each other, and the user's own `CODEX_HOME` (login and session history) stays in use.
 4. The sidecar communicates over stdio using the MCP JSON-RPC protocol.
 5. The sidecar reads `RUN_ID`, `RESULT_FILE`, and `TRANSITIONS` from its environment (set by `MCPManager.Prepare()`).
 6. When `signal_complete` or `request_human` is called, the sidecar writes a result JSON file that the runner reads after the agent exits.

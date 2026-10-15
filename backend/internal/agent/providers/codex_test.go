@@ -3,10 +3,10 @@ package providers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,36 +134,60 @@ func TestBuildCodexArgs_NoResume(t *testing.T) {
 	}
 }
 
-// TestRenderCodexMCPTOML verifies the generated TOML matches the shape
-// `codex mcp add` writes to config.toml (verified against a live invocation).
-func TestRenderCodexMCPTOML(t *testing.T) {
-	entry := mcpServerEntry{
+// TestCodexMCPConfigArgs verifies the sidecar entry renders as `-c`
+// overrides matching the shape `codex mcp list` reads back (verified against
+// codex 0.163.0), with one override per env var in sorted order.
+func TestCodexMCPConfigArgs(t *testing.T) {
+	got := codexMCPConfigArgs("task-editor", mcpServerEntry{
 		Command: "/opt/mcp-server",
-		Args:    []string{},
-		Env:     map[string]string{"RUN_ID": "abc"},
+		Args:    []string{"--x"},
+		Env:     map[string]string{"RUN_ID": "abc", "TRANSITIONS": `[{"to":"review"}]`},
+	})
+	want := []string{
+		"-c", `mcp_servers.task-editor.command="/opt/mcp-server"`,
+		"-c", `mcp_servers.task-editor.args=["--x"]`,
+		"-c", `mcp_servers.task-editor.env.RUN_ID="abc"`,
+		"-c", `mcp_servers.task-editor.env.TRANSITIONS="[{\"to\":\"review\"}]"`,
 	}
-	toml := renderCodexMCPTOML("task-editor", entry)
-	if !contains(toml, `[mcp_servers.task-editor]`) {
-		t.Errorf("missing server section header, got:\n%s", toml)
-	}
-	if !contains(toml, `command = "/opt/mcp-server"`) {
-		t.Errorf("missing command line, got:\n%s", toml)
-	}
-	if !contains(toml, `[mcp_servers.task-editor.env]`) {
-		t.Errorf("missing env section header, got:\n%s", toml)
-	}
-	if !contains(toml, `RUN_ID = "abc"`) {
-		t.Errorf("missing env entry, got:\n%s", toml)
+	if !slices.Equal(got, want) {
+		t.Fatalf("codexMCPConfigArgs =\n%q\nwant\n%q", got, want)
 	}
 }
 
-// TestRenderCodexMCPTOML_NoEnv verifies no env section is emitted when there
-// are no env vars to set.
-func TestRenderCodexMCPTOML_NoEnv(t *testing.T) {
-	entry := mcpServerEntry{Command: "/opt/mcp-server", Args: []string{}}
-	toml := renderCodexMCPTOML("task-editor", entry)
-	if contains(toml, ".env]") {
-		t.Errorf("did not expect an env section with no env vars, got:\n%s", toml)
+// TestCodexMCPConfigArgs_NoEnv verifies an empty args list and no env
+// overrides when the entry has none.
+func TestCodexMCPConfigArgs_NoEnv(t *testing.T) {
+	got := codexMCPConfigArgs("b", mcpServerEntry{Command: "/bin/x"})
+	want := []string{"-c", `mcp_servers.b.command="/bin/x"`, "-c", `mcp_servers.b.args=[]`}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestTOMLString verifies only TOML-defined escapes are emitted (strconv.Quote
+// would emit \a / \x.., which TOML rejects) and Unicode passes through.
+func TestTOMLString(t *testing.T) {
+	cases := map[string]string{
+		`plain`:         `"plain"`,
+		`a"b\c`:         `"a\"b\\c"`,
+		"tab\tnl\ncr\r": `"tab\tnl\ncr\r"`,
+		"bell\a\x7f":    `"bell\u0007\u007F"`,
+		"héllo ✓":       `"héllo ✓"`,
+	}
+	for in, want := range cases {
+		if got := tomlString(in); got != want {
+			t.Errorf("tomlString(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// TestBuildCodexArgs_ConfigArgs verifies config overrides sit with the
+// exec-level flags, before the prompt.
+func TestBuildCodexArgs_ConfigArgs(t *testing.T) {
+	args := buildCodexArgs(agent.RunInput{Task: agent.Task{Title: "t"}}, "-c", "a=1")
+	ci := slices.Index(args, "a=1")
+	if ci < 1 || args[ci-1] != "-c" || ci == len(args)-1 {
+		t.Fatalf("expected -c a=1 among the flags before the prompt, args=%v", args)
 	}
 }
 
@@ -458,83 +482,34 @@ func TestCodexRunner_Run_FailurePathPersistsPricedCost(t *testing.T) {
 	}
 }
 
-// TestCodexRunner_Run_WithMCP_PreparesAndCleansUpCodexHome verifies the MCP
-// sidecar wiring path: when r.MCP is configured with a ServerBinary, Run
-// must call prepareCodexHome to write a per-run $CODEX_HOME/config.toml
-// (rather than touching any shared/global config) and pass CODEX_HOME to the
-// child process, then Cleanup must remove that directory once Run returns.
-//
-// Regression coverage for a review finding on #251: prepareCodexHome and
-// codexRunConfig.Cleanup were still at 0% coverage because no lifecycle test
-// ever set runner.MCP, so this branch of Run was never exercised at all.
-func TestCodexRunner_Run_WithMCP_PreparesAndCleansUpCodexHome(t *testing.T) {
-	mcpBinary := os.Args[0] // any non-empty path; MCPManager.Prepare only writes it into config files, never executes it
+// TestCodexRunner_Run_WithMCP_PassesConfigOverrides verifies that with an
+// MCP manager configured, the sidecar reaches codex as `-c mcp_servers.*`
+// overrides and CODEX_HOME is not replaced (a per-run CODEX_HOME hid the
+// user's `codex login`, failing every ChatGPT-login run). The fake binary
+// (mode "assert_mcp_args" in TestMain) exits 1 unless both hold.
+func TestCodexRunner_Run_WithMCP_PassesConfigOverrides(t *testing.T) {
 	runner := &CodexRunner{
 		BinaryPath: os.Args[0],
-		MCP:        &MCPManager{ServerBinary: mcpBinary},
+		MCP:        &MCPManager{ServerBinary: "/opt/mcp-server"}, // written into the overrides, never executed
 	}
 	logCh := make(chan agent.LogEntry, 256)
+	var logs []agent.LogEntry
+	done := make(chan struct{})
 	go func() {
-		for range logCh {
+		for e := range logCh {
+			logs = append(logs, e)
 		}
+		close(done)
 	}()
-
-	input := codexHelperInput("exit0_success")
-
-	// Run synchronously; the helper process exits immediately, so by the
-	// time Run returns, its deferred codexHome.Cleanup() has already fired
-	// and we can only assert the directory is gone afterward. To also
-	// observe the directory *while it exists* (proving prepareCodexHome
-	// actually ran, not just that Cleanup ran on a nil config), call
-	// prepareCodexHome directly first and compare its deterministic path
-	// convention against what Run would have used for the same RunID.
-	wantHomeDir := filepath.Join(os.TempDir(), fmt.Sprintf("ate-codex-home-%s", input.RunID))
-
-	result, err := runner.Run(context.Background(), input, logCh)
+	result, err := runner.Run(context.Background(), codexHelperInput("assert_mcp_args"), logCh)
 	close(logCh)
+	<-done
 	if err != nil {
 		t.Fatalf("Run: unexpected error: %v", err)
 	}
 	if result.Status != "completed" || result.Outcome != "success" {
-		t.Fatalf("Run result = %+v, want completed/success", result)
+		t.Fatalf("Run result = %+v, want completed/success; logs %v", result, logs)
 	}
-
-	// Cleanup (deferred inside Run) must have removed the per-run CODEX_HOME
-	// directory by the time Run returns.
-	if _, statErr := os.Stat(wantHomeDir); !os.IsNotExist(statErr) {
-		t.Errorf("expected CODEX_HOME dir %q to be removed by Cleanup after Run, stat err = %v", wantHomeDir, statErr)
-	}
-
-	// Directly exercise prepareCodexHome/Cleanup's own behavior (config.toml
-	// contents + directory lifecycle), independent of Run's timing, so this
-	// test doesn't rely solely on the directory already being gone above.
-	entry := mcpServerEntry{Command: mcpBinary, Args: []string{}, Env: map[string]string{"RUN_ID": input.RunID}}
-	cfg, err := prepareCodexHome("standalone-"+input.RunID, &entry)
-	if err != nil {
-		t.Fatalf("prepareCodexHome: %v", err)
-	}
-	if cfg == nil {
-		t.Fatal("prepareCodexHome returned a nil config for a non-nil entry")
-	}
-	tomlPath := filepath.Join(cfg.HomeDir, "config.toml")
-	if _, statErr := os.Stat(tomlPath); statErr != nil {
-		t.Errorf("expected config.toml to exist at %q: %v", tomlPath, statErr)
-	}
-	cfg.Cleanup()
-	if _, statErr := os.Stat(cfg.HomeDir); !os.IsNotExist(statErr) {
-		t.Errorf("expected Cleanup to remove %q, stat err = %v", cfg.HomeDir, statErr)
-	}
-
-	// prepareCodexHome returns (nil, nil) when there's no MCP server entry to
-	// configure (the r.MCP == nil / ServerBinary == "" branch in Run).
-	if nilCfg, nilErr := prepareCodexHome("no-entry", nil); nilCfg != nil || nilErr != nil {
-		t.Errorf("prepareCodexHome(nil entry) = (%v, %v), want (nil, nil)", nilCfg, nilErr)
-	}
-
-	// Cleanup on a nil *codexRunConfig (the r.MCP == nil branch's `defer
-	// codexHome.Cleanup()` in Run) must be a safe no-op.
-	var nilCfgPtr *codexRunConfig
-	nilCfgPtr.Cleanup()
 }
 
 // TestCodexRunner_Run_Exit1WithTurnFailed verifies a non-zero exit whose
@@ -665,5 +640,73 @@ func TestCodexRunner_Run_OversizedLineTruncation(t *testing.T) {
 	}
 	if !sawTruncationLog {
 		t.Errorf("expected a LogSystem entry warning about the truncated output stream, got logs: %v", logs)
+	}
+}
+
+// TestBuildCodexArgs_Images verifies task attachments copied into the
+// worktree's .task_attachments/ are passed as --image=<path> (the = form, so
+// codex's variadic -i/--image can't swallow the prompt), missing copies are
+// skipped, and the prompt stays the final argument.
+func TestBuildCodexArgs_Images(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".task_attachments"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"a.png", "b.jpg"} {
+		if err := os.WriteFile(filepath.Join(dir, ".task_attachments", f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := buildCodexArgs(agent.RunInput{
+		Task:        agent.Task{Title: "t", Attachments: []string{"task1/a.png", "task1/missing.png", "task1/b.jpg", "task1/a.png"}},
+		AgentConfig: agent.AgentConfig{},
+		RepoPath:    dir,
+	})
+	var imgs []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--image") {
+			imgs = append(imgs, a)
+		}
+	}
+	want := []string{"--image=.task_attachments/a.png", "--image=.task_attachments/b.jpg"}
+	if !slices.Equal(imgs, want) {
+		t.Fatalf("image args = %v, want %v (all args %v)", imgs, want, args)
+	}
+	if strings.HasPrefix(args[len(args)-1], "--image") {
+		t.Fatalf("expected prompt as final arg, args=%v", args)
+	}
+}
+
+// TestBuildCodexArgs_ImagesAfterResume verifies images follow the resume
+// subcommand, since `codex exec resume` takes its own --image for the prompt
+// sent after resuming.
+func TestBuildCodexArgs_ImagesAfterResume(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".task_attachments"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".task_attachments", "a.png"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := buildCodexArgs(agent.RunInput{
+		Task:            agent.Task{Title: "t", Attachments: []string{"task1/a.png"}},
+		RepoPath:        dir,
+		ResumeSessionID: "sess-123",
+	})
+	ri := slices.Index(args, "resume")
+	ii := slices.Index(args, "--image=.task_attachments/a.png")
+	if ri < 0 || ii < 0 || ii < ri {
+		t.Fatalf("expected --image after the resume subcommand, args=%v", args)
+	}
+}
+
+// TestBuildCodexArgs_NoAttachmentsNoImages verifies no --image flag without
+// attachments.
+func TestBuildCodexArgs_NoAttachmentsNoImages(t *testing.T) {
+	args := buildCodexArgs(agent.RunInput{Task: agent.Task{Title: "t"}, RepoPath: t.TempDir()})
+	for _, a := range args {
+		if strings.HasPrefix(a, "--image") {
+			t.Fatalf("did not expect an --image arg, args=%v", args)
+		}
 	}
 }
