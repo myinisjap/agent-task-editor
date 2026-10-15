@@ -31,7 +31,7 @@ const boardMCPServerName = "task-editor-board"
 //
 // The wiring mirrors the task sidecar's per-provider mechanisms:
 //   - claude / qwen_code: a per-session --mcp-config JSON file
-//   - codex_cli: a per-session CODEX_HOME with config.toml
+//   - codex_cli: per-session `-c mcp_servers.<name>.*` config overrides
 //   - anything else (e.g. opencode): no injection (no per-invocation mechanism)
 func NewChatMCPProvisioner(binary, backendURL string) agent.ChatMCPProvisioner {
 	if binary == "" {
@@ -90,29 +90,9 @@ func NewChatMCPProvisioner(binary, backendURL string) agent.ChatMCPProvisioner {
 			return []string{"--mcp-config", file}, nil, func() { revoke(); _ = os.RemoveAll(dir) }, nil
 
 		case "codex_cli":
-			// MkdirTemp creates the dir 0700 with an unguessable name.
-			dir, err := os.MkdirTemp("", "ate-chat-codex-")
-			if err != nil {
-				revoke()
-				return nil, nil, noop, fmt.Errorf("mkdir codex home: %w", err)
-			}
-			if err := agentuser.ShareDir(dir, true); err != nil {
-				revoke()
-				_ = os.RemoveAll(dir)
-				return nil, nil, noop, fmt.Errorf("share codex home: %w", err)
-			}
-			toml := renderCodexMCPTOML(boardMCPServerName, entry)
-			if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(toml), 0600); err != nil {
-				revoke()
-				_ = os.RemoveAll(dir)
-				return nil, nil, noop, fmt.Errorf("write codex config.toml: %w", err)
-			}
-			if err := agentuser.ShareFile(filepath.Join(dir, "config.toml")); err != nil {
-				revoke()
-				_ = os.RemoveAll(dir)
-				return nil, nil, noop, fmt.Errorf("share codex config.toml: %w", err)
-			}
-			return nil, []string{"CODEX_HOME=" + dir}, func() { revoke(); _ = os.RemoveAll(dir) }, nil
+			// -c overrides, not a per-session CODEX_HOME: that would hide the
+			// user's `codex login` and session history (see codexMCPConfigArgs).
+			return codexMCPConfigArgs(boardMCPServerName, entry), nil, revoke, nil
 		}
 		return nil, nil, noop, nil
 	}

@@ -52,14 +52,9 @@ own `env` field. Any other backend env var will not reach the CLI.
 | `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
 | `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
 
-Codex configures MCP servers via `[mcp_servers.<name>]` TOML sections in `$CODEX_HOME/config.toml` (there is also a `codex mcp add` CLI subcommand that writes the same format — used here only to confirm the exact shape, not invoked at runtime). Because that's a persistent config file rather than a per-invocation flag, this provider:
+Codex reads MCP servers from `[mcp_servers.<name>]` sections of `$CODEX_HOME/config.toml`, but any config key can also be set per invocation with `-c key=value`. This provider passes the sidecar that way on every run: `-c mcp_servers.task-editor.command=...`, `-c mcp_servers.task-editor.args=[...]`, and one `-c mcp_servers.task-editor.env.<KEY>=...` per sidecar env var (verified with `codex mcp list` against 0.163.0). Chat sessions wire the board tools the same way.
 
-1. Creates a fresh, isolated temp directory per run.
-2. Writes `<tempdir>/config.toml` containing a single `[mcp_servers.task-editor]` section (confirmed shape: `command`, `args`, and a nested `[mcp_servers.task-editor.env]` table for env vars).
-3. Sets `CODEX_HOME=<tempdir>` only for that one subprocess invocation.
-4. Removes the temp directory when the run ends.
-
-This means concurrent runs never share or clobber a global `~/.codex/config.toml`, and no host-level Codex CLI configuration is touched.
+No config file is written and `CODEX_HOME` is left alone, so concurrent runs can't clobber each other, and Codex keeps using the agent user's own `~/.codex` (or `CODEX_HOME`, if set on the backend). That matters because `CODEX_HOME` also holds the `codex login` credentials (`auth.json`) and the session history `codex exec resume` needs. Earlier versions pointed `CODEX_HOME` at a fresh per-run directory, which made every ChatGPT-login run fail as "Not logged in" whenever `MCP_SERVER_PATH` was set.
 
 See [mcp-tools.md](../mcp-tools.md) for full tool reference.
 

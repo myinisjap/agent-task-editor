@@ -283,7 +283,7 @@ Install the `qwen` binary (`npm i -g @qwen-code/qwen-code`, or build the backend
 
 ### Codex CLI (`codex_cli` provider)
 
-Install the `codex` binary (`npm i -g @openai/codex`, or build the backend image with `INSTALL_CODEX_CLI=true`) and authenticate (`codex login` with ChatGPT, or `OPENAI_API_KEY`). MCP tools are supported via a per-run isolated `CODEX_HOME`. See [providers/codex_cli.md](providers/codex_cli.md).
+Install the `codex` binary (`npm i -g @openai/codex`, or build the backend image with `INSTALL_CODEX_CLI=true`) and authenticate (`codex login` with ChatGPT, or `OPENAI_API_KEY`). MCP tools are supported, passed to Codex as per-run `-c mcp_servers.*` overrides. See [providers/codex_cli.md](providers/codex_cli.md).
 
 ## Mounting Repositories
 
@@ -324,7 +324,7 @@ How it works:
   the agent has its own `HOME=/home/agent` (own `.gitconfig`).
 - Shared by group (`PGID`, with `umask 002`): bind-mounted repos and
   `.ate-worktrees/`, the `mise`/`uv`/Go caches, the qwen home, per-run temp dirs
-  (MCP config/result, `CODEX_HOME`). At startup the entrypoint adds the group
+  (MCP config/result). At startup the entrypoint adds the group
   write bit to repos under `REPO_BASE_DIR` (`AGENT_FIX_REPO_PERMS`) and to
   `~/.claude` / `~/.claude.json`, which stay mounted read-write and fully usable
   by the agent (Claude writes sessions and refreshes tokens there). The compose

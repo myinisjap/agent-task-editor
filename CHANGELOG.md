@@ -26,6 +26,7 @@ triggers the "Release" workflow the same way.
 - Bumped the pinned agent CLIs in the backend image to their latest releases: Claude Code 2.1.238 → 2.1.301, Codex 0.146.1 → 0.163.0 and Qwen Code 0.21.6 → 0.25.2 (Codex and Qwen ship in the `-all-cli` image and `INSTALL_*_CLI=true` builds). Every flag the runners pass was re-checked against the new versions.
 
 ### Fixed
+- **`codex_cli` runs failed for ChatGPT-login users whenever the task tools were enabled.** With `MCP_SERVER_PATH` set (the default Docker setup), each Codex run and each Codex chat session with board tools pointed `CODEX_HOME` at a fresh temp directory, which hid the `codex login` credentials ("Not logged in") and threw away the session history that resume needs. The MCP sidecar is now passed as `-c mcp_servers.*` overrides, so Codex keeps its own `CODEX_HOME`. `OPENAI_API_KEY` setups were not affected.
 - The Codex chat terminal's update-check opt-out used a config key Codex doesn't recognise (`check_for_update`), so the "Update available" banner still showed; it now uses `check_for_update_on_startup=false`.
 
 ## [0.17.0] - 2026-10-14

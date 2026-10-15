@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,12 +27,11 @@ import (
 // claude/qwen's stream-json envelope, so this runner uses its own
 // classifyCodexJSON parser (parse_codex.go).
 //
-// MCP servers are configured via $CODEX_HOME/config.toml's [mcp_servers.*]
-// TOML sections (confirmed via `codex mcp add` against a scratch CODEX_HOME).
-// Because that's a persistent config file the CLI reads on startup rather
-// than a per-invocation flag, this runner points CODEX_HOME at a fresh
-// per-run temp directory (so concurrent runs on the same host never
-// share/clobber a global config) and writes a minimal config.toml into it.
+// MCP servers are normally configured via $CODEX_HOME/config.toml's
+// [mcp_servers.*] sections; this runner instead passes the sidecar as `-c`
+// config overrides on each invocation (see codexMCPConfigArgs), so concurrent
+// runs never share or clobber a config file and the user's own CODEX_HOME
+// (login, sessions) is left in place.
 type CodexRunner struct {
 	// Path to the codex binary. Defaults to "codex" (resolved via PATH).
 	BinaryPath string
@@ -61,79 +60,69 @@ func (r *CodexRunner) binary() string {
 	return "codex"
 }
 
-// codexRunConfig carries the per-run CODEX_HOME directory prepared for MCP
-// server wiring, so Run can clean it up after the process exits.
-type codexRunConfig struct {
-	HomeDir string
+// codexMCPConfigArgs renders a stdio MCP server entry as `-c` config
+// overrides (`mcp_servers.<name>.command=...`, `.args=[...]`, and one
+// `.env.<KEY>=...` per env var, in sorted key order), the per-invocation
+// equivalent of the [mcp_servers.<name>] section `codex mcp add` writes to
+// config.toml (verified with `codex mcp list` against codex 0.163.0).
+//
+// Overrides are used instead of pointing CODEX_HOME at a per-run directory
+// holding a config.toml: CODEX_HOME is also where codex keeps its login
+// (auth.json from `codex login`) and its session rollouts, so a fresh
+// CODEX_HOME made every ChatGPT-login run fail as "Not logged in" and lost the
+// thread a later `codex exec resume` needs. Each env var gets its own `-c`
+// argument so no single argv string grows past what one value needs.
+func codexMCPConfigArgs(name string, entry mcpServerEntry) []string {
+	prefix := "mcp_servers." + name + "."
+	args := []string{"-c", prefix + "command=" + tomlString(entry.Command)}
+	quoted := make([]string, len(entry.Args))
+	for i, a := range entry.Args {
+		quoted[i] = tomlString(a)
+	}
+	args = append(args, "-c", prefix+"args=["+strings.Join(quoted, ", ")+"]")
+	keys := make([]string, 0, len(entry.Env))
+	for k := range entry.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "-c", prefix+"env."+k+"="+tomlString(entry.Env[k]))
+	}
+	return args
 }
 
-// prepareCodexHome creates a per-run CODEX_HOME directory containing a
-// config.toml with a single [mcp_servers.task-editor] section, so the codex
-// CLI picks it up without touching any shared/global config on the host.
-// Returns nil if there is no MCP server to configure (entry is nil).
-func prepareCodexHome(runID string, entry *mcpServerEntry) (*codexRunConfig, error) {
-	if entry == nil {
-		return nil, nil
-	}
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("ate-codex-home-%s", runID))
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, fmt.Errorf("mkdir codex home: %w", err)
-	}
-	// codex runs as the agent user and writes its sessions/state here.
-	if err := agentuser.ShareDir(dir, true); err != nil {
-		return nil, fmt.Errorf("share codex home: %w", err)
-	}
-	toml := renderCodexMCPTOML("task-editor", *entry)
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(toml), 0600); err != nil {
-		return nil, fmt.Errorf("write codex config.toml: %w", err)
-	}
-	if err := agentuser.ShareFile(filepath.Join(dir, "config.toml")); err != nil {
-		return nil, fmt.Errorf("share codex config.toml: %w", err)
-	}
-	return &codexRunConfig{HomeDir: dir}, nil
-}
-
-func (c *codexRunConfig) Cleanup() {
-	if c == nil {
-		return
-	}
-	_ = os.RemoveAll(c.HomeDir)
-}
-
-// renderCodexMCPTOML renders a single [mcp_servers.<name>] TOML section for
-// the given server entry, matching the shape `codex mcp add` writes (verified
-// against a live `codex mcp add` invocation):
-//
-//	[mcp_servers.<name>]
-//	command = "..."
-//	args = ["...", ...]
-//
-//	[mcp_servers.<name>.env]
-//	KEY = "..."
-//
-// Values are escaped with strconv.Quote, which produces valid TOML
-// basic-string escaping for the ASCII-only command/args/env values this
-// codebase generates (our own mcp-server binary path plus JSON-encoded
-// string env vars — never arbitrary untrusted TOML-breaking input).
-func renderCodexMCPTOML(name string, entry mcpServerEntry) string {
+// tomlString renders s as a TOML basic string. Unlike strconv.Quote it only
+// emits escapes TOML defines (\\, \", \b, \t, \n, \f, \r, \uXXXX), so
+// arbitrary text (review comments, transitions JSON) can't produce an
+// invalid value; other Unicode is kept as-is, which TOML allows.
+func tomlString(s string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[mcp_servers.%s]\n", name)
-	fmt.Fprintf(&b, "command = %s\n", strconv.Quote(entry.Command))
-	if len(entry.Args) > 0 {
-		args := make([]string, len(entry.Args))
-		for i, a := range entry.Args {
-			args[i] = strconv.Quote(a)
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+			} else {
+				b.WriteRune(r)
+			}
 		}
-		fmt.Fprintf(&b, "args = [%s]\n", strings.Join(args, ", "))
-	} else {
-		b.WriteString("args = []\n")
 	}
-	if len(entry.Env) > 0 {
-		fmt.Fprintf(&b, "\n[mcp_servers.%s.env]\n", name)
-		for k, v := range entry.Env {
-			fmt.Fprintf(&b, "%s = %s\n", k, strconv.Quote(v))
-		}
-	}
+	b.WriteByte('"')
 	return b.String()
 }
 
@@ -159,13 +148,17 @@ func renderCodexMCPTOML(name string, entry mcpServerEntry) string {
 //     CLI recognizes (worktrees can trip this check).
 //   - There is no confirmed --max-turns-equivalent flag for `codex exec`, so
 //     no turn cap is passed (see docs/providers/codex_cli.md).
-func buildCodexArgs(input agent.RunInput) []string {
+//
+// configArgs are extra `-c key=value` overrides (the MCP sidecar wiring from
+// codexMCPConfigArgs), placed with the other exec-level flags.
+func buildCodexArgs(input agent.RunInput, configArgs ...string) []string {
 	args := []string{
 		"exec",
 		"--json",
 		"--skip-git-repo-check",
 		"--dangerously-bypass-approvals-and-sandbox",
 	}
+	args = append(args, configArgs...)
 	if input.AgentConfig.Model != "" {
 		args = append(args, "--model", input.AgentConfig.Model)
 	}
@@ -222,13 +215,13 @@ func codexImagePaths(input agent.RunInput) []string {
 
 func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
 	// Set up MCP sidecar if manager is configured. Unlike claude/qwen (which
-	// take a per-invocation --mcp-config JSON file), the codex CLI only reads
-	// MCP servers from $CODEX_HOME/config.toml, so a fresh CODEX_HOME is
-	// prepared per run — but the sidecar's result-file protocol (RUN_ID/
+	// take a per-invocation --mcp-config JSON file), codex reads MCP servers
+	// from its config, so the sidecar is wired in through `-c` overrides (see
+	// codexMCPConfigArgs) — but the sidecar's result-file protocol (RUN_ID/
 	// RESULT_FILE/etc. env vars) is identical, so MCPManager.Prepare is still
 	// used to produce the sidecar's env vars and result file.
 	var mcpCfg *MCPRunConfig
-	var codexHome *codexRunConfig
+	var configArgs []string
 	if r.MCP != nil && r.MCP.ServerBinary != "" {
 		var err error
 		mcpCfg, err = r.MCP.Prepare(input.RunID, input.Transitions, input.OpenReviewComments, nil, &SubtaskEnv{
@@ -242,19 +235,14 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		}
 		defer mcpCfg.Cleanup()
 
-		entry := mcpServerEntry{
+		configArgs = codexMCPConfigArgs("task-editor", mcpServerEntry{
 			Command: r.MCP.ServerBinary,
 			Args:    []string{},
 			Env:     mcpSidecarEnv(input, r.BackendURL, mcpCfg.Token, mcpCfg.ResultFile),
-		}
-		codexHome, err = prepareCodexHome(input.RunID, &entry)
-		if err != nil {
-			return agent.Result{Status: "failed"}, fmt.Errorf("prepare codex home: %w", err)
-		}
-		defer codexHome.Cleanup()
+		})
 	}
 
-	args := buildCodexArgs(input)
+	args := buildCodexArgs(input, configArgs...)
 
 	timeoutSecs := input.AgentConfig.TimeoutSecs
 	if timeoutSecs <= 0 {
@@ -268,9 +256,6 @@ func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<
 		// Custom endpoint from the provider config: don't send the backend's
 		// own inherited OpenAI key there (a key the config supplies is kept).
 		env = dropInheritedEnv(env, input.AgentConfig.Env, "OPENAI_API_KEY")
-	}
-	if codexHome != nil {
-		env = append(env, "CODEX_HOME="+codexHome.HomeDir)
 	}
 
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
