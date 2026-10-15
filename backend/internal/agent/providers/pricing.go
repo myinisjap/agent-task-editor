@@ -12,7 +12,13 @@ import (
 type modelPrice struct {
 	InputPer1M  float64
 	OutputPer1M float64
+	// CachedInputPer1M is the price of cached (prompt-cache hit) input
+	// tokens; nil bills them at InputPer1M. Only providers that report a
+	// cached-token count (codex_cli) use it — see CachedPriceResolver.
+	CachedInputPer1M *float64
 }
+
+func usd(v float64) *float64 { return &v }
 
 // modelPricing is a small, manually maintained table of approximate USD
 // prices per 1M tokens for common models used by the
@@ -38,15 +44,15 @@ var modelPricing = map[string]modelPrice{
 	"claude-3-opus":     {InputPer1M: 15, OutputPer1M: 75},
 	"claude-3-haiku":    {InputPer1M: 0.25, OutputPer1M: 1.25},
 
-	// OpenAI-compatible models (for the `llm` provider)
-	"gpt-4o":       {InputPer1M: 2.5, OutputPer1M: 10},
-	"gpt-4o-mini":  {InputPer1M: 0.15, OutputPer1M: 0.6},
-	"gpt-4.1":      {InputPer1M: 2, OutputPer1M: 8},
-	"gpt-4.1-mini": {InputPer1M: 0.4, OutputPer1M: 1.6},
-	"gpt-4.1-nano": {InputPer1M: 0.1, OutputPer1M: 0.4},
-	"o3":           {InputPer1M: 2, OutputPer1M: 8},
-	"o3-mini":      {InputPer1M: 1.1, OutputPer1M: 4.4},
-	"o4-mini":      {InputPer1M: 1.1, OutputPer1M: 4.4},
+	// OpenAI models (codex_cli), with their published cached-input rates.
+	"gpt-4o":       {InputPer1M: 2.5, OutputPer1M: 10, CachedInputPer1M: usd(1.25)},
+	"gpt-4o-mini":  {InputPer1M: 0.15, OutputPer1M: 0.6, CachedInputPer1M: usd(0.075)},
+	"gpt-4.1":      {InputPer1M: 2, OutputPer1M: 8, CachedInputPer1M: usd(0.5)},
+	"gpt-4.1-mini": {InputPer1M: 0.4, OutputPer1M: 1.6, CachedInputPer1M: usd(0.1)},
+	"gpt-4.1-nano": {InputPer1M: 0.1, OutputPer1M: 0.4, CachedInputPer1M: usd(0.025)},
+	"o3":           {InputPer1M: 2, OutputPer1M: 8, CachedInputPer1M: usd(0.5)},
+	"o3-mini":      {InputPer1M: 1.1, OutputPer1M: 4.4, CachedInputPer1M: usd(0.55)},
+	"o4-mini":      {InputPer1M: 1.1, OutputPer1M: 4.4, CachedInputPer1M: usd(0.275)},
 }
 
 // lookupModelPrice looks up model in the given price table (exact match
@@ -121,6 +127,46 @@ func estimateCostUSDWithResolver(ctx context.Context, resolver PriceResolver, mo
 	return (float64(inputTokens)/1_000_000)*inPer1M + (float64(outputTokens)/1_000_000)*outPer1M, true
 }
 
+// CachedPriceResolver is optionally implemented by a PriceResolver that also
+// knows a model's cached-input rate. ok=false means no cached rate is known
+// (the model is unknown, or its row leaves the rate unset), and callers bill
+// cached tokens at the regular input rate.
+type CachedPriceResolver interface {
+	CachedInputPrice(ctx context.Context, model string) (cachedPer1M float64, ok bool)
+}
+
+func (defaultPriceResolver) CachedInputPrice(_ context.Context, model string) (float64, bool) {
+	price, ok := lookupModelPrice(modelPricing, model)
+	if !ok || price.CachedInputPer1M == nil {
+		return 0, false
+	}
+	return *price.CachedInputPer1M, true
+}
+
+// estimateCachedCostUSD is estimateCostUSDWithResolver for a usage report that
+// splits out cached input tokens (cachedTokens is a subset of inputTokens,
+// as codex reports it): the cached part is billed at the resolver's cached
+// rate when it has one, else at the input rate like any other input token.
+func estimateCachedCostUSD(ctx context.Context, resolver PriceResolver, model string, inputTokens, cachedTokens, outputTokens int64) (cost float64, known bool) {
+	if resolver == nil {
+		resolver = defaultPriceResolver{}
+	}
+	inPer1M, outPer1M, known := resolver.Price(ctx, model)
+	if !known {
+		return 0, false
+	}
+	cachedTokens = min(max(cachedTokens, 0), inputTokens)
+	cachedPer1M := inPer1M
+	if cr, ok := resolver.(CachedPriceResolver); ok {
+		if v, ok := cr.CachedInputPrice(ctx, model); ok {
+			cachedPer1M = v
+		}
+	}
+	return (float64(inputTokens-cachedTokens)/1_000_000)*inPer1M +
+		(float64(cachedTokens)/1_000_000)*cachedPer1M +
+		(float64(outputTokens)/1_000_000)*outPer1M, true
+}
+
 // DBPriceResolver resolves pricing from the user-editable model_pricing
 // table (see 042_model_pricing / GET/PUT /api/v1/settings/pricing) — exact
 // match first, then the same longest-prefix match the hardcoded fallback
@@ -135,13 +181,28 @@ type DBPriceResolver struct {
 }
 
 func (r DBPriceResolver) Price(ctx context.Context, model string) (float64, float64, bool) {
+	price, ok := r.lookup(ctx, model)
+	return price.InputPer1M, price.OutputPer1M, ok
+}
+
+// CachedInputPrice resolves the cached-input rate from the same row Price
+// matched; a row with no cached rate reports ok=false (bill at input rate).
+func (r DBPriceResolver) CachedInputPrice(ctx context.Context, model string) (float64, bool) {
+	price, ok := r.lookup(ctx, model)
+	if !ok || price.CachedInputPer1M == nil {
+		return 0, false
+	}
+	return *price.CachedInputPer1M, true
+}
+
+func (r DBPriceResolver) lookup(ctx context.Context, model string) (modelPrice, bool) {
 	if model == "" {
-		return 0, 0, false
+		return modelPrice{}, false
 	}
 	if r.Q != nil {
 		// Exact match first (single-row lookup, cheapest common case).
 		if row, err := r.Q.GetModelPricing(ctx, model); err == nil {
-			return row.InputPer1m, row.OutputPer1m, true
+			return modelPrice{InputPer1M: row.InputPer1m, OutputPer1M: row.OutputPer1m, CachedInputPer1M: row.CachedInputPer1m}, true
 		} else if err != sql.ErrNoRows {
 			// DB error other than "not found" — fall through to the hardcoded
 			// map rather than silently treating this as an unpriced model.
@@ -154,13 +215,12 @@ func (r DBPriceResolver) Price(ctx context.Context, model string) (float64, floa
 			// instead of only ever matching exact model strings.
 			table := make(map[string]modelPrice, len(rows))
 			for _, row := range rows {
-				table[row.Model] = modelPrice{InputPer1M: row.InputPer1m, OutputPer1M: row.OutputPer1m}
+				table[row.Model] = modelPrice{InputPer1M: row.InputPer1m, OutputPer1M: row.OutputPer1m, CachedInputPer1M: row.CachedInputPer1m}
 			}
 			if price, ok := lookupModelPrice(table, model); ok {
-				return price.InputPer1M, price.OutputPer1M, true
+				return price, true
 			}
 		}
 	}
-	price, ok := lookupModelPrice(modelPricing, model)
-	return price.InputPer1M, price.OutputPer1M, ok
+	return lookupModelPrice(modelPricing, model)
 }

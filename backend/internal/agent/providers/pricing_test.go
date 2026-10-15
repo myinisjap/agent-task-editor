@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"math"
 	"os"
 	"testing"
 
@@ -231,5 +232,105 @@ func TestDBPriceResolver_NilQueriesFallsBackToMap(t *testing.T) {
 	}
 	if inPer1M != 2.5 || outPer1M != 10 {
 		t.Errorf("expected hardcoded map pricing, got in=%v out=%v", inPer1M, outPer1M)
+	}
+}
+
+// fakeCachedPriceResolver adds a cached-input rate to fakePriceResolver.
+type fakeCachedPriceResolver struct {
+	fakePriceResolver
+	cachedPer1M float64
+	cachedKnown bool
+}
+
+func (f fakeCachedPriceResolver) CachedInputPrice(context.Context, string) (float64, bool) {
+	return f.cachedPer1M, f.cachedKnown
+}
+
+// TestEstimateCachedCostUSD verifies cached input tokens (a subset of input
+// tokens) are billed at the cached rate when one is known, at the input rate
+// otherwise, and that an out-of-range cached count is clamped.
+func TestEstimateCachedCostUSD(t *testing.T) {
+	ctx := context.Background()
+	base := fakePriceResolver{inPer1M: 2, outPer1M: 8, known: true}
+	cases := []struct {
+		name            string
+		resolver        PriceResolver
+		in, cached, out int64
+		want            float64
+	}{
+		{"cached rate", fakeCachedPriceResolver{base, 0.5, true}, 1_000_000, 800_000, 1_000_000, 0.2*2 + 0.8*0.5 + 8},
+		{"no cached rate bills at input", fakeCachedPriceResolver{base, 0, false}, 1_000_000, 800_000, 0, 2},
+		{"resolver without cached support", base, 1_000_000, 800_000, 0, 2},
+		{"cached clamped to input", fakeCachedPriceResolver{base, 0.5, true}, 1_000_000, 5_000_000, 0, 0.5},
+		{"negative cached ignored", fakeCachedPriceResolver{base, 0.5, true}, 1_000_000, -5, 0, 2},
+	}
+	for _, c := range cases {
+		got, known := estimateCachedCostUSD(ctx, c.resolver, "m", c.in, c.cached, c.out)
+		if !known || math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("%s: got (%v, %v), want (%v, true)", c.name, got, known, c.want)
+		}
+	}
+	if _, known := estimateCachedCostUSD(ctx, fakePriceResolver{}, "m", 1, 1, 1); known {
+		t.Error("unknown model must report known=false")
+	}
+}
+
+// TestDefaultPriceResolver_CachedInputPrice verifies the hardcoded table's
+// cached rates are exposed, including through prefix matching.
+func TestDefaultPriceResolver_CachedInputPrice(t *testing.T) {
+	v, ok := defaultPriceResolver{}.CachedInputPrice(context.Background(), "gpt-4.1-2025-04-14")
+	if !ok || v != 0.5 {
+		t.Errorf("gpt-4.1 cached = (%v, %v), want (0.5, true)", v, ok)
+	}
+	if _, ok := (defaultPriceResolver{}).CachedInputPrice(context.Background(), "claude-sonnet-4-5"); ok {
+		t.Error("claude rows carry no cached rate in the fallback table")
+	}
+}
+
+// TestDBPriceResolver_CachedInputPrice verifies a DB row's cached rate is used
+// (exact and prefix match), and a row without one reports ok=false.
+func TestDBPriceResolver_CachedInputPrice(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+	cached := 0.3
+	for _, p := range []gen.UpsertModelPricingParams{
+		{Model: "gpt-x", InputPer1m: 3, OutputPer1m: 9, CachedInputPer1m: &cached},
+		{Model: "gpt-y", InputPer1m: 3, OutputPer1m: 9},
+	} {
+		if _, err := q.UpsertModelPricing(ctx, p); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+	r := DBPriceResolver{Q: q}
+	if v, ok := r.CachedInputPrice(ctx, "gpt-x"); !ok || v != 0.3 {
+		t.Errorf("exact: got (%v, %v)", v, ok)
+	}
+	if v, ok := r.CachedInputPrice(ctx, "gpt-x-2026"); !ok || v != 0.3 {
+		t.Errorf("prefix: got (%v, %v)", v, ok)
+	}
+	if _, ok := r.CachedInputPrice(ctx, "gpt-y"); ok {
+		t.Error("row without cached rate should report ok=false")
+	}
+}
+
+// TestModelPricingMigration_SeedsCachedRates verifies migration 065 filled the
+// cached rate for the seeded OpenAI rows and left Claude rows unset.
+func TestModelPricingMigration_SeedsCachedRates(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	row, err := q.GetModelPricing(context.Background(), "gpt-4o")
+	if err != nil {
+		t.Fatalf("get gpt-4o: %v", err)
+	}
+	if row.CachedInputPer1m == nil || *row.CachedInputPer1m != 1.25 {
+		t.Errorf("gpt-4o cached = %v, want 1.25", row.CachedInputPer1m)
+	}
+	row, err = q.GetModelPricing(context.Background(), "claude-sonnet-4-5")
+	if err != nil {
+		t.Fatalf("get claude: %v", err)
+	}
+	if row.CachedInputPer1m != nil {
+		t.Errorf("claude cached = %v, want nil", *row.CachedInputPer1m)
 	}
 }

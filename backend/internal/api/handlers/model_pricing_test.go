@@ -96,6 +96,7 @@ func TestModelPricingHandler_UpdateRejectsInvalid(t *testing.T) {
 		{"duplicate model", `[{"model": "x", "input_per_1m": 1, "output_per_1m": 1}, {"model": "x", "input_per_1m": 2, "output_per_1m": 2}]`},
 		{"negative input price", `[{"model": "x", "input_per_1m": -1, "output_per_1m": 1}]`},
 		{"negative output price", `[{"model": "x", "input_per_1m": 1, "output_per_1m": -1}]`},
+		{"negative cached price", `[{"model": "x", "input_per_1m": 1, "output_per_1m": 1, "cached_input_per_1m": -0.1}]`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,5 +121,37 @@ func TestModelPricingHandler_UpdateRejectsInvalid(t *testing.T) {
 				t.Error("expected seeded rows to remain after a rejected update")
 			}
 		})
+	}
+}
+
+// TestModelPricingHandler_UpdateCachedInputPrice verifies the optional cached
+// rate round-trips through PUT, and an omitted one is stored as null.
+func TestModelPricingHandler_UpdateCachedInputPrice(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewModelPricingHandler(q, db.SQL())
+
+	body := `[{"model": "a", "input_per_1m": 2, "output_per_1m": 8, "cached_input_per_1m": 0.5},
+	          {"model": "b", "input_per_1m": 2, "output_per_1m": 8}]`
+	req := httptest.NewRequest(http.MethodPut, "/settings/pricing", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.Update(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[string]any{}
+	for _, r := range rows {
+		v, present := r["cached_input_per_1m"]
+		if !present {
+			t.Fatalf("row %v missing cached_input_per_1m", r["model"])
+		}
+		got[r["model"].(string)] = v
+	}
+	if got["a"] != 0.5 || got["b"] != nil {
+		t.Errorf("cached rates = %v, want a=0.5 b=null", got)
 	}
 }

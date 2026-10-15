@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +133,31 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	switch os.Getenv("CODEX_TEST_HELPER") {
+	case "max_turns":
+		// Three completed tool steps, then hang until killed: the runner
+		// must stop it once the max_turns cap is passed.
+		fmt.Println(`{"type":"thread.started","thread_id":"thread-mt"}`)
+		for i := 0; i < 3; i++ {
+			fmt.Printf("{\"type\":\"item.completed\",\"item\":{\"id\":\"c%d\",\"type\":\"command_execution\",\"status\":\"completed\"}}\n", i)
+		}
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
+	case "resume_missing":
+		// Fails like codex 0.163.0 when asked to resume a thread with no
+		// session file; succeeds when started fresh.
+		if slices.Contains(os.Args, "resume") {
+			fmt.Fprintln(os.Stderr, "Error: thread/resume: thread/resume failed: no rollout found for thread id gone-thread (code -32600)")
+			os.Exit(1)
+		}
+		fmt.Println(`{"type":"thread.started","thread_id":"thread-new"}`)
+		fmt.Println(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OUTCOME: success"}}`)
+		os.Exit(0)
+	case "cached_usage":
+		fmt.Println(`{"type":"thread.started","thread_id":"thread-cu"}`)
+		fmt.Println(`{"type":"item.completed","item":{"id":"c0","type":"command_execution","status":"completed"}}`)
+		fmt.Println(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OUTCOME: success"}}`)
+		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":1000000,"cached_input_tokens":800000,"output_tokens":100000}}`)
+		os.Exit(0)
 	case "assert_mcp_args":
 		// Fails unless the MCP sidecar arrived as -c overrides and the
 		// runner left CODEX_HOME alone (see

@@ -27,6 +27,9 @@ type modelPricingRow struct {
 	Model       string  `json:"model"`
 	InputPer1M  float64 `json:"input_per_1m"`
 	OutputPer1M float64 `json:"output_per_1m"`
+	// CachedInputPer1M is optional; null/omitted bills cached input tokens
+	// at InputPer1M.
+	CachedInputPer1M *float64 `json:"cached_input_per_1m"`
 }
 
 // List returns every user-defined pricing row, ordered by model.
@@ -69,7 +72,7 @@ func (h *ModelPricingHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		seen[row.Model] = true
-		if row.InputPer1M < 0 || row.OutputPer1M < 0 {
+		if row.InputPer1M < 0 || row.OutputPer1M < 0 || (row.CachedInputPer1M != nil && *row.CachedInputPer1M < 0) {
 			Err(w, http.StatusBadRequest, "prices must not be negative")
 			return
 		}
@@ -90,9 +93,10 @@ func (h *ModelPricingHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range body {
 		if _, err := tq.UpsertModelPricing(ctx, gen.UpsertModelPricingParams{
-			Model:       row.Model,
-			InputPer1m:  row.InputPer1M,
-			OutputPer1m: row.OutputPer1M,
+			Model:            row.Model,
+			InputPer1m:       row.InputPer1M,
+			OutputPer1m:      row.OutputPer1M,
+			CachedInputPer1m: row.CachedInputPer1M,
 		}); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return

@@ -20,12 +20,16 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **`max_turns` now works on `codex_cli`.** Codex has no turn-cap flag, so the runner counts completed tool steps (commands, file edits, MCP calls, web searches) and stops the run once it passes the cap, escalating to `waiting_human` like `claude`. The count is also recorded as the run's `turns_used`. As with other providers, `max_turns: 0` means the default of 50, so existing Codex configs are now capped at 50 tool steps; raise `max_turns` if your runs need more.
+- **Cached-input pricing.** Pricing rows (Settings → Pricing, `PUT /api/v1/settings/pricing`) take an optional `cached_input_per_1m`. `codex_cli` runs now bill their prompt-cache hits at that rate instead of the full input price, which overstated the estimate several times over on long runs. The seeded OpenAI rows get their published cached rates; a row without one bills cached tokens at its input price, as before.
 - **Image attachments for `codex_cli`** — a task's attached images are now passed to `codex exec` with `--image`, so Codex sees them visually instead of only as files in `.task_attachments/`. Works on resumed runs too.
 
 ### Changed
+- `codex_cli` cost estimates got more accurate. With no model set on the provider config, the run is now priced against the model Codex actually used (read from its session file) instead of being flagged "cost unknown". Resumed runs no longer re-bill earlier runs' tokens when Codex reports a session total. Runs stopped mid-turn (max turns, timeout, crash) still have the tokens they spent priced.
 - Bumped the pinned agent CLIs in the backend image to their latest releases: Claude Code 2.1.238 → 2.1.301, Codex 0.146.1 → 0.163.0 and Qwen Code 0.21.6 → 0.25.2 (Codex and Qwen ship in the `-all-cli` image and `INSTALL_*_CLI=true` builds). Every flag the runners pass was re-checked against the new versions.
 
 ### Fixed
+- A `codex_cli` run whose saved session no longer exists ("no rollout found for thread id") now retries once as a fresh session instead of failing every attempt. That covers threads recorded while the runner still used a per-run `CODEX_HOME`.
 - **`codex_cli` runs failed for ChatGPT-login users whenever the task tools were enabled.** With `MCP_SERVER_PATH` set (the default Docker setup), each Codex run and each Codex chat session with board tools pointed `CODEX_HOME` at a fresh temp directory, which hid the `codex login` credentials ("Not logged in") and threw away the session history that resume needs. The MCP sidecar is now passed as `-c mcp_servers.*` overrides, so Codex keeps its own `CODEX_HOME`. `OPENAI_API_KEY` setups were not affected.
 - The Codex chat terminal's update-check opt-out used a config key Codex doesn't recognise (`check_for_update`), so the "Update available" banner still showed; it now uses `check_for_update_on_startup=false`.
 

@@ -503,7 +503,7 @@ export const api = {
     list: () => request<ModelPricing[]>('/settings/pricing'),
     // Replaces the entire table — add/remove/edit a model are all expressed
     // client-side as a new full list (see PricingSettingsPage).
-    update: (rows: { model: string; input_per_1m: number; output_per_1m: number }[]) =>
+    update: (rows: { model: string; input_per_1m: number; output_per_1m: number; cached_input_per_1m?: number | null }[]) =>
       request<ModelPricing[]>('/settings/pricing', { method: 'PUT', body: JSON.stringify(rows) }),
   },
   uploads: {
