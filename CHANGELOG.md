@@ -19,6 +19,15 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Image attachments for `codex_cli`** — a task's attached images are now passed to `codex exec` with `--image`, so Codex sees them visually instead of only as files in `.task_attachments/`. Works on resumed runs too.
+
+### Changed
+- Bumped the pinned agent CLIs in the backend image to their latest releases: Claude Code 2.1.238 → 2.1.301, Codex 0.146.1 → 0.163.0 and Qwen Code 0.21.6 → 0.25.2 (Codex and Qwen ship in the `-all-cli` image and `INSTALL_*_CLI=true` builds). Every flag the runners pass was re-checked against the new versions.
+
+### Fixed
+- The Codex chat terminal's update-check opt-out used a config key Codex doesn't recognise (`check_for_update`), so the "Update available" banner still showed; it now uses `check_for_update_on_startup=false`.
+
 ## [0.17.0] - 2026-10-14
 
 ### Documentation

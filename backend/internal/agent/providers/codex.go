@@ -38,8 +38,8 @@ type CodexRunner struct {
 	BinaryPath string
 	MCP        *MCPManager
 	// UploadDir is the server-side directory where task attachments are stored.
-	// Reserved for future use; codex exec's -i/--image flag could attach these
-	// directly once wired up.
+	// Unused by this runner: images are attached from the worktree copies the
+	// dispatcher makes (see codexImagePaths).
 	UploadDir string
 	// BackendURL lets the create_subtask MCP tool post children live to the
 	// backend REST API (same container). Set from server config. The bearer
@@ -182,8 +182,42 @@ func buildCodexArgs(input agent.RunInput) []string {
 	if input.ResumeSessionID != "" {
 		args = append(args, "resume", input.ResumeSessionID)
 	}
+	// Images go after the (optional) resume subcommand: `codex exec resume`
+	// has its own -i/--image flag for the prompt sent after resuming, and the
+	// `exec`-level one only attaches to an initial prompt. The `--image=<path>`
+	// form is required — -i/--image takes a variadic value list, so a bare
+	// `--image a.png "<prompt>"` swallows the prompt as a second image and
+	// codex falls back to reading the prompt from stdin.
+	for _, img := range codexImagePaths(input) {
+		args = append(args, "--image="+img)
+	}
 	args = append(args, buildPrompt(input)+"\n\n"+buildSystemPrompt(input))
 	return args
+}
+
+// codexImagePaths returns the task's image attachments as paths relative to
+// the run's working directory (input.RepoPath), for codex's --image flag.
+// The dispatcher copies every attachment into <worktree>/.task_attachments/
+// before the run (see copyAttachmentsToWorktree), and those copies are what's
+// passed: unlike the server's upload dir, the worktree is readable by the
+// isolated agent user codex runs as. An attachment whose copy is missing is
+// skipped rather than passed through, since codex fails the whole run on an
+// unreadable --image path; the prompt still lists every attachment.
+func codexImagePaths(input agent.RunInput) []string {
+	var paths []string
+	seen := map[string]bool{}
+	for _, rel := range input.Task.Attachments {
+		p := filepath.Join(".task_attachments", filepath.Base(rel))
+		if seen[p] {
+			continue
+		}
+		if fi, err := os.Stat(filepath.Join(input.RepoPath, p)); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	return paths
 }
 
 func (r *CodexRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {

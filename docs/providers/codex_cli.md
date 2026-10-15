@@ -15,7 +15,7 @@ Everything in this document was verified against a live install of `@openai/code
 Runs:
 
 ```
-codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox [--model <model>] [-c model_reasoning_effort="<level>"] "<prompt + system prompt>"
+codex exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox [--model <model>] [-c model_reasoning_effort="<level>"] [resume <thread_id>] [--image=<file>...] "<prompt + system prompt>"
 ```
 
 - `codex exec` is the dedicated non-interactive/scriptable subcommand (as opposed to bare `codex`, which launches the interactive TUI).
@@ -65,7 +65,12 @@ See [mcp-tools.md](../mcp-tools.md) for full tool reference.
 
 ## Image Attachments
 
-Not yet supported by this provider, even though `codex exec` itself has a documented `-i`/`--image <FILE>...` flag — wiring task attachments through to it is left for a future change.
+**Supported.** The dispatcher copies a task's attachments into the worktree under `.task_attachments/` (as for every provider), and this runner passes each copy to `codex exec` as `--image=.task_attachments/<file>`, so the model receives the images visually, not just as files it could open. Two details, verified against `codex` 0.163.0:
+
+- The `--image=<path>` form is used because `-i/--image` takes a variadic value list: a bare `--image a.png "<prompt>"` swallows the prompt as a second image and codex falls back to reading the prompt from stdin.
+- On a resumed run the flags follow `resume <thread_id>`, since `codex exec resume` has its own `--image` for the prompt sent after resuming.
+
+An attachment whose worktree copy is missing is skipped (codex fails the whole run on an unreadable image path); the prompt still lists every attachment.
 
 ## Command Allowlist / Denylist
 

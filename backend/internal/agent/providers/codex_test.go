@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -665,5 +666,73 @@ func TestCodexRunner_Run_OversizedLineTruncation(t *testing.T) {
 	}
 	if !sawTruncationLog {
 		t.Errorf("expected a LogSystem entry warning about the truncated output stream, got logs: %v", logs)
+	}
+}
+
+// TestBuildCodexArgs_Images verifies task attachments copied into the
+// worktree's .task_attachments/ are passed as --image=<path> (the = form, so
+// codex's variadic -i/--image can't swallow the prompt), missing copies are
+// skipped, and the prompt stays the final argument.
+func TestBuildCodexArgs_Images(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".task_attachments"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"a.png", "b.jpg"} {
+		if err := os.WriteFile(filepath.Join(dir, ".task_attachments", f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := buildCodexArgs(agent.RunInput{
+		Task:        agent.Task{Title: "t", Attachments: []string{"task1/a.png", "task1/missing.png", "task1/b.jpg", "task1/a.png"}},
+		AgentConfig: agent.AgentConfig{},
+		RepoPath:    dir,
+	})
+	var imgs []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--image") {
+			imgs = append(imgs, a)
+		}
+	}
+	want := []string{"--image=.task_attachments/a.png", "--image=.task_attachments/b.jpg"}
+	if !slices.Equal(imgs, want) {
+		t.Fatalf("image args = %v, want %v (all args %v)", imgs, want, args)
+	}
+	if strings.HasPrefix(args[len(args)-1], "--image") {
+		t.Fatalf("expected prompt as final arg, args=%v", args)
+	}
+}
+
+// TestBuildCodexArgs_ImagesAfterResume verifies images follow the resume
+// subcommand, since `codex exec resume` takes its own --image for the prompt
+// sent after resuming.
+func TestBuildCodexArgs_ImagesAfterResume(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".task_attachments"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".task_attachments", "a.png"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := buildCodexArgs(agent.RunInput{
+		Task:            agent.Task{Title: "t", Attachments: []string{"task1/a.png"}},
+		RepoPath:        dir,
+		ResumeSessionID: "sess-123",
+	})
+	ri := slices.Index(args, "resume")
+	ii := slices.Index(args, "--image=.task_attachments/a.png")
+	if ri < 0 || ii < 0 || ii < ri {
+		t.Fatalf("expected --image after the resume subcommand, args=%v", args)
+	}
+}
+
+// TestBuildCodexArgs_NoAttachmentsNoImages verifies no --image flag without
+// attachments.
+func TestBuildCodexArgs_NoAttachmentsNoImages(t *testing.T) {
+	args := buildCodexArgs(agent.RunInput{Task: agent.Task{Title: "t"}, RepoPath: t.TempDir()})
+	for _, a := range args {
+		if strings.HasPrefix(a, "--image") {
+			t.Fatalf("did not expect an --image arg, args=%v", args)
+		}
 	}
 }

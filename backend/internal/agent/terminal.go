@@ -710,8 +710,10 @@ func terminalCommand(provider, model string, resume bool) (name string, args []s
 		// available!" banner from a background version check; suppress it
 		// since CODEX_CLI_VERSION is pinned in backend/Dockerfile and we don't
 		// want the running binary drifting from what's built into the image.
-		// -c overrides config.toml; no env var exists for this in Codex.
-		args = append(args, "-c", "check_for_update=false")
+		// -c overrides config.toml; no env var exists for this in Codex. The key
+		// is check_for_update_on_startup (a bare check_for_update is not a codex
+		// config key and is silently ignored).
+		args = append(args, "-c", "check_for_update_on_startup=false")
 		if resume {
 			args = append(args, "resume", "--last") // subcommand; cwd-filtered
 		}
