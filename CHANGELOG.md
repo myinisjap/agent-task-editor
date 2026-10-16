@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- Phone navigation: a fixed bottom tab bar (Inbox with waiting badge, Board, Chat, More) replaces the floating hamburger below the `md` breakpoint; More opens the existing drawer. The bar respects the home-indicator safe area (`viewport-fit=cover`). Desktop is unchanged.
+
 ### Added
 - **Installed phone app polish.** The page title is now "Agent Task Editor"; the web manifest gains an `id`, opens on the Inbox, and offers Inbox/Board/Chat long-press shortcuts; Settings shows an "Install app" bar (via `beforeinstallprompt`) until the app is installed. See "Install on your phone" in `docs/getting-started.md`.
 - **`opencode` now gets the task-editor MCP tools.** `signal_complete`, `request_human`, `update_task_notes`, `store_info`, `resolve_comment`, `get_task_transitions` (plus `create_subtask` when subtasks are enabled) are now available, injected via `OPENCODE_CONFIG_CONTENT`'s inline `mcp` config since opencode has no `--mcp-config` flag like `claude`/`qwen_code`. The text `OUTCOME: success`/`OUTCOME: failure` marker still works as a fallback in case the MCP tool call doesn't land (opencode's own MCP tool-naming hasn't been verified live).
