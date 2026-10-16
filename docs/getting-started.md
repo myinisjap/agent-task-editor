@@ -67,6 +67,12 @@ The app is served at `https://your.domain.com/tasks`. TLS is handled by Traefik 
 
 > **Note:** The frontend nginx is the only container on `proxy_net`. It proxies `/tasks/api/` and `/tasks/ws` to `backend:8080` over the stack's private default network, so the backend has no public port and is not reachable from other containers on `proxy_net`. Don't attach the backend to `proxy_net`: with no `API_TOKEN` set, every neighbouring container could then drive the API. (The private network is deliberately not `internal: true`, because agents need outbound access to git remotes and model APIs.)
 
+## Install on your phone
+
+ATE can be installed as a home-screen app. Open the site in Chrome on Android and either use **Settings → Install app** or the browser menu's *Install app* / *Add to Home screen*. The installed app opens on the Inbox, and long-pressing its icon offers Inbox, Board and Chat shortcuts.
+
+The phone must reach the server over **HTTPS** (or `localhost`) — browsers only offer installation and allow notifications in a secure context. Plain `http://` to a LAN IP will not work; put the server behind a TLS proxy (see Traefik above). The app still loads from the network; there is no offline cache.
+
 ## Set an API Token in Production
 
 With no `API_TOKEN`/`API_TOKENS`, the backend accepts unauthenticated requests from anything that can reach port 8080: other containers on a shared Docker network, LAN peers if `ATE_BIND_ADDR` is widened, and agent processes via `localhost:8080`. That API can register repos and start shell-executing agent runs, so set a token for any deployment that is not a single-user laptop.

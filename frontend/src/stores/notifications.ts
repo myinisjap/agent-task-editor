@@ -25,7 +25,7 @@ function isIOS(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
 }
 
-function isStandalone(): boolean {
+export function isStandalone(): boolean {
   if (typeof window === 'undefined') return false
   const nav = navigator as Navigator & { standalone?: boolean }
   return nav.standalone === true || window.matchMedia?.('(display-mode: standalone)').matches === true
