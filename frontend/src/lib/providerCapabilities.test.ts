@@ -8,12 +8,17 @@ describe('providerCapabilities', () => {
     }
   })
 
-  it('opencode lacks label transitions and MCP support, but has full cost tracking', () => {
-    expect(getCapability('opencode', 'labelTransitions').support).toBe('none')
+  it('opencode has full task-editor tools/label transitions but no user-level MCP servers, and full cost tracking', () => {
+    // The task-editor sidecar is injected via OPENCODE_CONFIG_CONTENT's
+    // inline "mcp" config, so label transitions and MCP-backed tools are
+    // 'full' — but user-level MCP servers/plugins are still not wired
+    // through for this provider.
+    expect(getCapability('opencode', 'labelTransitions').support).toBe('full')
+    expect(getCapability('opencode', 'taskEditorTools').support).toBe('full')
     expect(getCapability('opencode', 'mcpServers').support).toBe('none')
     // opencode's step_finish event reports authoritative cost/tokens
     // directly from the CLI (see parse_opencode.go / #287), so this is
-    // 'full', unlike the label/MCP gaps above.
+    // 'full', unlike the mcpServers gap above.
     expect(getCapability('opencode', 'costTracking').support).toBe('full')
   })
 

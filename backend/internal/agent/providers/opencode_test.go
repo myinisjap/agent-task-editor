@@ -130,13 +130,14 @@ func TestOpencodeRunner_Run_SystemPromptReachesConfigContentEnv(t *testing.T) {
 // on the "build" agent's "prompt" field (the agent opencode run uses by
 // default), since opencode run has no --system-prompt flag of its own.
 func TestOpencodeConfigContent_CarriesSystemPromptOnBuildAgent(t *testing.T) {
-	content, err := opencodeConfigContent("be careful.\n\nOUTCOME: success")
+	content, err := opencodeConfigContent("be careful.\n\nOUTCOME: success", 50, nil, "", nil, nil)
 	if err != nil {
 		t.Fatalf("opencodeConfigContent: unexpected error: %v", err)
 	}
 	var parsed struct {
 		Agent map[string]struct {
 			Prompt string `json:"prompt"`
+			Steps  int64  `json:"steps"`
 		} `json:"agent"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
@@ -149,6 +150,162 @@ func TestOpencodeConfigContent_CarriesSystemPromptOnBuildAgent(t *testing.T) {
 	if build.Prompt != "be careful.\n\nOUTCOME: success" {
 		t.Errorf("agent.build.prompt = %q, want the full system prompt", build.Prompt)
 	}
+	if build.Steps != 50 {
+		t.Errorf("agent.build.steps = %d, want 50", build.Steps)
+	}
+}
+
+// TestOpencodeConfigContent_OmitsMCPWhenUnconfigured verifies the no-MCP
+// behavior (r.MCP == nil, or ServerBinary == "") is unchanged: no "mcp" key
+// at all in OPENCODE_CONFIG_CONTENT.
+func TestOpencodeConfigContent_OmitsMCPWhenUnconfigured(t *testing.T) {
+	content, err := opencodeConfigContent("prompt", 50, nil, "", nil, nil)
+	if err != nil {
+		t.Fatalf("opencodeConfigContent: unexpected error: %v", err)
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	if _, ok := parsed["mcp"]; ok {
+		t.Errorf("want no \"mcp\" key when mcpCfg is nil, got: %s", content)
+	}
+}
+
+// TestOpencodeConfigContent_IncludesMCPServer verifies the inline mcp block
+// is built from MCPRunConfig.Env (the same env map MCPManager.Prepare uses
+// for the file-based providers), carrying the sidecar's scoped token/
+// RESULT_FILE handoff per ADR 0004.
+func TestOpencodeConfigContent_IncludesMCPServer(t *testing.T) {
+	mcpCfg := &MCPRunConfig{
+		Env: map[string]string{
+			"RUN_ID":           "run-1",
+			"RESULT_FILE":      "/tmp/result.json",
+			"TRANSITIONS":      "[]",
+			"REVIEW_COMMENTS":  "[]",
+			"SUBTASKS_ENABLED": "1",
+			"BACKEND_URL":      "http://localhost:8080",
+			"TASK_ID":          "task-1",
+			"API_TOKEN":        "scoped-token",
+			"MAX_SUBTASKS":     "3",
+		},
+	}
+	content, err := opencodeConfigContent("prompt", 50, mcpCfg, "/opt/mcp-server", nil, nil)
+	if err != nil {
+		t.Fatalf("opencodeConfigContent: unexpected error: %v", err)
+	}
+	var parsed struct {
+		MCP map[string]struct {
+			Type        string            `json:"type"`
+			Command     []string          `json:"command"`
+			Enabled     bool              `json:"enabled"`
+			Environment map[string]string `json:"environment"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("not valid JSON: %v\ncontent: %s", err, content)
+	}
+	te, ok := parsed.MCP["task-editor"]
+	if !ok {
+		t.Fatalf("want an mcp.task-editor entry, got: %v", parsed.MCP)
+	}
+	if te.Type != "local" {
+		t.Errorf("mcp.task-editor.type = %q, want local", te.Type)
+	}
+	if len(te.Command) == 0 || te.Command[0] != "/opt/mcp-server" {
+		t.Errorf("mcp.task-editor.command = %v, want [/opt/mcp-server]", te.Command)
+	}
+	if !te.Enabled {
+		t.Error("mcp.task-editor.enabled = false, want true")
+	}
+	for _, key := range []string{"RUN_ID", "RESULT_FILE", "TRANSITIONS", "REVIEW_COMMENTS", "SUBTASKS_ENABLED", "BACKEND_URL", "TASK_ID", "API_TOKEN", "MAX_SUBTASKS"} {
+		if te.Environment[key] == "" {
+			t.Errorf("mcp.task-editor.environment[%q] missing/empty, got: %v", key, te.Environment)
+		}
+	}
+}
+
+// TestOpencodeConfigContent_PermissionPolicy verifies command_denylist maps
+// to "deny" and command_allowlist maps to "allow" plus a catch-all "*":
+// "deny" default, with denylist winning on an overlapping pattern, and
+// empty-string patterns skipped.
+func TestOpencodeConfigContent_PermissionPolicy(t *testing.T) {
+	t.Run("denylist only", func(t *testing.T) {
+		content, err := opencodeConfigContent("p", 50, nil, "", nil, []string{"rm -rf *", ""})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var parsed struct {
+			Permission struct {
+				Bash map[string]string `json:"bash"`
+			} `json:"permission"`
+		}
+		if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+			t.Fatalf("not valid JSON: %v", err)
+		}
+		if parsed.Permission.Bash["rm -rf *"] != "deny" {
+			t.Errorf("permission.bash[rm -rf *] = %q, want deny", parsed.Permission.Bash["rm -rf *"])
+		}
+		if _, ok := parsed.Permission.Bash[""]; ok {
+			t.Error("empty-string pattern should be skipped")
+		}
+		if _, ok := parsed.Permission.Bash["*"]; ok {
+			t.Error("denylist-only should not add a catch-all \"*\" entry")
+		}
+	})
+
+	t.Run("allowlist adds default deny", func(t *testing.T) {
+		content, err := opencodeConfigContent("p", 50, nil, "", []string{"git status", ""}, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var parsed struct {
+			Permission struct {
+				Bash map[string]string `json:"bash"`
+			} `json:"permission"`
+		}
+		if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+			t.Fatalf("not valid JSON: %v", err)
+		}
+		if parsed.Permission.Bash["git status"] != "allow" {
+			t.Errorf("permission.bash[git status] = %q, want allow", parsed.Permission.Bash["git status"])
+		}
+		if parsed.Permission.Bash["*"] != "deny" {
+			t.Errorf("permission.bash[*] = %q, want deny (default)", parsed.Permission.Bash["*"])
+		}
+	})
+
+	t.Run("denylist wins on overlap", func(t *testing.T) {
+		content, err := opencodeConfigContent("p", 50, nil, "", []string{"rm -rf *"}, []string{"rm -rf *"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var parsed struct {
+			Permission struct {
+				Bash map[string]string `json:"bash"`
+			} `json:"permission"`
+		}
+		if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+			t.Fatalf("not valid JSON: %v", err)
+		}
+		if parsed.Permission.Bash["rm -rf *"] != "deny" {
+			t.Errorf("permission.bash[rm -rf *] = %q, want deny (denylist wins)", parsed.Permission.Bash["rm -rf *"])
+		}
+	})
+
+	t.Run("no permission block when both empty", func(t *testing.T) {
+		content, err := opencodeConfigContent("p", 50, nil, "", nil, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var parsed map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+			t.Fatalf("not valid JSON: %v", err)
+		}
+		if _, ok := parsed["permission"]; ok {
+			t.Errorf("want no \"permission\" key when allowlist/denylist are both empty, got: %s", content)
+		}
+	})
 }
 
 func TestOpencodeRunner_Run_Exit1NoOutputIsFailed(t *testing.T) {
@@ -269,6 +426,91 @@ func TestOpencodeRunner_Run_OversizedLineTruncation(t *testing.T) {
 	}
 	if !sawTruncationLog {
 		t.Errorf("expected a LogSystem entry warning about the truncated output stream, got logs: %v", logs)
+	}
+}
+
+// TestOpencodeRunner_Run_MaxTurnsStopsRun verifies the runner-side
+// step_finish counter backstop: once stepCount exceeds AgentConfig.MaxTurns
+// the process is stopped and *agent.ErrMaxTurns is returned with the step
+// count reported as turns used, well under the run timeout (mirrors
+// TestCodexRunner_Run_MaxTurnsStopsRun).
+func TestOpencodeRunner_Run_MaxTurnsStopsRun(t *testing.T) {
+	runner := &OpencodeRunner{BinaryPath: os.Args[0]}
+	input := opencodeHelperInput("max_turns")
+	input.AgentConfig.MaxTurns = 2
+	input.AgentConfig.TimeoutSecs = 20
+	logCh := make(chan agent.LogEntry, 256)
+	wait := collectLogs(logCh)
+	start := time.Now()
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	wait()
+
+	var mt *agent.ErrMaxTurns
+	if !errors.As(err, &mt) || mt.MaxTurns != 2 {
+		t.Fatalf("err = %v, want *agent.ErrMaxTurns{2}", err)
+	}
+	if result.TurnsUsed < 3 {
+		t.Errorf("TurnsUsed = %d, want >= 3 (stdout is buffered; all step_finish lines the helper printed before sleeping may be scanned before stopProc takes effect)", result.TurnsUsed)
+	}
+	if result.SessionID != "oc-mt" {
+		t.Errorf("SessionID = %q, want oc-mt", result.SessionID)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("run took %v; the cap should stop it immediately", elapsed)
+	}
+}
+
+// TestOpencodeRunner_Run_MaxStepsMessageDetected verifies the config-side
+// detector: opencode's own "maximum steps for this agent have been
+// reached" text (even on a clean exit 0) must also escalate to
+// *agent.ErrMaxTurns, independent of the runner-side step_finish counter.
+func TestOpencodeRunner_Run_MaxStepsMessageDetected(t *testing.T) {
+	runner := &OpencodeRunner{BinaryPath: os.Args[0]}
+	input := opencodeHelperInput("max_steps_message")
+	input.AgentConfig.MaxTurns = 50
+	logCh := make(chan agent.LogEntry, 256)
+	wait := collectLogs(logCh)
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	wait()
+
+	var mt *agent.ErrMaxTurns
+	if !errors.As(err, &mt) {
+		t.Fatalf("err = %v, want *agent.ErrMaxTurns", err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("Status = %q, want failed", result.Status)
+	}
+}
+
+// TestOpencodeRunner_Run_WithMCP_PassesInlineConfig verifies that when an
+// MCPManager is configured, Run prepares the sidecar and delivers its env
+// via OPENCODE_CONFIG_CONTENT's inline "mcp" block (there's no --mcp-config
+// flag for opencode, unlike claude/qwen).
+func TestOpencodeRunner_Run_WithMCP_PassesInlineConfig(t *testing.T) {
+	runner := &OpencodeRunner{
+		BinaryPath: os.Args[0],
+		MCP:        &MCPManager{ServerBinary: "/opt/mcp-server"},
+	}
+	input := opencodeHelperInput("assert_mcp_config")
+	logCh := make(chan agent.LogEntry, 256)
+	logs := make([]agent.LogEntry, 0)
+	done := make(chan struct{})
+	go func() {
+		for e := range logCh {
+			logs = append(logs, e)
+		}
+		close(done)
+	}()
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	<-done
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v (logs: %v)", err, logs)
+	}
+	if result.Status != "completed" {
+		t.Errorf("Status = %q, want completed", result.Status)
 	}
 }
 

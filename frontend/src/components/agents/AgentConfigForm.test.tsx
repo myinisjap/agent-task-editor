@@ -1,7 +1,8 @@
-// AgentConfigForm tests: the "Max turns" field warns when a turn cap is set
-// on a provider that doesn't enforce it (codex_cli, opencode), mirroring the
-// existing cost-tracking/subtasks/session-resume capability warnings, and
-// stays silent for providers where maxTurns support is 'full' (claude).
+// AgentConfigForm tests: the "Max turns" field would warn when a turn cap is
+// set on a provider that doesn't enforce it, mirroring the existing
+// cost-tracking/subtasks/session-resume capability warnings. Every provider
+// (claude, qwen_code, codex_cli, opencode) now has maxTurns support 'full',
+// so these tests assert the warning stays silent across the board.
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -73,13 +74,11 @@ describe('AgentConfigForm max_turns capability warning', () => {
     expect(screen.queryByText(/turn-cap flag/i)).not.toBeInTheDocument()
   })
 
-  it('warns when max_turns is set on opencode, which does not enforce it', () => {
+  it('does not warn when max_turns is set on opencode, whose runner and config.steps now enforce it', () => {
     const form = baseForm({ provider_config_id: 'pc-oc', max_turns: 5 })
     renderForm(form, [providerConfig('pc-oc', 'opencode')])
 
-    expect(
-      screen.getByText(/opencode CLI has no turn-cap flag/i),
-    ).toBeInTheDocument()
+    expect(screen.queryByText(/turn-cap flag/i)).not.toBeInTheDocument()
   })
 
   it('does not warn when max_turns is set on claude, which enforces it', () => {

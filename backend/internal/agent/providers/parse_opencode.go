@@ -3,6 +3,7 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -138,4 +139,25 @@ func sumRunUsage(a, b *runUsage) *runUsage {
 		CostUSD:           a.CostUSD + b.CostUSD,
 		Turns:             a.Turns + b.Turns,
 	}
+}
+
+// opencodeIsStepFinish reports whether line is a "step_finish" event.
+// opencode has no CLI turn-cap flag of its own analogous to claude/qwen's
+// --max-turns, so OpencodeRunner counts these runner-side as a backstop to
+// the config-side agent.<name>.steps cap (see opencodeConfigContent and
+// opencodeMaxStepsMessage) — one step_finish is opencode's closest
+// equivalent of a claude/qwen agent turn (mirrors codexCompletedToolStep's
+// role for the codex provider). A cheap substring check gates the
+// json.Unmarshal, mirroring codexCompletedToolStep's shape.
+func opencodeIsStepFinish(line string) bool {
+	if !strings.Contains(line, `"step_finish"`) {
+		return false
+	}
+	var ev struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal([]byte(line), &ev) != nil {
+		return false
+	}
+	return ev.Type == "step_finish"
 }

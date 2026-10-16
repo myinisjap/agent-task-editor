@@ -772,16 +772,19 @@ components:
             commands matching at least one pattern may run via run_bash/Bash. Fully
             enforced for qwen_code. NOT an effective restriction for
             claude (the CLI only auto-approves matches; non-matching commands still run
-            — see docs/providers/claude.md). Not enforced for opencode. Defaults to "[]"
-            (no restriction).
+            — see docs/providers/claude.md). Mapped to opencode's permission.bash config
+            (allow-listed patterns plus a catch-all deny default) via
+            OPENCODE_CONFIG_CONTENT; opencode's pattern-matching semantics have not been
+            verified live. Not enforced for codex_cli. Defaults to "[]" (no restriction).
         command_denylist:
           type: string
           description: >
             JSON array of shell-command glob patterns ("*" wildcard). Commands matching
             any pattern here are always denied, regardless of command_allowlist. Checked
-            first. Fully enforced for claude. NOT enforced for
-            qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]"
-            (no restriction).
+            first. Fully enforced for claude. Mapped to opencode's permission.bash config
+            as "deny" entries via OPENCODE_CONFIG_CONTENT (opencode's pattern-matching
+            semantics have not been verified live). NOT enforced for qwen_code (no
+            confirmed CLI denylist flag) or codex_cli. Defaults to "[]" (no restriction).
         max_cost_usd:
           type: number
           format: double
@@ -1208,10 +1211,12 @@ components:
           description: >-
             Number of internal agent turns the run actually consumed, for
             comparison against the agent config's configured `max_turns` cap.
-            0 means "not reported": only providers that expose a real count
-            set it (`claude`/`qwen_code` from the CLI stream-json result
-            event's `num_turns`). `codex_cli` and `opencode` report no comparable
-            figure and always leave it 0 — the count is never estimated.
+            0 means "not reported" for providers that expose a real count from
+            the CLI itself (`claude`/`qwen_code`, from the CLI stream-json
+            result event's `num_turns`). `codex_cli` and `opencode` instead
+            have the runner count completed tool steps / `step_finish` events
+            as a proxy for turns, so a genuine 0 there means the run ended
+            before completing a single step rather than "not reported".
       required: [id, task_id, agent_config_id, status, created_at]
 
     TaskLabelHistory:

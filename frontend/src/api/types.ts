@@ -5044,9 +5044,9 @@ export interface components {
             enabled_plugins?: string;
             /** @description JSON array of Claude user-level MCP server names (from ~/.claude.json's global mcpServers) enabled for this agent config. Claude-provider only; defaults to "[]" (all MCP servers off). */
             enabled_mcp_servers?: string;
-            /** @description JSON array of shell-command glob patterns ("*" wildcard). If non-empty, only commands matching at least one pattern may run via run_bash/Bash. Fully enforced for qwen_code. NOT an effective restriction for claude (the CLI only auto-approves matches; non-matching commands still run — see docs/providers/claude.md). Not enforced for opencode. Defaults to "[]" (no restriction). */
+            /** @description JSON array of shell-command glob patterns ("*" wildcard). If non-empty, only commands matching at least one pattern may run via run_bash/Bash. Fully enforced for qwen_code. NOT an effective restriction for claude (the CLI only auto-approves matches; non-matching commands still run — see docs/providers/claude.md). Mapped to opencode's permission.bash config (allow-listed patterns plus a catch-all deny default) via OPENCODE_CONFIG_CONTENT; opencode's pattern-matching semantics have not been verified live. Not enforced for codex_cli. Defaults to "[]" (no restriction). */
             command_allowlist?: string;
-            /** @description JSON array of shell-command glob patterns ("*" wildcard). Commands matching any pattern here are always denied, regardless of command_allowlist. Checked first. Fully enforced for claude. NOT enforced for qwen_code (no confirmed CLI denylist flag) or opencode. Defaults to "[]" (no restriction). */
+            /** @description JSON array of shell-command glob patterns ("*" wildcard). Commands matching any pattern here are always denied, regardless of command_allowlist. Checked first. Fully enforced for claude. Mapped to opencode's permission.bash config as "deny" entries via OPENCODE_CONFIG_CONTENT (opencode's pattern-matching semantics have not been verified live). NOT enforced for qwen_code (no confirmed CLI denylist flag) or codex_cli. Defaults to "[]" (no restriction). */
             command_denylist?: string;
             /**
              * Format: double
@@ -5242,7 +5242,7 @@ export interface components {
             cost_unknown?: number;
             /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */
             session_id?: string;
-            /** @description Number of internal agent turns the run actually consumed, for comparison against the agent config's configured `max_turns` cap. 0 means "not reported": only providers that expose a real count set it (`claude`/`qwen_code` from the CLI stream-json result event's `num_turns`). `codex_cli` and `opencode` report no comparable figure and always leave it 0 — the count is never estimated. */
+            /** @description Number of internal agent turns the run actually consumed, for comparison against the agent config's configured `max_turns` cap. 0 means "not reported" for providers that expose a real count from the CLI itself (`claude`/`qwen_code`, from the CLI stream-json result event's `num_turns`). `codex_cli` and `opencode` instead have the runner count completed tool steps / `step_finish` events as a proxy for turns, so a genuine 0 there means the run ended before completing a single step rather than "not reported". */
             turns_used?: number;
         };
         /** @description One row of a task's label-transition audit trail (task_label_history), oldest first. */

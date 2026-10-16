@@ -326,12 +326,13 @@ export function AgentsHelp() {
         </p>
         <p>
           Support for all of these — plus turn limits and the command allow/deny lists — varies a
-          lot by provider (e.g. <code className="bg-slate-800 rounded px-1 font-mono">maxTurns</code>{' '}
-          isn't enforced at all on <code className="bg-slate-800 rounded px-1 font-mono">opencode</code>,
-          and the command <strong>allowlist doesn't effectively restrict</strong>{' '}
+          lot by provider (e.g. the command{' '}
+          <strong>allowlist doesn't effectively restrict</strong>{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">claude</code> — use the denylist
-          there instead). The form surfaces inline warnings when a setting won't do what you'd
-          expect for the selected provider; see the Capability Matrix in{' '}
+          there instead, and <code className="bg-slate-800 rounded px-1 font-mono">opencode</code>'s
+          allow/deny lists and turn cap rely on its own unverified permission/config semantics).
+          The form surfaces inline warnings when a setting won't do what you'd expect for the
+          selected provider; see the Capability Matrix in{' '}
           <code className="bg-slate-800 rounded px-1 font-mono">docs/agents.md</code> for the full
           picture.
         </p>

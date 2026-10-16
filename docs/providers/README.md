@@ -10,7 +10,7 @@ Each provider file describes the credentials, MCP support, limitations, and setu
 | Provider string | File | MCP Tools | CLI Binary | Notes |
 |---|---|---|---|---|
 | `claude` | [claude.md](claude.md) | ✅ All 5 | `claude` | Claude Max or API key; image attachments |
-| `opencode` | [opencode.md](opencode.md) | ❌ None | `opencode` | Text-based OUTCOME signalling only |
+| `opencode` | [opencode.md](opencode.md) | ✅ All 5 | `opencode` | MCP via inline `OPENCODE_CONFIG_CONTENT` (no `--mcp-config` flag); text OUTCOME marker kept as a fallback |
 | `qwen_code` | [qwen_code.md](qwen_code.md) | ✅ All 5 | `qwen` | Same MCP support as `claude` |
 | `codex_cli` | [codex_cli.md](codex_cli.md) | ✅ All 5 | `codex` | Per-run isolated `CODEX_HOME`; native sandbox/approval system |
 
@@ -18,11 +18,11 @@ Each provider file describes the credentials, MCP support, limitations, and setu
 
 | Tool | `claude` | `opencode` | `qwen_code` | `codex_cli` |
 |---|---|---|---|---|
-| `get_task_transitions` | ✅ | ❌ | ✅ | ✅ |
-| `signal_complete` | ✅ MCP | ❌ text only | ✅ MCP | ✅ MCP |
-| `request_human` | ✅ MCP | ❌ | ✅ MCP | ✅ MCP |
-| `update_task_notes` | ✅ MCP | ❌ | ✅ MCP | ✅ MCP |
-| `store_info` | ✅ MCP | ❌ | ✅ MCP | ✅ MCP |
+| `get_task_transitions` | ✅ | ✅ | ✅ | ✅ |
+| `signal_complete` | ✅ MCP | ✅ MCP | ✅ MCP | ✅ MCP |
+| `request_human` | ✅ MCP | ✅ MCP | ✅ MCP | ✅ MCP |
+| `update_task_notes` | ✅ MCP | ✅ MCP | ✅ MCP | ✅ MCP |
+| `store_info` | ✅ MCP | ✅ MCP | ✅ MCP | ✅ MCP |
 
 "MCP" = via MCP sidecar (requires `MCP_SERVER_PATH`).
 

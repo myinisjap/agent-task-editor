@@ -275,7 +275,11 @@ func main() {
 			}
 			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		case "opencode":
-			return &providers.OpencodeRunner{}
+			var mcp *providers.MCPManager
+			if cfg.MCPBinary != "" {
+				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
+			}
+			return &providers.OpencodeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL}
 		case "qwen_code":
 			var mcp *providers.MCPManager
 			if cfg.MCPBinary != "" {

@@ -354,6 +354,36 @@ func TestMain(m *testing.M) {
 		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"OUTCOME: success"}}`)
 		fmt.Println(`{"type":"step_finish","sessionID":"oc-1","part":{"reason":"stop","cost":0.05,"tokens":{"input":100,"output":200}}}`)
 		os.Exit(0)
+	case "max_turns":
+		// More step_finish events than the cap, then hang until killed: the
+		// runner must stop it once stepCount passes maxTurns (mirrors
+		// codex's "max_turns" helper case above).
+		fmt.Println(`{"type":"text","sessionID":"oc-mt","part":{"type":"text","text":"working"}}`)
+		for i := 0; i < 4; i++ {
+			fmt.Printf("{\"type\":\"step_finish\",\"sessionID\":\"oc-mt\",\"part\":{\"reason\":\"tool_calls\"}}\n")
+		}
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
+	case "max_steps_message":
+		// opencode's own config-side stop message (agent.<name>.steps
+		// reached), exit 0 — proves the text-sniff detector sets
+		// maxTurnsHit independently of the runner-side step_finish counter.
+		fmt.Println(`{"type":"text","sessionID":"oc-ms","part":{"type":"text","text":"working"}}`)
+		fmt.Println(`{"type":"step_finish","sessionID":"oc-ms","part":{"reason":"tool_calls"}}`)
+		fmt.Fprintln(os.Stderr, "maximum steps for this agent have been reached")
+		os.Exit(0)
+	case "assert_mcp_config":
+		// Fails unless OPENCODE_CONFIG_CONTENT carries the inline mcp block
+		// built from MCPManager.Prepare's env (see
+		// TestOpencodeRunner_Run_WithMCP_PassesInlineConfig).
+		cc := os.Getenv("OPENCODE_CONFIG_CONTENT")
+		if !strings.Contains(cc, `"task-editor"`) || !strings.Contains(cc, `"RUN_ID"`) {
+			fmt.Fprintf(os.Stderr, "OPENCODE_CONFIG_CONTENT missing mcp task-editor block: %s\n", cc)
+			os.Exit(1)
+		}
+		fmt.Println(`{"type":"text","sessionID":"oc-mcp","part":{"type":"text","text":"working"}}`)
+		fmt.Println(`{"type":"step_finish","sessionID":"oc-mcp","part":{"reason":"stop"}}`)
+		os.Exit(0)
 	case "assert_outcome_in_config":
 		// Fails unless OPENCODE_CONFIG_CONTENT carries the OUTCOME
 		// instruction via the build agent's "prompt" field (see
