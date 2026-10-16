@@ -165,11 +165,17 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'none',
       note: 'Usage is now recorded at end-of-run (see costTracking), but no mid-run kill switch is wired up for this provider yet — each step_finish only carries that step\'s own cost/token delta, summed into a total only once the run ends, not a continuously-updated running total a watchdog could project from mid-run. Only the pre-dispatch budget guard applies.',
     },
-    imageAttachments: { support: 'none', note: 'opencode run has an -f/--file flag, but attachments are not wired through to it.' },
+    imageAttachments: {
+      support: 'full',
+      note: 'Passed to opencode run as -f/--file (from the worktree copies under .task_attachments/), so the model receives them as message attachments. Also listed in the prompt as files.',
+    },
     maxTurns: { support: 'none', note: 'Not enforced — the opencode CLI has no turn-cap flag.' },
     sessionResume: { support: 'full', note: 'sessionID + --session.' },
     subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
-    effort: { support: 'none', note: 'No reasoning-effort flag on the opencode CLI — the field is ignored for this provider.' },
+    effort: {
+      support: 'partial',
+      note: 'Passed as opencode run --variant. The value is forwarded to the model provider as-is (low/medium/high/xhigh/max); a model that doesn\'t define that variant may ignore or reject it.',
+    },
     permissionMode: { support: 'none', note: 'No permission-mode flag on the opencode CLI — the field is ignored for this provider.' },
   },
 }

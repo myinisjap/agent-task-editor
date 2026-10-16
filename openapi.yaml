@@ -810,8 +810,11 @@ components:
             unrecognized model or an organization-side restriction can make
             the CLI silently ignore it) and mapped to codex_cli's
             model_reasoning_effort config override (xhigh/max clamp down to
-            high, since codex has no higher tier). Ignored by qwen_code
-            and opencode. See docs/agents.md#effort.
+            high, since codex has no higher tier). Also passed through
+            unchanged to opencode's `opencode run --variant` flag (no fixed
+            vendor enum to clamp against there, so the value is forwarded
+            as-is and may be silently ignored or rejected by the underlying
+            model provider). Ignored by qwen_code. See docs/agents.md#effort.
         permission_mode:
           type: string
           enum: ["", default, auto, acceptEdits, bypassPermissions]

@@ -5054,7 +5054,7 @@ export interface components {
              */
             max_cost_usd: number;
             /**
-             * @description Optional reasoning effort level. Empty string (default) leaves the provider's own default effort in place. Passed as claude's --effort flag (accepts exactly low/medium/high/xhigh/max — an unrecognized model or an organization-side restriction can make the CLI silently ignore it) and mapped to codex_cli's model_reasoning_effort config override (xhigh/max clamp down to high, since codex has no higher tier). Ignored by qwen_code and opencode. See docs/agents.md#effort.
+             * @description Optional reasoning effort level. Empty string (default) leaves the provider's own default effort in place. Passed as claude's --effort flag (accepts exactly low/medium/high/xhigh/max — an unrecognized model or an organization-side restriction can make the CLI silently ignore it) and mapped to codex_cli's model_reasoning_effort config override (xhigh/max clamp down to high, since codex has no higher tier). Also passed through unchanged to opencode's `opencode run --variant` flag (no fixed vendor enum to clamp against there, so the value is forwarded as-is and may be silently ignored or rejected by the underlying model provider). Ignored by qwen_code. See docs/agents.md#effort.
              * @enum {string}
              */
             effort: "" | "low" | "medium" | "high" | "xhigh" | "max";

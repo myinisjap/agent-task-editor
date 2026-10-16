@@ -23,12 +23,18 @@ describe('providerCapabilities', () => {
     expect(getCapability('claude', 'subtasks').support).toBe('full')
   })
 
-  it('effort: claude is full, codex_cli is partial (clamped), everyone else is none', () => {
+  it('effort: claude is full, codex_cli and opencode are partial, qwen_code is none', () => {
     expect(getCapability('claude', 'effort').support).toBe('full')
     expect(getCapability('codex_cli', 'effort').support).toBe('partial')
     expect(getCapability('codex_cli', 'effort').note).toBeTruthy()
     expect(getCapability('qwen_code', 'effort').support).toBe('none')
-    expect(getCapability('opencode', 'effort').support).toBe('none')
+    expect(getCapability('opencode', 'effort').support).toBe('partial')
+    expect(getCapability('opencode', 'effort').note).toBeTruthy()
+  })
+
+  it('opencode has full image attachment support via -f/--file', () => {
+    expect(getCapability('opencode', 'imageAttachments').support).toBe('full')
+    expect(getCapability('opencode', 'imageAttachments').note).toBeTruthy()
   })
 
   it('falls back to none for an unrecognized provider', () => {
