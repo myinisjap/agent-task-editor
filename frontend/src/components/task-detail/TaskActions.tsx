@@ -51,7 +51,8 @@ export default function TaskActions({
   const message = needsHuman ? (activeRun?.feedback || activeRun?.notes) : activeRun?.feedback
   const replyIsPrimary = esc.action === 'reply'
   return (
-    <div className="shrink-0 border-t border-slate-700 bg-slate-900 p-4">
+    <div data-testid="task-actions-bar"
+      className="shrink-0 border-t border-slate-700 bg-slate-900 p-4 max-md:sticky max-md:bottom-0 max-md:z-10 max-md:max-h-[55vh] max-md:overflow-y-auto max-md:mb-[var(--ate-bottom-bar-height,0px)] max-md:min-w-0">
       <p className="text-sm font-medium text-slate-200 mb-3">
         {needsHuman ? esc.label : 'Human review required'}
       </p>
@@ -65,7 +66,7 @@ export default function TaskActions({
           {esc.action === 'fix' && esc.fix && (
             <Link
               to={esc.fix.to}
-              className="px-4 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white"
+              className="px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white"
             >
               {esc.fix.text}
             </Link>
@@ -76,8 +77,8 @@ export default function TaskActions({
               disabled={actionPending}
               className={
                 esc.action === 'retry'
-                  ? 'px-4 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-50'
-                  : 'px-4 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-100 disabled:opacity-50'
+                  ? 'px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-50'
+                  : 'px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-100 disabled:opacity-50'
               }
             >
               {esc.action === 'fix' ? 'Retry after fixing' : 'Retry'}
@@ -98,21 +99,21 @@ export default function TaskActions({
         </p>
       )}
       {needsHuman && (
-        <div className="flex gap-3 items-start mb-3">
+        <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-start mb-3">
           <textarea
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
             placeholder="Reply to the agent — answer its question and it continues in the same session, without moving the task…"
             rows={2}
-            className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500"
+            className="flex-1 min-w-0 text-base md:text-xs bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500"
           />
           <button
             onClick={onReply}
             disabled={actionPending || !replyText.trim()}
             className={
               replyIsPrimary
-                ? 'px-4 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-50'
-                : 'px-4 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-100 disabled:opacity-50'
+                ? 'px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-50'
+                : 'px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-100 disabled:opacity-50'
             }
           >
             Reply & Continue
@@ -123,7 +124,7 @@ export default function TaskActions({
         <p role="alert" className="text-xs text-red-400 mb-3">{actionError}</p>
       )}
       {(canApprove || canReject) && (
-      <div className="flex gap-3 items-start">
+      <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-start">
         {canReject ? (
         <textarea
           value={rejectNote}
@@ -134,17 +135,17 @@ export default function TaskActions({
               : 'Rejection note (required to reject)…'
           }
           rows={2}
-          className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500"
+          className="flex-1 min-w-0 text-base md:text-xs bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500"
         />
         ) : (
           <div className="flex-1" />
         )}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-row md:flex-col gap-2 [&>button]:flex-1 md:[&>button]:flex-none">
           {canApprove && (
           <button
             onClick={onApprove}
             disabled={actionPending}
-            className="px-4 py-1.5 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+            className="px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
           >
             Approve
           </button>
@@ -153,7 +154,7 @@ export default function TaskActions({
           <button
             onClick={onReject}
             disabled={actionPending || (!rejectNote.trim() && openCommentsCount === 0)}
-            className="px-4 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+            className="px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
           >
             Reject
           </button>
