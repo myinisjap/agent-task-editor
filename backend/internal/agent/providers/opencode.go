@@ -219,11 +219,62 @@ func buildOpencodeArgs(input agent.RunInput) []string {
 		args = append(args, "-f", p)
 	}
 	// "--" stops yargs flag parsing; prompt may contain "--" sequences that would be misread as flags
-	args = append(args, "--", buildPrompt(input))
+	//
+	// A resumed session (--session above) already contains the task context
+	// as prior conversation turns, so only the new information (human
+	// reply, feedback, open review comments) is sent as the next message —
+	// same rationale as claude.go/qwen.go's identical --resume handling.
+	prompt := buildPrompt(input)
+	if input.ResumeSessionID != "" {
+		prompt = buildResumePrompt(input)
+	}
+	args = append(args, "--", prompt)
 	return args
 }
 
+// opencodeAttemptInfo carries the signals runAttempt observed that Run needs
+// to decide whether a failed --session (resume) attempt should be retried as
+// a cold start. Mirrors claude.go's attemptInfo / qwen.go's qwenAttemptInfo.
+type opencodeAttemptInfo struct {
+	// sawStream is true once at least one well-formed JSON event carrying a
+	// sessionID arrived — evidence the CLI actually started a session.
+	sawStream bool
+	// resumeError is true when the output carried an explicit
+	// session-not-found signal for the --session target.
+	resumeError bool
+	// exitedWithError is true when the subprocess exited non-zero (for any
+	// reason).
+	exitedWithError bool
+}
+
+// opencodeShouldFallBackToColdStart mirrors claude.go's
+// shouldFallBackToColdStart / qwen.go's qwenShouldFallBackToColdStart: a
+// resumed attempt failed in a way that points at the resume itself (an
+// explicit session-not-found signal, or an error exit before any stream
+// output).
+func opencodeShouldFallBackToColdStart(info opencodeAttemptInfo) bool {
+	if info.resumeError {
+		return true
+	}
+	return info.exitedWithError && !info.sawStream
+}
+
 func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
+	res, info, err := r.runAttempt(ctx, input, logCh)
+	if input.ResumeSessionID != "" && opencodeShouldFallBackToColdStart(info) {
+		// The --session target most likely no longer exists (session
+		// expired, CLI updated, state moved). Non-fatal: retry once from a
+		// cold start with the full prompt, mirroring claude.go's identical
+		// fallback.
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("could not resume session %s — starting a fresh session", input.ResumeSessionID), At: time.Now()}
+		input.ResumeSessionID = ""
+		res, _, err = r.runAttempt(ctx, input, logCh)
+	}
+	return res, err
+}
+
+func (r *OpencodeRunner) runAttempt(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, opencodeAttemptInfo, error) {
+	var info opencodeAttemptInfo
 	// Unlike claude/qwen (a per-invocation --mcp-config file) or codex (-c
 	// config overrides), opencode has no CLI flag for MCP servers; the
 	// sidecar is instead wired in through OPENCODE_CONFIG_CONTENT's inline
@@ -240,7 +291,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
 		})
 		if err != nil {
-			return agent.Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
+			return agent.Result{Status: "failed"}, info, fmt.Errorf("prepare mcp: %w", err)
 		}
 		defer mcpCfg.Cleanup()
 	}
@@ -279,7 +330,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	// the turn cap, and the command policy with no indication why.
 	configContent, err := opencodeConfigContent(buildSystemPrompt(input), maxTurns, mcpCfg, serverBinary, input.AgentConfig.CommandAllowlist, input.AgentConfig.CommandDenylist)
 	if err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("build opencode config: %w", err)
+		return agent.Result{Status: "failed"}, info, fmt.Errorf("build opencode config: %w", err)
 	}
 	env = append(env, "OPENCODE_CONFIG_CONTENT="+configContent)
 	// Force-disabled: the CLI self-updating mid-run inside a container we
@@ -291,7 +342,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	env = append(env, "OPENCODE_DISABLE_AUTOUPDATE=1")
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
 	if err != nil {
-		return agent.Result{Status: "failed"}, err
+		return agent.Result{Status: "failed"}, info, err
 	}
 	cmd := newCLICommand(procCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
@@ -299,15 +350,15 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("stdout pipe: %w", err)
+		return agent.Result{Status: "failed"}, info, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("stderr pipe: %w", err)
+		return agent.Result{Status: "failed"}, info, fmt.Errorf("stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("start opencode: %w", err)
+		return agent.Result{Status: "failed"}, info, fmt.Errorf("start opencode: %w", err)
 	}
 
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started opencode pid=%d", cmd.Process.Pid), At: time.Now()}
@@ -361,6 +412,12 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 			if sid != "" {
 				mu.Lock()
 				sessionID = sid
+				info.sawStream = true
+				mu.Unlock()
+			}
+			if isResumeErrorLine(line) {
+				mu.Lock()
+				info.resumeError = true
 				mu.Unlock()
 			}
 			if u != nil {
@@ -424,6 +481,11 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		defer wg.Done()
 		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
+			if isResumeErrorLine(line) {
+				mu.Lock()
+				info.resumeError = true
+				mu.Unlock()
+			}
 			if is429Line(line) {
 				mu.Lock()
 				rateLimited = true
@@ -451,6 +513,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 
 	wg.Wait()
 	err = cmd.Wait()
+	info.exitedWithError = err != nil
 
 	mu.Lock()
 	finalSession := sessionID
@@ -477,7 +540,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode reached max_turns (%d steps); stopping the run", maxTurns), At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession}
 		priceRun(&res)
-		return res, &agent.ErrMaxTurns{MaxTurns: int(maxTurns)}
+		return res, info, &agent.ErrMaxTurns{MaxTurns: int(maxTurns)}
 	}
 
 	if truncated {
@@ -488,14 +551,14 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession}
 		priceRun(&res)
-		return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode output truncated at scan buffer limit")}
+		return res, info, &agent.ErrTransient{Cause: fmt.Errorf("opencode output truncated at scan buffer limit")}
 	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession}
 		priceRun(&res)
-		return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
+		return res, info, &agent.ErrTransient{Cause: fmt.Errorf("opencode run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode exited: %v", err), At: time.Now()}
@@ -506,12 +569,12 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		if rl {
 			res := agent.Result{Status: "failed", SessionID: finalSession}
 			priceRun(&res)
-			return res, &agent.ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
+			return res, info, &agent.ErrRateLimit{Message: "opencode CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
 			res := agent.Result{Status: "failed", SessionID: finalSession}
 			priceRun(&res)
-			return res, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
+			return res, info, &agent.ErrTransient{Cause: fmt.Errorf("opencode CLI exited with transient infra error: %w", err)}
 		}
 	}
 
@@ -539,9 +602,9 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession}
 			priceRun(&failed)
-			return failed, nil
+			return failed, info, nil
 		}
-		return res, nil
+		return res, info, nil
 	}
 
 	if err != nil {
@@ -562,10 +625,10 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		// qwen.go's equivalent failure path).
 		res := agent.Result{Status: "failed", SessionID: finalSession}
 		priceRun(&res)
-		return res, nil
+		return res, info, nil
 	}
 
 	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession}
 	priceRun(&res)
-	return res, nil
+	return res, info, nil
 }

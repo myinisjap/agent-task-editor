@@ -25,6 +25,44 @@ func TestBuildQwenArgs_Resume(t *testing.T) {
 	}
 }
 
+// TestBuildQwenArgs_ResumeSendsCondensedPrompt verifies that a resumed run
+// sends buildResumePrompt's condensed content (new information only) instead
+// of the full task prompt — mirrors
+// TestBuildClaudeArgs_ResumeSession (claude_test.go).
+func TestBuildQwenArgs_ResumeSendsCondensedPrompt(t *testing.T) {
+	reply := "use approach B"
+	input := agent.RunInput{
+		Task:            agent.Task{Title: "Fix the bug", Description: "long description"},
+		AgentConfig:     agent.AgentConfig{},
+		ResumeSessionID: "sess-1",
+		HumanReply:      &reply,
+	}
+	args := buildQwenArgs(input, nil)
+	prompt := findFlagValue(args, "-p")
+	if !strings.Contains(prompt, "RESPONSE FROM HUMAN") || !strings.Contains(prompt, "use approach B") {
+		t.Errorf("resume prompt should carry the human reply, got %q", prompt)
+	}
+	if strings.Contains(prompt, "Task: Fix the bug") {
+		t.Errorf("resume prompt should not repeat the full task context, got %q", prompt)
+	}
+}
+
+// TestBuildQwenArgs_NoResumeFlagOnColdStart verifies the full task prompt
+// (not the condensed resume prompt) is sent when ResumeSessionID is empty.
+func TestBuildQwenArgs_NoResumeFlagOnColdStart(t *testing.T) {
+	reply := "use approach B"
+	input := agent.RunInput{
+		Task:        agent.Task{Title: "Fix the bug", Description: "long description"},
+		AgentConfig: agent.AgentConfig{},
+		HumanReply:  &reply,
+	}
+	args := buildQwenArgs(input, nil)
+	prompt := findFlagValue(args, "-p")
+	if !strings.Contains(prompt, "RESPONSE FROM HUMAN") || !strings.Contains(prompt, "Task: Fix the bug") {
+		t.Errorf("cold prompt should carry both the reply and the task, got %q", prompt)
+	}
+}
+
 // TestBuildQwenArgs_MaxTurnsDefault verifies that when AgentConfig.MaxTurns
 // is unset (zero), the constructed args default --max-session-turns to 50
 // (matching the claude provider's fallback behavior).
@@ -936,5 +974,35 @@ func TestQwenRunner_Run_OversizedLineTruncation(t *testing.T) {
 	}
 	if !sawTruncationLog {
 		t.Errorf("expected a LogSystem entry warning about the truncated output stream, got logs: %v", logs)
+	}
+}
+
+// TestQwenRunner_Run_ResumeMissingFallsBackToColdStart verifies a resume
+// whose session no longer exists is retried once as a fresh session,
+// mirroring TestCodexRunner_Run_ResumeMissingFallsBackToColdStart
+// (codex_test.go) and claude.go's shouldFallBackToColdStart fallback.
+func TestQwenRunner_Run_ResumeMissingFallsBackToColdStart(t *testing.T) {
+	runner := &QwenRunner{BinaryPath: os.Args[0]}
+	input := qwenHelperInput("resume_missing")
+	input.ResumeSessionID = "gone-session"
+	logCh := make(chan agent.LogEntry, 256)
+	wait := collectLogs(logCh)
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	logs := wait()
+	if err != nil || result.Status != "completed" || result.Outcome != "success" {
+		t.Fatalf("Run = (%+v, %v), want completed/success after a cold start", result, err)
+	}
+	if result.SessionID != "qwen-fresh-session" {
+		t.Errorf("SessionID = %q, want the fresh session", result.SessionID)
+	}
+	var sawNote bool
+	for _, l := range logs {
+		if strings.Contains(l.Content, "starting a fresh session") {
+			sawNote = true
+		}
+	}
+	if !sawNote {
+		t.Error("expected a log line explaining the cold start")
 	}
 }

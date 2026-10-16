@@ -198,13 +198,19 @@ func qwenImageAtRefs(input agent.RunInput) []string {
 	return refs
 }
 
-// buildQwenPrompt is buildPrompt's output with an @-prefixed reference
-// appended for each task image attachment, so qwen's at-command processor
-// (see qwenImageAtRefs) actually attaches the image content instead of the
-// agent only seeing buildPrompt's plain-text "ATTACHED IMAGES" listing of
-// paths.
+// buildQwenPrompt is buildPrompt's output (or, for a resumed session,
+// buildResumePrompt's — see claude.go's identical --resume handling: a
+// resumed session already contains the task context as prior conversation
+// turns, so only the new information is sent as the next message) with an
+// @-prefixed reference appended for each task image attachment, so qwen's
+// at-command processor (see qwenImageAtRefs) actually attaches the image
+// content instead of the agent only seeing the prompt's plain-text "ATTACHED
+// IMAGES" listing of paths.
 func buildQwenPrompt(input agent.RunInput) string {
 	prompt := buildPrompt(input)
+	if input.ResumeSessionID != "" {
+		prompt = buildResumePrompt(input)
+	}
 	refs := qwenImageAtRefs(input)
 	if len(refs) == 0 {
 		return prompt
@@ -212,7 +218,48 @@ func buildQwenPrompt(input agent.RunInput) string {
 	return prompt + "\n\n" + strings.Join(refs, " ")
 }
 
+// qwenAttemptInfo carries the signals runAttempt observed that Run needs to
+// decide whether a failed --resume attempt should be retried as a cold
+// start. Mirrors claude.go's attemptInfo (kept as its own type since qwen's
+// runAttempt doesn't need claude's cost-watchdog-kill bookkeeping).
+type qwenAttemptInfo struct {
+	// sawStream is true once at least one well-formed stream-json line
+	// arrived — evidence the CLI actually started a conversation.
+	sawStream bool
+	// resumeError is true when the output carried an explicit
+	// session-not-found signal for the --resume target.
+	resumeError bool
+	// exitedWithError is true when the subprocess exited non-zero (for any
+	// reason).
+	exitedWithError bool
+}
+
+// qwenShouldFallBackToColdStart mirrors claude.go's
+// shouldFallBackToColdStart: a resumed attempt failed in a way that points
+// at the resume itself (an explicit session-not-found signal, or an error
+// exit before any stream output).
+func qwenShouldFallBackToColdStart(info qwenAttemptInfo) bool {
+	if info.resumeError {
+		return true
+	}
+	return info.exitedWithError && !info.sawStream
+}
+
 func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
+	res, info, err := r.runAttempt(ctx, input, logCh)
+	if input.ResumeSessionID != "" && qwenShouldFallBackToColdStart(info) {
+		// The --resume target most likely no longer exists (session expired,
+		// CLI updated, state moved). Non-fatal: retry once from a cold start
+		// with the full prompt, mirroring claude.go's identical fallback.
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("could not resume session %s — starting a fresh session", input.ResumeSessionID), At: time.Now()}
+		input.ResumeSessionID = ""
+		res, _, err = r.runAttempt(ctx, input, logCh)
+	}
+	return res, err
+}
+
+func (r *QwenRunner) runAttempt(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, qwenAttemptInfo, error) {
+	var info qwenAttemptInfo
 	// Set up MCP sidecar if manager is configured.
 	var mcpCfg *MCPRunConfig
 	if r.MCP != nil && r.MCP.ServerBinary != "" {
@@ -224,7 +271,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
 		})
 		if err != nil {
-			return agent.Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)
+			return agent.Result{Status: "failed"}, info, fmt.Errorf("prepare mcp: %w", err)
 		}
 		defer mcpCfg.Cleanup()
 	}
@@ -254,7 +301,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
 	if err != nil {
-		return agent.Result{Status: "failed"}, err
+		return agent.Result{Status: "failed"}, info, err
 	}
 	cmd := newCLICommand(runCtx, runBinary, runArgs...)
 	cmd.Dir = input.RepoPath
@@ -262,15 +309,15 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("stdout pipe: %w", err)
+		return agent.Result{Status: "failed"}, info, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("stderr pipe: %w", err)
+		return agent.Result{Status: "failed"}, info, fmt.Errorf("stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return agent.Result{Status: "failed"}, fmt.Errorf("start qwen: %w", err)
+		return agent.Result{Status: "failed"}, info, fmt.Errorf("start qwen: %w", err)
 	}
 
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started qwen pid=%d", cmd.Process.Pid), At: time.Now()}
@@ -342,6 +389,12 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 			if ev.SessionID != "" {
 				mu.Lock()
 				sessionID = ev.SessionID
+				info.sawStream = true
+				mu.Unlock()
+			}
+			if isResumeErrorLine(line) {
+				mu.Lock()
+				info.resumeError = true
 				mu.Unlock()
 			}
 			if ev.Model != "" {
@@ -449,6 +502,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		defer wg.Done()
 		scanErr := scanLines(stderr, func(line string) {
 			logCh <- agent.LogEntry{Type: agent.LogStderr, Content: line, At: time.Now()}
+			if isResumeErrorLine(line) {
+				mu.Lock()
+				info.resumeError = true
+				mu.Unlock()
+			}
 			if is429Line(line) {
 				mu.Lock()
 				rateLimited = true
@@ -479,6 +537,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 
 	wg.Wait()
 	err = cmd.Wait()
+	info.exitedWithError = err != nil
 
 	mu.Lock()
 	finalUsage := usage
@@ -529,7 +588,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		// cumulative-usage/incremental-cost snapshot instead, or the run
 		// would record cost_usd=0 despite having genuinely spent money.
 		applyUsage(&res, finalCostExceededUsage)
-		return res, finalCostExceeded
+		return res, info, finalCostExceeded
 	}
 
 	if truncated {
@@ -540,14 +599,14 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 		price(&res, finalUsage)
-		return res, &agent.ErrTransient{Cause: fmt.Errorf("qwen output truncated at scan buffer limit")}
+		return res, info, &agent.ErrTransient{Cause: fmt.Errorf("qwen output truncated at scan buffer limit")}
 	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 		price(&res, finalUsage)
-		return res, &agent.ErrTransient{Cause: fmt.Errorf("qwen run timed out")}
+		return res, info, &agent.ErrTransient{Cause: fmt.Errorf("qwen run timed out")}
 	}
 	if err != nil {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited: %v", err), At: time.Now()}
@@ -558,12 +617,12 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		if rl {
 			res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 			price(&res, finalUsage)
-			return res, &agent.ErrRateLimit{Message: "qwen CLI 429: Request rejected by API rate limit"}
+			return res, info, &agent.ErrRateLimit{Message: "qwen CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
 			res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 			price(&res, finalUsage)
-			return res, &agent.ErrTransient{Cause: fmt.Errorf("qwen CLI exited with transient infra error: %w", err)}
+			return res, info, &agent.ErrTransient{Cause: fmt.Errorf("qwen CLI exited with transient infra error: %w", err)}
 		}
 	}
 
@@ -583,7 +642,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		if configuredMaxTurns <= 0 {
 			configuredMaxTurns = 50
 		}
-		return res, &agent.ErrMaxTurns{MaxTurns: int(configuredMaxTurns)}
+		return res, info, &agent.ErrMaxTurns{MaxTurns: int(configuredMaxTurns)}
 	}
 
 	// MCP result takes priority; fall back to OUTCOME text parsing if the
@@ -609,9 +668,9 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 			price(&failed, finalUsage)
-			return failed, nil
+			return failed, info, nil
 		}
-		return res, nil
+		return res, info, nil
 	}
 
 	// Non-zero exit means the agent failed regardless of any parsed outcome.
@@ -621,9 +680,9 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		}
 		failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 		price(&failed, finalUsage)
-		return failed, nil
+		return failed, info, nil
 	}
 	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession, CostWarned: finalCostWarned}
 	price(&res, finalUsage)
-	return res, nil
+	return res, info, nil
 }

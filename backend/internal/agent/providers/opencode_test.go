@@ -514,6 +514,37 @@ func TestOpencodeRunner_Run_WithMCP_PassesInlineConfig(t *testing.T) {
 	}
 }
 
+// TestOpencodeRunner_Run_ResumeMissingFallsBackToColdStart verifies a resume
+// whose session no longer exists is retried once as a fresh session,
+// mirroring TestCodexRunner_Run_ResumeMissingFallsBackToColdStart
+// (codex_test.go) / TestQwenRunner_Run_ResumeMissingFallsBackToColdStart
+// (qwen_test.go) and claude.go's shouldFallBackToColdStart fallback.
+func TestOpencodeRunner_Run_ResumeMissingFallsBackToColdStart(t *testing.T) {
+	runner := &OpencodeRunner{BinaryPath: os.Args[0]}
+	input := opencodeHelperInput("resume_missing")
+	input.ResumeSessionID = "gone-session"
+	logCh := make(chan agent.LogEntry, 256)
+	wait := collectLogs(logCh)
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	logs := wait()
+	if err != nil || result.Status != "completed" || result.Outcome != "success" {
+		t.Fatalf("Run = (%+v, %v), want completed/success after a cold start", result, err)
+	}
+	if result.SessionID != "oc-fresh" {
+		t.Errorf("SessionID = %q, want the fresh session", result.SessionID)
+	}
+	var sawNote bool
+	for _, l := range logs {
+		if strings.Contains(l.Content, "starting a fresh session") {
+			sawNote = true
+		}
+	}
+	if !sawNote {
+		t.Error("expected a log line explaining the cold start")
+	}
+}
+
 // --- buildOpencodeArgs unit tests (no subprocess needed) ---
 
 // TestBuildOpencodeArgs_BaseFlagsAndSeparator verifies the always-present
@@ -569,6 +600,46 @@ func TestBuildOpencodeArgs_ModelAndResume(t *testing.T) {
 			t.Fatalf("did not expect --session flag when ResumeSessionID is unset, args=%v", args)
 		}
 	})
+}
+
+// TestBuildOpencodeArgs_ResumeSendsCondensedPrompt verifies that a resumed
+// run (--session set) sends buildResumePrompt's condensed content (new
+// information only) instead of the full task prompt — mirrors
+// TestBuildClaudeArgs_ResumeSession (claude_test.go) /
+// TestBuildQwenArgs_ResumeSendsCondensedPrompt (qwen_test.go).
+func TestBuildOpencodeArgs_ResumeSendsCondensedPrompt(t *testing.T) {
+	reply := "use approach B"
+	input := agent.RunInput{
+		Task:            agent.Task{Title: "Fix the bug", Description: "long description"},
+		AgentConfig:     agent.AgentConfig{},
+		ResumeSessionID: "sess-1",
+		HumanReply:      &reply,
+	}
+	args := buildOpencodeArgs(input)
+	prompt := args[len(args)-1]
+	if !strings.Contains(prompt, "RESPONSE FROM HUMAN") || !strings.Contains(prompt, "use approach B") {
+		t.Errorf("resume prompt should carry the human reply, got %q", prompt)
+	}
+	if strings.Contains(prompt, "Task: Fix the bug") {
+		t.Errorf("resume prompt should not repeat the full task context, got %q", prompt)
+	}
+}
+
+// TestBuildOpencodeArgs_NoResumeFlagOnColdStart verifies the full task
+// prompt (not the condensed resume prompt) is sent when ResumeSessionID is
+// empty.
+func TestBuildOpencodeArgs_NoResumeFlagOnColdStart(t *testing.T) {
+	reply := "use approach B"
+	input := agent.RunInput{
+		Task:        agent.Task{Title: "Fix the bug", Description: "long description"},
+		AgentConfig: agent.AgentConfig{},
+		HumanReply:  &reply,
+	}
+	args := buildOpencodeArgs(input)
+	prompt := args[len(args)-1]
+	if !strings.Contains(prompt, "RESPONSE FROM HUMAN") || !strings.Contains(prompt, "Task: Fix the bug") {
+		t.Errorf("cold prompt should carry both the reply and the task, got %q", prompt)
+	}
 }
 
 // TestBuildOpencodeArgs_Variant verifies AgentConfig.Effort maps to

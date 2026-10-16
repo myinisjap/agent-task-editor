@@ -175,7 +175,9 @@ _Verified against `@qwen-code/qwen-code` v0.25.2's shipped source and a live
 
 ## Session Resume
 
-The CLI's stream-json result message carries a `session_id`, which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes the CLI with `--resume <session_id>` (qwen 0.21.0 registers `-r, --resume <string>`, *"Resume a specific session by its ID"*), so prior context (transcript, task-editor tool history, rejection feedback, open review comments) carries forward instead of starting cold.
+The CLI's stream-json result message carries a `session_id`, which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes the CLI with `--resume <session_id>` (qwen 0.21.0 registers `-r, --resume <string>`, *"Resume a specific session by its ID"*) and sends a **condensed prompt** containing only the new information (human reply, rejection feedback, open review comments) instead of the full task description — the resumed conversation already carries the task context (transcript, task-editor tool history) as its own prior turns.
+
+- **Fallback:** if the CLI prints a session-not-found error (best-effort text match, shared with `claude`/`opencode`: "no conversation found" / "session ... not found") on stdout or stderr, or exits with an error before producing any stream output, the runner retries once cold with the full prompt (`qwenShouldFallBackToColdStart` in `internal/agent/providers/qwen.go`, mirroring `claude.go`'s identical fallback).
 
 ## Model Selection
 

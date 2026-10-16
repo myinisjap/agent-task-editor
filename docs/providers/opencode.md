@@ -204,7 +204,9 @@ named `*`) have **not been verified live** against the `opencode` binary.
 
 ## Session Resume
 
-Every event on `opencode run --format json`'s NDJSON output carries a top-level `sessionID` field (verified against opencode-ai v1.18.6), which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes the CLI with `--session <sessionID>`, so prior context carries forward instead of starting cold.
+Every event on `opencode run --format json`'s NDJSON output carries a top-level `sessionID` field (verified against opencode-ai v1.18.6), which the runner records. When a later run on the same task hits this same agent config (and the config's `resume_sessions` flag is on — the default), the runner invokes the CLI with `--session <sessionID>` and sends a **condensed prompt** containing only the new information (human reply, rejection feedback, open review comments) instead of the full task description — the resumed conversation already carries the task context as its own prior turns.
+
+- **Fallback:** if the CLI prints a session-not-found error (best-effort text match, shared with `claude`/`qwen_code`: "no conversation found" / "session ... not found") on stdout or stderr, or exits with an error before producing any stream output, the runner retries once cold with the full prompt (`opencodeShouldFallBackToColdStart` in `internal/agent/providers/opencode.go`, mirroring `claude.go`'s identical fallback).
 
 ## Cost & Usage Reporting
 

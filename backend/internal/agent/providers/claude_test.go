@@ -258,6 +258,17 @@ func TestMain(m *testing.M) {
 		// TestQwenRunner_Run_Exit1WithOutcome_ExitCodeWins).
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
 		os.Exit(1)
+	case "resume_missing":
+		// Fails like a qwen CLI asked to resume a session it no longer has
+		// (best-effort text match — see isResumeErrorLine); succeeds when
+		// started fresh (--resume absent). Mirrors codex_test.go's identical
+		// "resume_missing" helper mode.
+		if slices.Contains(os.Args, "--resume") {
+			fmt.Fprintln(os.Stderr, "Error: No conversation found with session ID: gone-session")
+			os.Exit(1)
+		}
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","session_id":"qwen-fresh-session"}`)
+		os.Exit(0)
 	case "error_max_turns":
 		// Simulate: qwen exhausts its configured --max-session-turns and
 		// exits 0 (mirrors claude's error_max_turns behavior).
@@ -395,6 +406,18 @@ func TestMain(m *testing.M) {
 		}
 		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"OUTCOME: success"}}`)
 		fmt.Println(`{"type":"step_finish","sessionID":"oc-1","part":{"reason":"stop"}}`)
+		os.Exit(0)
+	case "resume_missing":
+		// Fails like an opencode CLI asked to resume a session it no longer
+		// has (best-effort text match — see isResumeErrorLine); succeeds
+		// when started fresh (--session absent). Mirrors codex_test.go's /
+		// the qwen helper's identical "resume_missing" mode.
+		if slices.Contains(os.Args, "--session") {
+			fmt.Fprintln(os.Stderr, "Error: session gone-session not found")
+			os.Exit(1)
+		}
+		fmt.Println(`{"type":"text","sessionID":"oc-fresh","part":{"type":"text","text":"OUTCOME: success"}}`)
+		fmt.Println(`{"type":"step_finish","sessionID":"oc-fresh","part":{"reason":"stop"}}`)
 		os.Exit(0)
 	}
 
