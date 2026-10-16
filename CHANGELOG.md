@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+
+- **Phone chat message box and touch scrolling.** On phones, Chat has a native multi-line message box with a Send button (autocorrect, swipe typing, dictation and paste work; multi-line text is sent as one bracketed paste) plus a keyboard toggle for typing directly into the terminal. Swiping the terminal now scrolls the scrollback smoothly with momentum without popping the keyboard (only taps focus), and a "Jump to latest" button appears when scrolled up. Desktop is unchanged.
+
 ### Changed
 
 - Phone navigation: a fixed bottom tab bar (Inbox with waiting badge, Board, Chat, More) replaces the floating hamburger below the `md` breakpoint; More opens the existing drawer. The bar respects the home-indicator safe area (`viewport-fit=cover`). Desktop is unchanged.

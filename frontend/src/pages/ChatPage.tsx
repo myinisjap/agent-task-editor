@@ -10,6 +10,8 @@ import HelpButton from '../components/shared/HelpButton'
 import { ChatHelp } from '../components/shared/pageHelp'
 import TerminalKeyBar from '../components/chat/TerminalKeyBar'
 import { toControlChar } from '../lib/termKeys'
+import MessageComposer from '../components/chat/MessageComposer'
+import { isTap, pixelsToLines } from '../lib/chatInput'
 import { useKeyboardInset } from '../lib/useKeyboardInset'
 
 export default function ChatPage() {
@@ -188,6 +190,11 @@ function TerminalView({ sessionId }: { sessionId: string }) {
   // without re-registering the handler); the state only drives the button style.
   const ctrlRef = useRef(false)
   const [ctrlArmed, setCtrlArmed] = useState(false)
+  // Phones: false = type in the message box, true = type straight into xterm.
+  const [directMode, setDirectMode] = useState(false)
+  const directRef = useRef(false)
+  const [showJump, setShowJump] = useState(false)
+  const scrollToBottomRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const container = containerRef.current
@@ -301,9 +308,80 @@ function TerminalView({ sessionId }: { sessionId: string }) {
 
     // Mobile: tapping the terminal must focus xterm's hidden textarea, which is
     // what summons the on-screen keyboard — without this, touch users can't type.
-    const focus = () => term.focus()
-    container.addEventListener('touchend', focus)
+    // On phones the message box owns typing unless direct mode is on; on desktop
+    // (composer hidden) always focus.
+    const desktopMq = window.matchMedia?.('(min-width: 768px)')
+    const focus = () => {
+      if (directRef.current || !desktopMq || desktopMq.matches) term.focus()
+    }
     container.addEventListener('click', focus)
+
+    // Touch: tap focuses; a vertical drag scrolls the scrollback with momentum.
+    let t0: { x: number; y: number; time: number } | null = null
+    let lastY = 0
+    let lastT = 0
+    let velocity = 0 // px/ms
+    let remainder = 0
+    let raf = 0
+    const lineHeight = () => {
+      const h = container.querySelector('.xterm-screen')?.clientHeight ?? 0
+      return h > 0 && term.rows > 0 ? h / term.rows : 16
+    }
+    const scrollBy = (px: number) => {
+      const r = pixelsToLines(px, remainder, lineHeight())
+      remainder = r.remainder
+      if (r.lines) term.scrollLines(r.lines)
+    }
+    const onTouchStart = (e: TouchEvent) => {
+      cancelAnimationFrame(raf)
+      const t = e.touches[0]
+      t0 = { x: t.clientX, y: t.clientY, time: Date.now() }
+      lastY = t.clientY
+      lastT = e.timeStamp
+      velocity = 0
+      remainder = 0
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (!t0) return
+      const t = e.touches[0]
+      const dy = lastY - t.clientY
+      const dt = Math.max(1, e.timeStamp - lastT)
+      velocity = dy / dt
+      lastY = t.clientY
+      lastT = e.timeStamp
+      if (e.cancelable) e.preventDefault()
+      scrollBy(dy)
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!t0) return
+      const t = e.changedTouches[0]
+      const start = t0
+      t0 = null
+      if (isTap(t.clientX - start.x, t.clientY - start.y, Date.now() - start.time)) {
+        focus()
+        return
+      }
+      let v = velocity * 16 // px per frame
+      const step = () => {
+        if (Math.abs(v) < 0.5) return
+        scrollBy(v)
+        v *= 0.95
+        raf = requestAnimationFrame(step)
+      }
+      if (Math.abs(velocity) > 0.1) raf = requestAnimationFrame(step)
+    }
+    container.addEventListener('touchstart', onTouchStart, { passive: true })
+    container.addEventListener('touchmove', onTouchMove, { passive: false })
+    container.addEventListener('touchend', onTouchEnd)
+
+    // "Jump to latest" visibility.
+    const updateJump = () => {
+      const b = term.buffer.active
+      setShowJump(b.viewportY < b.baseY)
+    }
+    const d1 = term.onScroll(updateJump)
+    const d2 = term.onWriteParsed(updateJump)
+    scrollToBottomRef.current = () => { term.scrollToBottom(); setShowJump(false) }
 
     // Mobile: the on-screen keyboard shrinks the visual viewport without changing
     // the container's box, so ResizeObserver doesn't fire. Track visualViewport
@@ -318,8 +396,14 @@ function TerminalView({ sessionId }: { sessionId: string }) {
       if (reconnectTimer) clearTimeout(reconnectTimer)
       if (keepAliveTimer) clearInterval(keepAliveTimer)
       ro.disconnect()
-      container.removeEventListener('touchend', focus)
+      cancelAnimationFrame(raf)
+      container.removeEventListener('touchstart', onTouchStart)
+      container.removeEventListener('touchmove', onTouchMove)
+      container.removeEventListener('touchend', onTouchEnd)
       container.removeEventListener('click', focus)
+      d1.dispose()
+      d2.dispose()
+      scrollToBottomRef.current = () => {}
       vv?.removeEventListener('resize', refit)
       ws?.close()
       term.dispose()
@@ -333,6 +417,13 @@ function TerminalView({ sessionId }: { sessionId: string }) {
     focusRef.current()
   }
 
+  function toggleDirect() {
+    directRef.current = !directRef.current
+    setDirectMode(directRef.current)
+    if (directRef.current) focusRef.current()
+    else (document.activeElement as HTMLElement | null)?.blur?.()
+  }
+
   function toggleCtrl() {
     ctrlRef.current = !ctrlRef.current
     setCtrlArmed(ctrlRef.current)
@@ -343,7 +434,23 @@ function TerminalView({ sessionId }: { sessionId: string }) {
   // terminal; the flex box gives it a real height for FitAddon to measure.
   return (
     <>
-      <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-4 touch-manipulation" />
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-4 touch-none md:touch-manipulation" />
+        {showJump && (
+          <button
+            type="button"
+            onClick={() => scrollToBottomRef.current()}
+            className="absolute bottom-3 right-3 px-3 py-1.5 rounded-full bg-indigo-600 text-white text-xs shadow-lg"
+          >
+            Jump to latest ↓
+          </button>
+        )}
+      </div>
+      <MessageComposer
+        onSend={(d) => sendRef.current(d)}
+        directMode={directMode}
+        onToggleDirect={toggleDirect}
+      />
       <TerminalKeyBar onKey={pressKey} onToggleCtrl={toggleCtrl} ctrlArmed={ctrlArmed} />
     </>
   )
