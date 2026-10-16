@@ -13,11 +13,12 @@ services:
         # and git clone / npm / claude CLI at runtime).
         INSECURE_SKIP_SSL_VERIFY: ${INSECURE_SKIP_SSL_VERIFY:-false}
         # Set to true (or pass --all-cli to dev.sh) to also install the
-        # Codex and Qwen CLIs in the locally-built backend image — off by
-        # default so a plain `docker compose up --build` stays small and
-        # only ships the Claude CLI.
+        # Codex, Qwen and Opencode CLIs in the locally-built backend image —
+        # off by default so a plain `docker compose up --build` stays small
+        # and only ships the Claude CLI.
         INSTALL_CODEX_CLI: ${INSTALL_CODEX_CLI:-false}
         INSTALL_QWEN_CLI: ${INSTALL_QWEN_CLI:-false}
+        INSTALL_OPENCODE_CLI: ${INSTALL_OPENCODE_CLI:-false}
     # Bound to loopback by default: API_TOKEN may be empty, so a
     # 0.0.0.0 binding would expose the board and the agent-dispatch path to
     # the whole LAN. Set ATE_BIND_ADDR=0.0.0.0 (and set API_TOKEN!) to expose
