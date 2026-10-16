@@ -36,6 +36,15 @@ type MCPRunConfig struct {
 	// Token is the per-run scoped bearer token handed to the sidecar ("" when
 	// subtasks are disabled). It is revoked by Cleanup.
 	Token string
+	// Env is the sidecar's environment map (RUN_ID, RESULT_FILE,
+	// TRANSITIONS, REVIEW_COMMENTS, and — when subtasks are enabled —
+	// SUBTASKS_ENABLED/BACKEND_URL/TASK_ID/API_TOKEN/MAX_SUBTASKS). It is the
+	// same map written into ConfigFile's "env" entry for the file-based
+	// providers (claude/qwen/codex); exposed here so providers that deliver
+	// MCP config inline (opencode's OPENCODE_CONFIG_CONTENT) can reuse it
+	// without re-minting a token or re-marshaling transitions/comments. Do
+	// not log this map — it contains the scoped API_TOKEN.
+	Env map[string]string
 	// dir is the 0700 per-run directory holding ConfigFile.
 	dir string
 }
@@ -83,42 +92,10 @@ func (m *MCPManager) Prepare(runID string, transitions []agent.TransitionHint, r
 	}
 	resultFile := filepath.Join(dir, "result.json")
 
-	transitionsJSON, err := json.Marshal(transitions)
+	env, token, err := buildSidecarEnv(runID, resultFile, transitions, reviewComments, subtasks)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("marshal transitions: %w", err)
-	}
-	reviewCommentsJSON, err := json.Marshal(reviewComments)
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("marshal review comments: %w", err)
-	}
-
-	env := map[string]string{
-		"RUN_ID":          runID,
-		"RESULT_FILE":     resultFile,
-		"TRANSITIONS":     string(transitionsJSON),
-		"REVIEW_COMMENTS": string(reviewCommentsJSON),
-	}
-	token := ""
-	// Expose create_subtask only when the run's config opted in. The sidecar
-	// posts children live to the backend REST API, so it needs the base URL,
-	// bearer token, and parent task id.
-	if subtasks != nil && subtasks.Enabled {
-		env["SUBTASKS_ENABLED"] = "1"
-		env["BACKEND_URL"] = subtasks.BackendURL
-		env["TASK_ID"] = subtasks.TaskID
-		// Never the admin API_TOKEN: agents share the backend's OS user and
-		// can read this env/config. Mint a token that only works for
-		// POST /tasks/<this task>/subtasks and dies in Cleanup.
-		tok, err := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindRun, RunID: runID, TaskID: subtasks.TaskID})
-		if err != nil {
-			_ = os.RemoveAll(dir)
-			return nil, fmt.Errorf("mint sidecar token: %w", err)
-		}
-		token = tok
-		env["API_TOKEN"] = tok
-		env["MAX_SUBTASKS"] = fmt.Sprintf("%d", subtasks.MaxSubtasks)
+		return nil, err
 	}
 
 	cfg := mcpConfig{
@@ -156,7 +133,57 @@ func (m *MCPManager) Prepare(runID string, transitions []agent.TransitionHint, r
 		return nil, fmt.Errorf("share mcp config: %w", err)
 	}
 
-	return &MCPRunConfig{ConfigFile: configFile, ResultFile: resultFile, Token: token, dir: dir}, nil
+	return &MCPRunConfig{ConfigFile: configFile, ResultFile: resultFile, Token: token, Env: env, dir: dir}, nil
+}
+
+// buildSidecarEnv builds the env map handed to the MCP sidecar process and,
+// when subtasks are enabled, mints the scoped bearer token the create_subtask
+// tool uses. This is the single source of truth for the sidecar env contract
+// (RUN_ID, RESULT_FILE, TRANSITIONS, REVIEW_COMMENTS, and the optional
+// SUBTASKS_ENABLED/BACKEND_URL/TASK_ID/API_TOKEN/MAX_SUBTASKS) shared by every
+// provider's MCP delivery mechanism — the file-based --mcp-config providers
+// (claude/qwen/codex) via Prepare's mcpServerEntry.Env, and opencode's inline
+// OPENCODE_CONFIG_CONTENT mcp.*.environment via MCPRunConfig.Env. Adding a new
+// sidecar env var belongs here, not duplicated at each call site (see ADR
+// 0004). The returned token is "" when subtasks is nil or disabled; on error
+// the caller is responsible for cleanup (this function mints a token it
+// cannot itself revoke on an error it didn't cause).
+func buildSidecarEnv(runID, resultFile string, transitions []agent.TransitionHint, reviewComments []agent.ReviewComment, subtasks *SubtaskEnv) (map[string]string, string, error) {
+	transitionsJSON, err := json.Marshal(transitions)
+	if err != nil {
+		return nil, "", fmt.Errorf("marshal transitions: %w", err)
+	}
+	reviewCommentsJSON, err := json.Marshal(reviewComments)
+	if err != nil {
+		return nil, "", fmt.Errorf("marshal review comments: %w", err)
+	}
+
+	env := map[string]string{
+		"RUN_ID":          runID,
+		"RESULT_FILE":     resultFile,
+		"TRANSITIONS":     string(transitionsJSON),
+		"REVIEW_COMMENTS": string(reviewCommentsJSON),
+	}
+	token := ""
+	// Expose create_subtask only when the run's config opted in. The sidecar
+	// posts children live to the backend REST API, so it needs the base URL,
+	// bearer token, and parent task id.
+	if subtasks != nil && subtasks.Enabled {
+		env["SUBTASKS_ENABLED"] = "1"
+		env["BACKEND_URL"] = subtasks.BackendURL
+		env["TASK_ID"] = subtasks.TaskID
+		// Never the admin API_TOKEN: agents share the backend's OS user and
+		// can read this env/config. Mint a token that only works for
+		// POST /tasks/<this task>/subtasks and dies in Cleanup.
+		tok, err := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindRun, RunID: runID, TaskID: subtasks.TaskID})
+		if err != nil {
+			return nil, "", fmt.Errorf("mint sidecar token: %w", err)
+		}
+		token = tok
+		env["API_TOKEN"] = tok
+		env["MAX_SUBTASKS"] = fmt.Sprintf("%d", subtasks.MaxSubtasks)
+	}
+	return env, token, nil
 }
 
 // marshalMCPConfigWithExtras marshals cfg to JSON and merges in extraServers

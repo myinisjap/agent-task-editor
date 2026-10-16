@@ -147,16 +147,22 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
   },
   opencode: {
     taskEditorTools: {
-      support: 'none',
-      note: 'No MCP tools — relies on a text OUTCOME: success/failure marker instead of task-editor tool calls.',
+      support: 'full',
+      note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled), delivered through OPENCODE_CONFIG_CONTENT\'s inline "mcp" config since opencode has no --mcp-config flag. The text OUTCOME: success/failure marker is kept as a fallback in case the MCP tool call does not land; opencode\'s own tool-naming has not been verified live, which is exactly why that fallback still matters.',
     },
-    labelTransitions: {
+    labelTransitions: { support: 'full' },
+    mcpServers: {
       support: 'none',
-      note: 'Cannot signal workflow transitions via MCP tools; tasks handled by this agent may not move to the next label automatically.',
+      note: 'The task-editor sidecar is now injected (see taskEditorTools), but user-level MCP servers/plugins are still not wired through for this provider.',
     },
-    mcpServers: { support: 'none', note: 'MCP servers / plugins are not supported by the opencode provider.' },
-    commandAllowlist: { support: 'none', note: 'Not enforced for the opencode provider.' },
-    commandDenylist: { support: 'none', note: 'Not enforced for the opencode provider.' },
+    commandAllowlist: {
+      support: 'partial',
+      note: 'Mapped to opencode\'s "permission.bash" config: listed patterns get "allow" plus a catch-all "*": "deny" default. opencode\'s pattern-matching semantics (most-specific-wins vs. first-match, and whether "*" is treated as a wildcard default) have not been verified live.',
+    },
+    commandDenylist: {
+      support: 'partial',
+      note: 'Mapped to opencode\'s "permission.bash" config as "deny" entries (wins over an overlapping allowlist entry). opencode run auto-rejects "ask" permissions headless since --auto is deliberately never passed, so a deny entry genuinely blocks the pattern — but opencode\'s pattern-matching semantics have not been verified live.',
+    },
     costTracking: {
       support: 'full',
       note: 'Authoritative cost and token counts, summed across every step_finish event in the run (cost + tokens.input/output, plus cache read/write into input tokens) — not estimated via a pricing table.',
@@ -166,9 +172,12 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       note: 'Usage is now recorded at end-of-run (see costTracking), but no mid-run kill switch is wired up for this provider yet — each step_finish only carries that step\'s own cost/token delta, summed into a total only once the run ends, not a continuously-updated running total a watchdog could project from mid-run. Only the pre-dispatch budget guard applies.',
     },
     imageAttachments: { support: 'none', note: 'opencode run has an -f/--file flag, but attachments are not wired through to it.' },
-    maxTurns: { support: 'none', note: 'Not enforced — the opencode CLI has no turn-cap flag.' },
+    maxTurns: {
+      support: 'full',
+      note: 'Enforced via agent.<name>.steps in OPENCODE_CONFIG_CONTENT, with the runner also counting step_finish events as a backstop in case the installed opencode version ignores the config key. Hitting the cap escalates the run to waiting_human instead of retrying.',
+    },
     sessionResume: { support: 'full', note: 'sessionID + --session.' },
-    subtasks: { support: 'none', note: 'No create_subtask tool — not available on this provider.' },
+    subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
     effort: { support: 'none', note: 'No reasoning-effort flag on the opencode CLI — the field is ignored for this provider.' },
     permissionMode: { support: 'none', note: 'No permission-mode flag on the opencode CLI — the field is ignored for this provider.' },
   },
