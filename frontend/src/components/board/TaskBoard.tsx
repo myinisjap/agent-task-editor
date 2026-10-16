@@ -16,7 +16,11 @@ import TaskColumn from './TaskColumn'
 import AgentGroupColumn from './AgentGroupColumn'
 import { computeCondensedGroups } from '../../lib/condensedBoard'
 import { useIsMobile } from '../../lib/useIsMobile'
-import { useSwipe } from '../../lib/useSwipe'
+import { useSearchParams } from 'react-router-dom'
+import { useNeedsMeStore } from '../../stores/needsMe'
+import { useColumnSwipe } from './columnSwipe'
+import ColumnChips from './ColumnChips'
+import type { ColumnChip } from './ColumnChips'
 import { canHumanMove } from '../../lib/humanMoves'
 import type { DropState } from './dropState'
 
@@ -36,6 +40,7 @@ function MobileColumnNav({
   onPrev,
   onNext,
   onDotClick,
+  chips,
 }: {
   currentIndex: number
   total: number
@@ -43,9 +48,11 @@ function MobileColumnNav({
   onPrev: () => void
   onNext: () => void
   onDotClick: (i: number) => void
+  chips: ColumnChip[]
 }) {
   return (
     <div className="mb-3">
+      <ColumnChips chips={chips} currentIndex={currentIndex} onSelect={onDotClick} />
       <div className="flex items-center justify-between mb-2">
         <button
           disabled={currentIndex === 0}
@@ -230,35 +237,61 @@ function TaskBoardInner({
 
   const sortedLabels = [...labels].sort((a, b) => a.sort_order - b.sort_order)
 
-  // Mobile column index state — separate for normal and condensed views
-  const [mobileNormalIndex, setMobileNormalIndex] = useState(0)
-  const [mobileCondensedIndex, setMobileCondensedIndex] = useState(0)
-
-  // Clamp indices when label list changes
   const groups = condensed && transitions.length > 0 ? computeCondensedGroups(labels, transitions) : []
-  const clampedNormal = Math.min(mobileNormalIndex, Math.max(0, sortedLabels.length - 1))
-  const clampedCondensed = Math.min(mobileCondensedIndex, Math.max(0, groups.length - 1))
 
-  // Keep state in sync after clamping
-  useEffect(() => {
-    if (clampedNormal !== mobileNormalIndex) setMobileNormalIndex(clampedNormal)
-  }, [clampedNormal, mobileNormalIndex])
+  // Selected mobile column lives in the URL (?col=<label name>; for condensed
+  // groups, any label in the group) so Back and reload keep your place.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const colParam = searchParams.get('col')
+  const needsMeByTask = useNeedsMeStore((s) => s.byTask)
 
-  useEffect(() => {
-    if (clampedCondensed !== mobileCondensedIndex) setMobileCondensedIndex(clampedCondensed)
-  }, [clampedCondensed, mobileCondensedIndex])
+  const columnItems: { key: string; label: string; names: string[] }[] =
+    condensed && transitions.length > 0
+      ? groups.map((g) =>
+          g.kind === 'single'
+            ? { key: g.label.name, label: g.label.name, names: [g.label.name] }
+            : { key: g.labels[0]?.name ?? '', label: 'Agent', names: g.labels.map((l) => l.name) },
+        )
+      : sortedLabels.map((l) => ({ key: l.name, label: l.name, names: [l.name] }))
 
-  // Swipe handlers for the mobile single-column pager — swipe left/right to
-  // move between columns, clamped to valid bounds (no disabled-state concept
-  // for swipes, so clamp directly here).
-  const condensedSwipe = useSwipe({
-    onSwipeLeft: () => setMobileCondensedIndex((i) => Math.min(groups.length - 1, i + 1)),
-    onSwipeRight: () => setMobileCondensedIndex((i) => Math.max(0, i - 1)),
+  const chips: ColumnChip[] = columnItems.map((c) => {
+    const ts = c.names.flatMap((n) => tasksByLabel.get(n) ?? EMPTY_TASKS)
+    return {
+      key: c.key,
+      label: c.label,
+      count: ts.length,
+      needsHuman: ts.some((t) => !!needsMeByTask[t.id] || t.active_run_status === 'waiting_human'),
+    }
   })
-  const normalSwipe = useSwipe({
-    onSwipeLeft: () => setMobileNormalIndex((i) => Math.min(sortedLabels.length - 1, i + 1)),
-    onSwipeRight: () => setMobileNormalIndex((i) => Math.max(0, i - 1)),
+
+  const found = colParam == null ? -1 : columnItems.findIndex((c) => c.names.includes(colParam))
+  const currentIdx = Math.max(0, found)
+
+  const selectColumn = (i: number) => {
+    const idx = Math.max(0, Math.min(columnItems.length - 1, i))
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (idx === 0) next.delete('col')
+        else next.set('col', columnItems[idx].key)
+        return next
+      },
+      { replace: true },
+    )
+  }
+
+  const clampedNormal = currentIdx
+  const clampedCondensed = currentIdx
+
+  // Swipe pages columns; disabled mid-drag so a long-press drag released after
+  // a sideways move doesn't also change column.
+  const swipe = useColumnSwipe({
+    onSwipeLeft: () => selectColumn(currentIdx + 1),
+    onSwipeRight: () => selectColumn(currentIdx - 1),
+    disabled: dragFromLabel != null,
   })
+  const condensedSwipe = swipe
+  const normalSwipe = swipe
 
   if (condensed && transitions.length > 0) {
     if (isMobile && groups.length > 0) {
@@ -275,15 +308,17 @@ function TaskBoardInner({
               currentIndex={clampedCondensed}
               total={groups.length}
               label={currentLabel}
-              onPrev={() => setMobileCondensedIndex((i) => i - 1)}
-              onNext={() => setMobileCondensedIndex((i) => i + 1)}
-              onDotClick={setMobileCondensedIndex}
+              onPrev={() => selectColumn(clampedCondensed - 1)}
+              onNext={() => selectColumn(clampedCondensed + 1)}
+              onDotClick={selectColumn}
+              chips={chips}
             />
             <div
               className="flex-1 min-h-0 overflow-y-auto"
               style={{ touchAction: 'pan-y' }}
               onTouchStart={condensedSwipe.onTouchStart}
               onTouchEnd={condensedSwipe.onTouchEnd}
+              onTouchCancel={condensedSwipe.onTouchCancel}
             >
               {currentGroup.kind === 'single' ? (
                 <TaskColumn
@@ -379,15 +414,17 @@ function TaskBoardInner({
             currentIndex={clampedNormal}
             total={sortedLabels.length}
             label={currentLabel.name}
-            onPrev={() => setMobileNormalIndex((i) => i - 1)}
-            onNext={() => setMobileNormalIndex((i) => i + 1)}
-            onDotClick={setMobileNormalIndex}
+            onPrev={() => selectColumn(clampedNormal - 1)}
+            onNext={() => selectColumn(clampedNormal + 1)}
+            onDotClick={selectColumn}
+            chips={chips}
           />
           <div
             className="flex-1 min-h-0 overflow-y-auto"
             style={{ touchAction: 'pan-y' }}
             onTouchStart={normalSwipe.onTouchStart}
             onTouchEnd={normalSwipe.onTouchEnd}
+            onTouchCancel={normalSwipe.onTouchCancel}
           >
             <TaskColumn
               label={currentLabel}
