@@ -456,14 +456,14 @@ export default function TaskDetailPage() {
   ]
 
   return (
-    <div className="flex h-full overflow-hidden flex-col">
+    <div className="flex h-full overflow-hidden flex-col min-w-0">
       {/* Tab bar */}
       <div className="shrink-0 flex items-center gap-2 border-b border-slate-800 px-4 pt-3 w-full overflow-x-hidden">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
-            className={`flex-grow min-w-[100px] px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+            className={`flex-grow min-w-0 md:min-w-[100px] px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
               activeTab === t.id
                 ? 'bg-slate-800 text-slate-100 border-b-2 border-slate-400'
                 : 'text-slate-500 hover:text-slate-300'
@@ -485,7 +485,7 @@ export default function TaskDetailPage() {
       <div className="flex-1 overflow-hidden">
         {/* Overview tab */}
         {activeTab === 'overview' && (
-          <div className="h-full overflow-y-auto p-5 flex flex-col gap-4">
+          <div className="h-full overflow-y-auto overflow-x-hidden p-3 md:p-5 flex flex-col gap-4 min-w-0">
             <TaskHeader
               task={task}
               repos={repos}

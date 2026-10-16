@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import InboxPage from './InboxPage'
 import { useNeedsMeStore } from '../stores/needsMe'
 import { useInboxStore } from '../stores/inbox'
@@ -126,5 +126,33 @@ describe('InboxPage', () => {
     renderPage()
     await userEvent.click(await screen.findByRole('button', { name: 'Approve' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('nope')
+  })
+})
+
+describe('InboxPage phone layout', () => {
+  it('taps through the whole row on phones', async () => {
+    m.needsMe.mockResolvedValue([gateItem])
+    const orig = window.matchMedia
+    window.matchMedia = ((q: string) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} })) as never
+    try {
+      render(
+        <MemoryRouter>
+          <Routes>
+            <Route path="/" element={<InboxPage />} />
+            <Route path="/tasks/:id" element={<div>detail page</div>} />
+          </Routes>
+        </MemoryRouter>,
+      )
+      await userEvent.click(await screen.findByTestId('inbox-item'))
+      expect(await screen.findByText('detail page')).toBeInTheDocument()
+    } finally {
+      window.matchMedia = orig
+    }
+  })
+
+  it('gives action buttons a 44px phone tap target', async () => {
+    m.needsMe.mockResolvedValue([gateItem])
+    renderPage()
+    expect((await screen.findByRole('button', { name: 'Approve' })).className).toContain('min-h-[44px]')
   })
 })

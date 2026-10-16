@@ -19,8 +19,13 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- Phone navigation: a fixed bottom tab bar (Inbox with waiting badge, Board, Chat, More) replaces the floating hamburger below the `md` breakpoint; More opens the existing drawer. The bar respects the home-indicator safe area (`viewport-fit=cover`). Desktop is unchanged.
+
 ### Added
 - **Phone board: swipe and jump between columns.** A scrollable row of column chips (name + task count) sits above the single-column board; tap to jump, and columns holding a task that needs you (needs-me or waiting on a human) are highlighted. Swiping horizontally pages columns (only clearly horizontal, quick swipes — not scrolls or long-press drags), and the selected column is kept in the URL (`?col=`) so Back and reload keep your place. Desktop layout is unchanged.
+- **One-thumb Inbox and task actions on phones.** Inbox rows stack text above full-width, 44px-tall action buttons and the whole row taps through to the task. On task detail, the approval/reply/retry panel is a sticky bottom bar on phones, offset by the `--ate-bottom-bar-height` CSS variable (default `0px`) so a bottom tab bar can reserve room by setting it. Both pages no longer overflow horizontally at 360px. Desktop is unchanged.
 - **`opencode` now gets the task-editor MCP tools.** `signal_complete`, `request_human`, `update_task_notes`, `store_info`, `resolve_comment`, `get_task_transitions` (plus `create_subtask` when subtasks are enabled) are now available, injected via `OPENCODE_CONFIG_CONTENT`'s inline `mcp` config since opencode has no `--mcp-config` flag like `claude`/`qwen_code`. The text `OUTCOME: success`/`OUTCOME: failure` marker still works as a fallback in case the MCP tool call doesn't land (opencode's own MCP tool-naming hasn't been verified live).
 - **`max_turns` now works on `opencode`.** Set via `agent.<name>.steps` in `OPENCODE_CONFIG_CONTENT` (`maxSteps` is deprecated as of opencode-ai v1.19.1), with the runner also counting `step_finish` events as a backstop in case the installed opencode version ignores the config key. As with the other providers, `max_turns: 0` means the default of 50, so existing `opencode` configs are now capped at 50 steps; raise `max_turns` if your runs need more.
 - **`command_denylist`/`command_allowlist` are now enforced for `opencode`** via an `OPENCODE_CONFIG_CONTENT` `permission.bash` map (denylist entries map to `"deny"`; allowlist entries map to `"allow"` plus a catch-all `"*": "deny"` default, with denylist winning on overlap). `opencode run` auto-rejects "ask" permissions headless since the runner deliberately never passes `--auto`, so a `"deny"` entry genuinely blocks the pattern.

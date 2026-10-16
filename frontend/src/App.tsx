@@ -1,6 +1,7 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import NavSidebar from './components/shared/NavSidebar'
+import BottomTabBar from './components/shared/BottomTabBar'
 import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import HomeRoute from './components/shared/HomeRoute'
@@ -88,6 +89,7 @@ export default function App() {
   // Registered once at the app root (not per-page) so "human needed"
   // notifications fire for the whole session regardless of route.
   useHumanNeededNotifications()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
@@ -97,12 +99,13 @@ export default function App() {
             fixed-bottom UI (e.g. the chat composer) below the fold. dvh tracks
             the actually-visible height. */}
         <div className="flex h-dvh overflow-hidden">
-          <NavSidebar />
-          <main className="flex-1 overflow-auto bg-slate-950 pt-12 md:pt-0">
+          <NavSidebar open={menuOpen} onOpenChange={setMenuOpen} />
+          <main className="flex-1 overflow-auto bg-slate-950 pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
             <ProviderPausedBanner />
             <HealthWarningBanner />
             <AppRoutes />
           </main>
+          <BottomTabBar onMore={() => setMenuOpen(true)} />
         </div>
       </ApiTokenGate>
     </BrowserRouter>
