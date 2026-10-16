@@ -273,3 +273,33 @@ func TestSetGitTimeout_IgnoresNonPositive(t *testing.T) {
 // errFakeGit is a small sentinel error used by the fake gitRunner in
 // TestPushBranch_PropagatesGitFailure.
 var errFakeGit = errors.New("git exited 1")
+
+// TestRemoveWorktree_MissingDirIsNoOp verifies RemoveWorktree succeeds
+// (running `git worktree prune` instead of `git worktree remove`) when the
+// worktree directory has already been removed by something else — e.g.
+// ghsync's cleanupMergedBranch running ahead of the workflow engine's
+// OnTerminal hook. Previously this failed with "git worktree remove: ...
+// cannot change to '<path>': No such file or directory", which is the root
+// cause of the "Branch push failed" bug on an already-merged task.
+func TestRemoveWorktree_MissingDirIsNoOp(t *testing.T) {
+	ctx := context.Background()
+	repo := initRepo(t)
+
+	wt, _, _, err := provisionWorktree(ctx, repo, "task-gone-1234", "Some change")
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	// Simulate something else (ghsync) already having torn down the worktree.
+	if err := RemoveWorktree(ctx, repo, wt); err != nil {
+		t.Fatalf("first remove: %v", err)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Fatalf("worktree dir should be gone after first remove")
+	}
+
+	// Calling RemoveWorktree again for the now-missing directory must not
+	// error — it has nothing to do beyond pruning stale administration state.
+	if err := RemoveWorktree(ctx, repo, wt); err != nil {
+		t.Fatalf("RemoveWorktree on an already-missing dir should be a no-op, got: %v", err)
+	}
+}

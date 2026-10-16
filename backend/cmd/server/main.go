@@ -180,9 +180,12 @@ func main() {
 	//
 	// OnTerminal, on reaching a terminal label: for a subtask, merge its branch
 	// back into the parent's branch (see SubtaskCoordinator). For an ordinary
-	// task, push the branch (if the repo has a remote) and tear down its
-	// worktree to reclaim disk — the branch is kept for human review/PR. The
-	// worktree is only removed once the push succeeded, so a retry can push again.
+	// task, push the branch and tear down its worktree to reclaim disk — see
+	// agent.OnTaskTerminal for the full behavior (including skipping the push
+	// once the PR is merged/closed, and tolerating a worktree already removed
+	// by ghsync's post-merge cleanup). Kept as a thin wrapper here — the actual
+	// logic lives in agent.OnTaskTerminal so it can be unit tested; cmd/server
+	// is excluded from coverage (ADR 0035).
 	engine.OnTerminal = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {
@@ -194,28 +197,7 @@ func main() {
 			subtaskCoord.OnChildTerminal(ctx, task, repo.Path)
 			return nil
 		}
-		if task.WorktreePath == "" {
-			return nil
-		}
-		// PushBranch and RemoveWorktree mutate the repo's shared ref store;
-		// serialize against sibling worktrees' concurrent git writes (safety-net
-		// commits, subtask merges, dispatcher provisioning, the sweeper) via the
-		// per-repo lock. Locked only around these two calls — never wrap the
-		// subtask branch above, which takes the parent lock and then the repo
-		// lock itself inside SubtaskCoordinator; wrapping here would invert that
-		// ordering. See worktree.go's repoGitLocks doc comment / issue #344.
-		lock := agent.RepoGitLock(repo.Path)
-		lock.Lock()
-		defer lock.Unlock()
-		if repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
-			if err := agent.PushBranch(ctx, task.WorktreePath, task.Branch); err != nil {
-				return fmt.Errorf("push branch %s: %w", task.Branch, err)
-			}
-		}
-		if err := agent.RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
-			return fmt.Errorf("remove worktree: %w", err)
-		}
-		return nil
+		return agent.OnTaskTerminal(ctx, termQ, task, repo)
 	}
 
 	// Status write-back to the source GitHub issue for imported tasks (opt-in

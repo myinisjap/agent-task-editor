@@ -457,6 +457,39 @@ func TestCleanupMergedBranch_NoWorktreePath(t *testing.T) {
 	}
 }
 
+// TestCleanupMergedBranch_ClearsWorktreePath verifies cleanupMergedBranch
+// clears the task's worktree_path once it has removed the worktree, so a
+// later side effect (the workflow engine's OnTerminal, or a retry of it)
+// never trusts a stale path that no longer points at a real directory. This
+// is the fix for "Branch push failed" on an already-merged task: previously
+// worktree_path was left set after cleanup, and OnTerminal's push attempt
+// from that now-missing directory failed.
+func TestCleanupMergedBranch_ClearsWorktreePath(t *testing.T) {
+	ctx := context.Background()
+	repoPath := initRepo(t)
+	branch := "feature-branch"
+	wtPath := filepath.Join(t.TempDir(), "wt")
+	gitWorktreeAdd(t, repoPath, branch, wtPath)
+
+	s, q, _ := newTestSyncer(t, nil)
+	wfID, label := newTestWorkflow(t, q)
+	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
+	task := newTestTask(t, q, repoID, wfID, label, branch, wtPath, "pr_open", "")
+
+	s.cleanupMergedBranch(ctx, task, repoPath)
+
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree dir to be removed, stat err = %v", err)
+	}
+	updated, err := q.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if updated.WorktreePath != "" {
+		t.Errorf("worktree_path = %q, want cleared after cleanup", updated.WorktreePath)
+	}
+}
+
 func TestSweep_SkipsNonGitHubRepo(t *testing.T) {
 	ctx := context.Background()
 	repoPath := initRepo(t)
