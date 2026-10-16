@@ -1,3 +1,4 @@
+import InstallAppBar from '../components/shared/InstallAppBar'
 import TabbedPage from '../components/shared/TabbedPage'
 import { useHealthStore, worstHealth } from '../stores/health'
 
@@ -16,5 +17,12 @@ export default function SettingsPage() {
         : null,
     },
   ]
-  return <TabbedPage testId="settings-page" tabs={tabs} />
+  return (
+    <div className="flex flex-col h-full">
+      <InstallAppBar />
+      <div className="flex-1 min-h-0">
+        <TabbedPage testId="settings-page" tabs={tabs} />
+      </div>
+    </div>
+  )
 }
