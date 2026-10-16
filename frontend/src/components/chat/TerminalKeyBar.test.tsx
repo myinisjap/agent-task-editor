@@ -38,3 +38,21 @@ test('buttons suppress the pointerdown default so focus stays on the terminal', 
   fireEvent(tab, ev)
   expect(ev.defaultPrevented).toBe(true)
 })
+
+test('quick answers write the character plus Enter; Enter sends just CR', () => {
+  const { onKey } = setup()
+  fireEvent.click(screen.getByRole('button', { name: 'Answer y' }))
+  expect(onKey).toHaveBeenLastCalledWith('y\r')
+  fireEvent.click(screen.getByRole('button', { name: 'Answer 3' }))
+  expect(onKey).toHaveBeenLastCalledWith('3\r')
+  fireEvent.click(screen.getByRole('button', { name: 'Answer Enter' }))
+  expect(onKey).toHaveBeenLastCalledWith('\r')
+})
+
+test('quick answers keep focus and reflect prompt state', () => {
+  render(<TerminalKeyBar onKey={vi.fn()} onToggleCtrl={vi.fn()} ctrlArmed={false} promptLike />)
+  expect(screen.getByTestId('quick-answers')).toHaveAttribute('data-prompt', 'true')
+  const ev = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+  fireEvent(screen.getByRole('button', { name: 'Answer n' }), ev)
+  expect(ev.defaultPrevented).toBe(true)
+})

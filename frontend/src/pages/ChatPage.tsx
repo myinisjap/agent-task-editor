@@ -12,6 +12,7 @@ import TerminalKeyBar from '../components/chat/TerminalKeyBar'
 import { toControlChar } from '../lib/termKeys'
 import MessageComposer from '../components/chat/MessageComposer'
 import { isTap, pixelsToLines } from '../lib/chatInput'
+import { isNarrowScreen, loadFontSize, saveFontSize, stepFont, MIN_FONT, MAX_FONT, looksLikePrompt } from '../lib/termFont'
 import { useKeyboardInset } from '../lib/useKeyboardInset'
 
 export default function ChatPage() {
@@ -26,6 +27,13 @@ export default function ChatPage() {
   // Mobile: the on-screen keyboard overlays the bottom of the layout viewport,
   // so pad the page by its height to keep the terminal key bar above it.
   const keyboardInset = useKeyboardInset()
+  // Terminal text size, remembered per device class (narrow vs wide).
+  const [fontSize, setFontSize] = useState(() => loadFontSize(isNarrowScreen()))
+  function changeFont(dir: 1 | -1) {
+    const next = stepFont(fontSize, dir)
+    saveFontSize(isNarrowScreen(), next)
+    setFontSize(next)
+  }
 
   // Initial load: sessions + repos (repos needed for the new-session picker)
   // + provider configs (needed to create a session and to resolve each
@@ -154,11 +162,33 @@ export default function ChatPage() {
               >
                 ‹ Chats
               </button>
-              {providerConfigs.find((p) => p.id === active.provider_config_id)?.provider ?? ''}
-              {repos.find((r) => r.id === active.repo_id) && ` · ${repos.find((r) => r.id === active.repo_id)!.name}`}
+              <span className="flex-1 min-w-0 truncate">
+                {providerConfigs.find((p) => p.id === active.provider_config_id)?.provider ?? ''}
+                {repos.find((r) => r.id === active.repo_id) && ` · ${repos.find((r) => r.id === active.repo_id)!.name}`}
+              </span>
+              <span className="ml-auto flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => changeFont(-1)}
+                  disabled={fontSize <= MIN_FONT}
+                  aria-label="Smaller text"
+                  className="px-2 py-0.5 rounded border border-slate-700 text-slate-300 disabled:opacity-40"
+                >
+                  A−
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeFont(1)}
+                  disabled={fontSize >= MAX_FONT}
+                  aria-label="Larger text"
+                  className="px-2 py-0.5 rounded border border-slate-700 text-slate-300 disabled:opacity-40"
+                >
+                  A+
+                </button>
+              </span>
             </div>
             {/* keyed by session id so switching sessions remounts a fresh terminal */}
-            <TerminalView key={active.id} sessionId={active.id} />
+            <TerminalView key={active.id} sessionId={active.id} fontSize={fontSize} />
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">
@@ -180,7 +210,7 @@ export default function ChatPage() {
 // a dedicated WebSocket. The backend keeps the process alive across disconnects
 // and replays scrollback on reconnect, so remounting (session switch, refresh)
 // reattaches to the same live CLI.
-function TerminalView({ sessionId }: { sessionId: string }) {
+function TerminalView({ sessionId, fontSize }: { sessionId: string; fontSize: number }) {
   const containerRef = useRef<HTMLDivElement>(null)
   // Set inside the effect; the key bar reaches the live terminal/socket through
   // these rather than forcing a remount when the connection is replaced.
@@ -195,16 +225,18 @@ function TerminalView({ sessionId }: { sessionId: string }) {
   const directRef = useRef(false)
   const [showJump, setShowJump] = useState(false)
   const scrollToBottomRef = useRef<() => void>(() => {})
+  const applyFontRef = useRef<(n: number) => void>(() => {})
+  const fontSizeRef = useRef(fontSize)
+  const [promptLike, setPromptLike] = useState(false)
 
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
     // Smaller font on phones so a usable number of columns fits the width.
-    const isNarrow = window.innerWidth < 640
     const term = new Terminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-      fontSize: isNarrow ? 11 : 13,
+      fontSize: fontSizeRef.current,
       theme: { background: '#0f172a' }, // slate-900, matches the app chrome
       cursorBlink: true,
     })
@@ -236,6 +268,11 @@ function TerminalView({ sessionId }: { sessionId: string }) {
         fit.fit()
         sendResize()
       } catch { /* container not laid out yet; a later call will succeed */ }
+    }
+
+    applyFontRef.current = (n: number) => {
+      term.options.fontSize = n
+      refit()
     }
 
     // Initial fit after layout settles. On mobile the container often measures
@@ -380,7 +417,15 @@ function TerminalView({ sessionId }: { sessionId: string }) {
       setShowJump(b.viewportY < b.baseY)
     }
     const d1 = term.onScroll(updateJump)
-    const d2 = term.onWriteParsed(updateJump)
+    const updatePrompt = () => {
+      const b = term.buffer.active
+      for (let i = b.baseY + term.rows - 1; i >= b.baseY; i--) {
+        const text = b.getLine(i)?.translateToString(true) ?? ''
+        if (text.trim()) { setPromptLike(looksLikePrompt(text)); return }
+      }
+      setPromptLike(false)
+    }
+    const d2 = term.onWriteParsed(() => { updateJump(); updatePrompt() })
     scrollToBottomRef.current = () => { term.scrollToBottom(); setShowJump(false) }
 
     // Mobile: the on-screen keyboard shrinks the visual viewport without changing
@@ -404,11 +449,17 @@ function TerminalView({ sessionId }: { sessionId: string }) {
       d1.dispose()
       d2.dispose()
       scrollToBottomRef.current = () => {}
+      applyFontRef.current = () => {}
       vv?.removeEventListener('resize', refit)
       ws?.close()
       term.dispose()
     }
   }, [sessionId])
+
+  useEffect(() => {
+    fontSizeRef.current = fontSize
+    applyFontRef.current(fontSize)
+  }, [fontSize])
 
   // Key-bar press: write the sequence, then hand focus back to xterm so the
   // on-screen keyboard stays up.
@@ -451,7 +502,7 @@ function TerminalView({ sessionId }: { sessionId: string }) {
         directMode={directMode}
         onToggleDirect={toggleDirect}
       />
-      <TerminalKeyBar onKey={pressKey} onToggleCtrl={toggleCtrl} ctrlArmed={ctrlArmed} />
+      <TerminalKeyBar onKey={pressKey} onToggleCtrl={toggleCtrl} ctrlArmed={ctrlArmed} promptLike={promptLike} />
     </>
   )
 }
