@@ -27,6 +27,15 @@ package providers
 // minimal|low|medium|high. Since our own enum has no "off"/"minimal" tier,
 // xhigh/max (which codex has no equivalent of) clamp down to "high" rather
 // than being passed through unrecognized.
+//
+// opencode: `opencode run --variant <value>` is the provider-specific
+// reasoning-effort/variant selector. Unlike claude/codex there is no fixed
+// vendor enum to validate or clamp against — accepted values are
+// provider/model-specific (e.g. "minimal", "high", "max" depending on what
+// the underlying model defines), opencode does not validate ours CLI-side,
+// so an unsupported value may be silently ignored or rejected further
+// upstream by the model provider. opencodeVariant therefore passes our own
+// enum value straight through rather than guessing at a clamp.
 
 // claudeEffortLevels is the exact set of values accepted by claude's
 // --effort flag (verified against `claude --help`, v2.1.223).
@@ -68,4 +77,36 @@ func codexReasoningEffort(level string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// opencodeVariantLevels is the set of our own effort enum values that are
+// passed through to opencode run's --variant flag unchanged. There is no
+// fixed vendor enum here (see the package doc comment above): --variant is
+// forwarded to whichever model provider opencode is configured against, and
+// the set of variants that model actually understands isn't something this
+// code can validate. Listing the five levels explicitly (mirroring
+// claudeEffortLevels) still keeps an out-of-enum value from reaching the CLI.
+var opencodeVariantLevels = map[string]bool{
+	"low":    true,
+	"medium": true,
+	"high":   true,
+	"xhigh":  true,
+	"max":    true,
+}
+
+// opencodeVariant maps our stored effort value to opencode run's --variant
+// argument. ok is false when level is "" (unset — omit the flag entirely)
+// or not a recognized value (defensive; validated at the API layer, so this
+// should not normally happen). Unlike codexReasoningEffort, no clamping is
+// applied: the value is passed through unchanged for every recognized
+// level, since --variant's accepted values are model-specific and there is
+// no vendor enum of our own to clamp against.
+func opencodeVariant(level string) (string, bool) {
+	if level == "" {
+		return "", false
+	}
+	if !opencodeVariantLevels[level] {
+		return "", false
+	}
+	return level, true
 }

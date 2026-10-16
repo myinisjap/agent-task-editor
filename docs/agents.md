@@ -30,7 +30,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition). |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD (cumulative across all runs of a task, not per run), checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. On `claude`/`qwen_code`, also enforced mid-run as a kill switch that cancels an in-flight run over budget. See [Cost Budgets](#cost-budgets) below. |
-| `effort` | Optional reasoning effort level: `""` (default/unset), `low`, `medium`, `high`, `xhigh`, or `max`. **`claude` (full) and `codex_cli` (partial, clamped)** — see [Effort](#effort) below. Ignored by `qwen_code` and `opencode`. |
+| `effort` | Optional reasoning effort level: `""` (default/unset), `low`, `medium`, `high`, `xhigh`, or `max`. **`claude` (full), `codex_cli` (partial, clamped), and `opencode` (partial, pass-through via `--variant`)** — see [Effort](#effort) below. Ignored by `qwen_code`. |
 
 ## Provider Configs
 
@@ -94,11 +94,11 @@ _Generated from `frontend/src/lib/providerCapabilities.ts` by `npm run gen:capab
 | Command denylist | ✅ | ⚠️ Enforced via qwen's --exclude-tools flag (folds into its permissionsDeny policy), which is honored even under yolo mode. Per-pattern Bash(pattern) granularity mirrors --allowed-tools but has not been confirmed live for the deny path; if qwen only accepts bare tool names here, denial may degrade to blanket Bash exclusion. | ❌ Not enforced for the codex_cli provider — Codex has its own native sandbox/approval-mode system instead (see docs/providers/codex_cli.md). | ❌ Not enforced for the opencode provider. |
 | Cost & tokens | ✅ Authoritative cost and token counts. | ⚠️ Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire. | ⚠️ Estimated, not authoritative like claude/opencode: tokens from turn.completed are priced via the pricing table (DB-backed, with a hardcoded fallback), with cached input tokens at the cached rate. With no model set, the model codex actually used is read from its session file. The pre-dispatch max_cost_usd guard works. Runs on an unpriced model are flagged "cost unknown" instead of $0. | ✅ Authoritative cost and token counts, summed across every step_finish event in the run (cost + tokens.input/output, plus cache read/write into input tokens) — not estimated via a pricing table. |
 | Mid-run cost kill switch | ✅ Mid-run kill switch: projects cost from incremental assistant-message token usage via the pricing table and cancels the run if it crosses the effective budget, escalating to waiting_human. The projection is an estimate (not the CLI's own authoritative total_cost_usd, which is only known after the run ends) — under a subscription plan with $0 real marginal cost, this estimate can still be nonzero and trigger a kill. | ⚠️ Same mid-run kill switch mechanism as claude (projects cost from incremental token usage). Only effective when the configured model is in the pricing table — otherwise the watchdog is a silent no-op and only the pre-dispatch budget guard applies. | ❌ Not implemented — usage is only known at end-of-run for this provider, so mid-run cost can't be projected. Only the pre-dispatch budget guard applies. | ❌ Usage is now recorded at end-of-run (see costTracking), but no mid-run kill switch is wired up for this provider yet — each step_finish only carries that step's own cost/token delta, summed into a total only once the run ends, not a continuously-updated running total a watchdog could project from mid-run. Only the pre-dispatch budget guard applies. |
-| Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ✅ Passed to codex exec as --image (from the worktree copies under .task_attachments/), so the model sees them visually. Also listed in the prompt as files. | ❌ opencode run has an -f/--file flag, but attachments are not wired through to it. |
+| Image attachments | ❌ The claude CLI has no --image flag (verified against v2.1.220), so this provider does not attempt to pass one. The dispatcher still copies attachments into the worktree under .task_attachments/, listed in the prompt, so agents can read them as files via the Read tool. | ❌ No image flag on the qwen CLI. | ✅ Passed to codex exec as --image (from the worktree copies under .task_attachments/), so the model sees them visually. Also listed in the prompt as files. | ✅ Passed to opencode run as -f/--file (from the worktree copies under .task_attachments/), so the model receives them as message attachments. Also listed in the prompt as files. |
 | `max_turns` | ✅ Enforced via --max-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying. | ✅ Enforced by the runner (codex exec has no turn-cap flag): each completed tool step (command, file edit, MCP call, web search) counts as a turn, and passing the cap stops the run and escalates it to waiting_human instead of retrying. | ❌ Not enforced — the opencode CLI has no turn-cap flag. |
 | Session resume | ✅ session_id + --resume. | ✅ session_id + --resume. | ✅ thread_id + codex exec resume. | ✅ sessionID + --session. |
 | Subtasks (`create_subtask`) | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ✅ create_subtask MCP tool available. | ❌ No create_subtask tool — not available on this provider. |
-| Effort (reasoning level) | ✅ Passed as --effort. Supports low/medium/high/xhigh/max. Not all models support effort levels, and higher levels may be restricted by your Anthropic organization — either case degrades silently (the CLI only warns), so verify against the agent run logs. | ❌ No reasoning-effort flag on the qwen CLI — the field is ignored for this provider. | ⚠️ Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high. | ❌ No reasoning-effort flag on the opencode CLI — the field is ignored for this provider. |
+| Effort (reasoning level) | ✅ Passed as --effort. Supports low/medium/high/xhigh/max. Not all models support effort levels, and higher levels may be restricted by your Anthropic organization — either case degrades silently (the CLI only warns), so verify against the agent run logs. | ❌ No reasoning-effort flag on the qwen CLI — the field is ignored for this provider. | ⚠️ Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high. | ⚠️ Passed as opencode run --variant. The value is forwarded to the model provider as-is (low/medium/high/xhigh/max); a model that doesn't define that variant may ignore or reject it. |
 | Permission mode | ✅ Passed as --permission-mode. Leave as Default (unset) to keep today's behavior (no flag — the CLI's own "auto" classifier). command_denylist is still enforced even under bypassPermissions (verified empirically). | ❌ qwen_code always runs in --approval-mode yolo (full auto-approve) — always full bypass, not configurable per agent config. | ❌ codex_cli always runs with --dangerously-bypass-approvals-and-sandbox — always full bypass, not configurable per agent config. | ❌ No permission-mode flag on the opencode CLI — the field is ignored for this provider. |
 
 <!-- END capability-matrix (generated) -->
@@ -573,9 +573,21 @@ Matrix](#capability-matrix) above):
   equivalent tier for) are clamped down to `high` rather than passed
   through unrecognized.
 
-- **`qwen_code`, `opencode` — not supported.** No
-  reasoning-effort flag or config knob on any of these; the field is
-  simply ignored.
+- **`qwen_code` — not supported.** No reasoning-effort flag or config knob
+  on the qwen CLI; the field is simply ignored.
+
+- **`opencode` — partial support (pass-through).** Mapped to `opencode run
+  --variant <value>`, passed through unchanged for `low|medium|high|xhigh|max`
+  (no clamping, unlike `codex_cli`) and omitted entirely when unset. Unlike
+  `claude`/`codex_cli`, there is no fixed vendor enum to validate or clamp
+  against: `--variant` is forwarded by opencode straight to whichever model
+  provider it's configured against, and the variants an individual model
+  actually understands are model-specific. An accepted-by-us value can
+  still be a **silent no-op or an outright rejection** further upstream,
+  entirely outside this codebase's control. The runner logs `requested
+  effort=<value> (--variant)` as a system log line for every run where one
+  was set, so you can cross-reference it against the run's actual behavior.
+  See [providers/opencode.md § Effort](providers/opencode.md#effort).
 
 **Cost interaction.** Raising effort meaningfully increases token spend
 (more reasoning tokens per turn) — see [Cost & Usage
