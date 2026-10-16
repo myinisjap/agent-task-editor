@@ -2,11 +2,17 @@
   "name": "Agent Task Editor",
   "short_name": "AgentEditor",
   "description": "Kanban-style task board for orchestrating coding agents",
-  "start_url": "./board",
+  "id": "./",
+  "start_url": "./inbox",
   "scope": "./",
   "display": "standalone",
   "background_color": "#020617",
   "theme_color": "#020617",
+  "shortcuts": [
+    { "name": "Inbox", "url": "./inbox" },
+    { "name": "Board", "url": "./board" },
+    { "name": "Chat", "url": "./chat" }
+  ],
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
