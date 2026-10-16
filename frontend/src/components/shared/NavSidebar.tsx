@@ -83,8 +83,15 @@ const NOTIFICATIONS_UNAVAILABLE: Record<NotificationsUnavailableReason, { label:
   },
 }
 
-export default function NavSidebar() {
-  const [isOpen, setIsOpen] = useState(false)
+interface NavSidebarProps {
+  /** Mobile drawer state, owned by App so the bottom tab bar's More tab can open it. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}
+
+export default function NavSidebar({ open = false, onOpenChange }: NavSidebarProps = {}) {
+  const isOpen = open
+  const setIsOpen = (v: boolean) => onOpenChange?.(v)
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggle)
   const notificationsEnabled = useNotificationsStore((s) => s.enabled)
@@ -118,15 +125,6 @@ export default function NavSidebar() {
 
   return (
     <>
-      {/* Hamburger button — only visible on mobile, fixed top-left */}
-      <button
-        onClick={() => setIsOpen(true)}
-        aria-label="Open menu"
-        className="fixed top-3 left-3 z-50 md:hidden p-2 rounded bg-slate-800 text-slate-200 shadow-lg"
-      >
-        ☰
-      </button>
-
       {/* Backdrop — only on mobile when sidebar is open */}
       {isOpen && (
         <div

@@ -74,20 +74,28 @@ describe('NavSidebar', () => {
   })
 
   it('closes the mobile drawer when a nav link is clicked', () => {
+    const onOpenChange = vi.fn()
+    render(
+      <MemoryRouter initialEntries={['/board']}>
+        <NavSidebar open onOpenChange={onOpenChange} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Close menu' }).closest('aside')?.className)
+      .toEqual(expect.stringContaining('translate-x-0'))
+
+    fireEvent.click(screen.getByRole('link', { name: 'Settings' }))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('is off-screen on mobile by default and has no floating hamburger', () => {
     render(
       <MemoryRouter initialEntries={['/board']}>
         <NavSidebar />
       </MemoryRouter>,
     )
-
-    // Open the mobile drawer.
-    fireEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(screen.queryByRole('button', { name: 'Open menu' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Close menu' }).closest('aside')?.className)
-      .toEqual(expect.stringContaining('translate-x-0'))
-
-    fireEvent.click(screen.getByRole('link', { name: 'Settings' }))
-
-    expect(screen.queryByRole('button', { name: 'Close menu' })?.closest('aside')?.className)
       .toEqual(expect.stringContaining('-translate-x-full'))
   })
 
