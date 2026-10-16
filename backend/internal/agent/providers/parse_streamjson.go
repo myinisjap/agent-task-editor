@@ -48,13 +48,24 @@ type streamEvent struct {
 	// over text-sniffing when present since it's authoritative and immune
 	// to wording changes.
 	APIErrorStatus int
-	// Model is the model ID carried on an "assistant" message's
-	// message.model field (empty otherwise, and empty if the event itself
-	// carries none). The result event carries no model field, so this is the
-	// only structural source of the model actually used — needed so qwen's
-	// cost estimation (qwen.go) can still price a run when
-	// AgentConfig.Model was left unset (CLI default model). See
-	// docs/providers/qwen_code.md.
+	// MessageID is the message.id carried on an "assistant" event (empty
+	// otherwise, and empty if the assistant message itself has none).
+	// Claude Code can split one API message into several "assistant" events
+	// sharing the same message.id, each repeating that message's *full*
+	// usage — callers accumulating Usage across assistant events must count
+	// each distinct MessageID once, not once per event. See
+	// assistantMessageID's doc comment.
+	MessageID string
+	// Model is the model actually used, from whichever structural source a
+	// given event type carries it: an "assistant" message's message.model
+	// field (qwen's only source, since its result event carries no model
+	// field — see extractAssistantModel), or the initial "system"/"init"
+	// event's own model field (claude and qwen both emit this). Empty for
+	// every other message type, and empty if the event itself carries none.
+	// Used as a pricing fallback when the run's AgentConfig.Model is empty
+	// (the CLI picked its own default) — both the mid-run cost watchdog
+	// (claude.go/qwen.go's setModelIfEmpty) and qwen's final cost estimate
+	// (qwen.go's modelUsed) consume this.
 	Model string
 	// Parsed is true when the line was valid stream-json (any event type,
 	// including an unrecognized "type"). False only when json.Unmarshal
@@ -110,10 +121,14 @@ func classifyStreamJSON(line string) streamEvent {
 			// one reports only its own turn's usage, not a running total.
 			Usage: extractAssistantUsage(raw),
 			// message.model names the model that actually produced this
-			// turn — the only structural source of the model used (the
+			// turn — qwen's only structural source of the model used (its
 			// result event carries no such field). See streamEvent.Model.
-			Model:  extractAssistantModel(raw),
-			Parsed: true,
+			Model: extractAssistantModel(raw),
+			// See MessageID's doc comment — lets the caller dedupe when
+			// Claude Code splits one API message into several "assistant"
+			// events sharing the same message.id.
+			MessageID: assistantMessageID(raw),
+			Parsed:    true,
 		}
 	case "tool_use":
 		return streamEvent{Entry: agent.LogEntry{Type: agent.LogToolCall, Content: line, At: time.Now()}, SessionID: sessionID, Parsed: true}
@@ -161,6 +176,18 @@ func classifyStreamJSON(line string) streamEvent {
 			APIErrorStatus: apiErrorStatus,
 			Parsed:         true,
 		}
+	case "system":
+		// The initial {"type":"system","subtype":"init",...,"model":"..."}
+		// event reports the model the CLI actually resolved — the run's own
+		// AgentConfig.Model when one was set, or the CLI's own default
+		// otherwise. Used as a watchdog-pricing fallback (see claude.go/
+		// qwen.go) so an unset model doesn't leave the mid-run cost
+		// watchdog permanently inert for the whole run.
+		var model string
+		if v, ok := raw["model"]; ok {
+			_ = json.Unmarshal(v, &model)
+		}
+		return streamEvent{Entry: agent.LogEntry{Type: agent.LogSystem, Content: line, At: time.Now()}, SessionID: sessionID, Model: model, Parsed: true}
 	default:
 		return streamEvent{Entry: agent.LogEntry{Type: agent.LogStdout, Content: line, At: time.Now()}, SessionID: sessionID, Parsed: true}
 	}
@@ -214,18 +241,19 @@ func classifyResultMessage(raw map[string]json.RawMessage) agent.Classification 
 // extractResultUsage parses the usage/total_cost_usd/num_turns fields from a
 // claude/qwen CLI stream-json "result" message. num_turns is the CLI's own
 // count of internal agent turns the run consumed, compared against the
-// configured max_turns cap. CacheReadInputTokens is only ever populated by
-// qwen (verified against @qwen-code/qwen-code 0.25.2's computeUsageFromMetrics,
+// configured max_turns cap. cache_creation_input_tokens is only ever
+// populated by claude; cache_read_input_tokens is populated by both (verified
+// for qwen against @qwen-code/qwen-code 0.25.2's computeUsageFromMetrics,
 // which sets cache_read_input_tokens on the result usage block from
-// uiTelemetryService's cached-token stat) — claude's result usage carries no
-// such field, so this is always 0 there. Returns nil if none of the fields
+// uiTelemetryService's cached-token stat). Returns nil if none of the fields
 // are present.
 func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 	var parsed struct {
 		Usage *struct {
-			InputTokens          int64 `json:"input_tokens"`
-			OutputTokens         int64 `json:"output_tokens"`
-			CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
+			InputTokens              int64 `json:"input_tokens"`
+			OutputTokens             int64 `json:"output_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 		TotalCostUSD *float64 `json:"total_cost_usd"`
 		NumTurns     *int64   `json:"num_turns"`
@@ -251,6 +279,23 @@ func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 	if parsed.Usage != nil {
 		u.InputTokens = parsed.Usage.InputTokens
 		u.OutputTokens = parsed.Usage.OutputTokens
+		// CacheCreationInputTokens/CacheReadInputTokens are kept separate
+		// from InputTokens (not folded in) — see runUsage's field docs and
+		// applyUsage, which adds them back in for the persisted/displayed
+		// token count. CostUSD above (from total_cost_usd) is what's
+		// actually billed, so this split has no effect on claude's cost — it
+		// only fixes the recorded token breakdown (see #251 §5 / the test
+		// this used to pin as a gap).
+		u.CacheCreationInputTokens = parsed.Usage.CacheCreationInputTokens
+		u.CacheReadInputTokens = parsed.Usage.CacheReadInputTokens
+		// CachedInputTokens additionally mirrors CacheReadInputTokens here
+		// (rather than being left 0) because qwen's result event — unlike
+		// claude's, whose authoritative total_cost_usd makes this value
+		// cost-inert — never reports total_cost_usd at all: qwen.go's
+		// applyUsageWithCost prices this usage from tokens via
+		// estimateCachedCostUSD, which reads CachedInputTokens (the
+		// subset-of-input shape codex_cli also uses), not the additive
+		// CacheReadInputTokens field above.
 		u.CachedInputTokens = parsed.Usage.CacheReadInputTokens
 	}
 	if parsed.TotalCostUSD != nil {
@@ -273,11 +318,17 @@ func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 // watchdog derives cost from tokens via the pricing table instead.
 //
 // Cache tokens (cache_creation_input_tokens/cache_read_input_tokens) are
-// folded into InputTokens for cost-projection purposes: the pricing table
-// (pricing.go) has no separate cache read/write rate today, so this is an
-// approximation — cache reads in particular are typically priced well below
-// full input-token rate, so a watchdog projection that includes them at full
-// input price is conservative (overestimates cost, never under-warns).
+// kept in their own runUsage fields rather than folded into InputTokens:
+// cache reads are priced at roughly 10% of the full input rate and cache
+// writes at roughly 125% (see pricing.go's CacheReadInputPer1M/
+// CacheWriteInputPer1M), and long agent runs are mostly cache reads once the
+// system prompt/tool definitions/conversation history are cached — pricing
+// them all at the full input rate (the old behavior) over-projected cost by
+// several times on a typical run, causing the mid-run cost watchdog
+// (cost_watchdog.go) to kill runs well before the real budget. The caller
+// (claude.go/qwen.go) sums these across every assistant message, same as
+// InputTokens/OutputTokens, and passes them to the watchdog separately so
+// each token type is priced at its own rate.
 //
 // Returns nil if the message carries no usage block at all (e.g. a
 // tool_use-only continuation in some CLI versions).
@@ -294,8 +345,10 @@ func extractAssistantUsage(raw map[string]json.RawMessage) *runUsage {
 		return nil
 	}
 	return &runUsage{
-		InputTokens:  msg.Usage.InputTokens + msg.Usage.CacheCreationInputTokens + msg.Usage.CacheReadInputTokens,
-		OutputTokens: msg.Usage.OutputTokens,
+		InputTokens:              msg.Usage.InputTokens,
+		OutputTokens:             msg.Usage.OutputTokens,
+		CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     msg.Usage.CacheReadInputTokens,
 	}
 }
 
@@ -311,6 +364,25 @@ func extractAssistantModel(raw map[string]json.RawMessage) string {
 		return ""
 	}
 	return msg.Model
+}
+
+// assistantMessageID extracts the message.id field from an "assistant"
+// stream-json envelope, or "" if absent. Claude Code's stream-json can split
+// one API message into several "assistant" events that all share the same
+// message.id — each one carrying that message's *full* usage block, not a
+// delta — e.g. one event per emitted content block when the CLI is run with
+// extra verbosity. Summing every such event's usage would double (or
+// n-tuple) count that turn's tokens. Callers that accumulate usage across
+// assistant events (claude.go/qwen.go) use this to count each distinct
+// message.id's usage exactly once — see dedupe handling at the call site.
+func assistantMessageID(raw map[string]json.RawMessage) string {
+	var msg struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw["message"], &msg); err != nil {
+		return ""
+	}
+	return msg.ID
 }
 
 // assistantHasToolUse reports whether an assistant stream-json message carries

@@ -4251,7 +4251,7 @@ export interface paths {
         };
         /**
          * List user-editable model pricing rows
-         * @description Returns every row of the user-editable USD-per-1M-token pricing table used to estimate codex_cli run costs, ordered by model. Models with no row here fall back to an internal, approximate hardcoded table. See ModelPricing and AgentRun.cost_unknown.
+         * @description Returns every row of the user-editable USD-per-1M-token pricing table used to estimate codex_cli run costs and drive the claude/qwen_code mid-run cost watchdog, ordered by model. Models with no row here fall back to an internal, approximate hardcoded table. See ModelPricing and AgentRun.cost_unknown.
          */
         get: {
             parameters: {
@@ -4302,6 +4302,11 @@ export interface paths {
                          * @description Optional; null or omitted bills cached input tokens at input_per_1m. Must be >= 0.
                          */
                         cached_input_per_1m?: number | null;
+                        /**
+                         * Format: double
+                         * @description Optional; null or omitted bills cache-write tokens (claude/qwen_code's cache_creation_input_tokens) at input_per_1m. Must be >= 0.
+                         */
+                        cache_write_input_per_1m?: number | null;
                     }[];
                 };
             };
@@ -4933,7 +4938,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        /** @description One user-editable USD-per-1M-token pricing row (see 042_model_pricing and internal/agent/providers/pricing.go's DBPriceResolver), used to estimate codex_cli run costs. A model with no row here falls back to an internal, approximate hardcoded table; a model matching neither has its cost flagged unknown (AgentRun.cost_unknown) instead of being silently reported as free. Read fresh on every run completion, so an edit here takes effect on the very next run without a restart. */
+        /** @description One user-editable USD-per-1M-token pricing row (see 042_model_pricing and internal/agent/providers/pricing.go's DBPriceResolver), used to estimate codex_cli run costs and to drive the claude/qwen_code mid-run cost watchdog. A model with no row here falls back to an internal, approximate hardcoded table; a model matching neither has its cost flagged unknown (AgentRun.cost_unknown) instead of being silently reported as free. Read fresh on every run completion, so an edit here takes effect on the very next run without a restart. */
         ModelPricing: {
             /** @description Model ID, matched exactly first, then by longest-prefix (e.g. a row for "claude-sonnet-4-5" also prices "claude-sonnet-4-5-20260101"). */
             model: string;
@@ -4949,9 +4954,14 @@ export interface components {
             output_per_1m: number;
             /**
              * Format: double
-             * @description USD price per 1M cached (prompt-cache hit) input tokens, used for codex_cli runs, which report cached tokens as part of their input tokens. null bills cached tokens at input_per_1m. Must be >= 0.
+             * @description USD price per 1M cached (prompt-cache hit) input tokens. Used for codex_cli runs, which report cached tokens as part of their input tokens, and for claude/qwen_code's cache_read_input_tokens (reported as a separate counter, additional to input tokens). null bills cached tokens at input_per_1m. Must be >= 0.
              */
             cached_input_per_1m: number | null;
+            /**
+             * Format: double
+             * @description USD price per 1M cache-write (prompt-cache creation) input tokens — claude/qwen_code's cache_creation_input_tokens, billed at a premium over the input rate for writing a prompt prefix into the cache for the first time. Only meaningful for claude/qwen_code; codex_cli reports no cache-write counter. null bills cache-write tokens at input_per_1m. Must be >= 0.
+             */
+            cache_write_input_per_1m: number | null;
             /** Format: date-time */
             updated_at: string;
         };
