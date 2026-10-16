@@ -144,7 +144,7 @@ describe('NavSidebar', () => {
       expect(screen.getByText('Notifications blocked')).toBeInTheDocument()
     })
 
-    it('hides the toggle entirely when the Notifications API is unsupported', () => {
+    it('explains instead of offering the toggle when the Notifications API is unsupported', () => {
       vi.unstubAllGlobals()
       delete (window as unknown as Record<string, unknown>).Notification
 
@@ -156,6 +156,22 @@ describe('NavSidebar', () => {
 
       expect(screen.queryByRole('button', { name: 'Enable notifications' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Disable notifications' })).not.toBeInTheDocument()
+      expect(screen.getByText('Notifications unsupported')).toBeInTheDocument()
+    })
+
+    it('says HTTPS is needed when the page is not a secure context', () => {
+      Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false })
+      try {
+        render(
+          <MemoryRouter initialEntries={['/settings/health']}>
+            <NavSidebar />
+          </MemoryRouter>,
+        )
+        expect(screen.queryByRole('button', { name: 'Enable notifications' })).not.toBeInTheDocument()
+        expect(screen.getByText('Notifications need HTTPS')).toBeInTheDocument()
+      } finally {
+        delete (window as unknown as Record<string, unknown>).isSecureContext
+      }
     })
   })
 })

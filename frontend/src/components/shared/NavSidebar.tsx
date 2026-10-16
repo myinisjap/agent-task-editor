@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
-import { useNotificationsStore, notificationsSupported } from '../../stores/notifications'
+import { useNotificationsStore, notificationsUnavailableReason, type NotificationsUnavailableReason } from '../../stores/notifications'
 import { useWsStatus } from '../../lib/useWsStatus'
 import { useHealthStore, worstHealth } from '../../stores/health'
 import type { WSStatus } from '../../api/ws'
@@ -68,6 +68,21 @@ function loadOpenGroups(activeKey: string | null): Record<string, boolean> {
   return initial
 }
 
+const NOTIFICATIONS_UNAVAILABLE: Record<NotificationsUnavailableReason, { label: string; title: string }> = {
+  insecure: {
+    label: 'Notifications need HTTPS',
+    title: 'Browsers only allow notifications on pages served over HTTPS (or localhost). Open the app through an HTTPS address to enable them.',
+  },
+  'ios-install': {
+    label: 'Add to Home Screen for notifications',
+    title: 'On iPhone and iPad, notifications only work once the app is added to the Home Screen (Share → Add to Home Screen) and opened from there.',
+  },
+  unsupported: {
+    label: 'Notifications unsupported',
+    title: 'This browser does not support notifications.',
+  },
+}
+
 export default function NavSidebar() {
   const [isOpen, setIsOpen] = useState(false)
   const theme = useThemeStore((s) => s.theme)
@@ -75,6 +90,7 @@ export default function NavSidebar() {
   const notificationsEnabled = useNotificationsStore((s) => s.enabled)
   const notificationsPermission = useNotificationsStore((s) => s.permission)
   const toggleNotifications = useNotificationsStore((s) => s.toggle)
+  const notificationsUnavailable = notificationsUnavailableReason()
   const wsStatus = useWsStatus()
   useNeedsMeSync()
   useInboxSync()
@@ -232,7 +248,15 @@ export default function NavSidebar() {
           <span>{WS_STATUS_CONFIG[wsStatus].label}</span>
         </div>
 
-        {notificationsSupported() && (
+        {notificationsUnavailable ? (
+          <div
+            title={NOTIFICATIONS_UNAVAILABLE[notificationsUnavailable].title}
+            className="mt-auto flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 shrink-0"
+          >
+            <span aria-hidden="true">🔕</span>
+            <span>{NOTIFICATIONS_UNAVAILABLE[notificationsUnavailable].label}</span>
+          </div>
+        ) : (
           <button
             onClick={toggleNotifications}
             disabled={notificationsPermission === 'denied'}
@@ -261,7 +285,7 @@ export default function NavSidebar() {
           onClick={toggleTheme}
           aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          className={`${notificationsSupported() ? '' : 'mt-auto'} flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0`}
+          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0"
         >
           <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
           <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>

@@ -57,7 +57,8 @@ src/
 │   ├── useKeyboardInset.ts  Hook: height of the on-screen keyboard overlapping the layout viewport
 │   ├── termKeys.ts          Mobile terminal key-bar sequences + Ctrl-modifier folding
 │   ├── humanGate.ts         isHumanGateLabel() — is a workflow label one only a human can move a task out of
-│   ├── notify.ts            showHumanNeededNotification() — de-duped browser Notification wrapper
+│   ├── notify.ts            showHumanNeededNotification() — de-duped browser notification (via the service worker when present)
+│   ├── serviceWorker.ts     Registers public/sw.js (needed for notifications on mobile; secure contexts only)
 │   └── useHumanNeededNotifications.ts  Hook mounted at the app root: WS-driven "needs human" notifications
 ├── App.tsx           Router setup
 └── main.tsx          Entry point

@@ -45,7 +45,7 @@ async function resolveTaskWorkflow(taskId: string) {
 
 async function handleNeedsHuman(payload: Extract<WSEvent, { type: 'task.needs_human' }>['payload']) {
   const title = await resolveTaskTitle(payload.task_id)
-  showHumanNeededNotification({
+  await showHumanNeededNotification({
     title: 'Human needed',
     body: `${title}: ${payload.message}`,
     taskId: payload.task_id,
@@ -57,7 +57,7 @@ async function handleLabelChanged(payload: Extract<WSEvent, { type: 'task.label_
   if (!isHumanGateLabel(workflow, payload.to)) return
 
   const title = await resolveTaskTitle(payload.task_id)
-  showHumanNeededNotification({
+  await showHumanNeededNotification({
     title: 'Human needed',
     body: `${title} is waiting on "${payload.to}" (human review)`,
     taskId: payload.task_id,
