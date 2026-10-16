@@ -35,13 +35,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --all-cli builds the backend image with the Codex and Qwen CLIs installed
-# alongside Claude (see backend/Dockerfile's INSTALL_*_CLI build args, wired
-# through docker-compose.yml) instead of the default Claude-only image.
-# Mirrors run.sh --all-cli, which selects the prebuilt `-all-cli` tag.
+# --all-cli builds the backend image with the Codex, Qwen and Opencode CLIs
+# installed alongside Claude (see backend/Dockerfile's INSTALL_*_CLI build
+# args, wired through docker-compose.yml) instead of the default Claude-only
+# image. Mirrors run.sh --all-cli, which selects the prebuilt `-all-cli` tag.
 if [[ "$ALL_CLI" == "true" ]]; then
   export INSTALL_CODEX_CLI=true
   export INSTALL_QWEN_CLI=true
+  export INSTALL_OPENCODE_CLI=true
 fi
 
 if [[ -z "${REPO_BASE_DIR:-}" ]]; then

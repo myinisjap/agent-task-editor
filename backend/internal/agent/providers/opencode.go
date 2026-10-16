@@ -86,6 +86,13 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		return agent.Result{Status: "failed"}, fmt.Errorf("build opencode config: %w", err)
 	}
 	env = append(env, "OPENCODE_CONFIG_CONTENT="+configContent)
+	// Force-disabled: the CLI self-updating mid-run inside a container we
+	// version and rebuild ourselves (OPENCODE_CLI_VERSION in
+	// backend/Dockerfile) would silently drift the running binary away from
+	// what's pinned. Mirrors claude's DISABLE_AUTOUPDATER and qwen's
+	// NO_UPDATE_NOTIFIER above. Appended last so it always wins over any
+	// operator-set OPENCODE_DISABLE_AUTOUPDATE in the backend's own env.
+	env = append(env, "OPENCODE_DISABLE_AUTOUPDATE=1")
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
 	if err != nil {
 		return agent.Result{Status: "failed"}, err

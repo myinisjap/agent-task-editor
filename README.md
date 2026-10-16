@@ -92,7 +92,7 @@ which references the published images:
 
 Prefer plain Compose? `ATE_VERSION=v0.1.0 docker compose -f docker-compose.release.yml up -d`.
 
-Want the Codex/Qwen CLIs preinstalled instead of building them yourself (see below)? Pass `--all-cli` to run the `-all-cli` backend image variant published alongside each release:
+Want the Codex/Qwen/Opencode CLIs preinstalled instead of building them yourself (see below)? Pass `--all-cli` to run the `-all-cli` backend image variant published alongside each release:
 
 ```bash
 ./run.sh --all-cli
@@ -110,7 +110,7 @@ list — it doesn't print env vars, so here's what `run.sh` itself reads
 |---|---|---|
 | `REPO_BASE_DIR` | `/tmp/repos` (warns) | Host directory containing the repos agents work in — set this to your real projects dir |
 | `ATE_VERSION` | `latest` | Image tag to pull, e.g. `v0.1.0` |
-| `ATE_CLI_SUFFIX` | _(empty)_ | Set to `-all-cli` to use the Codex/Qwen-preinstalled backend image (or just pass `--all-cli`) |
+| `ATE_CLI_SUFFIX` | _(empty)_ | Set to `-all-cli` to use the Codex/Qwen/Opencode-preinstalled backend image (or just pass `--all-cli`) |
 | `GH_TOKEN` | _(from `gh auth token`)_ | GitHub token for PR sync; auto-detected if the `gh` CLI is logged in |
 | `TRAEFIK_HOST` | _(empty)_ | If set, also loads `docker-compose.traefik.yml` to expose the app behind Traefik |
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set `true` to disable SSL verification (git/npm/Node) behind a corporate TLS proxy |
@@ -142,15 +142,15 @@ The `claude` CLI binary itself is baked into the backend image — you don't nee
 
 ### Build args: optional CLI providers, SSL verification
 
-Unlike `claude` (installed unconditionally), the Codex CLI (`codex_cli` provider) and Qwen CLI (`qwen_code` provider) are **not** installed in the default backend image — they're gated behind build args so the image doesn't grow for users who don't need them:
+Unlike `claude` (installed unconditionally), the Codex CLI (`codex_cli` provider), Qwen CLI (`qwen_code` provider) and Opencode CLI (`opencode` provider) are **not** installed in the default backend image — they're gated behind build args so the image doesn't grow for users who don't need them:
 
 ```bash
-INSTALL_CODEX_CLI=true INSTALL_QWEN_CLI=true docker compose build
+INSTALL_CODEX_CLI=true INSTALL_QWEN_CLI=true INSTALL_OPENCODE_CLI=true docker compose build
 ```
 
-Running from prebuilt images instead of building locally? Every release also publishes a backend image with both CLIs preinstalled, tagged with an `-all-cli` suffix (e.g. `ghcr.io/myinisjap/agent-task-editor-backend:latest-all-cli`). Run it with `./run.sh --all-cli`, or set `ATE_CLI_SUFFIX=-all-cli` if you're driving `docker-compose.release.yml` directly.
+Running from prebuilt images instead of building locally? Every release also publishes a backend image with all three CLIs preinstalled, tagged with an `-all-cli` suffix (e.g. `ghcr.io/myinisjap/agent-task-editor-backend:latest-all-cli`). Run it with `./run.sh --all-cli`, or set `ATE_CLI_SUFFIX=-all-cli` if you're driving `docker-compose.release.yml` directly.
 
-`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. For a safer alternative, set `SSL_CA_CERT_PATH=/path/to/ca.pem` to trust a specific CA instead — it's bind-mounted into the container and wired into git/npm/Node via `GIT_SSL_CAINFO`/`NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`. See [docs/providers/codex_cli.md](docs/providers/codex_cli.md) and [docs/providers/qwen_code.md](docs/providers/qwen_code.md) for authentication setup once installed.
+`INSECURE_SKIP_SSL_VERIFY=true` is also available (see `backend/Dockerfile`) to disable SSL verification for git/npm/Node.js behind a corporate TLS proxy. For a safer alternative, set `SSL_CA_CERT_PATH=/path/to/ca.pem` to trust a specific CA instead — it's bind-mounted into the container and wired into git/npm/Node via `GIT_SSL_CAINFO`/`NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`. See [docs/providers/codex_cli.md](docs/providers/codex_cli.md), [docs/providers/qwen_code.md](docs/providers/qwen_code.md) and [docs/providers/opencode.md](docs/providers/opencode.md) for authentication setup once installed.
 
 ### Mount your repositories
 
@@ -185,7 +185,7 @@ Four providers are available (`anthropic` and `llm` were removed in v0.17.0 — 
 | Provider | Auth Required | CLI Dependency | Built-in Tools | Label Transitions | Notes |
 |---|---|---|---|---|---|
 | **`claude`** | Claude Max subscription (authenticated via `~/.claude`) | ✅ `claude` CLI must be installed & authenticated on the host/container | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Without MCP, runs always complete with no label transition. Dangerous env vars (`PATH`, `LD_PRELOAD`, `HOME`, `SHELL`, etc.) are blocked for security. |
-| **`opencode`** | Provider-specific (configured in `opencode` CLI) | ✅ `opencode` binary must be installed | Depends on opencode config | ❌ MCP tools not available | Label transitions require MCP, which opencode does not support. Runs complete without transitioning the task label. |
+| **`opencode`** | Provider-specific (configured in `opencode` CLI) | ✅ `opencode` binary must be installed (see `INSTALL_OPENCODE_CLI` build arg) | Depends on opencode config | ❌ MCP tools not available | Label transitions require MCP, which opencode does not support. Runs complete without transitioning the task label. |
 | **`qwen_code`** | Qwen auth (configured in `qwen` CLI) | ✅ `qwen` binary must be installed (see `INSTALL_QWEN_CLI` build arg) | `Edit`, `Write`, `Read`, `Bash`, `Glob`, `Grep` + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | Same MCP setup as the `claude` provider. |
 | **`codex_cli`** | ChatGPT account login (`codex login`) or `OPENAI_API_KEY` | ✅ `codex` CLI must be installed (see `INSTALL_CODEX_CLI` build arg) | Codex's built-in tools + MCP tools | ✅ via MCP sidecar (`MCP_SERVER_PATH` must be set) | MCP wired via per-run `-c mcp_servers.*` config overrides. Runs fully unsandboxed/unattended (`--dangerously-bypass-approvals-and-sandbox`); command allowlist/denylist not enforced — Codex's own sandbox/approval system is bypassed instead. Cost is estimated from token counts via the pricing table. |
 

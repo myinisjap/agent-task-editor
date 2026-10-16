@@ -31,14 +31,19 @@ always overrides any `OPENCODE_CONFIG_CONTENT` set in the agent config's own
 
 Opencode manages its own auth and model configuration. You must have the `opencode` binary installed and configured on the host (or in the container). Refer to [opencode's documentation](https://opencode.ai/docs) for setup.
 
+The `opencode` CLI is not installed in the backend image by default — build with `INSTALL_OPENCODE_CLI=true` to have the backend `Dockerfile` `npm install -g opencode-ai` for you (see the backend `Dockerfile`'s `INSTALL_OPENCODE_CLI` build arg, pinned to `OPENCODE_CLI_VERSION`), or install it yourself with `npm i -g opencode-ai` and mount it into the container.
+
 **Subprocess environment:** the `opencode` subprocess does not inherit the
 backend's full environment (see [providers/README.md § Subprocess
 environment](README.md#subprocess-environment)). It receives `PATH`/`HOME`
 (opencode's own auth store lives under `$HOME`/XDG dirs, which are also
 allowlisted) plus `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
-`GOOGLE_API_KEY` if set on the backend, a handful of locale/proxy/TLS vars,
+`GOOGLE_API_KEY` if set on the backend (plus the always-injected
+`OPENCODE_DISABLE_AUTOUPDATE` below), a handful of locale/proxy/TLS vars,
 and this agent config's own `env` field. Any other backend env var will not
 reach the CLI.
+
+`OPENCODE_DISABLE_AUTOUPDATE=1` is automatically set in the environment (headless runs and the interactive chat terminal) so the CLI never self-updates away from the version pinned by `OPENCODE_CLI_VERSION` in the backend `Dockerfile` — mirroring `claude`'s `DISABLE_AUTOUPDATER` and `qwen_code`'s `NO_UPDATE_NOTIFIER`.
 
 ## MCP Tools
 
