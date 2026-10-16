@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,7 +82,14 @@ func TestBuildQwenArgs_CommandAllowlist_NotWired(t *testing.T) {
 }
 
 // TestBuildQwenArgs_CommandDenylist verifies that each CommandDenylist
-// pattern is appended as a Bash(pattern) entry to --exclude-tools.
+// pattern is appended as a run_shell_command(pattern) entry to
+// --exclude-tools — qwen's shell tool is named run_shell_command, not Bash
+// (verified against the 0.25.2 bundle's SHELL_TOOL_NAMES/
+// doesToolInvocationMatch; see qwen.go and docs/providers/qwen_code.md) — and
+// that a trailing "*" wildcard (the shared cross-provider glob convention,
+// e.g. "git *") is stripped to the literal prefix qwen's own match semantics
+// actually use, while a pattern with no trailing "*" (e.g. "npm test") is
+// passed through unchanged as an exact-match pattern.
 func TestBuildQwenArgs_CommandDenylist(t *testing.T) {
 	args := buildQwenArgs(agent.RunInput{
 		Task: agent.Task{Title: "t"},
@@ -88,11 +97,16 @@ func TestBuildQwenArgs_CommandDenylist(t *testing.T) {
 			CommandDenylist: []string{"git *", "npm test"},
 		},
 	}, nil)
-	if countFlagOccurrences(args, "--exclude-tools", "Bash(git *)") != 1 {
-		t.Fatalf("expected one --exclude-tools Bash(git *) entry, got args=%v", args)
+	if countFlagOccurrences(args, "--exclude-tools", "run_shell_command(git)") != 1 {
+		t.Fatalf("expected one --exclude-tools run_shell_command(git) entry, got args=%v", args)
 	}
-	if countFlagOccurrences(args, "--exclude-tools", "Bash(npm test)") != 1 {
-		t.Fatalf("expected one --exclude-tools Bash(npm test) entry, got args=%v", args)
+	if countFlagOccurrences(args, "--exclude-tools", "run_shell_command(npm test)") != 1 {
+		t.Fatalf("expected one --exclude-tools run_shell_command(npm test) entry, got args=%v", args)
+	}
+	for i, a := range args {
+		if a == "--exclude-tools" && i+1 < len(args) && strings.HasPrefix(args[i+1], "Bash(") {
+			t.Fatalf("did not expect a Bash(...) --exclude-tools entry (qwen's shell tool is run_shell_command, not Bash), found %q at index %d in args=%v", args[i+1], i, args)
+		}
 	}
 }
 
@@ -105,11 +119,11 @@ func TestBuildQwenArgs_CommandDenylist_BlankPatternSkipped(t *testing.T) {
 			CommandDenylist: []string{"", "git *", ""},
 		},
 	}, nil)
-	if countFlagOccurrences(args, "--exclude-tools", "Bash()") != 0 {
+	if countFlagOccurrences(args, "--exclude-tools", "run_shell_command()") != 0 {
 		t.Fatalf("expected blank denylist pattern to be skipped, got args=%v", args)
 	}
-	if countFlagOccurrences(args, "--exclude-tools", "Bash(git *)") != 1 {
-		t.Fatalf("expected one --exclude-tools Bash(git *) entry, got args=%v", args)
+	if countFlagOccurrences(args, "--exclude-tools", "run_shell_command(git)") != 1 {
+		t.Fatalf("expected one --exclude-tools run_shell_command(git) entry, got args=%v", args)
 	}
 	n := 0
 	for _, a := range args {
@@ -119,6 +133,29 @@ func TestBuildQwenArgs_CommandDenylist_BlankPatternSkipped(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("expected exactly one --exclude-tools flag total, got %d in args=%v", n, args)
+	}
+}
+
+// TestQwenDenylistArg verifies the pattern-normalization rules qwenDenylistArg
+// applies when translating a shared cross-provider "*"-wildcard glob pattern
+// into the literal prefix qwen's doesToolInvocationMatch actually compares
+// against (exact match, or whitespace-delimited prefix match — no glob
+// expansion).
+func TestQwenDenylistArg(t *testing.T) {
+	cases := []struct {
+		pattern string
+		want    string
+	}{
+		{"git *", "git"},
+		{"rm -rf *", "rm -rf"},
+		{"npm test", "npm test"},
+		{"git*", "git"},
+		{"*", "*"}, // bare wildcard has no literal-prefix equivalent; passed through
+	}
+	for _, c := range cases {
+		if got := qwenDenylistArg(c.pattern); got != c.want {
+			t.Errorf("qwenDenylistArg(%q) = %q, want %q", c.pattern, got, c.want)
+		}
 	}
 }
 
@@ -134,6 +171,57 @@ func TestBuildQwenArgs_NoCommandFilters_NoExtraFlags(t *testing.T) {
 		if a == "--allowed-tools" || a == "--exclude-tools" {
 			t.Fatalf("expected no --allowed-tools/--exclude-tools flags without mcpCfg/filters, found %q at index %d in args=%v", a, i, args)
 		}
+	}
+}
+
+// TestBuildQwenArgs_Images verifies task attachments copied into the
+// worktree's .task_attachments/ are referenced from the prompt text as
+// @-prefixed tokens (qwen has no --image flag — verified against 0.25.2's
+// --help output; its headless -p mode instead resolves @path references via
+// the same at-command processor the interactive CLI uses, embedding images
+// as inlineData content parts — see qwen.go's qwenImageAtRefs), missing
+// copies are skipped, and duplicate attachments are only referenced once.
+func TestBuildQwenArgs_Images(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".task_attachments"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"a.png", "b.jpg"} {
+		if err := os.WriteFile(filepath.Join(dir, ".task_attachments", f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := buildQwenArgs(agent.RunInput{
+		Task:        agent.Task{Title: "t", Attachments: []string{"task1/a.png", "task1/missing.png", "task1/b.jpg", "task1/a.png"}},
+		AgentConfig: agent.AgentConfig{},
+		RepoPath:    dir,
+	}, nil)
+	prompt := findFlagValue(args, "-p")
+	if !strings.Contains(prompt, "@.task_attachments/a.png") {
+		t.Fatalf("expected prompt to reference @.task_attachments/a.png, prompt=%q", prompt)
+	}
+	if !strings.Contains(prompt, "@.task_attachments/b.jpg") {
+		t.Fatalf("expected prompt to reference @.task_attachments/b.jpg, prompt=%q", prompt)
+	}
+	// buildPrompt's own plain-text "ATTACHED IMAGES" listing (see prompt.go)
+	// still names every attachment including the missing one, by design —
+	// only the @-prefixed at-command reference (which qwen actually resolves
+	// to file content) must skip a copy that isn't present in the worktree.
+	if strings.Contains(prompt, "@.task_attachments/missing.png") {
+		t.Fatalf("did not expect an @-prefixed reference to the missing attachment copy, prompt=%q", prompt)
+	}
+	if n := strings.Count(prompt, "@.task_attachments/a.png"); n != 1 {
+		t.Fatalf("expected the duplicate a.png attachment referenced exactly once, got %d, prompt=%q", n, prompt)
+	}
+}
+
+// TestBuildQwenArgs_NoAttachmentsNoImageRefs verifies no @-prefixed image
+// reference is appended to the prompt without attachments.
+func TestBuildQwenArgs_NoAttachmentsNoImageRefs(t *testing.T) {
+	args := buildQwenArgs(agent.RunInput{Task: agent.Task{Title: "t"}, RepoPath: t.TempDir()}, nil)
+	prompt := findFlagValue(args, "-p")
+	if strings.Contains(prompt, "@") {
+		t.Fatalf("did not expect an @-prefixed reference in the prompt, prompt=%q", prompt)
 	}
 }
 

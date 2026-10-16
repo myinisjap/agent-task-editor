@@ -89,7 +89,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     commandDenylist: {
       support: 'partial',
-      note: "Enforced via qwen's --exclude-tools flag (folds into its permissionsDeny policy), which is honored even under yolo mode. Per-pattern Bash(pattern) granularity mirrors --allowed-tools but has not been confirmed live for the deny path; if qwen only accepts bare tool names here, denial may degrade to blanket Bash exclusion.",
+      note: "Enforced via qwen's --exclude-tools flag (folds into its permissionsDeny policy), which is honored even under yolo mode. Verified against the 0.25.2 bundle: qwen's shell tool is named run_shell_command (not Bash), so each pattern is sent as run_shell_command(pattern) — a Bash(pattern) entry, as used for --allowed-tools above, would be a silent no-op here. qwen's own matching is exact-or-prefix, not a true glob: a trailing \"*\" wildcard (this app's shared glob convention) is normalized to the literal prefix qwen compares against, but a \"*\" anywhere else in the pattern (e.g. suffix-matching \"* --force\") has no qwen-side equivalent and won't match.",
     },
     costTracking: {
       support: 'partial',
@@ -99,7 +99,10 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'partial',
       note: 'Same mid-run kill switch mechanism as claude (projects cost from incremental token usage). Only effective when the configured model is in the pricing table — otherwise the watchdog is a silent no-op and only the pre-dispatch budget guard applies.',
     },
-    imageAttachments: { support: 'none', note: 'No image flag on the qwen CLI.' },
+    imageAttachments: {
+      support: 'partial',
+      note: "The qwen CLI has no --image flag, but its headless -p prompt supports @path file references the same way the interactive CLI does (verified against the 0.25.2 bundle: handleAtCommand runs unconditionally on the initial prompt in headless mode). Each attachment's worktree copy under .task_attachments/ is referenced with an @ token, and qwen embeds it as real image content — but only if the configured model's modalities report image support; otherwise qwen itself skips the file with a warning and the run continues without it.",
+    },
     maxTurns: {
       support: 'full',
       note: 'Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying (detected from the CLI\'s stderr message, since qwen exits non-zero rather than emitting a structured result).',
