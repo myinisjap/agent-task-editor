@@ -14,7 +14,7 @@ Concrete agent backends (claude, opencode, qwen_code, codex_cli) and the MCP sid
 | `qwen.go` | `QwenRunner` — Qwen Code CLI; reuses `MCPManager` and the claude stream-json envelope |
 | `codex.go` | `CodexRunner` — `codex exec --json`; own event schema. MCP sidecar via `-c mcp_servers.*` overrides (never replace `CODEX_HOME`: it holds the login and sessions); runner-enforced `max_turns` (completed tool steps); one cold-start retry when the resume thread is gone |
 | `codex_rollout.go` | Best-effort reads of codex's session file (`$CODEX_HOME/sessions/.../rollout-*-<thread>.jsonl`): the model used when the config leaves it unset, and cumulative usage so resumed or interrupted runs are priced for their own tokens only |
-| `opencode.go` | `OpencodeRunner` — opencode CLI; own event schema; no MCP support (known gap) |
+| `opencode.go` | `OpencodeRunner` — opencode CLI; own event schema; no MCP support (known gap). System prompt delivered via `OPENCODE_CONFIG_CONTENT` (no `--system-prompt` flag exists), set on the `build` agent's `prompt` field |
 | `mcp.go` | `MCPManager`, `SubtaskEnv` — prepares/cleans up the MCP sidecar config and result file (ADR 0004) |
 | `pricing.go` | `estimateCostUSD(WithResolver)`, `estimateCachedCostUSD`, `PriceResolver` (+ optional `CachedPriceResolver`) — manually maintained USD/1M-token table. Cost estimation for `codex_cli`; *projection* source for the claude/qwen cost watchdog |
 | `cost_watchdog.go` | `costWatchdog` — pure accumulator projecting total task cost from incremental usage; `claude.go`/`qwen.go` own cancelling the subprocess and building `agent.ErrCostBudgetExceeded` (ADR 0013) |
@@ -31,7 +31,7 @@ Concrete agent backends (claude, opencode, qwen_code, codex_cli) and the MCP sid
 
 - **One parser file per provider.** A runner calls only its own `parse_<name>.go`; never another provider's parser, and never `parse_streamjson.go` directly except `claude.go`. (ADR 0017)
 - **Raw-line sniffing (`ClassifyLine`) is applied to stdout only for lines that did not parse as a structured event**; stderr is always sniffed. (ADR 0010)
-- **Mid-run cost watchdog**: only `claude.go`/`qwen.go` wire it. Don't add it to a provider unless it has *priced, incremental* usage before the terminal event (codex prices at `turn.completed`; opencode's `step_finish` is a cumulative snapshot). (ADR 0013)
+- **Mid-run cost watchdog**: only `claude.go`/`qwen.go` wire it. Don't add it to a provider unless it has *priced, incremental* usage before the terminal event (codex prices at `turn.completed`; opencode's `step_finish` carries a per-step delta, only known at end-of-run once summed across every step — not usable as a running mid-run total). (ADR 0013)
 - Runtime mechanisms (worktrees, cancellation, retry, cost budgets, resume, review comments, locking, subtasks) are owned by `pool.go`/`dispatcher.go`/`worktree.go`/`subtasks.go`; see `../AGENTS.md`.
 
 ## Environment Variable Security (ADR 0019)
