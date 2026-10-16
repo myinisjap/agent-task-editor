@@ -41,9 +41,12 @@ const (
 	// (AgentConfig.MaxTurns) without finishing: escalate to waiting_human.
 	// Re-dispatching would silently void the operator's cap by handing the
 	// next run a fresh turn budget. Applies to the providers that actually
-	// enforce the cap (claude, qwen_code) — surfaced
-	// structurally via a typed error / result subtype, not text-sniffed, so
-	// it deliberately has no classPatterns entry below.
+	// enforce the cap: claude and qwen_code surface it structurally via a
+	// typed error / result subtype (so it has no classPatterns entry for
+	// those), but qwen_code additionally needs a classPatterns entry (see
+	// below) because its CLI (verified against @qwen-code/qwen-code 0.25.2)
+	// prints the max-turns message to stderr and exits non-zero instead of
+	// emitting a stream-json result with subtype error_max_turns.
 	ClassMaxTurns Classification = "max_turns"
 	// ClassCostBudget means a provider's mid-run cost watchdog cancelled the
 	// run because projected cost crossed the task's effective cost budget
@@ -114,6 +117,17 @@ var classPatterns = []classPattern{
 	// stdout/stderr line).
 	{Substr: "session limit", Class: ClassRateLimit},
 	{Substr: "usage limit", Class: ClassRateLimit},
+
+	// Qwen Code CLI (verified against @qwen-code/qwen-code 0.25.2):
+	// handleMaxTurnsExceededError writes this exact message to stderr and
+	// exits with FatalTurnLimitedError's code (53) when --max-session-turns
+	// is reached — it never emits a stream-json "result" with
+	// subtype:"error_max_turns" the way claude does, so there is no
+	// structural signal to key on and this line must be text-matched. Listed
+	// ahead of the generic transient/auth markers (none of which this text
+	// would otherwise match) so a CLI wording tweak that also happens to
+	// mention e.g. a timeout still classifies as max_turns.
+	{Substr: "reached max session turns for this session", Class: ClassMaxTurns},
 
 	// Authentication / login. Requires a human to re-authenticate, so it must
 	// win over the generic transient markers below (an auth failure that also

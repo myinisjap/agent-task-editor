@@ -20,6 +20,9 @@ func TestClassifyLine(t *testing.T) {
 		{"claude session limit", "You've hit your session limit · resets 6pm (America/Chicago)", ClassRateLimit},
 		{"claude usage limit", "You've hit your usage limit for this period", ClassRateLimit},
 
+		// Qwen max-turns (stderr text, not structural — see errclass.go).
+		{"qwen max session turns", "Reached max session turns for this session. Increase the number of turns by specifying maxSessionTurns in settings.json.", ClassMaxTurns},
+
 		// Auth.
 		{"not logged in", "Error: Not logged in", ClassAuth},
 		{"please run login", "Please run /login to continue", ClassAuth},
