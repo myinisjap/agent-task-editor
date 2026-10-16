@@ -48,3 +48,28 @@ func TestCodexReasoningEffort(t *testing.T) {
 		}
 	}
 }
+
+func TestOpencodeVariant(t *testing.T) {
+	cases := []struct {
+		level  string
+		want   string
+		wantOK bool
+	}{
+		{"", "", false},
+		// opencode has no fixed vendor enum (--variant is forwarded to the
+		// model provider as-is), so every recognized level passes through
+		// unchanged rather than being clamped like codex's xhigh/max->high.
+		{"low", "low", true},
+		{"medium", "medium", true},
+		{"high", "high", true},
+		{"xhigh", "xhigh", true},
+		{"max", "max", true},
+		{"bogus", "", false},
+	}
+	for _, c := range cases {
+		got, ok := opencodeVariant(c.level)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("opencodeVariant(%q) = (%q, %v), want (%q, %v)", c.level, got, ok, c.want, c.wantOK)
+		}
+	}
+}

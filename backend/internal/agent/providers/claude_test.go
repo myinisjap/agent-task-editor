@@ -106,6 +106,37 @@ func TestMain(m *testing.M) {
 		// Only reached if the watchdog failed to cancel the run in time.
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":1000000,"output_tokens":1000000},"total_cost_usd":100}`)
 		os.Exit(0)
+	case "cost_watchdog_model_fallback":
+		// Simulate: AgentConfig.Model is empty (the operator left it unset),
+		// so the CLI resolved its own default and reports it on the initial
+		// "system"/"init" event. The watchdog must pick this up as a
+		// pricing fallback (see watchdogModel's doc comment in claude.go) —
+		// without it, the watchdog stays permanently inert for the whole
+		// run and never prices the oversized assistant usage below.
+		fmt.Println(`{"type":"system","subtype":"init","model":"claude-opus-4-5","session_id":"cost-watchdog-fallback-session"}`)
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":1000000,"output_tokens":1000000}},"session_id":"cost-watchdog-fallback-session"}`)
+		time.Sleep(2 * time.Second)
+		// Only reached if the watchdog failed to cancel the run in time.
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":1000000,"output_tokens":1000000},"total_cost_usd":100}`)
+		os.Exit(0)
+	case "cost_watchdog_cache_heavy":
+		// Simulate a long-running agent whose usage is mostly prompt-cache
+		// reads (cache_read_input_tokens) — typical of a real multi-turn
+		// agent run once the system prompt/tool defs/history are cached.
+		// Pricing these at the full input rate (the pre-fix behavior) would
+		// project well past the configured budget below; pricing them at
+		// their own, much lower, cache-read rate must NOT trip the kill
+		// switch. Each of these assistant events repeats the same
+		// message.id ("split message" handling, see assistantMessageID's doc
+		// comment) with the *same* full-message usage — summing them
+		// without dedup would double/triple count and incorrectly trigger
+		// the watchdog despite the fix.
+		for i := 0; i < 3; i++ {
+			fmt.Println(`{"type":"assistant","message":{"id":"msg_dup_1","role":"assistant","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":2000000,"cache_creation_input_tokens":0}},"session_id":"cost-watchdog-cache-session"}`)
+		}
+		time.Sleep(1 * time.Second)
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":2000000,"cache_creation_input_tokens":0},"total_cost_usd":0.65}`)
+		os.Exit(0)
 	case "oversized_line":
 		// Simulate: a single stdout line (e.g. an assistant message quoting a
 		// large file a tool Read/Wrote) exceeding the scan buffer limit
@@ -941,6 +972,141 @@ func TestClaudeRunner_CostWatchdogKillsRun_SubtractsPriorSpend(t *testing.T) {
 	// runs' own persisted 6.
 	if res.r.CostUSD != 20.0 {
 		t.Errorf("want Result.CostUSD=20.0 (this run's own cost, prior spend subtracted out), got %v", res.r.CostUSD)
+	}
+}
+
+// modelOnlyPriceResolver only knows pricing for one specific model —
+// Price reports known=false for anything else, including the empty string.
+// Used to prove the watchdog is genuinely inert until it learns the real
+// model (vs. e.g. a resolver that happens to answer known=true for "").
+type modelOnlyPriceResolver struct {
+	model             string
+	inPer1M, outPer1M float64
+}
+
+func (r modelOnlyPriceResolver) Price(_ context.Context, model string) (float64, float64, bool) {
+	if model != r.model {
+		return 0, 0, false
+	}
+	return r.inPer1M, r.outPer1M, true
+}
+
+// TestClaudeRunner_CostWatchdog_ModelFallback verifies that with
+// AgentConfig.Model left empty, the watchdog picks up the model reported on
+// the stream-json "system"/"init" event and prices against it — rather than
+// staying permanently inert for the whole run (problem fixed: "watchdog
+// inert with no model set").
+func TestClaudeRunner_CostWatchdog_ModelFallback(t *testing.T) {
+	runner := helperRunner("cost_watchdog_model_fallback")
+	runner.PriceResolver = modelOnlyPriceResolver{model: "claude-opus-4-5", inPer1M: 10, outPer1M: 10}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := makeInput("cost_watchdog_model_fallback")
+	// AgentConfig.Model is intentionally left empty (see makeInput) — only
+	// set via the fixture's "system"/"init" event above.
+	input.CostBudgetUSD = 1.00
+	input.CostWarnRatio = 0.8
+	input.AgentConfig.TimeoutSecs = 10
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Run to return — watchdog likely failed to cancel the subprocess")
+	}
+
+	var ce *agent.ErrCostBudgetExceeded
+	if !errors.As(res.err, &ce) {
+		t.Fatalf("want *agent.ErrCostBudgetExceeded (watchdog should have picked up the model from the init event), got err=%v (%T)", res.err, res.err)
+	}
+	if res.r.SessionID != "cost-watchdog-fallback-session" {
+		t.Errorf("want session id preserved, got %q", res.r.SessionID)
+	}
+}
+
+// TestClaudeRunner_CostWatchdogCacheHeavy_NoFalseKill verifies the fix for
+// the over-projection bug: a run whose usage is mostly prompt-cache reads
+// must be priced at the cache-read rate (not the full input rate) and must
+// NOT trip the watchdog, even though the exact same token counts priced at
+// the full input rate would blow well past the budget. It also exercises
+// the "split message" dedup — the fake CLI repeats the same message.id
+// across several assistant events, each carrying that message's full usage;
+// without dedup the watchdog would triple-count and fire regardless of the
+// cache-aware pricing fix.
+func TestClaudeRunner_CostWatchdogCacheHeavy_NoFalseKill(t *testing.T) {
+	runner := helperRunner("cost_watchdog_cache_heavy")
+	// $10/1M input, $10/1M output, cache reads at $0.10/1M (1% of input) —
+	// close to Anthropic's real ~10% cache-read discount.
+	runner.PriceResolver = fakeClaudeCacheResolver{
+		fakePriceResolver: fakePriceResolver{inPer1M: 10, outPer1M: 10, known: true},
+		readPer1M:         0.10,
+		readKnown:         true,
+	}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := makeInput("cost_watchdog_cache_heavy")
+	// The run's usage (deduped to a single message): 1,000 input +
+	// 2,000,000 cache-read + 500 output tokens.
+	//   - Priced correctly (cache reads at $0.10/1M): ~$0.21 — comfortably
+	//     under this $5 budget.
+	//   - Priced at the full input rate (the pre-fix bug): 2,001,000 *
+	//     $10/1M = ~$20 — would have blown past the same budget several
+	//     times over.
+	input.CostBudgetUSD = 5.00
+	input.CostWarnRatio = 0.8
+	input.AgentConfig.TimeoutSecs = 10
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	drainLogs(logCh)
+
+	var res outcome
+	select {
+	case res = <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Run to return")
+	}
+
+	var ce *agent.ErrCostBudgetExceeded
+	if errors.As(res.err, &ce) {
+		t.Fatalf("watchdog incorrectly killed a cache-heavy run that should have projected well under budget: %+v", ce)
+	}
+	if res.r.Status != "completed" {
+		t.Errorf("want Status=completed, got %q (err=%v)", res.r.Status, res.err)
+	}
+	if res.r.CostWarned {
+		t.Error("want CostWarned=false — the correctly-priced projection never approaches the warn ratio")
+	}
+	// The final "result" event's cache tokens must be folded into the
+	// persisted InputTokens count (see applyUsage): 1000 input + 2,000,000
+	// cache-read + 0 cache-write = 2,001,000.
+	if res.r.InputTokens != 2_001_000 {
+		t.Errorf("want InputTokens=2,001,000 (cache tokens folded in), got %d", res.r.InputTokens)
+	}
+	// CostUSD is always the CLI's own authoritative total_cost_usd for
+	// claude, never re-estimated.
+	if res.r.CostUSD != 0.65 {
+		t.Errorf("want CostUSD=0.65 (the CLI's own total_cost_usd), got %v", res.r.CostUSD)
 	}
 }
 

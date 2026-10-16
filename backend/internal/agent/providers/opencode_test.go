@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -353,14 +356,12 @@ func TestOpencodeRunner_Run_TimeoutKillsProcess(t *testing.T) {
 	}
 }
 
-// TestOpencodeRunner_Run_ModelAndResumeFlags exercises the args-building
-// portion of Run indirectly is not possible (opencode.go inlines arg
-// construction rather than exposing a buildOpencodeArgs helper like the
-// other providers), so this smoke-tests that a Model/ResumeSessionID-bearing
-// input doesn't panic or otherwise break the fake-binary run — the resulting
-// args aren't independently inspectable without capturing the exec.Cmd, but
-// the successful run + expected outcome is still a meaningful regression
-// guard for this previously fully-untested provider.
+// TestOpencodeRunner_Run_ModelAndResumeFlags is a subprocess smoke test for
+// a Model/ResumeSessionID-bearing input: the actual arg construction is now
+// covered directly (and much more precisely) by the buildOpencodeArgs unit
+// tests below, which don't need a subprocess at all. This test remains as a
+// regression guard that such an input doesn't panic or otherwise break the
+// fake-binary run end-to-end.
 func TestOpencodeRunner_Run_ModelAndResumeFlags(t *testing.T) {
 	runner := &OpencodeRunner{BinaryPath: os.Args[0]}
 	logCh := make(chan agent.LogEntry, 256)
@@ -510,5 +511,150 @@ func TestOpencodeRunner_Run_WithMCP_PassesInlineConfig(t *testing.T) {
 	}
 	if result.Status != "completed" {
 		t.Errorf("Status = %q, want completed", result.Status)
+	}
+}
+
+// --- buildOpencodeArgs unit tests (no subprocess needed) ---
+
+// TestBuildOpencodeArgs_BaseFlagsAndSeparator verifies the always-present
+// `run --format json` flags, that "--" is present, and that the prompt is
+// the very last argument — the guard against -f (a variadic/array-type
+// yargs option) swallowing the prompt as an extra file.
+func TestBuildOpencodeArgs_BaseFlagsAndSeparator(t *testing.T) {
+	input := agent.RunInput{
+		Task:        agent.Task{Title: "t"},
+		AgentConfig: agent.AgentConfig{},
+	}
+	args := buildOpencodeArgs(input)
+	if len(args) < 3 || args[0] != "run" || args[1] != "--format" || args[2] != "json" {
+		t.Fatalf("expected leading `run --format json`, got %v", args)
+	}
+	sepIdx := slices.Index(args, "--")
+	if sepIdx < 0 {
+		t.Fatalf("expected a -- separator before the prompt, args=%v", args)
+	}
+	if args[len(args)-1] != buildPrompt(input) {
+		t.Fatalf("expected the prompt as the final argument, got %v", args)
+	}
+	if sepIdx != len(args)-2 {
+		t.Fatalf("expected -- to immediately precede the prompt, args=%v", args)
+	}
+}
+
+// TestBuildOpencodeArgs_ModelAndResume verifies -m/--session are present
+// when set and absent when unset.
+func TestBuildOpencodeArgs_ModelAndResume(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		args := buildOpencodeArgs(agent.RunInput{
+			Task:            agent.Task{Title: "t"},
+			AgentConfig:     agent.AgentConfig{Model: "some-model"},
+			ResumeSessionID: "sess-99",
+		})
+		if got := findFlagValue(args, "-m"); got != "some-model" {
+			t.Fatalf("expected -m some-model, got %q (args=%v)", got, args)
+		}
+		if got := findFlagValue(args, "--session"); got != "sess-99" {
+			t.Fatalf("expected --session sess-99, got %q (args=%v)", got, args)
+		}
+	})
+	t.Run("unset", func(t *testing.T) {
+		args := buildOpencodeArgs(agent.RunInput{
+			Task:        agent.Task{Title: "t"},
+			AgentConfig: agent.AgentConfig{},
+		})
+		if containsArg(args, "-m") {
+			t.Fatalf("did not expect -m flag when Model is unset, args=%v", args)
+		}
+		if containsArg(args, "--session") {
+			t.Fatalf("did not expect --session flag when ResumeSessionID is unset, args=%v", args)
+		}
+	})
+}
+
+// TestBuildOpencodeArgs_Variant verifies AgentConfig.Effort maps to
+// --variant unchanged (pass-through, no clamping — see effort.go), and is
+// omitted when unset or unrecognized.
+func TestBuildOpencodeArgs_Variant(t *testing.T) {
+	t.Run("unset omits --variant", func(t *testing.T) {
+		args := buildOpencodeArgs(agent.RunInput{
+			Task:        agent.Task{Title: "t"},
+			AgentConfig: agent.AgentConfig{},
+		})
+		if containsArg(args, "--variant") {
+			t.Fatalf("did not expect --variant flag when Effort is unset, args=%v", args)
+		}
+	})
+
+	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+		t.Run(level, func(t *testing.T) {
+			args := buildOpencodeArgs(agent.RunInput{
+				Task:        agent.Task{Title: "t"},
+				AgentConfig: agent.AgentConfig{Effort: level},
+			})
+			if got := findFlagValue(args, "--variant"); got != level {
+				t.Fatalf("expected --variant %s, got %q (args=%v)", level, got, args)
+			}
+		})
+	}
+
+	t.Run("unrecognized value omits --variant", func(t *testing.T) {
+		args := buildOpencodeArgs(agent.RunInput{
+			Task:        agent.Task{Title: "t"},
+			AgentConfig: agent.AgentConfig{Effort: "bogus"},
+		})
+		if containsArg(args, "--variant") {
+			t.Fatalf("did not expect --variant flag for an unrecognized Effort value, args=%v", args)
+		}
+	})
+}
+
+// TestBuildOpencodeArgs_Files verifies task attachments copied into the
+// worktree's .task_attachments/ are passed as one -f <path> per file,
+// de-duplicated, missing copies skipped, and that the prompt stays the
+// final argument (not swallowed as a file by the variadic -f).
+func TestBuildOpencodeArgs_Files(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".task_attachments"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"a.png", "b.jpg"} {
+		if err := os.WriteFile(filepath.Join(dir, ".task_attachments", f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	input := agent.RunInput{
+		Task: agent.Task{
+			Title:       "t",
+			Attachments: []string{"task1/a.png", "task1/missing.png", "task1/b.jpg", "task1/a.png"},
+		},
+		AgentConfig: agent.AgentConfig{},
+		RepoPath:    dir,
+	}
+	args := buildOpencodeArgs(input)
+
+	var files []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-f" && i+1 < len(args) {
+			files = append(files, args[i+1])
+		}
+	}
+	want := []string{".task_attachments/a.png", ".task_attachments/b.jpg"}
+	if !slices.Equal(files, want) {
+		t.Fatalf("file args = %v, want %v (all args %v)", files, want, args)
+	}
+	if args[len(args)-1] != buildPrompt(input) {
+		t.Fatalf("expected prompt as final arg (not swallowed by -f), args=%v", args)
+	}
+	if strings.HasPrefix(args[len(args)-1], ".task_attachments") {
+		t.Fatalf("expected prompt as final arg, args=%v", args)
+	}
+}
+
+// TestBuildOpencodeArgs_NoAttachmentsNoFileFlag verifies no -f flag is
+// added when there are no attachments.
+func TestBuildOpencodeArgs_NoAttachmentsNoFileFlag(t *testing.T) {
+	args := buildOpencodeArgs(agent.RunInput{Task: agent.Task{Title: "t"}, RepoPath: t.TempDir()})
+	if containsArg(args, "-f") {
+		t.Fatalf("did not expect a -f arg without attachments, args=%v", args)
 	}
 }

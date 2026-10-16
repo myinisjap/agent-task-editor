@@ -12,9 +12,9 @@ The `opencode` provider runs the [opencode](https://opencode.ai) CLI. opencode h
 
 ## How It Works
 
-Runs: `opencode run --format json [-m <model>] -- <prompt>`
+Runs: `opencode run --format json [-m <model>] [--session <id>] [--variant <effort>] [-f <file> ...] -- <prompt>`
 
-Output is parsed as NDJSON. The `--` separator prevents the prompt content from being interpreted as CLI flags.
+Output is parsed as NDJSON. The `--` separator prevents the prompt content from being interpreted as CLI flags. The `-f <file>` arguments (one per task attachment, see [Image Attachments](#image-attachments)) are always placed *before* the `--` separator — `-f`/`--file` is a variadic (array-type) option in opencode's yargs-based CLI, so a bare `-f a.png "<prompt>"` would swallow the prompt as a second file; repeating `-f` per path and keeping `--` immediately before the prompt guards against that.
 
 `opencode run` has no `--system-prompt`/`-p` flag, `--mcp-config` flag, turn-cap
 flag, or command-policy flag, so all of the following are delivered together
@@ -123,14 +123,36 @@ To see available models: `opencode models` (the UI calls `GET /api/v1/agents/mod
 
 ## Effort
 
-**Not supported.** The opencode CLI has no reasoning-effort flag or config
-knob; the agent config's `effort` field is ignored for this provider. See
-[agents.md § Effort](../agents.md#effort).
+**Partially supported, pass-through.** The agent config's `effort` field is
+mapped to `opencode run --variant <value>` — one of `low`, `medium`, `high`,
+`xhigh`, `max` — passed through unchanged (no clamping, unlike `codex_cli`'s
+`minimal|low|medium|high`). The flag is omitted entirely when `effort` is
+unset. Unlike `claude`/`codex_cli`, there is no fixed vendor enum to
+validate against: `--variant` is forwarded by opencode straight to whichever
+model provider it's configured against, and the set of variants that model
+actually understands is model-specific. An unsupported value may be
+**silently ignored, or rejected further upstream** by the model provider —
+opencode itself does not validate it. When a variant is passed, the runner
+logs `requested effort=<value> (--variant)` as a `LogSystem` entry so this
+can be cross-referenced against the run's actual behavior (or stderr, if
+the provider rejects it). See [agents.md § Effort](../agents.md#effort).
 
 ## Image Attachments
 
-**Not wired up.** `opencode run` has an `-f`/`--file` flag for attaching files to the
-message (verified against v1.18.6), but task attachments are not passed to it.
+**Supported** via `opencode run`'s `-f`/`--file` flag. Every task attachment
+is passed as its own `-f <path>` argument, using the worktree copies the
+dispatcher makes under `.task_attachments/` before the run starts (the
+server's own upload directory is not readable by the isolated agent user
+opencode runs as). Attachments are de-duplicated by that relative path, and
+an attachment whose worktree copy is missing is skipped rather than failing
+the whole run — the prompt still lists every attachment as a file regardless
+of whether its `-f` was passed. See [How It Works](#how-it-works) for why
+the `-f` arguments are always placed before the `--` separator.
+
+opencode may reject a file type its configured model can't accept as a
+message attachment; unlike `codex_cli` (`--image`), this has not been
+verified live against the opencode CLI. A model-side rejection would surface
+as a normal run failure in the logs, not a crash in the runner itself.
 
 ## Max Turns
 
@@ -228,12 +250,13 @@ which is now effective since `cost_usd` is recorded. See
 | `store_info` | ✅ Available |
 | `request_human` | ✅ Available |
 | `max_turns` | ✅ Enforced via `agent.build.steps` plus a runner-side `step_finish` counter backstop — see above |
-| Image attachments | ❌ Not wired up — `opencode run` has an `-f`/`--file` flag, but attachments are not passed to it |
+| Image attachments | ✅ Passed as one `-f <path>` per task attachment (worktree copies under `.task_attachments/`, de-duplicated, missing copies skipped) — see above |
 | Outcome signalling | ✅ MCP `signal_complete`, with a text `OUTCOME: success/failure` fallback in case the tool call doesn't land (opencode's own MCP tool-naming is unverified — see [MCP Tools](#mcp-tools)) |
 | Rate limit detection | ✅ Implemented — stderr, and stdout lines that aren't structured JSON events, are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit`. opencode has no typed error classification, so a rate limit reported only inside a structured event body's text isn't caught on stdout (it still surfaces via stderr or a non-zero exit) — see issue #335 |
 | Cost & usage reporting | ✅ Recorded from the CLI's `step_finish` event (cost + tokens), summed across every step, authoritative — see above |
 | Command allowlist/denylist | ✅ Enforced via `permission.bash` (unverified pattern-matching semantics — see above) |
 | Session resume | ✅ `sessionID` + `--session` (see above) |
+| Effort | ⚠️ Mapped to `--variant`, pass-through of `low/medium/high/xhigh/max`, omitted when unset; accepted values are model-specific, so an unsupported one may be silently ignored upstream — see above |
 
 ## Setup Checklist
 
@@ -241,3 +264,15 @@ which is now effective since `cost_usd` is recorded. See
 2. Configure opencode's model and auth via its own config
 3. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "opencode"`, then an agent config referencing it via `provider_config_id`
 4. Set `MCP_SERVER_PATH` on the backend to get the task-editor MCP tools (`get_task_transitions`, `signal_complete`, `request_human`, `update_task_notes`, `store_info`, `resolve_comment`, and `create_subtask` when enabled); without it, only the text `OUTCOME: success`/`OUTCOME: failure` marker is available for completion signalling. Either way, the runner always sends the `OUTCOME:` instruction via `OPENCODE_CONFIG_CONTENT` (see [How It Works](#how-it-works)) as a fallback; a custom `system_prompt` on the agent config is still honored (it's prepended, not replaced)
+
+---
+
+**A note on verification:** the `-f`/`--file` and `--variant` flag spellings
+documented above (How It Works, Image Attachments, Effort) are taken from
+the pinned `opencode-ai` v1.19.1 CLI's documented behavior, not confirmed
+live against `opencode run --help` in this environment (the CLI is not
+installed in this repo's dev container). In particular, `--variant`'s full
+set of accepted values was not enumerated live — it is model/provider
+dependent and opencode does not validate it CLI-side. If you have the CLI
+installed, it's worth spot-checking `opencode run --help` against this doc
+after an opencode CLI version bump.

@@ -13,7 +13,7 @@ func TestCostWatchdog_InactiveWithNoBudget(t *testing.T) {
 	if w.active() {
 		t.Fatal("expected watchdog to be inactive with budget=0")
 	}
-	projected, warn, exceeded := w.observe(context.Background(), 1_000_000, 1_000_000)
+	projected, warn, exceeded := w.observe(context.Background(), 1_000_000, 0, 0, 1_000_000)
 	if projected != 0 || warn || exceeded {
 		t.Errorf("expected (0, false, false) with no budget, got (%v, %v, %v)", projected, warn, exceeded)
 	}
@@ -24,7 +24,7 @@ func TestCostWatchdog_InactiveWithNoBudget(t *testing.T) {
 // a $0 (or fabricated) cost that could cause a false-positive kill.
 func TestCostWatchdog_UnknownModelNeverFires(t *testing.T) {
 	w := newCostWatchdog(10, 0, 0.8, fakePriceResolver{known: false}, "mystery-model")
-	projected, warn, exceeded := w.observe(context.Background(), 1_000_000_000, 1_000_000_000)
+	projected, warn, exceeded := w.observe(context.Background(), 1_000_000_000, 0, 0, 1_000_000_000)
 	if projected != 0 || warn || exceeded {
 		t.Errorf("expected (0, false, false) for an unpriced model, got (%v, %v, %v)", projected, warn, exceeded)
 	}
@@ -39,12 +39,12 @@ func TestCostWatchdog_WarnFiresOnceAtThreshold(t *testing.T) {
 	w := newCostWatchdog(10, 0, 0.8, resolver, "test-model")
 
 	// 750,000 tokens = $7.50 = 75% of budget -- under the 80% warn line.
-	if _, warn, exceeded := w.observe(context.Background(), 750_000, 0); warn || exceeded {
+	if _, warn, exceeded := w.observe(context.Background(), 750_000, 0, 0, 0); warn || exceeded {
 		t.Fatalf("expected no warn/exceeded at 75%% of budget, got warn=%v exceeded=%v", warn, exceeded)
 	}
 
 	// 850,000 tokens = $8.50 = 85% of budget -- crosses the 80% warn line.
-	projected, warn, exceeded := w.observe(context.Background(), 850_000, 0)
+	projected, warn, exceeded := w.observe(context.Background(), 850_000, 0, 0, 0)
 	if !warn {
 		t.Error("expected warn=true crossing the 80% threshold")
 	}
@@ -56,7 +56,7 @@ func TestCostWatchdog_WarnFiresOnceAtThreshold(t *testing.T) {
 	}
 
 	// A subsequent observation still above the warn line must not warn again.
-	if _, warn, _ := w.observe(context.Background(), 900_000, 0); warn {
+	if _, warn, _ := w.observe(context.Background(), 900_000, 0, 0, 0); warn {
 		t.Error("expected warn=false on a second observation past the threshold (one-shot)")
 	}
 }
@@ -68,7 +68,7 @@ func TestCostWatchdog_ExceededAtBudget(t *testing.T) {
 	w := newCostWatchdog(10, 0, 0.8, resolver, "test-model")
 
 	// 1,000,000 tokens = $10 = exactly the budget.
-	projected, warn, exceeded := w.observe(context.Background(), 1_000_000, 0)
+	projected, warn, exceeded := w.observe(context.Background(), 1_000_000, 0, 0, 0)
 	if !exceeded {
 		t.Error("expected exceeded=true at exactly the budget")
 	}
@@ -92,7 +92,7 @@ func TestCostWatchdog_PriorSpendCountsTowardBudget(t *testing.T) {
 
 	// 50,000 tokens = $0.50 incremental; 9 + 0.5 = 9.5, still under budget
 	// but already past the 80% warn line (thanks to prior spend).
-	projected, warn, exceeded := w.observe(context.Background(), 50_000, 0)
+	projected, warn, exceeded := w.observe(context.Background(), 50_000, 0, 0, 0)
 	if projected != 9.5 {
 		t.Errorf("expected projected cost 9.5 (prior 9 + incremental 0.5), got %v", projected)
 	}
@@ -105,7 +105,7 @@ func TestCostWatchdog_PriorSpendCountsTowardBudget(t *testing.T) {
 
 	// 60,000 tokens = $0.60 incremental; 9 + 0.6 = 9.6, still under 10.
 	// 100,000 tokens = $1.00 incremental; 9 + 1.00 = 10.00 -- now exceeded.
-	if _, _, exceeded := w.observe(context.Background(), 100_000, 0); !exceeded {
+	if _, _, exceeded := w.observe(context.Background(), 100_000, 0, 0, 0); !exceeded {
 		t.Error("expected exceeded=true once prior spend + incremental usage reaches the budget")
 	}
 }
@@ -116,7 +116,7 @@ func TestCostWatchdog_WarnRatioDisabled(t *testing.T) {
 	resolver := fakePriceResolver{inPer1M: 10, outPer1M: 0, known: true}
 	w := newCostWatchdog(10, 0, 0, resolver, "test-model")
 
-	if _, warn, exceeded := w.observe(context.Background(), 1_000_000, 0); warn || !exceeded {
+	if _, warn, exceeded := w.observe(context.Background(), 1_000_000, 0, 0, 0); warn || !exceeded {
 		t.Errorf("expected (warn=false, exceeded=true) with warnRatio disabled, got warn=%v exceeded=%v", warn, exceeded)
 	}
 }
