@@ -423,6 +423,12 @@ export function PricingHelp() {
           silent no-op (only the pre-dispatch guard still applies) even though the final reported
           cost for <code className="bg-slate-800 rounded px-1 font-mono">claude</code> is unaffected.
         </p>
+        <p>
+          The optional <strong>cached</strong> and <strong>cache write</strong> $/1M columns price
+          prompt-cache hits and first-time cache writes separately from the regular input rate —
+          cache reads are typically far cheaper than a full input token and cache writes somewhat
+          more expensive. Leaving either empty bills those tokens at the regular input price.
+        </p>
       </section>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Fallback behavior</h3>

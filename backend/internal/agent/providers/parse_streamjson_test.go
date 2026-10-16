@@ -35,25 +35,17 @@ func TestClassifyStreamJSON_ResultUsage(t *testing.T) {
 	}
 }
 
-// TestClassifyStreamJSON_ResultUsage_CacheTokensNotYetParsed documents a real
-// gap found while auditing parser fixtures for #251 §3: the claude/qwen
-// stream-json "result" envelope's usage object can carry
-// cache_creation_input_tokens/cache_read_input_tokens (cache-billed tokens),
-// but extractResultUsage/runUsage only read input_tokens/output_tokens — the
-// cache fields are silently dropped.
-//
-// This is intentionally *not* fixed here. For claude/qwen (this code path),
-// the run's CostUSD comes straight from the CLI's own authoritative
-// total_cost_usd, so dropping these fields doesn't affect billing/estimates
-// today — it's a metadata/observability gap, not a cost-correctness bug, on
-// this path. Wiring them through would additionally touch agent.Result, the
-// agent_runs DB schema (a new migration + sqlc regen), and the cost-budget
-// UI, which is a small feature in its own right rather than a test-only
-// change — out of scope for a structural-test-gaps task. Tracked as a
-// separate follow-up; this test pins down the current (unchanged) behavior
-// so a future fix has a failing test to flip green rather than silent scope
-// creep here.
-func TestClassifyStreamJSON_ResultUsage_CacheTokensNotYetParsed(t *testing.T) {
+// TestClassifyStreamJSON_ResultUsage_CacheTokensParsed verifies the claude/
+// qwen stream-json "result" envelope's cache_creation_input_tokens/
+// cache_read_input_tokens are parsed into runUsage's own
+// CacheCreationInputTokens/CacheReadInputTokens fields (see
+// extractResultUsage) rather than silently dropped. This used to be a
+// documented gap (#251 §3 / "CacheTokensNotYetParsed") — see applyUsage,
+// which now folds these into the persisted/displayed InputTokens count so
+// the recorded token breakdown reflects everything the run actually
+// consumed, even though CostUSD here is still always the CLI's own
+// authoritative total_cost_usd (never re-estimated from these fields).
+func TestClassifyStreamJSON_ResultUsage_CacheTokensParsed(t *testing.T) {
 	// Real capture shape (see TestClassifyStreamJSON_ResultUsage's line):
 	// cache_creation_input_tokens/cache_read_input_tokens sit alongside
 	// input_tokens/output_tokens in the usage object.
@@ -64,14 +56,15 @@ func TestClassifyStreamJSON_ResultUsage_CacheTokensNotYetParsed(t *testing.T) {
 	if ev.Usage == nil {
 		t.Fatalf("want non-nil usage, got nil")
 	}
-	// The parsed fields we do support are unaffected by the extra cache keys.
 	if ev.Usage.InputTokens != 123 || ev.Usage.OutputTokens != 456 || ev.Usage.CostUSD != 0.0789 {
 		t.Errorf("unexpected parsed usage: %+v", ev.Usage)
 	}
-	// runUsage has no cache-token fields at all today — this is the gap.
-	// (No further assertion possible without adding the fields; the point of
-	// this test is that it documents/pins the gap, not that it proves an
-	// absence via reflection.)
+	if ev.Usage.CacheCreationInputTokens != 789 {
+		t.Errorf("want CacheCreationInputTokens=789, got %d", ev.Usage.CacheCreationInputTokens)
+	}
+	if ev.Usage.CacheReadInputTokens != 1011 {
+		t.Errorf("want CacheReadInputTokens=1011, got %d", ev.Usage.CacheReadInputTokens)
+	}
 }
 
 // TestClassifyStreamJSON_ResultNoUsage verifies a "result" message with no
@@ -111,7 +104,9 @@ func TestClassifyStreamJSON_NonResultMessagesReturnNilUsage(t *testing.T) {
 
 // TestClassifyStreamJSON_AssistantUsage verifies an "assistant" message
 // carrying a usage block is parsed into a per-turn (not cumulative) runUsage,
-// with cache tokens folded into InputTokens (see extractAssistantUsage) and
+// with cache read/creation tokens kept in their own fields rather than
+// folded into InputTokens (see extractAssistantUsage's doc comment — they're
+// priced at their own, much lower/higher, rates by the cost watchdog) and
 // IsResult left false so callers know to sum rather than replace their
 // running total. Unlike a "result" message, CostUSD is always zero here — the
 // CLI never reports cost per-message.
@@ -126,12 +121,17 @@ func TestClassifyStreamJSON_AssistantUsage(t *testing.T) {
 	if ev.IsResult {
 		t.Error("want IsResult=false for an assistant message")
 	}
-	// 100 input + 20 cache_creation + 30 cache_read = 150 (folded into InputTokens).
-	if ev.Usage.InputTokens != 150 {
-		t.Errorf("want InputTokens=150 (100+20+30 cache folded in), got %d", ev.Usage.InputTokens)
+	if ev.Usage.InputTokens != 100 {
+		t.Errorf("want InputTokens=100 (cache tokens kept separate), got %d", ev.Usage.InputTokens)
 	}
 	if ev.Usage.OutputTokens != 50 {
 		t.Errorf("want OutputTokens=50, got %d", ev.Usage.OutputTokens)
+	}
+	if ev.Usage.CacheCreationInputTokens != 20 {
+		t.Errorf("want CacheCreationInputTokens=20, got %d", ev.Usage.CacheCreationInputTokens)
+	}
+	if ev.Usage.CacheReadInputTokens != 30 {
+		t.Errorf("want CacheReadInputTokens=30, got %d", ev.Usage.CacheReadInputTokens)
 	}
 	if ev.Usage.CostUSD != 0 {
 		t.Errorf("want CostUSD=0 (assistant messages never carry cost), got %v", ev.Usage.CostUSD)

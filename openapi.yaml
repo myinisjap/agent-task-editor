@@ -605,7 +605,8 @@ components:
       description: >
         One user-editable USD-per-1M-token pricing row (see 042_model_pricing
         and internal/agent/providers/pricing.go's DBPriceResolver), used to
-        estimate codex_cli run costs. A model with no row here
+        estimate codex_cli run costs and to drive the claude/qwen_code
+        mid-run cost watchdog. A model with no row here
         falls back to an internal, approximate hardcoded table; a model
         matching neither has its cost flagged unknown (AgentRun.cost_unknown)
         instead of being silently reported as free. Read fresh on every run
@@ -619,9 +620,14 @@ components:
           type: number
           format: double
           nullable: true
-          description: "USD price per 1M cached (prompt-cache hit) input tokens, used for codex_cli runs, which report cached tokens as part of their input tokens. null bills cached tokens at input_per_1m. Must be >= 0."
+          description: "USD price per 1M cached (prompt-cache hit) input tokens. Used for codex_cli runs, which report cached tokens as part of their input tokens, and for claude/qwen_code's cache_read_input_tokens (reported as a separate counter, additional to input tokens). null bills cached tokens at input_per_1m. Must be >= 0."
+        cache_write_input_per_1m:
+          type: number
+          format: double
+          nullable: true
+          description: "USD price per 1M cache-write (prompt-cache creation) input tokens — claude/qwen_code's cache_creation_input_tokens, billed at a premium over the input rate for writing a prompt prefix into the cache for the first time. Only meaningful for claude/qwen_code; codex_cli reports no cache-write counter. null bills cache-write tokens at input_per_1m. Must be >= 0."
         updated_at:    { type: string, format: date-time }
-      required: [model, input_per_1m, output_per_1m, cached_input_per_1m, updated_at]
+      required: [model, input_per_1m, output_per_1m, cached_input_per_1m, cache_write_input_per_1m, updated_at]
 
     WorkflowLabel:
       type: object
@@ -804,8 +810,11 @@ components:
             unrecognized model or an organization-side restriction can make
             the CLI silently ignore it) and mapped to codex_cli's
             model_reasoning_effort config override (xhigh/max clamp down to
-            high, since codex has no higher tier). Ignored by qwen_code
-            and opencode. See docs/agents.md#effort.
+            high, since codex has no higher tier). Also passed through
+            unchanged to opencode's `opencode run --variant` flag (no fixed
+            vendor enum to clamp against there, so the value is forwarded
+            as-is and may be silently ignored or rejected by the underlying
+            model provider). Ignored by qwen_code. See docs/agents.md#effort.
         permission_mode:
           type: string
           enum: ["", default, auto, acceptEdits, bypassPermissions]
@@ -4271,7 +4280,8 @@ paths:
       summary: List user-editable model pricing rows
       description: >
         Returns every row of the user-editable USD-per-1M-token pricing table
-        used to estimate codex_cli run costs, ordered by model.
+        used to estimate codex_cli run costs and drive the claude/qwen_code
+        mid-run cost watchdog, ordered by model.
         Models with no row here fall back to an internal, approximate
         hardcoded table. See ModelPricing and AgentRun.cost_unknown.
       responses:
@@ -4303,6 +4313,7 @@ paths:
                   input_per_1m:  { type: number, format: double, description: "Must be >= 0." }
                   output_per_1m: { type: number, format: double, description: "Must be >= 0." }
                   cached_input_per_1m: { type: number, format: double, nullable: true, description: "Optional; null or omitted bills cached input tokens at input_per_1m. Must be >= 0." }
+                  cache_write_input_per_1m: { type: number, format: double, nullable: true, description: "Optional; null or omitted bills cache-write tokens (claude/qwen_code's cache_creation_input_tokens) at input_per_1m. Must be >= 0." }
       responses:
         "200":
           content:

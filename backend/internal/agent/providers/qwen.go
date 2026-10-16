@@ -276,21 +276,28 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started qwen pid=%d", cmd.Process.Pid), At: time.Now()}
 
 	var (
-		wg              sync.WaitGroup
-		outcome         string
-		sessionID       string
-		rateLimited     bool
-		transient       bool
-		maxTurnsHit     bool
-		usage           *runUsage
-		cumInputTokens  int64
-		cumOutputTokens int64
+		wg                  sync.WaitGroup
+		outcome             string
+		sessionID           string
+		rateLimited         bool
+		transient           bool
+		maxTurnsHit         bool
+		usage               *runUsage
+		cumInputTokens      int64
+		cumOutputTokens     int64
+		cumCacheReadTokens  int64
+		cumCacheWriteTokens int64
+		// seenMessageIDs dedupes assistant-message usage by message.id — see
+		// claude.go's identical handling for why (a stream-json client can
+		// split one API message into several events sharing the same
+		// message.id, each repeating that message's full usage).
+		seenMessageIDs map[string]bool
 		// modelUsed is the model named on the stream-json "assistant"
-		// messages (message.model) — qwen's result event carries no model
-		// field, and AgentConfig.Model may be left unset (the CLI's own
-		// default), so this is the only structural source for pricing the
-		// run's cost estimate. See applyUsageWithCost below and
-		// docs/providers/qwen_code.md.
+		// messages (message.model) or the initial "system"/"init" event —
+		// qwen's result event carries no model field, and AgentConfig.Model
+		// may be left unset (the CLI's own default), so this is the only
+		// structural source for pricing the run's final cost estimate. See
+		// applyUsageWithCost below and docs/providers/qwen_code.md.
 		modelUsed    string
 		costWarned   bool
 		costExceeded *agent.ErrCostBudgetExceeded
@@ -308,7 +315,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	wg.Add(2)
 
 	// Mid-run cost watchdog — same mechanism as claude.go's runAttempt. See
-	// cost_watchdog.go. Inert when input.CostBudgetUSD is 0.
+	// cost_watchdog.go. Inert when input.CostBudgetUSD is 0, or when no price
+	// is known for the resolved model (qwen's own model IDs are not in the
+	// pricing table today — a follow-up task is adding qwen-specific cost
+	// estimation; until then this stays a correct no-op rather than a bogus
+	// estimate).
 	watchdog := newCostWatchdog(input.CostBudgetUSD, input.CostSpentUSD, input.CostWarnRatio, r.PriceResolver, input.AgentConfig.Model)
 
 	// Stream stdout (stream-json lines) — same envelope as the claude CLI.
@@ -337,6 +348,9 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 				mu.Lock()
 				modelUsed = ev.Model
 				mu.Unlock()
+				// Watchdog-pricing fallback for an unset AgentConfig.Model —
+				// see claude.go's identical handling.
+				watchdog.setModelIfEmpty(ev.Model)
 			}
 			// Prefer the structured classification from the typed "result"
 			// event. Raw-line sniffing (ClassifyLine) is reserved for lines
@@ -369,12 +383,31 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 					mu.Unlock()
 				} else {
 					mu.Lock()
-					cumInputTokens += ev.Usage.InputTokens
-					cumOutputTokens += ev.Usage.OutputTokens
-					inTok, outTok := cumInputTokens, cumOutputTokens
+					// See claude.go's identical dedup handling: a stream-json
+					// client can split one API message into several events
+					// sharing the same message.id, each repeating that
+					// message's full usage.
+					count := true
+					if ev.MessageID != "" {
+						if seenMessageIDs == nil {
+							seenMessageIDs = make(map[string]bool)
+						}
+						if seenMessageIDs[ev.MessageID] {
+							count = false
+						} else {
+							seenMessageIDs[ev.MessageID] = true
+						}
+					}
+					if count {
+						cumInputTokens += ev.Usage.InputTokens
+						cumOutputTokens += ev.Usage.OutputTokens
+						cumCacheReadTokens += ev.Usage.CacheReadInputTokens
+						cumCacheWriteTokens += ev.Usage.CacheCreationInputTokens
+					}
+					inTok, outTok, readTok, writeTok := cumInputTokens, cumOutputTokens, cumCacheReadTokens, cumCacheWriteTokens
 					mu.Unlock()
 					if watchdog.active() {
-						if projected, warn, exceeded := watchdog.observe(context.Background(), inTok, outTok); warn || exceeded {
+						if projected, warn, exceeded := watchdog.observe(context.Background(), inTok, readTok, writeTok, outTok); warn || exceeded {
 							if warn {
 								mu.Lock()
 								costWarned = true
@@ -390,9 +423,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 								// includes cost already recorded by earlier
 								// runs, which must not be double-counted here.
 								costExceededUsage = &runUsage{
-									InputTokens:  inTok,
-									OutputTokens: outTok,
-									CostUSD:      projected - input.CostSpentUSD,
+									InputTokens:              inTok,
+									OutputTokens:             outTok,
+									CacheReadInputTokens:     readTok,
+									CacheCreationInputTokens: writeTok,
+									CostUSD:                  projected - input.CostSpentUSD,
 								}
 								mu.Unlock()
 								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the budget ($%.2f) — cancelling run", projected, input.CostBudgetUSD), At: time.Now()}

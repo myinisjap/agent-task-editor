@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -54,7 +56,41 @@ func opencodeConfigContent(systemPrompt string) (string, error) {
 	return string(b), nil
 }
 
-func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
+// opencodeFilePaths returns the task's attachments as paths relative to the
+// run's working directory (input.RepoPath), for opencode run's -f/--file
+// flag. Modelled directly on codexImagePaths (codex.go) so the two
+// providers can't drift: the dispatcher copies every attachment into
+// <worktree>/.task_attachments/ before the run (see
+// copyAttachmentsToWorktree), and those copies are what's passed — unlike
+// the server's upload dir (AttachmentAbsPaths/UploadDir), the worktree is
+// readable by the isolated agent user opencode runs as. Paths are
+// deduplicated by their relative form (so the same attachment named twice
+// produces one -f), and an attachment whose worktree copy is missing is
+// skipped rather than passed through, so an unreadable path can't fail the
+// whole run; the prompt still lists every attachment (see prompt.go).
+func opencodeFilePaths(input agent.RunInput) []string {
+	var paths []string
+	seen := map[string]bool{}
+	for _, rel := range input.Task.Attachments {
+		p := filepath.Join(".task_attachments", filepath.Base(rel))
+		if seen[p] {
+			continue
+		}
+		if fi, err := os.Stat(filepath.Join(input.RepoPath, p)); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	return paths
+}
+
+// buildOpencodeArgs constructs the `opencode run` argument list. Extracted
+// as a standalone function so arg construction is unit-testable without
+// spawning a subprocess — mirrors buildCodexArgs (codex.go) / buildQwenArgs
+// (qwen.go). Must stay side-effect free (opencodeFilePaths does stat the
+// worktree, but nothing here logs or writes).
+func buildOpencodeArgs(input agent.RunInput) []string {
 	args := []string{"run", "--format", "json"}
 	if input.AgentConfig.Model != "" {
 		args = append(args, "-m", input.AgentConfig.Model)
@@ -62,9 +98,25 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	if input.ResumeSessionID != "" {
 		args = append(args, "--session", input.ResumeSessionID)
 	}
+	if v, ok := opencodeVariant(input.AgentConfig.Effort); ok {
+		args = append(args, "--variant", v)
+	}
+	// One -f per attachment: -f/--file is a variadic (array-type) option in
+	// opencode's yargs CLI, so a bare `-f a.png "<prompt>"` would swallow the
+	// prompt as a second file (the same failure mode codex.go documents for
+	// --image). Repeating the flag per path and keeping -- immediately
+	// before the prompt (below) is belt-and-braces against that.
+	for _, p := range opencodeFilePaths(input) {
+		args = append(args, "-f", p)
+	}
 	// ponytail: opencode has no --mcp-config flag; MCP tools unavailable for opencode runs
 	// "--" stops yargs flag parsing; prompt may contain "--" sequences that would be misread as flags
 	args = append(args, "--", buildPrompt(input))
+	return args
+}
+
+func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
+	args := buildOpencodeArgs(input)
 
 	timeoutSecs := input.AgentConfig.TimeoutSecs
 	if timeoutSecs <= 0 {
@@ -115,6 +167,14 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	}
 
 	logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("started opencode pid=%d", cmd.Process.Pid), At: time.Now()}
+	if v, ok := opencodeVariant(input.AgentConfig.Effort); ok {
+		// opencode run --variant forwards the value straight to the model
+		// provider with no CLI-side validation of our own — logging what was
+		// actually requested lets an operator cross-reference against the
+		// run's own behavior (or stderr, if the provider rejects it) if a
+		// variant looks like it was silently ignored. See effort.go.
+		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("requested effort=%s (--variant)", v), At: time.Now()}
+	}
 
 	var (
 		wg          sync.WaitGroup
