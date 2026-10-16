@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { useNotificationsStore, notificationsActive, notificationsSupported } from './notifications'
+import { useNotificationsStore, notificationsActive, notificationsSupported, notificationsUnavailableReason } from './notifications'
 
 class FakeNotification {
   static permission: NotificationPermission = 'default'
@@ -69,5 +69,37 @@ describe('notifications store', () => {
 
     expect(useNotificationsStore.getState().enabled).toBe(false)
     expect(localStorage.getItem('notifications.enabled')).toBe('0')
+  })
+
+  describe('notificationsUnavailableReason', () => {
+    const realUA = navigator.userAgent
+
+    afterEach(() => {
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, value: realUA })
+      delete (window as unknown as Record<string, unknown>).isSecureContext
+    })
+
+    it('is null when the Notifications API is available in a secure context', () => {
+      vi.stubGlobal('Notification', FakeNotification)
+      expect(notificationsUnavailableReason()).toBeNull()
+    })
+
+    it('reports insecure over plain HTTP even when the API exists', () => {
+      vi.stubGlobal('Notification', FakeNotification)
+      Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false })
+      expect(notificationsUnavailableReason()).toBe('insecure')
+    })
+
+    it('asks iPhone Safari users to add the app to the Home Screen', () => {
+      Object.defineProperty(navigator, 'userAgent', {
+        configurable: true,
+        value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+      })
+      expect(notificationsUnavailableReason()).toBe('ios-install')
+    })
+
+    it('reports unsupported for other browsers without the API', () => {
+      expect(notificationsUnavailableReason()).toBe('unsupported')
+    })
   })
 })

@@ -8,6 +8,37 @@ export function notificationsSupported(): boolean {
   return typeof window !== 'undefined' && 'Notification' in window
 }
 
+/** Why notifications can't be offered on this device, or null when they can.
+ *  Shown in the sidebar instead of silently hiding the toggle.
+ *  - 'insecure': the page isn't served over HTTPS (or localhost); browsers
+ *    only allow notifications in secure contexts, e.g. not over
+ *    http://<lan-ip>:5173 from a phone.
+ *  - 'ios-install': iOS/iPadOS Safari only offers notifications to a web app
+ *    added to the Home Screen (iOS 16.4+).
+ *  - 'unsupported': the browser has no Notifications API at all. */
+export type NotificationsUnavailableReason = 'insecure' | 'ios-install' | 'unsupported'
+
+function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  // iPadOS 13+ reports itself as a Mac; tell it apart by touch support.
+  return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+}
+
+function isStandalone(): boolean {
+  if (typeof window === 'undefined') return false
+  const nav = navigator as Navigator & { standalone?: boolean }
+  return nav.standalone === true || window.matchMedia?.('(display-mode: standalone)').matches === true
+}
+
+export function notificationsUnavailableReason(): NotificationsUnavailableReason | null {
+  if (typeof window === 'undefined') return 'unsupported'
+  if (window.isSecureContext === false) return 'insecure'
+  if (notificationsSupported()) return null
+  if (isIOS() && !isStandalone()) return 'ios-install'
+  return 'unsupported'
+}
+
 function initialEnabled(): boolean {
   try {
     return localStorage.getItem(STORAGE_KEY) === '1'

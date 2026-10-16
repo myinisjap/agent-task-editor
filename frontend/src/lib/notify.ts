@@ -28,30 +28,58 @@ export interface HumanNeededNotificationOptions {
   taskId: string
 }
 
+/** The page's service worker registration, if one is active (see
+ *  src/lib/serviceWorker.ts). Mobile browsers only show notifications through
+ *  it: Android Chrome throws "Illegal constructor" on `new Notification()`. */
+async function serviceWorkerRegistration(): Promise<ServiceWorkerRegistration | undefined> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return undefined
+  try {
+    return await navigator.serviceWorker.getRegistration()
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Shows a browser notification that a task needs human attention. No-ops
  * silently when the Notifications API is unsupported, the user hasn't
  * opted in, or permission isn't granted — see stores/notifications.ts.
+ * Goes through the service worker when there is one (required on mobile),
+ * else falls back to the page-level Notification constructor.
  */
-export function showHumanNeededNotification({ title, body, taskId }: HumanNeededNotificationOptions): void {
+export async function showHumanNeededNotification({ title, body, taskId }: HumanNeededNotificationOptions): Promise<void> {
   if (!notificationsSupported()) return
   if (!notificationsActive()) return
   if (shouldSkipDuplicate(taskId)) return
 
+  const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+  const url = `${window.location.origin}${base}/tasks/${taskId}`
+  const options: NotificationOptions = {
+    body,
+    tag: `human-needed-${taskId}`,
+    icon: ICON,
+    data: { url },
+  }
+
+  const registration = await serviceWorkerRegistration()
+  if (registration) {
+    try {
+      // Click handling lives in public/sw.js (notificationclick).
+      await registration.showNotification(title, options)
+      return
+    } catch {
+      // fall through to the page-level constructor
+    }
+  }
+
   try {
-    const notification = new Notification(title, {
-      body,
-      tag: `human-needed-${taskId}`,
-      icon: ICON,
-    })
+    const notification = new Notification(title, options)
     notification.onclick = () => {
       window.focus()
-      const base = import.meta.env.BASE_URL.replace(/\/$/, '')
-      window.location.assign(`${base}/tasks/${taskId}`)
+      window.location.assign(url)
     }
   } catch {
-    // Constructing a Notification can throw in some environments (e.g. some
-    // mobile browsers require a service worker registration); degrade
-    // silently rather than surface an error to the user.
+    // Constructing a Notification throws on mobile browsers without a service
+    // worker; degrade silently rather than surface an error to the user.
   }
 }
