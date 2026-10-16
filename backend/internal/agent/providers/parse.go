@@ -96,3 +96,13 @@ func is429Line(line string) bool {
 func isTransientLine(line string) bool {
 	return agent.ClassifyLine(line) == agent.ClassTransient
 }
+
+// isMaxTurnsLine reports whether the line signals that the agent hit its
+// configured turn cap. Thin wrapper over agent.ClassifyLine. Used by the
+// qwen_code provider, whose CLI (verified against @qwen-code/qwen-code
+// 0.25.2) prints this to stderr and exits non-zero instead of emitting a
+// stream-json result with subtype:"error_max_turns" the way claude does —
+// see errclass.go and qwen.go.
+func isMaxTurnsLine(line string) bool {
+	return agent.ClassifyLine(line) == agent.ClassMaxTurns
+}

@@ -93,14 +93,17 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     costTracking: {
       support: 'partial',
-      note: "Tokens only, no cost — qwen's stream-json result carries usage but no total_cost_usd, so a cost budget cap will not reliably fire.",
+      note: "Estimated, not authoritative: qwen's stream-json result carries usage but no total_cost_usd, so tokens are priced via the same DB-backed pricing table codex_cli uses (cached tokens, when reported, at the cached rate). If the model isn't set, the model qwen actually used (read from the assistant message) is priced instead. Runs on an unpriced model are flagged \"cost unknown\" instead of $0 — add a row for your Qwen model under Settings → Pricing.",
     },
     costWatchdog: {
       support: 'partial',
       note: 'Same mid-run kill switch mechanism as claude (projects cost from incremental token usage). Only effective when the configured model is in the pricing table — otherwise the watchdog is a silent no-op and only the pre-dispatch budget guard applies.',
     },
     imageAttachments: { support: 'none', note: 'No image flag on the qwen CLI.' },
-    maxTurns: { support: 'full', note: 'Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying.' },
+    maxTurns: {
+      support: 'full',
+      note: 'Enforced via --max-session-turns. Hitting the cap escalates the run to waiting_human instead of retrying (detected from the CLI\'s stderr message, since qwen exits non-zero rather than emitting a structured result).',
+    },
     sessionResume: { support: 'full', note: 'session_id + --resume.' },
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
     effort: { support: 'none', note: 'No reasoning-effort flag on the qwen CLI — the field is ignored for this provider.' },

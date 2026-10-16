@@ -48,6 +48,14 @@ type streamEvent struct {
 	// over text-sniffing when present since it's authoritative and immune
 	// to wording changes.
 	APIErrorStatus int
+	// Model is the model ID carried on an "assistant" message's
+	// message.model field (empty otherwise, and empty if the event itself
+	// carries none). The result event carries no model field, so this is the
+	// only structural source of the model actually used — needed so qwen's
+	// cost estimation (qwen.go) can still price a run when
+	// AgentConfig.Model was left unset (CLI default model). See
+	// docs/providers/qwen_code.md.
+	Model string
 	// Parsed is true when the line was valid stream-json (any event type,
 	// including an unrecognized "type"). False only when json.Unmarshal
 	// failed, i.e. the line wasn't JSON at all.
@@ -100,7 +108,11 @@ func classifyStreamJSON(line string) streamEvent {
 			// providers/cost_watchdog.go) to project mid-run cost; the caller
 			// is responsible for summing across assistant messages since each
 			// one reports only its own turn's usage, not a running total.
-			Usage:  extractAssistantUsage(raw),
+			Usage: extractAssistantUsage(raw),
+			// message.model names the model that actually produced this
+			// turn — the only structural source of the model used (the
+			// result event carries no such field). See streamEvent.Model.
+			Model:  extractAssistantModel(raw),
 			Parsed: true,
 		}
 	case "tool_use":
@@ -202,12 +214,18 @@ func classifyResultMessage(raw map[string]json.RawMessage) agent.Classification 
 // extractResultUsage parses the usage/total_cost_usd/num_turns fields from a
 // claude/qwen CLI stream-json "result" message. num_turns is the CLI's own
 // count of internal agent turns the run consumed, compared against the
-// configured max_turns cap. Returns nil if none of the fields are present.
+// configured max_turns cap. CacheReadInputTokens is only ever populated by
+// qwen (verified against @qwen-code/qwen-code 0.25.2's computeUsageFromMetrics,
+// which sets cache_read_input_tokens on the result usage block from
+// uiTelemetryService's cached-token stat) — claude's result usage carries no
+// such field, so this is always 0 there. Returns nil if none of the fields
+// are present.
 func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 	var parsed struct {
 		Usage *struct {
-			InputTokens  int64 `json:"input_tokens"`
-			OutputTokens int64 `json:"output_tokens"`
+			InputTokens          int64 `json:"input_tokens"`
+			OutputTokens         int64 `json:"output_tokens"`
+			CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 		TotalCostUSD *float64 `json:"total_cost_usd"`
 		NumTurns     *int64   `json:"num_turns"`
@@ -233,6 +251,7 @@ func extractResultUsage(raw map[string]json.RawMessage) *runUsage {
 	if parsed.Usage != nil {
 		u.InputTokens = parsed.Usage.InputTokens
 		u.OutputTokens = parsed.Usage.OutputTokens
+		u.CachedInputTokens = parsed.Usage.CacheReadInputTokens
 	}
 	if parsed.TotalCostUSD != nil {
 		u.CostUSD = *parsed.TotalCostUSD
@@ -278,6 +297,20 @@ func extractAssistantUsage(raw map[string]json.RawMessage) *runUsage {
 		InputTokens:  msg.Usage.InputTokens + msg.Usage.CacheCreationInputTokens + msg.Usage.CacheReadInputTokens,
 		OutputTokens: msg.Usage.OutputTokens,
 	}
+}
+
+// extractAssistantModel parses the message.model field from a claude/qwen
+// stream-json "assistant" message (verified against
+// @qwen-code/qwen-code 0.25.2's StreamJsonOutputAdapter, which sets it from
+// config.getModel() on every assistant message). Returns "" if absent.
+func extractAssistantModel(raw map[string]json.RawMessage) string {
+	var msg struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(raw["message"], &msg); err != nil {
+		return ""
+	}
+	return msg.Model
 }
 
 // assistantHasToolUse reports whether an assistant stream-json message carries

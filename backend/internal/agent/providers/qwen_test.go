@@ -192,6 +192,61 @@ func TestQwenRunner_ErrorMaxTurns(t *testing.T) {
 	}
 }
 
+// TestQwenRunner_MaxSessionTurns_StderrDetection verifies that qwen's real
+// 0.25.2 behavior — printing "Reached max session turns for this session...."
+// to stderr and exiting non-zero (FatalTurnLimitedError, exit code 53),
+// without ever emitting a stream-json result with subtype:"error_max_turns"
+// — still drives Run to return *agent.ErrMaxTurns and escalate to
+// waiting_human, rather than being treated as a genuine failure (which
+// would exhaust the task's retry budget before escalating). See errclass.go
+// and qwen.go's stderr scan loop.
+func TestQwenRunner_MaxSessionTurns_StderrDetection(t *testing.T) {
+	runner := &QwenRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+
+	input := agent.RunInput{
+		RunID: "qwen-test-run",
+		Task:  agent.Task{ID: "task-1", Title: "test task"},
+		AgentConfig: agent.AgentConfig{
+			Env:         map[string]string{"QWEN_TEST_HELPER": "max_session_turns_stderr"},
+			TimeoutSecs: 10,
+			MaxTurns:    5,
+		},
+		RepoPath: os.TempDir(),
+	}
+
+	type outcome struct {
+		r   agent.Result
+		err error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		r, err := runner.Run(context.Background(), input, logCh)
+		close(logCh)
+		ch <- outcome{r, err}
+	}()
+	for range logCh {
+	}
+	res := <-ch
+
+	var mt *agent.ErrMaxTurns
+	if !errors.As(res.err, &mt) {
+		t.Fatalf("want *agent.ErrMaxTurns, got err=%v (%T)", res.err, res.err)
+	}
+	if mt.MaxTurns != 5 {
+		t.Errorf("want MaxTurns=5, got %d", mt.MaxTurns)
+	}
+	if res.r.Status != "failed" {
+		t.Errorf("want Status=failed, got %q", res.r.Status)
+	}
+	// Usage from the one assistant message that was emitted before the
+	// stderr line/exit must still be preserved (so the run isn't recorded
+	// as having spent $0 despite having consumed tokens).
+	if res.r.InputTokens != 30 || res.r.OutputTokens != 40 {
+		t.Errorf("want usage preserved (30/40), got (%d/%d)", res.r.InputTokens, res.r.OutputTokens)
+	}
+}
+
 // TestQwenRunner_RateLimit_PreservesUsage is a regression test for the bug
 // where qwen.go's rate-limit return path built a bare
 // agent.Result{Status, CostWarned} — dropping SessionID and usage entirely —
@@ -530,6 +585,149 @@ func TestQwenRunner_Run_Exit0Success(t *testing.T) {
 	}
 	if result.InputTokens != 5 || result.OutputTokens != 7 {
 		t.Errorf("usage = %d/%d, want 5/7", result.InputTokens, result.OutputTokens)
+	}
+}
+
+// recordingPriceResolver wraps fakePriceResolver and additionally records
+// the model it was asked to price, so tests can assert which model string
+// qwen.go actually resolved pricing against (e.g. the fallback to the
+// assistant message's message.model when AgentConfig.Model is unset).
+type recordingPriceResolver struct {
+	fakePriceResolver
+	onPrice func(model string)
+}
+
+func (r recordingPriceResolver) Price(ctx context.Context, model string) (float64, float64, bool) {
+	if r.onPrice != nil {
+		r.onPrice(model)
+	}
+	return r.fakePriceResolver.Price(ctx, model)
+}
+
+// TestQwenRunner_Run_EstimatesCostFromTokens_ConfiguredModel verifies that
+// when the result carries no total_cost_usd (qwen's result event never has
+// one — see docs/providers/qwen_code.md), Result.CostUSD is estimated from
+// the result's usage via the runner's PriceResolver, using
+// AgentConfig.Model when it's set.
+func TestQwenRunner_Run_EstimatesCostFromTokens_ConfiguredModel(t *testing.T) {
+	runner := &QwenRunner{
+		BinaryPath:    os.Args[0],
+		PriceResolver: fakePriceResolver{inPer1M: 3, outPer1M: 15, known: true},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := qwenHelperInput("exit0_success")
+	input.AgentConfig.Model = "claude-sonnet-4-5"
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	// exit0_success's result usage is 5 input / 7 output tokens.
+	want := (5.0/1_000_000)*3 + (7.0/1_000_000)*15
+	if result.CostUSD != want {
+		t.Errorf("CostUSD = %v, want %v (estimated from tokens via PriceResolver)", result.CostUSD, want)
+	}
+	if result.CostUnknown {
+		t.Error("CostUnknown = true, want false (model was known to the resolver)")
+	}
+}
+
+// TestQwenRunner_Run_EstimatesCostFromTokens_ModelFromAssistantMessage
+// verifies that when AgentConfig.Model is left empty, the model used to
+// price the run is instead taken from the stream-json "assistant" message's
+// message.model field (the only structural source — qwen's result event
+// carries no model field) rather than silently estimating with an empty
+// model string (which would always report CostUnknown).
+func TestQwenRunner_Run_EstimatesCostFromTokens_ModelFromAssistantMessage(t *testing.T) {
+	var gotModel string
+	runner := &QwenRunner{
+		BinaryPath: os.Args[0],
+		PriceResolver: recordingPriceResolver{
+			fakePriceResolver: fakePriceResolver{inPer1M: 1, outPer1M: 2, known: true},
+			onPrice:           func(model string) { gotModel = model },
+		},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	// AgentConfig.Model deliberately left unset.
+	result, err := runner.Run(context.Background(), qwenHelperInput("exit0_success_no_cost_known_model"), logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if gotModel != "qwen3-coder-plus" {
+		t.Errorf("want pricing resolved against the assistant message's model %q, got %q", "qwen3-coder-plus", gotModel)
+	}
+	want := (1_000_000.0/1_000_000)*1 + (1_000_000.0/1_000_000)*2
+	if result.CostUSD != want {
+		t.Errorf("CostUSD = %v, want %v", result.CostUSD, want)
+	}
+	if result.CostUnknown {
+		t.Error("CostUnknown = true, want false")
+	}
+}
+
+// TestQwenRunner_Run_CachedTokensPricedAtCachedRate verifies that when the
+// result's usage carries cache_read_input_tokens (verified against
+// @qwen-code/qwen-code 0.25.2's computeUsageFromMetrics), those tokens are
+// billed at the resolver's cached rate rather than the full input rate.
+func TestQwenRunner_Run_CachedTokensPricedAtCachedRate(t *testing.T) {
+	runner := &QwenRunner{
+		BinaryPath: os.Args[0],
+		PriceResolver: fakeCachedPriceResolver{
+			fakePriceResolver: fakePriceResolver{inPer1M: 2, outPer1M: 8, known: true},
+			cachedPer1M:       0.5,
+			cachedKnown:       true,
+		},
+	}
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	input := qwenHelperInput("exit0_success_cached_tokens")
+	input.AgentConfig.Model = "some-model"
+	result, err := runner.Run(context.Background(), input, logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	// 1,000,000 input tokens, 800,000 of which are cached: 200k at $2/1M +
+	// 800k at $0.5/1M + 1,000,000 output at $8/1M.
+	want := (200_000.0/1_000_000)*2 + (800_000.0/1_000_000)*0.5 + (1_000_000.0/1_000_000)*8
+	if result.CostUSD != want {
+		t.Errorf("CostUSD = %v, want %v (cached tokens priced at cached rate)", result.CostUSD, want)
+	}
+}
+
+// TestQwenRunner_Run_UnknownModel_CostUnknownFlag verifies that when no
+// model is known at all (AgentConfig.Model unset and no assistant message
+// to source one from) and the result carries no total_cost_usd, the run
+// reports CostUnknown rather than a misleading CostUSD=0.
+func TestQwenRunner_Run_UnknownModel_CostUnknownFlag(t *testing.T) {
+	runner := &QwenRunner{BinaryPath: os.Args[0]} // nil PriceResolver -> defaultPriceResolver
+	logCh := make(chan agent.LogEntry, 256)
+	go func() {
+		for range logCh {
+		}
+	}()
+	result, err := runner.Run(context.Background(), qwenHelperInput("exit0_success_cached_tokens"), logCh)
+	close(logCh)
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if result.CostUSD != 0 {
+		t.Errorf("CostUSD = %v, want 0 (model unknown)", result.CostUSD)
+	}
+	if !result.CostUnknown {
+		t.Error("CostUnknown = false, want true (tokens consumed but no model known)")
 	}
 }
 

@@ -232,6 +232,30 @@ func TestMain(m *testing.M) {
 		// exits 0 (mirrors claude's error_max_turns behavior).
 		fmt.Println(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached max turns","session_id":"qwen-max-turns-session","total_cost_usd":0.02,"usage":{"input_tokens":30,"output_tokens":40}}`)
 		os.Exit(0)
+	case "max_session_turns_stderr":
+		// Simulate: qwen 0.25.2's actual behavior when --max-session-turns
+		// is reached — handleMaxTurnsExceededError writes this exact
+		// message to stderr and exits with FatalTurnLimitedError's code
+		// (53). No stream-json "result" with subtype:"error_max_turns" is
+		// ever emitted, unlike claude — see errclass.go and qwen.go.
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","model":"qwen3-coder-plus","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":30,"output_tokens":40}}}`)
+		fmt.Fprintln(os.Stderr, "Reached max session turns for this session. Increase the number of turns by specifying maxSessionTurns in settings.json.")
+		os.Exit(53)
+	case "exit0_success_no_cost_known_model":
+		// Simulate: qwen's result event carries usage but no total_cost_usd
+		// (it never emits one — see docs/providers/qwen_code.md), with the
+		// model named on the assistant message's message.model field —
+		// AgentConfig.Model is left empty by the test's input, so pricing
+		// must fall back to this structural source.
+		fmt.Println(`{"type":"assistant","message":{"role":"assistant","model":"qwen3-coder-plus","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":0,"output_tokens":0}}}`)
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","session_id":"qwen-cost-est-session","usage":{"input_tokens":1000000,"output_tokens":1000000}}`)
+		os.Exit(0)
+	case "exit0_success_cached_tokens":
+		// Simulate: qwen's result usage carries cache_read_input_tokens
+		// (verified against 0.25.2's computeUsageFromMetrics) — a subset of
+		// input_tokens that should be priced at the cached rate.
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","session_id":"qwen-cached-session","usage":{"input_tokens":1000000,"output_tokens":1000000,"cache_read_input_tokens":800000}}`)
+		os.Exit(0)
 	case "rate_limit_with_usage":
 		// Mirrors claude's "rate_limit_with_usage" helper mode above —
 		// regression coverage for the same dropped-usage bug on qwen.go's

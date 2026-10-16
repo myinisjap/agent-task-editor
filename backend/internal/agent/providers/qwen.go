@@ -186,8 +186,15 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		usage           *runUsage
 		cumInputTokens  int64
 		cumOutputTokens int64
-		costWarned      bool
-		costExceeded    *agent.ErrCostBudgetExceeded
+		// modelUsed is the model named on the stream-json "assistant"
+		// messages (message.model) — qwen's result event carries no model
+		// field, and AgentConfig.Model may be left unset (the CLI's own
+		// default), so this is the only structural source for pricing the
+		// run's cost estimate. See applyUsageWithCost below and
+		// docs/providers/qwen_code.md.
+		modelUsed    string
+		costWarned   bool
+		costExceeded *agent.ErrCostBudgetExceeded
 		// costExceededUsage snapshots this run's own cumulative token usage
 		// and incremental cost (projected minus the watchdog's prior-spend
 		// baseline) at the moment the watchdog cancels the subprocess. A
@@ -225,6 +232,11 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 			if ev.SessionID != "" {
 				mu.Lock()
 				sessionID = ev.SessionID
+				mu.Unlock()
+			}
+			if ev.Model != "" {
+				mu.Lock()
+				modelUsed = ev.Model
 				mu.Unlock()
 			}
 			// Prefer the structured classification from the typed "result"
@@ -307,6 +319,17 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 				mu.Lock()
 				rateLimited = true
 				mu.Unlock()
+			} else if isMaxTurnsLine(line) {
+				// qwen 0.25.2's handleMaxTurnsExceededError writes "Reached
+				// max session turns for this session..." to stderr and
+				// exits non-zero (FatalTurnLimitedError, exit code 53) —
+				// unlike claude, it never emits a stream-json result with
+				// subtype:"error_max_turns", so this is the only signal
+				// available. See errclass.go and
+				// docs/providers/qwen_code.md.
+				mu.Lock()
+				maxTurnsHit = true
+				mu.Unlock()
 			} else if isTransientLine(line) {
 				mu.Lock()
 				transient = true
@@ -330,8 +353,36 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 	finalCostWarned := costWarned
 	finalCostExceeded := costExceeded
 	finalCostExceededUsage := costExceededUsage
+	finalCumInputTokens := cumInputTokens
+	finalCumOutputTokens := cumOutputTokens
 	truncated := stdoutTruncated || stderrTruncated
+	finalModel := modelUsed
 	mu.Unlock()
+
+	// qwen 0.25.2's actual max-turns behavior (handleMaxTurnsExceededError
+	// printing to stderr and exiting non-zero — see errclass.go) never
+	// reaches the terminal "result" event, so finalUsage is nil here even
+	// though assistant messages (and their token usage) were emitted before
+	// the cap was hit. Fall back to the cumulative per-turn usage tallied
+	// from those assistant messages so a max-turns run doesn't silently
+	// record cost_usd=0 despite having consumed tokens.
+	if finalUsage == nil && mth && (finalCumInputTokens > 0 || finalCumOutputTokens > 0) {
+		finalUsage = &runUsage{InputTokens: finalCumInputTokens, OutputTokens: finalCumOutputTokens}
+	}
+
+	// price applies usage/cost onto res, pricing via PriceResolver whenever
+	// the result carried no authoritative total_cost_usd (qwen's own result
+	// event never does — see docs/providers/qwen_code.md). model prefers the
+	// configured model, falling back to what the CLI actually used
+	// (finalModel, from the assistant stream-json messages) when the
+	// provider config left Model unset.
+	model := input.AgentConfig.Model
+	if model == "" {
+		model = finalModel
+	}
+	price := func(res *agent.Result, u *runUsage) {
+		applyUsageWithCost(ctx, res, u, r.PriceResolver, model)
+	}
 
 	if finalCostExceeded != nil {
 		// The watchdog already cancelled the subprocess; err here is just
@@ -354,14 +405,14 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		// "completed" with missing output (see scan.go for detail).
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen output stream truncated: a single line exceeded the %d-byte scan limit (bufio.ErrTooLong) — run output is incomplete", maxScanLineBytes), At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
-		applyUsage(&res, finalUsage)
+		price(&res, finalUsage)
 		return res, &agent.ErrTransient{Cause: fmt.Errorf("qwen output truncated at scan buffer limit")}
 	}
 
 	if err != nil && runCtx.Err() == context.DeadlineExceeded {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "agent timed out", At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
-		applyUsage(&res, finalUsage)
+		price(&res, finalUsage)
 		return res, &agent.ErrTransient{Cause: fmt.Errorf("qwen run timed out")}
 	}
 	if err != nil {
@@ -372,25 +423,28 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		mu.Unlock()
 		if rl {
 			res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
-			applyUsage(&res, finalUsage)
+			price(&res, finalUsage)
 			return res, &agent.ErrRateLimit{Message: "qwen CLI 429: Request rejected by API rate limit"}
 		}
 		if tr {
 			res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
-			applyUsage(&res, finalUsage)
+			price(&res, finalUsage)
 			return res, &agent.ErrTransient{Cause: fmt.Errorf("qwen CLI exited with transient infra error: %w", err)}
 		}
 	}
 
-	// qwen may exit 0 on the max-session-turns subtype (mirrors claude's
-	// error_max_turns behavior), so this must be checked regardless of err —
-	// otherwise the MCP/outcome fallthrough below would report the run as a
-	// normal "completed" result and the turn cap would silently have no
-	// effect.
+	// Checked regardless of err: a run that hit max turns might exit 0 (if
+	// qwen ever adopts claude's error_max_turns subtype behavior) or, as
+	// qwen 0.25.2 actually does, exit non-zero with FatalTurnLimitedError
+	// after printing the stderr line matched above — either way the
+	// MCP/outcome fallthrough below must not get a chance to report this as
+	// a normal "completed"/"failed" result, or the turn cap would silently
+	// have no effect (re-dispatch would hand the next run a fresh turn
+	// budget instead of escalating to waiting_human).
 	if mth {
 		logCh <- agent.LogEntry{Type: agent.LogSystem, Content: "qwen hit its configured max-turns limit", At: time.Now()}
 		res := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
-		applyUsage(&res, finalUsage)
+		price(&res, finalUsage)
 		configuredMaxTurns := input.AgentConfig.MaxTurns
 		if configuredMaxTurns <= 0 {
 			configuredMaxTurns = 50
@@ -408,7 +462,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 		// ReadResult() (the MCP sidecar result file) has no knowledge of
 		// token usage/cost — that only comes from the CLI's stream-json
 		// "result" message — so merge it in here.
-		applyUsage(&res, finalUsage)
+		price(&res, finalUsage)
 		res.SessionID = finalSession
 		res.CostWarned = finalCostWarned
 		// Any non-zero exit from the qwen binary means something went wrong
@@ -420,7 +474,7 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited with error but had outcome %q — treating as failed", res.Outcome), At: time.Now()}
 			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
-			applyUsage(&failed, finalUsage)
+			price(&failed, finalUsage)
 			return failed, nil
 		}
 		return res, nil
@@ -432,10 +486,10 @@ func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<-
 			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
 		}
 		failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
-		applyUsage(&failed, finalUsage)
+		price(&failed, finalUsage)
 		return failed, nil
 	}
 	res := agent.Result{Status: "completed", Outcome: outcome, SessionID: finalSession, CostWarned: finalCostWarned}
-	applyUsage(&res, finalUsage)
+	price(&res, finalUsage)
 	return res, nil
 }
