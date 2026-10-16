@@ -83,7 +83,7 @@ func TestClassifyOpencodeJSON_StepFinishCarriesSessionID(t *testing.T) {
 }
 
 // TestClassifyOpencodeJSON_StepFinishCarriesUsage verifies that a
-// step_finish event carrying "cost" and "tokens" (as opencode-ai v1.18.6
+// step_finish event carrying "cost" and "tokens" (as opencode-ai v1.19.1
 // emits) is parsed into a non-nil *runUsage with the expected fields.
 func TestClassifyOpencodeJSON_StepFinishCarriesUsage(t *testing.T) {
 	line := `{"type":"step_finish","sessionID":"ses_xyz789","part":{"reason":"stop","cost":0.042,"tokens":{"input":123,"output":456,"reasoning":0,"cache":{"read":0,"write":0}}}}`
@@ -104,6 +104,26 @@ func TestClassifyOpencodeJSON_StepFinishCarriesUsage(t *testing.T) {
 	}
 }
 
+// TestClassifyOpencodeJSON_StepFinishCountsCacheTokensAsInput verifies that
+// cache.read/cache.write on the "tokens" object are folded into
+// InputTokens, so prompt-cache usage isn't silently dropped from the input
+// token total (see extractOpencodeUsage).
+func TestClassifyOpencodeJSON_StepFinishCountsCacheTokensAsInput(t *testing.T) {
+	line := `{"type":"step_finish","sessionID":"ses_xyz789","part":{"reason":"stop","cost":0.01,"tokens":{"input":100,"output":50,"reasoning":0,"cache":{"read":30,"write":20}}}}`
+
+	_, _, usage, _, _ := classifyOpencodeJSON(line)
+
+	if usage == nil {
+		t.Fatalf("want non-nil usage, got nil")
+	}
+	if usage.InputTokens != 150 {
+		t.Errorf("InputTokens = %d, want 150 (100 input + 30 cache.read + 20 cache.write)", usage.InputTokens)
+	}
+	if usage.OutputTokens != 50 {
+		t.Errorf("OutputTokens = %d, want 50", usage.OutputTokens)
+	}
+}
+
 // TestClassifyOpencodeJSON_StepFinishNoUsageFields verifies the nil-guard:
 // a step_finish part lacking both "cost" and "tokens" must return nil usage
 // rather than a spurious zero-valued *runUsage, matching
@@ -115,6 +135,30 @@ func TestClassifyOpencodeJSON_StepFinishNoUsageFields(t *testing.T) {
 
 	if usage != nil {
 		t.Errorf("want nil usage when neither cost nor tokens present, got %+v", usage)
+	}
+}
+
+// TestSumRunUsage verifies the accumulation helper used to sum opencode's
+// per-step step_finish usage across a run: nil + b returns a copy of b (not
+// a shared pointer), and a + b adds every field.
+func TestSumRunUsage(t *testing.T) {
+	b := &runUsage{InputTokens: 10, OutputTokens: 20, CachedInputTokens: 1, CostUSD: 0.01, Turns: 1}
+
+	got := sumRunUsage(nil, b)
+	if got == b {
+		t.Errorf("want a copy of b, got the same pointer")
+	}
+	if *got != *b {
+		t.Errorf("sumRunUsage(nil, b) = %+v, want a copy of %+v", got, b)
+	}
+
+	a := &runUsage{InputTokens: 100, OutputTokens: 200, CachedInputTokens: 5, CostUSD: 0.05, Turns: 2}
+	sum := sumRunUsage(a, b)
+	if sum.InputTokens != 110 || sum.OutputTokens != 220 || sum.CachedInputTokens != 6 || sum.Turns != 3 {
+		t.Errorf("sumRunUsage(a, b) = %+v, want InputTokens=110 OutputTokens=220 CachedInputTokens=6 Turns=3", sum)
+	}
+	if diff := sum.CostUSD - 0.06; diff < -1e-9 || diff > 1e-9 {
+		t.Errorf("sumRunUsage(a, b).CostUSD = %v, want ~0.06", sum.CostUSD)
 	}
 }
 

@@ -12,20 +12,19 @@ import (
 //
 // Usage/cost: the "step_finish" event's part carries both a "cost" (float,
 // USD) and a "tokens" object ({input,output,reasoning,cache:{read,write}})
-// (verified against opencode-ai v1.18.6). Only input/output/cost are read
-// here — see extractOpencodeUsage — mirroring extractResultUsage's
-// nil-if-neither-present guard in parse_streamjson.go.
+// (verified against opencode-ai v1.19.1). cost/input/output/cache.read/
+// cache.write are read here — see extractOpencodeUsage — mirroring
+// extractResultUsage's nil-if-neither-present guard in parse_streamjson.go.
 //
 // step_finish fires once per *step*, not once per run, so there may be
-// several per run. opencode's own SQLite "session" table stores a single
-// cumulative cost/tokens_input/tokens_output row per session (not a
-// per-step delta), which strongly suggests the values reported on each
-// step_finish event are themselves cumulative-to-date rather than
-// per-step. Based on that evidence, the caller (OpencodeRunner.Run)
-// *takes the last* step_finish's usage rather than summing across steps.
-// This assumption has not been independently verified against a real
-// multi-step authenticated run; if that's ever done and the values turn
-// out to be per-step deltas instead, switch the caller to sum them.
+// several per run, and each one's cost/tokens is a *per-step delta*, not a
+// cumulative-to-date snapshot: opencode-ai v1.19.1's session processor does
+// `assistantMessage.cost += step.cost` as each step completes and emits the
+// step-finish part with that step's own `cost`/`tokens` only (confirmed by
+// reading the processor source, not inferred). The caller (OpencodeRunner.Run)
+// therefore *sums* cost/tokens across every step_finish in the run rather
+// than taking the last one, which would otherwise undercount a multi-step
+// run down to just its final step.
 //
 // The CLI stamps a top-level "sessionID" field onto every emitted event
 // (verified against opencode-ai v1.18.6), so it's extracted here regardless
@@ -49,14 +48,11 @@ func classifyOpencodeJSON(line string) (agent.LogEntry, string, *runUsage, strin
 		Type      string `json:"type"`
 		SessionID string `json:"sessionID"`
 		Part      struct {
-			Type   string   `json:"type"`
-			Text   string   `json:"text"`
-			Reason string   `json:"reason"`
-			Cost   *float64 `json:"cost"`
-			Tokens *struct {
-				Input  int64 `json:"input"`
-				Output int64 `json:"output"`
-			} `json:"tokens"`
+			Type   string          `json:"type"`
+			Text   string          `json:"text"`
+			Reason string          `json:"reason"`
+			Cost   *float64        `json:"cost"`
+			Tokens *opencodeTokens `json:"tokens"`
 		} `json:"part"`
 	}
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
@@ -90,25 +86,56 @@ func classifyOpencodeJSON(line string) (agent.LogEntry, string, *runUsage, strin
 	}
 }
 
+// opencodeTokens mirrors the "tokens" object on a step_finish part:
+// {input,output,reasoning,cache:{read,write}} (verified against opencode-ai
+// v1.19.1).
+type opencodeTokens struct {
+	Input  int64 `json:"input"`
+	Output int64 `json:"output"`
+	Cache  struct {
+		Read  int64 `json:"read"`
+		Write int64 `json:"write"`
+	} `json:"cache"`
+}
+
 // extractOpencodeUsage builds a *runUsage from a step_finish part's cost/
 // tokens fields, mirroring extractResultUsage's guard in
 // parse_streamjson.go: returns nil unless at least one of cost/tokens is
 // present, so a step_finish that genuinely carries neither stays at zero
-// rather than recording a spurious $0.
-func extractOpencodeUsage(cost *float64, tokens *struct {
-	Input  int64 `json:"input"`
-	Output int64 `json:"output"`
-}) *runUsage {
+// rather than recording a spurious $0. cache.read/cache.write are folded
+// into InputTokens so the input-token total (and therefore any downstream
+// pricing based on it) isn't missing the prompt-cache portion of the step's
+// usage; reasoning tokens are still not tracked.
+func extractOpencodeUsage(cost *float64, tokens *opencodeTokens) *runUsage {
 	if cost == nil && tokens == nil {
 		return nil
 	}
 	u := &runUsage{}
 	if tokens != nil {
-		u.InputTokens = tokens.Input
+		u.InputTokens = tokens.Input + tokens.Cache.Read + tokens.Cache.Write
 		u.OutputTokens = tokens.Output
 	}
 	if cost != nil {
 		u.CostUSD = *cost
 	}
 	return u
+}
+
+// sumRunUsage adds b's cost/tokens onto a and returns the result. Used to
+// accumulate opencode's per-step step_finish usage across an entire run
+// (see classifyOpencodeJSON's doc comment) rather than keeping only the
+// last step's values. a may be nil (first step_finish observed); b is
+// never nil (callers only invoke this when a new usage was just parsed).
+func sumRunUsage(a, b *runUsage) *runUsage {
+	if a == nil {
+		cp := *b
+		return &cp
+	}
+	return &runUsage{
+		InputTokens:       a.InputTokens + b.InputTokens,
+		OutputTokens:      a.OutputTokens + b.OutputTokens,
+		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens,
+		CostUSD:           a.CostUSD + b.CostUSD,
+		Turns:             a.Turns + b.Turns,
+	}
 }

@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -21,6 +22,36 @@ func (r *OpencodeRunner) binary() string {
 		return r.BinaryPath
 	}
 	return "opencode"
+}
+
+// opencodeDefaultAgent is the agent `opencode run` uses when the CLI isn't
+// told otherwise (verified against opencode-ai v1.19.1).
+const opencodeDefaultAgent = "build"
+
+// opencodeConfigContent builds the JSON value for OPENCODE_CONFIG_CONTENT
+// that sets the system prompt on the agent opencode run invokes
+// (opencodeDefaultAgent). OPENCODE_CONFIG_CONTENT (supported in opencode-ai
+// v1.19.1) lets the CLI read its config from an env var instead of (or in
+// addition to) an opencode.json file on disk, which is the only way to
+// deliver a system prompt to `opencode run` — it has no --system-prompt/-p
+// flag like claude/qwen. Without this, buildSystemPrompt(input) (the agent
+// config's own system_prompt, and critically the instruction to end with
+// "OUTCOME: success"/"OUTCOME: failure" — opencode's only way to report an
+// outcome, since it has no MCP sidecar) was never sent to the CLI at all.
+func opencodeConfigContent(systemPrompt string) (string, error) {
+	cfg := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"agent": map[string]any{
+			opencodeDefaultAgent: map[string]any{
+				"prompt": systemPrompt,
+			},
+		},
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {
@@ -43,6 +74,18 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 	defer cancel()
 
 	env := mergeEnv(providerBaseEnv(opencodeEnvAllowlist), input.AgentConfig.Env)
+	// Delivered via the runner, not opencodeEnvAllowlist: OPENCODE_CONFIG_CONTENT
+	// isn't inherited from the backend's own environment, it's generated per
+	// run from buildSystemPrompt(input) — see opencodeConfigContent. Appended
+	// after mergeEnv so it always wins over any OPENCODE_CONFIG_CONTENT an
+	// operator set on the agent config's own env (os/exec.Cmd.Env keeps the
+	// last occurrence of a duplicate key): letting that silently win would
+	// drop the OUTCOME instruction with no indication why.
+	configContent, err := opencodeConfigContent(buildSystemPrompt(input))
+	if err != nil {
+		return agent.Result{Status: "failed"}, fmt.Errorf("build opencode config: %w", err)
+	}
+	env = append(env, "OPENCODE_CONFIG_CONTENT="+configContent)
 	runBinary, runArgs, env, err := applyRuntime(input.Runtime, r.binary(), sanitizeArgs(args), env)
 	if err != nil {
 		return agent.Result{Status: "failed"}, err
@@ -72,10 +115,13 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 		sessionID   string
 		rateLimited bool
 		transient   bool
-		// usage holds the most recently observed step_finish usage. Per the
-		// cumulative-to-date assumption documented on classifyOpencodeJSON,
-		// each step_finish's cost/tokens are taken as-is (assign, not sum)
-		// rather than accumulated across steps.
+		// usage accumulates every step_finish's cost/tokens seen this run.
+		// step_finish fires once per *step*, not once per run, and its
+		// cost/tokens are per-step deltas (verified against opencode-ai
+		// v1.19.1's session processor: assistantMessage.cost += D.cost per
+		// step) — summed here rather than taking the last one, which would
+		// undercount a multi-step run down to its final step alone. See
+		// classifyOpencodeJSON's doc comment.
 		usage           *runUsage
 		stdoutTruncated bool
 		stderrTruncated bool
@@ -106,7 +152,7 @@ func (r *OpencodeRunner) Run(ctx context.Context, input agent.RunInput, logCh ch
 			}
 			if u != nil {
 				mu.Lock()
-				usage = u
+				usage = sumRunUsage(usage, u)
 				mu.Unlock()
 			}
 			// opencode has no typed error classification (unlike

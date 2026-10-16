@@ -290,14 +290,26 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "exit0_success_with_usage":
 		// Simulate: opencode emits two step_finish events (one per step),
-		// each carrying cumulative-to-date cost/tokens (see classifyOpencodeJSON's
-		// doc comment on the cumulative-vs-per-step assumption). The runner
-		// must take the *last* one's values, not sum across steps — so the
-		// final Result should reflect only the second step_finish's numbers.
+		// each carrying that step's own per-step cost/tokens delta (see
+		// classifyOpencodeJSON's doc comment). The runner must sum them
+		// across steps, not take only the last one — so the final Result
+		// should reflect both step_finish events' numbers combined.
 		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"working"}}`)
 		fmt.Println(`{"type":"step_finish","sessionID":"oc-1","part":{"reason":"tool_calls","cost":0.01,"tokens":{"input":10,"output":20}}}`)
 		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"OUTCOME: success"}}`)
 		fmt.Println(`{"type":"step_finish","sessionID":"oc-1","part":{"reason":"stop","cost":0.05,"tokens":{"input":100,"output":200}}}`)
+		os.Exit(0)
+	case "assert_outcome_in_config":
+		// Fails unless OPENCODE_CONFIG_CONTENT carries the OUTCOME
+		// instruction via the build agent's "prompt" field (see
+		// TestOpencodeRunner_Run_SystemPromptReachesConfigContentEnv).
+		cc := os.Getenv("OPENCODE_CONFIG_CONTENT")
+		if !strings.Contains(cc, "OUTCOME: success") {
+			fmt.Fprintf(os.Stderr, "OPENCODE_CONFIG_CONTENT missing OUTCOME instruction: %s\n", cc)
+			os.Exit(1)
+		}
+		fmt.Println(`{"type":"text","sessionID":"oc-1","part":{"type":"text","text":"OUTCOME: success"}}`)
+		fmt.Println(`{"type":"step_finish","sessionID":"oc-1","part":{"reason":"stop"}}`)
 		os.Exit(0)
 	}
 

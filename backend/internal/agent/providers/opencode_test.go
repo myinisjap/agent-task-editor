@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -58,12 +59,12 @@ func TestOpencodeRunner_Run_Exit0Success(t *testing.T) {
 	}
 }
 
-// TestOpencodeRunner_Run_UsageTakesLastStepFinish verifies the
-// cumulative-to-date accumulation decision: when multiple step_finish
-// events are emitted (one per step), the final Result's usage/cost must
-// reflect only the *last* step_finish's values (assign, not sum) — see the
-// cumulative-vs-per-step assumption documented on classifyOpencodeJSON.
-func TestOpencodeRunner_Run_UsageTakesLastStepFinish(t *testing.T) {
+// TestOpencodeRunner_Run_UsageSumsAllStepFinish verifies the per-step-delta
+// accumulation fix: when multiple step_finish events are emitted (one per
+// step), the final Result's usage/cost must be the *sum* across every
+// step_finish, not just the last one — see classifyOpencodeJSON's doc
+// comment on why each step_finish's cost/tokens is a per-step delta.
+func TestOpencodeRunner_Run_UsageSumsAllStepFinish(t *testing.T) {
 	runner := &OpencodeRunner{BinaryPath: os.Args[0]}
 	logCh := make(chan agent.LogEntry, 256)
 	go func() {
@@ -78,14 +79,72 @@ func TestOpencodeRunner_Run_UsageTakesLastStepFinish(t *testing.T) {
 	if result.Status != "completed" {
 		t.Errorf("Status = %q, want completed", result.Status)
 	}
-	if result.InputTokens != 100 {
-		t.Errorf("InputTokens = %d, want 100 (last step_finish only, not summed)", result.InputTokens)
+	if result.InputTokens != 110 {
+		t.Errorf("InputTokens = %d, want 110 (10 + 100, summed across both step_finish events)", result.InputTokens)
 	}
-	if result.OutputTokens != 200 {
-		t.Errorf("OutputTokens = %d, want 200 (last step_finish only, not summed)", result.OutputTokens)
+	if result.OutputTokens != 220 {
+		t.Errorf("OutputTokens = %d, want 220 (20 + 200, summed across both step_finish events)", result.OutputTokens)
 	}
-	if result.CostUSD != 0.05 {
-		t.Errorf("CostUSD = %v, want 0.05 (last step_finish only, not summed)", result.CostUSD)
+	if diff := result.CostUSD - 0.06; diff < -1e-9 || diff > 1e-9 {
+		t.Errorf("CostUSD = %v, want ~0.06 (0.01 + 0.05, summed across both step_finish events)", result.CostUSD)
+	}
+}
+
+// TestOpencodeRunner_Run_SystemPromptReachesConfigContentEnv verifies the
+// fix for the system prompt never being sent to opencode: Run must deliver
+// buildSystemPrompt(input) — which carries the OUTCOME: success/failure
+// instruction, opencode's only way to report an outcome since it has no
+// MCP sidecar — to the CLI via OPENCODE_CONFIG_CONTENT. The fake binary
+// (OPENCODE_TEST_HELPER=assert_outcome_in_config) fails unless it finds
+// that instruction in its own OPENCODE_CONFIG_CONTENT env var.
+func TestOpencodeRunner_Run_SystemPromptReachesConfigContentEnv(t *testing.T) {
+	runner := &OpencodeRunner{BinaryPath: os.Args[0]}
+	logCh := make(chan agent.LogEntry, 256)
+	logs := make([]agent.LogEntry, 0)
+	done := make(chan struct{})
+	go func() {
+		for e := range logCh {
+			logs = append(logs, e)
+		}
+		close(done)
+	}()
+	result, err := runner.Run(context.Background(), opencodeHelperInput("assert_outcome_in_config"), logCh)
+	close(logCh)
+	<-done
+	if err != nil {
+		t.Fatalf("Run: unexpected error: %v (logs: %v)", err, logs)
+	}
+	if result.Status != "completed" {
+		t.Errorf("Status = %q, want completed", result.Status)
+	}
+	if result.Outcome != "success" {
+		t.Errorf("Outcome = %q, want success", result.Outcome)
+	}
+}
+
+// TestOpencodeConfigContent_CarriesSystemPromptOnBuildAgent verifies the
+// OPENCODE_CONFIG_CONTENT JSON shape directly: the system prompt must land
+// on the "build" agent's "prompt" field (the agent opencode run uses by
+// default), since opencode run has no --system-prompt flag of its own.
+func TestOpencodeConfigContent_CarriesSystemPromptOnBuildAgent(t *testing.T) {
+	content, err := opencodeConfigContent("be careful.\n\nOUTCOME: success")
+	if err != nil {
+		t.Fatalf("opencodeConfigContent: unexpected error: %v", err)
+	}
+	var parsed struct {
+		Agent map[string]struct {
+			Prompt string `json:"prompt"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("OPENCODE_CONFIG_CONTENT is not valid JSON: %v\ncontent: %s", err, content)
+	}
+	build, ok := parsed.Agent["build"]
+	if !ok {
+		t.Fatalf("want an agent.build entry, got agents: %v", parsed.Agent)
+	}
+	if build.Prompt != "be careful.\n\nOUTCOME: success" {
+		t.Errorf("agent.build.prompt = %q, want the full system prompt", build.Prompt)
 	}
 }
 

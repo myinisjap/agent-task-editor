@@ -16,6 +16,17 @@ Runs: `opencode run --format json [-m <model>] -- <prompt>`
 
 Output is parsed as NDJSON. The `--` separator prevents the prompt content from being interpreted as CLI flags.
 
+`opencode run` has no `--system-prompt`/`-p` flag, so the system prompt
+(the agent config's own `system_prompt`, plus the task-editor boilerplate —
+critically, the instruction to end with `OUTCOME: success`/`OUTCOME:
+failure`) is delivered via the `OPENCODE_CONFIG_CONTENT` environment
+variable (supported in opencode-ai v1.19.1), set on the `build` agent's
+`prompt` field — the agent `opencode run` uses when none is otherwise
+specified. This env var is generated per run by the runner itself; it is
+not part of the subprocess environment allowlist described below, and it
+always overrides any `OPENCODE_CONFIG_CONTENT` set in the agent config's own
+`env` field.
+
 ## Credentials
 
 Opencode manages its own auth and model configuration. You must have the `opencode` binary installed and configured on the host (or in the container). Refer to [opencode's documentation](https://opencode.ai/docs) for setup.
@@ -39,7 +50,7 @@ This means:
 - `signal_complete` (MCP version) — **unavailable**
 - `request_human` (MCP version) — **unavailable**
 
-**Workaround for completion signalling:** The agent must output `OUTCOME: success` or `OUTCOME: failure` somewhere in its final text response. The runner scans the output for this marker.
+**Workaround for completion signalling:** The agent must output `OUTCOME: success` or `OUTCOME: failure` somewhere in its final text response. The runner scans the output for this marker. The runner always appends this instruction to the system prompt it sends via `OPENCODE_CONFIG_CONTENT` (see [How It Works](#how-it-works)), regardless of the agent config's own `system_prompt` — no manual setup needed.
 
 ```
 OUTCOME: success
@@ -92,31 +103,33 @@ Every event on `opencode run --format json`'s NDJSON output carries a top-level 
 from the CLI's `step_finish` event: opencode's `step-finish` part carries both
 a `cost` number and a `tokens` object (`{input, output, reasoning, cache:
 {read, write}}`). `classifyOpencodeJSON` reads `cost` and `tokens.input`/
-`tokens.output` off that event (reasoning/cache fields are not currently
-tracked). Cost is authoritative — reported directly by the CLI, not estimated
-via a pricing table, the same as `claude`/`qwen_code`.
+`tokens.output` off that event, plus `tokens.cache.read`/`tokens.cache.write`
+(folded into `input_tokens` so prompt-cache usage isn't dropped from the
+total; `reasoning` is still not tracked). Cost is authoritative — reported
+directly by the CLI, not estimated via a pricing table, the same as
+`claude`/`qwen_code`.
 
 `step_finish` fires once per *step*, not once per run, so a single run may
-emit several of these events. opencode's own SQLite `session` table stores a
-single cumulative `cost`/`tokens_input`/`tokens_output` row per session (not a
-running delta per step), which strongly suggests the values on each
-`step_finish` event are themselves cumulative-to-date. Based on that
-evidence, the runner **takes the last `step_finish`'s usage** rather than
-summing across steps. This assumption has not been independently verified
-against a real multi-step authenticated run — if it's ever confirmed to be
-per-step deltas instead, the runner should sum them instead of assigning.
+emit several of these events, and each one's `cost`/`tokens` is a **per-step
+delta**, not a cumulative-to-date snapshot: opencode-ai v1.19.1's session
+processor accumulates `assistantMessage.cost += step.cost` as each step
+completes and emits the step-finish part with that step's own cost/tokens
+only. The runner **sums `cost` and `tokens.input`/`tokens.output` (plus
+`tokens.cache.read`/`tokens.cache.write` into input tokens) across every
+`step_finish` in the run**, so a multi-step run's total reflects every step,
+not just the last one.
 
 Usage is persisted on every run outcome, including failed/timed-out runs —
 money may have been spent on a run before it crashed.
 
-_Verified against `opencode-ai` v1.18.6._ See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
+_Verified against `opencode-ai` v1.19.1._ See [agents.md § Cost & Usage Tracking](../agents.md#cost--usage-tracking).
 
 **Mid-run cost kill switch: not supported.** No mid-run watchdog is wired
 into this provider (unlike `claude`/`qwen_code`'s incremental token-usage
-watchdog) — `step_finish`'s cumulative-to-date snapshot is not the per-turn
-incremental usage a watchdog needs to project a running total mid-run. Usage
-is only known at end-of-run. Only the pre-dispatch `max_cost_usd` guard
-applies, which is now effective since `cost_usd` is recorded. See
+watchdog) — `step_finish`'s per-step delta is only summed into a total
+at end-of-run; there is no continuously-updated running total available to
+a watchdog mid-run. Only the pre-dispatch `max_cost_usd` guard applies,
+which is now effective since `cost_usd` is recorded. See
 [agents.md § Cost Budgets](../agents.md#cost-budgets).
 
 ## Limitations
@@ -130,7 +143,7 @@ applies, which is now effective since `cost_usd` is recorded. See
 | Image attachments | ❌ Not wired up — `opencode run` has an `-f`/`--file` flag, but attachments are not passed to it |
 | Outcome signalling | ⚠️ Text-based only (`OUTCOME: success/failure`) |
 | Rate limit detection | ✅ Implemented — stderr, and stdout lines that aren't structured JSON events, are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit`. opencode has no typed error classification, so a rate limit reported only inside a structured event body's text isn't caught on stdout (it still surfaces via stderr or a non-zero exit) — see issue #335 |
-| Cost & usage reporting | ✅ Recorded from the CLI's `step_finish` event (cost + tokens), authoritative — see above |
+| Cost & usage reporting | ✅ Recorded from the CLI's `step_finish` event (cost + tokens), summed across every step, authoritative — see above |
 | Command allowlist/denylist | ❌ Not enforced |
 | Session resume | ✅ `sessionID` + `--session` (see above) |
 
@@ -139,4 +152,4 @@ applies, which is now effective since `cost_usd` is recorded. See
 1. Install `opencode` and add it to `PATH` (or mount it into the container)
 2. Configure opencode's model and auth via its own config
 3. Create a [Provider Config](../agents.md#provider-configs) with `"provider": "opencode"`, then an agent config referencing it via `provider_config_id`
-4. Instruct the agent in its system prompt to output `OUTCOME: success` or `OUTCOME: failure` at the end
+4. Nothing else needed for outcome signalling — the runner always sends the `OUTCOME: success`/`OUTCOME: failure` instruction via `OPENCODE_CONFIG_CONTENT` (see [How It Works](#how-it-works)); a custom `system_prompt` on the agent config is still honored (it's prepended, not replaced)
