@@ -245,6 +245,8 @@ export const api = {
     prUrl: (id: string) => request<{ url: string }>(`/tasks/${id}/pr-url`),
     createPR: (id: string) =>
       request<{ pr_url: string; git_state: Task['git_state'] }>(`/tasks/${id}/pr`, { method: 'POST' }),
+    dismissSideEffects: (id: string) =>
+      request<void>(`/tasks/${id}/side-effects`, { method: 'DELETE' }),
     retrySideEffects: (id: string) =>
       request<Task>(`/tasks/${id}/side-effects/retry`, { method: 'POST' }),
     applySourceUpdate: (id: string) =>

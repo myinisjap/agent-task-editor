@@ -753,3 +753,47 @@ func TestRun_SweepsOnTickerAndStopsOnCancel(t *testing.T) {
 		t.Fatal("timed out waiting for Run to return after cancel")
 	}
 }
+
+func TestSyncTask_MergedClearsPushAndPRSideEffects(t *testing.T) {
+	ctx := context.Background()
+	repoPath := initRepo(t)
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pr_merged", "https://github.com/acme/widgets/pull/1", 1), nil
+	}
+	s, q, _ := newTestSyncer(t, getPRHead)
+	wfID, label := newTestWorkflow(t, q)
+	repoID := newTestRepo(t, q, wfID, repoPath, ghURL())
+	task := newTestTask(t, q, repoID, wfID, label, "feature-branch", "", "pr_open", "")
+
+	for _, kind := range []string{"terminal", "create_pr", "leave_not_ready"} {
+		if err := q.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{ID: uuid.NewString(), TaskID: task.ID, Kind: kind}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, _ := q.ListDueTaskSideEffects(ctx, gen.ListDueTaskSideEffectsParams{NextAt: time.Now().Add(time.Hour), Limit: 10})
+	msg := "boom"
+	for _, r := range rows {
+		if r.Kind == "create_pr" {
+			if err := q.FailTaskSideEffect(ctx, gen.FailTaskSideEffectParams{ID: r.ID, Attempts: 8, LastError: &msg}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	s.syncTask(ctx, task, repoInfo{ghName: "acme/widgets", path: repoPath})
+
+	left, err := q.ListDueTaskSideEffects(ctx, gen.ListDueTaskSideEffectsParams{NextAt: time.Now().Add(time.Hour), Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 || left[0].Kind != "leave_not_ready" {
+		t.Fatalf("expected only the write-back effect to remain pending, got %+v", left)
+	}
+	failed, err := q.ListTaskSideEffectsForTasks(ctx, []string{task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 remaining row, got %+v", failed)
+	}
+}

@@ -2792,6 +2792,22 @@ paths:
         "404": { description: Task not found }
         "409": { description: The task has no failed side effects }
 
+  /tasks/{id}/side-effects:
+    delete:
+      summary: Dismiss a task's failed side effects
+      description: >
+        Deletes the task's failed outbox rows (see TaskSideEffect) without
+        running them, for effects that no longer apply. Emits task.updated.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Dismissed }
+        "404": { description: Task not found }
+        "409": { description: The task has no failed side effects }
+
   /tasks/{id}/source-update/apply:
     post:
       summary: Apply the held source-issue edit to the task

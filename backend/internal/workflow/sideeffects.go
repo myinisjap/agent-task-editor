@@ -193,6 +193,12 @@ func (e *Engine) execSideEffect(ctx context.Context, se gen.TaskSideEffect) erro
 	if err != nil {
 		return fmt.Errorf("get task: %w", err)
 	}
+	// A merged/closed PR means the branch's work is upstream; push and PR
+	// effects can never be needed (and would fail: the local branch is gone).
+	if (se.Kind == SideEffectTerminal || se.Kind == SideEffectCreatePR) &&
+		(task.GitState == "pr_merged" || task.GitState == "pr_closed") {
+		return nil
+	}
 	labels, err := e.sq.ListWorkflowLabels(ctx, task.WorkflowID)
 	if err != nil {
 		return fmt.Errorf("list labels: %w", err)
@@ -251,6 +257,19 @@ func (e *Engine) RetrySideEffects(ctx context.Context, taskID string) (int64, er
 		if e.pub != nil {
 			e.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: taskID})
 		}
+	}
+	return n, nil
+}
+
+// DismissSideEffects deletes a task's failed side effects without running
+// them. It returns how many were removed.
+func (e *Engine) DismissSideEffects(ctx context.Context, taskID string) (int64, error) {
+	n, err := e.sq.DismissFailedTaskSideEffects(ctx, taskID)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 && e.pub != nil {
+		e.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: taskID})
 	}
 	return n, nil
 }

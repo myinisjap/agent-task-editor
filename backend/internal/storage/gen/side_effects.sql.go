@@ -34,6 +34,33 @@ func (q *Queries) CompleteTaskSideEffect(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteMootTaskSideEffects = `-- name: DeleteMootTaskSideEffects :execrows
+DELETE FROM task_side_effects
+WHERE task_id = ? AND kind IN ('terminal', 'create_pr') AND status IN ('pending', 'failed')
+`
+
+// Push (terminal) and PR (create_pr) effects are moot once the PR is merged or
+// closed upstream. Running rows are left to the worker. Write-back effects stay.
+func (q *Queries) DeleteMootTaskSideEffects(ctx context.Context, taskID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteMootTaskSideEffects, taskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const dismissFailedTaskSideEffects = `-- name: DismissFailedTaskSideEffects :execrows
+DELETE FROM task_side_effects WHERE task_id = ? AND status = 'failed'
+`
+
+func (q *Queries) DismissFailedTaskSideEffects(ctx context.Context, taskID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, dismissFailedTaskSideEffects, taskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const enqueueTaskSideEffect = `-- name: EnqueueTaskSideEffect :exec
 INSERT INTO task_side_effects (id, task_id, kind)
 VALUES (?, ?, ?)

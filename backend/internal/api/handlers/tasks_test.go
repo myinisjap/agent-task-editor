@@ -145,6 +145,7 @@ func setupTaskRouter(t *testing.T) (http.Handler, *gen.Queries, string, string) 
 	r.Post("/tasks/{id}/rerun", h.Rerun)
 	r.Get("/tasks/{id}/diff", h.Diff)
 	r.Post("/tasks/{id}/side-effects/retry", h.RetrySideEffects)
+	r.Delete("/tasks/{id}/side-effects", h.DismissSideEffects)
 	r.Post("/tasks/{id}/source-update/apply", h.ApplySourceUpdate)
 	r.Delete("/tasks/{id}/source-update", h.DiscardSourceUpdate)
 
@@ -3972,5 +3973,45 @@ func TestTasks_SourceUpdate_ApplyAndDiscard(t *testing.T) {
 	}
 	if w := do(http.MethodPost, "/tasks/"+task.ID+"/source-update/apply"); w.Code != http.StatusConflict {
 		t.Errorf("apply after discard: %d", w.Code)
+	}
+}
+
+func TestTasks_DismissSideEffects(t *testing.T) {
+	r, q, wfID, repoID := setupTaskRouter(t)
+	ctx := context.Background()
+	task, err := q.CreateTask(ctx, gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "T", WorkflowID: wfID, RepoID: repoID, Label: "work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	do := func(path string) int {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, path, nil))
+		return w.Code
+	}
+	if c := do("/tasks/nope/side-effects"); c != http.StatusNotFound {
+		t.Fatalf("unknown task: %d", c)
+	}
+	if c := do("/tasks/" + task.ID + "/side-effects"); c != http.StatusConflict {
+		t.Fatalf("none failed: %d", c)
+	}
+	if err := q.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{ID: uuid.NewString(), TaskID: task.ID, Kind: "create_pr"}); err != nil {
+		t.Fatal(err)
+	}
+	// Pending (not failed) rows are not dismissable.
+	if c := do("/tasks/" + task.ID + "/side-effects"); c != http.StatusConflict {
+		t.Fatalf("pending only: %d", c)
+	}
+	rows, _ := q.ListDueTaskSideEffects(ctx, gen.ListDueTaskSideEffectsParams{NextAt: time.Now().Add(time.Hour), Limit: 10})
+	msg := "boom"
+	if err := q.FailTaskSideEffect(ctx, gen.FailTaskSideEffectParams{ID: rows[0].ID, Attempts: 8, LastError: &msg}); err != nil {
+		t.Fatal(err)
+	}
+	if c := do("/tasks/" + task.ID + "/side-effects"); c != http.StatusNoContent {
+		t.Fatalf("dismiss: %d", c)
+	}
+	if c := do("/tasks/" + task.ID + "/side-effects"); c != http.StatusConflict {
+		t.Fatalf("after dismiss: %d", c)
 	}
 }

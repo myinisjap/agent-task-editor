@@ -9,7 +9,7 @@ import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 
 const m = {
-  needsMe: vi.fn(), apply: vi.fn(), discard: vi.fn(), list: vi.fn(), approve: vi.fn(), rerun: vi.fn(), retry: vi.fn(), health: vi.fn(), resume: vi.fn(),
+  needsMe: vi.fn(), apply: vi.fn(), discard: vi.fn(), list: vi.fn(), approve: vi.fn(), rerun: vi.fn(), retry: vi.fn(), dismiss: vi.fn(), health: vi.fn(), resume: vi.fn(),
 }
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -22,6 +22,7 @@ vi.mock('../api/client', async () => {
         approve: (...a: unknown[]) => m.approve(...a),
         rerun: (...a: unknown[]) => m.rerun(...a),
         retrySideEffects: (...a: unknown[]) => m.retry(...a),
+        dismissSideEffects: (...a: unknown[]) => m.dismiss(...a),
         applySourceUpdate: (...a: unknown[]) => m.apply(...a),
         discardSourceUpdate: (...a: unknown[]) => m.discard(...a),
       },
@@ -80,6 +81,18 @@ describe('InboxPage', () => {
     expect(await screen.findByText(/PR creation failed: boom/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(m.retry).toHaveBeenCalledWith('t2')
+  })
+
+  it('dismisses a failed side effect', async () => {
+    m.list.mockResolvedValue({
+      items: [{ id: 't2', title: 'PR task', side_effects: [{ kind: 'create_pr', status: 'failed', attempts: 5, next_at: '2026-01-01T00:00:00Z', last_error: 'boom' }] }],
+      nextCursor: null,
+    })
+    m.dismiss.mockResolvedValue(undefined)
+    renderPage()
+    await screen.findByText(/PR creation failed: boom/)
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(m.dismiss).toHaveBeenCalledWith('t2')
   })
 
   it('lists a source issue edit held after approval and applies or discards it', async () => {

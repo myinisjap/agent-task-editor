@@ -141,6 +141,9 @@ Returns `400` if no transition exists, `403` if the transition requires human au
 ### `POST /tasks/{id}/side-effects/retry`
 Re-queues the task's failed side effects (branch push, PR creation, source-issue write-back). These run from a durable outbox after the label change commits, with up to 8 retries and exponential backoff; once exhausted they show as `failed`. This makes the failed rows pending again with a fresh attempt budget and the background worker picks them up immediately. Returns the task, including its `side_effects` array (the outstanding or failed effects, also returned by `GET /tasks` and `GET /tasks/{id}`). `404` if the task does not exist, `409` if it has no failed side effects. Progress is published as the `task.side_effect` WebSocket event.
 
+### `DELETE /tasks/{id}/side-effects`
+Dismisses (deletes) the task's failed side effects without retrying them, for ones that no longer apply. `204` on success, `404` if the task does not exist, `409` if it has no failed side effects.
+
 ### `POST /tasks/{id}/source-update/apply`
 With `issue_sync_update_policy: always`, an edit to the source issue made *after* a human approved the task is held in `source_pending_update` instead of overwriting the task. This applies the held title, description and type to the task, clears the hold and publishes `task.updated`. Returns the task. `404` if the task does not exist, `409` if nothing is pending. See [task-sources.md](task-sources.md).
 

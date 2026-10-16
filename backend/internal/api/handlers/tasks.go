@@ -842,6 +842,27 @@ func (h *TasksHandler) RetrySideEffects(w http.ResponseWriter, r *http.Request) 
 	JSON(w, http.StatusOK, resp)
 }
 
+// DismissSideEffects deletes the task's failed side effects without retrying
+// them (for ones that no longer apply). 404 for an unknown task; 409 when
+// nothing is in the failed state; 204 on success.
+func (h *TasksHandler) DismissSideEffects(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	n, err := h.engine.DismissSideEffects(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n == 0 {
+		Err(w, http.StatusConflict, "task has no failed side effects")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
