@@ -5,7 +5,10 @@ package providers
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +25,10 @@ type QwenRunner struct {
 	BinaryPath string
 	MCP        *MCPManager
 	// UploadDir is the server-side directory where task attachments are stored.
-	// Reserved for future use if Qwen CLI gains an --image flag.
+	// Unused by this runner: images are attached from the worktree copies the
+	// dispatcher makes (see qwenImageAtRefs), referenced from the prompt text
+	// via @path tokens — qwen has no --image flag (verified against 0.25.2's
+	// --help output; see docs/providers/qwen_code.md § Image Attachments).
 	UploadDir string
 	// BackendURL lets the create_subtask MCP tool post children live to the
 	// backend REST API (same container). Set from server config. The bearer
@@ -58,7 +64,7 @@ func buildQwenArgs(input agent.RunInput, mcpCfg *MCPRunConfig) []string {
 	}
 
 	args := []string{
-		"-p", buildPrompt(input),
+		"-p", buildQwenPrompt(input),
 		"--system-prompt", buildSystemPrompt(input),
 		"--output-format", "stream-json",
 		"--approval-mode", "yolo",
@@ -94,23 +100,116 @@ func buildQwenArgs(input agent.RunInput, mcpCfg *MCPRunConfig) []string {
 	// is therefore left unused here; the capability matrix records it as
 	// unsupported so operators aren't misled.
 
-	// Command denylist: qwen v0.21.0 exposes --exclude-tools, which feeds
-	// its permissionsDeny policy and is honored even under yolo mode.
-	// Mirror the Bash(pattern) convention used for --allowed-tools above
-	// and elsewhere in the codebase (e.g. the claude provider).
+	// Command denylist: qwen v0.25.2 exposes --exclude-tools, which feeds its
+	// getPermissionsDeny() policy and is honored even under --approval-mode
+	// yolo (verified by reading the shipped 0.25.2 bundle: the shell-command
+	// confirmation path calls doesToolInvocationMatch("run_shell_command",
+	// invocation, excludeTools) before auto-approving, regardless of
+	// approval mode).
 	//
-	// NOTE: the Bash(pattern) glob shape is confirmed for --allowed-tools
-	// but has not been verified live for --exclude-tools specifically. If
-	// qwen only accepts bare tool names on the deny path, per-pattern
-	// denial may silently degrade to a no-op and a blanket
-	// "--exclude-tools Bash" (no pattern) would be the safer fallback.
+	// IMPORTANT (verified against the 0.25.2 bundle, not a live authenticated
+	// run — see docs/providers/qwen_code.md): qwen's shell tool is named
+	// run_shell_command (legacy class name ShellTool), NOT Bash. The
+	// Bash(pattern) convention used for claude's --allowedTools/
+	// --disallowedTools (and for qwen's own --allowed-tools above, which is
+	// a bypass-confirmation list, not an enforcement list, so the wrong tool
+	// name there is harmless) is a complete no-op on this deny path: neither
+	// doesToolInvocationMatch's bare-name branch nor its "ToolName(arg)"
+	// branch ever matches a candidate list that only contains "Bash(...)"
+	// entries, since the invoked tool's name is always run_shell_command.
+	// Each pattern is therefore emitted as "run_shell_command(pattern)"
+	// instead.
+	//
+	// qwen's pattern matching is also not a glob: doesToolInvocationMatch
+	// matches an invocation's command string argument by exact equality or
+	// by the pattern being a literal whitespace-delimited *prefix* of the
+	// command ("argValue===argPattern || argValue.startsWith(argPattern+"
+	// ")") — a literal "*" in the pattern matches nothing (it's compared
+	// character-for-character, never expanded). Patterns written in the
+	// shared cross-provider "*"-wildcard convention (e.g. "git *", matching
+	// claude's Bash(pattern) glob shape) are therefore normalized via
+	// qwenDenylistArg below: a trailing "*" (optionally preceded by
+	// whitespace) is stripped so "git *" becomes the prefix "git", which
+	// correctly prefix-matches "git clone ..." etc. under qwen's own
+	// semantics. A bare pattern with no trailing "*" is passed through
+	// as-is and only matches that exact command string.
 	for _, pat := range input.AgentConfig.CommandDenylist {
 		if pat == "" {
 			continue
 		}
-		args = append(args, "--exclude-tools", "Bash("+pat+")")
+		args = append(args, "--exclude-tools", "run_shell_command("+qwenDenylistArg(pat)+")")
 	}
 	return args
+}
+
+// qwenDenylistArg converts a shared cross-provider "*"-wildcard glob pattern
+// (as used by claude's command_denylist, e.g. "git *" or "rm -rf *") into the
+// literal prefix qwen's doesToolInvocationMatch actually matches against: a
+// trailing "*", and any whitespace immediately before it, is stripped, since
+// qwen has no glob expansion and would otherwise never match the pattern
+// (see the comment in buildQwenArgs above). A pattern with no trailing "*"
+// is returned unchanged, matching only that exact command string.
+func qwenDenylistArg(pattern string) string {
+	trimmed := strings.TrimSuffix(pattern, "*")
+	trimmed = strings.TrimRight(trimmed, " \t")
+	if trimmed == "" {
+		// A bare "*" (match everything) has no literal-prefix equivalent;
+		// fall back to the original pattern rather than emitting an empty
+		// "run_shell_command()" (which would only match an empty command).
+		return pattern
+	}
+	return trimmed
+}
+
+// qwenImageAtRefs returns @-prefixed references, one per task image
+// attachment, to append to the prompt text sent to qwen. qwen's headless -p
+// mode resolves @<path> tokens via its at-command processor (handleAtCommand,
+// called unconditionally from runNonInteractive in the 0.25.2 bundle) the
+// same way the interactive CLI does: an image file is read, sniffed, and
+// embedded as an inlineData content part (base64 + mimeType) IF the
+// configured model's modalities declare image support — otherwise qwen
+// itself skips the file with a logged warning and continues. There is no
+// --image flag (confirmed against 0.25.2's --help output; unlike claude/
+// codex, qwen has no CLI-level image flag at all), so this prompt-text route
+// is the only way to attach images in headless mode.
+//
+// The dispatcher copies every attachment into <worktree>/.task_attachments/
+// before the run (see copyAttachmentsToWorktree), and those copies — relative
+// to input.RepoPath, the qwen subprocess's cwd — are what's referenced here,
+// mirroring codexImagePaths in codex.go. An attachment whose copy is missing
+// is skipped rather than referenced, since a dangling @path reference is
+// surfaced to the model as a "file not found" style message in the
+// processed query; the prompt's own ATTACHED IMAGES text list (written by
+// buildPrompt) still names every attachment regardless.
+func qwenImageAtRefs(input agent.RunInput) []string {
+	var refs []string
+	seen := map[string]bool{}
+	for _, rel := range input.Task.Attachments {
+		p := filepath.Join(".task_attachments", filepath.Base(rel))
+		if seen[p] {
+			continue
+		}
+		if fi, err := os.Stat(filepath.Join(input.RepoPath, p)); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		seen[p] = true
+		refs = append(refs, "@"+p)
+	}
+	return refs
+}
+
+// buildQwenPrompt is buildPrompt's output with an @-prefixed reference
+// appended for each task image attachment, so qwen's at-command processor
+// (see qwenImageAtRefs) actually attaches the image content instead of the
+// agent only seeing buildPrompt's plain-text "ATTACHED IMAGES" listing of
+// paths.
+func buildQwenPrompt(input agent.RunInput) string {
+	prompt := buildPrompt(input)
+	refs := qwenImageAtRefs(input)
+	if len(refs) == 0 {
+		return prompt
+	}
+	return prompt + "\n\n" + strings.Join(refs, " ")
 }
 
 func (r *QwenRunner) Run(ctx context.Context, input agent.RunInput, logCh chan<- agent.LogEntry) (agent.Result, error) {

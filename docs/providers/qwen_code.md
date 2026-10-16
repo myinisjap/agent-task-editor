@@ -64,7 +64,42 @@ See [mcp-tools.md](../mcp-tools.md) for full tool reference.
 
 ## Image Attachments
 
-Not yet supported. Reserved for when the `qwen` CLI gains an `--image` flag.
+**Supported, model-permitting.** The `qwen` CLI has no `--image` flag
+(confirmed against 0.25.2's `--help` output — unlike `codex_cli`'s
+`--image=<path>`, qwen registers no image-specific flag at all). Instead,
+qwen's headless `-p`/positional-prompt mode resolves `@<path>` file
+references the same way the interactive CLI does: confirmed by reading the
+shipped 0.25.2 bundle, `runNonInteractive` (`chunk-SPLINFM7.js`) calls
+`handleAtCommand` unconditionally on the initial input before the first turn
+— this is not an interactive-only code path.
+
+For each task attachment, the runner appends an `@.task_attachments/<name>`
+token to the end of the prompt text sent via `-p`, referencing the same
+worktree copy under `.task_attachments/` that every provider's dispatcher
+step makes (`copyAttachmentsToWorktree`) and that `buildPrompt`'s own
+plain-text "ATTACHED IMAGES" listing names. An attachment whose worktree copy
+is missing is not referenced (`qwenImageAtRefs` in `qwen.go`), and duplicate
+attachments are only referenced once.
+
+qwen's own `@path` resolution (traced through `resolveAtCommandQuery` →
+`readManyFiles` → `processSingleFileContent` in the 0.25.2 bundle) reads the
+image bytes, sniffs the file type, and — **only if the configured model's
+reported modalities include image support** — embeds it as a real
+`inlineData` content part (base64 + MIME type), the same representation an
+interactive session would send. If the model doesn't support image input,
+qwen itself skips the file (logging `Model '<model>' does not support image
+input. Skipping file: <name>` rather than erroring the whole run), so an
+image attachment on a text-only model degrades gracefully instead of
+breaking the run.
+
+This was verified by inspecting the shipped 0.25.2 bundle's source (not a
+live authenticated run — no API credentials were available in the
+verification environment) and by running the unauthenticated CLI locally
+with `--auth-type openai` and `-d` (debug logging): a request referencing
+`@tiny.png` against a non-vision model logged exactly that skip warning
+before failing for an unrelated reason (the fake API endpoint), and the same
+request against a `*-vl-*` model name produced no skip warning, consistent
+with the image being embedded instead.
 
 ## Command Allowlist / Denylist
 
@@ -77,21 +112,66 @@ commands. On top of that, this runner always passes `--approval-mode yolo`
 allowlist would have no effect even if wired up. Use `command_denylist`
 instead if you need enforced restrictions.
 
-**`command_denylist` is enforced via `--exclude-tools`.** Each denylist pattern
-is appended as a `Bash(pattern)` entry to `--exclude-tools`, e.g.
-`--exclude-tools Bash(rm -rf *)`. qwen folds `--exclude-tools` into its
-`permissionsDeny` policy, which is honored even under `--approval-mode yolo`.
+**`command_denylist` is enforced via `--exclude-tools`, using `run_shell_command(pattern)`
+— not `Bash(pattern)`.** This was the open uncertainty from an earlier pass and has now
+been resolved by reading the shipped 0.25.2 bundle's source directly: qwen's shell-execution
+tool is registered as `run_shell_command` (legacy class name `ShellTool`); there is no tool
+named `Bash` anywhere in its tool registry (confirmed against the `"tools":[...]` list on a
+live `system`/`init` stream-json event too). The permission-check call site
+(`chunk-XWEXQT3X.js`'s shell-confirmation path) calls
+`doesToolInvocationMatch("run_shell_command", invocation, excludeTools)` before honoring
+`--approval-mode yolo`'s auto-approve, so a `--exclude-tools run_shell_command(pattern)`
+entry is enforced even under yolo — but a `Bash(pattern)` entry (the convention used for
+`--allowed-tools` above, and claude's own `permissions.deny` syntax) is a **complete,
+silent no-op** on this specific flag: `doesToolInvocationMatch` never matches a candidate
+whose tool name differs from the invoked tool's actual name (`run_shell_command`), and
+`Bash` is never that name. Each `command_denylist` pattern is therefore sent as
+`--exclude-tools run_shell_command(pattern)`, e.g. `--exclude-tools "run_shell_command(rm
+-rf)"`.
 
-> **Known uncertainty:** the `Bash(pattern)` glob shape is confirmed for
-> `--allowed-tools`, but has not been verified against a live authenticated
-> qwen run for `--exclude-tools` specifically. If qwen's deny path only
-> accepts bare tool names (rather than `Bash(pattern)` sub-matching), a
-> per-pattern denylist entry may silently fail to match anything, and a
-> blanket `--exclude-tools Bash` (denying all Bash calls, no pattern) would be
-> the only reliably available granularity. Treat per-pattern denial as
-> best-effort until confirmed live.
+**Pattern matching is a literal prefix match, not a true glob.** Reading
+`doesToolInvocationMatch`'s implementation in the 0.25.2 bundle: a
+`ToolName(arg)` entry matches an invocation when the command string equals
+`arg` exactly, or starts with `arg` followed by a literal space
+(`argValue===argPattern || argValue.startsWith(argPattern+" ")`) — `*` inside
+`arg` is never expanded as a wildcard; it is compared character-for-character
+like any other byte. The shared cross-provider `command_denylist` convention
+(documented in [agents.md](../agents.md#command-allowlist--denylist) as
+`"*"`-wildcard glob patterns, e.g. `"git *"`, matching claude's own
+`Bash(pattern)` glob shape) is normalized for this provider by stripping a
+trailing `*` (and any whitespace immediately before it): `"git *"` becomes
+the prefix `git`, which correctly prefix-matches `git clone ...` etc. under
+qwen's own semantics. A pattern with no trailing `*` (e.g. `"npm test"`) is
+passed through unchanged and only matches that exact command string — not a
+prefix of it. A bare `"*"` (match-everything) has no literal-prefix
+equivalent and is passed through as-is, which — given the matching semantics
+above — will not actually match any real command; use an explicit denylist
+entry per command instead if you need to block everything.
 
-_Verified against `@qwen-code/qwen-code` v0.21.0's registered CLI options._
+Only a **trailing** `*` can be normalized this way. A pattern that uses `*`
+anywhere else — e.g. the suffix-matching form `"* --force"` ("any command
+ending in `--force`", per [agents.md](../agents.md#command-allowlist--denylist))
+— has no equivalent under qwen's exact-or-prefix matching and is passed
+through unnormalized, where it will not match real commands. This is why
+`command_denylist` is listed as **partial** support for `qwen_code` in the
+[capability matrix](../agents.md#providers): trailing-`*` prefix patterns
+(the common case) are fully enforced, but qwen cannot replicate full glob
+parity with `claude`'s matcher.
+
+> **Verification note:** the tool-name fix and the glob-to-prefix
+> normalization above were confirmed by reading `doesToolInvocationMatch`
+> and `getPermissionsDeny` directly in the shipped
+> `@qwen-code/qwen-code@0.25.2` npm package (`chunks/chunk-XWEXQT3X.js`,
+> `chunks/chunk-IFAUFERF.js`) and by re-implementing the matcher's exact
+> logic in an isolated script to confirm `Bash(pattern)` never matches while
+> `run_shell_command(pattern)` does. A live authenticated run exercising an
+> actual denylisted command end-to-end was not performed (no API credentials
+> were available in the verification environment) — if you rely on this for
+> security-sensitive enforcement, smoke-test it against your own qwen
+> account before trusting it in production.
+
+_Verified against `@qwen-code/qwen-code` v0.25.2's shipped source and a live
+(unauthenticated) `qwen --help` / debug-mode invocation._
 
 ## Session Resume
 
