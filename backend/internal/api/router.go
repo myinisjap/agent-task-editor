@@ -216,6 +216,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
 			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)
+			r.Delete("/tasks/{id}/side-effects", tasksH.DismissSideEffects)
 			r.Post("/tasks/{id}/source-update/apply", tasksH.ApplySourceUpdate)
 			r.Delete("/tasks/{id}/source-update", tasksH.DiscardSourceUpdate)
 			r.Get("/tasks/{id}/github-status", tasksH.GitHubStatus)

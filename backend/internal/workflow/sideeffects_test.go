@@ -360,3 +360,44 @@ func TestRunSideEffects_RecoversRunningRowsOnStart(t *testing.T) {
 	}
 	_ = calls
 }
+
+func TestSideEffects_MergedTaskPushAndPRAreNoOps(t *testing.T) {
+	engine, db, task, calls, hookErr := createPREngine(t, &noopPublisher{})
+	ctx := context.Background()
+	*hookErr = errors.New("src refspec does not match any")
+	if err := engine.Transition(ctx, task.ID, "review", workflow.TriggerAgent, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SQL().Exec(`INSERT INTO task_git (task_id, git_state) VALUES (?, 'pr_merged') ON CONFLICT(task_id) DO UPDATE SET git_state = 'pr_merged'`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	engine.DrainSideEffects(ctx)
+	if *calls != 0 {
+		t.Fatalf("hook must not run for a merged task, ran %d times", *calls)
+	}
+	if rows := sideEffectRows(t, db, task.ID); len(rows) != 0 {
+		t.Fatalf("expected row deleted, got %+v", rows)
+	}
+}
+
+func TestSideEffects_DismissDeletesOnlyFailed(t *testing.T) {
+	engine, db, task, _, hookErr := createPREngine(t, &noopPublisher{})
+	ctx := context.Background()
+	engine.SideEffectBackoff = func(int) time.Duration { return 0 }
+	*hookErr = errors.New("down")
+	if err := engine.Transition(ctx, task.ID, "review", workflow.TriggerAgent, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := engine.DismissSideEffects(ctx, task.ID); n != 0 {
+		t.Fatalf("pending row must not be dismissed, got %d", n)
+	}
+	for i := 0; i < workflow.MaxSideEffectAttempts+1; i++ {
+		engine.DrainSideEffects(ctx)
+	}
+	if n, err := engine.DismissSideEffects(ctx, task.ID); err != nil || n != 1 {
+		t.Fatalf("dismiss: n=%d err=%v", n, err)
+	}
+	if rows := sideEffectRows(t, db, task.ID); len(rows) != 0 {
+		t.Fatalf("expected none, got %+v", rows)
+	}
+}

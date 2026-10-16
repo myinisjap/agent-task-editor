@@ -157,6 +157,13 @@ export default function InboxPage() {
               <span className="text-xs text-slate-500">{formatRelativeAge(since)}</span>
               <button
                 disabled={busy[`fx:${task.id}`]}
+                onClick={() => run(`fx:${task.id}`, () => api.tasks.dismissSideEffects(task.id), refreshEffects)}
+                className={SECONDARY}
+              >
+                Dismiss
+              </button>
+              <button
+                disabled={busy[`fx:${task.id}`]}
                 onClick={() => run(`fx:${task.id}`, () => api.tasks.retrySideEffects(task.id), refreshEffects)}
                 className={PRIMARY}
               >

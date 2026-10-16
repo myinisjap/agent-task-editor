@@ -328,6 +328,16 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 	// Once GitHub confirms the PR is merged, the branch's work is preserved
 	// upstream and is no longer needed locally — clean it up. Closed-without-
 	// merge PRs are left alone so a human can still inspect/reopen the branch.
+	if state == "pr_merged" || state == "pr_closed" {
+		// The branch's work is upstream (or abandoned), so pending/failed
+		// push and PR side effects can never be needed; drop them so they
+		// don't linger in the Inbox. Write-back effects are left alone.
+		if n, err := s.q.DeleteMootTaskSideEffects(ctx, task.ID); err != nil {
+			log.Warn("ghsync: clear moot side effects", "err", err)
+		} else if n > 0 {
+			s.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: task.ID})
+		}
+	}
 	if state == "pr_merged" {
 		s.cleanupMergedBranch(ctx, task, repo.path)
 	}
