@@ -169,3 +169,13 @@ describe('TaskActions escalation reason', () => {
     expect(screen.queryByRole('button', { name: /Retry/ })).not.toBeInTheDocument()
   })
 })
+
+describe('TaskActions phone bar', () => {
+  it('is a sticky bottom bar offset by the bottom-bar CSS variable', () => {
+    renderActions()
+    const cls = screen.getByTestId('task-actions-bar').className
+    expect(cls).toContain('max-md:sticky')
+    expect(cls).toContain('--ate-bottom-bar-height')
+    expect(screen.getByRole('button', { name: 'Approve' }).className).toContain('min-h-[44px]')
+  })
+})

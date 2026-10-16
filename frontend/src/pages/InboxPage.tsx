@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useState, type ReactNode, type MouseEvent } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useNeedsMeStore } from '../stores/needsMe'
 import { useInboxStore } from '../stores/inbox'
@@ -12,7 +12,7 @@ import { sideEffectText } from '../components/shared/SideEffectBadge'
 import { providerLabel } from '../components/shared/ProviderPausedBanner'
 import type { NeedsMeItem } from '../api/client'
 
-const BTN = 'px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50'
+const BTN = 'flex-1 md:flex-none inline-flex items-center justify-center min-h-[44px] md:min-h-0 px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50'
 const PRIMARY = `${BTN} bg-sky-600 hover:bg-sky-500`
 const SECONDARY = `${BTN} bg-slate-700 hover:bg-slate-600 text-slate-100`
 
@@ -28,10 +28,19 @@ function Section({ title, count, children }: { title: string; count: number; chi
   )
 }
 
-function Row({ children, error }: { children: ReactNode; error?: string }) {
+const isPhone = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 767px)').matches
+
+function Row({ children, error, to }: { children: ReactNode; error?: string; to?: string }) {
+  const navigate = useNavigate()
+  // On phones the whole row taps through to the task; taps on inner links/buttons keep their own action.
+  const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    if (!to || !isPhone()) return
+    if ((e.target as HTMLElement).closest('a,button,input,textarea,select')) return
+    navigate(to)
+  }
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-lg p-4" data-testid="inbox-item">
-      <div className="flex items-start justify-between gap-4">{children}</div>
+    <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 min-w-0" data-testid="inbox-item" onClick={onClick}>
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 md:gap-4">{children}</div>
       {error && <p role="alert" className="text-xs text-red-400 mt-2">{error}</p>}
     </div>
   )
@@ -78,8 +87,8 @@ export default function InboxPage() {
   const renderNeedsMe = (item: NeedsMeItem) => {
     const a = itemActions(item, workflows.find((w) => w.id === item.workflow_id))
     return (
-      <Row key={item.task_id} error={errors[item.task_id]}>
-        <div className="min-w-0">
+      <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={errors[item.task_id]}>
+        <div className="min-w-0 break-words">
           <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
             {item.task_title}
           </Link>
@@ -88,11 +97,11 @@ export default function InboxPage() {
           </span>
           {item.message && <p className="text-xs text-slate-400 mt-1">{item.message}</p>}
         </div>
-        <div className="shrink-0 flex flex-col items-end gap-2">
+        <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
           <span className="text-xs text-slate-500" title={new Date(item.since).toLocaleString()}>
             {formatRelativeAge(item.since)}
           </span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {a.fix && (
               <Link to={a.fix.to} className={PRIMARY}>{a.fix.text}</Link>
             )}
@@ -125,7 +134,7 @@ export default function InboxPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto" data-testid="inbox-page">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto" data-testid="inbox-page">
       <h1 className="text-xl font-semibold text-slate-100 mb-6">Inbox</h1>
 
       {total === 0 && (
@@ -141,8 +150,8 @@ export default function InboxPage() {
 
       <Section title="Failed side effects" count={groups.side_effect.length}>
         {groups.side_effect.map(({ task, effects, since }) => (
-          <Row key={task.id} error={errors[`fx:${task.id}`]}>
-            <div className="min-w-0">
+          <Row key={task.id} to={`/tasks/${task.id}`} error={errors[`fx:${task.id}`]}>
+            <div className="min-w-0 break-words">
               <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
                 {task.title}
               </Link>
@@ -153,7 +162,7 @@ export default function InboxPage() {
                 </p>
               ))}
             </div>
-            <div className="shrink-0 flex flex-col items-end gap-2">
+            <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
               <span className="text-xs text-slate-500">{formatRelativeAge(since)}</span>
               <button
                 disabled={busy[`fx:${task.id}`]}
@@ -176,8 +185,8 @@ export default function InboxPage() {
 
       <Section title="Source issue edited" count={groups.source_edit.length}>
         {groups.source_edit.map(({ task, since }) => (
-          <Row key={task.id} error={errors[`su:${task.id}`]}>
-            <div className="min-w-0">
+          <Row key={task.id} to={`/tasks/${task.id}`} error={errors[`su:${task.id}`]}>
+            <div className="min-w-0 break-words">
               <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
                 {task.title}
               </Link>
@@ -185,9 +194,9 @@ export default function InboxPage() {
                 The source issue was edited after approval. Review the new text before it reaches the agent.
               </p>
             </div>
-            <div className="shrink-0 flex flex-col items-end gap-2">
+            <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
               <span className="text-xs text-slate-500">{formatRelativeAge(since)}</span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Link to={`/tasks/${task.id}`} className={SECONDARY}>Review</Link>
                 <button
                   disabled={busy[`su:${task.id}`]}
@@ -212,7 +221,7 @@ export default function InboxPage() {
       <Section title="Paused providers" count={groups.provider.length}>
         {groups.provider.map((p) => (
           <Row key={p.provider} error={errors[`pv:${p.provider}`]}>
-            <div className="min-w-0">
+            <div className="min-w-0 break-words">
               <p className="text-sm font-medium text-slate-200">
                 {providerLabel(p.provider)} dispatch is paused
               </p>
@@ -221,7 +230,7 @@ export default function InboxPage() {
                 <Link to="/settings/health" className="underline">View health</Link>
               </p>
             </div>
-            <div className="shrink-0 flex flex-col items-end gap-2">
+            <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
               <span className="text-xs text-slate-500">{formatRelativeAge(p.paused_at)}</span>
               <button
                 disabled={busy[`pv:${p.provider}`]}
