@@ -275,7 +275,7 @@ still on them fail at dispatch until switched to `claude`, `codex_cli`, `opencod
 
 ### Opencode (`opencode` provider)
 
-Install the `opencode` binary and configure it. **MCP tools are not available.** See [providers/opencode.md](providers/opencode.md).
+Install the `opencode` binary (`npm i -g opencode-ai`, or build the backend image with `INSTALL_OPENCODE_CLI=true`) and configure it. **MCP tools are not available.** See [providers/opencode.md](providers/opencode.md).
 
 ### Qwen Code (`qwen_code` provider)
 
