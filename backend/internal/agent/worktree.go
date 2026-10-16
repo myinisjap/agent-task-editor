@@ -31,8 +31,8 @@ var safeIDSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 //   - the subtask coordinator's merge-back / branch teardown (subtasks.go)
 //   - the dispatcher's worktree provisioning — `git fetch --prune` + `git
 //     worktree add -b` (dispatcher.go's worktreeSetup, run from the pool worker)
-//   - cmd/server/main.go's engine.OnTerminal — branch push + worktree teardown
-//     for non-subtask tasks
+//   - OnTaskTerminal (task_terminal.go), wired as cmd/server/main.go's
+//     engine.OnTerminal — branch push + worktree teardown for non-subtask tasks
 //   - the worktree sweeper's reclaim pass — `git worktree remove --force` and
 //     `git worktree prune` (internal/worktreesweep/sweeper.go)
 //
@@ -241,8 +241,18 @@ func MergeBranch(ctx context.Context, wtPath, branch, msg, gitName, gitEmail str
 }
 
 // RemoveWorktree tears down the task's worktree directory. The branch is kept.
+// If wtPath no longer exists on disk — e.g. ghsync's cleanupMergedBranch (or a
+// crash, or a manual rm) already removed it — this is a no-op that just prunes
+// git's stale worktree administration entry instead of failing; there is
+// nothing left to remove, and `git worktree remove` would otherwise error with
+// "cannot change to '<path>': No such file or directory" (see issue
+// "Branch push failed" / git state pr_merged).
 func RemoveWorktree(ctx context.Context, repoPath, wtPath string) error {
 	if wtPath == "" {
+		return nil
+	}
+	if !gitcmd.DirExists(wtPath) {
+		_, _ = git(ctx, repoPath, "worktree", "prune")
 		return nil
 	}
 	if out, err := git(ctx, repoPath, "worktree", "remove", "--force", wtPath); err != nil {

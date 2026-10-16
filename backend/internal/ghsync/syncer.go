@@ -357,6 +357,14 @@ func (s *Syncer) cleanupMergedBranch(ctx context.Context, task gen.Task, repoPat
 			// Continue anyway — branch delete below will fail loudly (and be
 			// logged) if the worktree is in fact still attached.
 		}
+		// Clear the stale worktree_path regardless of the remove's outcome: the
+		// row must not keep pointing at a directory this task will never use
+		// again, or a later side effect (e.g. the workflow engine's OnTerminal,
+		// or a retry of it) will try to operate on a path that may no longer
+		// exist. See "Branch push failed" / git state pr_merged.
+		if err := s.q.ClearTaskWorktreePath(ctx, task.ID); err != nil {
+			log.Warn("ghsync: clear worktree_path", "err", err)
+		}
 	}
 	if err := agent.DeleteLocalBranch(ctx, repoPath, task.Branch); err != nil {
 		log.Warn("ghsync: delete local branch", "branch", task.Branch, "err", err)
