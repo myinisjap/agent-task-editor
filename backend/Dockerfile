@@ -129,19 +129,29 @@ ENV MISE_YES=1
 ARG CLAUDE_CLI_VERSION=2.1.301
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}
 
-# Codex CLI (codex_cli provider) and Qwen CLI (qwen_code provider) are NOT
-# installed by default — unlike claude above, both are gated behind build
-# args (default false) so the default image doesn't grow for users who
-# don't need them. Pass via:
+# Codex CLI (codex_cli provider), Qwen CLI (qwen_code provider) and Opencode
+# CLI (opencode provider) are NOT installed by default — unlike claude above,
+# all three are gated behind build args (default false) so the default image
+# doesn't grow for users who don't need them. Pass via:
 #   INSTALL_CODEX_CLI=true docker compose build
 #   INSTALL_QWEN_CLI=true docker compose build
+#   INSTALL_OPENCODE_CLI=true docker compose build
 ARG INSTALL_CODEX_CLI=false
 ARG INSTALL_QWEN_CLI=false
+ARG INSTALL_OPENCODE_CLI=false
 # Pinned for the same reproducibility reason as CLAUDE_CLI_VERSION above.
 ARG CODEX_CLI_VERSION=0.163.0
 ARG QWEN_CLI_VERSION=0.25.2
+# opencode-ai's npm package has no platform-specific install step of its own:
+# like codex/qwen above, its optionalDependencies (opencode-linux-x64/arm64,
+# darwin/windows variants, ...) are resolved by npm itself against the
+# builder's os/cpu at install time, so `npm install -g` here already lands
+# the right linux-x64 or linux-arm64 binary for TARGETARCH with no extra
+# plumbing needed.
+ARG OPENCODE_CLI_VERSION=1.19.1
 RUN if [ "$INSTALL_CODEX_CLI" = "true" ]; then npm install -g @openai/codex@${CODEX_CLI_VERSION}; fi
 RUN if [ "$INSTALL_QWEN_CLI" = "true" ]; then npm install -g @qwen-code/qwen-code@${QWEN_CLI_VERSION}; fi
+RUN if [ "$INSTALL_OPENCODE_CLI" = "true" ]; then npm install -g opencode-ai@${OPENCODE_CLI_VERSION}; fi
 ENV SHELL=/bin/sh
 
 # Bring in the same Go toolchain used to build this image's own server binary

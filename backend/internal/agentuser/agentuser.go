@@ -166,7 +166,12 @@ func ChildEnv(env []string, c Config) []string {
 	if env == nil {
 		env = os.Environ()
 	}
-	out := make([]string, 0, len(env)+3)
+	// Capacity hint only (not len(env)+3): CodeQL flags arithmetic feeding an
+	// allocation size as a potential overflow, even though env here is never
+	// attacker-sized. len(env) alone undercounts by the 3 HOME/USER/LOGNAME
+	// entries appended below, so append still grows the slice once — a minor
+	// reallocation, not a correctness issue.
+	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
 		if k == "HOME" || k == "USER" || k == "LOGNAME" {

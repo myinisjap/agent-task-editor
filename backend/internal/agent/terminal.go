@@ -323,14 +323,16 @@ func (m *TerminalManager) ensure(sessionID, repoPath, provider, model string, re
 	// *_CLI_VERSION build arg in backend/Dockerfile, so a self-update mid-session
 	// would silently drift the running binary away from what's pinned — and
 	// otherwise surfaces as an "update available" warning in the chat terminal.
-	// Mirrors the same env forcing in each headless Runner (claude.go, qwen.go);
-	// codex has no env var for this, so its opt-out is a CLI flag (see
-	// terminalCommand above) instead.
+	// Mirrors the same env forcing in each headless Runner (claude.go, qwen.go,
+	// opencode.go); codex has no env var for this, so its opt-out is a CLI flag
+	// (see terminalCommand above) instead.
 	switch provider {
 	case "claude":
 		cmd.Env = append(cmd.Env, "DISABLE_AUTOUPDATER=1")
 	case "qwen_code":
 		cmd.Env = append(cmd.Env, "NO_UPDATE_NOTIFIER=1")
+	case "opencode":
+		cmd.Env = append(cmd.Env, "OPENCODE_DISABLE_AUTOUPDATE=1")
 	}
 	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Env = append(cmd.Env, runtimeEnv...)
