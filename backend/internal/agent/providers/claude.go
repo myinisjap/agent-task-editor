@@ -301,19 +301,22 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	}
 
 	var (
-		wg              sync.WaitGroup
-		outcome         string
-		sessionID       string
-		rateLimited     bool
-		rateLimitMsg    string
-		transient       bool
-		maxTurnsHit     bool
-		usage           *runUsage
-		cumInputTokens  int64
-		cumOutputTokens int64
-		stdoutTruncated bool
-		stderrTruncated bool
-		mu              sync.Mutex
+		wg                  sync.WaitGroup
+		outcome             string
+		sessionID           string
+		rateLimited         bool
+		rateLimitMsg        string
+		transient           bool
+		maxTurnsHit         bool
+		usage               *runUsage
+		cumInputTokens      int64
+		cumOutputTokens     int64
+		cumCacheReadTokens  int64
+		cumCacheWriteTokens int64
+		seenMessageIDs      map[string]bool
+		stdoutTruncated     bool
+		stderrTruncated     bool
+		mu                  sync.Mutex
 	)
 	wg.Add(2)
 
@@ -322,7 +325,15 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	// and cancels the subprocess if the projection crosses the effective
 	// budget. Inert (Price lookups skipped entirely) when input.CostBudgetUSD
 	// is 0 (no cap configured). See cost_watchdog.go.
-	watchdog := newCostWatchdog(input.CostBudgetUSD, input.CostSpentUSD, input.CostWarnRatio, r.PriceResolver, input.AgentConfig.Model)
+	//
+	// watchdogModel starts as the configured model and falls back to the
+	// model reported on the stream-json "system"/"init" event (see the
+	// scan loop below) when AgentConfig.Model is empty — otherwise an
+	// unset model would leave the watchdog permanently inert (Price never
+	// finds a match) for the whole run even though the CLI resolved and is
+	// billing against its own default model.
+	watchdogModel := input.AgentConfig.Model
+	watchdog := newCostWatchdog(input.CostBudgetUSD, input.CostSpentUSD, input.CostWarnRatio, r.PriceResolver, watchdogModel)
 
 	// Stream stdout (stream-json lines)
 	go func() {
@@ -343,6 +354,11 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 			if ev.Outcome != "" {
 				outcome = ev.Outcome
 			}
+			if ev.Model != "" {
+				// Watchdog-pricing fallback for an unset AgentConfig.Model —
+				// see watchdogModel's doc comment above.
+				watchdog.setModelIfEmpty(ev.Model)
+			}
 			if ev.Usage != nil {
 				if ev.IsResult {
 					// Authoritative final total — replaces any running
@@ -353,10 +369,34 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 					// sum it to build the running total the watchdog projects
 					// against. total_cost_usd is never set on these, so the
 					// watchdog derives cost from tokens via the pricing table.
-					cumInputTokens += ev.Usage.InputTokens
-					cumOutputTokens += ev.Usage.OutputTokens
+					//
+					// Claude Code can split one API message into several
+					// "assistant" events sharing the same message.id, each
+					// repeating that message's *full* usage — count each
+					// distinct message.id's usage exactly once, or a split
+					// message would multiply its tokens into the running
+					// total. An event with no message.id (older CLI
+					// versions, or a message type that never had the field)
+					// is always counted, matching the pre-dedup behavior.
+					count := true
+					if ev.MessageID != "" {
+						if seenMessageIDs == nil {
+							seenMessageIDs = make(map[string]bool)
+						}
+						if seenMessageIDs[ev.MessageID] {
+							count = false
+						} else {
+							seenMessageIDs[ev.MessageID] = true
+						}
+					}
+					if count {
+						cumInputTokens += ev.Usage.InputTokens
+						cumOutputTokens += ev.Usage.OutputTokens
+						cumCacheReadTokens += ev.Usage.CacheReadInputTokens
+						cumCacheWriteTokens += ev.Usage.CacheCreationInputTokens
+					}
 					if watchdog.active() {
-						if projected, warn, exceeded := watchdog.observe(context.Background(), cumInputTokens, cumOutputTokens); warn || exceeded {
+						if projected, warn, exceeded := watchdog.observe(context.Background(), cumInputTokens, cumCacheReadTokens, cumCacheWriteTokens, cumOutputTokens); warn || exceeded {
 							if warn {
 								info.costWarned = true
 								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the warning threshold (budget $%.2f)", projected, input.CostBudgetUSD), At: time.Now()}
@@ -369,9 +409,11 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 								// includes cost already recorded by earlier
 								// runs, which must not be double-counted here.
 								info.costExceededUsage = &runUsage{
-									InputTokens:  cumInputTokens,
-									OutputTokens: cumOutputTokens,
-									CostUSD:      projected - input.CostSpentUSD,
+									InputTokens:              cumInputTokens,
+									OutputTokens:             cumOutputTokens,
+									CacheReadInputTokens:     cumCacheReadTokens,
+									CacheCreationInputTokens: cumCacheWriteTokens,
+									CostUSD:                  projected - input.CostSpentUSD,
 								}
 								logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("cost watchdog: projected run cost ($%.2f) has crossed the budget ($%.2f) — cancelling run", projected, input.CostBudgetUSD), At: time.Now()}
 								cancel()

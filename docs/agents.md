@@ -400,10 +400,18 @@ toward the task's total, so it can't be "reset" by killing and resuming it.
 billed cost.** Claude/qwen only report a `total_cost_usd` on the terminal
 `result` event of a stream-json run — by definition too late for a mid-run
 kill switch to act on. The watchdog instead derives cost from incremental
-`input_tokens`/`output_tokens` (folding cache tokens into the input count,
-since the pricing table has no separate cache rate — see
-`extractAssistantUsage` in `parse_streamjson.go`) via the same pricing table.
-Two consequences:
+`input_tokens`/`output_tokens` via the same pricing table, plus the model's
+optional `cached_input_per_1m`/`cache_write_input_per_1m` rates (Settings →
+Pricing) for the `cache_read_input_tokens`/`cache_creation_input_tokens`
+counters Claude/qwen report *additional to* `input_tokens` (not a subset of
+it, unlike `codex_cli`'s single cached-tokens counter — see
+`extractAssistantUsage` in `parse_streamjson.go`). Cache reads are typically
+far cheaper than a full input token and cache writes somewhat more
+expensive; pricing them both at the plain input rate (the old behavior)
+over-projected cost by several times on a typical cache-heavy run and could
+kill it well before the real budget. A model row with no cache rates set
+still bills cache tokens at its plain input rate, same as before this
+existed. Two consequences:
 
 - **Subscription plans.** Under a Claude subscription where the real
   marginal cost of a run is `$0`, the pricing-table estimate can still be

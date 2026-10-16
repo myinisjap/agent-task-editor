@@ -22,15 +22,29 @@ vi.mock('../api/client', async () => {
 import { api } from '../api/client'
 
 const SEEDED = [
-  { model: 'gpt-4o', input_per_1m: 2.5, output_per_1m: 10, cached_input_per_1m: 1.25, updated_at: '2026-01-01T00:00:00Z' },
+  {
+    model: 'gpt-4o',
+    input_per_1m: 2.5,
+    output_per_1m: 10,
+    cached_input_per_1m: 1.25,
+    cache_write_input_per_1m: null,
+    updated_at: '2026-01-01T00:00:00Z',
+  },
 ]
 
 beforeEach(() => {
   vi.clearAllMocks()
   ;(api.modelPricing.list as ReturnType<typeof vi.fn>).mockResolvedValue(SEEDED)
   ;(api.modelPricing.update as ReturnType<typeof vi.fn>).mockImplementation(
-    async (rows: { model: string; input_per_1m: number; output_per_1m: number; cached_input_per_1m: number | null }[]) =>
-      rows.map((r) => ({ ...r, updated_at: '2026-01-02T00:00:00Z' })),
+    async (
+      rows: {
+        model: string
+        input_per_1m: number
+        output_per_1m: number
+        cached_input_per_1m: number | null
+        cache_write_input_per_1m: number | null
+      }[],
+    ) => rows.map((r) => ({ ...r, updated_at: '2026-01-02T00:00:00Z' })),
   )
 })
 
@@ -53,7 +67,7 @@ describe('PricingSettingsPage', () => {
     await user.click(screen.getByRole('button', { name: /Save pricing table/i }))
     await waitFor(() =>
       expect(api.modelPricing.update).toHaveBeenLastCalledWith([
-        { model: 'gpt-4o', input_per_1m: 2.5, output_per_1m: 10, cached_input_per_1m: null },
+        { model: 'gpt-4o', input_per_1m: 2.5, output_per_1m: 10, cached_input_per_1m: null, cache_write_input_per_1m: null },
       ]),
     )
 
@@ -61,9 +75,35 @@ describe('PricingSettingsPage', () => {
     await user.click(screen.getByRole('button', { name: /Save pricing table/i }))
     await waitFor(() =>
       expect(api.modelPricing.update).toHaveBeenLastCalledWith([
-        { model: 'gpt-4o', input_per_1m: 2.5, output_per_1m: 10, cached_input_per_1m: 0.3 },
+        { model: 'gpt-4o', input_per_1m: 2.5, output_per_1m: 10, cached_input_per_1m: 0.3, cache_write_input_per_1m: null },
       ]),
     )
+  })
+
+  it('saves an edited cache-write price, and an empty one as null', async () => {
+    const user = userEvent.setup()
+    render(<PricingSettingsPage />)
+
+    const cacheWrite = await screen.findByLabelText(/Cache-write price for gpt-4o/i)
+    await user.type(cacheWrite, '3.75')
+    await user.click(screen.getByRole('button', { name: /Save pricing table/i }))
+    await waitFor(() =>
+      expect(api.modelPricing.update).toHaveBeenLastCalledWith([
+        { model: 'gpt-4o', input_per_1m: 2.5, output_per_1m: 10, cached_input_per_1m: 1.25, cache_write_input_per_1m: 3.75 },
+      ]),
+    )
+  })
+
+  it('rejects a negative cache-write price without calling the API', async () => {
+    const user = userEvent.setup()
+    render(<PricingSettingsPage />)
+
+    const cacheWrite = await screen.findByLabelText(/Cache-write price for gpt-4o/i)
+    await user.type(cacheWrite, '-2')
+    await user.click(screen.getByRole('button', { name: /Save pricing table/i }))
+
+    expect(await screen.findByText(/Cache-write price for "gpt-4o"/i)).toBeInTheDocument()
+    expect(api.modelPricing.update).not.toHaveBeenCalled()
   })
 
   it('rejects a negative cached price without calling the API', async () => {
@@ -131,8 +171,8 @@ describe('PricingSettingsPage', () => {
 
     await waitFor(() =>
       expect(api.modelPricing.update).toHaveBeenCalledWith([
-        { model: 'gpt-4o', input_per_1m: 2.5, output_per_1m: 10, cached_input_per_1m: 1.25 },
-        { model: 'my-custom-model', input_per_1m: 0, output_per_1m: 0, cached_input_per_1m: null },
+        { model: 'gpt-4o', input_per_1m: 2.5, output_per_1m: 10, cached_input_per_1m: 1.25, cache_write_input_per_1m: null },
+        { model: 'my-custom-model', input_per_1m: 0, output_per_1m: 0, cached_input_per_1m: null, cache_write_input_per_1m: null },
       ]),
     )
     expect(await screen.findByText(/Pricing table saved/i)).toBeInTheDocument()

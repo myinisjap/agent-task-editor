@@ -275,15 +275,92 @@ func TestEstimateCachedCostUSD(t *testing.T) {
 	}
 }
 
+// fakeClaudeCacheResolver adds both a cache-read and a cache-write rate to
+// fakePriceResolver, mirroring the two separate (additional-to-input, not a
+// subset) counters claude/qwen report — see estimateClaudeCostUSD.
+type fakeClaudeCacheResolver struct {
+	fakePriceResolver
+	readPer1M  float64
+	readKnown  bool
+	writePer1M float64
+	writeKnown bool
+}
+
+func (f fakeClaudeCacheResolver) CachedInputPrice(context.Context, string) (float64, bool) {
+	return f.readPer1M, f.readKnown
+}
+
+func (f fakeClaudeCacheResolver) CacheWriteInputPrice(context.Context, string) (float64, bool) {
+	return f.writePer1M, f.writeKnown
+}
+
+// TestEstimateClaudeCostUSD verifies claude/qwen's cache read/write tokens
+// (additional to, not a subset of, input tokens) are each billed at their
+// own resolver rate when known, falling back to the plain input rate for
+// whichever bucket has none — and that pricing cache reads at ~10% of the
+// input rate (rather than the old behavior of lumping them into the full
+// input rate) produces a materially lower estimate on a cache-heavy usage
+// pattern typical of a long agent run.
+func TestEstimateClaudeCostUSD(t *testing.T) {
+	ctx := context.Background()
+	base := fakePriceResolver{inPer1M: 3, outPer1M: 15, known: true}
+	cases := []struct {
+		name                           string
+		resolver                       PriceResolver
+		in, cacheRead, cacheWrite, out int64
+		want                           float64
+	}{
+		{
+			"both rates known",
+			fakeClaudeCacheResolver{base, 0.3, true, 3.75, true},
+			1_000, 1_000_000, 10_000, 500,
+			(1_000.0/1e6)*3 + (1_000_000.0/1e6)*0.3 + (10_000.0/1e6)*3.75 + (500.0/1e6)*15,
+		},
+		{
+			"no cache rates known falls back to input rate for both",
+			base,
+			1_000, 1_000_000, 10_000, 500,
+			(1_000.0/1e6)*3 + (1_000_000.0/1e6)*3 + (10_000.0/1e6)*3 + (500.0/1e6)*15,
+		},
+		{
+			"negative cache counts ignored (clamped to 0)",
+			fakeClaudeCacheResolver{base, 0.3, true, 3.75, true},
+			1_000, -5, -5, 0,
+			(1_000.0 / 1e6) * 3,
+		},
+	}
+	for _, c := range cases {
+		got, known := estimateClaudeCostUSD(ctx, c.resolver, "m", c.in, c.cacheRead, c.cacheWrite, c.out)
+		if !known || math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("%s: got (%v, %v), want (%v, true)", c.name, got, known, c.want)
+		}
+	}
+	if _, known := estimateClaudeCostUSD(ctx, fakePriceResolver{}, "m", 1, 1, 1, 1); known {
+		t.Error("unknown model must report known=false")
+	}
+
+	// A cache-heavy run (mostly cache reads, as a long agent run typically
+	// is) should project materially cheaper than pricing every token at the
+	// full input rate — the bug this fixes.
+	heavyResolver := fakeClaudeCacheResolver{fakePriceResolver{inPer1M: 3, outPer1M: 15, known: true}, 0.3, true, 3.75, true}
+	cacheHeavy, _ := estimateClaudeCostUSD(ctx, heavyResolver, "m", 1_000, 10_000_000, 0, 1_000)
+	allAtInputRate := (1_000.0/1e6)*3 + (10_000_000.0/1e6)*3 + (1_000.0/1e6)*15
+	if cacheHeavy >= allAtInputRate {
+		t.Errorf("cache-heavy estimate (%v) should be well below pricing all tokens at the full input rate (%v)", cacheHeavy, allAtInputRate)
+	}
+}
+
 // TestDefaultPriceResolver_CachedInputPrice verifies the hardcoded table's
-// cached rates are exposed, including through prefix matching.
+// cached rates are exposed, including through prefix matching. Claude rows
+// now also carry a cached (cache-read) rate — see pricing.go's modelPricing
+// map — so cache reads are no longer priced at the full input rate.
 func TestDefaultPriceResolver_CachedInputPrice(t *testing.T) {
 	v, ok := defaultPriceResolver{}.CachedInputPrice(context.Background(), "gpt-4.1-2025-04-14")
 	if !ok || v != 0.5 {
 		t.Errorf("gpt-4.1 cached = (%v, %v), want (0.5, true)", v, ok)
 	}
-	if _, ok := (defaultPriceResolver{}).CachedInputPrice(context.Background(), "claude-sonnet-4-5"); ok {
-		t.Error("claude rows carry no cached rate in the fallback table")
+	if v, ok := (defaultPriceResolver{}).CachedInputPrice(context.Background(), "claude-sonnet-4-5"); !ok || v != 0.30 {
+		t.Errorf("claude-sonnet-4-5 cached = (%v, %v), want (0.30, true)", v, ok)
 	}
 }
 
@@ -315,7 +392,8 @@ func TestDBPriceResolver_CachedInputPrice(t *testing.T) {
 }
 
 // TestModelPricingMigration_SeedsCachedRates verifies migration 065 filled the
-// cached rate for the seeded OpenAI rows and left Claude rows unset.
+// cached rate for the seeded OpenAI rows, and migration 066 backfilled the
+// Claude rows' cache-read and cache-write rates.
 func TestModelPricingMigration_SeedsCachedRates(t *testing.T) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
@@ -330,7 +408,10 @@ func TestModelPricingMigration_SeedsCachedRates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get claude: %v", err)
 	}
-	if row.CachedInputPer1m != nil {
-		t.Errorf("claude cached = %v, want nil", *row.CachedInputPer1m)
+	if row.CachedInputPer1m == nil || *row.CachedInputPer1m != 0.30 {
+		t.Errorf("claude-sonnet-4-5 cached = %v, want 0.30", row.CachedInputPer1m)
+	}
+	if row.CacheWriteInputPer1m == nil || *row.CacheWriteInputPer1m != 3.75 {
+		t.Errorf("claude-sonnet-4-5 cache-write = %v, want 3.75", row.CacheWriteInputPer1m)
 	}
 }

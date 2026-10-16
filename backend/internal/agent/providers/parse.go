@@ -13,10 +13,26 @@ type runUsage struct {
 	InputTokens  int64
 	OutputTokens int64
 	// CachedInputTokens is the part of InputTokens served from the prompt
-	// cache, for providers that report it (codex_cli). Priced at the model's
-	// cached-input rate when one is known (see estimateCachedCostUSD).
+	// cache, for providers that report it as a *subset* of InputTokens
+	// (codex_cli only). Priced at the model's cached-input rate when one is
+	// known (see estimateCachedCostUSD). claude/qwen use the separate
+	// CacheReadInputTokens/CacheCreationInputTokens fields below instead —
+	// their CLI reports cache tokens as additional counters alongside (not
+	// a subset of) input_tokens, a different shape from codex's.
 	CachedInputTokens int64
-	CostUSD           float64
+	// CacheReadInputTokens is the claude/qwen stream-json
+	// cache_read_input_tokens counter: prompt-cache hits, priced well below
+	// the full input rate (see pricing.go's CacheReadInputPer1M). Unlike
+	// codex's CachedInputTokens, this is reported *in addition to*
+	// InputTokens, not as a subset of it.
+	CacheReadInputTokens int64
+	// CacheCreationInputTokens is the claude/qwen stream-json
+	// cache_creation_input_tokens counter: tokens written to the prompt
+	// cache for the first time this turn, priced *above* the full input
+	// rate (see pricing.go's CacheWriteInputPer1M). Also additional to
+	// InputTokens, not a subset.
+	CacheCreationInputTokens int64
+	CostUSD                  float64
 	// Turns is the run's actual turn count as reported by the provider
 	// (claude/qwen stream-json's result-event num_turns). 0 when the message
 	// carries no turn count — never estimated. See agent.Result.TurnsUsed.
@@ -24,11 +40,18 @@ type runUsage struct {
 }
 
 // applyUsage copies token/cost usage from u onto res, if u is non-nil.
+// res.InputTokens includes u's cache read/creation tokens (claude/qwen
+// report those as separate counters, not a subset of InputTokens — see
+// runUsage) so the persisted/displayed token count reflects everything the
+// run actually consumed; res.CostUSD is left as u.CostUSD (for claude/qwen
+// this is always the CLI's own authoritative total_cost_usd, already priced
+// correctly per-token-type by Anthropic — this function never re-estimates
+// it).
 func applyUsage(res *agent.Result, u *runUsage) {
 	if u == nil {
 		return
 	}
-	res.InputTokens = u.InputTokens
+	res.InputTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 	res.OutputTokens = u.OutputTokens
 	res.CostUSD = u.CostUSD
 	res.TurnsUsed = u.Turns
