@@ -313,7 +313,7 @@ func TestBlockReasonResolver_RateLimited(t *testing.T) {
 
 	rl := NewRateLimitRegistry()
 	until := time.Now().Add(30 * time.Minute)
-	rl.Block(cfgID, until)
+	rl.Block(poolOfAgentConfig(t, f.q, cfgID), until)
 
 	r := NewBlockReasonResolver(f.q, nil, rl, nil)
 	reason := resolveOne(t, r, task)
@@ -471,7 +471,7 @@ func TestBlockReasonResolver_Ordering(t *testing.T) {
 	}
 
 	rl := NewRateLimitRegistry()
-	rl.Block(cfgID, time.Now().Add(time.Hour))
+	rl.Block(poolOfAgentConfig(t, f.q, cfgID), time.Now().Add(time.Hour))
 
 	r := NewBlockReasonResolver(f.q, nil, rl, nil)
 	reason := resolveOne(t, r, task)

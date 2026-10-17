@@ -50,7 +50,9 @@ func BackoffDurationWithBase(attempt int, base time.Duration) time.Duration {
 	return d
 }
 
-// RateLimitRegistry tracks per-agent-config rate-limit blocks concurrency-safely.
+// RateLimitRegistry tracks rate-limit blocks concurrency-safely. Keys are
+// usage pools (provider accounts, see usagepool.go), not agent config ids;
+// the persisted agent_rate_limits.agent_config_id column holds that key.
 type RateLimitRegistry struct {
 	mu        sync.Mutex
 	blocked   map[string]time.Time // agentConfigID → unblock time

@@ -536,7 +536,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// slow sibling run sharing the same agent config can't wipe a fresh block
 	// registered by a concurrently-finishing run (see issue #344).
 	if p.RateLimits != nil {
-		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.ID, startedAt)
+		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.usagePool(), startedAt)
 	}
 
 	// If this task is a parent with subtasks, settle merge-backs now that its run
@@ -723,16 +723,16 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 		// per-task retry-budget bookkeeping below.
 		if p.RateLimits != nil {
 			if !rl.ResetAt.IsZero() && rl.ResetAt.After(time.Now()) {
-				p.RateLimits.Block(job.Input.AgentConfig.ID, rl.ResetAt)
+				p.RateLimits.Block(job.Input.AgentConfig.usagePool(), rl.ResetAt)
 			} else {
-				p.RateLimits.BlockWithBackoff(job.Input.AgentConfig.ID)
+				p.RateLimits.BlockWithBackoff(job.Input.AgentConfig.usagePool())
 			}
 		}
 		// Notify the frontend so the task card can show a rate-limit hint.
 		if p.pub != nil {
 			var unblockStr string
 			if p.RateLimits != nil {
-				if until := p.RateLimits.BlockedUntil(job.Input.AgentConfig.ID); !until.IsZero() {
+				if until := p.RateLimits.BlockedUntil(job.Input.AgentConfig.usagePool()); !until.IsZero() {
 					unblockStr = until.Format(time.RFC3339)
 				}
 			}
@@ -743,7 +743,7 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 				UnblockedAt:   unblockStr,
 			})
 		}
-		p.handleTransientFailure(ctx, job, result, "rate limited: "+rl.Message, startedAt)
+		p.handleRateLimited(ctx, job, result, "rate limited: "+rl.Message, startedAt)
 		return true
 	}
 

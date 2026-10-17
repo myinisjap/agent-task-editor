@@ -80,6 +80,7 @@ func NewBlockReasonResolver(q *gen.Queries, pool *Pool, rateLimits *RateLimitReg
 // resolve block reasons for a whole page of tasks without N+1 queries.
 type blockSharedState struct {
 	configs       []gen.AgentConfig
+	pools         usagePools          // provider_config_id -> usage pool (rate-limit key)
 	inUse         map[string]int64    // repo_id -> pending/running run count (worker slots in use)
 	repos         map[string]gen.Repo // repo_id -> repo
 	labelsByWF    map[string][]gen.WorkflowLabel
@@ -137,6 +138,10 @@ func (r *BlockReasonResolver) gatherState(ctx context.Context, tasks []gen.Task)
 		return nil, fmt.Errorf("list agent configs: %w", err)
 	}
 	state.configs = configs
+
+	// A load failure degrades to each config being its own usage pool, the
+	// same fallback the dispatcher uses.
+	state.pools, _ = loadUsagePools(ctx, r.q)
 
 	inUse, err := r.q.CountActiveRunsByRepo(ctx)
 	if err != nil {
@@ -389,7 +394,7 @@ func (r *BlockReasonResolver) checkRateLimited(matches []*gen.AgentConfig, label
 	var blockedIDs []string
 	var earliest time.Time
 	for _, cand := range matches {
-		blocked, until := r.rateLimits.IsBlocked(cand.ID)
+		blocked, until := r.rateLimits.IsBlocked(state.pools.of(cand))
 		if !blocked {
 			return cand, nil
 		}

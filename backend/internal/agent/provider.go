@@ -229,10 +229,13 @@ type Task struct {
 
 // AgentConfig is a minimal copy of storage.AgentConfig.
 type AgentConfig struct {
-	ID           string
-	Name         string
-	Provider     string
-	Model        string
+	ID       string
+	Name     string
+	Provider string
+	Model    string
+	// UsagePool is the provider account this config's rate/usage limits are
+	// tracked against (see usagepool.go), set from the provider config.
+	UsagePool    string
 	SystemPrompt string
 	MaxTokens    int64
 	TimeoutSecs  int64
