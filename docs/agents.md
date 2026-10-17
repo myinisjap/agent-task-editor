@@ -870,9 +870,15 @@ so humans aren't paged for problems that will resolve themselves:
   no `OUTCOME:` line) is escalated to `waiting_human` once, with a note on the
   run, rather than being re-run every sweep.
 - **Rate limit** — a `429` or a provider usage/session limit. This blocks
-  the *provider account* (usage pool) from new dispatches until the parsed
-  reset time (Claude) or a growing backoff window (30s doubling to 10
-  minutes), because the limit belongs to the account, not the task. Every
+  the *provider account* (usage pool) from new dispatches until it resets,
+  because the limit belongs to the account, not the task. When the provider
+  says when that is (Claude's "resets 6pm" message) the block lasts until
+  then. When it doesn't (opencode, Qwen Code, API-key accounts), a
+  background **reset check** sends the account's CLI a one-line "reply OK"
+  prompt, outside any task and with no MCP tools, 1, 2, 5, 10 and 15 minutes
+  after the limit and then every 15 minutes, and unblocks the account as
+  soon as one gets through (each check is logged under
+  `component=reset_check`). These probes are not recorded as runs or cost. Every
   agent config on that account is skipped, not only the one whose run hit
   the limit. Each provider config is its own account, except that `claude`
   configs on the shared `claude login` (no `ANTHROPIC_API_KEY`,

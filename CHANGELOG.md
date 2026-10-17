@@ -21,6 +21,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
+- **Reset checks for providers that don't say when their limit resets.** When opencode, Qwen Code or an API-key account hits a limit with no reset time, ATE keeps every task off that account and probes its CLI in the background with a one-line prompt (1, 2, 5, 10 and 15 minutes after the limit, then every 15 minutes) instead of letting task runs find out. The account is unblocked as soon as a probe gets an answer. Probes aren't recorded as runs or cost.
 - **Chat text size and quick answers.** The chat header has A− / A+ controls (9–18px; defaults 11px narrow / 13px wide) that refit the terminal and resize the PTY; the choice is remembered per device, separately for narrow and wide screens. On phones the key bar starts with one-tap Enter, y, n, 1, 2, 3 buttons (character + Enter), highlighted when the last terminal line looks like a prompt.
 - **Phone chat message box and touch scrolling.** On phones, Chat has a native multi-line message box with a Send button (autocorrect, swipe typing, dictation and paste work; multi-line text is sent as one bracketed paste) plus a keyboard toggle for typing directly into the terminal. Swiping the terminal now scrolls the scrollback smoothly with momentum without popping the keyboard (only taps focus), and a "Jump to latest" button appears when scrolled up. Desktop is unchanged.
 

@@ -248,29 +248,31 @@ func main() {
 	priceResolver := providers.DBPriceResolver{Q: termQ}
 
 	// Agent provider factory — selects backend based on AgentConfig.Provider
-	providerFactory := func(agentCfg agent.AgentConfig) agent.Provider {
+	// newProvider builds a runner for agentCfg. withMCP=false leaves out the
+	// MCP sidecar, for runs with no task to report on (reset checks).
+	newProvider := func(agentCfg agent.AgentConfig, withMCP bool) agent.Provider {
 		switch agentCfg.Provider {
 		case "claude":
 			var mcp *providers.MCPManager
-			if cfg.MCPBinary != "" {
+			if withMCP && cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &providers.ClaudeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		case "opencode":
 			var mcp *providers.MCPManager
-			if cfg.MCPBinary != "" {
+			if withMCP && cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &providers.OpencodeRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL}
 		case "qwen_code":
 			var mcp *providers.MCPManager
-			if cfg.MCPBinary != "" {
+			if withMCP && cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &providers.QwenRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
 		case "codex_cli":
 			var mcp *providers.MCPManager
-			if cfg.MCPBinary != "" {
+			if withMCP && cfg.MCPBinary != "" {
 				mcp = &providers.MCPManager{ServerBinary: cfg.MCPBinary}
 			}
 			return &providers.CodexRunner{MCP: mcp, UploadDir: uploadDir, BackendURL: backendURL, PriceResolver: priceResolver}
@@ -281,6 +283,7 @@ func main() {
 			return nil
 		}
 	}
+	providerFactory := func(agentCfg agent.AgentConfig) agent.Provider { return newProvider(agentCfg, true) }
 
 	maxWorkers := cfg.MaxWorkers
 	if maxWorkers <= 0 {
@@ -541,6 +544,12 @@ func main() {
 		dispatcher.Run(dispatchCtx)
 	}()
 	// Auto-resume paused providers once their existing health check passes.
+	// Finds out when a provider account whose limit gave no reset time is
+	// usable again, by probing its CLI outside any task.
+	go (&agent.ResetChecker{
+		Limits:      rateLimits,
+		NewProvider: func(c agent.AgentConfig) agent.Provider { return newProvider(c, false) },
+	}).Run(ctx)
 	go providerPauses.RunRecheck(ctx, 30*time.Second, func(provider string) bool {
 		return health.ProviderReady(provider, health.Input{}, nil)
 	})
