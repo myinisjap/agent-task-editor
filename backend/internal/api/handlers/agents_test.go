@@ -22,6 +22,8 @@ type agentConfigResponse struct {
 	Enabled         bool `json:"enabled"`
 	ResumeSessions  bool `json:"resume_sessions"`
 	SubtasksEnabled bool `json:"subtasks_enabled"`
+
+	FallbackProviderConfigIDs []string `json:"fallback_provider_config_ids"`
 }
 
 // setupAgentsRouter returns a chi router wired with the agents routes, plus
@@ -1111,5 +1113,96 @@ func TestAgentsList_RedactsProviderConfigEnv(t *testing.T) {
 	}
 	if !strings.Contains(body, "ANTHROPIC_API_KEY") {
 		t.Errorf("expected env key name to remain visible, got body %q", body)
+	}
+}
+
+// TestAgentsFallbackProviders covers the ordered provider list: create
+// round-trips it, invalid lists are rejected, an update without the field
+// keeps it, and promoting a fallback to primary drops it from the list.
+func TestAgentsFallbackProviders(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	primary := mkProviderConfig(t, q)
+	fb1 := mkProviderConfig(t, q)
+	fb2 := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{"name": "default", "provider_config_id": primary})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create without fallbacks: %d %s", w.Code, w.Body.String())
+	}
+	var plain agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&plain); err != nil {
+		t.Fatal(err)
+	}
+	if plain.FallbackProviderConfigIDs == nil || len(plain.FallbackProviderConfigIDs) != 0 {
+		t.Errorf("default fallbacks = %#v, want []", plain.FallbackProviderConfigIDs)
+	}
+
+	for name, ids := range map[string][]string{
+		"unknown":   {"no-such-provider"},
+		"primary":   {primary},
+		"duplicate": {fb1, fb1},
+		"empty":     {""},
+	} {
+		w := postJSON(t, router, "/agents", map[string]any{
+			"name": "bad", "provider_config_id": primary, "fallback_provider_config_ids": ids,
+		})
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d %s", name, w.Code, w.Body.String())
+		}
+	}
+
+	w = postJSON(t, router, "/agents", map[string]any{
+		"name": "list", "provider_config_id": primary, "fallback_provider_config_ids": []string{fb1, fb2},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if got := created.FallbackProviderConfigIDs; len(got) != 2 || got[0] != fb1 || got[1] != fb2 {
+		t.Fatalf("created fallbacks = %v, want [%s %s]", got, fb1, fb2)
+	}
+
+	// Omitting the field keeps the list.
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{"name": "renamed", "provider_config_id": primary})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", w.Code, w.Body.String())
+	}
+	var kept agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if got := kept.FallbackProviderConfigIDs; len(got) != 2 || got[0] != fb1 || got[1] != fb2 {
+		t.Errorf("kept fallbacks = %v, want [%s %s]", got, fb1, fb2)
+	}
+
+	// Promoting fb1 to primary drops it from the kept list.
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{"name": "renamed", "provider_config_id": fb1})
+	if w.Code != http.StatusOK {
+		t.Fatalf("promote: %d %s", w.Code, w.Body.String())
+	}
+	var promoted agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&promoted); err != nil {
+		t.Fatal(err)
+	}
+	if got := promoted.FallbackProviderConfigIDs; len(got) != 1 || got[0] != fb2 {
+		t.Errorf("promoted fallbacks = %v, want [%s]", got, fb2)
+	}
+
+	// An explicit empty list clears it.
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{
+		"name": "renamed", "provider_config_id": fb1, "fallback_provider_config_ids": []string{},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear: %d %s", w.Code, w.Body.String())
+	}
+	var cleared agentConfigResponse
+	if err := json.NewDecoder(w.Body).Decode(&cleared); err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared.FallbackProviderConfigIDs) != 0 {
+		t.Errorf("cleared fallbacks = %v, want []", cleared.FallbackProviderConfigIDs)
 	}
 }

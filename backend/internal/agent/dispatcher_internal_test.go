@@ -351,7 +351,7 @@ func TestDispatcher_ResolveAgentConfig_ResumeByProvider(t *testing.T) {
 				t.Fatalf("get task: %v", err)
 			}
 
-			_, resumeSessionID, err := d.resolveAgentConfig(ctx, task, matched)
+			_, resumeSessionID, err := d.resolveAgentConfig(ctx, task, matched, matched.ProviderConfigID)
 			if err != nil {
 				t.Fatalf("resolveAgentConfig: %v", err)
 			}

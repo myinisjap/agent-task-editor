@@ -9,30 +9,31 @@ import (
 )
 
 type AgentConfig struct {
-	ID                string    `json:"id"`
-	Name              string    `json:"name"`
-	SystemPrompt      string    `json:"system_prompt"`
-	Labels            string    `json:"labels"`
-	MaxTokens         int64     `json:"max_tokens"`
-	TimeoutSecs       int64     `json:"timeout_secs"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	Enabled           int64     `json:"enabled"`
-	EnabledPlugins    string    `json:"enabled_plugins"`
-	EnabledMcpServers string    `json:"enabled_mcp_servers"`
-	MaxTurns          int64     `json:"max_turns"`
-	CommandAllowlist  string    `json:"command_allowlist"`
-	CommandDenylist   string    `json:"command_denylist"`
-	MaxRetries        int64     `json:"max_retries"`
-	RetryBackoffSecs  int64     `json:"retry_backoff_secs"`
-	ResumeSessions    int64     `json:"resume_sessions"`
-	SubtasksEnabled   int64     `json:"subtasks_enabled"`
-	MaxSubtasks       int64     `json:"max_subtasks"`
-	MaxCostUsd        float64   `json:"max_cost_usd"`
-	Priority          int64     `json:"priority"`
-	ProviderConfigID  string    `json:"provider_config_id"`
-	Effort            string    `json:"effort"`
-	PermissionMode    string    `json:"permission_mode"`
+	ID                        string    `json:"id"`
+	Name                      string    `json:"name"`
+	SystemPrompt              string    `json:"system_prompt"`
+	Labels                    string    `json:"labels"`
+	MaxTokens                 int64     `json:"max_tokens"`
+	TimeoutSecs               int64     `json:"timeout_secs"`
+	CreatedAt                 time.Time `json:"created_at"`
+	UpdatedAt                 time.Time `json:"updated_at"`
+	Enabled                   int64     `json:"enabled"`
+	EnabledPlugins            string    `json:"enabled_plugins"`
+	EnabledMcpServers         string    `json:"enabled_mcp_servers"`
+	MaxTurns                  int64     `json:"max_turns"`
+	CommandAllowlist          string    `json:"command_allowlist"`
+	CommandDenylist           string    `json:"command_denylist"`
+	MaxRetries                int64     `json:"max_retries"`
+	RetryBackoffSecs          int64     `json:"retry_backoff_secs"`
+	ResumeSessions            int64     `json:"resume_sessions"`
+	SubtasksEnabled           int64     `json:"subtasks_enabled"`
+	MaxSubtasks               int64     `json:"max_subtasks"`
+	MaxCostUsd                float64   `json:"max_cost_usd"`
+	Priority                  int64     `json:"priority"`
+	ProviderConfigID          string    `json:"provider_config_id"`
+	Effort                    string    `json:"effort"`
+	PermissionMode            string    `json:"permission_mode"`
+	FallbackProviderConfigIds string    `json:"fallback_provider_config_ids"`
 }
 
 type AgentLog struct {
@@ -68,6 +69,7 @@ type AgentRun struct {
 	CostUnknown      int64      `json:"cost_unknown"`
 	TurnsUsed        int64      `json:"turns_used"`
 	EscalationReason *string    `json:"escalation_reason"`
+	ProviderConfigID *string    `json:"provider_config_id"`
 }
 
 type BackupSetting struct {

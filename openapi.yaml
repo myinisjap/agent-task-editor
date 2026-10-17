@@ -706,6 +706,17 @@ components:
             responses for convenience so clients don't need a second fetch.
             Absent from request bodies. Its `env` values are redacted (see
             ProviderConfig.env) — this embed never carries real secret values.
+        fallback_provider_config_ids:
+          type: array
+          items: { type: string }
+          description: >
+            Ordered fallback providers, tried after provider_config_id when an
+            earlier one's account is rate-limited (or its provider is paused).
+            Each must be an existing provider config, distinct, and not the
+            primary. Optional on write: omitted on create means none; omitted
+            on update keeps the stored list (minus a fallback promoted to
+            primary). Runs record which one they used in
+            AgentRun.provider_config_id.
         enabled:
           type: boolean
           description: >
@@ -1140,6 +1151,7 @@ components:
         id:               { type: string }
         task_id:          { type: string }
         agent_config_id:  { type: string, nullable: true, description: "Agent config that ran this task; set NULL if that config is later deleted." }
+        provider_config_id: { type: string, nullable: true, description: "Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks." }
         status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled, interrupted] }
         feedback:         { type: string, nullable: true }
         stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }

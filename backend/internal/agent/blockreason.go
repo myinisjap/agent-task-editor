@@ -394,14 +394,16 @@ func (r *BlockReasonResolver) checkRateLimited(matches []*gen.AgentConfig, label
 	var blockedIDs []string
 	var earliest time.Time
 	for _, cand := range matches {
-		blocked, until := r.rateLimits.IsBlocked(state.pools.of(cand))
-		if !blocked {
-			return cand, nil
+		for _, pcID := range agentProviderIDs(cand) {
+			blocked, until := r.rateLimits.IsBlocked(state.pools.ofProvider(pcID))
+			if !blocked {
+				return cand, nil
+			}
+			if earliest.IsZero() || until.Before(earliest) {
+				earliest = until
+			}
 		}
 		blockedIDs = append(blockedIDs, cand.ID)
-		if earliest.IsZero() || until.Before(earliest) {
-			earliest = until
-		}
 	}
 	reason := &BlockReason{
 		Code:    BlockRateLimited,

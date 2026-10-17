@@ -3,6 +3,7 @@ import type { AgentConfig } from '../api/client'
 export const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'> = {
   name: '',
   provider_config_id: '',
+  fallback_provider_config_ids: [],
   system_prompt: '',
   labels: '[]',
   max_tokens: 8192,
@@ -64,11 +65,11 @@ Steps:
 5. Call mcp__task-editor__signal_complete with outcome='success' if done (and all prior feedback is addressed), 'failure' if you hit a blocker.
 6. If you hit a blocker only a human can resolve (e.g. missing credentials, a decision outside your scope), call mcp__task-editor__request_human instead.`
 
-// TEMPLATES omits provider_config_id (unlike EMPTY) — a template pre-fills
+// TEMPLATES omits provider_config_id and its fallbacks (unlike EMPTY) — a template pre-fills
 // workflow behavior (system prompt, labels, retry policy) but the caller must
 // still choose which ProviderConfig (provider/model/API key) the resulting
 // agent config uses; see AgentConfigPage's applyTemplate.
-export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'provider_config_id'>> = [
+export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'provider_config_id' | 'fallback_provider_config_ids'>> = [
   {
     name: 'Planner',
     system_prompt: PLAN_PROMPT,
