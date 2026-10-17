@@ -848,7 +848,7 @@ so humans aren't paged for problems that will resolve themselves:
   released so it can retry, and at the limit the run becomes `waiting_human`
   with a note such as `Agent asked to move to "review" but the move was
   rejected: ...`. A concurrent human move of the task is not counted.
-- **Transient failure** — a rate limit (`429`), a network-level error,
+- **Transient failure** — a network-level error,
   upstream `5xx`, or (for CLI providers) a text match for signals like
   connection resets or `502/503/504`. The match is anchored (word/HTTP-status
   boundaries, not a bare substring, so e.g. a diff hunk header containing
@@ -869,10 +869,16 @@ so humans aren't paged for problems that will resolve themselves:
 - A run that **completes without reporting an outcome** (no `signal_complete`,
   no `OUTCOME:` line) is escalated to `waiting_human` once, with a note on the
   run, rather than being re-run every sweep.
-- This is separate from, and complementary to, the existing per-agent-config
-  rate-limit block: a `429` still blocks the *whole config* from new
-  dispatches for a backoff window (protects shared credentials/quota) **and**
-  counts against the *specific task's* retry budget. The per-config block and its consecutive-429 backoff counter are persisted (`agent_rate_limits` table) and reloaded at startup, so a restart or deploy does not immediately re-hit a provider that just rate-limited; expired rows are pruned on boot, and a database error only logs without blocking dispatch.
+- **Rate limit** — a `429` or a provider usage/session limit. This blocks
+  the *whole agent config* from new dispatches until the parsed reset time
+  (Claude) or a growing backoff window (30s doubling to 10 minutes), because
+  the limit belongs to the provider account, not the task. It does **not**
+  spend the task's retry budget: the task is released right away, so the next
+  sweep hands it to the next enabled config for the same label (by
+  `priority`) or, when every matching config is blocked, leaves it waiting
+  with the "all matching configs rate-limited" block reason until a block
+  expires. Rate limits therefore never escalate a task to `waiting_human`,
+  whatever `max_retries` is set to. The per-config block and its consecutive-429 backoff counter are persisted (`agent_rate_limits` table) and reloaded at startup, so a restart or deploy does not immediately re-hit a provider that just rate-limited; expired rows are pruned on boot, and a database error only logs without blocking dispatch.
 - **Turn-limit exhaustion** — the agent hit its configured `max_turns` cap
   without finishing (`claude`, `qwen_code`; see the
   [`max_turns` field](#fields) above). This is neither a genuine failure nor

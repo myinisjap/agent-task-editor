@@ -83,32 +83,60 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Resul
 			Message: *message, Result: &result, PublishDone: true,
 		})
 	} else {
-		costUnknown := int64(0)
-		if result.CostUnknown {
-			costUnknown = 1
-		}
-		if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
-			Status:       finalStatus,
-			InputTokens:  result.InputTokens,
-			OutputTokens: result.OutputTokens,
-			CostUsd:      result.CostUSD,
-			CostUnknown:  costUnknown,
-			TurnsUsed:    result.TurnsUsed,
-			ID:           job.RunID,
-		}); err != nil {
-			slog.Warn("pool: set run completed (transient)", "component", "pool", "run_id", job.RunID, "err", err)
-		}
-		p.releaseLock(bg, job.Input.Task.ID, job.RunID)
-		if p.pub != nil {
-			p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
-				TaskID: job.Input.Task.ID,
-				RunID:  job.RunID,
-				Status: finalStatus,
-			})
-		}
+		p.failAndRelease(bg, job, result)
 	}
 	metrics.RunTerminalTotal.WithLabelValues(finalStatus).Inc()
 	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
+}
+
+// handleRateLimited finishes a run that hit a provider rate/usage limit. The
+// caller has already blocked the agent config in RateLimits, so the
+// dispatcher will not hand this config another run until the block expires;
+// it falls through to the next matching config (by priority) instead, or
+// leaves the task waiting with a "rate limited" block reason when none is
+// free. The limit belongs to the provider account, not to the task, so the
+// task's transient retry budget is left untouched: spending it here would
+// escalate a perfectly healthy task to waiting_human after max_retries
+// limits, even while a fallback config sat idle. The registry's growing
+// per-config backoff is what bounds re-attempts. Without a registry there is
+// no config block to wait on, so this falls back to the task-level budget.
+func (p *Pool) handleRateLimited(ctx context.Context, job Job, result Result, reason string, startedAt time.Time) {
+	if p.RateLimits == nil {
+		p.handleTransientFailure(ctx, job, result, reason, startedAt)
+		return
+	}
+	slog.Info("pool: rate limited, releasing task for another config or the block to expire", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "agent_config_id", job.Input.AgentConfig.ID, "reason", reason)
+	p.failAndRelease(context.Background(), job, result)
+	metrics.RunTerminalTotal.WithLabelValues("failed").Inc()
+	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
+}
+
+// failAndRelease marks the run failed (persisting any usage it accrued),
+// releases the task's dispatch lock and publishes task.agent_done.
+func (p *Pool) failAndRelease(bg context.Context, job Job, result Result) {
+	costUnknown := int64(0)
+	if result.CostUnknown {
+		costUnknown = 1
+	}
+	if _, err := p.q.SetAgentRunCompleted(bg, gen.SetAgentRunCompletedParams{
+		Status:       "failed",
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		CostUsd:      result.CostUSD,
+		CostUnknown:  costUnknown,
+		TurnsUsed:    result.TurnsUsed,
+		ID:           job.RunID,
+	}); err != nil {
+		slog.Warn("pool: set run completed (transient)", "component", "pool", "run_id", job.RunID, "err", err)
+	}
+	p.releaseLock(bg, job.Input.Task.ID, job.RunID)
+	if p.pub != nil {
+		p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
+			TaskID: job.Input.Task.ID,
+			RunID:  job.RunID,
+			Status: "failed",
+		})
+	}
 }
 
 // maxConsecutiveFailures is how many genuine (non-transient) agent failures in a

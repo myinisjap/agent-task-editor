@@ -743,7 +743,7 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 				UnblockedAt:   unblockStr,
 			})
 		}
-		p.handleTransientFailure(ctx, job, result, "rate limited: "+rl.Message, startedAt)
+		p.handleRateLimited(ctx, job, result, "rate limited: "+rl.Message, startedAt)
 		return true
 	}
 

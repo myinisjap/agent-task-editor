@@ -55,7 +55,7 @@ Providers stream `LogEntry` on `logCh`; the pool persists in batches and publish
 - Context-deadline timeout = transient. Plain non-zero exit with no signal = genuine. `auth` escalates to `waiting_human` immediately.
 - Transient budget: `AgentConfig.MaxRetries` (default 3; 0 escalates immediately, lock kept) and `retry_backoff_secs` (default 30, cap 10m). `tasks.transient_retry_count` / `next_retry_at`; `ListAgentPickupTasks` hides tasks still backing off. Exhaustion → `waiting_human` and counter reset. Success or a genuine failure resets the transient counter; transient failures never reset the genuine counter.
 - A run completing with no resolvable outcome escalates once via `escalateNoOutcome` (lock kept, single `task.needs_human`).
-- A 429 also blocks the whole agent config through `RateLimitRegistry`, independently of the per-task budget.
+- A 429 / usage limit blocks the whole agent config through `RateLimitRegistry` and goes through `handleRateLimited`, which releases the task **without** spending its transient budget (the dispatcher fails over to the next config by priority or waits for the block). Only with a nil registry does it fall back to the task budget.
 
 ## Cost Budgets (ADR 0013)
 

@@ -26,6 +26,7 @@ triggers the "Release" workflow the same way.
 
 ### Changed
 
+- **Rate limits no longer use up a task's retries.** A run that hits a provider rate or usage limit still blocks that agent config until the limit resets (or a backoff window passes), but the task is released straight away instead of counting against `max_retries`. The next sweep hands it to another enabled config on the same label, or the task waits with the "rate limited" block reason. Before, three rate limits in a row escalated the task to "needs human" even when a fallback config was free.
 - Phone navigation: a fixed bottom tab bar (Inbox with waiting badge, Board, Chat, More) replaces the floating hamburger below the `md` breakpoint; More opens the existing drawer. The bar respects the home-indicator safe area (`viewport-fit=cover`). Desktop is unchanged.
 
 ### Added

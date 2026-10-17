@@ -1243,6 +1243,63 @@ func TestPool_RateLimit_PreservesUsage(t *testing.T) {
 	}
 }
 
+// TestPool_RateLimit_DoesNotSpendRetryBudget verifies that with the rate-limit
+// registry wired (as in production) a rate-limited run blocks its agent
+// config but releases the task without touching its transient retry budget,
+// even when the task is already at the cap: the limit belongs to the
+// provider account, so the dispatcher should fail over to another config (or
+// wait for the block) rather than escalate the task to waiting_human.
+func TestPool_RateLimit_DoesNotSpendRetryBudget(t *testing.T) {
+	db := openAgentTestDB(t)
+	pub := &testPub{}
+	q := gen.New(db.SQL())
+	engine := workflow.New(db.SQL(), pub)
+	pool := agent.NewPool(1, db.SQL(), engine, pub)
+	pool.RateLimits = agent.NewRateLimitRegistry()
+
+	wfs, _ := q.ListWorkflows(context.Background())
+	taskID, agCfgID, runID := seedJobFixtures(t, q, wfs[0].ID)
+
+	// At the cap (max_retries=1): a transient failure here would escalate.
+	if _, err := q.SetTaskTransientRetry(context.Background(), gen.SetTaskTransientRetryParams{
+		TransientRetryCount: 1,
+		ID:                  taskID,
+	}); err != nil {
+		t.Fatalf("seed retry count: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		ActiveAgentRunID: &runID,
+		ID:               taskID,
+	}); err != nil {
+		t.Fatalf("seed active run: %v", err)
+	}
+
+	resetAt := time.Now().Add(2 * time.Hour)
+	provider := &mockProvider{err: &agent.ErrRateLimit{ResetAt: resetAt, Message: "usage limit"}}
+
+	_, stop := startPool(t, pool)
+	pool.Submit(buildJobWithRetry(runID, taskID, agCfgID, wfs[0].ID, t.TempDir(), provider, 1, 30))
+	waitForStatus(t, q, runID, "failed")
+	stop()
+
+	if pub.hasEvent("task.needs_human") {
+		t.Error("rate limit must not escalate the task to waiting_human")
+	}
+	task, err := q.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if task.TransientRetryCount != 1 {
+		t.Errorf("expected transient_retry_count untouched at 1, got %d", task.TransientRetryCount)
+	}
+	if task.ActiveAgentRunID != nil {
+		t.Error("expected active_agent_run_id cleared so another config can pick the task up")
+	}
+	if blocked, until := pool.RateLimits.IsBlocked(agCfgID); !blocked || !until.Equal(resetAt) {
+		t.Errorf("expected config blocked until %v, got blocked=%v until=%v", resetAt, blocked, until)
+	}
+}
+
 // TestPool_MaxTurns_EscalatesToWaitingHuman verifies that a run whose
 // provider returns *agent.ErrMaxTurns escalates straight to waiting_human
 // (no auto-retry, no re-dispatch), leaves the task's active-run lock set,
