@@ -25,6 +25,9 @@ INSERT INTO agent_runs (id, task_id, agent_config_id, status, feedback)
 VALUES (?, ?, ?, 'pending', ?)
 RETURNING *;
 
+-- name: SetAgentRunProviderConfig :exec
+UPDATE agent_runs SET provider_config_id = ? WHERE id = ?;
+
 -- name: SetAgentRunFeedback :exec
 UPDATE agent_runs SET feedback = ? WHERE id = ?;
 
@@ -45,13 +48,18 @@ UPDATE agent_runs SET session_id = ? WHERE id = ?;
 
 -- name: GetLatestTaskSession :one
 -- Latest non-empty provider session recorded for this task under this agent
--- config, used to resume the session on the next run. Honored today for
--- claude, qwen_code, codex_cli, and opencode (see
--- agent.providerSupportsResume).
--- Positional params: ?1 task_id, ?2 agent_config_id.
-SELECT session_id FROM agent_runs
-WHERE task_id = ?1 AND agent_config_id = ?2 AND session_id != ''
-ORDER BY created_at DESC, id DESC
+-- config and provider config, used to resume the session on the next run.
+-- Honored today for claude, qwen_code, codex_cli, and opencode (see
+-- agent.providerSupportsResume). Runs from before fallbacks (NULL
+-- provider_config_id) used the agent config's primary, so they count only
+-- when ?3 is that primary.
+-- Positional params: ?1 task_id, ?2 agent_config_id, ?3 provider_config_id.
+SELECT ar.session_id FROM agent_runs ar
+WHERE ar.task_id = ?1 AND ar.agent_config_id = ?2 AND ar.session_id != ''
+  AND (ar.provider_config_id = ?3
+       OR (ar.provider_config_id IS NULL
+           AND ?3 = (SELECT ac.provider_config_id FROM agent_configs ac WHERE ac.id = ?2)))
+ORDER BY ar.created_at DESC, ar.id DESC
 LIMIT 1;
 
 -- name: SetAgentRunCompleted :one

@@ -15,6 +15,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 |---|---|
 | `name` | Human-readable name |
 | `provider_config_id` | References a [Provider Config](#provider-configs) (provider/model/env), managed separately via `/api/v1/provider-configs`. Required. `GET`/list responses embed the resolved config as `provider_config` for convenience. |
+| `fallback_provider_config_ids` | Ordered list of further provider configs to try, after `provider_config_id`, when the ones before them are at their usage limit or paused. Default `[]` (primary only). Each must exist, be distinct and differ from the primary; changing the primary to one in the list drops it from the list. See [Provider list](#provider-list). |
 | `labels` | JSON array of label names this agent handles (e.g. `["plan","work"]`) |
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
@@ -114,7 +115,7 @@ The dispatcher runs a background goroutine that sweeps the database every 5 seco
 
 1. Queries `ListAgentPickupTasks` — tasks whose label appears in any agent-triggerable transition AND whose `active_agent_run_id IS NULL`, ordered by `priority` (urgent → high → normal → low) then oldest first. See [Task Priority](#task-priority) below.
 2. Computes each repo's current worker-slot usage (`CountActiveRunsByRepo`: tasks whose active run is `pending` or `running`) and skips any task whose repo is already at its effective concurrency limit — see [Per-Repo Concurrency Limits](#per-repo-concurrency-limits) below.
-3. Loads all agent configs, matches each task to the first config whose `labels` array contains the task's label.
+3. Loads all agent configs and matches each task to the first config whose `labels` array contains the task's label, then picks the first provider in that config's [provider list](#provider-list) that is not at its limit or paused. When none is, it tries the next matching config by `priority`.
 4. Creates an `agent_runs` record with status `pending`.
 5. Sets the task's `active_agent_run_id` (and updates `current_agent_run_id`) — this prevents the next sweep from double-dispatching. The two "phantom" `waiting_human` escalation paths (cost budget exhausted/unenforceable, and provider disabled or unknown) are the exception: their synthetic run has no logs and no feedback, so they set only `active_agent_run_id` (still gating re-dispatch) and leave `current_agent_run_id` pointing at the task's last real run — the run WS replay shows and the run the next dispatch reads rework feedback from. See [Cost Budgets](#cost-budgets) below and issue #344.
 6. Submits a `Job` to the worker pool. If the pool queue is full, marks the run `failed` and clears `active_agent_run_id`.
@@ -122,6 +123,31 @@ The dispatcher runs a background goroutine that sweeps the database every 5 seco
 ### Block Reasons
 
 Every step above that declines to dispatch a task (paused, repo at its concurrency limit, no matching config, all matching configs rate-limited, cost budget exhausted, WIP limit full) — plus the SQL-level gates in `ListAgentPickupTasks` itself (unmet dependency, transient-retry backoff, `agent_ignore` label) — is surfaced on the task via the read-time `block_reason` field (see [api.md](api.md)'s Task fields table). `internal/agent/blockreason.go`'s `BlockReasonResolver` re-evaluates the same predicates the dispatcher uses, in the same order, so only the first reason that would actually block dispatch is reported and it can never drift from real dispatch behavior. It's computed fresh on every `GET /tasks`/`GET /tasks/{id}` response (never stored), in one batched pass per request so listing a page of tasks doesn't cost a query per task.
+
+### Provider list
+
+An agent config runs on `provider_config_id` first and then, in order, on each
+of `fallback_provider_config_ids`. The prompt, labels, budgets and tools stay
+in one agent config, so moving between providers doesn't need a copy of the
+config per provider. At dispatch the first provider whose account (usage pool)
+is not rate-limited and whose kind is not paused by the
+[provider circuit breaker](#provider-circuit-breaker) is used, and the run
+records it in `agent_runs.provider_config_id`. Only when every provider in the
+list is unavailable does the dispatcher move on to the next matching agent
+config, and with none left the task waits with the "all matching configs
+rate-limited" block reason. A provider that comes back is preferred again on
+the next dispatch, because it is earlier in the list; runs already going on a
+later provider finish there.
+
+Session resume (`resume_sessions`) is keyed by provider as well as agent
+config, so a task that moved to another provider starts cold there instead of
+handing that CLI a session id it doesn't know. The worktree and branch carry
+the work over.
+
+Settings that only some providers support (plugins, `effort`,
+`permission_mode`, MCP servers, command filters, ...) apply where the provider
+supports them and are ignored elsewhere. The agent config editor warns, per
+provider in the list, about the settings that provider will ignore.
 
 ## Per-Repo Concurrency Limits
 
@@ -889,8 +915,9 @@ so humans aren't paged for problems that will resolve themselves:
   login. Runs already in flight on that account when the limit lands still
   finish (or fail) on their own. It does **not**
   spend the task's retry budget: the task is released right away, so the next
-  sweep hands it to the next enabled config for the same label (by
-  `priority`) or, when every matching config is blocked, leaves it waiting
+  sweep hands it to the next provider in the agent config's
+  [provider list](#provider-list), then to the next enabled config for the
+  same label (by `priority`), or, when every matching config is blocked, leaves it waiting
   with the "all matching configs rate-limited" block reason until a block
   expires. Rate limits therefore never escalate a task to `waiting_human`,
   whatever `max_retries` is set to. The per-account block and its consecutive-429 backoff counter are persisted (`agent_rate_limits` table) and reloaded at startup, so a restart or deploy does not immediately re-hit a provider that just rate-limited; expired rows are pruned on boot, and a database error only logs without blocking dispatch.

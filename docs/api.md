@@ -718,6 +718,7 @@ Create an agent config.
 {
   "name": "string",
   "provider_config_id": "string",
+  "fallback_provider_config_ids": ["string"],
   "labels": ["label1", "label2"],
   "system_prompt": "string",
   "max_tokens": 0,
@@ -734,6 +735,14 @@ Create an agent config.
 required. `provider`/`model`/`env` are no longer fields on the agent config
 itself; `GET`/list responses embed the resolved provider config as
 `provider_config` for convenience (see below).
+
+`fallback_provider_config_ids` (optional, default `[]`) is the ordered list of
+provider configs tried after `provider_config_id` when the earlier ones are at
+their usage limit or paused (see
+[agents.md#provider-list](agents.md#provider-list)). Each id must exist, be
+distinct and differ from `provider_config_id` (`400` otherwise). On update,
+omitting it keeps the stored list (minus a fallback promoted to primary); `[]`
+clears it.
 
 `max_retries`/`retry_backoff_secs` configure auto-retry for *transient*
 provider errors (rate limits, network blips, upstream 5xx) — see

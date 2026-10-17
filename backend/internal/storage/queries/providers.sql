@@ -34,7 +34,10 @@ RETURNING *;
 DELETE FROM provider_configs WHERE id = ?;
 
 -- name: CountAgentConfigsByProviderConfig :one
-SELECT COUNT(*) FROM agent_configs WHERE provider_config_id = ?;
+-- Agent configs using the provider config as primary or as a fallback.
+SELECT COUNT(*) FROM agent_configs
+WHERE provider_config_id = ?1
+   OR EXISTS (SELECT 1 FROM json_each(agent_configs.fallback_provider_config_ids) WHERE json_each.value = ?1);
 
 -- name: CountChatSessionsByProviderConfig :one
 SELECT COUNT(*) FROM chat_sessions WHERE provider_config_id = ?;
@@ -47,4 +50,5 @@ SELECT COUNT(*) FROM chat_sessions WHERE provider_config_id = ?;
 -- readiness warnings (e.g. a missing API key for a provider nothing runs).
 SELECT DISTINCT pc.provider FROM provider_configs pc
 WHERE pc.id IN (SELECT provider_config_id FROM agent_configs WHERE enabled = 1)
+   OR pc.id IN (SELECT j.value FROM agent_configs a, json_each(a.fallback_provider_config_ids) j WHERE a.enabled = 1)
    OR pc.id IN (SELECT provider_config_id FROM chat_sessions);

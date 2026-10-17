@@ -78,13 +78,32 @@ func loadUsagePools(ctx context.Context, q *gen.Queries) (usagePools, error) {
 	return pools, nil
 }
 
-// of returns cfg's usage pool. A provider config missing from the map (load
-// failed, or created since) falls back to its own id, the default pool.
-func (u usagePools) of(cfg *gen.AgentConfig) string {
-	if k, ok := u[cfg.ProviderConfigID]; ok {
+// ofProvider returns a provider config's usage pool. One missing from the
+// map (load failed, or created since) falls back to its own id, the default
+// pool.
+func (u usagePools) ofProvider(providerConfigID string) string {
+	if k, ok := u[providerConfigID]; ok {
 		return k
 	}
-	return cfg.ProviderConfigID
+	return providerConfigID
+}
+
+// agentProviderIDs returns cfg's providers in the order they are tried: the
+// primary provider_config_id, then fallback_provider_config_ids (a JSON
+// array; empty or malformed means no fallbacks). Duplicates are dropped.
+func agentProviderIDs(cfg *gen.AgentConfig) []string {
+	ids := []string{cfg.ProviderConfigID}
+	var fallbacks []string
+	_ = json.Unmarshal([]byte(cfg.FallbackProviderConfigIds), &fallbacks)
+	seen := map[string]bool{cfg.ProviderConfigID: true}
+	for _, id := range fallbacks {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // usagePool returns the pool a run's limits are recorded against. Configs

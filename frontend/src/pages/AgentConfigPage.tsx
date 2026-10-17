@@ -53,6 +53,7 @@ export default function AgentConfigPage() {
     setForm({
       name: a.name,
       provider_config_id: a.provider_config_id,
+      fallback_provider_config_ids: a.fallback_provider_config_ids ?? [],
       system_prompt: a.system_prompt,
       labels: a.labels,
       max_tokens: a.max_tokens,
@@ -90,7 +91,7 @@ export default function AgentConfigPage() {
         alert('Create a provider config first (Providers page) before applying a template.')
         return
       }
-      const { config, labelConflict } = await createAgent({ ...t, provider_config_id: providerConfigId })
+      const { config, labelConflict } = await createAgent({ ...t, provider_config_id: providerConfigId, fallback_provider_config_ids: [] })
       selectAgent(config)
       if (labelConflict) {
         alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)

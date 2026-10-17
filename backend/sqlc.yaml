@@ -68,6 +68,7 @@ sql:
       - "internal/storage/migrations/064_run_verification.up.sql"
       - "internal/storage/migrations/065_model_pricing_cached_input.up.sql"
       - "internal/storage/migrations/066_model_pricing_claude_cache.up.sql"
+      - "internal/storage/migrations/067_agent_provider_fallbacks.up.sql"
     gen:
       go:
         package: "gen"

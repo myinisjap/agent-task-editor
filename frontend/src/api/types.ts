@@ -5073,6 +5073,8 @@ export interface components {
             provider_config_id: string;
             /** @description The resolved provider config for provider_config_id, embedded on responses for convenience so clients don't need a second fetch. Absent from request bodies. Its `env` values are redacted (see ProviderConfig.env) — this embed never carries real secret values. */
             readonly provider_config?: components["schemas"]["ProviderConfig"];
+            /** @description Ordered fallback providers, tried after provider_config_id when an earlier one's account is rate-limited (or its provider is paused). Each must be an existing provider config, distinct, and not the primary. Optional on write: omitted on create means none; omitted on update keeps the stored list (minus a fallback promoted to primary). Runs record which one they used in AgentRun.provider_config_id. */
+            fallback_provider_config_ids?: string[];
             /** @description Whether the dispatcher considers this config for its labels. Sent as a boolean on responses (the stored 0/1 is normalized); accepted as boolean or 0/1 on write. Absent from create request bodies (new configs start enabled unless a label conflict disables them). */
             enabled: boolean;
             system_prompt: string;
@@ -5264,6 +5266,8 @@ export interface components {
             task_id: string;
             /** @description Agent config that ran this task; set NULL if that config is later deleted. */
             agent_config_id: string | null;
+            /** @description Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks. */
+            provider_config_id?: string | null;
             /** @enum {string} */
             status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
             feedback?: string | null;

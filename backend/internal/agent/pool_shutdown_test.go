@@ -98,7 +98,13 @@ func TestPool_Shutdown_PersistsSessionForResume(t *testing.T) {
 	waitForStatus(t, q, runID, "running")
 	pool.Shutdown(50 * time.Millisecond)
 
-	sid, err := q.GetLatestTaskSession(context.Background(), gen.GetLatestTaskSessionParams{TaskID: taskID, AgentConfigID: &agCfgID})
+	cfg, err := q.GetAgentConfig(context.Background(), agCfgID)
+	if err != nil {
+		t.Fatalf("get agent config: %v", err)
+	}
+	sid, err := q.GetLatestTaskSession(context.Background(), gen.GetLatestTaskSessionParams{
+		TaskID: taskID, AgentConfigID: &agCfgID, ProviderConfigID: &cfg.ProviderConfigID,
+	})
 	if err != nil || sid != "sess-1" {
 		t.Fatalf("session = %q err=%v, want sess-1 stored for resume", sid, err)
 	}
