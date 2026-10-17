@@ -59,6 +59,20 @@ type RateLimitRegistry struct {
 	attempts  map[string]int       // agentConfigID → consecutive 429 count
 	blockedAt map[string]time.Time // agentConfigID → wall-clock time of most recent Block/BlockWithBackoff
 	store     RateLimitStore       // optional write-through persistence; nil = in-memory only
+
+	// resetChecks is set once a ResetChecker is running. Limits with no
+	// known reset time are then handed to it (BlockUnknownReset) instead of
+	// the blind backoff ladder.
+	resetChecks bool
+	probes      map[string]*resetCheckState // pool → pending reset check
+}
+
+// resetCheckState is a pool whose reset time is unknown and is being found
+// by probing its CLI (see ResetChecker).
+type resetCheckState struct {
+	cfg     AgentConfig // the config whose run hit the limit; probes run as it
+	attempt int         // failed probes so far
+	next    time.Time   // when the next probe is due
 }
 
 // RateLimitStore persists registry blocks so they survive a restart. All
@@ -176,6 +190,7 @@ func NewRateLimitRegistry() *RateLimitRegistry {
 		blocked:   make(map[string]time.Time),
 		attempts:  make(map[string]int),
 		blockedAt: make(map[string]time.Time),
+		probes:    make(map[string]*resetCheckState),
 	}
 }
 
@@ -186,7 +201,107 @@ func (r *RateLimitRegistry) Block(agentConfigID string, resetAt time.Time) {
 	r.blocked[agentConfigID] = resetAt
 	r.attempts[agentConfigID]++
 	r.blockedAt[agentConfigID] = time.Now()
+	delete(r.probes, agentConfigID) // the reset time is known now
 	r.persistSave(agentConfigID, resetAt, r.attempts[agentConfigID])
+}
+
+// resetCheckDelays is how long the ResetChecker waits before each probe of a
+// pool with an unknown reset time: soon at first (short-window limits clear
+// within minutes), then settling at every 15 minutes, which costs at most a
+// few dozen tiny prompts a day against a daily or weekly quota.
+var resetCheckDelays = []time.Duration{
+	1 * time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute, 15 * time.Minute,
+}
+
+// resetCheckGrace keeps a probe-managed block in place past the probe's due
+// time, long enough for the checker's tick plus one probe run. If the checker
+// stalls (or the server restarts and forgets the probe), the block still
+// expires on its own and the next task run finds out instead.
+const resetCheckGrace = 5 * time.Minute
+
+func resetCheckDelay(attempt int) time.Duration {
+	if attempt >= len(resetCheckDelays) {
+		return resetCheckDelays[len(resetCheckDelays)-1]
+	}
+	return resetCheckDelays[attempt]
+}
+
+// EnableResetChecks hands future unknown-reset limits to a ResetChecker.
+func (r *RateLimitRegistry) EnableResetChecks() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.resetChecks = true
+}
+
+// BlockUnknownReset blocks pool after a limit that carried no reset time.
+// With reset checks enabled the pool stays blocked until a ResetChecker
+// probe, run as cfg, gets through; otherwise it falls back to
+// BlockWithBackoff. A pool already under a reset check keeps its schedule.
+func (r *RateLimitRegistry) BlockUnknownReset(pool string, cfg AgentConfig) {
+	r.mu.Lock()
+	if !r.resetChecks {
+		r.mu.Unlock()
+		r.BlockWithBackoff(pool)
+		return
+	}
+	defer r.mu.Unlock()
+	now := time.Now()
+	if st, ok := r.probes[pool]; ok {
+		// A sibling run hit the same limit; the existing check covers it.
+		r.blockedAt[pool] = now
+		r.blocked[pool] = st.next.Add(resetCheckGrace)
+		return
+	}
+	st := &resetCheckState{cfg: cfg, next: now.Add(resetCheckDelay(0))}
+	r.probes[pool] = st
+	until := st.next.Add(resetCheckGrace)
+	r.blocked[pool] = until
+	r.attempts[pool]++
+	r.blockedAt[pool] = now
+	r.persistSave(pool, until, r.attempts[pool])
+}
+
+// ResetCheck is one pool due for a probe.
+type ResetCheck struct {
+	Pool   string
+	Config AgentConfig
+}
+
+// dueResetChecks returns the pools whose next probe is due. Probes for pools
+// that are no longer blocked (cleared by a successful run, or expired) are
+// dropped.
+func (r *RateLimitRegistry) dueResetChecks(now time.Time) []ResetCheck {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var due []ResetCheck
+	for pool, st := range r.probes {
+		until, ok := r.blocked[pool]
+		if !ok || !now.Before(until) {
+			delete(r.probes, pool)
+			continue
+		}
+		if !now.Before(st.next) {
+			due = append(due, ResetCheck{Pool: pool, Config: st.cfg})
+		}
+	}
+	return due
+}
+
+// resetCheckStillLimited records a probe that was still limited (or failed
+// for another reason) and schedules the next one, extending the block to
+// cover it.
+func (r *RateLimitRegistry) resetCheckStillLimited(pool string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st, ok := r.probes[pool]
+	if !ok {
+		return
+	}
+	st.attempt++
+	st.next = time.Now().Add(resetCheckDelay(st.attempt))
+	until := st.next.Add(resetCheckGrace)
+	r.blocked[pool] = until
+	r.persistSave(pool, until, r.attempts[pool])
 }
 
 // BlockWithBackoff marks agentConfigID as rate-limited using exponential backoff
@@ -236,6 +351,7 @@ func (r *RateLimitRegistry) Unblock(agentConfigID string) {
 	delete(r.blocked, agentConfigID)
 	delete(r.attempts, agentConfigID)
 	delete(r.blockedAt, agentConfigID)
+	delete(r.probes, agentConfigID)
 	r.persistDelete(agentConfigID)
 }
 
@@ -258,6 +374,7 @@ func (r *RateLimitRegistry) UnblockIfNotBlockedSince(agentConfigID string, since
 	delete(r.blocked, agentConfigID)
 	delete(r.attempts, agentConfigID)
 	delete(r.blockedAt, agentConfigID)
+	delete(r.probes, agentConfigID)
 	r.persistDelete(agentConfigID)
 	return true
 }

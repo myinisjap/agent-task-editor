@@ -725,7 +725,7 @@ func (p *Pool) handleProviderError(ctx context.Context, job Job, err error, resu
 			if !rl.ResetAt.IsZero() && rl.ResetAt.After(time.Now()) {
 				p.RateLimits.Block(job.Input.AgentConfig.usagePool(), rl.ResetAt)
 			} else {
-				p.RateLimits.BlockWithBackoff(job.Input.AgentConfig.usagePool())
+				p.RateLimits.BlockUnknownReset(job.Input.AgentConfig.usagePool(), job.Input.AgentConfig)
 			}
 		}
 		// Notify the frontend so the task card can show a rate-limit hint.
