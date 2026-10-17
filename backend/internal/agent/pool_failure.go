@@ -90,22 +90,23 @@ func (p *Pool) handleTransientFailure(ctx context.Context, job Job, result Resul
 }
 
 // handleRateLimited finishes a run that hit a provider rate/usage limit. The
-// caller has already blocked the agent config in RateLimits, so the
-// dispatcher will not hand this config another run until the block expires;
-// it falls through to the next matching config (by priority) instead, or
+// caller has already blocked the run's usage pool (provider account, see
+// usagepool.go) in RateLimits, so the dispatcher will not hand any config on
+// that account another run until the block expires; it falls through to the
+// next matching config (by priority) instead, or
 // leaves the task waiting with a "rate limited" block reason when none is
 // free. The limit belongs to the provider account, not to the task, so the
 // task's transient retry budget is left untouched: spending it here would
 // escalate a perfectly healthy task to waiting_human after max_retries
 // limits, even while a fallback config sat idle. The registry's growing
-// per-config backoff is what bounds re-attempts. Without a registry there is
+// per-pool backoff is what bounds re-attempts. Without a registry there is
 // no config block to wait on, so this falls back to the task-level budget.
 func (p *Pool) handleRateLimited(ctx context.Context, job Job, result Result, reason string, startedAt time.Time) {
 	if p.RateLimits == nil {
 		p.handleTransientFailure(ctx, job, result, reason, startedAt)
 		return
 	}
-	slog.Info("pool: rate limited, releasing task for another config or the block to expire", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "agent_config_id", job.Input.AgentConfig.ID, "reason", reason)
+	slog.Info("pool: rate limited, releasing task for another config or the block to expire", "component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID, "agent_config_id", job.Input.AgentConfig.ID, "usage_pool", job.Input.AgentConfig.usagePool(), "reason", reason)
 	p.failAndRelease(context.Background(), job, result)
 	metrics.RunTerminalTotal.WithLabelValues("failed").Inc()
 	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
@@ -289,7 +290,7 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 	// issue #344) so a concurrently-finishing sibling run's fresh block isn't
 	// clobbered.
 	if p.RateLimits != nil && reason != CancelReasonShutdown {
-		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.ID, startedAt)
+		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.usagePool(), startedAt)
 	}
 
 	log.Info("pool: agent run cancelled", "reason", reason, "status", status)

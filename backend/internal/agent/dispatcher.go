@@ -164,6 +164,13 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 	}
 	slog.Debug("dispatcher sweep: active configs", "component", "dispatcher", "config_count", len(configs))
 
+	// Usage pools (provider accounts) per provider config, for rate-limit
+	// checks. A load failure degrades to each config being its own pool.
+	pools, err := loadUsagePools(ctx, d.q)
+	if err != nil {
+		slog.Warn("dispatcher: list provider configs for usage pools", "component", "dispatcher", "err", err)
+	}
+
 	// Per-repo in-flight run counts, refreshed once per sweep and decremented
 	// in-process as this sweep dispatches tasks (see repoInUse below) so a
 	// repo at its configured limit is skipped for the rest of this sweep too,
@@ -175,7 +182,7 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 	}
 
 	for _, t := range tasks {
-		d.dispatch(ctx, t, configs, inUse)
+		d.dispatch(ctx, t, configs, pools, inUse)
 	}
 }
 
@@ -208,7 +215,7 @@ func (d *Dispatcher) repoAtLimit(repo gen.Repo, inUse map[string]int64) bool {
 	return inUse[repo.ID] >= int64(limit)
 }
 
-func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig, inUse map[string]int64) {
+func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig, pools usagePools, inUse map[string]int64) {
 	log := slog.With("component", "dispatcher", "task_id", t.ID)
 
 	if t.Paused != 0 { // defense-in-depth; ListAgentPickupTasks already filters paused tasks
@@ -233,14 +240,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	}
 
 	// Walk matches in priority order (matches is already sorted by the SQL
-	// query); the first config that isn't rate-limit-blocked wins. This turns
-	// "primary config ran out of usage credits" into automatic failover to a
-	// backup config sharing the same label.
+	// query); the first config whose usage pool (provider account) isn't
+	// rate-limit-blocked wins. This turns "primary account ran out of usage
+	// credits" into automatic failover to a backup config sharing the same
+	// label, and skips every config on that account, not just the one whose
+	// run hit the limit.
 	var matched *gen.AgentConfig
 	for _, cand := range matches {
 		if d.RateLimits != nil {
-			if blocked, until := d.RateLimits.IsBlocked(cand.ID); blocked {
-				log.Info("dispatcher: skipping rate-limited config, trying next", "agent_config_id", cand.ID, "unblocked_at", until)
+			if blocked, until := d.RateLimits.IsBlocked(pools.of(cand)); blocked {
+				log.Info("dispatcher: skipping rate-limited config, trying next", "agent_config_id", cand.ID, "usage_pool", pools.of(cand), "unblocked_at", until)
 				continue
 			}
 		}
@@ -1366,6 +1375,7 @@ func toAgentConfig(cfg gen.AgentConfig, pc gen.ProviderConfig) AgentConfig {
 		Name:              cfg.Name,
 		Provider:          pc.Provider,
 		Model:             pc.Model,
+		UsagePool:         UsagePoolKey(pc.ID, pc.Provider, env),
 		SystemPrompt:      cfg.SystemPrompt,
 		MaxTokens:         cfg.MaxTokens,
 		TimeoutSecs:       cfg.TimeoutSecs,

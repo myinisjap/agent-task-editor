@@ -870,15 +870,24 @@ so humans aren't paged for problems that will resolve themselves:
   no `OUTCOME:` line) is escalated to `waiting_human` once, with a note on the
   run, rather than being re-run every sweep.
 - **Rate limit** — a `429` or a provider usage/session limit. This blocks
-  the *whole agent config* from new dispatches until the parsed reset time
-  (Claude) or a growing backoff window (30s doubling to 10 minutes), because
-  the limit belongs to the provider account, not the task. It does **not**
+  the *provider account* (usage pool) from new dispatches until the parsed
+  reset time (Claude) or a growing backoff window (30s doubling to 10
+  minutes), because the limit belongs to the account, not the task. Every
+  agent config on that account is skipped, not only the one whose run hit
+  the limit. Each provider config is its own account, except that `claude`
+  configs on the shared `claude login` (no `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
+  Bedrock or Vertex in their env) share one, as do `codex_cli` configs on the
+  shared ChatGPT login (no `OPENAI_API_KEY`, `CODEX_API_KEY` or
+  `OPENAI_BASE_URL`); a `CLAUDE_CONFIG_DIR` / `CODEX_HOME` makes a separate
+  login. Runs already in flight on that account when the limit lands still
+  finish (or fail) on their own. It does **not**
   spend the task's retry budget: the task is released right away, so the next
   sweep hands it to the next enabled config for the same label (by
   `priority`) or, when every matching config is blocked, leaves it waiting
   with the "all matching configs rate-limited" block reason until a block
   expires. Rate limits therefore never escalate a task to `waiting_human`,
-  whatever `max_retries` is set to. The per-config block and its consecutive-429 backoff counter are persisted (`agent_rate_limits` table) and reloaded at startup, so a restart or deploy does not immediately re-hit a provider that just rate-limited; expired rows are pruned on boot, and a database error only logs without blocking dispatch.
+  whatever `max_retries` is set to. The per-account block and its consecutive-429 backoff counter are persisted (`agent_rate_limits` table) and reloaded at startup, so a restart or deploy does not immediately re-hit a provider that just rate-limited; expired rows are pruned on boot, and a database error only logs without blocking dispatch.
 - **Turn-limit exhaustion** — the agent hit its configured `max_turns` cap
   without finishing (`claude`, `qwen_code`; see the
   [`max_turns` field](#fields) above). This is neither a genuine failure nor

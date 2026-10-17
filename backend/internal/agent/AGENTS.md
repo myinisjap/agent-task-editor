@@ -14,7 +14,8 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 | `terminal.go` | `TerminalManager`/`NewTerminalManager` — interactive chat session CLI process management |
 | `errors.go` | `ErrTransient`; typed non-transient escalation signals `ErrMaxTurns` and `ErrCostBudgetExceeded` (detected via `errors.As` in `pool.go#handleProviderError`, routed to `waiting_human`, never retried) |
 | `errclass.go` | `Classification` + `ClassifyLine` — the single table of patterns that classify provider output (ADR 0010). `providers.is429Line`/`isTransientLine` are thin wrappers |
-| `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-config 429 blocking; write-through to `agent_rate_limits` via an optional `RateLimitStore`, reloaded at boot, nil store = in-memory), `BackoffDuration(WithBase)`; use `UnblockIfNotBlockedSince` (not `Unblock`) for in-run clears (ADR 0011) |
+| `usagepool.go` | `UsagePoolKey`: the provider account a config's limits belong to (provider config id, or a shared `claude:login` / `codex_cli:login` pool for the CLIs' single login) |
+| `ratelimit.go` | `ErrRateLimit`, `RateLimitRegistry` (per-usage-pool 429 blocking; write-through to `agent_rate_limits` via an optional `RateLimitStore`, reloaded at boot, nil store = in-memory), `BackoffDuration(WithBase)`; use `UnblockIfNotBlockedSince` (not `Unblock`) for in-run clears (ADR 0011) |
 
 Concrete runners (`ClaudeRunner`, `QwenRunner`, `CodexRunner`, `OpencodeRunner`) are constructed only in `backend/cmd/server/main.go`'s `providerFactory`, which imports both this package (for `agent.AgentConfig`/`agent.Provider`) and `providers` (for the concrete runner types).
 
@@ -55,7 +56,7 @@ Providers stream `LogEntry` on `logCh`; the pool persists in batches and publish
 - Context-deadline timeout = transient. Plain non-zero exit with no signal = genuine. `auth` escalates to `waiting_human` immediately.
 - Transient budget: `AgentConfig.MaxRetries` (default 3; 0 escalates immediately, lock kept) and `retry_backoff_secs` (default 30, cap 10m). `tasks.transient_retry_count` / `next_retry_at`; `ListAgentPickupTasks` hides tasks still backing off. Exhaustion → `waiting_human` and counter reset. Success or a genuine failure resets the transient counter; transient failures never reset the genuine counter.
 - A run completing with no resolvable outcome escalates once via `escalateNoOutcome` (lock kept, single `task.needs_human`).
-- A 429 / usage limit blocks the whole agent config through `RateLimitRegistry` and goes through `handleRateLimited`, which releases the task **without** spending its transient budget (the dispatcher fails over to the next config by priority or waits for the block). Only with a nil registry does it fall back to the task budget.
+- A 429 / usage limit blocks the run's usage pool (provider account: `AgentConfig.UsagePool`, from `usagepool.go`; the dispatcher and `BlockReasonResolver` resolve candidates with `loadUsagePools`) through `RateLimitRegistry`, never the agent config id, and goes through `handleRateLimited`, which releases the task **without** spending its transient budget (the dispatcher fails over to the next config by priority or waits for the block). Only with a nil registry does it fall back to the task budget.
 
 ## Cost Budgets (ADR 0013)
 

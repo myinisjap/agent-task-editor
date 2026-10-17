@@ -795,7 +795,7 @@ func TestE2E_FailoverToBackupConfig(t *testing.T) {
 	taskID, config0ID, config1ID := h.seedTaskWithTwoConfigs(t, wfID)
 
 	// Block the primary (priority 0) config before the dispatcher ever sweeps.
-	h.disp.RateLimits.Block(config0ID, time.Now().Add(time.Hour))
+	h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config0ID), time.Now().Add(time.Hour))
 
 	select {
 	case <-step.started:
@@ -824,8 +824,8 @@ func TestE2E_FailoverAllBlocked_NoDispatch(t *testing.T) {
 	wfID := seedE2EWorkflow(t, h.q)
 	taskID, config0ID, config1ID := h.seedTaskWithTwoConfigs(t, wfID)
 
-	h.disp.RateLimits.Block(config0ID, time.Now().Add(time.Hour))
-	h.disp.RateLimits.Block(config1ID, time.Now().Add(time.Hour))
+	h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config0ID), time.Now().Add(time.Hour))
+	h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config1ID), time.Now().Add(time.Hour))
 
 	// Give the dispatcher several sweeps' worth of time to (not) act.
 	h.waitForSweeps(t, 5)
