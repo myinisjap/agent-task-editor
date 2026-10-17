@@ -293,7 +293,11 @@ body {
 }
 
 #root {
+  /* dvh, not just vh: on mobile browsers 100vh is the height with the address
+     bar hidden, so while the bar is showing it makes #root taller than the
+     screen and the whole page scrolls behind the app shell (which is h-dvh). */
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
 }
