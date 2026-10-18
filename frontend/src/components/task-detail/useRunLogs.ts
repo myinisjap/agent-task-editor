@@ -29,6 +29,9 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
   // no longer exists on its own — an orphan result folds into its call once the
   // older page brings the call into view.
   const anchorRef = useRef<{ key: string; rowCount: number } | null>(null)
+  // Ids of every log currently held (or about to be), so live-event dedupe is
+  // O(1) instead of scanning the array. Kept in sync at each setLogs site.
+  const seenIdsRef = useRef<Set<string>>(new Set())
 
   // Display rows: a tool result is folded into the call that produced it, so a
   // call and its output are one row rather than two. See groupAgentLog.
@@ -52,6 +55,7 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
     let cancelled = false
     api.tasks.runLogs(taskId, runId, { limit: LOG_PAGE_SIZE }).then((res) => {
       if (cancelled) return
+      seenIdsRef.current = new Set(res.items.map((x) => x.id))
       setLogs(res.items)
       setLogsHasEarlier(res.hasMore)
       autoScrollRef.current = true
@@ -70,6 +74,7 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
       const res = await api.tasks.runLogs(taskId, runId, { before: oldest, limit: LOG_PAGE_SIZE })
       autoScrollRef.current = false
       anchorRef.current = rows[0] ? { key: rows[0].key, rowCount: rows.length } : null
+      for (const x of res.items) seenIdsRef.current.add(x.id)
       setLogs((prev) => mergeLogs(prev, res.items))
       setLogsHasEarlier(res.hasMore)
     } catch {
@@ -82,6 +87,31 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
   // WS subscription (message-bus only — see doc comment above).
   useEffect(() => {
     if (!taskId) return
+    // Live entries are buffered and flushed once per animation frame, so a
+    // burst of lines costs one array copy and one render.
+    let pending: AgentLog[] = []
+    let frame: number | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const flush = () => {
+      frame = null
+      timer = null
+      if (pending.length === 0) return
+      const seen = seenIdsRef.current
+      const batch = pending
+      pending = []
+      const fresh: AgentLog[] = []
+      for (const l of batch) {
+        if (seen.has(l.id)) continue
+        seen.add(l.id)
+        fresh.push(l)
+      }
+      if (fresh.length > 0) setLogs((prev) => [...prev, ...fresh])
+    }
+    const schedule = () => {
+      if (frame !== null || timer !== null) return
+      if (typeof requestAnimationFrame === 'function') frame = requestAnimationFrame(flush)
+      else timer = setTimeout(flush, 16)
+    }
     const off = wsClient.on((event) => {
       if (event.type === 'agent.log' && event.payload.task_id === taskId) {
         const entry = event.payload.entry
@@ -91,19 +121,28 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
           // the same row, so this guard actually catches reconnect
           // duplicates rather than always seeing a fresh client-minted id.
           const l = toLog(entry)
-          setLogs((prev) => (prev.some((x) => x.id === l.id) ? prev : [...prev, l]))
+          pending.push(l)
+          schedule()
         }
       } else if (event.type === 'agent.log_replay' && event.payload.task_id === taskId) {
         // Batched tail sent on subscribe. Merge (dedupe) with whatever the REST
         // page already loaded, and surface "load earlier" if more history exists.
         if (event.payload.run_id === runId) {
           const entries = (event.payload.entries ?? []).map(toLog)
+          // Flush buffered live lines first so ordering is preserved.
+          flush()
+          for (const x of entries) seenIdsRef.current.add(x.id)
           setLogs((prev) => mergeLogs(prev, entries))
           if (event.payload.has_more) setLogsHasEarlier(true)
         }
       }
     })
-    return () => { off() }
+    return () => {
+      off()
+      if (frame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
+      if (timer !== null) clearTimeout(timer)
+      pending = []
+    }
   }, [taskId, runId])
 
   // Keep the log viewport anchored as entries change. After "load earlier"
