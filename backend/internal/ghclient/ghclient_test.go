@@ -352,7 +352,7 @@ func TestIssueWrites(t *testing.T) {
 }
 
 func TestIssueWrites_Error(t *testing.T) {
-	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { http.Error(w, "no", 403) })
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { http.Error(w, "no", http.StatusForbidden) })
 	ctx := context.Background()
 	if AddIssueLabel(ctx, "a/b", 1, "x") == nil || CommentOnIssue(ctx, "a/b", 1, "x") == nil || CloseIssueWithComment(ctx, "a/b", 1, "x") == nil {
 		t.Fatal("want errors")
