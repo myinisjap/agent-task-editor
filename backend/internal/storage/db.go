@@ -33,7 +33,11 @@ type DB struct {
 
 // Open opens (or creates) the SQLite database at path and runs all pending migrations.
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open(utcDriverName, path+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
+	// _synchronous=NORMAL: in WAL mode this cannot corrupt the database, but
+	// the last few commits may be lost on power loss/OS crash (not on app
+	// crash). In exchange, commits no longer fsync the WAL every time, which
+	// matters with many agents flushing logs every 500ms.
+	sqlDB, err := sql.Open(utcDriverName, path+"?_foreign_keys=on&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
