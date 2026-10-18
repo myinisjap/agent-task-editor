@@ -12,7 +12,7 @@ import (
 )
 
 // TestLogRetentionSettingsHandler_GetDefaults verifies the seeded migration
-// row surfaces the documented out-of-the-box defaults (disabled / hourly)
+// row surfaces the documented out-of-the-box defaults (30 days / hourly)
 // before any PUT has ever been made.
 func TestLogRetentionSettingsHandler_GetDefaults(t *testing.T) {
 	db := openTestDB(t)
@@ -33,8 +33,8 @@ func TestLogRetentionSettingsHandler_GetDefaults(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Days != 0 {
-		t.Errorf("expected default days=0 (disabled), got %d", resp.Days)
+	if resp.Days != 30 {
+		t.Errorf("expected default days=30, got %d", resp.Days)
 	}
 	if resp.IntervalSeconds != 3600 {
 		t.Errorf("expected default interval_seconds=3600 (hourly), got %d", resp.IntervalSeconds)
