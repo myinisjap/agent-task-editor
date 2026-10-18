@@ -48,7 +48,7 @@ TriggerAgent TransitionTrigger = "agent"
 TriggerHuman TransitionTrigger = "human"
 ```
 
-Human transitions come from Approve/Reject/MoveLabel. Agent transitions come from the pool after a run completes with `NextLabel`; the pool uses `TransitionExpecting` with the dispatch-time label so an outcome never lands on a human move made after the run finished. `TriggerSubtasksComplete` is used by `SubtaskCoordinator` (ADR 0016) and bypasses the human/agent gate checks. `internal/ghsync`'s opt-in PR-review auto-transition uses `TriggerHuman` to mirror Reject, with its own `ghsync.(*Syncer).failurePathTarget` rather than depending on `api/handlers`. Do not write `tasks.label` outside the engine (ADR 0029).
+Human transitions come from Approve/Reject/MoveLabel. Agent transitions come from the pool after a run completes with `NextLabel`; the pool uses `TransitionExpecting` with the dispatch-time label so an outcome never lands on a human move made after the run finished. `TriggerSubtasksComplete` is used by `SubtaskCoordinator` (ADR 0016) and bypasses the human/agent gate checks. `internal/ghsync`'s opt-in PR-review auto-transition uses `TriggerHuman` to mirror Reject, with its own `ghsync.(*Syncer).failurePathTarget` rather than depending on `api/handlers`. `ghsync.(*Syncer).finishMergedTask` uses `ForceTransition` to move a task whose PR merged onto the first terminal label, skipping tasks whose active run is pending/running. Do not write `tasks.label` outside the engine (ADR 0029).
 
 ## AgentPickupLabels
 

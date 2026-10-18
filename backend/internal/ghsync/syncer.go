@@ -340,6 +340,7 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 	}
 	if state == "pr_merged" {
 		s.cleanupMergedBranch(ctx, task, repo.path)
+		s.finishMergedTask(ctx, updated, log)
 	}
 	return ok
 }
