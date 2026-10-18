@@ -245,20 +245,29 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// credits" into automatic failover to a backup config sharing the same
 	// label, and skips every config on that account, not just the one whose
 	// run hit the limit.
+	//
+	// Within one agent config, its providers are tried in order (primary,
+	// then fallback_provider_config_ids), so a tapped-out primary moves the
+	// task to the next provider on the same agent before any lower-priority
+	// agent config is considered.
 	var matched *gen.AgentConfig
+	var providerConfigID string
+candidates:
 	for _, cand := range matches {
-		if d.RateLimits != nil {
-			if blocked, until := d.RateLimits.IsBlocked(pools.of(cand)); blocked {
-				log.Info("dispatcher: skipping rate-limited config, trying next", "agent_config_id", cand.ID, "usage_pool", pools.of(cand), "unblocked_at", until)
+		for _, pcID := range agentProviderIDs(cand) {
+			if d.RateLimits != nil {
+				if blocked, until := d.RateLimits.IsBlocked(pools.ofProvider(pcID)); blocked {
+					log.Info("dispatcher: skipping rate-limited provider, trying next", "agent_config_id", cand.ID, "provider_config_id", pcID, "usage_pool", pools.ofProvider(pcID), "unblocked_at", until)
+					continue
+				}
+			}
+			if d.providerPaused(ctx, pcID) {
+				log.Info("dispatcher: skipping provider that is paused, trying next", "agent_config_id", cand.ID, "provider_config_id", pcID)
 				continue
 			}
+			matched, providerConfigID = cand, pcID
+			break candidates
 		}
-		if d.providerPaused(ctx, cand) {
-			log.Info("dispatcher: skipping config whose provider is paused, trying next", "agent_config_id", cand.ID)
-			continue
-		}
-		matched = cand
-		break
 	}
 	if matched == nil {
 		log.Info("dispatcher: all matching configs rate-limited or provider-paused, skipping dispatch", "label", t.Label)
@@ -294,7 +303,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 		return
 	}
 
-	if _, err := d.startRun(ctx, t, *matched, runOptions{}); err != nil {
+	if _, err := d.startRun(ctx, t, *matched, runOptions{providerConfigID: providerConfigID}); err != nil {
 		if errors.Is(err, ErrDispatchConflict) {
 			log.Debug("dispatcher: skipping, task changed since it was listed (lost dispatch claim)")
 			return
@@ -309,11 +318,11 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	inUse[repo.ID]++
 }
 
-// providerPaused reports whether cfg's provider kind is paused by the provider
-// circuit breaker. The task is simply left queued (not escalated). A failed
-// provider-config lookup is treated as not paused: startRun surfaces that
-// error through its own path.
-func (d *Dispatcher) providerPaused(ctx context.Context, cfg *gen.AgentConfig) bool {
+// providerPaused reports whether the provider config's provider kind is
+// paused by the provider circuit breaker. The task is simply left queued (not
+// escalated). A failed provider-config lookup is treated as not paused:
+// startRun surfaces that error through its own path.
+func (d *Dispatcher) providerPaused(ctx context.Context, providerConfigID string) bool {
 	if d.ProviderPauses == nil {
 		return false
 	}
@@ -321,7 +330,7 @@ func (d *Dispatcher) providerPaused(ctx context.Context, cfg *gen.AgentConfig) b
 	if len(paused) == 0 {
 		return false
 	}
-	pc, err := d.q.GetProviderConfig(ctx, cfg.ProviderConfigID)
+	pc, err := d.q.GetProviderConfig(ctx, providerConfigID)
 	if err != nil {
 		return false
 	}
@@ -765,13 +774,27 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 	if err := d.q.ResetTaskFailureCount(ctx, taskID); err != nil {
 		slog.Warn("dispatcher: reset failure count on reply", "component", "dispatcher", "task_id", taskID, "err", err)
 	}
-	return d.startRun(ctx, t, *matched, runOptions{humanReply: &message})
+	// Reply on the provider that asked, so its session can be resumed, as
+	// long as it is still in the agent config's list.
+	opts := runOptions{humanReply: &message}
+	if run.ProviderConfigID != nil && run.AgentConfigID != nil && *run.AgentConfigID == matched.ID {
+		for _, id := range agentProviderIDs(matched) {
+			if id == *run.ProviderConfigID {
+				opts.providerConfigID = id
+				break
+			}
+		}
+	}
+	return d.startRun(ctx, t, *matched, opts)
 }
 
 // runOptions carries the extras a non-sweep dispatch (currently only the
 // human-reply flow) layers on top of a standard run.
 type runOptions struct {
 	humanReply *string
+	// providerConfigID is the provider (from the agent config's list) the run
+	// uses; empty means the agent config's primary.
+	providerConfigID string
 }
 
 // startRun creates the run row,
@@ -795,7 +818,11 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	runID := uuid.NewString()
 	log = log.With("run_id", runID)
 
-	agentCfg, resumeSessionID, err := d.resolveAgentConfig(ctx, t, matched)
+	pcID := opts.providerConfigID
+	if pcID == "" {
+		pcID = matched.ProviderConfigID
+	}
+	agentCfg, resumeSessionID, err := d.resolveAgentConfig(ctx, t, matched, pcID)
 	if err != nil {
 		return "", err
 	}
@@ -806,7 +833,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		feedback = prior.Feedback
 	}
 
-	if err := d.persistRunRow(ctx, t, matched, runID, feedback); err != nil {
+	if err := d.persistRunRow(ctx, t, matched, pcID, runID, feedback); err != nil {
 		return "", err
 	}
 
@@ -1110,8 +1137,8 @@ func providerSupportsResume(provider string) bool {
 // the provider session to resume, if any. Resume is honored for claude,
 // qwen_code, codex_cli, and opencode (and only when the config hasn't opted
 // out); the runner falls back to a cold start if the session no longer exists.
-func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig) (AgentConfig, string, error) {
-	pc, err := d.q.GetProviderConfig(ctx, matched.ProviderConfigID)
+func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID string) (AgentConfig, string, error) {
+	pc, err := d.q.GetProviderConfig(ctx, providerConfigID)
 	if err != nil {
 		return AgentConfig{}, "", fmt.Errorf("get provider config: %w", err)
 	}
@@ -1120,8 +1147,9 @@ func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched
 	var resumeSessionID string
 	if agentCfg.ResumeSessions && providerSupportsResume(agentCfg.Provider) {
 		if sid, serr := d.q.GetLatestTaskSession(ctx, gen.GetLatestTaskSessionParams{
-			TaskID:        t.ID,
-			AgentConfigID: &matched.ID,
+			TaskID:           t.ID,
+			AgentConfigID:    &matched.ID,
+			ProviderConfigID: &providerConfigID,
 		}); serr == nil && sid != "" {
 			resumeSessionID = sid
 		}
@@ -1141,7 +1169,7 @@ func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched
 // meantime, zero rows are affected, the transaction (including the just-created
 // run row) is rolled back, and ErrDispatchConflict is returned so the caller
 // does not start the run.
-func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, runID string, feedback *string) error {
+func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID, runID string, feedback *string) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -1155,6 +1183,13 @@ func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.
 	}); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("create agent run: %w", err)
+	}
+	if err := tq.SetAgentRunProviderConfig(ctx, gen.SetAgentRunProviderConfigParams{
+		ProviderConfigID: &providerConfigID,
+		ID:               runID,
+	}); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("set agent run provider config: %w", err)
 	}
 	// Claim the task's active run so the next sweep skips it.
 	var claimed int64

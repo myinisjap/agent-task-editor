@@ -6,6 +6,7 @@ import PluginMcpPicker from './PluginMcpPicker'
 import CommandFilterEditor from './CommandFilterEditor'
 import LabelPicker from './LabelPicker'
 import { getCapability } from '../../lib/providerCapabilities'
+import { providerListGaps } from '../../lib/providerListGaps'
 
 export type FormState = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'>
 
@@ -51,6 +52,29 @@ export default function AgentConfigForm({
   const maxTurnsCap = getCapability(providerStr, 'maxTurns')
   const effortCap = getCapability(providerStr, 'effort')
   const permissionModeCap = getCapability(providerStr, 'permissionMode')
+
+  // Ordered fallback providers, tried after the primary when its account is
+  // rate-limited. Ids no longer in providerConfigs are kept (the server
+  // rejects them on save) but shown as unknown.
+  const fallbackIds = form.fallback_provider_config_ids ?? []
+  const setFallbacks = (ids: string[]) => setForm((f) => ({ ...f, fallback_provider_config_ids: ids }))
+  const moveFallback = (i: number, delta: number) => {
+    const ids = [...fallbackIds]
+    const j = i + delta
+    if (j < 0 || j >= ids.length) return
+    ;[ids[i], ids[j]] = [ids[j], ids[i]]
+    setFallbacks(ids)
+  }
+  const addableFallbacks = providerConfigs.filter(
+    (pc) => pc.id !== form.provider_config_id && !fallbackIds.includes(pc.id),
+  )
+  const providerOf = (id: string) => providerConfigs.find((pc) => pc.id === id)?.provider ?? ''
+  // The primary's gaps already show next to each field; this covers the
+  // fallbacks, which a task only reaches when the primary is tapped out.
+  const listGaps = providerListGaps(
+    form,
+    fallbackIds.map(providerOf).filter((p) => p !== providerStr),
+  )
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -118,6 +142,58 @@ export default function AgentConfigForm({
             <Link to="/settings/providers" className="text-indigo-400 hover:text-indigo-300">Manage provider configs →</Link>
           </p>
         </Field>
+
+        <Field
+          label="Fallback providers"
+          className="sm:col-span-2"
+          hint="Tried in order when the provider above (or an earlier fallback) hits its usage limit. Tasks go back to the first one as soon as its limit resets."
+        >
+          {fallbackIds.length > 0 && (
+            <ol className="mb-2 space-y-1" aria-label="Fallback providers">
+              {fallbackIds.map((id, i) => {
+                const pc = providerConfigs.find((p) => p.id === id)
+                return (
+                  <li key={id} className="flex items-center gap-2 text-xs text-slate-300">
+                    <span className="w-5 text-slate-500">{i + 1}.</span>
+                    <span className="flex-1 truncate">
+                      {pc ? `${pc.name} (${pc.provider}${pc.model ? `/${pc.model}` : ''})` : `Unknown provider config ${id}`}
+                    </span>
+                    <button type="button" onClick={() => moveFallback(i, -1)} disabled={i === 0} className="px-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`Move ${pc?.name ?? id} up`}>↑</button>
+                    <button type="button" onClick={() => moveFallback(i, 1)} disabled={i === fallbackIds.length - 1} className="px-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`Move ${pc?.name ?? id} down`}>↓</button>
+                    <button type="button" onClick={() => setFallbacks(fallbackIds.filter((x) => x !== id))} className="px-1 text-slate-400 hover:text-red-400" aria-label={`Remove ${pc?.name ?? id}`}>✕</button>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+          <select
+            value=""
+            onChange={(e) => e.target.value && setFallbacks([...fallbackIds, e.target.value])}
+            className="input"
+            aria-label="Add fallback provider"
+            disabled={addableFallbacks.length === 0}
+          >
+            <option value="">{addableFallbacks.length === 0 ? 'No other provider configs' : 'Add a fallback provider…'}</option>
+            {addableFallbacks.map((pc) => (
+              <option key={pc.id} value={pc.id}>{pc.name} ({pc.provider}{pc.model ? `/${pc.model}` : ''})</option>
+            ))}
+          </select>
+        </Field>
+
+        {listGaps.length > 0 && (
+          <div role="alert" className="sm:col-span-2 px-3 py-2 rounded border border-amber-700/50 bg-amber-950/30 text-xs text-amber-300">
+            <p className="mb-1">⚠️ Some of this agent's settings won't fully apply when a task falls back to:</p>
+            <ul className="list-disc pl-5 space-y-0.5">
+              {listGaps.map((g) => (
+                <li key={`${g.provider}:${g.setting}`}>
+                  <span className="font-mono">{g.provider}</span>: {g.setting}{' '}
+                  {g.support === 'none' ? 'is not supported' : 'is only partly supported'}
+                  {g.note ? <span className="text-amber-400/80"> — {g.note}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <Field label="Labels" className="sm:col-span-2">
           <LabelPicker

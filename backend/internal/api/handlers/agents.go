@@ -97,10 +97,13 @@ func (h *AgentsHandler) labelConflict(r *http.Request, labelsJSON string, exclud
 // safeConfig) — values never leave the server via this view.
 type agentConfigView struct {
 	gen.AgentConfig
-	Enabled         bool                `json:"enabled"`
-	ResumeSessions  bool                `json:"resume_sessions"`
-	SubtasksEnabled bool                `json:"subtasks_enabled"`
-	ProviderConfig  *gen.ProviderConfig `json:"provider_config,omitempty"`
+	// FallbackProviderConfigIDs shadows the embedded JSON-text column so the
+	// API carries a real array.
+	FallbackProviderConfigIDs []string            `json:"fallback_provider_config_ids"`
+	Enabled                   bool                `json:"enabled"`
+	ResumeSessions            bool                `json:"resume_sessions"`
+	SubtasksEnabled           bool                `json:"subtasks_enabled"`
+	ProviderConfig            *gen.ProviderConfig `json:"provider_config,omitempty"`
 }
 
 // safeConfig builds the response view for an agent config, looking up its
@@ -113,10 +116,11 @@ type agentConfigView struct {
 // secrets.
 func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentConfigView {
 	view := agentConfigView{
-		AgentConfig:     cfg,
-		Enabled:         cfg.Enabled != 0,
-		ResumeSessions:  cfg.ResumeSessions != 0,
-		SubtasksEnabled: cfg.SubtasksEnabled != 0,
+		AgentConfig:               cfg,
+		FallbackProviderConfigIDs: parseFallbackIDs(cfg.FallbackProviderConfigIds),
+		Enabled:                   cfg.Enabled != 0,
+		ResumeSessions:            cfg.ResumeSessions != 0,
+		SubtasksEnabled:           cfg.SubtasksEnabled != 0,
 	}
 	if cfg.ProviderConfigID != "" {
 		if pc, err := h.q.GetProviderConfig(r.Context(), cfg.ProviderConfigID); err == nil {
@@ -125,6 +129,41 @@ func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentCo
 		}
 	}
 	return view
+}
+
+// parseFallbackIDs decodes the stored fallback_provider_config_ids JSON
+// array; empty or malformed yields an empty (non-nil) list.
+func parseFallbackIDs(raw string) []string {
+	ids := []string{}
+	_ = json.Unmarshal([]byte(raw), &ids)
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids
+}
+
+// validateFallbacks checks an agent config's ordered fallback providers:
+// each must be an existing provider config, distinct, and not the primary.
+// Returns the JSON to store, or a 400 message.
+func (h *AgentsHandler) validateFallbacks(r *http.Request, primary string, ids []string) (string, string) {
+	seen := map[string]bool{primary: true}
+	for _, id := range ids {
+		if id == "" {
+			return "", "fallback_provider_config_ids must not contain empty ids"
+		}
+		if seen[id] {
+			return "", "fallback_provider_config_ids must not repeat a provider config or include the primary"
+		}
+		seen[id] = true
+		if _, err := h.q.GetProviderConfig(r.Context(), id); err != nil {
+			return "", "unknown provider config in fallback_provider_config_ids: " + id
+		}
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	b, _ := json.Marshal(ids)
+	return string(b), ""
 }
 
 // knownProviders lists every provider string accepted for reads, model lists
@@ -221,6 +260,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Priority          *int64    `json:"priority"`
 		Effort            *string   `json:"effort"`
 		PermissionMode    *string   `json:"permission_mode"`
+		FallbackIDs       []string  `json:"fallback_provider_config_ids"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -243,6 +283,11 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.PermissionMode != nil && !validAgentConfigPermissionMode[*body.PermissionMode] {
 		Err(w, http.StatusBadRequest, "permission_mode must be one of: (empty), default, auto, acceptEdits, bypassPermissions")
+		return
+	}
+	fallbacks, msg := h.validateFallbacks(r, body.ProviderConfigID, body.FallbackIDs)
+	if msg != "" {
+		Err(w, http.StatusBadRequest, msg)
 		return
 	}
 	if body.Labels == "" {
@@ -319,27 +364,28 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg, err := h.q.CreateAgentConfig(r.Context(), gen.CreateAgentConfigParams{
-		ID:                uuid.NewString(),
-		Name:              body.Name,
-		ProviderConfigID:  body.ProviderConfigID,
-		SystemPrompt:      body.SystemPrompt,
-		Labels:            body.Labels,
-		MaxTokens:         body.MaxTokens,
-		TimeoutSecs:       body.TimeoutSecs,
-		MaxTurns:          body.MaxTurns,
-		EnabledPlugins:    body.EnabledPlugins,
-		EnabledMcpServers: body.EnabledMCPServers,
-		CommandAllowlist:  body.CommandAllowlist,
-		CommandDenylist:   body.CommandDenylist,
-		MaxRetries:        maxRetries,
-		RetryBackoffSecs:  retryBackoffSecs,
-		ResumeSessions:    resumeSessions,
-		SubtasksEnabled:   subtasksEnabled,
-		MaxSubtasks:       maxSubtasks,
-		MaxCostUsd:        maxCostUsd,
-		Priority:          priority,
-		Effort:            effort,
-		PermissionMode:    permissionMode,
+		ID:                        uuid.NewString(),
+		Name:                      body.Name,
+		ProviderConfigID:          body.ProviderConfigID,
+		SystemPrompt:              body.SystemPrompt,
+		Labels:                    body.Labels,
+		MaxTokens:                 body.MaxTokens,
+		TimeoutSecs:               body.TimeoutSecs,
+		MaxTurns:                  body.MaxTurns,
+		EnabledPlugins:            body.EnabledPlugins,
+		EnabledMcpServers:         body.EnabledMCPServers,
+		CommandAllowlist:          body.CommandAllowlist,
+		CommandDenylist:           body.CommandDenylist,
+		MaxRetries:                maxRetries,
+		RetryBackoffSecs:          retryBackoffSecs,
+		ResumeSessions:            resumeSessions,
+		SubtasksEnabled:           subtasksEnabled,
+		MaxSubtasks:               maxSubtasks,
+		MaxCostUsd:                maxCostUsd,
+		Priority:                  priority,
+		Effort:                    effort,
+		PermissionMode:            permissionMode,
+		FallbackProviderConfigIds: fallbacks,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -358,9 +404,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ResumeSessions:  cfg.ResumeSessions,
 			SubtasksEnabled: cfg.SubtasksEnabled, MaxSubtasks: cfg.MaxSubtasks,
 			MaxCostUsd: cfg.MaxCostUsd, Priority: cfg.Priority,
-			Effort:         cfg.Effort,
-			PermissionMode: cfg.PermissionMode,
-			Enabled:        0, ID: cfg.ID,
+			Effort:                    cfg.Effort,
+			PermissionMode:            cfg.PermissionMode,
+			FallbackProviderConfigIds: cfg.FallbackProviderConfigIds,
+			Enabled:                   0, ID: cfg.ID,
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -397,6 +444,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Priority          *int64    `json:"priority"`
 		Effort            *string   `json:"effort"`
 		PermissionMode    *string   `json:"permission_mode"`
+		FallbackIDs       *[]string `json:"fallback_provider_config_ids"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -451,6 +499,23 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if body.ProviderConfigID == "" {
 		body.ProviderConfigID = existing.ProviderConfigID
+	}
+	// Omitted keeps the stored list (re-validated against a changed primary).
+	// A fallback promoted to primary drops out of the kept list.
+	var fallbackIDs []string
+	if body.FallbackIDs != nil {
+		fallbackIDs = *body.FallbackIDs
+	} else {
+		for _, id := range parseFallbackIDs(existing.FallbackProviderConfigIds) {
+			if id != body.ProviderConfigID {
+				fallbackIDs = append(fallbackIDs, id)
+			}
+		}
+	}
+	fallbacks, msg := h.validateFallbacks(r, body.ProviderConfigID, fallbackIDs)
+	if msg != "" {
+		Err(w, http.StatusBadRequest, msg)
+		return
 	}
 	if body.EnabledPlugins == "" {
 		body.EnabledPlugins = existing.EnabledPlugins
@@ -510,28 +575,29 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
-		Name:              body.Name,
-		ProviderConfigID:  body.ProviderConfigID,
-		SystemPrompt:      body.SystemPrompt,
-		Labels:            body.Labels,
-		MaxTokens:         body.MaxTokens,
-		TimeoutSecs:       body.TimeoutSecs,
-		MaxTurns:          body.MaxTurns,
-		Enabled:           enabled,
-		EnabledPlugins:    body.EnabledPlugins,
-		EnabledMcpServers: body.EnabledMCPServers,
-		CommandAllowlist:  body.CommandAllowlist,
-		CommandDenylist:   body.CommandDenylist,
-		MaxRetries:        maxRetries,
-		RetryBackoffSecs:  retryBackoffSecs,
-		ResumeSessions:    resumeSessions,
-		SubtasksEnabled:   subtasksEnabled,
-		MaxSubtasks:       maxSubtasks,
-		MaxCostUsd:        maxCostUsd,
-		Priority:          priority,
-		Effort:            effort,
-		PermissionMode:    permissionMode,
-		ID:                chi.URLParam(r, "id"),
+		Name:                      body.Name,
+		ProviderConfigID:          body.ProviderConfigID,
+		SystemPrompt:              body.SystemPrompt,
+		Labels:                    body.Labels,
+		MaxTokens:                 body.MaxTokens,
+		TimeoutSecs:               body.TimeoutSecs,
+		MaxTurns:                  body.MaxTurns,
+		Enabled:                   enabled,
+		EnabledPlugins:            body.EnabledPlugins,
+		EnabledMcpServers:         body.EnabledMCPServers,
+		CommandAllowlist:          body.CommandAllowlist,
+		CommandDenylist:           body.CommandDenylist,
+		MaxRetries:                maxRetries,
+		RetryBackoffSecs:          retryBackoffSecs,
+		ResumeSessions:            resumeSessions,
+		SubtasksEnabled:           subtasksEnabled,
+		MaxSubtasks:               maxSubtasks,
+		MaxCostUsd:                maxCostUsd,
+		Priority:                  priority,
+		Effort:                    effort,
+		PermissionMode:            permissionMode,
+		FallbackProviderConfigIds: fallbacks,
+		ID:                        chi.URLParam(r, "id"),
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
