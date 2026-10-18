@@ -1,6 +1,10 @@
 package memguard
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 type fakePool struct {
 	oldestID   string
@@ -60,5 +64,47 @@ func TestGuard_NoOp_WhenNothingRunning(t *testing.T) {
 
 	if len(pool.cancelled) != 0 {
 		t.Fatalf("expected no cancellation with no in-flight run, got %v", pool.cancelled)
+	}
+}
+
+func TestReadUsage_SubtractsInactiveFileCache(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	orig := [3]string{cgroupCurrentPath, cgroupMaxPath, cgroupStatPath}
+	t.Cleanup(func() { cgroupCurrentPath, cgroupMaxPath, cgroupStatPath = orig[0], orig[1], orig[2] })
+
+	// 95% of max is in use, but most of it is reclaimable page cache: the
+	// guard must not treat this as memory pressure.
+	cgroupCurrentPath = write("memory.current", "950\n")
+	cgroupMaxPath = write("memory.max", "1000\n")
+	cgroupStatPath = write("memory.stat", "anon 300\nfile 640\nactive_file 40\ninactive_file 600\n")
+
+	current, max, ok := readUsage()
+	if !ok || current != 350 || max != 1000 {
+		t.Fatalf("readUsage() = %d, %d, %v; want 350, 1000, true", current, max, ok)
+	}
+
+	pool := &fakePool{oldestID: "run-1"}
+	New(pool).cancelIfOverThreshold(current, max)
+	if len(pool.cancelled) != 0 {
+		t.Fatalf("expected no cancellation when usage is mostly page cache, got %v", pool.cancelled)
+	}
+
+	// Without memory.stat, fall back to the raw memory.current figure.
+	cgroupStatPath = filepath.Join(dir, "missing")
+	if current, _, ok := readUsage(); !ok || current != 950 {
+		t.Fatalf("readUsage() without memory.stat = %d, %v; want 950, true", current, ok)
+	}
+}
+
+func TestWorkingSet_NeverNegative(t *testing.T) {
+	if got := workingSet(100, 150); got != 0 {
+		t.Fatalf("workingSet(100, 150) = %d, want 0", got)
 	}
 }

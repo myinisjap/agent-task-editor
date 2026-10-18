@@ -2,8 +2,9 @@
 // (or its subprocess tree — see #the-Setpgid-fix-in-providers/cli.go)
 // exhausting the whole backend container's memory limit and starving the Go
 // server itself (readyz timeouts, request handling stalls/500s). It watches
-// cgroup v2 memory.current against memory.max on an interval and, if usage
-// crosses a critical threshold, cancels the single oldest in-flight agent
+// the cgroup v2 working set (memory.current minus reclaimable inactive file
+// cache) against memory.max on an interval and, if usage crosses a critical
+// threshold, cancels the single oldest in-flight agent
 // run — the best guess for a stuck/runaway one — via the same Pool.Cancel
 // path a human or a run timeout already uses.
 //
@@ -15,6 +16,7 @@ package memguard
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -32,9 +34,11 @@ const Interval = 5 * time.Second
 // still catching a runaway before it fully wedges the container.
 const Threshold = 0.90
 
-const (
+// Package vars rather than consts so tests can point them at fixture files.
+var (
 	cgroupCurrentPath = "/sys/fs/cgroup/memory.current"
 	cgroupMaxPath     = "/sys/fs/cgroup/memory.max"
+	cgroupStatPath    = "/sys/fs/cgroup/memory.stat"
 )
 
 // canceller is the subset of *agent.Pool the guard needs. Matched
@@ -114,9 +118,17 @@ func (g *Guard) cancelIfOverThreshold(current, max int64) {
 	g.pool.CancelForResourceConstraint(runID)
 }
 
-// readUsage reads cgroup v2 memory.current/memory.max. Returns ok=false if
-// either file is missing, unreadable, or memory.max is "max" (unbounded —
-// nothing to guard against).
+// readUsage reads the cgroup v2 working set and memory.max. Returns ok=false
+// if either memory.current or memory.max is missing, unreadable, or
+// memory.max is "max" (unbounded — nothing to guard against).
+//
+// memory.current includes the page cache, which git fetches, toolchain
+// installs, builds and test runs fill up quickly and which the kernel
+// reclaims on demand. Comparing it raw against memory.max reads a busy but
+// healthy container as "critical" and cancels runs that aren't using much
+// memory at all. Subtracting inactive_file (the same working-set figure
+// kubelet and `docker stats` use) leaves only memory that can't simply be
+// dropped. If memory.stat is unreadable, fall back to the raw figure.
 func readUsage() (current, max int64, ok bool) {
 	c, err := readInt(cgroupCurrentPath)
 	if err != nil {
@@ -126,7 +138,35 @@ func readUsage() (current, max int64, ok bool) {
 	if err != nil {
 		return 0, 0, false
 	}
+	if inactive, err := readStatField(cgroupStatPath, "inactive_file"); err == nil {
+		c = workingSet(c, inactive)
+	}
 	return c, m, true
+}
+
+// workingSet subtracts reclaimable inactive file cache from usage, never
+// going below zero.
+func workingSet(current, inactiveFile int64) int64 {
+	if inactiveFile >= current {
+		return 0
+	}
+	return current - inactiveFile
+}
+
+// readStatField returns one "key value" line's value from a cgroup
+// memory.stat file.
+func readStatField(path, key string) (int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		name, val, found := strings.Cut(line, " ")
+		if found && name == key {
+			return strconv.ParseInt(strings.TrimSpace(val), 10, 64)
+		}
+	}
+	return 0, fmt.Errorf("memguard: %s not found in %s", key, path)
 }
 
 func readInt(path string) (int64, error) {
