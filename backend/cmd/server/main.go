@@ -492,9 +492,9 @@ func main() {
 
 	// Agent-log retention: periodically deletes agent_logs rows for
 	// terminal-status runs (completed/failed/waiting_human) whose
-	// completed_at is older than the configured number of days. Disabled by
-	// default (days=0) so DB growth behavior is unchanged unless explicitly
-	// opted in. See docs/backup.md#agent-log-retention.
+	// completed_at is older than the configured number of days. Enabled by
+	// default (days=30 on fresh installs; days=0 disables).
+	// See docs/backup.md#agent-log-retention.
 	//
 	// Days/interval are DB-backed (log_retention_settings, seeded from
 	// cfg.LogRetentionDays/cfg.LogRetentionInterval on first migration) and

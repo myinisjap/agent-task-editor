@@ -578,7 +578,7 @@ components:
         restart. Unlike backup, there is no separate deploy-time enable
         gate — days=0 fully disables cleanup via this settings row alone.
       properties:
-        days:             { type: integer, description: "Delete terminal-run logs older than this many days. 0 disables cleanup (logs are kept forever). Minimum 0. Default 0." }
+        days:             { type: integer, description: "Delete terminal-run logs older than this many days. 0 disables cleanup (logs are kept forever). Minimum 0. Default 30 on fresh installs (existing installs keep their stored value)." }
         interval_seconds: { type: integer, description: "How often the pruner checks for logs to delete, in seconds. Minimum 60 (1 minute). Default 3600 (once an hour)." }
         updated_at:       { type: string, format: date-time }
       required: [days, interval_seconds, updated_at]

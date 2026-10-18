@@ -54,10 +54,10 @@ func TestLoad_CORSOriginsWildcard_ExplicitOverride(t *testing.T) {
 	}
 }
 
-func TestDefaults_LogRetentionDisabledByDefault(t *testing.T) {
+func TestDefaults_LogRetention30DaysByDefault(t *testing.T) {
 	cfg := config.Defaults()
-	if cfg.LogRetentionDays != 0 {
-		t.Errorf("LogRetentionDays must default to 0 (disabled), got %d", cfg.LogRetentionDays)
+	if cfg.LogRetentionDays != 30 {
+		t.Errorf("LogRetentionDays must default to 30, got %d", cfg.LogRetentionDays)
 	}
 	if cfg.LogRetentionInterval <= 0 {
 		t.Errorf("LogRetentionInterval must have a positive default, got %v", cfg.LogRetentionInterval)

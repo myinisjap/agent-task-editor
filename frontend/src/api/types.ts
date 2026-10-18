@@ -4974,7 +4974,7 @@ export interface components {
         };
         /** @description DB-backed settings for the automatic agent-log retention pruner (see docs/backup.md#agent-log-retention). It deletes agent_logs rows belonging to runs in a terminal status (completed/failed/ waiting_human) whose completed_at is older than `days` days ago. Changes take effect on the pruner's next scheduled run without a restart. Unlike backup, there is no separate deploy-time enable gate — days=0 fully disables cleanup via this settings row alone. */
         LogRetentionSettings: {
-            /** @description Delete terminal-run logs older than this many days. 0 disables cleanup (logs are kept forever). Minimum 0. Default 0. */
+            /** @description Delete terminal-run logs older than this many days. 0 disables cleanup (logs are kept forever). Minimum 0. Default 30 on fresh installs (existing installs keep their stored value). */
             days: number;
             /** @description How often the pruner checks for logs to delete, in seconds. Minimum 60 (1 minute). Default 3600 (once an hour). */
             interval_seconds: number;

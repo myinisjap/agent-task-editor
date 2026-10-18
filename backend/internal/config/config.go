@@ -70,8 +70,8 @@ type Config struct {
 	// LogRetentionDays, if > 0, enables the built-in agent-log pruner: logs
 	// belonging to runs in a terminal status whose completed_at is older than
 	// this many days are deleted on a schedule (see internal/logretention).
-	// 0 (default) disables pruning entirely - behavior is unchanged from
-	// today (logs are kept forever) unless explicitly opted in.
+	// Defaults to 30. 0 disables pruning entirely (logs kept forever); set it
+	// explicitly to opt out.
 	LogRetentionDays int `yaml:"log_retention_days"`
 	// LogRetentionInterval is how often the pruner runs. Only meaningful when
 	// LogRetentionDays > 0.
@@ -202,7 +202,7 @@ func Defaults() Config {
 		ScheduleInterval:      30 * time.Second,
 		BackupInterval:        24 * time.Hour,
 		BackupKeep:            7,
-		LogRetentionDays:      0,
+		LogRetentionDays:      30,
 		LogRetentionInterval:  1 * time.Hour,
 		WorktreeSweepInterval: 10 * time.Minute,
 		ChatMaxSessions:       0,
