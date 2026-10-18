@@ -300,16 +300,17 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 // The patterns live in the central classification table (errclass.go), so a
 // CLI wording change is a one-line edit there rather than here.
 func (p *Pool) hasLoginError(ctx context.Context, runID string) bool {
-	logs, err := p.q.ListAgentLogs(ctx, runID)
+	// Bounded tail fetch (newest first): login errors appear near the end.
+	// The scan is an any-match, so order doesn't affect the result.
+	logs, err := p.q.ListAgentLogsPage(ctx, gen.ListAgentLogsPageParams{
+		AgentRunID: runID,
+		Column2:    "",
+		Limit:      20,
+	})
 	if err != nil {
 		return false
 	}
-	// Check the last 20 entries only — login errors appear near the end.
-	start := len(logs) - 20
-	if start < 0 {
-		start = 0
-	}
-	for _, l := range logs[start:] {
+	for _, l := range logs {
 		if ClassifyLine(l.Content) == ClassAuth {
 			return true
 		}
@@ -326,11 +327,11 @@ func (p *Pool) isPreStreamFailure(ctx context.Context, job Job, result Result) b
 	if result.SessionID != "" || result.InputTokens != 0 || result.OutputTokens != 0 {
 		return false
 	}
-	logs, err := p.q.ListAgentLogs(ctx, job.RunID)
+	n, err := p.q.CountAgentLogs(ctx, job.RunID)
 	if err != nil {
 		return false
 	}
-	return len(logs) == 0
+	return n == 0
 }
 
 // resolveOutcome finds the to_label for a given outcome ("success"|"failure") from the task's current label.
