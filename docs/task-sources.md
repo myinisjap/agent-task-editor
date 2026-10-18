@@ -510,6 +510,19 @@ tell an agent-task-editor write-back apart from their own comments. This
 marker plays no role in idempotency (which is DB-flag based, not
 comment-scraping based) — it's purely for human legibility.
 
+## Merged PRs finish the task
+
+When the sweep (or a webhook) first sees a task's PR as merged, it deletes the
+local branch and worktree and moves the task to its workflow's terminal label
+(the first one in column order). The move is a forced move recorded in the
+label history as "Forced move: PR merged", so it works even when the workflow
+has no transition from the task's current column to the terminal one. It also
+releases a run left waiting on a human, for example a fix-up run started after
+a CI failure that the merge made moot. A task with a run still pending or
+running is left where it is, the same as a manual move would be refused.
+Nothing moves if the task is already on a terminal label or the workflow has
+none.
+
 ## PR review / GitHub Actions feedback ingestion
 
 This is the reverse direction of the loop above: instead of writing task

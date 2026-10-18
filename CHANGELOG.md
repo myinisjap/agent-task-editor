@@ -21,6 +21,7 @@ triggers the "Release" workflow the same way.
 
 ### Changed
 
+- **A merged PR now finishes its task.** When GitHub reports a task's PR as merged, the board moves the task to its workflow's terminal column (as a forced move noted "PR merged") and releases any run left waiting on a human. Before, a task that bounced back for a CI fix and then merged anyway stayed stuck in its working column with a run that could never resume. Tasks with a run still in progress are left alone.
 - **GitHub is now talked to over its REST API instead of the `gh` CLI.** PR sync, issue import, write-back and PR creation make direct HTTP requests rather than spawning several `gh` processes per open PR per sweep. Auth is unchanged: `GH_TOKEN`, then `GITHUB_TOKEN`, then the output of `gh auth token` (so an existing `gh auth login` keeps working), and the Health page and `/github/auth-status` still report it. `GITHUB_API_URL` can point at a GitHub Enterprise API. The `ate_gh_calls_total` metric now counts API requests.
 - **Faster live log view on long runs.** Live log lines in the task detail view are now batched once per animation frame and deduplicated with an id set, instead of copying and re-rendering the whole list for every line.
 
