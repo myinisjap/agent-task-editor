@@ -570,20 +570,19 @@ func (d *Dispatcher) refreshGlobalCostStatus(ctx context.Context) bool {
 	}
 
 	now := time.Now().UTC()
-	day := now.Format("2006-01-02")
-	month := now.Format("2006-01")
+	dayStart, dayEnd, monthStart, monthEnd := costPeriodBounds(now)
 
 	var dailySpent, monthlySpent float64
 	if d.MaxDailyCostUSD > 0 {
 		var err error
-		dailySpent, err = d.q.SumCostForDay(ctx, day)
+		dailySpent, err = d.q.SumCostForDay(ctx, gen.SumCostForDayParams{RangeStart: dayStart, RangeEnd: dayEnd})
 		if err != nil {
 			slog.Error("dispatcher: sum cost for day", "component", "dispatcher", "err", err)
 		}
 	}
 	if d.MaxMonthlyCostUSD > 0 {
 		var err error
-		monthlySpent, err = d.q.SumCostForMonth(ctx, month)
+		monthlySpent, err = d.q.SumCostForMonth(ctx, gen.SumCostForMonthParams{RangeStart: monthStart, RangeEnd: monthEnd})
 		if err != nil {
 			slog.Error("dispatcher: sum cost for month", "component", "dispatcher", "err", err)
 		}
@@ -1435,4 +1434,16 @@ func toAgentConfig(cfg gen.AgentConfig, pc gen.ProviderConfig) AgentConfig {
 // escalate.go).
 func (d *Dispatcher) lifecycle() runLifecycle {
 	return runLifecycle{q: d.q, pub: d.Publisher}
+}
+
+// costPeriodBounds returns the half-open UTC [start, end) bounds of the
+// calendar day and month containing now, formatted as the canonical
+// 'YYYY-MM-DD HH:MM:SS' used by agent_runs.created_at.
+func costPeriodBounds(now time.Time) (dayStart, dayEnd, monthStart, monthEnd string) {
+	const layout = "2006-01-02 15:04:05"
+	now = now.UTC()
+	d := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	m := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return d.Format(layout), d.AddDate(0, 0, 1).Format(layout),
+		m.Format(layout), m.AddDate(0, 1, 0).Format(layout)
 }
