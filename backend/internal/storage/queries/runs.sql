@@ -327,22 +327,19 @@ GROUP BY t.id, ar.agent_config_id;
 -- Dispatcher.checkGlobalCostBudget) so a rate-limited/failed/in-flight run
 -- that already burned spend still counts against the cap the same sweep it
 -- happened, not just once it reaches a terminal status. day is a
--- 'YYYY-MM-DD' string (UTC), matching date(created_at) below; the
--- CAST(sqlc.arg(day) AS TEXT) pins the generated Go param type to string
--- instead of sqlc inferring time.Time from the datetime column it's
--- compared against.
+-- half-open range [range_start, range_end) of canonical UTC
+-- 'YYYY-MM-DD HH:MM:SS' strings (migration 058) so idx_agent_runs_created_at
+-- is usable; the CASTs pin the generated Go param types to string.
 SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
-FROM agent_runs WHERE date(created_at) = CAST(sqlc.arg(day) AS TEXT);
+FROM agent_runs WHERE created_at >= CAST(sqlc.arg(range_start) AS TEXT) AND created_at < CAST(sqlc.arg(range_end) AS TEXT);
 
 -- name: SumCostForMonth :one
 -- Cumulative recorded cost across ALL runs regardless of status, for a
--- single UTC calendar month. month is a 'YYYY-MM' string (UTC), matching
--- strftime('%Y-%m', created_at) below; the CAST(sqlc.arg(month) AS TEXT)
--- pins the generated Go param type to string, same reason as SumCostForDay
--- above. See SumCostForDay for the "every run counts" rationale and its
+-- single UTC calendar month. Bounds are a half-open UTC range of
+-- 'YYYY-MM-DD HH:MM:SS' strings, same as SumCostForDay. See SumCostForDay for the "every run counts" rationale and its
 -- dispatcher usage.
 SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
-FROM agent_runs WHERE strftime('%Y-%m', created_at) = CAST(sqlc.arg(month) AS TEXT);
+FROM agent_runs WHERE created_at >= CAST(sqlc.arg(range_start) AS TEXT) AND created_at < CAST(sqlc.arg(range_end) AS TEXT);
 
 -- name: SumUsageByRepo :many
 -- Per-repo token/cost rollup across ALL runs regardless of status (same

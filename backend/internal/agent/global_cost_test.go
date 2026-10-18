@@ -260,3 +260,38 @@ func TestDispatcher_Sweep_HaltsDispatchWhenGlobalCapTripped(t *testing.T) {
 		t.Error("expected GlobalCostStatus().Tripped to be true after the sweep")
 	}
 }
+
+func TestCostPeriodBounds(t *testing.T) {
+	cases := []struct {
+		now            time.Time
+		ds, de, ms, me string
+	}{
+		{time.Date(2024, 2, 28, 23, 59, 59, 0, time.UTC), "2024-02-28 00:00:00", "2024-02-29 00:00:00", "2024-02-01 00:00:00", "2024-03-01 00:00:00"},
+		{time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC), "2024-12-31 00:00:00", "2025-01-01 00:00:00", "2024-12-01 00:00:00", "2025-01-01 00:00:00"},
+		{time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC), "2025-03-01 00:00:00", "2025-03-02 00:00:00", "2025-03-01 00:00:00", "2025-04-01 00:00:00"},
+	}
+	for _, c := range cases {
+		ds, de, ms, me := costPeriodBounds(c.now)
+		if ds != c.ds || de != c.de || ms != c.ms || me != c.me {
+			t.Errorf("%v: got %s %s %s %s", c.now, ds, de, ms, me)
+		}
+	}
+}
+
+func TestSumCostRangeBoundaries(t *testing.T) {
+	f := newGlobalCostFixture(t)
+	ctx := context.Background()
+	for _, ts := range []string{"2024-12-31 23:59:59", "2025-01-01 00:00:00", "2025-01-01 23:59:59", "2025-01-02 00:00:00"} {
+		tm, _ := time.Parse("2006-01-02 15:04:05", ts)
+		f.seedAgentRunWithCost(t, 1, tm)
+	}
+	ds, de, ms, me := costPeriodBounds(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC))
+	day, err := f.q.SumCostForDay(ctx, gen.SumCostForDayParams{RangeStart: ds, RangeEnd: de})
+	if err != nil || day != 2 {
+		t.Fatalf("day = %v, %v; want 2", day, err)
+	}
+	month, err := f.q.SumCostForMonth(ctx, gen.SumCostForMonthParams{RangeStart: ms, RangeEnd: me})
+	if err != nil || month != 3 {
+		t.Fatalf("month = %v, %v; want 3", month, err)
+	}
+}

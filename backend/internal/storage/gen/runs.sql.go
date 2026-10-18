@@ -1059,8 +1059,13 @@ func (q *Queries) SetAgentRunStarted(ctx context.Context, id string) (AgentRun, 
 
 const sumCostForDay = `-- name: SumCostForDay :one
 SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
-FROM agent_runs WHERE date(created_at) = CAST(?1 AS TEXT)
+FROM agent_runs WHERE created_at >= CAST(?1 AS TEXT) AND created_at < CAST(?2 AS TEXT)
 `
+
+type SumCostForDayParams struct {
+	RangeStart string `json:"range_start"`
+	RangeEnd   string `json:"range_end"`
+}
 
 // Cumulative recorded cost across ALL runs regardless of status (same "every
 // run counts" rationale as SumTaskCost above), for a single UTC calendar day.
@@ -1068,12 +1073,11 @@ FROM agent_runs WHERE date(created_at) = CAST(?1 AS TEXT)
 // Dispatcher.checkGlobalCostBudget) so a rate-limited/failed/in-flight run
 // that already burned spend still counts against the cap the same sweep it
 // happened, not just once it reaches a terminal status. day is a
-// 'YYYY-MM-DD' string (UTC), matching date(created_at) below; the
-// CAST(sqlc.arg(day) AS TEXT) pins the generated Go param type to string
-// instead of sqlc inferring time.Time from the datetime column it's
-// compared against.
-func (q *Queries) SumCostForDay(ctx context.Context, day string) (float64, error) {
-	row := q.db.QueryRowContext(ctx, sumCostForDay, day)
+// half-open range [range_start, range_end) of canonical UTC
+// 'YYYY-MM-DD HH:MM:SS' strings (migration 058) so idx_agent_runs_created_at
+// is usable; the CASTs pin the generated Go param types to string.
+func (q *Queries) SumCostForDay(ctx context.Context, arg SumCostForDayParams) (float64, error) {
+	row := q.db.QueryRowContext(ctx, sumCostForDay, arg.RangeStart, arg.RangeEnd)
 	var cost_usd float64
 	err := row.Scan(&cost_usd)
 	return cost_usd, err
@@ -1081,17 +1085,20 @@ func (q *Queries) SumCostForDay(ctx context.Context, day string) (float64, error
 
 const sumCostForMonth = `-- name: SumCostForMonth :one
 SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
-FROM agent_runs WHERE strftime('%Y-%m', created_at) = CAST(?1 AS TEXT)
+FROM agent_runs WHERE created_at >= CAST(?1 AS TEXT) AND created_at < CAST(?2 AS TEXT)
 `
 
+type SumCostForMonthParams struct {
+	RangeStart string `json:"range_start"`
+	RangeEnd   string `json:"range_end"`
+}
+
 // Cumulative recorded cost across ALL runs regardless of status, for a
-// single UTC calendar month. month is a 'YYYY-MM' string (UTC), matching
-// strftime('%Y-%m', created_at) below; the CAST(sqlc.arg(month) AS TEXT)
-// pins the generated Go param type to string, same reason as SumCostForDay
-// above. See SumCostForDay for the "every run counts" rationale and its
+// single UTC calendar month. Bounds are a half-open UTC range of
+// 'YYYY-MM-DD HH:MM:SS' strings, same as SumCostForDay. See SumCostForDay for the "every run counts" rationale and its
 // dispatcher usage.
-func (q *Queries) SumCostForMonth(ctx context.Context, month string) (float64, error) {
-	row := q.db.QueryRowContext(ctx, sumCostForMonth, month)
+func (q *Queries) SumCostForMonth(ctx context.Context, arg SumCostForMonthParams) (float64, error) {
+	row := q.db.QueryRowContext(ctx, sumCostForMonth, arg.RangeStart, arg.RangeEnd)
 	var cost_usd float64
 	err := row.Scan(&cost_usd)
 	return cost_usd, err
