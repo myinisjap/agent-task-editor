@@ -250,11 +250,11 @@ Delete a comment entirely. Returns `204 No Content`.
 Returns `{ "url": "..." }` — a GitHub `compare` URL with the PR **title and body pre-filled** (task title, description, agent notes, and commit subjects). Open it to create a fully-described PR in one click; no GitHub auth or `gh` CLI needed. Requires the repo to have a GitHub remote and the task to have a provisioned branch (else `400`).
 
 ### `POST /tasks/{id}/pr`
-One-click PR creation. Pushes the task's branch to origin, then runs `gh pr create` with the title from the task and a body assembled from the description, agent notes, and commit subjects. Stores the resulting PR URL and git state on the task and returns:
+One-click PR creation. Pushes the task's branch to origin, then opens the PR via the GitHub REST API with the title from the task and a body assembled from the description, agent notes, and commit subjects. Stores the resulting PR URL and git state on the task and returns:
 ```json
 { "pr_url": "https://github.com/owner/repo/pull/42", "git_state": "pr_open" }
 ```
-**Idempotent** — if a PR already exists for the branch, that PR is returned instead of erroring. Requires the repo to have a GitHub remote, the task to have a provisioned branch (else `400`), and the `gh` CLI to be authenticated (a `gh pr create` failure returns `502`).
+**Idempotent** — if a PR already exists for the branch, that PR is returned instead of erroring. Requires the repo to have a GitHub remote, the task to have a provisioned branch (else `400`), and a GitHub token (`GH_TOKEN`/`GITHUB_TOKEN`, or a `gh auth login`) (a PR-creation failure returns `502`).
 
 ### `GET /tasks/{id}/github-status`
 Fetches live GitHub PR state for the task's branch, and (when a PR exists) refreshes GitHub's merge-conflict verdict for it. Returns:
@@ -1278,7 +1278,7 @@ list of checks:
   providers actually referenced by an **enabled** agent config or a chat
   session, via their Provider Config — an unused/disabled Provider Config
   doesn't produce a check), the MCP sidecar binary
-  (`MCP_SERVER_PATH`), gh auth (same probe as `/github/auth-status`),
+  (`MCP_SERVER_PATH`), GitHub auth — a token from `GH_TOKEN`/`GITHUB_TOKEN`/`gh auth token`, no network call (same probe as `/github/auth-status`),
   `REPO_BASE_DIR`, `auto_backup` (whether the automatic local-snapshot
   scheduler is enabled via `BACKUP_DIR` — see [backup.md](backup.md)), and
   `version` (the running build's version — see `GET /healthz` above).
@@ -1344,7 +1344,7 @@ In addition to the standard Go runtime/process collectors (`go_*`,
 **Sync loops**
 - `ate_ghsync_sweep_duration_seconds` (histogram) — GitHub PR-status sweep duration.
 - `ate_tasksource_sweep_duration_seconds` (histogram) — GitHub issue-import sweep duration.
-- `ate_gh_calls_total{command}` (counter) — `gh` CLI invocations by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`, `issue_label_add`, `issue_comment`, `issue_close`), an early warning signal for GitHub API rate limiting.
+- `ate_gh_calls_total{command}` (counter) — GitHub REST API calls by logical command (`pr_list`, `pr_create`, `issue_list`, `auth_status`, `branch_check`, `issue_label_add`, `issue_comment`, `issue_close`), an early warning signal for GitHub API rate limiting.
 
 **Outbound notifications** (see [websocket.md#outbound-webhook](websocket.md#outbound-webhook); all zero/no-op when `NOTIFY_WEBHOOK_URL` is unset)
 - `ate_notify_delivered_total` (counter) — webhook notifications successfully delivered.

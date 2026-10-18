@@ -43,7 +43,7 @@ agent-task-editor/
 │       ├── forge/            # Forge interface + forge-neutral types (git-hosting-provider seam); leaf package (no ghclient/ghsync/tasksource/writeback/metrics imports); two impls today
 │       │   └── gitea/        # Gitea `forge.Forge` impl: direct REST calls (no CLI dependency)
 │       ├── gitcmd/           # Single funnel for the server's `git` subprocesses (via agentuser; Output/Run/Combined, no-prompt env) + shared ref validator `IsValidRef`; leaf (agentuser + stdlib only)
-│       ├── ghclient/         # GitHub `forge.Forge` impl: thin `gh` CLI wrapper (PR lookup/create, issue listing, repo name parsing)
+│       ├── ghclient/         # GitHub `forge.Forge` impl: direct GitHub REST client (token from GH_TOKEN/GITHUB_TOKEN/`gh auth token`) (PR lookup/create, issue listing, repo name parsing)
 │       ├── ghsync/           # Background poller: refreshes task PR state (incl. merge conflicts) via the repo's `forge.Forge`
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
 │       ├── intake/           # Intake routing rules: match->apply engine shared by tasksource + schedule; leaf package, no deps beyond storage/gen

@@ -1,24 +1,36 @@
-// Package ghclient provides shared GitHub CLI helpers used by both the HTTP
-// handlers and the background GitHub-sync goroutine. It is the GitHub
-// implementation of the internal/forge.Forge interface — see GitHub below.
+// Package ghclient is the GitHub implementation of the internal/forge.Forge
+// interface. It talks to the GitHub REST API directly over HTTP (like
+// forge/gitea) instead of spawning gh CLI subprocesses, so a ghsync sweep or
+// issue-import poll costs HTTP requests rather than forked processes.
+//
+// Authentication reuses what the gh CLI used: GH_TOKEN, then GITHUB_TOKEN,
+// then the output of `gh auth token` (so a ~/.config/gh login keeps working).
+// GITHUB_API_URL optionally overrides the API base (GitHub Enterprise,
+// tests); default https://api.github.com.
 package ghclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 )
 
 // GitHub is the GitHub implementation of forge.Forge. It has no state of its
 // own — every method delegates to the package-level functions below, which
-// shell out to the gh CLI (see runGH). Registered with the forge package's
+// call the GitHub REST API (see apiDo). Registered with the forge package's
 // selection registry in init() below so forge.ForRemote can pick it for any
 // github.com remote.
 type GitHub struct{}
@@ -82,7 +94,7 @@ func (GitHub) AuthStatus() (authed bool, note string) { return GHAuthStatus() }
 
 // CompareURL builds a GitHub compare URL for the given repo/base/branch with
 // a pre-filled PR title and body, so a human can open a properly-described PR
-// in one click without needing GitHub auth or the gh CLI.
+// in one click without needing GitHub auth.
 func (GitHub) CompareURL(repoName, base, branch, title, body string) string {
 	q := url.Values{}
 	q.Set("expand", "1")
@@ -91,36 +103,242 @@ func (GitHub) CompareURL(repoName, base, branch, title, body string) string {
 	return fmt.Sprintf("https://github.com/%s/compare/%s...%s?%s", repoName, base, branch, q.Encode())
 }
 
-// ghRunner is the subset of *exec.Cmd used by the gh-calling functions below.
-// Abstracted out so tests can substitute a fake without shelling out to a
-// real gh binary.
-type ghRunner interface {
-	Output() ([]byte, error)
-	CombinedOutput() ([]byte, error)
-	Run() error
+// httpClient issues every API request. Overridable in tests.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// apiBase returns the REST API base URL (no trailing slash).
+func apiBase() string {
+	if b := strings.TrimSpace(os.Getenv("GITHUB_API_URL")); b != "" {
+		return strings.TrimSuffix(b, "/")
+	}
+	return "https://api.github.com"
 }
 
-// runGH constructs the command used to invoke the gh CLI with the given
-// args. Overridable in tests.
-var runGH = func(ctx context.Context, args ...string) ghRunner {
-	return agentuser.ServerCommandContext(ctx, "gh", args...)
+var (
+	cliTokenMu     sync.Mutex
+	cliTokenCached string
+	cliTokenAt     time.Time
+)
+
+// cliTokenTTL bounds how long a token obtained from `gh auth token` is reused
+// before re-running the CLI (so a re-login is eventually picked up while a
+// sweep doesn't fork `gh` per request).
+const cliTokenTTL = 5 * time.Minute
+
+// ghAuthToken runs `gh auth token`. Overridable in tests.
+var ghAuthToken = func() (string, error) {
+	out, err := agentuser.ServerCommand("gh", "auth", "token").Output()
+	return strings.TrimSpace(string(out)), err
 }
 
-// GHAuthStatus returns whether the gh CLI has valid auth credentials.
-// Primary: runs `gh auth status` to check for stored credentials (e.g. from the
-// ~/.config/gh volume mount).
-// Fallback: checks the GITHUB_TOKEN env var (gh picks it up automatically).
+// resolveToken returns the API token and a short description of its source.
+// Order: GH_TOKEN, GITHUB_TOKEN, `gh auth token` (cached briefly).
+func resolveToken() (token, source string) {
+	if t := strings.TrimSpace(os.Getenv("GH_TOKEN")); t != "" {
+		return t, "GH_TOKEN env var"
+	}
+	if t := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); t != "" {
+		return t, "GITHUB_TOKEN env var"
+	}
+	cliTokenMu.Lock()
+	defer cliTokenMu.Unlock()
+	if cliTokenCached != "" && time.Since(cliTokenAt) < cliTokenTTL {
+		return cliTokenCached, "gh auth"
+	}
+	if t, err := ghAuthToken(); err == nil && t != "" {
+		cliTokenCached, cliTokenAt = t, time.Now()
+		return t, "gh auth"
+	}
+	cliTokenCached = ""
+	return "", ""
+}
+
+// GHAuthStatus reports whether a GitHub API token is available (GH_TOKEN,
+// GITHUB_TOKEN, or a gh CLI login). It does not make a network call.
 func GHAuthStatus() (authed bool, note string) {
 	metrics.GhCallsTotal.WithLabelValues("auth_status").Inc()
-	cmd := agentuser.ServerCommand("gh", "auth", "status")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return true, "gh auth"
+	if t, src := resolveToken(); t != "" {
+		return true, src
 	}
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		return true, "GITHUB_TOKEN env var"
+	return false, "no GitHub token: set GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`"
+}
+
+// apiError is a non-2xx response from the GitHub API.
+type apiError struct {
+	Status int
+	Body   string
+	Method string
+	Path   string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("github %s %s: HTTP %d: %s", e.Method, e.Path, e.Status, strings.TrimSpace(e.Body))
+}
+
+func isStatus(err error, code int) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.Status == code
+}
+
+// apiDo performs one request against the GitHub REST API. path is relative
+// to the API base (leading slash, already escaped, may include a query) or an
+// absolute URL (pagination). payload, if non-nil, is JSON-encoded as the
+// body. Returns the response body and the rel="next" pagination URL, if any.
+func apiDo(ctx context.Context, method, path string, payload any) ([]byte, string, error) {
+	full := path
+	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
+		full = apiBase() + path
 	}
-	return false, strings.TrimSpace(string(out))
+	var rdr io.Reader
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return nil, "", err
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, full, rdr)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "agent-task-editor")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if tok, _ := resolveToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", &apiError{Status: resp.StatusCode, Body: string(body), Method: method, Path: path}
+	}
+	return body, nextLink(resp.Header.Get("Link")), nil
+}
+
+// nextLink extracts the rel="next" URL from a Link header.
+func nextLink(h string) string {
+	for _, part := range strings.Split(h, ",") {
+		segs := strings.Split(part, ";")
+		if len(segs) < 2 {
+			continue
+		}
+		for _, s := range segs[1:] {
+			if strings.TrimSpace(s) == `rel="next"` {
+				return strings.Trim(strings.TrimSpace(segs[0]), "<>")
+			}
+		}
+	}
+	return ""
+}
+
+// apiPages GETs path and follows pagination, calling fn with each page body.
+func apiPages(ctx context.Context, path string, fn func(page []byte) error) error {
+	next := path
+	for next != "" {
+		body, n, err := apiDo(ctx, http.MethodGet, next, nil)
+		if err != nil {
+			return err
+		}
+		if err := fn(body); err != nil {
+			return err
+		}
+		next = n
+	}
+	return nil
+}
+
+// repoPath returns "/repos/owner/repo" with each segment escaped.
+func repoPath(repoName string) string {
+	return "/repos/" + escapeSegments(repoName)
+}
+
+func escapeSegments(s string) string {
+	parts := strings.Split(s, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
+}
+
+// branchExists reports whether the branch exists on the remote (404 = no).
+func branchExists(ctx context.Context, repoName, branch string) (bool, error) {
+	metrics.GhCallsTotal.WithLabelValues("branch_check").Inc()
+	_, _, err := apiDo(ctx, http.MethodGet, repoPath(repoName)+"/branches/"+escapeSegments(branch), nil)
+	if err != nil {
+		if isStatus(err, http.StatusNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// rawPR is the subset of a pull request payload we read.
+type rawPR struct {
+	Number    int    `json:"number"`
+	State     string `json:"state"`
+	HTMLURL   string `json:"html_url"`
+	UpdatedAt string `json:"updated_at"`
+	MergedAt  string `json:"merged_at"`
+	Mergeable *bool  `json:"mergeable"`
+	Head      struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+// rawState returns the raw (open/merged/closed) state of the PR.
+func (p rawPR) rawState() string {
+	if p.MergedAt != "" {
+		return "merged"
+	}
+	return p.State
+}
+
+// listPRsForBranch returns the most recent PR (any state) whose head is the
+// given branch in the same repo, or nil if none.
+func listPRsForBranch(ctx context.Context, repoName, branch string) (*rawPR, error) {
+	owner := strings.SplitN(repoName, "/", 2)[0]
+	q := url.Values{}
+	q.Set("head", owner+":"+branch)
+	q.Set("state", "all")
+	q.Set("per_page", "1")
+	body, _, err := apiDo(ctx, http.MethodGet, repoPath(repoName)+"/pulls?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var prs []rawPR
+	if err := json.Unmarshal(body, &prs); err != nil {
+		return nil, err
+	}
+	if len(prs) == 0 {
+		return nil, nil
+	}
+	return &prs[0], nil
+}
+
+func getPR(ctx context.Context, repoName string, number int) (*rawPR, error) {
+	body, _, err := apiDo(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d", repoPath(repoName), number), nil)
+	if err != nil {
+		return nil, err
+	}
+	var pr rawPR
+	if err := json.Unmarshal(body, &pr); err != nil {
+		return nil, err
+	}
+	return &pr, nil
 }
 
 // GetPRForBranch queries GitHub for a PR matching the given branch in the given
@@ -128,44 +346,26 @@ func GHAuthStatus() (authed bool, note string) {
 // "pr_merged", "pr_closed"), the PR web URL, the PR number, and any error.
 func GetPRForBranch(ctx context.Context, repoName, branch string) (state, prURL string, prNumber int, err error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_list").Inc()
-	cmd := runGH(ctx, "pr", "list",
-		"--repo", repoName,
-		"--head", branch,
-		"--state", "all",
-		"--json", "state,number,url",
-		"--limit", "1",
-	)
-	out, err := cmd.Output()
+	pr, err := listPRsForBranch(ctx, repoName, branch)
 	if err != nil {
 		return "", "", 0, err
 	}
-
-	var prs []struct {
-		State  string `json:"state"`
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-	}
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return "", "", 0, err
-	}
-
-	if len(prs) == 0 {
-		// No PR yet — verify the branch actually exists on the remote.
-		metrics.GhCallsTotal.WithLabelValues("branch_check").Inc()
-		chk := runGH(ctx, "api", "repos/"+repoName+"/branches/"+branch, "--silent")
-		if chk.Run() != nil {
+	if pr == nil {
+		ok, err := branchExists(ctx, repoName, branch)
+		if err != nil {
+			return "", "", 0, err
+		}
+		if !ok {
 			return "", "", 0, nil // branch not on remote yet
 		}
 		return "pushed", "", 0, nil
 	}
-
-	return normalizePRState(prs[0].State), prs[0].URL, prs[0].Number, nil
+	return normalizePRState(pr.rawState()), pr.HTMLURL, pr.Number, nil
 }
 
-// normalizePRState maps gh's raw PR state (OPEN, MERGED, CLOSED — uppercase)
+// normalizePRState maps a raw PR state (open, merged, closed; any case)
 // onto the cross-forge normalised state strings ("pr_open", "pr_merged",
-// "pr_closed"). Shared by GetPRForBranch and GetPRHead so the two calls can
-// never drift on how they classify the same raw value.
+// "pr_closed"). Shared by GetPRForBranch and GetPRHead.
 func normalizePRState(raw string) string {
 	switch strings.ToLower(raw) {
 	case "open":
@@ -179,51 +379,49 @@ func normalizePRState(raw string) string {
 	}
 }
 
-// CreatePR opens a pull request for the given branch using the gh CLI, or
-// returns the existing PR if one already exists for the branch (idempotent).
-// title/body are only used when creating a new PR. base is the target branch
-// (e.g. "main"); an empty base lets gh fall back to the repo's default branch.
-// The branch is expected to already be pushed to origin.
+// CreatePR opens a pull request for the given branch, or returns the
+// existing PR if one already exists for the branch (idempotent). base is the
+// target branch; an empty base uses the repo's default branch. The branch is
+// expected to already be pushed.
 //
 // Returns the normalised state ("pr_open" for a freshly created PR, or the
 // existing PR's state) and the PR web URL.
 func CreatePR(ctx context.Context, repoName, branch, base, title, body string) (state, prURL string, err error) {
-	// Idempotency: if a PR already exists for this branch, return it rather
-	// than letting `gh pr create` fail with "a pull request already exists".
 	if s, u, n, gerr := GetPRForBranch(ctx, repoName, branch); gerr == nil && n != 0 {
 		return s, u, nil
 	}
-
-	args := []string{"pr", "create",
-		"--repo", repoName,
-		"--head", branch,
-		"--title", title,
-		"--body", body,
-	}
-	if base != "" {
-		args = append(args, "--base", base)
+	if base == "" {
+		metrics.GhCallsTotal.WithLabelValues("repo_get").Inc()
+		rb, _, rerr := apiDo(ctx, http.MethodGet, repoPath(repoName), nil)
+		if rerr != nil {
+			return "", "", fmt.Errorf("github create pr: %w", rerr)
+		}
+		var repo struct {
+			DefaultBranch string `json:"default_branch"`
+		}
+		if jerr := json.Unmarshal(rb, &repo); jerr != nil {
+			return "", "", jerr
+		}
+		base = repo.DefaultBranch
 	}
 	metrics.GhCallsTotal.WithLabelValues("pr_create").Inc()
-	out, err := runGH(ctx, args...).CombinedOutput()
+	out, _, err := apiDo(ctx, http.MethodPost, repoPath(repoName)+"/pulls", map[string]string{
+		"title": title, "head": branch, "base": base, "body": body,
+	})
 	if err != nil {
-		trimmed := strings.TrimSpace(string(out))
-		// Handle the race where a PR appeared between our check and create.
-		if strings.Contains(trimmed, "already exists") {
+		// Race: a PR appeared between our check and create.
+		if strings.Contains(err.Error(), "already exists") {
 			if s, u, n, gerr := GetPRForBranch(ctx, repoName, branch); gerr == nil && n != 0 {
 				return s, u, nil
 			}
 		}
-		return "", "", fmt.Errorf("gh pr create: %w: %s", err, trimmed)
+		return "", "", fmt.Errorf("github create pr: %w", err)
 	}
-
-	// `gh pr create` prints the new PR's URL on stdout (last non-empty line).
-	url := ""
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line = strings.TrimSpace(line); strings.HasPrefix(line, "https://") {
-			url = line
-		}
+	var pr rawPR
+	if err := json.Unmarshal(out, &pr); err != nil {
+		return "", "", err
 	}
-	return "pr_open", url, nil
+	return "pr_open", pr.HTMLURL, nil
 }
 
 // Mergeability is aliased from the forge package so existing ghclient callers
@@ -239,161 +437,111 @@ const (
 	MergeableConflicting = forge.MergeableConflicting
 )
 
-// normalizeMergeable maps gh's GraphQL mergeable enum (MERGEABLE /
-// CONFLICTING / UNKNOWN) onto a Mergeability. An empty or unrecognised value
-// maps to MergeableUnknown so a gh version that grows a new enum member can
-// never be read as "conflicting".
-func normalizeMergeable(raw string) Mergeability {
-	switch strings.ToUpper(strings.TrimSpace(raw)) {
-	case "MERGEABLE":
-		return MergeableClean
-	case "CONFLICTING":
-		return MergeableConflicting
-	default:
+// normalizeMergeable maps the REST API's tri-state mergeable field (true /
+// false / null) onto a Mergeability. null (GitHub still computing) maps to
+// MergeableUnknown so it is never read as "conflicting".
+func normalizeMergeable(m *bool) Mergeability {
+	switch {
+	case m == nil:
 		return MergeableUnknown
+	case *m:
+		return MergeableClean
+	default:
+		return MergeableConflicting
 	}
 }
 
-// PRHead is aliased from forge.PRHead — see its doc comment there. Holds a
-// PR's number, current head commit SHA, base branch, and mergeability, used
-// by ghsync to detect when the agent has pushed a new commit and whether the
-// PR currently conflicts with its base (see GetPRHead).
+// PRHead is aliased from forge.PRHead — see its doc comment there.
 type PRHead = forge.PRHead
 
 // GetPRHead returns the PR number, head commit SHA, base branch,
 // mergeability, normalised state, web URL, and last-updated timestamp for
-// the given branch — the single `gh` call ghsync makes per task per sweep
-// (see forge.PRHead's doc comment for why PRForBranch's data was folded in
-// here rather than kept as a second call). Returns PRHead{State: "pushed"}
-// if the branch is pushed but has no PR yet, or a zero PRHead if the branch
-// doesn't exist on the remote at all. Used to detect a fresh push since the
-// last sweep (the review/feedback ingestion cursor resets when the head SHA
-// changes), to spot a PR that has started conflicting with its base branch,
-// and to gate review/comment/check ingestion on whether the PR has actually
-// changed since the last sweep (via UpdatedAt).
+// the given branch. Returns PRHead{State: "pushed"} if the branch is pushed
+// but has no PR yet, or a zero PRHead if the branch doesn't exist on the
+// remote. Mergeability requires fetching the single PR (the list endpoint
+// omits it), so a PR costs two requests.
 func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_list_head").Inc()
-	cmd := runGH(ctx, "pr", "list",
-		"--repo", repoName,
-		"--head", branch,
-		"--state", "all",
-		"--json", "number,headRefOid,baseRefName,mergeable,state,url,updatedAt",
-		"--limit", "1",
-	)
-	out, err := cmd.Output()
+	pr, err := listPRsForBranch(ctx, repoName, branch)
 	if err != nil {
 		return PRHead{}, err
 	}
-	var prs []struct {
-		Number      int    `json:"number"`
-		HeadRefOid  string `json:"headRefOid"`
-		BaseRefName string `json:"baseRefName"`
-		Mergeable   string `json:"mergeable"`
-		State       string `json:"state"`
-		URL         string `json:"url"`
-		UpdatedAt   string `json:"updatedAt"`
-	}
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return PRHead{}, err
-	}
-	if len(prs) == 0 {
-		// No PR yet — verify the branch actually exists on the remote, same
-		// as GetPRForBranch, so ghsync can still distinguish "pushed, no PR
-		// yet" from "branch not on the remote" from this one call.
-		metrics.GhCallsTotal.WithLabelValues("branch_check").Inc()
-		chk := runGH(ctx, "api", "repos/"+repoName+"/branches/"+branch, "--silent")
-		if chk.Run() != nil {
-			return PRHead{}, nil // branch not on remote yet
+	if pr == nil {
+		ok, err := branchExists(ctx, repoName, branch)
+		if err != nil {
+			return PRHead{}, err
+		}
+		if !ok {
+			return PRHead{}, nil
 		}
 		return PRHead{State: "pushed"}, nil
 	}
+	full, err := getPR(ctx, repoName, pr.Number)
+	if err != nil {
+		return PRHead{}, err
+	}
 	return PRHead{
-		Number:    prs[0].Number,
-		HeadSHA:   prs[0].HeadRefOid,
-		BaseRef:   prs[0].BaseRefName,
-		Mergeable: normalizeMergeable(prs[0].Mergeable),
-		State:     normalizePRState(prs[0].State),
-		URL:       prs[0].URL,
-		UpdatedAt: prs[0].UpdatedAt,
+		Number:    full.Number,
+		HeadSHA:   full.Head.SHA,
+		BaseRef:   full.Base.Ref,
+		Mergeable: normalizeMergeable(full.Mergeable),
+		State:     normalizePRState(full.rawState()),
+		URL:       full.HTMLURL,
+		UpdatedAt: full.UpdatedAt,
 	}, nil
 }
 
-// Review is aliased from forge.Review — see its doc comment there. A single
-// review left on a PR (a "changes requested"/"approved"/"commented"
-// submission with a body, as opposed to an inline review comment — see
-// PRReviewComment).
+// Review is aliased from forge.Review — see its doc comment there.
 type Review = forge.Review
 
-// GetPRReviews returns all reviews submitted on the given PR, in the order
-// GitHub returns them (oldest first). Populates Review.AuthorAssociation
-// from GitHub's authorAssociation field so ghsync can filter out feedback
-// from authors without write access (see #331).
+// GetPRReviews returns all reviews submitted on the given PR, oldest first,
+// paginated. Populates Review.AuthorAssociation (see #331).
 func GetPRReviews(ctx context.Context, repoName string, prNumber int) ([]Review, error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_reviews").Inc()
-	cmd := runGH(ctx, "pr", "view", fmt.Sprint(prNumber),
-		"--repo", repoName,
-		"--json", "reviews",
-	)
-	out, err := cmd.Output()
+	reviews := make([]Review, 0)
+	err := apiPages(ctx, fmt.Sprintf("%s/pulls/%d/reviews?per_page=100", repoPath(repoName), prNumber), func(b []byte) error {
+		var page []struct {
+			ID    int64  `json:"id"`
+			State string `json:"state"`
+			Body  string `json:"body"`
+			User  struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			SubmittedAt       string `json:"submitted_at"`
+			AuthorAssociation string `json:"author_association"`
+		}
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
+		}
+		for _, r := range page {
+			reviews = append(reviews, Review{
+				ID:                fmt.Sprint(r.ID),
+				State:             strings.ToUpper(r.State),
+				Body:              r.Body,
+				Author:            r.User.Login,
+				SubmittedAt:       r.SubmittedAt,
+				AuthorAssociation: strings.ToUpper(r.AuthorAssociation),
+			})
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	var payload struct {
-		Reviews []struct {
-			ID     string `json:"id"`
-			State  string `json:"state"`
-			Body   string `json:"body"`
-			Author struct {
-				Login string `json:"login"`
-			} `json:"author"`
-			SubmittedAt       string `json:"submittedAt"`
-			AuthorAssociation string `json:"authorAssociation"`
-		} `json:"reviews"`
-	}
-	if err := json.Unmarshal(out, &payload); err != nil {
-		return nil, err
-	}
-	reviews := make([]Review, 0, len(payload.Reviews))
-	for _, r := range payload.Reviews {
-		reviews = append(reviews, Review{
-			ID:                r.ID,
-			State:             strings.ToUpper(r.State),
-			Body:              r.Body,
-			Author:            r.Author.Login,
-			SubmittedAt:       r.SubmittedAt,
-			AuthorAssociation: strings.ToUpper(r.AuthorAssociation),
-		})
 	}
 	return reviews, nil
 }
 
 // PRReviewComment is aliased from forge.PRReviewComment — see its doc
-// comment there. A single inline (file/line-anchored) review comment left on
-// a PR's diff. Named distinctly from agent.ReviewComment (the local
-// human-left-in-app equivalent) to avoid an import cycle / naming collision.
+// comment there.
 type PRReviewComment = forge.PRReviewComment
 
 // GetPRReviewComments returns all inline review comments left on the given
-// PR's diff, across all reviews. Paginates through the full result set.
-// Populates PRReviewComment.AuthorAssociation from GitHub's
-// author_association field so ghsync can filter out feedback from authors
-// without write access (see #331).
+// PR's diff, across all reviews, paginated. Populates AuthorAssociation (see
+// #331).
 func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]PRReviewComment, error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_review_comments").Inc()
-	cmd := runGH(ctx, "api",
-		fmt.Sprintf("repos/%s/pulls/%d/comments", repoName, prNumber),
-		"--paginate",
-	)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-	// --paginate concatenates one JSON array per page back-to-back rather than
-	// merging them into a single array, so decode with a streaming decoder that
-	// consumes each array in turn.
-	dec := json.NewDecoder(strings.NewReader(string(out)))
 	var comments []PRReviewComment
-	for dec.More() {
+	err := apiPages(ctx, fmt.Sprintf("%s/pulls/%d/comments?per_page=100", repoPath(repoName), prNumber), func(b []byte) error {
 		var page []struct {
 			ID        int64  `json:"id"`
 			Path      string `json:"path"`
@@ -409,8 +557,8 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 			CreatedAt         string `json:"created_at"`
 			AuthorAssociation string `json:"author_association"`
 		}
-		if err := dec.Decode(&page); err != nil {
-			return nil, err
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
 		}
 		for _, c := range page {
 			line := 0
@@ -435,67 +583,89 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 				AuthorAssociation: c.AuthorAssociation,
 			})
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return comments, nil
 }
 
-// Check is aliased from forge.Check — see its doc comment there. A single
-// GitHub Actions / status check result on a PR.
+// Check is aliased from forge.Check — see its doc comment there.
 type Check = forge.Check
 
-// GetFailedChecks returns the checks on the given PR whose bucket is "fail"
-// or "cancel" (build/test failures and cancelled runs — both indicate the
-// agent's last push didn't pass CI). Pending/skipped/passing checks are
-// excluded.
+// GetFailedChecks returns the checks on the given PR's head commit whose
+// bucket is "fail" or "cancel" (build/test failures and cancelled runs).
+// Pending/skipped/passing checks are excluded. Combines check runs (GitHub
+// Actions etc.) and legacy commit statuses, as `gh pr checks` did.
 func GetFailedChecks(ctx context.Context, repoName string, prNumber int) ([]Check, error) {
 	metrics.GhCallsTotal.WithLabelValues("pr_checks").Inc()
-	cmd := runGH(ctx, "pr", "checks", fmt.Sprint(prNumber),
-		"--repo", repoName,
-		"--json", "name,link,bucket",
-	)
-	out, err := cmd.Output()
+	pr, err := getPR(ctx, repoName, prNumber)
 	if err != nil {
-		// `gh pr checks` exits non-zero when any check has failed (or none
-		// exist yet), even though it still prints valid JSON on stdout in the
-		// failing-checks case. Try to parse stdout before giving up.
-		if len(out) == 0 {
-			return nil, err
-		}
+		return nil, err
 	}
-	var raw []struct {
-		Name   string `json:"name"`
-		Link   string `json:"link"`
-		Bucket string `json:"bucket"`
-	}
-	if jerr := json.Unmarshal(out, &raw); jerr != nil {
-		if err != nil {
-			return nil, err
-		}
-		return nil, jerr
-	}
+	sha := pr.Head.SHA
 	checks := make([]Check, 0)
-	for _, c := range raw {
-		if c.Bucket == "fail" || c.Bucket == "cancel" {
-			checks = append(checks, Check{Name: c.Name, Link: c.Link, Bucket: c.Bucket})
+
+	err = apiPages(ctx, fmt.Sprintf("%s/commits/%s/check-runs?per_page=100", repoPath(repoName), url.PathEscape(sha)), func(b []byte) error {
+		var page struct {
+			CheckRuns []struct {
+				Name       string `json:"name"`
+				Conclusion string `json:"conclusion"`
+				HTMLURL    string `json:"html_url"`
+			} `json:"check_runs"`
 		}
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
+		}
+		for _, c := range page.CheckRuns {
+			switch c.Conclusion {
+			case "failure", "timed_out", "startup_failure", "action_required":
+				checks = append(checks, Check{Name: c.Name, Link: c.HTMLURL, Bucket: "fail"})
+			case "cancelled":
+				checks = append(checks, Check{Name: c.Name, Link: c.HTMLURL, Bucket: "cancel"})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	err = apiPages(ctx, fmt.Sprintf("%s/commits/%s/status?per_page=100", repoPath(repoName), url.PathEscape(sha)), func(b []byte) error {
+		var page struct {
+			Statuses []struct {
+				Context   string `json:"context"`
+				State     string `json:"state"`
+				TargetURL string `json:"target_url"`
+			} `json:"statuses"`
+		}
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
+		}
+		for _, s := range page.Statuses {
+			if s.State == "failure" || s.State == "error" {
+				checks = append(checks, Check{Name: s.Context, Link: s.TargetURL, Bucket: "fail"})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return checks, nil
 }
 
-// Issue is aliased from forge.Issue — see its doc comment there. A GitHub
-// issue as returned by `gh issue list`.
+// Issue is aliased from forge.Issue — see its doc comment there.
 type Issue = forge.Issue
 
 // ListOpenIssues returns every open issue for the given repo (org/repo
 // format), optionally filtered to issues carrying the given label (empty =
 // all open issues). Pull requests are never included: the REST /issues
-// endpoint returns both issues and PRs, so any element carrying a non-null
-// pull_request field is skipped, matching `gh issue list`'s behavior of
-// excluding PRs.
-//
-// Uses `gh api ... --paginate` rather than `gh issue list --limit N` so the
-// result is never silently truncated (see issue #265) — reconciliation of
-// disappeared issues depends on the fetch being complete.
+// endpoint returns both, so any element with a non-null pull_request field
+// is skipped. Follows pagination to the end so the result is never silently
+// truncated (see issue #265) — reconciliation of disappeared issues depends
+// on the fetch being complete.
 func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error) {
 	q := url.Values{}
 	q.Set("state", "open")
@@ -503,20 +673,9 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 	if label != "" {
 		q.Set("labels", label)
 	}
-	path := fmt.Sprintf("repos/%s/issues?%s", repoName, q.Encode())
-
 	metrics.GhCallsTotal.WithLabelValues("issue_list").Inc()
-	out, err := runGH(ctx, "api", path, "--paginate").Output()
-	if err != nil {
-		return nil, err
-	}
-
-	// --paginate concatenates one JSON array per page back-to-back rather than
-	// merging them into a single array, so decode with a streaming decoder that
-	// consumes each array in turn (mirrors GetPRReviewComments below).
-	dec := json.NewDecoder(strings.NewReader(string(out)))
 	var issues []Issue
-	for dec.More() {
+	err := apiPages(ctx, fmt.Sprintf("%s/issues?%s", repoPath(repoName), q.Encode()), func(b []byte) error {
 		var page []struct {
 			Number            int    `json:"number"`
 			Title             string `json:"title"`
@@ -530,14 +689,11 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 				Name string `json:"name"`
 			} `json:"labels"`
 		}
-		if err := dec.Decode(&page); err != nil {
-			return nil, err
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
 		}
 		for _, r := range page {
 			if r.PullRequest != nil {
-				// The REST /issues endpoint also returns pull requests; skip them
-				// so behavior matches `gh issue list`, which excludes PRs. Without
-				// this, PRs would start getting imported as tasks.
 				continue
 			}
 			labels := make([]string, 0, len(r.Labels))
@@ -553,32 +709,23 @@ func ListOpenIssues(ctx context.Context, repoName, label string) ([]Issue, error
 				AuthorAssociation: r.AuthorAssociation,
 			})
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return issues, nil
 }
 
-// IssueComment is aliased from forge.IssueComment — see its doc comment
-// there. A single comment on a GitHub issue (not a PR review comment — see
-// PRReviewComment).
+// IssueComment is aliased from forge.IssueComment — see its doc comment there.
 type IssueComment = forge.IssueComment
 
-// GetIssueComments returns every comment on the given issue, in the order
-// GitHub returns them (oldest first). Paginates through the full result set.
+// GetIssueComments returns every comment on the given issue, oldest first.
+// Paginates through the full result set.
 func GetIssueComments(ctx context.Context, repoName string, issueNumber int) ([]IssueComment, error) {
 	metrics.GhCallsTotal.WithLabelValues("issue_comments").Inc()
-	cmd := runGH(ctx, "api",
-		fmt.Sprintf("repos/%s/issues/%d/comments", repoName, issueNumber),
-		"--paginate",
-	)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	// Same --paginate concatenation caveat as GetPRReviewComments/ListOpenIssues.
-	dec := json.NewDecoder(strings.NewReader(string(out)))
 	var comments []IssueComment
-	for dec.More() {
+	err := apiPages(ctx, fmt.Sprintf("%s/issues/%d/comments?per_page=100", repoPath(repoName), issueNumber), func(b []byte) error {
 		var page []struct {
 			ID                int64  `json:"id"`
 			Body              string `json:"body"`
@@ -588,8 +735,8 @@ func GetIssueComments(ctx context.Context, repoName string, issueNumber int) ([]
 			} `json:"user"`
 			CreatedAt string `json:"created_at"`
 		}
-		if err := dec.Decode(&page); err != nil {
-			return nil, err
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
 		}
 		for _, c := range page {
 			comments = append(comments, IssueComment{
@@ -600,51 +747,49 @@ func GetIssueComments(ctx context.Context, repoName string, issueNumber int) ([]
 				CreatedAt:         c.CreatedAt,
 			})
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return comments, nil
 }
 
-// AddIssueLabel adds a label to a GitHub issue via the gh CLI. Used by the
-// write-back feature to signal "an agent is already working on this" without
-// requiring the label to previously exist on the issue (it must already exist
-// on the repo, though — `gh issue edit --add-label` fails if the label itself
-// hasn't been created in the repo's label set).
+// AddIssueLabel adds a label to a GitHub issue. Used by the write-back
+// feature to signal "an agent is already working on this".
 func AddIssueLabel(ctx context.Context, repoName string, issueNumber int, label string) error {
 	metrics.GhCallsTotal.WithLabelValues("issue_label_add").Inc()
-	out, err := runGH(ctx, "issue", "edit", fmt.Sprint(issueNumber),
-		"--repo", repoName,
-		"--add-label", label,
-	).CombinedOutput()
+	_, _, err := apiDo(ctx, http.MethodPost, fmt.Sprintf("%s/issues/%d/labels", repoPath(repoName), issueNumber),
+		map[string][]string{"labels": {label}})
 	if err != nil {
-		return fmt.Errorf("gh issue edit --add-label: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("github add label: %w", err)
 	}
 	return nil
 }
 
-// CommentOnIssue posts a comment on a GitHub issue via the gh CLI. Used by the
-// write-back feature to link the PR opened for an imported issue.
+// CommentOnIssue posts a comment on a GitHub issue. Used by the write-back
+// feature to link the PR opened for an imported issue.
 func CommentOnIssue(ctx context.Context, repoName string, issueNumber int, body string) error {
 	metrics.GhCallsTotal.WithLabelValues("issue_comment").Inc()
-	out, err := runGH(ctx, "issue", "comment", fmt.Sprint(issueNumber),
-		"--repo", repoName,
-		"--body", body,
-	).CombinedOutput()
+	_, _, err := apiDo(ctx, http.MethodPost, fmt.Sprintf("%s/issues/%d/comments", repoPath(repoName), issueNumber),
+		map[string]string{"body": body})
 	if err != nil {
-		return fmt.Errorf("gh issue comment: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("github issue comment: %w", err)
 	}
 	return nil
 }
 
-// CloseIssueWithComment closes a GitHub issue and posts a comment in the same
-// call via the gh CLI. Used by the write-back feature once a task's PR merges.
+// CloseIssueWithComment posts a comment on a GitHub issue and closes it.
+// Used by the write-back feature once a task's PR merges.
 func CloseIssueWithComment(ctx context.Context, repoName string, issueNumber int, body string) error {
 	metrics.GhCallsTotal.WithLabelValues("issue_close").Inc()
-	out, err := runGH(ctx, "issue", "close", fmt.Sprint(issueNumber),
-		"--repo", repoName,
-		"--comment", body,
-	).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("gh issue close: %w: %s", err, strings.TrimSpace(string(out)))
+	if _, _, err := apiDo(ctx, http.MethodPost, fmt.Sprintf("%s/issues/%d/comments", repoPath(repoName), issueNumber),
+		map[string]string{"body": body}); err != nil {
+		return fmt.Errorf("github issue close: %w", err)
+	}
+	if _, _, err := apiDo(ctx, http.MethodPatch, fmt.Sprintf("%s/issues/%d", repoPath(repoName), issueNumber),
+		map[string]string{"state": "closed"}); err != nil {
+		return fmt.Errorf("github issue close: %w", err)
 	}
 	return nil
 }

@@ -179,7 +179,7 @@ var (
 	// name, serving as an early warning signal for GitHub API rate limiting.
 	GhCallsTotal = factory.NewCounterVec(prometheus.CounterOpts{
 		Name: "ate_gh_calls_total",
-		Help: "Total number of `gh` CLI invocations, labeled by logical command.",
+		Help: "Total number of GitHub REST API calls, labeled by logical command.",
 	}, []string{"command"})
 
 	// GiteaCallsTotal counts Gitea REST API calls (internal/forge/gitea),

@@ -21,6 +21,7 @@ triggers the "Release" workflow the same way.
 
 ### Changed
 
+- **GitHub is now talked to over its REST API instead of the `gh` CLI.** PR sync, issue import, write-back and PR creation make direct HTTP requests rather than spawning several `gh` processes per open PR per sweep. Auth is unchanged: `GH_TOKEN`, then `GITHUB_TOKEN`, then the output of `gh auth token` (so an existing `gh auth login` keeps working), and the Health page and `/github/auth-status` still report it. `GITHUB_API_URL` can point at a GitHub Enterprise API. The `ate_gh_calls_total` metric now counts API requests.
 - **Faster live log view on long runs.** Live log lines in the task detail view are now batched once per animation frame and deduplicated with an id set, instead of copying and re-rendering the whole list for every line.
 
 ### Added

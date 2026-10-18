@@ -111,7 +111,7 @@ list — it doesn't print env vars, so here's what `run.sh` itself reads
 | `REPO_BASE_DIR` | `/tmp/repos` (warns) | Host directory containing the repos agents work in — set this to your real projects dir |
 | `ATE_VERSION` | `latest` | Image tag to pull, e.g. `v0.1.0` |
 | `ATE_CLI_SUFFIX` | _(empty)_ | Set to `-all-cli` to use the Codex/Qwen/Opencode-preinstalled backend image (or just pass `--all-cli`) |
-| `GH_TOKEN` | _(from `gh auth token`)_ | GitHub token for PR sync; auto-detected if the `gh` CLI is logged in |
+| `GH_TOKEN` | _(from `gh auth token`)_ | GitHub token for all GitHub API calls (PR sync, issue import, PR creation); `GITHUB_TOKEN` is also accepted, and it is auto-detected if the `gh` CLI is logged in. `GITHUB_API_URL` overrides the API base (GitHub Enterprise) |
 | `TRAEFIK_HOST` | _(empty)_ | If set, also loads `docker-compose.traefik.yml` to expose the app behind Traefik |
 | `INSECURE_SKIP_SSL_VERIFY` | `false` | Set `true` to disable SSL verification (git/npm/Node) behind a corporate TLS proxy |
 | `SSL_CA_CERT_PATH` | _(empty)_ | Path to a corporate CA `.pem` file to trust instead — safer alternative to `INSECURE_SKIP_SSL_VERIFY` |

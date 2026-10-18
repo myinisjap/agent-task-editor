@@ -2,738 +2,408 @@ package ghclient
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 )
 
-// fakeCmd implements ghRunner with a canned response.
-type fakeCmd struct {
-	output []byte
-	err    error
+type recorded struct {
+	Method, Path, Query, Body, Auth string
 }
 
-func (f *fakeCmd) Output() ([]byte, error)         { return f.output, f.err }
-func (f *fakeCmd) CombinedOutput() ([]byte, error) { return f.output, f.err }
-func (f *fakeCmd) Run() error                      { return f.err }
-
-// scriptedRunner installs a queue of canned responses, consumed in call
-// order. Each entry may optionally assert on the args it expects to see.
-// If more calls happen than were scripted, the test fails loudly instead of
-// silently returning zero values, so a missing script entry is caught.
-func scriptedRunner(t *testing.T, script []func(t *testing.T, args []string) fakeCmd) {
+// fakeAPI starts a server answering via h, points the client at it, and
+// records every request.
+func fakeAPI(t *testing.T, h func(r recorded, w http.ResponseWriter, req *http.Request)) *[]recorded {
 	t.Helper()
-	orig := runGH
-	i := 0
-	runGH = func(_ context.Context, args ...string) ghRunner {
-		if i >= len(script) {
-			t.Fatalf("unexpected extra gh call #%d with args %v", i+1, args)
-		}
-		fc := script[i](t, args)
-		i++
-		return &fc
-	}
-	t.Cleanup(func() {
-		runGH = orig
-		if i != len(script) {
-			t.Fatalf("expected %d gh calls, got %d", len(script), i)
-		}
-	})
+	var reqs []recorded
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		b, _ := io.ReadAll(req.Body)
+		r := recorded{req.Method, req.URL.Path, req.URL.RawQuery, string(b), req.Header.Get("Authorization")}
+		reqs = append(reqs, r)
+		h(r, w, req)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("GITHUB_API_URL", srv.URL)
+	t.Setenv("GH_TOKEN", "tok123")
+	return &reqs
 }
 
-func argsContain(args []string, needle string) bool {
-	for _, a := range args {
-		if a == needle {
-			return true
-		}
-	}
-	return false
+func jsonOK(w http.ResponseWriter, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(body))
 }
 
-func TestGetPRForBranch_StateNormalization(t *testing.T) {
+func TestAuthHeaderSent(t *testing.T) {
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { jsonOK(w, `[]`) })
+	if _, err := GetPRReviews(context.Background(), "acme/widgets", 1); err != nil {
+		t.Fatal(err)
+	}
+	if (*reqs)[0].Auth != "Bearer tok123" {
+		t.Errorf("auth = %q", (*reqs)[0].Auth)
+	}
+}
+
+func TestGetPRForBranch(t *testing.T) {
 	cases := []struct {
-		name       string
-		json       string
-		wantState  string
-		wantURL    string
-		wantNumber int
+		name, json, state string
+		want              string
+		num               int
 	}{
-		{
-			name:       "open",
-			json:       `[{"state":"OPEN","number":1,"url":"https://github.com/acme/widgets/pull/1"}]`,
-			wantState:  "pr_open",
-			wantURL:    "https://github.com/acme/widgets/pull/1",
-			wantNumber: 1,
-		},
-		{
-			name:       "merged",
-			json:       `[{"state":"MERGED","number":2,"url":"https://github.com/acme/widgets/pull/2"}]`,
-			wantState:  "pr_merged",
-			wantURL:    "https://github.com/acme/widgets/pull/2",
-			wantNumber: 2,
-		},
-		{
-			name:       "closed",
-			json:       `[{"state":"CLOSED","number":3,"url":"https://github.com/acme/widgets/pull/3"}]`,
-			wantState:  "pr_closed",
-			wantURL:    "https://github.com/acme/widgets/pull/3",
-			wantNumber: 3,
-		},
+		{"open", `[{"state":"open","number":1,"html_url":"u1"}]`, "", "pr_open", 1},
+		{"merged", `[{"state":"closed","merged_at":"2024-01-01T00:00:00Z","number":2,"html_url":"u2"}]`, "", "pr_merged", 2},
+		{"closed", `[{"state":"closed","number":3,"html_url":"u3"}]`, "", "pr_closed", 3},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-				func(t *testing.T, args []string) fakeCmd {
-					if !argsContain(args, "list") {
-						t.Fatalf("expected pr list call, got %v", args)
-					}
-					return fakeCmd{output: []byte(tc.json)}
-				},
-			})
-
-			state, url, num, err := GetPRForBranch(context.Background(), "acme/widgets", "some-branch")
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
+			reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { jsonOK(w, tc.json) })
+			st, url, n, err := GetPRForBranch(context.Background(), "acme/widgets", "feat-x")
+			if err != nil || st != tc.want || n != tc.num || url != fmt.Sprintf("u%d", tc.num) {
+				t.Fatalf("got (%q,%q,%d,%v)", st, url, n, err)
 			}
-			if state != tc.wantState {
-				t.Errorf("state = %q, want %q", state, tc.wantState)
-			}
-			if url != tc.wantURL {
-				t.Errorf("url = %q, want %q", url, tc.wantURL)
-			}
-			if num != tc.wantNumber {
-				t.Errorf("number = %d, want %d", num, tc.wantNumber)
+			r := (*reqs)[0]
+			if r.Path != "/repos/acme/widgets/pulls" || !strings.Contains(r.Query, "head=acme%3Afeat-x") {
+				t.Errorf("request = %+v", r)
 			}
 		})
 	}
 }
 
-func TestGetPRForBranch_NoPR_BranchExists(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{output: []byte(`[]`)}
-		},
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "api") {
-				t.Fatalf("expected branch-check call, got %v", args)
+func TestGetPRForBranch_NoPR(t *testing.T) {
+	for _, exists := range []bool{true, false} {
+		fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+			if strings.HasSuffix(r.Path, "/pulls") {
+				jsonOK(w, `[]`)
+				return
 			}
-			return fakeCmd{err: nil}
-		},
-	})
-
-	state, url, num, err := GetPRForBranch(context.Background(), "acme/widgets", "some-branch")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if state != "pushed" {
-		t.Errorf("state = %q, want %q", state, "pushed")
-	}
-	if url != "" || num != 0 {
-		t.Errorf("url/num = %q/%d, want empty/0", url, num)
+			if !exists {
+				http.Error(w, `{"message":"Branch not found"}`, 404)
+				return
+			}
+			jsonOK(w, `{}`)
+		})
+		st, _, n, err := GetPRForBranch(context.Background(), "acme/widgets", "feat/x")
+		want := ""
+		if exists {
+			want = "pushed"
+		}
+		if err != nil || st != want || n != 0 {
+			t.Errorf("exists=%v got (%q,%d,%v)", exists, st, n, err)
+		}
 	}
 }
 
-func TestGetPRForBranch_NoPR_BranchNotExists(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{output: []byte(`[]`)}
-		},
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{err: errors.New("404")}
-		},
-	})
-
-	state, url, num, err := GetPRForBranch(context.Background(), "acme/widgets", "some-branch")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if state != "" {
-		t.Errorf("state = %q, want empty", state)
-	}
-	if url != "" || num != 0 {
-		t.Errorf("url/num = %q/%d, want empty/0", url, num)
+func TestGetPRForBranch_Error(t *testing.T) {
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { http.Error(w, "boom", 500) })
+	if _, _, _, err := GetPRForBranch(context.Background(), "acme/widgets", "b"); err == nil {
+		t.Fatal("want error")
 	}
 }
 
-func TestCreatePR_ExistingPRShortCircuit(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "list") {
-				t.Fatalf("expected pr list call, got %v", args)
-			}
-			return fakeCmd{output: []byte(`[{"state":"OPEN","number":7,"url":"https://github.com/acme/widgets/pull/7"}]`)}
-		},
+func TestCreatePR_ExistingShortCircuit(t *testing.T) {
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		jsonOK(w, `[{"state":"open","number":5,"html_url":"u5"}]`)
 	})
-
-	state, url, err := CreatePR(context.Background(), "acme/widgets", "some-branch", "main", "title", "body")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if state != "pr_open" {
-		t.Errorf("state = %q, want pr_open", state)
-	}
-	if url != "https://github.com/acme/widgets/pull/7" {
-		t.Errorf("url = %q, want pull/7", url)
+	st, u, err := CreatePR(context.Background(), "acme/widgets", "b", "main", "t", "b")
+	if err != nil || st != "pr_open" || u != "u5" || len(*reqs) != 1 {
+		t.Fatalf("got (%q,%q,%v) reqs=%d", st, u, err, len(*reqs))
 	}
 }
 
-func TestCreatePR_CreatesNew(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		// Idempotency pre-check: pr list -> empty
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "list") {
-				t.Fatalf("expected pr list call, got %v", args)
-			}
-			return fakeCmd{output: []byte(`[]`)}
-		},
-		// GetPRForBranch's follow-up branch-check since PR list was empty.
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "api") {
-				t.Fatalf("expected branch-check call, got %v", args)
-			}
-			return fakeCmd{err: errors.New("404")}
-		},
-		// pr create
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "create") {
-				t.Fatalf("expected pr create call, got %v", args)
-			}
-			return fakeCmd{output: []byte("Creating pull request\nhttps://github.com/org/repo/pull/5\n")}
-		},
+func TestCreatePR_CreatesNewWithDefaultBase(t *testing.T) {
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		switch {
+		case r.Method == "POST":
+			w.WriteHeader(201)
+			jsonOK(w, `{"number":9,"html_url":"u9"}`)
+		case strings.HasSuffix(r.Path, "/pulls"):
+			jsonOK(w, `[]`)
+		case strings.Contains(r.Path, "/branches/"):
+			jsonOK(w, `{}`)
+		default:
+			jsonOK(w, `{"default_branch":"develop"}`)
+		}
 	})
-
-	state, url, err := CreatePR(context.Background(), "acme/widgets", "some-branch", "main", "title", "body")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
+	st, u, err := CreatePR(context.Background(), "acme/widgets", "b", "", "T", "B")
+	if err != nil || st != "pr_open" || u != "u9" {
+		t.Fatalf("got (%q,%q,%v)", st, u, err)
 	}
-	if state != "pr_open" {
-		t.Errorf("state = %q, want pr_open", state)
-	}
-	if url != "https://github.com/org/repo/pull/5" {
-		t.Errorf("url = %q, want pull/5", url)
+	last := (*reqs)[len(*reqs)-1]
+	var p map[string]string
+	_ = json.Unmarshal([]byte(last.Body), &p)
+	if p["base"] != "develop" || p["head"] != "b" || p["title"] != "T" || p["body"] != "B" {
+		t.Errorf("payload = %v", p)
 	}
 }
 
 func TestCreatePR_RaceAlreadyExists(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		// Idempotency pre-check: pr list -> empty
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{output: []byte(`[]`)}
-		},
-		// GetPRForBranch's follow-up branch-check since PR list was empty.
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{err: errors.New("404")}
-		},
-		// pr create fails with "already exists"
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "create") {
-				t.Fatalf("expected pr create call, got %v", args)
+	listCalls := 0
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		switch {
+		case r.Method == "POST":
+			w.WriteHeader(422)
+			jsonOK(w, `{"message":"Validation Failed","errors":[{"message":"A pull request already exists for acme:b."}]}`)
+		case strings.HasSuffix(r.Path, "/pulls"):
+			listCalls++
+			if listCalls == 1 {
+				jsonOK(w, `[]`)
+			} else {
+				jsonOK(w, `[{"state":"open","number":7,"html_url":"u7"}]`)
 			}
-			return fakeCmd{output: []byte("a pull request for branch \"some-branch\" already exists"), err: errors.New("exit status 1")}
-		},
-		// Re-check pr list -> now has a PR
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "list") {
-				t.Fatalf("expected re-check pr list call, got %v", args)
-			}
-			return fakeCmd{output: []byte(`[{"state":"OPEN","number":9,"url":"https://github.com/acme/widgets/pull/9"}]`)}
-		},
+		default:
+			jsonOK(w, `{}`)
+		}
 	})
-
-	state, url, err := CreatePR(context.Background(), "acme/widgets", "some-branch", "main", "title", "body")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if state != "pr_open" {
-		t.Errorf("state = %q, want pr_open", state)
-	}
-	if url != "https://github.com/acme/widgets/pull/9" {
-		t.Errorf("url = %q, want pull/9", url)
+	st, u, err := CreatePR(context.Background(), "acme/widgets", "b", "main", "t", "b")
+	if err != nil || st != "pr_open" || u != "u7" {
+		t.Fatalf("got (%q,%q,%v)", st, u, err)
 	}
 }
 
 func TestGetPRHead(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !strings.Contains(strings.Join(args, " "), "headRefOid") {
-				t.Fatalf("expected headRefOid in json fields, got %v", args)
-			}
-			return fakeCmd{output: []byte(`[{"number":5,"headRefOid":"abc123"}]`)}
-		},
-	})
-
-	head, err := GetPRHead(context.Background(), "acme/widgets", "some-branch")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if head.Number != 5 || head.HeadSHA != "abc123" {
-		t.Errorf("head = %+v, want {5 abc123}", head)
-	}
-}
-
-func TestGetPRHead_NoPR_BranchNotOnRemote(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{output: []byte(`[]`)}
-		},
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "repos/acme/widgets/branches/some-branch") {
-				t.Errorf("expected branch-existence check, got args %v", args)
-			}
-			return fakeCmd{err: errors.New("exit status 1")}
-		},
-	})
-
-	head, err := GetPRHead(context.Background(), "acme/widgets", "some-branch")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if head != (PRHead{}) {
-		t.Errorf("head = %+v, want zero value", head)
-	}
-}
-
-func TestGetPRHead_NoPR_BranchPushed(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{output: []byte(`[]`)}
-		},
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "repos/acme/widgets/branches/some-branch") {
-				t.Errorf("expected branch-existence check, got args %v", args)
-			}
-			return fakeCmd{} // branch exists, no error
-		},
-	})
-
-	head, err := GetPRHead(context.Background(), "acme/widgets", "some-branch")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if head.State != "pushed" || head.Number != 0 {
-		t.Errorf("head = %+v, want State: \"pushed\"", head)
-	}
-}
-
-func TestGetPRHead_Mergeability(t *testing.T) {
 	cases := []struct {
-		name string
-		json string
-		want Mergeability
-	}{
-		{"conflicting", `[{"number":5,"headRefOid":"abc","baseRefName":"main","mergeable":"CONFLICTING"}]`, MergeableConflicting},
-		{"mergeable", `[{"number":5,"headRefOid":"abc","baseRefName":"main","mergeable":"MERGEABLE"}]`, MergeableClean},
-		{"unknown", `[{"number":5,"headRefOid":"abc","baseRefName":"main","mergeable":"UNKNOWN"}]`, MergeableUnknown},
-		// A field gh didn't return, or an enum member it grows later, must
-		// never be read as a conflict.
-		{"absent", `[{"number":5,"headRefOid":"abc","baseRefName":"main"}]`, MergeableUnknown},
-		{"unrecognised", `[{"number":5,"headRefOid":"abc","baseRefName":"main","mergeable":"BLOCKED"}]`, MergeableUnknown},
-	}
+		mergeable string
+		want      forge.Mergeability
+	}{{"true", MergeableClean}, {"false", MergeableConflicting}, {"null", MergeableUnknown}}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-				func(t *testing.T, args []string) fakeCmd {
-					if !strings.Contains(strings.Join(args, " "), "mergeable") {
-						t.Fatalf("expected mergeable in json fields, got %v", args)
-					}
-					return fakeCmd{output: []byte(tc.json)}
-				},
-			})
-
-			head, err := GetPRHead(context.Background(), "acme/widgets", "some-branch")
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
+		fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+			if strings.HasSuffix(r.Path, "/pulls") {
+				jsonOK(w, `[{"number":4}]`)
+				return
 			}
-			if head.Mergeable != tc.want {
-				t.Errorf("mergeable = %q, want %q", head.Mergeable, tc.want)
-			}
-			if head.BaseRef != "main" {
-				t.Errorf("base ref = %q, want main", head.BaseRef)
-			}
+			jsonOK(w, `{"number":4,"state":"open","html_url":"u4","updated_at":"T","mergeable":`+tc.mergeable+`,"head":{"sha":"abc"},"base":{"ref":"main"}}`)
 		})
-	}
-}
-
-func TestGetPRReviews(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "view") {
-				t.Fatalf("expected pr view call, got %v", args)
-			}
-			return fakeCmd{output: []byte(`{"reviews":[
-				{"id":"r1","state":"changes_requested","body":"please fix X","author":{"login":"alice"},"submittedAt":"2024-01-01T00:00:00Z","authorAssociation":"collaborator"},
-				{"id":"r2","state":"APPROVED","body":"lgtm","author":{"login":"bob"},"submittedAt":"2024-01-02T00:00:00Z","authorAssociation":"NONE"}
-			]}`)}
-		},
-	})
-
-	reviews, err := GetPRReviews(context.Background(), "acme/widgets", 5)
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if len(reviews) != 2 {
-		t.Fatalf("expected 2 reviews, got %d", len(reviews))
-	}
-	if reviews[0].State != "CHANGES_REQUESTED" {
-		t.Errorf("review[0].State = %q, want normalized CHANGES_REQUESTED", reviews[0].State)
-	}
-	if reviews[0].Author != "alice" || reviews[0].Body != "please fix X" {
-		t.Errorf("review[0] = %+v, unexpected", reviews[0])
-	}
-	if reviews[0].AuthorAssociation != "COLLABORATOR" {
-		t.Errorf("review[0].AuthorAssociation = %q, want normalized COLLABORATOR", reviews[0].AuthorAssociation)
-	}
-	if reviews[1].AuthorAssociation != "NONE" {
-		t.Errorf("review[1].AuthorAssociation = %q, want NONE", reviews[1].AuthorAssociation)
-	}
-}
-
-func TestGetPRReviewComments_Paginated(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "--paginate") {
-				t.Fatalf("expected --paginate flag, got %v", args)
-			}
-			// Two pages concatenated back to back, as gh --paginate does for arrays.
-			page1 := `[{"id":1,"path":"a.go","line":10,"start_line":10,"side":"RIGHT","body":"fix this","diff_hunk":"@@ -1 +1 @@","commit_id":"sha1","user":{"login":"alice"},"created_at":"2024-01-01T00:00:00Z","author_association":"COLLABORATOR"}]`
-			page2 := `[{"id":2,"path":"b.go","line":20,"side":"RIGHT","body":"and this","diff_hunk":"@@ -2 +2 @@","commit_id":"sha1","user":{"login":"bob"},"created_at":"2024-01-01T00:01:00Z","author_association":"NONE"}]`
-			return fakeCmd{output: []byte(page1 + page2)}
-		},
-	})
-
-	comments, err := GetPRReviewComments(context.Background(), "acme/widgets", 5)
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if len(comments) != 2 {
-		t.Fatalf("expected 2 comments, got %d: %+v", len(comments), comments)
-	}
-	if comments[0].ID != "1" || comments[0].Path != "a.go" || comments[0].Line != 10 {
-		t.Errorf("comment[0] = %+v, unexpected", comments[0])
-	}
-	if comments[0].AuthorAssociation != "COLLABORATOR" {
-		t.Errorf("comment[0].AuthorAssociation = %q, want COLLABORATOR", comments[0].AuthorAssociation)
-	}
-	if comments[1].ID != "2" || comments[1].Path != "b.go" {
-		t.Errorf("comment[1] = %+v, unexpected", comments[1])
-	}
-	if comments[1].AuthorAssociation != "NONE" {
-		t.Errorf("comment[1].AuthorAssociation = %q, want NONE", comments[1].AuthorAssociation)
-	}
-}
-
-func TestGetFailedChecks_FiltersToFailures(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "checks") {
-				t.Fatalf("expected pr checks call, got %v", args)
-			}
-			// gh pr checks exits non-zero when a check has failed, but still
-			// prints JSON on stdout — simulate that.
-			return fakeCmd{
-				output: []byte(`[
-					{"name":"build","link":"https://ci/1","bucket":"fail"},
-					{"name":"lint","link":"https://ci/2","bucket":"pass"},
-					{"name":"deploy","link":"https://ci/3","bucket":"cancel"},
-					{"name":"e2e","link":"https://ci/4","bucket":"pending"}
-				]`),
-				err: errors.New("exit status 8"),
-			}
-		},
-	})
-
-	checks, err := GetFailedChecks(context.Background(), "acme/widgets", 5)
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if len(checks) != 2 {
-		t.Fatalf("expected 2 failed/cancelled checks, got %d: %+v", len(checks), checks)
-	}
-	if checks[0].Name != "build" || checks[1].Name != "deploy" {
-		t.Errorf("checks = %+v, unexpected", checks)
-	}
-}
-
-func TestGetFailedChecks_HardFailureNoOutput(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{err: errors.New("gh: not found")}
-		},
-	})
-
-	if _, err := GetFailedChecks(context.Background(), "acme/widgets", 5); err == nil {
-		t.Fatal("expected error when gh produces no output and fails")
-	}
-}
-
-func TestListOpenIssues_LabelFiltering(t *testing.T) {
-	t.Run("no label", func(t *testing.T) {
-		var capturedArgs []string
-		scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-			func(t *testing.T, args []string) fakeCmd {
-				capturedArgs = args
-				return fakeCmd{output: []byte(`[{"number":1,"title":"t1","body":"b1","html_url":"u1","labels":[{"name":"bug"},{"name":"urgent"}]}]`)}
-			},
-		})
-
-		issues, err := ListOpenIssues(context.Background(), "acme/widgets", "")
+		h, err := GetPRHead(context.Background(), "acme/widgets", "b")
 		if err != nil {
-			t.Fatalf("unexpected err: %v", err)
+			t.Fatal(err)
 		}
-		joined := strings.Join(capturedArgs, " ")
-		if strings.Contains(joined, "labels=") {
-			t.Errorf("did not expect a labels= query param in args: %v", capturedArgs)
+		if h.Number != 4 || h.HeadSHA != "abc" || h.BaseRef != "main" || h.State != "pr_open" || h.URL != "u4" || h.UpdatedAt != "T" || h.Mergeable != tc.want {
+			t.Errorf("mergeable=%s got %+v", tc.mergeable, h)
 		}
-		if !argsContain(capturedArgs, "--paginate") {
-			t.Errorf("expected --paginate flag in args: %v", capturedArgs)
-		}
-		if len(issues) != 1 {
-			t.Fatalf("expected 1 issue, got %d", len(issues))
-		}
-		if issues[0].URL != "u1" {
-			t.Errorf("url = %q, want %q (mapped from html_url)", issues[0].URL, "u1")
-		}
-		if got, want := issues[0].Labels, []string{"bug", "urgent"}; !equalStrSlices(got, want) {
-			t.Errorf("labels = %v, want %v", got, want)
-		}
-	})
+	}
+}
 
-	t.Run("with label", func(t *testing.T) {
-		var capturedArgs []string
-		scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-			func(t *testing.T, args []string) fakeCmd {
-				capturedArgs = args
-				return fakeCmd{output: []byte(`[]`)}
-			},
+func TestGetPRHead_NoPR(t *testing.T) {
+	for _, exists := range []bool{true, false} {
+		fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+			if strings.HasSuffix(r.Path, "/pulls") {
+				jsonOK(w, `[]`)
+			} else if exists {
+				jsonOK(w, `{}`)
+			} else {
+				http.Error(w, "{}", 404)
+			}
 		})
-
-		_, err := ListOpenIssues(context.Background(), "acme/widgets", "bug")
+		h, err := GetPRHead(context.Background(), "acme/widgets", "b")
 		if err != nil {
-			t.Fatalf("unexpected err: %v", err)
+			t.Fatal(err)
 		}
-		if !argsContain(capturedArgs, "--paginate") {
-			t.Errorf("expected --paginate flag in args: %v", capturedArgs)
+		want := forge.PRHead{}
+		if exists {
+			want.State = "pushed"
 		}
-		joined := strings.Join(capturedArgs, " ")
-		if !strings.Contains(joined, "labels=bug") {
-			t.Errorf("expected labels=bug query param in args: %v", capturedArgs)
+		if h != want {
+			t.Errorf("exists=%v got %+v", exists, h)
 		}
-	})
-
-	t.Run("label with space and ampersand is URL-encoded", func(t *testing.T) {
-		var capturedArgs []string
-		scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-			func(t *testing.T, args []string) fakeCmd {
-				capturedArgs = args
-				return fakeCmd{output: []byte(`[]`)}
-			},
-		})
-
-		_, err := ListOpenIssues(context.Background(), "acme/widgets", "needs & review")
-		if err != nil {
-			t.Fatalf("unexpected err: %v", err)
-		}
-		joined := strings.Join(capturedArgs, " ")
-		// url.Values.Encode() percent-encodes spaces as '+' and '&' as '%26'.
-		if !strings.Contains(joined, "labels=needs+%26+review") {
-			t.Errorf("expected URL-encoded label in args, got: %v", capturedArgs)
-		}
-	})
+	}
 }
 
-func TestListOpenIssues_Paginated(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "--paginate") {
-				t.Fatalf("expected --paginate flag, got %v", args)
-			}
-			// Two pages concatenated back to back, as gh --paginate does for arrays.
-			page1 := `[{"number":1,"title":"first","body":"b1","html_url":"u1","labels":[]}]`
-			page2 := `[{"number":2,"title":"second","body":"b2","html_url":"u2","labels":[{"name":"bug"}]}]`
-			return fakeCmd{output: []byte(page1 + page2)}
-		},
+func TestGetPRReviews_Paginated(t *testing.T) {
+	var srvURL string
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, req *http.Request) {
+		if req.URL.Query().Get("page") == "2" {
+			jsonOK(w, `[{"id":2,"state":"approved","body":"b2","user":{"login":"bob"},"submitted_at":"s2","author_association":"member"}]`)
+			return
+		}
+		w.Header().Set("Link", `<`+srvURL+r.Path+`?per_page=100&page=2>; rel="next"`)
+		jsonOK(w, `[{"id":1,"state":"changes_requested","body":"b1","user":{"login":"al"},"submitted_at":"s1","author_association":"owner"}]`)
 	})
+	srvURL = strings.TrimSuffix(apiBase(), "/")
+	rs, err := GetPRReviews(context.Background(), "acme/widgets", 3)
+	if err != nil || len(rs) != 2 {
+		t.Fatalf("got %v %v", rs, err)
+	}
+	if rs[0].ID != "1" || rs[0].State != "CHANGES_REQUESTED" || rs[0].Author != "al" || rs[0].AuthorAssociation != "OWNER" || rs[1].Author != "bob" {
+		t.Errorf("reviews = %+v", rs)
+	}
+}
 
-	issues, err := ListOpenIssues(context.Background(), "acme/widgets", "")
+func TestGetPRReviewComments(t *testing.T) {
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		jsonOK(w, `[{"id":1,"path":"a.go","line":10,"start_line":8,"side":"RIGHT","body":"x","diff_hunk":"h","commit_id":"c","user":{"login":"al"},"created_at":"t","author_association":"MEMBER"},
+		{"id":2,"path":"b.go","line":null,"body":"y","user":{"login":"bo"}}]`)
+	})
+	cs, err := GetPRReviewComments(context.Background(), "acme/widgets", 3)
+	if err != nil || len(cs) != 2 {
+		t.Fatalf("got %v %v", cs, err)
+	}
+	if cs[0].Line != 10 || cs[0].StartLine != 8 || cs[0].Author != "al" || cs[0].CommitID != "c" {
+		t.Errorf("c0 = %+v", cs[0])
+	}
+	if cs[1].Line != 0 || cs[1].StartLine != 0 {
+		t.Errorf("c1 = %+v", cs[1])
+	}
+}
+
+func TestGetFailedChecks(t *testing.T) {
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		switch {
+		case strings.HasSuffix(r.Path, "/pulls/3"):
+			jsonOK(w, `{"number":3,"head":{"sha":"abc"}}`)
+		case strings.HasSuffix(r.Path, "/check-runs"):
+			jsonOK(w, `{"check_runs":[{"name":"ok","conclusion":"success"},{"name":"build","conclusion":"failure","html_url":"l1"},{"name":"c","conclusion":"cancelled","html_url":"l2"},{"name":"p","conclusion":null}]}`)
+		case strings.HasSuffix(r.Path, "/status"):
+			jsonOK(w, `{"statuses":[{"context":"ci","state":"error","target_url":"l3"},{"context":"fine","state":"success"}]}`)
+		default:
+			t.Errorf("unexpected %s", r.Path)
+		}
+	})
+	cs, err := GetFailedChecks(context.Background(), "acme/widgets", 3)
 	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
+		t.Fatal(err)
 	}
-	if len(issues) != 2 {
-		t.Fatalf("expected 2 issues across both pages, got %d: %+v", len(issues), issues)
+	want := []Check{{Name: "build", Link: "l1", Bucket: "fail"}, {Name: "c", Link: "l2", Bucket: "cancel"}, {Name: "ci", Link: "l3", Bucket: "fail"}}
+	if len(cs) != len(want) {
+		t.Fatalf("got %+v", cs)
 	}
-	if issues[0].Number != 1 || issues[1].Number != 2 {
-		t.Errorf("issues = %+v, unexpected numbers", issues)
-	}
-}
-
-func TestListOpenIssues_SkipsPullRequests(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			// The REST /issues endpoint returns PRs too, tagged with a non-null
-			// pull_request field. These must never be imported as tasks.
-			body := `[
-				{"number":1,"title":"a real issue","body":"b1","html_url":"u1","labels":[]},
-				{"number":2,"title":"a pull request","body":"b2","html_url":"u2","labels":[],"pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/2"}}
-			]`
-			return fakeCmd{output: []byte(body)}
-		},
-	})
-
-	issues, err := ListOpenIssues(context.Background(), "acme/widgets", "")
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if len(issues) != 1 {
-		t.Fatalf("expected 1 issue (PR skipped), got %d: %+v", len(issues), issues)
-	}
-	if issues[0].Number != 1 {
-		t.Errorf("issues[0] = %+v, expected the non-PR issue", issues[0])
-	}
-}
-
-func TestGetIssueComments_Decodes(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "--paginate") {
-				t.Fatalf("expected --paginate flag, got %v", args)
-			}
-			joined := strings.Join(args, " ")
-			if !strings.Contains(joined, "issues/42/comments") {
-				t.Fatalf("expected issues/42/comments in args, got %v", args)
-			}
-			return fakeCmd{output: []byte(`[{"id":123,"body":"looks good","author_association":"OWNER","user":{"login":"alice"},"created_at":"2024-01-01T00:00:00Z"}]`)}
-		},
-	})
-
-	comments, err := GetIssueComments(context.Background(), "acme/widgets", 42)
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if len(comments) != 1 {
-		t.Fatalf("expected 1 comment, got %d", len(comments))
-	}
-	c := comments[0]
-	if c.ID != "123" || c.Author != "alice" || c.AuthorAssociation != "OWNER" || c.Body != "looks good" || c.CreatedAt != "2024-01-01T00:00:00Z" {
-		t.Errorf("comment = %+v, unexpected", c)
-	}
-}
-
-func TestGetIssueComments_Paginated(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			page1 := `[{"id":1,"body":"first","author_association":"MEMBER","user":{"login":"alice"},"created_at":"2024-01-01T00:00:00Z"}]`
-			page2 := `[{"id":2,"body":"second","author_association":"NONE","user":{"login":"mallory"},"created_at":"2024-01-01T00:01:00Z"}]`
-			return fakeCmd{output: []byte(page1 + page2)}
-		},
-	})
-
-	comments, err := GetIssueComments(context.Background(), "acme/widgets", 42)
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if len(comments) != 2 {
-		t.Fatalf("expected 2 comments across both pages, got %d: %+v", len(comments), comments)
-	}
-	if comments[0].ID != "1" || comments[1].ID != "2" {
-		t.Errorf("comments = %+v, unexpected", comments)
-	}
-}
-
-func TestAddIssueLabel(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "edit") || !argsContain(args, "--add-label") || !argsContain(args, "agent-in-progress") {
-				t.Fatalf("expected issue edit --add-label call, got %v", args)
-			}
-			if !argsContain(args, "--repo") || !argsContain(args, "acme/widgets") {
-				t.Fatalf("expected --repo acme/widgets in args, got %v", args)
-			}
-			return fakeCmd{output: []byte("")}
-		},
-	})
-
-	if err := AddIssueLabel(context.Background(), "acme/widgets", 42, "agent-in-progress"); err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-}
-
-func TestAddIssueLabel_Error(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{output: []byte("label not found"), err: errors.New("exit status 1")}
-		},
-	})
-
-	if err := AddIssueLabel(context.Background(), "acme/widgets", 42, "does-not-exist"); err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestCommentOnIssue(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "comment") || !argsContain(args, "--body") {
-				t.Fatalf("expected issue comment --body call, got %v", args)
-			}
-			return fakeCmd{output: []byte("https://github.com/acme/widgets/issues/42#issuecomment-1")}
-		},
-	})
-
-	if err := CommentOnIssue(context.Background(), "acme/widgets", 42, "PR opened: https://github.com/acme/widgets/pull/7"); err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-}
-
-func TestCommentOnIssue_Error(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{output: []byte("not found"), err: errors.New("exit status 1")}
-		},
-	})
-
-	if err := CommentOnIssue(context.Background(), "acme/widgets", 42, "body"); err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestCloseIssueWithComment(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			if !argsContain(args, "close") || !argsContain(args, "--comment") {
-				t.Fatalf("expected issue close --comment call, got %v", args)
-			}
-			return fakeCmd{output: []byte("")}
-		},
-	})
-
-	if err := CloseIssueWithComment(context.Background(), "acme/widgets", 42, "merged: https://github.com/acme/widgets/pull/7"); err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-}
-
-func TestCloseIssueWithComment_Error(t *testing.T) {
-	scriptedRunner(t, []func(t *testing.T, args []string) fakeCmd{
-		func(t *testing.T, args []string) fakeCmd {
-			return fakeCmd{output: []byte("already closed"), err: errors.New("exit status 1")}
-		},
-	})
-
-	if err := CloseIssueWithComment(context.Background(), "acme/widgets", 42, "body"); err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func equalStrSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
+	for i := range want {
+		if cs[i] != want[i] {
+			t.Errorf("[%d] = %+v, want %+v", i, cs[i], want[i])
 		}
 	}
-	return true
+}
+
+func TestGetFailedChecks_Error(t *testing.T) {
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { http.Error(w, "x", 500) })
+	if _, err := GetFailedChecks(context.Background(), "acme/widgets", 3); err == nil {
+		t.Fatal("want error")
+	}
+}
+
+func TestListOpenIssues(t *testing.T) {
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		jsonOK(w, `[{"number":1,"title":"a","body":"b","html_url":"u1","author_association":"OWNER","labels":[{"name":"x"},{"name":"y"}]},
+		{"number":2,"title":"pr","pull_request":{"url":"z"}}]`)
+	})
+	is, err := ListOpenIssues(context.Background(), "acme/widgets", "bug")
+	if err != nil || len(is) != 1 {
+		t.Fatalf("got %+v %v", is, err)
+	}
+	if is[0].Number != 1 || is[0].URL != "u1" || len(is[0].Labels) != 2 || is[0].AuthorAssociation != "OWNER" {
+		t.Errorf("issue = %+v", is[0])
+	}
+	if q := (*reqs)[0].Query; !strings.Contains(q, "labels=bug") || !strings.Contains(q, "state=open") {
+		t.Errorf("query = %q", q)
+	}
+}
+
+func TestListOpenIssues_NoLabelFilter(t *testing.T) {
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { jsonOK(w, `[]`) })
+	if _, err := ListOpenIssues(context.Background(), "acme/widgets", ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains((*reqs)[0].Query, "labels") {
+		t.Errorf("query = %q", (*reqs)[0].Query)
+	}
+}
+
+func TestGetIssueComments(t *testing.T) {
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		jsonOK(w, `[{"id":5,"body":"hi","author_association":"MEMBER","user":{"login":"al"},"created_at":"t"}]`)
+	})
+	cs, err := GetIssueComments(context.Background(), "acme/widgets", 2)
+	if err != nil || len(cs) != 1 || cs[0].ID != "5" || cs[0].Author != "al" || cs[0].Body != "hi" {
+		t.Fatalf("got %+v %v", cs, err)
+	}
+}
+
+func TestIssueWrites(t *testing.T) {
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { jsonOK(w, `{}`) })
+	ctx := context.Background()
+	if err := AddIssueLabel(ctx, "acme/widgets", 4, "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CommentOnIssue(ctx, "acme/widgets", 4, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CloseIssueWithComment(ctx, "acme/widgets", 4, "done"); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ m, p, b string }{
+		{"POST", "/repos/acme/widgets/issues/4/labels", `{"labels":["agent"]}`},
+		{"POST", "/repos/acme/widgets/issues/4/comments", `{"body":"hello"}`},
+		{"POST", "/repos/acme/widgets/issues/4/comments", `{"body":"done"}`},
+		{"PATCH", "/repos/acme/widgets/issues/4", `{"state":"closed"}`},
+	}
+	if len(*reqs) != len(want) {
+		t.Fatalf("reqs = %+v", *reqs)
+	}
+	for i, w := range want {
+		g := (*reqs)[i]
+		if g.Method != w.m || g.Path != w.p || g.Body != w.b {
+			t.Errorf("[%d] = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
+func TestIssueWrites_Error(t *testing.T) {
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { http.Error(w, "no", http.StatusForbidden) })
+	ctx := context.Background()
+	if AddIssueLabel(ctx, "a/b", 1, "x") == nil || CommentOnIssue(ctx, "a/b", 1, "x") == nil || CloseIssueWithComment(ctx, "a/b", 1, "x") == nil {
+		t.Fatal("want errors")
+	}
+}
+
+func TestResolveToken_Order(t *testing.T) {
+	orig := ghAuthToken
+	t.Cleanup(func() { ghAuthToken = orig; cliTokenCached = "" })
+	ghAuthToken = func() (string, error) { return "clitok", nil }
+	cliTokenCached = ""
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	if tok, src := resolveToken(); tok != "clitok" || src != "gh auth" {
+		t.Errorf("cli: %q %q", tok, src)
+	}
+	t.Setenv("GITHUB_TOKEN", "gt")
+	if tok, _ := resolveToken(); tok != "gt" {
+		t.Errorf("GITHUB_TOKEN: %q", tok)
+	}
+	t.Setenv("GH_TOKEN", "ght")
+	if tok, _ := resolveToken(); tok != "ght" {
+		t.Errorf("GH_TOKEN: %q", tok)
+	}
+}
+
+func TestAuthStatus_NoToken(t *testing.T) {
+	orig := ghAuthToken
+	t.Cleanup(func() { ghAuthToken = orig; cliTokenCached = "" })
+	ghAuthToken = func() (string, error) { return "", fmt.Errorf("no gh") }
+	cliTokenCached = ""
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	if ok, note := (GitHub{}).AuthStatus(); ok || note == "" {
+		t.Errorf("got %v %q", ok, note)
+	}
+	t.Setenv("GITHUB_TOKEN", "x")
+	if ok, note := (GitHub{}).AuthStatus(); !ok || note == "" {
+		t.Errorf("got %v %q", ok, note)
+	}
+}
+
+func TestForgeInterfaceDelegation(t *testing.T) {
+	var f forge.Forge = GitHub{}
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		jsonOK(w, `[{"state":"open","number":11,"html_url":"u11"}]`)
+	})
+	st, u, n, err := f.PRForBranch(context.Background(), "acme/widgets", "feat-x")
+	if err != nil || st != "pr_open" || u != "u11" || n != 11 {
+		t.Fatalf("got (%q,%q,%d,%v)", st, u, n, err)
+	}
 }
 
 func TestParseGitHubName(t *testing.T) {
@@ -761,6 +431,55 @@ func TestParseGitHubName(t *testing.T) {
 			}
 			if ok && got != tc.want {
 				t.Errorf("name = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGitHubName pins GitHub.Name()'s return value, which is relied on
+// elsewhere (e.g. tasksource.GitHubIssues.Name() and ghsync's PR-review-
+// comment source tagging) to match exactly "github".
+func TestGitHubName(t *testing.T) {
+	if got := (GitHub{}).Name(); got != "github" {
+		t.Errorf("Name() = %q, want %q", got, "github")
+	}
+}
+
+// TestGitHubCompareURL asserts the full constructed URL string, since URL
+// construction (via url.Values.Encode(), which sorts keys alphabetically:
+// body, expand, title) is CompareURL's only real logic.
+func TestGitHubCompareURL(t *testing.T) {
+	cases := []struct {
+		name                   string
+		repoName, base, branch string
+		title, body            string
+		want                   string
+	}{
+		{
+			name:     "simple",
+			repoName: "acme/widgets",
+			base:     "main",
+			branch:   "feat-x",
+			title:    "My Title",
+			body:     "My Body",
+			want:     "https://github.com/acme/widgets/compare/main...feat-x?body=My+Body&expand=1&title=My+Title",
+		},
+		{
+			name:     "needs escaping",
+			repoName: "acme/widgets",
+			base:     "main",
+			branch:   "feat-x",
+			title:    "T&T #1\nnewline",
+			body:     "B&B #2\nnewline",
+			want:     "https://github.com/acme/widgets/compare/main...feat-x?body=B%26B+%232%0Anewline&expand=1&title=T%26T+%231%0Anewline",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := (GitHub{}).CompareURL(tc.repoName, tc.base, tc.branch, tc.title, tc.body)
+			if got != tc.want {
+				t.Errorf("CompareURL = %q, want %q", got, tc.want)
 			}
 		})
 	}
