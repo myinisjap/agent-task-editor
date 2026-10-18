@@ -28,6 +28,8 @@ triggers the "Release" workflow the same way.
 
 ### Changed
 
+- **Agent log retention is on by default for new installs.** Fresh databases now keep 30 days of `agent_logs` for finished runs (`completed`, `failed`, `waiting_human`) instead of keeping them forever. Existing installs keep their stored setting (including `0`, keep forever) and nothing is deleted on upgrade. Change it on the Health page or via `PUT /api/v1/log-retention/settings`; `0` turns it off.
+
 - **Rate limits no longer use up a task's retries.** A run that hits a provider rate or usage limit still blocks that agent config until the limit resets (or a backoff window passes), but the task is released straight away instead of counting against `max_retries`. The next sweep hands it to another enabled config on the same label, or the task waits with the "rate limited" block reason. Before, three rate limits in a row escalated the task to "needs human" even when a fallback config was free.
 - **Rate limits are tracked per provider account.** When a run hits a limit, every agent config on that account is skipped until it resets, not just the config whose run hit it, so other tasks stop trying a provider that's already tapped out. Each provider config is its own account, except `claude` configs on the shared `claude login` and `codex_cli` configs on the shared ChatGPT login, which share one (an API key, base URL, Bedrock/Vertex, or a separate `CLAUDE_CONFIG_DIR`/`CODEX_HOME` in the env makes it separate).
 - Phone navigation: a fixed bottom tab bar (Inbox with waiting badge, Board, Chat, More) replaces the floating hamburger below the `md` breakpoint; More opens the existing drawer. The bar respects the home-indicator safe area (`viewport-fit=cover`). Desktop is unchanged.

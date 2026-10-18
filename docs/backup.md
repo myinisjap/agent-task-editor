@@ -167,7 +167,7 @@ server (see the restore procedure below).
 ## Agent log retention
 
 Every stream-json line produced by every agent run is persisted to the
-`agent_logs` table forever by default. On a busy, long-lived board this is
+`agent_logs` table. By default, fresh installs prune terminal-run logs after 30 days (existing databases keep their stored setting, including `0`). On a busy, long-lived board this is
 the table most likely to bloat the SQLite file, which in turn slows down
 `VACUUM INTO` backups (see above) and log-list queries.
 
@@ -178,11 +178,11 @@ days and how often the pruner runs are **DB-backed and editable at runtime**
 from the **Health** page (or the API directly) — no restart required. The
 env vars below only seed the *initial* values on first migration; unlike
 `BACKUP_DIR` there's no separate deploy-time enable gate for log retention,
-so `days=0` (the default) alone fully disables cleanup:
+so `days=0` alone fully disables cleanup:
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOG_RETENTION_DAYS` | `0` | Seeds the initial retention days on first migration. `0` = keep forever (pruning disabled, the default — no behavior change unless explicitly opted in). |
+| `LOG_RETENTION_DAYS` | `30` | Default retention days. `0` = keep forever (pruning disabled). Fresh databases start at 30; existing installs keep their stored value (including `0`) — change it via the settings API/Health page. |
 | `LOG_RETENTION_INTERVAL` | `1h` | Seeds the initial pruner run interval. Accepts Go duration strings. |
 
 ```yaml
@@ -213,7 +213,7 @@ curl -X PUT -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/
 
 | Field | Minimum | Default | Description |
 |---|---|---|---|
-| `days` | `0` | `0` | Delete terminal-run logs older than this many days. `0` disables cleanup (logs are kept forever). |
+| `days` | `0` | `30` (fresh installs) | Delete terminal-run logs older than this many days. `0` disables cleanup (logs are kept forever). |
 | `interval_seconds` | `60` (1 minute) | `3600` (once an hour) | How often the pruner checks for logs to delete. |
 
 The pruner re-reads these on its own timer, so a change here takes effect on

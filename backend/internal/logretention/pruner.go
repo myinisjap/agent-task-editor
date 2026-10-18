@@ -11,7 +11,7 @@
 // without a restart — see NewWithSettingsFunc. The env vars
 // LOG_RETENTION_DAYS/LOG_RETENTION_INTERVAL now only seed the settings row's
 // initial values (and serve as a fallback if the DB read fails); they are no
-// longer the live source of truth. Disabled by default (days=0).
+// longer the live source of truth. Defaults to 30 days; 0 disables.
 package logretention
 
 import (
