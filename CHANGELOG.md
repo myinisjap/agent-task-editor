@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- **Faster live log view on long runs.** Live log lines in the task detail view are now batched once per animation frame and deduplicated with an id set, instead of copying and re-rendering the whole list for every line.
+
 ### Added
 
 - **Ordered provider list per agent config.** An agent config can list fallback providers after its main one (Settings → Agents → "Fallback providers", or `fallback_provider_config_ids` in the API). When a provider's account is at its usage limit or paused, new runs use the next provider in the list with the same prompt, labels and budgets, and go back to the first one once it's available. Each run records which provider it used, and sessions are only resumed on the provider that started them. The editor warns about settings that a provider in the list will ignore.
