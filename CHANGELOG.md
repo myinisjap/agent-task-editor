@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- **GitHub is now talked to over its REST API instead of the `gh` CLI.** PR sync, issue import, write-back and PR creation make direct HTTP requests rather than spawning several `gh` processes per open PR per sweep. Auth is unchanged: `GH_TOKEN`, then `GITHUB_TOKEN`, then the output of `gh auth token` (so an existing `gh auth login` keeps working), and the Health page and `/github/auth-status` still report it. `GITHUB_API_URL` can point at a GitHub Enterprise API. The `ate_gh_calls_total` metric now counts API requests.
+
 ### Added
 
 - **Ordered provider list per agent config.** An agent config can list fallback providers after its main one (Settings → Agents → "Fallback providers", or `fallback_provider_config_ids` in the API). When a provider's account is at its usage limit or paused, new runs use the next provider in the list with the same prompt, labels and budgets, and go back to the first one once it's available. Each run records which provider it used, and sessions are only resumed on the provider that started them. The editor warns about settings that a provider in the list will ignore.

@@ -32,7 +32,7 @@ internal/backup/  Optional scheduler: periodic rotated local DB snapshots. Enabl
 internal/boardtools/ Board MCP tools as thin REST wrappers, shared by cmd/mcp-board (stdio) and internal/remotemcp
 internal/config/  Config struct; loaded from YAML file then env vars override
 internal/gitcmd/   The one place the server runs `git` (Output/Run/Combined/CombinedNoPrompt over agentuser.ServerCommandContext) plus the shared `IsValidRef` ref validator and `DirExists`; leaf (agentuser + stdlib only). New git calls go here, not raw agentuser/exec
-internal/ghclient/ Thin wrapper around the `gh` CLI (PR create/lookup, PR head/mergeability, issue listing, PR reviews/review comments/check runs, GitHub URL parsing)
+internal/ghclient/ GitHub REST API client (no subprocess per call) (PR create/lookup, PR head/mergeability, issue listing, PR reviews/review comments/check runs, GitHub URL parsing)
 internal/ghsync/  Background PR-state poller — refreshes task git_state + pr_mergeable from GitHub, cleans up merged branches, ingests PR review/GHA/merge-conflict feedback into task_review_comments + run Feedback (optional auto-transition; see pr_review.go)
 internal/health/  Provider readiness checks (used by GET /health/providers)
 internal/remotemcp/ Remote MCP endpoint (POST /mcp) + Google-backed OAuth server; calls the router in-process via middleware.WithTrustedActor

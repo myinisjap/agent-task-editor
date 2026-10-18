@@ -11,7 +11,7 @@ existing tasks in step with their issue afterwards — see
 Internally, issue import, PR-state sync (`internal/ghsync`), and PR
 creation/write-back all go through a `Forge` interface
 (`internal/forge`) rather than talking to a specific provider directly.
-GitHub (via the `gh` CLI, `internal/ghclient`) and Gitea (via its REST API,
+GitHub (via its REST API, `internal/ghclient`) and Gitea (via its REST API,
 `internal/forge/gitea`) are the two implementations shipped today — every
 prerequisite below that's phrased in terms of GitHub applies equally to
 Gitea unless noted otherwise. The seam exists so an additional self-hosted
@@ -76,7 +76,7 @@ API):
 Two prerequisites are enforced when enabling:
 
 1. **`remote_url`** must be set and point at a recognised forge — GitHub
-   (issues fetched with the `gh` CLI; same auth as PR sync: `gh auth login`
+   (issues fetched via the GitHub REST API; same auth as PR sync: `GH_TOKEN`/`GITHUB_TOKEN` or `gh auth login`
    or `GITHUB_TOKEN`), or a self-hosted Gitea instance whose host is listed
    in `GITEA_HOST` (see above; issues fetched via Gitea's REST API using
    `GITEA_TOKEN`).
@@ -109,7 +109,7 @@ For each matching open issue the importer creates a task with:
   to the issue on the task detail page
 
 Pull requests are never imported. Issues are fetched from the REST API
-(`gh api repos/{owner}/{repo}/issues --paginate`), which *does* return pull
+(`GET /repos/{owner}/{repo}/issues`, paginated), which *does* return pull
 requests, so the importer drops any entry carrying a `pull_request` field.
 The fetch is fully paginated — earlier versions capped it at 200 issues per
 sweep and silently ignored the rest, which also meant reconciliation (below)
@@ -374,7 +374,7 @@ Three guarantees hold regardless of the configured action:
   label, the next sweep clears `source_state` automatically.
 
 One caveat worth knowing: reconciliation infers "gone" from absence, so if a
-`gh` call ever succeeds while returning nothing (an auth scope change, for
+GitHub call ever succeeds while returning nothing (an auth scope change, for
 instance), every imported task for that repo would be flagged in one sweep.
 With the default `flag` action that's cosmetic and self-correcting on the next
 successful sweep. It's a reason to prefer `flag` over `archive`/`move` unless
@@ -431,7 +431,7 @@ to check the board.
 Only one prerequisite is enforced when enabling write-back:
 
 1. **`remote_url`** must be set and point at GitHub, same as issue sync —
-   write-back shells out to the `gh` CLI (same auth as import/PR sync).
+   write-back uses the GitHub REST API (same auth as import/PR sync).
 
 Write-back is **independent of `issue_sync_enabled`** at the API/DB level —
 you can enable one without the other. In practice they're used together,
@@ -450,7 +450,7 @@ curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
 ### Triggers
 
 Three independent triggers fire the write-back actions below. Each is
-best-effort: a failed `gh` call is logged and swallowed, never surfaced to
+best-effort: a failed GitHub API call is logged and swallowed, never surfaced to
 the human clicking a button or blocking a background sweep.
 
 1. **Task leaves the human-gate label** (optional intermediate signal) — the
@@ -464,7 +464,7 @@ the human clicking a button or blocking a background sweep.
    value falls back to the default `agent-in-progress`
    (`writeback.InProgressLabel`). Either way, the label — default or
    custom — **must already exist on the GitHub repo**: if it doesn't, the
-   `gh` call fails — this is logged and ignored, and (unlike the two
+   GitHub API call fails — this is logged and ignored, and (unlike the two
    triggers below) is **not retried**: this is explicitly the optional
    signal, and retrying a call that's already failed on every future
    sweep/transition forever is worse than an occasional missed label.
@@ -482,7 +482,7 @@ state: the background `ghsync` PR-status sweep, the `POST
 `PATCH /tasks/{id}/git-state` (`UpdateGitState`) override, since a human
 marking a task `pr_merged` by hand should still close the issue. Both are
 safe to call unconditionally on every state (re)write, since the underlying
-DB flag (see below) makes repeat calls a no-op; a failed `gh` call leaves the
+DB flag (see below) makes repeat calls a no-op; a failed GitHub API call leaves the
 flag unset, so the next sweep or handler call naturally retries.
 
 ### Idempotency
@@ -519,23 +519,23 @@ task, for any task with a branch and an open PR — not just imported ones.
 
 On every sweep, for each task with a resolved PR number, the syncer:
 
-1. **Fetches inline review comments** (`gh api repos/{repo}/pulls/{n}/comments`,
+1. **Fetches inline review comments** (`GET /repos/{repo}/pulls/{n}/comments`,
    paginated) and inserts any not already ingested (deduped by the GitHub
    comment id) as `task_review_comments` rows tagged `source: "github"`,
    `external_id: "<github comment id>"`. These flow through the exact same
    path as comments left in-app: the `OPEN REVIEW COMMENTS` prompt section on
    the next dispatch, and the MCP `resolve_comment` tool / API resolve
    endpoint to close them out.
-2. **Fetches reviews** (`gh pr view --json reviews`) and, for any
+2. **Fetches reviews** (`GET /repos/{repo}/pulls/{n}/reviews`) and, for any
    `CHANGES_REQUESTED` review submitted after the last-seen cursor, appends
    its body to a feedback block.
-3. **Fetches failed/cancelled checks** (`gh pr checks --json name,link,bucket`)
+3. **Fetches failed/cancelled checks** (check runs + commit statuses for the head SHA)
    and, if the set of failing check names differs from what was last
    surfaced for the current head commit, appends their names/links to the
    same feedback block.
 4. **Checks whether the PR still merges cleanly** into its base branch
-   (`gh pr list --json mergeable,baseRefName`, folded into the head-SHA call
-   the ingestion cursor already makes, so it costs no extra `gh` invocation)
+   (the single-PR `mergeable`/`base.ref` fields, folded into the head-SHA call
+   the ingestion cursor already makes, so it costs no extra request)
    and appends a resolve-the-conflict note to the same block the first time a
    conflict is seen. See "Merge conflict detection" below.
 5. If that combined block is non-empty, it's **appended** (not overwritten)
@@ -579,7 +579,7 @@ Already-ingested inline review comments are **not** purged or reset on a
 push; they stay wherever they are until resolved (matching how locally-left
 open review comments already behave across runs).
 
-Every fetch is best-effort and independent: a `gh` failure fetching reviews,
+Every fetch is best-effort and independent: a GitHub API failure fetching reviews,
 say, is logged and swallowed and does not prevent comments or checks from
 still being ingested that sweep, mirroring the write-back error-handling
 style above.
