@@ -47,6 +47,27 @@ var (
 	repoGitLocks  = map[string]*sync.Mutex{}
 )
 
+// fetchSkipWindow is how long a successful fetch suppresses further fetches.
+const fetchSkipWindow = 30 * time.Second
+
+var (
+	lastFetchMu sync.Mutex
+	lastFetch   = map[string]time.Time{}
+)
+
+func recentlyFetched(repoPath string, now time.Time) bool {
+	lastFetchMu.Lock()
+	defer lastFetchMu.Unlock()
+	t, ok := lastFetch[repoPath]
+	return ok && now.Sub(t) < fetchSkipWindow
+}
+
+func markFetched(repoPath string, now time.Time) {
+	lastFetchMu.Lock()
+	defer lastFetchMu.Unlock()
+	lastFetch[repoPath] = now
+}
+
 // RepoGitLock returns the per-repo git mutex, creating it on first use. Keyed by
 // the repo's main-clone path. An empty path returns a throwaway lock (callers
 // without a known repo path still get correct, if uncontended, behavior).
@@ -121,7 +142,13 @@ func provisionWorktreeFrom(ctx context.Context, repoPath, taskID, title, baseOve
 
 	// Fetch latest before branching so the task starts from current main.
 	// Best-effort: if there's no remote or no connectivity, proceed with local state.
-	_, _ = git(ctx, repoPath, "fetch", "--prune")
+	// Skipped when this repo was fetched successfully moments ago (default-base
+	// tasks only; subtasks with baseOverride keep fetching as before).
+	if baseOverride != "" || !recentlyFetched(repoPath, time.Now()) {
+		if _, ferr := git(ctx, repoPath, "fetch", "--prune"); ferr == nil {
+			markFetched(repoPath, time.Now())
+		}
+	}
 
 	if baseOverride != "" {
 		baseRef = baseOverride
