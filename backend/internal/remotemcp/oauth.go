@@ -286,7 +286,7 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		name = "An MCP client"
 	}
 	ru, _ := url.Parse(redirectURI)
-	consentPage(w, name, ru.Host, s.cfg.GoogleAuthURL+"?"+g.Encode(), s.cfg.ToolProfile == ToolProfileFull)
+	consentPage(w, name, ru.Host, s.cfg.GoogleAuthURL+"?"+g.Encode(), s.cfg.ToolProfile)
 }
 
 // pkceChallenge matches an S256 challenge: base64url(SHA-256) is 43 chars.
@@ -562,10 +562,13 @@ func (s *Server) redirectWith(w http.ResponseWriter, r *http.Request, target str
 
 // consentPage asks the signed-in browser to confirm before sending it to
 // Google, naming the client and where the grant will be sent.
-func consentPage(w http.ResponseWriter, client, redirectHost, googleURL string, full bool) {
+func consentPage(w http.ResponseWriter, client, redirectHost, googleURL, profile string) {
 	what := "read your board: list tasks and read agent runs, logs and diffs"
-	if full {
+	switch profile {
+	case ToolProfileFull:
 		what = "read and manage your board: list and create tasks, read agent runs, and approve, reject, move or reply to tasks"
+	case ToolProfileAdmin:
+		what = "read, manage and configure your board: list and create tasks, read agent runs, approve, reject, move or reply to tasks, edit workflows, and add or change repositories"
 	}
 	setPageHeaders(w)
 	w.WriteHeader(http.StatusOK)
