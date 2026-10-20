@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// Server instructions shared by the remote MCP endpoint and the stdio server.
+// ReadInstructions, AdminInstructions and WriteInstructions are the server
+// instructions shared by the remote MCP endpoint and the stdio server.
 const ReadInstructions = "Tools for the Agent Task Editor kanban board. Tasks move between labels (columns); " +
 	"a task on an agent-triggerable label such as \"work\" is picked up by an AI agent automatically. " +
 	"Use list_tasks/get_task to see state and list_runs/get_run_logs/get_diff to inspect agent work; " +
