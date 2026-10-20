@@ -568,7 +568,7 @@ func consentPage(w http.ResponseWriter, client, redirectHost, googleURL, profile
 	case ToolProfileFull:
 		what = "read and manage your board: list and create tasks, read agent runs, and approve, reject, move or reply to tasks"
 	case ToolProfileAdmin:
-		what = "read, manage and configure your board: list and create tasks, read agent runs, approve, reject, move or reply to tasks, edit workflows, and add or change repositories"
+		what = "read, manage and configure your board: list and create tasks, read agent runs, approve, reject, move or reply to tasks, edit workflows, add or change repositories, and create or change agents (including their system prompts)"
 	}
 	setPageHeaders(w)
 	w.WriteHeader(http.StatusOK)
