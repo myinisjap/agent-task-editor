@@ -46,6 +46,9 @@ func NewChatMCPProvisioner(binary, backendURL string, toolProfile ...string) age
 	if len(toolProfile) > 0 {
 		profile = strings.TrimSpace(toolProfile[0])
 	}
+	// Decision (Josh, via the task's human-input reply, superseding the ticket's
+	// "keep three tools" line for the Chat tab only): the in-app Chat tab defaults
+	// to "full". Standalone mcp-board still defaults to "create".
 	if profile == "" {
 		profile = "full"
 	}
