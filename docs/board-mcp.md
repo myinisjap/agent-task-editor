@@ -45,12 +45,15 @@ and `admin` are the remote connector's sets, see the remote connector section be
 | Auth | per-session scoped token (revoked when the session ends), never `API_TOKEN` | `API_TOKEN` in the client's `env` | Google sign-in + built-in OAuth (`MCP_ALLOWED_EMAILS`) |
 | Profile env var | `MCP_BOARD_TOOL_PROFILE` (backend; passed on as `TOOL_PROFILE`) | `TOOL_PROFILE` (in the client's `env`) | `MCP_TOOL_PROFILE` (backend) |
 | Default profile | `full` | `create` | `readonly` |
-| Default tools | `full`: all `readonly` tools plus `create_task`, `reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task` | `list_repos`, `list_workflows`, `create_task` | `list_repos`, `list_workflows`, `list_tasks`, `get_task`, `list_runs`, `get_run_logs`, `get_diff`, `get_workflow`, `list_agents`, `get_repo`, `detect_repo_runtime` |
+| Default tools | `full`: every `readonly` tool plus `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task`, `create_pr`) | `list_repos`, `list_workflows`, `create_task` | `readonly`: the read tools only (`list_tasks`, `get_task`, `list_runs`, `get_run_logs`, `get_diff`, `list_needs_me`, `get_costs`, and the board-setup reads such as `get_workflow`, `list_agents`, `get_repo`, `list_templates`, `list_schedules`) |
 
 The Chat tab defaults to `full` because it is driven by you, but it reads repo
 code that can contain prompt injection; set `MCP_BOARD_TOOL_PROFILE=create` (or
-`readonly`) to narrow it. `admin` adds `create_workflow`, `update_workflow`,
-`add_repo` and `update_repo` on any surface that selects it.
+`readonly`) to narrow it. `admin` adds board configuration (`create_workflow`,
+`update_workflow`, `add_repo`, `update_repo`, `create_agent`, `update_agent`,
+`create_template`, `update_template`, `create_schedule`, `update_schedule`) on
+any surface that selects it. The full lists per profile are in
+[Remote connector](#remote-connector).
 
 ## Tools
 
@@ -91,7 +94,7 @@ the workflow, or the backend returns a 400.
 The Docker images build `mcp-board` in and set `MCP_BOARD_PATH=/app/mcp-board`,
 so the board tools are wired into the app's Chat tab out of the box. When you
 open a chat session, the backend registers `mcp-board` with the session's CLI
-(pointed at its own REST API), and the three tools become available in that
+(pointed at its own REST API), and the `full` profile's tools (see the table above) become available in that
 conversation.
 
 To use it: open the **Chat** tab, start a session against the repo you want,

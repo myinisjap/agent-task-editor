@@ -138,15 +138,22 @@ var (
 		{"GET", "agents"},
 		{"GET", "tasks"}, {"GET", "tasks/{}"}, {"GET", "tasks/{}/runs"},
 		{"GET", "tasks/{}/runs/{}/logs"}, {"GET", "tasks/{}/diff"},
+		{"GET", "needs-me"}, {"GET", "dashboard"}, {"GET", "dashboard/cost-by-task"},
+		{"GET", "provider-configs"}, {"GET", "agents/{}"},
+		{"GET", "templates"}, {"GET", "schedules"},
 	}
 	fullRoutes = []route{
 		{"POST", "tasks"}, {"POST", "tasks/{}/runs/{}/reply"},
 		{"POST", "tasks/{}/approve"}, {"POST", "tasks/{}/reject"},
 		{"PATCH", "tasks/{}/label"}, {"PATCH", "tasks/{}/archive"},
+		{"POST", "tasks/{}/runs/{}/cancel"}, {"POST", "tasks/{}/rerun"}, {"POST", "tasks/{}/pr"},
 	}
 	adminRoutes = []route{
 		{"POST", "repos"}, {"PATCH", "repos/{}"}, {"POST", "repos/{}/runtime/detect"},
 		{"POST", "workflows/import"}, {"PUT", "workflows/{}/yaml"},
+		{"POST", "agents"}, {"PUT", "agents/{}"},
+		{"POST", "templates"}, {"GET", "templates/{}"}, {"PUT", "templates/{}"},
+		{"POST", "schedules"}, {"GET", "schedules/{}"}, {"PUT", "schedules/{}"},
 	}
 )
 
