@@ -111,7 +111,7 @@ Notes:
   `MCP_BOARD_PATH` to the built binary to enable it.
 - Leaving `MCP_BOARD_PATH` unset simply launches chat sessions as before (no
   board tools).
-- Chat sessions default to the `full` profile (the remote connector's read tools plus create_task, reply_to_run, approve_task, reject_task, move_task, archive_task). A chat reads repo code that can contain prompt injection, so set `MCP_BOARD_TOOL_PROFILE=create` (the three create tools) or `readonly` to narrow it, or `admin` to widen it. The value is passed to `mcp-board` as `TOOL_PROFILE`, and the session token is widened to the board-tool routes (repos, tasks, workflows, agents) unless the profile is `create`.
+- Chat sessions default to the `full` profile (the remote connector's read tools plus create_task, reply_to_run, approve_task, reject_task, move_task, archive_task). A chat reads repo code that can contain prompt injection, so set `MCP_BOARD_TOOL_PROFILE=create` (the three create tools) or `readonly` to narrow it, or `admin` to widen it. The value is passed to `mcp-board` as `TOOL_PROFILE`, and the session token is widened to the exact method+path pairs the profile's tools call (no DELETE, no other routes) unless the profile is `create`.
 
 ## External chat client
 

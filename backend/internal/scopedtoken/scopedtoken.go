@@ -37,10 +37,10 @@ type Grant struct {
 	RunID  string // KindRun: the agent run
 	TaskID string // KindRun: the only task the token may touch
 	Chat   string // KindChat: the chat session id
-	// Wide (KindChat) widens the grant from the three create-profile routes to
-	// every route the board tools use (repos, tasks, workflows, agents), for
-	// MCP_BOARD_TOOL_PROFILE=readonly|full|admin.
-	Wide bool
+	// Profile (KindChat) widens the grant beyond the three create routes to the
+	// exact method+path pairs of that board-tool profile: "readonly", "full" or
+	// "admin" (MCP_BOARD_TOOL_PROFILE). Empty = the narrow create grant.
+	Profile string
 }
 
 // Actor is the name recorded for requests made with this grant.
@@ -51,7 +51,7 @@ func (g Grant) Actor() string {
 	return "agent:" + g.RunID
 }
 
-// Allows reports whether the grant may call method+path. Paths are matched
+// Allows reports whether the grant may call method+path. Methods and paths are matched
 // exactly (no prefixes), so nothing else under /api/v1 is reachable.
 func (g Grant) Allows(method, path string) bool {
 	switch g.Kind {
@@ -61,17 +61,8 @@ func (g Grant) Allows(method, path string) bool {
 			path == "/api/v1/tasks/"+g.TaskID+"/subtasks"
 	case KindChat:
 		// Exactly what cmd/mcp-board calls: list_repos, list_workflows, create_task.
-		if g.Wide {
-			if strings.Contains(path, "..") || strings.Contains(path, "//") {
-				return false
-			}
-			for _, p := range []string{"repos", "tasks", "workflows", "agents"} {
-				base := "/api/v1/" + p
-				if path == base || strings.HasPrefix(path, base+"/") {
-					return true
-				}
-			}
-			return false
+		if g.Profile != "" {
+			return g.profileAllows(method, path)
 		}
 		switch path {
 		case "/api/v1/repos", "/api/v1/workflows":
@@ -134,4 +125,68 @@ func (r *Registry) Lookup(token string) (Grant, bool) {
 	g, ok := r.grants[hash(token)]
 	r.mu.RUnlock()
 	return g, ok
+}
+
+// route is one allowed method + path pattern; "{}" matches exactly one
+// non-empty path segment.
+type route struct{ method, pattern string }
+
+var (
+	readRoutes = []route{
+		{"GET", "repos"}, {"GET", "repos/{}"},
+		{"GET", "workflows"}, {"GET", "workflows/{}"}, {"GET", "workflows/{}/export.yaml"},
+		{"GET", "agents"},
+		{"GET", "tasks"}, {"GET", "tasks/{}"}, {"GET", "tasks/{}/runs"},
+		{"GET", "tasks/{}/runs/{}/logs"}, {"GET", "tasks/{}/diff"},
+	}
+	fullRoutes = []route{
+		{"POST", "tasks"}, {"POST", "tasks/{}/runs/{}/reply"},
+		{"POST", "tasks/{}/approve"}, {"POST", "tasks/{}/reject"},
+		{"PATCH", "tasks/{}/label"}, {"PATCH", "tasks/{}/archive"},
+	}
+	adminRoutes = []route{
+		{"POST", "repos"}, {"PATCH", "repos/{}"}, {"POST", "repos/{}/runtime/detect"},
+		{"POST", "workflows/import"}, {"PUT", "workflows/{}/yaml"},
+	}
+)
+
+// profileAllows is an exact method+path allowlist: exactly the REST calls the
+// board tools of the profile make, nothing else (no DELETE, no other routes).
+func (g Grant) profileAllows(method, path string) bool {
+	var sets [][]route
+	switch strings.ToLower(g.Profile) {
+	case "readonly":
+		sets = [][]route{readRoutes}
+	case "full":
+		sets = [][]route{readRoutes, fullRoutes}
+	case "admin":
+		sets = [][]route{readRoutes, fullRoutes, adminRoutes}
+	default:
+		return false
+	}
+	rest, ok := strings.CutPrefix(path, "/api/v1/")
+	if !ok {
+		return false
+	}
+	segs := strings.Split(rest, "/")
+	for _, set := range sets {
+		for _, r := range set {
+			if r.method == method && matchSegs(strings.Split(r.pattern, "/"), segs) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func matchSegs(pat, segs []string) bool {
+	if len(pat) != len(segs) {
+		return false
+	}
+	for i, p := range pat {
+		if segs[i] == "" || (p != "{}" && p != segs[i]) {
+			return false
+		}
+	}
+	return true
 }

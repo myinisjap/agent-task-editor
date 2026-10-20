@@ -23,7 +23,7 @@ same wire protocol as `cmd/mcp-server`.
   initial placement (see `TasksHandler.resolveInitialLabel`), so it is not
   restricted to the workflow's transition edges.
 
-The above is the default `create` profile (`TOOL_PROFILE` unset). `TOOL_PROFILE=readonly|full|admin` swaps in `boardtools.ReadOnlyRemoteTools`/`RemoteTools`/`AdminRemoteTools` plus the remote server's instructions. The backend sets it for chat sessions from `MCP_BOARD_TOOL_PROFILE` (which defaults to `full` there; the standalone default stays `create`) and widens the chat scoped token (`scopedtoken.Grant.Wide`) to match.
+The above is the default `create` profile (`TOOL_PROFILE` unset). `TOOL_PROFILE=readonly|full|admin` swaps in `boardtools.ReadOnlyRemoteTools`/`RemoteTools`/`AdminRemoteTools` plus the remote server's instructions. The backend sets it for chat sessions from `MCP_BOARD_TOOL_PROFILE` (which defaults to `full` there; the standalone default stays `create`) and widens the chat scoped token (`scopedtoken.Grant.Profile`, an exact method+path allowlist) to match.
 
 ## Environment Variables
 

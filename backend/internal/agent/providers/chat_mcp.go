@@ -49,7 +49,10 @@ func NewChatMCPProvisioner(binary, backendURL string, toolProfile ...string) age
 	if profile == "" {
 		profile = "full"
 	}
-	wide := profile != "" && !strings.EqualFold(profile, "create")
+	tokenProfile := strings.ToLower(profile)
+	if tokenProfile == "create" {
+		tokenProfile = ""
+	}
 	return func(provider, sessionID string) ([]string, []string, func(), error) {
 		noop := func() {}
 		switch provider {
@@ -57,7 +60,7 @@ func NewChatMCPProvisioner(binary, backendURL string, toolProfile ...string) age
 		default:
 			return nil, nil, noop, nil
 		}
-		token, err := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindChat, Chat: sessionID, Wide: wide})
+		token, err := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindChat, Chat: sessionID, Profile: tokenProfile})
 		if err != nil {
 			return nil, nil, noop, fmt.Errorf("mint chat token: %w", err)
 		}
