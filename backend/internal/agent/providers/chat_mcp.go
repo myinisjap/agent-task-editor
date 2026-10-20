@@ -36,7 +36,8 @@ const boardMCPServerName = "task-editor-board"
 //   - anything else (e.g. opencode): no injection (no per-invocation mechanism)
 //
 // toolProfile (MCP_BOARD_TOOL_PROFILE) is passed to mcp-board as TOOL_PROFILE;
-// empty keeps the default three create tools and the narrow token.
+// empty means "full" for the Chat tab; "create" keeps the three create tools
+// and the narrow token.
 func NewChatMCPProvisioner(binary, backendURL string, toolProfile ...string) agent.ChatMCPProvisioner {
 	if binary == "" {
 		return nil
@@ -44,6 +45,9 @@ func NewChatMCPProvisioner(binary, backendURL string, toolProfile ...string) age
 	profile := ""
 	if len(toolProfile) > 0 {
 		profile = strings.TrimSpace(toolProfile[0])
+	}
+	if profile == "" {
+		profile = "full"
 	}
 	wide := profile != "" && !strings.EqualFold(profile, "create")
 	return func(provider, sessionID string) ([]string, []string, func(), error) {
@@ -63,9 +67,7 @@ func NewChatMCPProvisioner(binary, backendURL string, toolProfile ...string) age
 			Args:    []string{},
 			Env:     map[string]string{"BACKEND_URL": backendURL, "API_TOKEN": token},
 		}
-		if profile != "" {
-			entry.Env["TOOL_PROFILE"] = profile
-		}
+		entry.Env["TOOL_PROFILE"] = profile
 		revoke := func() { scopedtoken.Default.Revoke(token) }
 
 		switch provider {

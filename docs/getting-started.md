@@ -159,7 +159,7 @@ These are read directly via `os.Getenv` by `internal/forge/gitea`, not through t
 |---|---|---|
 | `MCP_SERVER_PATH` | _(empty)_ | Path to the `mcp-server` binary. Required for MCP tools (`claude`, `qwen_code`, and `codex_cli` providers). |
 | `MCP_BOARD_PATH` | _(empty)_ | Path to the `mcp-board` binary. Enables the board tools (`list_repos`/`list_workflows`/`create_task`) inside Chat-tab sessions, so a chat can create tickets. Set automatically by the Docker images and `./dev.sh dev`. See [board-mcp.md](board-mcp.md). |
-| `MCP_BOARD_TOOL_PROFILE` | _(empty)_ | Tool set for Chat-tab board tools: `readonly`, `full` or `admin` (default: the three create tools). See [board-mcp.md](board-mcp.md). |
+| `MCP_BOARD_TOOL_PROFILE` | `full` | Tool set for Chat-tab board tools (passed as mcp-board's `TOOL_PROFILE`): `create`, `readonly`, `full` (default) or `admin`. See [board-mcp.md](board-mcp.md). |
 
 ### Shutdown
 

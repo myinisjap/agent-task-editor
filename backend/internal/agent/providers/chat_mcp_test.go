@@ -126,3 +126,22 @@ func TestChatMCPProvisioner_UnsupportedProvider_NoInjection(t *testing.T) {
 		t.Errorf("opencode should get no injection; args=%v env=%v", args, env)
 	}
 }
+
+func TestChatMCPProvisioner_ToolProfile(t *testing.T) {
+	for _, c := range []struct{ in, want string }{{"", "full"}, {"create", "create"}, {"admin", "admin"}} {
+		p := NewChatMCPProvisioner("/app/mcp-board", "http://localhost:8080", c.in)
+		args, _, cleanup, err := p("claude", "s")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(args[1])
+		cleanup()
+		var cfg mcpConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.MCPServers[boardMCPServerName].Env["TOOL_PROFILE"]; got != c.want {
+			t.Errorf("profile %q: TOOL_PROFILE = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

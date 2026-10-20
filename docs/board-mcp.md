@@ -33,6 +33,25 @@ tool.** Task creation lives only in `mcp-board`, which is a process *you* point 
 chat client at — not something an agent processing a column can reach. See
 [mcp-tools.md](mcp-tools.md) for the sidecar's tools.
 
+## Which surface gets which tools
+
+Three surfaces serve the same board tools; each picks its set with a profile
+(`create` = `list_repos`, `list_workflows`, `create_task`; `readonly`, `full`
+and `admin` are the remote connector's sets, see the remote connector section below).
+
+| | In-app Chat tab | Claude Desktop (stdio `mcp-board`) | Remote claude.ai connector |
+|---|---|---|---|
+| Transport | stdio, launched by the backend per chat session | stdio, launched by the chat client | MCP streamable HTTP at `<MCP_PUBLIC_URL>/mcp` |
+| Auth | per-session scoped token (revoked when the session ends), never `API_TOKEN` | `API_TOKEN` in the client's `env` | Google sign-in + built-in OAuth (`MCP_ALLOWED_EMAILS`) |
+| Profile env var | `MCP_BOARD_TOOL_PROFILE` (backend; passed on as `TOOL_PROFILE`) | `TOOL_PROFILE` (in the client's `env`) | `MCP_TOOL_PROFILE` (backend) |
+| Default profile | `full` | `create` | `readonly` |
+| Default tools | `full`: all `readonly` tools plus `create_task`, `reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task` | `list_repos`, `list_workflows`, `create_task` | `list_repos`, `list_workflows`, `list_tasks`, `get_task`, `list_runs`, `get_run_logs`, `get_diff`, `get_workflow`, `list_agents`, `get_repo`, `detect_repo_runtime` |
+
+The Chat tab defaults to `full` because it is driven by you, but it reads repo
+code that can contain prompt injection; set `MCP_BOARD_TOOL_PROFILE=create` (or
+`readonly`) to narrow it. `admin` adds `create_workflow`, `update_workflow`,
+`add_repo` and `update_repo` on any surface that selects it.
+
 ## Tools
 
 ### `list_repos`
@@ -92,12 +111,7 @@ Notes:
   `MCP_BOARD_PATH` to the built binary to enable it.
 - Leaving `MCP_BOARD_PATH` unset simply launches chat sessions as before (no
   board tools).
-- By default chat sessions get only the three create tools, because a chat
-  reads repo code that can contain prompt injection. Set `MCP_BOARD_TOOL_PROFILE`
-  (`readonly`, `full` or `admin`; default unset) on the backend to give them the
-  remote connector's tool sets instead; it is passed to `mcp-board` as
-  `TOOL_PROFILE`, and the session token is widened to the board-tool routes
-  (repos, tasks, workflows, agents).
+- Chat sessions default to the `full` profile (the remote connector's read tools plus create_task, reply_to_run, approve_task, reject_task, move_task, archive_task). A chat reads repo code that can contain prompt injection, so set `MCP_BOARD_TOOL_PROFILE=create` (the three create tools) or `readonly` to narrow it, or `admin` to widen it. The value is passed to `mcp-board` as `TOOL_PROFILE`, and the session token is widened to the board-tool routes (repos, tasks, workflows, agents) unless the profile is `create`.
 
 ## External chat client
 
@@ -326,7 +340,7 @@ woken by CI and review activity.
 |---|---|---|
 | `BACKEND_URL` | ✅ | Base URL of the backend, e.g. `http://localhost:8080` |
 | `API_TOKEN` | — | Bearer token; sent on every request when the backend has `API_TOKEN`/`API_TOKENS` set |
-| `TOOL_PROFILE` | — | `create` (default, unset = same: list_repos/list_workflows/create_task), `readonly`, `full` or `admin` — the remote connector's tool sets; unknown values exit with an error |
+| `TOOL_PROFILE` | — | `create` (default when unset: list_repos/list_workflows/create_task), `readonly`, `full` or `admin` — the remote connector's tool sets; unknown values exit with an error |
 | `LOG_LEVEL` | — | `debug`/`info`/… (default `info`) |
 
 These are for the stdio `mcp-board` binary. The remote connector is configured

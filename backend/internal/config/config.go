@@ -44,8 +44,9 @@ type Config struct {
 	GitHubWebhookSecret string `yaml:"github_webhook_secret"`
 	MCPBinary           string `yaml:"mcp_server_path"`
 	MCPBoardBinary      string `yaml:"mcp_board_path"`
-	// MCPBoardToolProfile is TOOL_PROFILE for chat-session mcp-board: ""/"create"
-	// (default), "readonly", "full" or "admin".
+	// MCPBoardToolProfile is TOOL_PROFILE for chat-session mcp-board: "" (= "full"),
+	// "create",
+	// "readonly", "full" or "admin".
 	MCPBoardToolProfile string        `yaml:"mcp_board_tool_profile"`
 	MaxWorkers          int           `yaml:"max_workers"`
 	RepoBaseDir         string        `yaml:"repo_base_dir"`
