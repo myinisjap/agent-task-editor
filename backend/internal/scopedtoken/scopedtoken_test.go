@@ -43,3 +43,20 @@ func TestGrant_Allows(t *testing.T) {
 		t.Error("actor names")
 	}
 }
+
+func TestChatWideGrant(t *testing.T) {
+	g := Grant{Kind: KindChat, Chat: "s", Wide: true}
+	for _, p := range []string{"/api/v1/tasks", "/api/v1/tasks/1/runs/2/reply", "/api/v1/workflows/import", "/api/v1/agents", "/api/v1/repos/x"} {
+		if !g.Allows("POST", p) {
+			t.Errorf("wide should allow %s", p)
+		}
+	}
+	for _, p := range []string{"/api/v1/settings", "/api/v1/tasks/../tokens", "/api/v1/tasksx"} {
+		if g.Allows("GET", p) {
+			t.Errorf("wide should refuse %s", p)
+		}
+	}
+	if (Grant{Kind: KindChat}).Allows("POST", "/api/v1/agents") {
+		t.Error("narrow grant must stay narrow")
+	}
+}

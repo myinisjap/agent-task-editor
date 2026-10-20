@@ -92,6 +92,12 @@ Notes:
   `MCP_BOARD_PATH` to the built binary to enable it.
 - Leaving `MCP_BOARD_PATH` unset simply launches chat sessions as before (no
   board tools).
+- By default chat sessions get only the three create tools, because a chat
+  reads repo code that can contain prompt injection. Set `MCP_BOARD_TOOL_PROFILE`
+  (`readonly`, `full` or `admin`; default unset) on the backend to give them the
+  remote connector's tool sets instead; it is passed to `mcp-board` as
+  `TOOL_PROFILE`, and the session token is widened to the board-tool routes
+  (repos, tasks, workflows, agents).
 
 ## External chat client
 
@@ -118,6 +124,9 @@ To create tickets from a chat client outside the app (e.g. Claude Desktop), run
      }
    }
    ```
+
+   Optionally add `"TOOL_PROFILE": "readonly"` (or `full`/`admin`) to `env` for
+   the remote connector's tool sets; the default is the three create tools.
 
 3. **Restart the chat client** and start a conversation: work through a plan,
    then ask it to create the tickets. It will call `list_repos` to find the repo
@@ -317,6 +326,7 @@ woken by CI and review activity.
 |---|---|---|
 | `BACKEND_URL` | ✅ | Base URL of the backend, e.g. `http://localhost:8080` |
 | `API_TOKEN` | — | Bearer token; sent on every request when the backend has `API_TOKEN`/`API_TOKENS` set |
+| `TOOL_PROFILE` | — | `create` (default, unset = same: list_repos/list_workflows/create_task), `readonly`, `full` or `admin` — the remote connector's tool sets; unknown values exit with an error |
 | `LOG_LEVEL` | — | `debug`/`info`/… (default `info`) |
 
 These are for the stdio `mcp-board` binary. The remote connector is configured

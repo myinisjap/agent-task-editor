@@ -37,6 +37,10 @@ type Grant struct {
 	RunID  string // KindRun: the agent run
 	TaskID string // KindRun: the only task the token may touch
 	Chat   string // KindChat: the chat session id
+	// Wide (KindChat) widens the grant from the three create-profile routes to
+	// every route the board tools use (repos, tasks, workflows, agents), for
+	// MCP_BOARD_TOOL_PROFILE=readonly|full|admin.
+	Wide bool
 }
 
 // Actor is the name recorded for requests made with this grant.
@@ -57,6 +61,18 @@ func (g Grant) Allows(method, path string) bool {
 			path == "/api/v1/tasks/"+g.TaskID+"/subtasks"
 	case KindChat:
 		// Exactly what cmd/mcp-board calls: list_repos, list_workflows, create_task.
+		if g.Wide {
+			if strings.Contains(path, "..") || strings.Contains(path, "//") {
+				return false
+			}
+			for _, p := range []string{"repos", "tasks", "workflows", "agents"} {
+				base := "/api/v1/" + p
+				if path == base || strings.HasPrefix(path, base+"/") {
+					return true
+				}
+			}
+			return false
+		}
 		switch path {
 		case "/api/v1/repos", "/api/v1/workflows":
 			return method == http.MethodGet

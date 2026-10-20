@@ -16,6 +16,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -51,6 +52,10 @@ type backend struct {
 	baseURL string
 	token   string
 	client  *http.Client
+	// tools and instructions are the advertised set; nil/empty means the
+	// default "create" profile (stdioTools, no instructions).
+	tools        []boardtools.Tool
+	instructions string
 }
 
 func main() {
@@ -65,10 +70,17 @@ func main() {
 		slog.Error("BACKEND_URL env var required (e.g. http://localhost:8080)")
 		os.Exit(1)
 	}
+	tools, instr, err := resolveProfile(os.Getenv("TOOL_PROFILE"))
+	if err != nil {
+		slog.Error("invalid TOOL_PROFILE", "err", err)
+		os.Exit(1)
+	}
 	be := &backend{
-		baseURL: baseURL,
-		token:   os.Getenv("API_TOKEN"),
-		client:  &http.Client{Timeout: 30 * time.Second},
+		tools:        tools,
+		instructions: instr,
+		baseURL:      baseURL,
+		token:        os.Getenv("API_TOKEN"),
+		client:       &http.Client{Timeout: 30 * time.Second},
 	}
 
 	serve(os.Stdin, os.Stdout, be)
@@ -108,14 +120,18 @@ func serve(in io.Reader, out io.Writer, be *backend) {
 
 		switch req.Method {
 		case "initialize":
-			respond(map[string]any{
+			res := map[string]any{
 				"protocolVersion": "2024-11-05",
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 				"serverInfo":      map[string]any{"name": "task-editor-board", "version": "1.0.0"},
-			})
+			}
+			if be.instructions != "" {
+				res["instructions"] = be.instructions
+			}
+			respond(res)
 
 		case "tools/list":
-			respond(map[string]any{"tools": toolDefs()})
+			respond(map[string]any{"tools": be.toolDefs()})
 
 		case "tools/call":
 			var params struct {
@@ -141,13 +157,34 @@ func serve(in io.Reader, out io.Writer, be *backend) {
 // stdioTools is the fixed tool list this server advertises.
 var stdioTools = boardtools.Select(boardtools.StdioTools)
 
+// resolveProfile maps TOOL_PROFILE to a tool set and server instructions.
+// Unset or "create" is the default three tools; otherwise it is one of the
+// remote server's profiles (readonly, full, admin).
+func resolveProfile(name string) ([]boardtools.Tool, string, error) {
+	if n := strings.ToLower(strings.TrimSpace(name)); n == "" || n == "create" {
+		return stdioTools, "", nil
+	}
+	names, instr, err := boardtools.Profile(name)
+	if err != nil {
+		return nil, "", fmt.Errorf("TOOL_PROFILE: %v (or create)", err)
+	}
+	return boardtools.Select(names), instr, nil
+}
+
+func (be *backend) activeTools() []boardtools.Tool {
+	if be.tools != nil {
+		return be.tools
+	}
+	return stdioTools
+}
+
 // toolDefs is the tools/list payload.
-func toolDefs() []map[string]any {
-	return boardtools.Defs(stdioTools)
+func (be *backend) toolDefs() []map[string]any {
+	return boardtools.Defs(be.activeTools())
 }
 
 // callTool dispatches one tool call and returns (text, isError).
 func (be *backend) callTool(name string, args json.RawMessage) (string, bool) {
 	c := &boardtools.Client{BaseURL: be.baseURL, Token: be.token, HTTP: be.client}
-	return c.Call(stdioTools, name, args)
+	return c.Call(be.activeTools(), name, args)
 }

@@ -15,6 +15,7 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `MetricsPublic` | `METRICS_PUBLIC` | `metrics_public` | `false` |
 | `MCPBinary` | `MCP_SERVER_PATH` | `mcp_server_path` | _(empty)_ |
 | `MCPBoardBinary` | `MCP_BOARD_PATH` | `mcp_board_path` | _(empty)_ |
+| `MCPBoardToolProfile` | `MCP_BOARD_TOOL_PROFILE` | `mcp_board_tool_profile` | _(empty = create)_ |
 | `MaxWorkers` | `MAX_WORKERS` | `max_workers` | `5` |
 | `RepoBaseDir` | `REPO_BASE_DIR` | `repo_base_dir` | _(empty)_ |
 | `UploadDir` | `UPLOAD_DIR` | `upload_dir` | `uploads` (next to DB) |

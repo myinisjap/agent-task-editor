@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
@@ -33,10 +34,18 @@ const boardMCPServerName = "task-editor-board"
 //   - claude / qwen_code: a per-session --mcp-config JSON file
 //   - codex_cli: per-session `-c mcp_servers.<name>.*` config overrides
 //   - anything else (e.g. opencode): no injection (no per-invocation mechanism)
-func NewChatMCPProvisioner(binary, backendURL string) agent.ChatMCPProvisioner {
+//
+// toolProfile (MCP_BOARD_TOOL_PROFILE) is passed to mcp-board as TOOL_PROFILE;
+// empty keeps the default three create tools and the narrow token.
+func NewChatMCPProvisioner(binary, backendURL string, toolProfile ...string) agent.ChatMCPProvisioner {
 	if binary == "" {
 		return nil
 	}
+	profile := ""
+	if len(toolProfile) > 0 {
+		profile = strings.TrimSpace(toolProfile[0])
+	}
+	wide := profile != "" && !strings.EqualFold(profile, "create")
 	return func(provider, sessionID string) ([]string, []string, func(), error) {
 		noop := func() {}
 		switch provider {
@@ -44,7 +53,7 @@ func NewChatMCPProvisioner(binary, backendURL string) agent.ChatMCPProvisioner {
 		default:
 			return nil, nil, noop, nil
 		}
-		token, err := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindChat, Chat: sessionID})
+		token, err := scopedtoken.Default.Issue(scopedtoken.Grant{Kind: scopedtoken.KindChat, Chat: sessionID, Wide: wide})
 		if err != nil {
 			return nil, nil, noop, fmt.Errorf("mint chat token: %w", err)
 		}
@@ -53,6 +62,9 @@ func NewChatMCPProvisioner(binary, backendURL string) agent.ChatMCPProvisioner {
 			Command: binary,
 			Args:    []string{},
 			Env:     map[string]string{"BACKEND_URL": backendURL, "API_TOKEN": token},
+		}
+		if profile != "" {
+			entry.Env["TOOL_PROFILE"] = profile
 		}
 		revoke := func() { scopedtoken.Default.Revoke(token) }
 

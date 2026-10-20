@@ -23,6 +23,8 @@ same wire protocol as `cmd/mcp-server`.
   initial placement (see `TasksHandler.resolveInitialLabel`), so it is not
   restricted to the workflow's transition edges.
 
+The above is the default `create` profile (`TOOL_PROFILE` unset). `TOOL_PROFILE=readonly|full|admin` swaps in `boardtools.ReadOnlyRemoteTools`/`RemoteTools`/`AdminRemoteTools` plus the remote server's instructions. The backend sets it for chat sessions from `MCP_BOARD_TOOL_PROFILE` and widens the chat scoped token (`scopedtoken.Grant.Wide`) to match.
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -30,6 +32,7 @@ same wire protocol as `cmd/mcp-server`.
 | `BACKEND_URL` | ✅ | Base URL of the backend, e.g. `http://localhost:8080` |
 | `API_TOKEN` | — | Bearer token; sent on every request when the backend requires one |
 | `LOG_LEVEL` | — | `debug`/`info`/… (default `info`), matching the other binaries |
+| `TOOL_PROFILE` | — | `create` (default; same as unset), `readonly`, `full` or `admin` — the remote connector's tool lists (`boardtools.Profile`); unknown value exits 1. Also sets the `initialize` instructions |
 
 ## Building & Connecting
 
