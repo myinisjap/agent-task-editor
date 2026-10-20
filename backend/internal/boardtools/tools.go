@@ -82,13 +82,15 @@ var StdioTools = []string{"list_repos", "list_workflows", "create_task"}
 // is attacker-influenced, so nothing reachable from it may change state.
 var ReadOnlyRemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
-	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime", "get_costs",
+	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime",
+	"list_needs_me", "get_costs",
 }
 
 // RemoteTools is the "full" remote MCP profile: ticket creation plus
 // reading tasks/runs and unblocking agents that wait on a human.
 var RemoteTools = append(slices.Clone(ReadOnlyRemoteTools),
-	"create_task", "reply_to_run", "approve_task", "reject_task", "move_task", "archive_task", "create_pr",
+	"create_task", "reply_to_run", "approve_task", "reject_task", "move_task", "archive_task",
+	"cancel_run", "rerun_task", "create_pr",
 )
 
 // AdminRemoteTools is the "admin" remote MCP profile: everything in

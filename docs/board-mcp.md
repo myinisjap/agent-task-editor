@@ -149,7 +149,7 @@ admits the emails in `MCP_ALLOWED_EMAILS`.
 | Profile | Adds |
 |---|---|
 | `readonly` (default) | `list_repos`, `list_workflows` and the read tools below (`list_tasks` … `get_costs`) |
-| `full` | `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `create_pr`) |
+| `full` | `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task`, `create_pr`) |
 | `admin` | Board configuration: `create_workflow`, `update_workflow`, `add_repo`, `update_repo` |
 
 The full profile has everything the stdio server has, plus (read tools first):
@@ -165,11 +165,14 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `list_agents` | Agent configs: which labels each works on, enabled, provider and model (no prompts or env) |
 | `get_repo` | One repo's settings, including `clone_status` / `clone_error` |
 | `detect_repo_runtime` | Suggested toolchain pins from the repo's manifest files; changes nothing |
+| `list_needs_me` | Tasks waiting on a human (task id, title, label, reason) — the "what needs me?" opener |
 | `get_costs` | What agents have spent: total tokens/USD over finished runs, the split by provider, and the top tasks by cost (`limit`, default 5, max 50; or one `task_id`). The dashboard cost endpoints take no date/repo filters, so there are none |
 | `reply_to_run` | Answer an agent waiting on a human (defaults to the task's active run) |
 | `approve_task` / `reject_task` | Follow the workflow's `success` / `failure` human transition, with a note |
 | `move_task` | Move a task to another label (must be an allowed transition) |
 | `archive_task` | Archive a task (or unarchive it with `archived: false`); works on any label and removes the task's worktree |
+| `cancel_run` | Stop a running agent run (defaults to the task's active run) |
+| `rerun_task` | Clear the active run and failure count so an agent picks the task up again |
 | `create_pr` | Push the task's branch and open a GitHub PR, returning its URL; idempotent (returns the existing PR). Needs a provisioned branch and a GitHub remote |
 
 The admin profile adds:
@@ -265,10 +268,10 @@ exposed, in any profile.
 - Tool profile: by default (`MCP_TOOL_PROFILE=readonly`) only the read tools
   (`list_repos`, `list_workflows`, `list_tasks`, `get_task`, `list_runs`,
   `get_run_logs`, `get_diff`, `get_workflow`, `list_agents`, `get_repo`,
-  `detect_repo_runtime`) are exposed, because run logs, diffs and task
+  `detect_repo_runtime`, `list_needs_me`, `get_costs`) are exposed, because run logs, diffs and task
   bodies contain text an attacker can influence and could steer a model into
   calling write tools. `MCP_TOOL_PROFILE=full` also exposes `create_task`,
-  `reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task` and `create_pr`; if you enable
+  `reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task` and `create_pr`; if you enable
   it, keep claude.ai's per-tool "ask before running" and avoid "always allow"
   on those tools. `MCP_TOOL_PROFILE=admin` further exposes workflow editing and
   repo onboarding. A repo's `verify_command` runs as a shell command on the
