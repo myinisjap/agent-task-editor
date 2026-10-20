@@ -247,6 +247,41 @@ transitions:
 		t.Errorf("list_schedules: %s", out)
 	}
 
+	// Wire an agent to the new workflow's label.
+	var pcID string
+	{
+		rec := do(h, http.MethodPost, "/api/v1/provider-configs", "application/json", `{"name":"P","provider":"claude","model":"opus","env":"{\"SECRET\":\"hunter2\"}"}`, "Authorization", "Bearer static-api-token")
+		var pc struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &pc); err != nil || pc.ID == "" {
+			t.Fatalf("create provider config: %d %s", rec.Code, rec.Body.String())
+		}
+		pcID = pc.ID
+	}
+	if out := result("list_provider_configs", map[string]any{}); !strings.Contains(out, pcID) || strings.Contains(out, "hunter2") || strings.Contains(out, "env") {
+		t.Errorf("list_provider_configs: %s", out)
+	}
+	out = result("create_agent", map[string]any{"name": "Coder", "provider_config_id": pcID, "system_prompt": "ship it", "labels": []string{"work"}, "max_turns": 20, "priority": 1})
+	m = regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).FindStringSubmatch(out)
+	if m == nil || !strings.Contains(out, `"enabled":true`) || strings.Contains(out, "hunter2") {
+		t.Fatalf("create_agent: %s", out)
+	}
+	agentID := m[1]
+	out = result("update_agent", map[string]any{"agent_id": agentID, "labels": []string{"work", "review"}, "enabled": false})
+	if !strings.Contains(out, `"enabled":false`) || strings.Contains(out, "hunter2") {
+		t.Fatalf("update_agent: %s", out)
+	}
+	out = result("get_agent", map[string]any{"agent_id": agentID})
+	for _, want := range []string{`"system_prompt":"ship it"`, `\"work\",\"review\"`, `"max_turns":20`, `"priority":1`, `"timeout_secs":600`, `"provider":"claude"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("get_agent missing %s: %s", want, out)
+		}
+	}
+	if strings.Contains(out, "hunter2") || strings.Contains(out, `"env"`) {
+		t.Errorf("get_agent leaked env: %s", out)
+	}
+
 	// A task on "review" blocks dropping that label.
 	if out := result("create_task", map[string]any{"title": "t", "repo_id": repoID, "workflow_id": wfID, "label": "review"}); !strings.Contains(out, "review") {
 		t.Fatalf("create_task: %s", out)

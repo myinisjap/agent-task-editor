@@ -83,7 +83,7 @@ var StdioTools = []string{"list_repos", "list_workflows", "create_task"}
 var ReadOnlyRemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
 	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime",
-	"list_needs_me", "get_costs", "list_templates", "list_schedules",
+	"list_needs_me", "get_costs", "list_provider_configs", "get_agent", "list_templates", "list_schedules",
 }
 
 // RemoteTools is the "full" remote MCP profile: ticket creation plus
@@ -100,6 +100,7 @@ var RemoteTools = append(slices.Clone(ReadOnlyRemoteTools),
 // is a separate opt-in rather than part of "full".
 var AdminRemoteTools = append(slices.Clone(RemoteTools),
 	"create_workflow", "update_workflow", "add_repo", "update_repo",
+	"create_agent", "update_agent",
 	"create_template", "update_template", "create_schedule", "update_schedule",
 )
 
