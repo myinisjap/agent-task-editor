@@ -85,6 +85,12 @@ func TestToolsAgainstRealRouter(t *testing.T) {
 	if out := call("approve_task", `{"task_id":"missing"}`); !strings.Contains(out, "404") || !strings.Contains(out, `"isError":true`) {
 		t.Errorf("approve_task on missing task: %s", out)
 	}
+	if out := call("get_costs", `{}`); !strings.Contains(out, "Total") || !strings.Contains(out, `"isError":false`) {
+		t.Errorf("get_costs: %s", out)
+	}
+	if out := call("create_pr", `{"task_id":"missing"}`); !strings.Contains(out, "create_pr failed") || !strings.Contains(out, `"isError":true`) {
+		t.Errorf("create_pr on missing task: %s", out)
+	}
 	if out := call("create_workflow", `{"yaml":"name: X"}`); !strings.Contains(out, "unknown tool") {
 		t.Errorf("full profile ran create_workflow: %s", out)
 	}
