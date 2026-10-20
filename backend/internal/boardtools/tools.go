@@ -83,12 +83,14 @@ var StdioTools = []string{"list_repos", "list_workflows", "create_task"}
 var ReadOnlyRemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
 	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime",
+	"list_needs_me",
 }
 
 // RemoteTools is the "full" remote MCP profile: ticket creation plus
 // reading tasks/runs and unblocking agents that wait on a human.
 var RemoteTools = append(slices.Clone(ReadOnlyRemoteTools),
 	"create_task", "reply_to_run", "approve_task", "reject_task", "move_task", "archive_task",
+	"cancel_run", "rerun_task",
 )
 
 // AdminRemoteTools is the "admin" remote MCP profile: everything in

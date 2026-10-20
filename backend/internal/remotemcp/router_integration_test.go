@@ -88,6 +88,15 @@ func TestToolsAgainstRealRouter(t *testing.T) {
 	if out := call("create_workflow", `{"yaml":"name: X"}`); !strings.Contains(out, "unknown tool") {
 		t.Errorf("full profile ran create_workflow: %s", out)
 	}
+	if out := call("list_needs_me", `{}`); !strings.Contains(out, `"text":"[]"`) || !strings.Contains(out, `"isError":false`) {
+		t.Errorf("list_needs_me: %s", out)
+	}
+	if out := call("rerun_task", `{"task_id":"missing"}`); !strings.Contains(out, "404") || !strings.Contains(out, `"isError":true`) {
+		t.Errorf("rerun_task on missing task: %s", out)
+	}
+	if out := call("cancel_run", `{"task_id":"missing","run_id":"r"}`); !strings.Contains(out, "404") || !strings.Contains(out, `"isError":true`) {
+		t.Errorf("cancel_run on missing task: %s", out)
+	}
 }
 
 // TestAdminToolsAgainstRealRouter checks the admin tools' request shapes
