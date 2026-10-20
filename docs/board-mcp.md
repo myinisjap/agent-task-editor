@@ -148,9 +148,9 @@ admits the emails in `MCP_ALLOWED_EMAILS`.
 
 | Profile | Adds |
 |---|---|
-| `readonly` (default) | `list_repos`, `list_workflows` and the read tools below (`list_tasks` … `detect_repo_runtime`) |
+| `readonly` (default) | `list_repos`, `list_workflows` and the read tools below (`list_tasks` … `list_schedules`) |
 | `full` | `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`) |
-| `admin` | Board configuration: `create_workflow`, `update_workflow`, `add_repo`, `update_repo` |
+| `admin` | Board configuration: `create_workflow`, `update_workflow`, `add_repo`, `update_repo`, and recurring work: `create_template`, `update_template`, `create_schedule`, `update_schedule` |
 
 The full profile has everything the stdio server has, plus (read tools first):
 
@@ -165,6 +165,8 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `list_agents` | Agent configs: which labels each works on, enabled, provider and model (no prompts or env) |
 | `get_repo` | One repo's settings, including `clone_status` / `clone_error` |
 | `detect_repo_runtime` | Suggested toolchain pins from the repo's manifest files; changes nothing |
+| `list_templates` | Task templates (name, title, description, type) that schedules instantiate |
+| `list_schedules` | Schedules: template, repo, cron, target label, enabled, last run |
 | `reply_to_run` | Answer an agent waiting on a human (defaults to the task's active run) |
 | `approve_task` / `reject_task` | Follow the workflow's `success` / `failure` human transition, with a note |
 | `move_task` | Move a task to another label (must be an allowed transition) |
@@ -178,6 +180,9 @@ The admin profile adds:
 | `update_workflow` | Replace a workflow's name, description, labels and transitions from YAML. It's a full replacement, so read it with `get_workflow` first. Refused if it would drop a label that still holds tasks in that workflow (archived ones included) |
 | `add_repo` | Onboard a repo: `remote_url` clones it under `REPO_BASE_DIR` in the background (poll `get_repo` for `clone_status: ready`), or `path` registers a checkout already on the server. Also takes `name`, `workflow_id`, `verify_command`, `verify_timeout_seconds`, `runtime_languages`, `max_concurrent_runs`, `issue_sync_enabled`, `issue_sync_label` |
 | `update_repo` | Change those same settings (except `path`) on an existing repo; only the fields passed change |
+| `create_template` / `update_template` | Create a task template (`name`, `title`, `description`, `type`); an update changes only the fields passed |
+| `create_schedule` | Create a task from a template in a repo on a 5-field cron (`minute hour day-of-month month day-of-week`, e.g. `0 9 * * 1` = Mondays 09:00). Optional `target_label`, `enabled` |
+| `update_schedule` | Change `cron_expr` or `target_label`, or pause/resume with `enabled: false/true`; only the fields passed change. Template and repo are fixed. There are no delete tools |
 
 A typical onboarding chat: `add_repo` → `get_repo` until ready →
 `detect_repo_runtime` → `update_repo` with the pins and a `verify_command` →
@@ -263,15 +268,19 @@ exposed, in any profile.
 - Tool profile: by default (`MCP_TOOL_PROFILE=readonly`) only the read tools
   (`list_repos`, `list_workflows`, `list_tasks`, `get_task`, `list_runs`,
   `get_run_logs`, `get_diff`, `get_workflow`, `list_agents`, `get_repo`,
-  `detect_repo_runtime`) are exposed, because run logs, diffs and task
+  `detect_repo_runtime`, `list_templates`, `list_schedules`) are exposed, because run logs, diffs and task
   bodies contain text an attacker can influence and could steer a model into
   calling write tools. `MCP_TOOL_PROFILE=full` also exposes `create_task`,
   `reply_to_run`, `approve_task`, `reject_task`, `move_task` and `archive_task`; if you enable
   it, keep claude.ai's per-tool "ask before running" and avoid "always allow"
   on those tools. `MCP_TOOL_PROFILE=admin` further exposes workflow editing and
-  repo onboarding. A repo's `verify_command` runs as a shell command on the
+  repo onboarding and recurring work. A repo's `verify_command` runs as a shell command on the
   server (as the agent user), so only pick `admin` if you would let the chat
-  run commands there, and never "always allow" `add_repo` or `update_repo`.
+  run commands there, and never "always allow" `add_repo` or `update_repo`. A schedule creates tasks
+  unattended: with an empty `target_label` they wait in the human-gate column
+  for you; pointing it at a label an agent works on starts agent runs on the
+  cron with nobody watching, so never "always allow" `create_schedule` or
+  `update_schedule` either.
   The consent page states which profile is active.
 - Tool calls reach the API in-process under a trusted-actor mark that only the
   `/api/v1` auth chain honours; `/metrics` and every other route ignore it.

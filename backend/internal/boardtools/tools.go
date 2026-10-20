@@ -82,7 +82,7 @@ var StdioTools = []string{"list_repos", "list_workflows", "create_task"}
 // is attacker-influenced, so nothing reachable from it may change state.
 var ReadOnlyRemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
-	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime",
+	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime", "list_templates", "list_schedules",
 }
 
 // RemoteTools is the "full" remote MCP profile: ticket creation plus
@@ -92,11 +92,13 @@ var RemoteTools = append(slices.Clone(ReadOnlyRemoteTools),
 )
 
 // AdminRemoteTools is the "admin" remote MCP profile: everything in
-// RemoteTools plus board configuration, i.e. creating and editing workflows
-// and onboarding repos. A repo's verify_command runs on the server, so this
+// RemoteTools plus board configuration, i.e. creating and editing workflows,
+// onboarding repos, and recurring work (templates and schedules; a schedule
+// creates agent work unattended). A repo's verify_command runs on the server, so this
 // is a separate opt-in rather than part of "full".
 var AdminRemoteTools = append(slices.Clone(RemoteTools),
 	"create_workflow", "update_workflow", "add_repo", "update_repo",
+	"create_template", "update_template", "create_schedule", "update_schedule",
 )
 
 // Select returns the tools with the given names, in that order. Unknown names
