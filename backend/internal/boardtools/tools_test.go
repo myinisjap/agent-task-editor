@@ -154,7 +154,7 @@ func TestReadTools(t *testing.T) {
 	if last := (*calls)[len(*calls)-1]; last.body["label"] != "not_ready" || last.body["workflow_id"] != nil {
 		t.Errorf("create_task body = %v", last.body)
 	}
-	for _, tool := range []string{"get_task", "list_runs", "get_run_logs", "get_diff", "reply_to_run", "approve_task", "move_task", "archive_task"} {
+	for _, tool := range []string{"get_task", "list_runs", "get_run_logs", "get_diff", "reply_to_run", "approve_task", "move_task", "archive_task", "cancel_run", "rerun_task"} {
 		if _, isErr := c.Call(tools, tool, nil); !isErr {
 			t.Errorf("%s accepted missing task_id", tool)
 		}
@@ -177,7 +177,7 @@ func TestDefsAndTruncate(t *testing.T) {
 }
 
 func TestReadOnlyRemoteToolsDoNotMutate(t *testing.T) {
-	mutating := map[string]bool{"create_task": true, "reply_to_run": true, "approve_task": true, "reject_task": true, "move_task": true, "archive_task": true}
+	mutating := map[string]bool{"create_task": true, "reply_to_run": true, "approve_task": true, "reject_task": true, "move_task": true, "archive_task": true, "cancel_run": true, "rerun_task": true}
 	admin := map[string]bool{"create_workflow": true, "update_workflow": true, "add_repo": true, "update_repo": true, "create_agent": true, "update_agent": true}
 	for _, tl := range Select(ReadOnlyRemoteTools) {
 		if mutating[tl.Name] || admin[tl.Name] || !tl.ReadOnly {
@@ -207,5 +207,30 @@ func TestReadOnlyRemoteToolsDoNotMutate(t *testing.T) {
 		if !full[n] {
 			t.Errorf("%q is read-only but missing from RemoteTools", n)
 		}
+	}
+}
+
+func TestNeedsMeCancelRerun(t *testing.T) {
+	c, calls := stubAPI(t, map[string]string{
+		"GET /api/v1/needs-me":                 `{"items":[{"task_id":"t1","task_title":"Fix","label":"review","reason":"review","since":"x"}]}`,
+		"GET /api/v1/tasks/t1":                 `{"active_agent_run_id":"r9"}`,
+		"POST /api/v1/tasks/t1/runs/r9/cancel": `{"status":"cancelling"}`,
+		"POST /api/v1/tasks/t1/rerun":          ``,
+	})
+	tools := Select(RemoteTools)
+	text, isErr := c.Call(Select(ReadOnlyRemoteTools), "list_needs_me", nil)
+	if isErr || !strings.Contains(text, `"title":"Fix"`) {
+		t.Fatalf("list_needs_me: %q (err=%v)", text, isErr)
+	}
+	text, isErr = c.Call(tools, "cancel_run", json.RawMessage(`{"task_id":"t1"}`))
+	if isErr || !strings.Contains(text, "r9") {
+		t.Fatalf("cancel_run: %q (err=%v)", text, isErr)
+	}
+	text, isErr = c.Call(tools, "rerun_task", json.RawMessage(`{"task_id":"t1"}`))
+	if isErr {
+		t.Fatalf("rerun_task: %q", text)
+	}
+	if last := (*calls)[len(*calls)-1]; last.method != "POST" || last.path != "/api/v1/tasks/t1/rerun" {
+		t.Errorf("last call = %v", last)
 	}
 }
