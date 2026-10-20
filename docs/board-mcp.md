@@ -148,9 +148,9 @@ admits the emails in `MCP_ALLOWED_EMAILS`.
 
 | Profile | Adds |
 |---|---|
-| `readonly` (default) | `list_repos`, `list_workflows` and the read tools below (`list_tasks` … `get_costs`) |
+| `readonly` (default) | `list_repos`, `list_workflows` and the read tools below (`list_tasks` … `list_schedules`) |
 | `full` | `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task`, `create_pr`) |
-| `admin` | Board configuration: `create_workflow`, `update_workflow`, `add_repo`, `update_repo`, `create_agent`, `update_agent` |
+| `admin` | Board configuration: `create_workflow`, `update_workflow`, `add_repo`, `update_repo`, `create_agent`, `update_agent`, and recurring work: `create_template`, `update_template`, `create_schedule`, `update_schedule` |
 
 The full profile has everything the stdio server has, plus (read tools first):
 
@@ -169,6 +169,8 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `detect_repo_runtime` | Suggested toolchain pins from the repo's manifest files; changes nothing |
 | `list_needs_me` | Tasks waiting on a human (task id, title, label, reason) — the "what needs me?" opener |
 | `get_costs` | What agents have spent: total tokens/USD over finished runs, the split by provider, and the top tasks by cost (`limit`, default 5, max 50; or one `task_id`). The dashboard cost endpoints take no date/repo filters, so there are none |
+| `list_templates` | Task templates (name, title, description, type) that schedules instantiate |
+| `list_schedules` | Schedules: template, repo, cron, target label, enabled, last run |
 | `reply_to_run` | Answer an agent waiting on a human (defaults to the task's active run) |
 | `approve_task` / `reject_task` | Follow the workflow's `success` / `failure` human transition, with a note |
 | `move_task` | Move a task to another label (must be an allowed transition) |
@@ -187,6 +189,9 @@ The admin profile adds:
 | `update_repo` | Change those same settings (except `path`) on an existing repo; only the fields passed change |
 | `create_agent` | Create an agent config: `name`, `provider_config_id` (from `list_provider_configs`), `system_prompt`, `labels`, `enabled`, `max_turns`, `timeout_secs`, `max_cost_usd`, `priority`, `effort`, `permission_mode`, `fallback_provider_config_ids`. Starts disabled if another agent already lists one of the labels, unless `enabled` is passed |
 | `update_agent` | Change those fields on an existing agent; the current config is merged in, so only the fields passed change |
+| `create_template` / `update_template` | Create a task template (`name`, `title`, `description`, `type`); an update changes only the fields passed |
+| `create_schedule` | Create a task from a template in a repo on a 5-field cron (`minute hour day-of-month month day-of-week`, e.g. `0 9 * * 1` = Mondays 09:00). Optional `target_label`, `enabled` |
+| `update_schedule` | Change `cron_expr` or `target_label`, or pause/resume with `enabled: false/true`; only the fields passed change. Template and repo are fixed. There are no delete tools |
 
 A typical onboarding chat: `add_repo` → `get_repo` until ready →
 `detect_repo_runtime` → `update_repo` with the pins and a `verify_command` →
@@ -272,15 +277,19 @@ exposed, in any profile.
 - Tool profile: by default (`MCP_TOOL_PROFILE=readonly`) only the read tools
   (`list_repos`, `list_workflows`, `list_tasks`, `get_task`, `list_runs`,
   `get_run_logs`, `get_diff`, `get_workflow`, `list_agents`, `get_repo`,
-  `detect_repo_runtime`, `list_needs_me`, `get_costs`, `list_provider_configs`, `get_agent`) are exposed, because run logs, diffs and task
+  `detect_repo_runtime`, `list_needs_me`, `get_costs`, `list_provider_configs`, `get_agent`, `list_templates`, `list_schedules`) are exposed, because run logs, diffs and task
   bodies contain text an attacker can influence and could steer a model into
   calling write tools. `MCP_TOOL_PROFILE=full` also exposes `create_task`,
   `reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task` and `create_pr`; if you enable
   it, keep claude.ai's per-tool "ask before running" and avoid "always allow"
-  on those tools. `MCP_TOOL_PROFILE=admin` further exposes workflow editing, agent configs and
-  repo onboarding. A repo's `verify_command` runs as a shell command on the
+  on those tools. `MCP_TOOL_PROFILE=admin` further exposes workflow editing, agent configs,
+  repo onboarding and recurring work. A repo's `verify_command` runs as a shell command on the
   server (as the agent user), so only pick `admin` if you would let the chat
-  run commands there, and never "always allow" `add_repo`, `update_repo`, `create_agent` or `update_agent` (an agent's system prompt steers what it runs).
+  run commands there, and never "always allow" `add_repo`, `update_repo`, `create_agent` or `update_agent` (an agent's system prompt steers what it runs). A schedule creates tasks
+  unattended: with an empty `target_label` they wait in the human-gate column
+  for you; pointing it at a label an agent works on starts agent runs on the
+  cron with nobody watching, so never "always allow" `create_schedule` or
+  `update_schedule` either.
   The consent page states which profile is active.
 - Tool calls reach the API in-process under a trusted-actor mark that only the
   `/api/v1` auth chain honours; `/metrics` and every other route ignore it.

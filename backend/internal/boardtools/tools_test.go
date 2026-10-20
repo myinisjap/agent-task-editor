@@ -178,7 +178,7 @@ func TestDefsAndTruncate(t *testing.T) {
 
 func TestReadOnlyRemoteToolsDoNotMutate(t *testing.T) {
 	mutating := map[string]bool{"create_task": true, "reply_to_run": true, "approve_task": true, "reject_task": true, "move_task": true, "archive_task": true, "cancel_run": true, "rerun_task": true}
-	admin := map[string]bool{"create_workflow": true, "update_workflow": true, "add_repo": true, "update_repo": true, "create_agent": true, "update_agent": true}
+	admin := map[string]bool{"create_workflow": true, "update_workflow": true, "add_repo": true, "update_repo": true, "create_agent": true, "update_agent": true, "create_template": true, "update_template": true, "create_schedule": true, "update_schedule": true}
 	for _, tl := range Select(ReadOnlyRemoteTools) {
 		if mutating[tl.Name] || admin[tl.Name] || !tl.ReadOnly {
 			t.Errorf("read-only profile exposes mutating tool %q", tl.Name)

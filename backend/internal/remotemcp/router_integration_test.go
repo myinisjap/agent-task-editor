@@ -218,6 +218,35 @@ transitions:
 		t.Errorf("get_repo: %s", out)
 	}
 
+	// Recurring work: a template and a schedule, then pause the schedule.
+	out = result("create_template", map[string]any{"name": "Triage", "title": "Triage open issues", "type": "chore"})
+	m = regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("create_template: %s", out)
+	}
+	tplID := m[1]
+	if out := result("update_template", map[string]any{"template_id": tplID, "description": "Look at each one"}); !strings.Contains(out, `"title":"Triage open issues"`) || !strings.Contains(out, "Look at each one") {
+		t.Errorf("update_template: %s", out)
+	}
+	out = result("create_schedule", map[string]any{"template_id": tplID, "repo_id": repoID, "cron_expr": "0 9 * * 1", "target_label": "todo"})
+	m = regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).FindStringSubmatch(out)
+	if m == nil || !strings.Contains(out, `"enabled":true`) {
+		t.Fatalf("create_schedule: %s", out)
+	}
+	schedID := m[1]
+	if out := result("update_schedule", map[string]any{"schedule_id": schedID, "enabled": false}); !strings.Contains(out, `"enabled":false`) || !strings.Contains(out, `"cron_expr":"0 9 * * 1"`) || !strings.Contains(out, `"target_label":"todo"`) {
+		t.Errorf("update_schedule pause: %s", out)
+	}
+	if out := result("update_schedule", map[string]any{"schedule_id": schedID, "cron_expr": "0 8 * * *"}); !strings.Contains(out, `"enabled":false`) || !strings.Contains(out, `"0 8 * * *"`) {
+		t.Errorf("update_schedule cron: %s", out)
+	}
+	if out := result("list_templates", map[string]any{}); !strings.Contains(out, "Triage") {
+		t.Errorf("list_templates: %s", out)
+	}
+	if out := result("list_schedules", map[string]any{}); !strings.Contains(out, schedID) {
+		t.Errorf("list_schedules: %s", out)
+	}
+
 	// Wire an agent to the new workflow's label.
 	var pcID string
 	{
