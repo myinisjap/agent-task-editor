@@ -27,6 +27,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
+- **`create_pr` and `get_costs` board MCP tools.** `create_pr` (remote `full` profile) pushes a task's branch and opens its GitHub PR, returning the URL (idempotent: an existing PR is returned). `get_costs` (every profile, read-only) summarises agent spend: total tokens/USD, the split by provider and the top tasks by cost. See `docs/board-mcp.md#remote-connector`.
 - **`list_needs_me`, `cancel_run` and `rerun_task` board MCP tools.** `list_needs_me` (every remote profile) lists the tasks waiting on a human, the "what needs me?" opener for a chat. `cancel_run` (stops a running agent, defaulting to the task's active run) and `rerun_task` (lets an agent pick a task up again) are in the `full` profile and up.
 
 - **Set the board up from any chat.** The remote MCP connector has a new `MCP_TOOL_PROFILE=admin` that adds `create_workflow` and `update_workflow` (workflows as the same YAML the workflow editor uses; an update that would drop a column still holding tasks is refused) and `add_repo` / `update_repo` (clone from a remote URL or register a checkout on the server, then assign a workflow, verify command, toolchain pins, run cap or issue import). Every profile also gains the read tools `get_workflow`, `list_agents` (which labels each agent works on), `get_repo` (including clone status) and `detect_repo_runtime`. `full` is unchanged apart from those reads. See `docs/board-mcp.md#remote-connector`.
