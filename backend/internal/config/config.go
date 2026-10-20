@@ -186,7 +186,7 @@ type Config struct {
 	// MCPAllowedClientIDs, when set, restricts the remote MCP to these OAuth
 	// client ids. Empty accepts any client with an allowed redirect URI.
 	MCPAllowedClientIDs []string `yaml:"mcp_allowed_client_ids"`
-	// MCPToolProfile is "readonly" (default) or "full"; see docs/board-mcp.md.
+	// MCPToolProfile is "readonly" (default), "full" or "admin"; see docs/board-mcp.md.
 	MCPToolProfile string `yaml:"mcp_tool_profile"`
 }
 

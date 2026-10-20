@@ -144,10 +144,13 @@ admits the emails in `MCP_ALLOWED_EMAILS`.
 
 ### Tools
 
-By default the remote endpoint is **read-only** (`MCP_TOOL_PROFILE=readonly`):
-it exposes `list_repos`, `list_workflows` and the five read tools below (`list_tasks` … `get_diff`).
-Set `MCP_TOOL_PROFILE=full` to also expose `create_task` and the write tools
-(`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`).
+`MCP_TOOL_PROFILE` picks one of three tool sets, each including the one before:
+
+| Profile | Adds |
+|---|---|
+| `readonly` (default) | `list_repos`, `list_workflows` and the read tools below (`list_tasks` … `detect_repo_runtime`) |
+| `full` | `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`) |
+| `admin` | Board configuration: `create_workflow`, `update_workflow`, `add_repo`, `update_repo` |
 
 The full profile has everything the stdio server has, plus (read tools first):
 
@@ -158,18 +161,38 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `list_runs` | A task's agent runs; `waiting_human` means an agent is blocked on you |
 | `get_run_logs` | The latest log entries of a run (defaults to the task's current run) |
 | `get_diff` | The task branch's diff (capped at 100 KB) |
+| `get_workflow` | One workflow as the YAML document the workflow editor's YAML tab shows |
+| `list_agents` | Agent configs: which labels each works on, enabled, provider and model (no prompts or env) |
+| `get_repo` | One repo's settings, including `clone_status` / `clone_error` |
+| `detect_repo_runtime` | Suggested toolchain pins from the repo's manifest files; changes nothing |
 | `reply_to_run` | Answer an agent waiting on a human (defaults to the task's active run) |
 | `approve_task` / `reject_task` | Follow the workflow's `success` / `failure` human transition, with a note |
 | `move_task` | Move a task to another label (must be an allowed transition) |
 | `archive_task` | Archive a task (or unarchive it with `archived: false`); works on any label and removes the task's worktree |
 
+The admin profile adds:
+
+| Tool | What it does |
+|---|---|
+| `create_workflow` | Create a workflow from a YAML document (same shape as [workflow export](workflows.md)) |
+| `update_workflow` | Replace a workflow's name, description, labels and transitions from YAML. It's a full replacement, so read it with `get_workflow` first. Refused if it would drop a label that still holds tasks in that workflow (archived ones included) |
+| `add_repo` | Onboard a repo: `remote_url` clones it under `REPO_BASE_DIR` in the background (poll `get_repo` for `clone_status: ready`), or `path` registers a checkout already on the server. Also takes `name`, `workflow_id`, `verify_command`, `verify_timeout_seconds`, `runtime_languages`, `max_concurrent_runs`, `issue_sync_enabled`, `issue_sync_label` |
+| `update_repo` | Change those same settings (except `path`) on an existing repo; only the fields passed change |
+
+A typical onboarding chat: `add_repo` → `get_repo` until ready →
+`detect_repo_runtime` → `update_repo` with the pins and a `verify_command` →
+`create_task`. Agents are matched to columns by label name, so a new workflow
+gets runs on a label only if an enabled agent lists it (`list_agents`); agent
+configs themselves are still edited in the app.
+
 Read-only tools are annotated `readOnlyHint: true`; the rest aren't, so clients
 that confirm writes (claude.ai does by default) ask before creating, moving,
-approving, rejecting or replying. Every change is recorded in the task's label
-history under the signed-in email, like a named `API_TOKENS` entry.
+approving, rejecting, replying or changing configuration. `update_workflow` is
+also annotated `destructiveHint: true`. Every task change is recorded in the
+task's label history under the signed-in email, like a named `API_TOKENS` entry.
 
-Workflow, agent, provider, settings, backup and delete endpoints are
-deliberately not exposed.
+Agent, provider, settings, backup and delete endpoints are deliberately not
+exposed, in any profile.
 
 ### Setup
 
@@ -186,7 +209,7 @@ deliberately not exposed.
    MCP_GOOGLE_CLIENT_SECRET=...
    MCP_ALLOWED_EMAILS=you@example.com           # comma-separated
    MCP_SIGNING_KEY=...                          # openssl rand -base64 48 (>= 32 chars)
-   # MCP_TOOL_PROFILE=full                      # default is read-only; see below
+   # MCP_TOOL_PROFILE=full                      # default is read-only; admin adds board setup; see below
    ```
    With the bundled nginx (`frontend/nginx.conf`) the app lives under `/tasks`,
    so `MCP_PUBLIC_URL` ends in `/tasks`. If you expose the backend directly,
@@ -239,12 +262,17 @@ deliberately not exposed.
   The client id stays valid as long as `MCP_SIGNING_KEY` is unchanged.
 - Tool profile: by default (`MCP_TOOL_PROFILE=readonly`) only the read tools
   (`list_repos`, `list_workflows`, `list_tasks`, `get_task`, `list_runs`,
-  `get_run_logs`, `get_diff`) are exposed, because run logs, diffs and task
+  `get_run_logs`, `get_diff`, `get_workflow`, `list_agents`, `get_repo`,
+  `detect_repo_runtime`) are exposed, because run logs, diffs and task
   bodies contain text an attacker can influence and could steer a model into
   calling write tools. `MCP_TOOL_PROFILE=full` also exposes `create_task`,
   `reply_to_run`, `approve_task`, `reject_task`, `move_task` and `archive_task`; if you enable
   it, keep claude.ai's per-tool "ask before running" and avoid "always allow"
-  on those tools. The consent page states which profile is active.
+  on those tools. `MCP_TOOL_PROFILE=admin` further exposes workflow editing and
+  repo onboarding. A repo's `verify_command` runs as a shell command on the
+  server (as the agent user), so only pick `admin` if you would let the chat
+  run commands there, and never "always allow" `add_repo` or `update_repo`.
+  The consent page states which profile is active.
 - Tool calls reach the API in-process under a trusted-actor mark that only the
   `/api/v1` auth chain honours; `/metrics` and every other route ignore it.
 - Before sending you to Google, the server shows a consent page naming the
@@ -302,7 +330,7 @@ on the backend itself:
 | `MCP_GOOGLE_CLIENT_SECRET` | ✅ | Google OAuth client secret |
 | `MCP_SIGNING_KEY` | ✅ | Token-signing key, at least 32 characters (`openssl rand -base64 48`). Independent of the Google secret |
 | `MCP_ALLOWED_EMAILS` | ✅ | Comma-separated Google accounts allowed to connect |
-| `MCP_TOOL_PROFILE` | — | `readonly` (default) or `full`; see [How it's secured](#how-its-secured) |
+| `MCP_TOOL_PROFILE` | — | `readonly` (default), `full` or `admin`; see [How it's secured](#how-its-secured) |
 | `MCP_REDIRECT_URIS` | — | Exact OAuth redirect URIs allowed (default `https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback`) |
 | `MCP_ALLOWED_CLIENT_IDS` | — | Comma-separated OAuth client ids to accept; empty = any client with an allowed redirect |
 

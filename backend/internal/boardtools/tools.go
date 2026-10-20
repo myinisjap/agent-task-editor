@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -52,7 +53,10 @@ type Tool struct {
 	// ReadOnly is surfaced as the MCP readOnlyHint annotation so clients can
 	// skip confirmation for tools that change nothing.
 	ReadOnly bool
-	call     func(c *Client, args json.RawMessage) (string, bool)
+	// Destructive is surfaced as destructiveHint: the tool can overwrite
+	// existing configuration rather than only add to it.
+	Destructive bool
+	call        func(c *Client, args json.RawMessage) (string, bool)
 }
 
 // Def returns the tool's tools/list entry.
@@ -63,7 +67,7 @@ func (t Tool) Def() map[string]any {
 		"inputSchema": t.InputSchema,
 		"annotations": map[string]any{
 			"readOnlyHint":    t.ReadOnly,
-			"destructiveHint": false,
+			"destructiveHint": t.Destructive,
 			"openWorldHint":   false,
 		},
 	}
@@ -78,14 +82,22 @@ var StdioTools = []string{"list_repos", "list_workflows", "create_task"}
 // is attacker-influenced, so nothing reachable from it may change state.
 var ReadOnlyRemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
+	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime",
 }
 
 // RemoteTools is the "full" remote MCP profile: ticket creation plus
 // reading tasks/runs and unblocking agents that wait on a human.
-var RemoteTools = []string{
-	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
+var RemoteTools = append(slices.Clone(ReadOnlyRemoteTools),
 	"create_task", "reply_to_run", "approve_task", "reject_task", "move_task", "archive_task",
-}
+)
+
+// AdminRemoteTools is the "admin" remote MCP profile: everything in
+// RemoteTools plus board configuration, i.e. creating and editing workflows
+// and onboarding repos. A repo's verify_command runs on the server, so this
+// is a separate opt-in rather than part of "full".
+var AdminRemoteTools = append(slices.Clone(RemoteTools),
+	"create_workflow", "update_workflow", "add_repo", "update_repo",
+)
 
 // Select returns the tools with the given names, in that order. Unknown names
 // panic: the lists above are fixed at compile time.
@@ -596,39 +608,55 @@ func (c *Client) getRaw(path, tool string) (string, bool) {
 // JSON response into out. It returns the HTTP status alongside any error so
 // callers can surface the backend's status code.
 func (c *Client) do(method, path string, payload, out any) (int, error) {
-	var body io.Reader
+	var body []byte
+	contentType := ""
 	if payload != nil {
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return 0, err
 		}
-		body = bytes.NewReader(data)
+		body, contentType = data, "application/json"
 	}
-	req, err := http.NewRequest(method, c.BaseURL+path, body)
+	respBody, status, err := c.send(method, path, contentType, body)
 	if err != nil {
-		return 0, err
+		return status, err
 	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if out != nil {
+		if err := json.Unmarshal(respBody, out); err != nil {
+			return status, err
+		}
+	}
+	return status, nil
+}
+
+// send performs one request with an optional raw body and returns the 2xx
+// response body; a non-2xx status becomes an error carrying the backend's
+// message.
+func (c *Client) send(method, path, contentType string, body []byte) ([]byte, int, error) {
+	var r io.Reader
+	if body != nil {
+		r = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, c.BaseURL+path, r)
+	if err != nil {
+		return nil, 0, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("%s", apiError(respBody))
+		return nil, resp.StatusCode, fmt.Errorf("%s", apiError(respBody))
 	}
-	if out != nil {
-		if err := json.Unmarshal(respBody, out); err != nil {
-			return resp.StatusCode, err
-		}
-	}
-	return resp.StatusCode, nil
+	return respBody, resp.StatusCode, nil
 }
 
 // apiError pulls the {"error": "..."} message the backend returns, falling back

@@ -111,6 +111,22 @@ func TestToolProfiles(t *testing.T) {
 		}
 	}
 
+	for _, n := range []string{"create_workflow", "update_workflow", "add_repo", "update_repo"} {
+		if strings.Contains(out, `"name":"`+n+`"`) {
+			t.Errorf("full profile exposes admin tool %s", n)
+		}
+	}
+
+	// Admin adds the configuration tools.
+	h, _ = newHardeningServer(t, func(c *Config) { c.ToolProfile = "admin" })
+	_, tok = signIn(t, h)
+	out = list(h, tok["access_token"].(string))
+	for _, n := range append(mutating, "create_workflow", "update_workflow", "add_repo", "update_repo") {
+		if !strings.Contains(out, `"name":"`+n+`"`) {
+			t.Errorf("admin profile missing %s", n)
+		}
+	}
+
 	// Typos fail at startup rather than silently picking a profile.
 	email := allowedEmail
 	g := fakeGoogle(t, &email)

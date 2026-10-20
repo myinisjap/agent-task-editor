@@ -178,9 +178,24 @@ func TestDefsAndTruncate(t *testing.T) {
 
 func TestReadOnlyRemoteToolsDoNotMutate(t *testing.T) {
 	mutating := map[string]bool{"create_task": true, "reply_to_run": true, "approve_task": true, "reject_task": true, "move_task": true, "archive_task": true}
+	admin := map[string]bool{"create_workflow": true, "update_workflow": true, "add_repo": true, "update_repo": true}
 	for _, tl := range Select(ReadOnlyRemoteTools) {
-		if mutating[tl.Name] {
+		if mutating[tl.Name] || admin[tl.Name] || !tl.ReadOnly {
 			t.Errorf("read-only profile exposes mutating tool %q", tl.Name)
+		}
+	}
+	for _, tl := range Select(RemoteTools) {
+		if admin[tl.Name] {
+			t.Errorf("full profile exposes admin tool %q", tl.Name)
+		}
+	}
+	// Admin is full plus the configuration tools, and nothing else.
+	if want := len(RemoteTools) + len(admin); len(AdminRemoteTools) != want {
+		t.Errorf("AdminRemoteTools has %d tools, want %d", len(AdminRemoteTools), want)
+	}
+	for _, n := range AdminRemoteTools[len(RemoteTools):] {
+		if !admin[n] {
+			t.Errorf("unexpected admin tool %q", n)
 		}
 	}
 	// Every read-only tool is also part of the full profile.
