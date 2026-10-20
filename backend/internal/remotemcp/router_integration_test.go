@@ -85,8 +85,23 @@ func TestToolsAgainstRealRouter(t *testing.T) {
 	if out := call("approve_task", `{"task_id":"missing"}`); !strings.Contains(out, "404") || !strings.Contains(out, `"isError":true`) {
 		t.Errorf("approve_task on missing task: %s", out)
 	}
+	if out := call("get_costs", `{}`); !strings.Contains(out, "Total") || !strings.Contains(out, `"isError":false`) {
+		t.Errorf("get_costs: %s", out)
+	}
+	if out := call("create_pr", `{"task_id":"missing"}`); !strings.Contains(out, "create_pr failed") || !strings.Contains(out, `"isError":true`) {
+		t.Errorf("create_pr on missing task: %s", out)
+	}
 	if out := call("create_workflow", `{"yaml":"name: X"}`); !strings.Contains(out, "unknown tool") {
 		t.Errorf("full profile ran create_workflow: %s", out)
+	}
+	if out := call("list_needs_me", `{}`); !strings.Contains(out, `"text":"[]"`) || !strings.Contains(out, `"isError":false`) {
+		t.Errorf("list_needs_me: %s", out)
+	}
+	if out := call("rerun_task", `{"task_id":"missing"}`); !strings.Contains(out, "404") || !strings.Contains(out, `"isError":true`) {
+		t.Errorf("rerun_task on missing task: %s", out)
+	}
+	if out := call("cancel_run", `{"task_id":"missing","run_id":"r"}`); !strings.Contains(out, "404") || !strings.Contains(out, `"isError":true`) {
+		t.Errorf("cancel_run on missing task: %s", out)
 	}
 }
 
@@ -201,6 +216,70 @@ transitions:
 	result("update_repo", map[string]any{"repo_id": repoID, "verify_command": "go test ./...", "runtime_languages": []map[string]string{{"id": "go", "version": "1.26"}}})
 	if out := result("get_repo", map[string]any{"repo_id": repoID}); !strings.Contains(out, `"verify_command":"go test ./..."`) || !strings.Contains(out, `1.26`) {
 		t.Errorf("get_repo: %s", out)
+	}
+
+	// Recurring work: a template and a schedule, then pause the schedule.
+	out = result("create_template", map[string]any{"name": "Triage", "title": "Triage open issues", "type": "chore"})
+	m = regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("create_template: %s", out)
+	}
+	tplID := m[1]
+	if out := result("update_template", map[string]any{"template_id": tplID, "description": "Look at each one"}); !strings.Contains(out, `"title":"Triage open issues"`) || !strings.Contains(out, "Look at each one") {
+		t.Errorf("update_template: %s", out)
+	}
+	out = result("create_schedule", map[string]any{"template_id": tplID, "repo_id": repoID, "cron_expr": "0 9 * * 1", "target_label": "todo"})
+	m = regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).FindStringSubmatch(out)
+	if m == nil || !strings.Contains(out, `"enabled":true`) {
+		t.Fatalf("create_schedule: %s", out)
+	}
+	schedID := m[1]
+	if out := result("update_schedule", map[string]any{"schedule_id": schedID, "enabled": false}); !strings.Contains(out, `"enabled":false`) || !strings.Contains(out, `"cron_expr":"0 9 * * 1"`) || !strings.Contains(out, `"target_label":"todo"`) {
+		t.Errorf("update_schedule pause: %s", out)
+	}
+	if out := result("update_schedule", map[string]any{"schedule_id": schedID, "cron_expr": "0 8 * * *"}); !strings.Contains(out, `"enabled":false`) || !strings.Contains(out, `"0 8 * * *"`) {
+		t.Errorf("update_schedule cron: %s", out)
+	}
+	if out := result("list_templates", map[string]any{}); !strings.Contains(out, "Triage") {
+		t.Errorf("list_templates: %s", out)
+	}
+	if out := result("list_schedules", map[string]any{}); !strings.Contains(out, schedID) {
+		t.Errorf("list_schedules: %s", out)
+	}
+
+	// Wire an agent to the new workflow's label.
+	var pcID string
+	{
+		rec := do(h, http.MethodPost, "/api/v1/provider-configs", "application/json", `{"name":"P","provider":"claude","model":"opus","env":"{\"SECRET\":\"hunter2\"}"}`, "Authorization", "Bearer static-api-token")
+		var pc struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &pc); err != nil || pc.ID == "" {
+			t.Fatalf("create provider config: %d %s", rec.Code, rec.Body.String())
+		}
+		pcID = pc.ID
+	}
+	if out := result("list_provider_configs", map[string]any{}); !strings.Contains(out, pcID) || strings.Contains(out, "hunter2") || strings.Contains(out, "env") {
+		t.Errorf("list_provider_configs: %s", out)
+	}
+	out = result("create_agent", map[string]any{"name": "Coder", "provider_config_id": pcID, "system_prompt": "ship it", "labels": []string{"work"}, "max_turns": 20, "priority": 1})
+	m = regexp.MustCompile(`"id":"([0-9a-f-]{36})"`).FindStringSubmatch(out)
+	if m == nil || !strings.Contains(out, `"enabled":true`) || strings.Contains(out, "hunter2") {
+		t.Fatalf("create_agent: %s", out)
+	}
+	agentID := m[1]
+	out = result("update_agent", map[string]any{"agent_id": agentID, "labels": []string{"work", "review"}, "enabled": false})
+	if !strings.Contains(out, `"enabled":false`) || strings.Contains(out, "hunter2") {
+		t.Fatalf("update_agent: %s", out)
+	}
+	out = result("get_agent", map[string]any{"agent_id": agentID})
+	for _, want := range []string{`"system_prompt":"ship it"`, `\"work\",\"review\"`, `"max_turns":20`, `"priority":1`, `"timeout_secs":600`, `"provider":"claude"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("get_agent missing %s: %s", want, out)
+		}
+	}
+	if strings.Contains(out, "hunter2") || strings.Contains(out, `"env"`) {
+		t.Errorf("get_agent leaked env: %s", out)
 	}
 
 	// A task on "review" blocks dropping that label.

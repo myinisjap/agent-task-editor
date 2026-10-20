@@ -85,7 +85,8 @@ const (
 	ToolProfileReadOnly = "readonly"
 	// ToolProfileFull also exposes create/reply/approve/reject/move/archive.
 	ToolProfileFull = "full"
-	// ToolProfileAdmin also exposes workflow editing and repo onboarding.
+	// ToolProfileAdmin also exposes workflow editing, repo onboarding and recurring work
+	// (task templates and schedules).
 	ToolProfileAdmin = "admin"
 )
 
