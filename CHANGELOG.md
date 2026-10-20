@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in tool profiles for the stdio board MCP.** `mcp-board` (Chat tab and Claude Desktop) reads a new `TOOL_PROFILE` env var: unset or `create` keeps today's three tools (`list_repos`, `list_workflows`, `create_task`); `readonly`, `full` and `admin` expose the same tool sets as the remote connector's `MCP_TOOL_PROFILE`, along with its server instructions. An unknown value exits with an error. The in-app Chat tab now defaults to the `full` profile: set the backend setting `MCP_BOARD_TOOL_PROFILE` (passed through in both compose files) to `create`, `readonly`, `full` or `admin` to change it; the session's scoped token is widened to exactly the REST calls that profile's tools make (an exact method+path allowlist; no DELETE or other routes) unless it is `create`. Set `create` if chat sessions read untrusted repo code. Claude Desktop keeps `create` as the default. See `docs/board-mcp.md`.
+
 ### Changed
 
 - **A merged PR now finishes its task.** When GitHub reports a task's PR as merged, the board moves the task to its workflow's terminal column (as a forced move noted "PR merged") and releases any run left waiting on a human. Before, a task that bounced back for a CI fix and then merged anyway stayed stuck in its working column with a run that could never resume. Tasks with a run still in progress are left alone.

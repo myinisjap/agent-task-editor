@@ -43,3 +43,52 @@ func TestGrant_Allows(t *testing.T) {
 		t.Error("actor names")
 	}
 }
+
+func TestChatProfileGrants(t *testing.T) {
+	allow := func(profile, method, path string) bool {
+		return Grant{Kind: KindChat, Chat: "s", Profile: profile}.Allows(method, path)
+	}
+	for _, c := range []struct {
+		profile, method, path string
+		want                  bool
+	}{
+		{"readonly", "GET", "/api/v1/tasks/1/runs/2/logs", true},
+		{"readonly", "POST", "/api/v1/tasks", false},
+		{"full", "POST", "/api/v1/tasks", true},
+		{"full", "PATCH", "/api/v1/tasks/1/label", true},
+		{"full", "POST", "/api/v1/tasks/1/runs/2/reply", true},
+		{"full", "DELETE", "/api/v1/tasks/1", false},
+		{"full", "DELETE", "/api/v1/repos/1", false},
+		{"full", "PUT", "/api/v1/tasks/1", false},
+		{"full", "POST", "/api/v1/repos", false},
+		{"full", "GET", "/api/v1/settings", false},
+		{"full", "GET", "/api/v1/tasks/1/unknown", false},
+		{"full", "GET", "/api/v1/tasks//diff", false},
+		{"full", "GET", "/api/v1/tasks/../tokens", false},
+		{"full", "GET", "/api/v1/tasksx", false},
+		{"readonly", "GET", "/api/v1/needs-me", true},
+		{"readonly", "GET", "/api/v1/dashboard/cost-by-task", true},
+		{"readonly", "GET", "/api/v1/agents/1", true},
+		{"readonly", "GET", "/api/v1/schedules", true},
+		{"readonly", "POST", "/api/v1/tasks/1/rerun", false},
+		{"full", "POST", "/api/v1/tasks/1/runs/2/cancel", true},
+		{"full", "POST", "/api/v1/tasks/1/pr", true},
+		{"full", "PUT", "/api/v1/agents/1", false},
+		{"full", "POST", "/api/v1/schedules", false},
+		{"admin", "PUT", "/api/v1/agents/1", true},
+		{"admin", "PUT", "/api/v1/schedules/1", true},
+		{"admin", "DELETE", "/api/v1/schedules/1", false},
+		{"admin", "POST", "/api/v1/repos", true},
+		{"admin", "PUT", "/api/v1/workflows/1/yaml", true},
+		{"admin", "POST", "/api/v1/workflows/import", true},
+		{"admin", "DELETE", "/api/v1/repos/1", false},
+		{"admin", "DELETE", "/api/v1/workflows/1", false},
+		{"", "POST", "/api/v1/agents", false},
+		{"", "GET", "/api/v1/tasks", false},
+		{"bogus", "GET", "/api/v1/repos", false},
+	} {
+		if got := allow(c.profile, c.method, c.path); got != c.want {
+			t.Errorf("%q %s %s = %v, want %v", c.profile, c.method, c.path, got, c.want)
+		}
+	}
+}

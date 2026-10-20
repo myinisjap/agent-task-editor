@@ -340,8 +340,8 @@ func main() {
 	// human-driven surface (the chat tab), deliberately separate from the in-flow
 	// kanban agents, which never get task-creation tools. Nil when unset.
 	if cfg.MCPBoardBinary != "" {
-		terminal.ChatMCP = providers.NewChatMCPProvisioner(cfg.MCPBoardBinary, backendURL)
-		slog.Info("board MCP enabled for chat sessions", "binary", cfg.MCPBoardBinary)
+		terminal.ChatMCP = providers.NewChatMCPProvisioner(cfg.MCPBoardBinary, backendURL, cfg.MCPBoardToolProfile)
+		slog.Info("board MCP enabled for chat sessions", "binary", cfg.MCPBoardBinary, "tool_profile", cfg.MCPBoardToolProfile)
 	}
 	// CHAT_MAX_SESSIONS/CHAT_IDLE_TIMEOUT bound the otherwise-unbounded growth
 	// of concurrent PTY subprocesses + scrollback buffers a long-lived chat

@@ -41,9 +41,13 @@ type Config struct {
 	// GitHubWebhookSecret (GITHUB_WEBHOOK_SECRET) enables POST
 	// /api/v1/github/webhook, authenticated by HMAC-SHA256 signature. Empty
 	// leaves the route disabled (404).
-	GitHubWebhookSecret string        `yaml:"github_webhook_secret"`
-	MCPBinary           string        `yaml:"mcp_server_path"`
-	MCPBoardBinary      string        `yaml:"mcp_board_path"`
+	GitHubWebhookSecret string `yaml:"github_webhook_secret"`
+	MCPBinary           string `yaml:"mcp_server_path"`
+	MCPBoardBinary      string `yaml:"mcp_board_path"`
+	// MCPBoardToolProfile is TOOL_PROFILE for chat-session mcp-board: "" (= "full"),
+	// "create",
+	// "readonly", "full" or "admin".
+	MCPBoardToolProfile string        `yaml:"mcp_board_tool_profile"`
 	MaxWorkers          int           `yaml:"max_workers"`
 	RepoBaseDir         string        `yaml:"repo_base_dir"`
 	UploadDir           string        `yaml:"upload_dir"`
@@ -278,6 +282,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MCP_SERVER_PATH"); v != "" {
 		cfg.MCPBinary = v
+	}
+	if v := os.Getenv("MCP_BOARD_TOOL_PROFILE"); v != "" {
+		cfg.MCPBoardToolProfile = v
 	}
 	if v := os.Getenv("MCP_BOARD_PATH"); v != "" {
 		cfg.MCPBoardBinary = v

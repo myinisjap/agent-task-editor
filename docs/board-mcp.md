@@ -33,6 +33,28 @@ tool.** Task creation lives only in `mcp-board`, which is a process *you* point 
 chat client at — not something an agent processing a column can reach. See
 [mcp-tools.md](mcp-tools.md) for the sidecar's tools.
 
+## Which surface gets which tools
+
+Three surfaces serve the same board tools; each picks its set with a profile
+(`create` = `list_repos`, `list_workflows`, `create_task`; `readonly`, `full`
+and `admin` are the remote connector's sets, see the remote connector section below).
+
+| | In-app Chat tab | Claude Desktop (stdio `mcp-board`) | Remote claude.ai connector |
+|---|---|---|---|
+| Transport | stdio, launched by the backend per chat session | stdio, launched by the chat client | MCP streamable HTTP at `<MCP_PUBLIC_URL>/mcp` |
+| Auth | per-session scoped token (revoked when the session ends), never `API_TOKEN` | `API_TOKEN` in the client's `env` | Google sign-in + built-in OAuth (`MCP_ALLOWED_EMAILS`) |
+| Profile env var | `MCP_BOARD_TOOL_PROFILE` (backend; passed on as `TOOL_PROFILE`) | `TOOL_PROFILE` (in the client's `env`) | `MCP_TOOL_PROFILE` (backend) |
+| Default profile | `full` | `create` | `readonly` |
+| Default tools | `full`: every `readonly` tool plus `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task`, `create_pr`) | `list_repos`, `list_workflows`, `create_task` | `readonly`: the read tools only (`list_tasks`, `get_task`, `list_runs`, `get_run_logs`, `get_diff`, `list_needs_me`, `get_costs`, and the board-setup reads such as `get_workflow`, `list_agents`, `get_repo`, `list_templates`, `list_schedules`) |
+
+The Chat tab defaults to `full` because it is driven by you, but it reads repo
+code that can contain prompt injection; set `MCP_BOARD_TOOL_PROFILE=create` (or
+`readonly`) to narrow it. `admin` adds board configuration (`create_workflow`,
+`update_workflow`, `add_repo`, `update_repo`, `create_agent`, `update_agent`,
+`create_template`, `update_template`, `create_schedule`, `update_schedule`) on
+any surface that selects it. The full lists per profile are in
+[Remote connector](#remote-connector).
+
 ## Tools
 
 ### `list_repos`
@@ -72,7 +94,7 @@ the workflow, or the backend returns a 400.
 The Docker images build `mcp-board` in and set `MCP_BOARD_PATH=/app/mcp-board`,
 so the board tools are wired into the app's Chat tab out of the box. When you
 open a chat session, the backend registers `mcp-board` with the session's CLI
-(pointed at its own REST API), and the three tools become available in that
+(pointed at its own REST API), and the `full` profile's tools (see the table above) become available in that
 conversation.
 
 To use it: open the **Chat** tab, start a session against the repo you want,
@@ -92,6 +114,7 @@ Notes:
   `MCP_BOARD_PATH` to the built binary to enable it.
 - Leaving `MCP_BOARD_PATH` unset simply launches chat sessions as before (no
   board tools).
+- Chat sessions default to the `full` profile (the remote connector's read tools plus create_task, reply_to_run, approve_task, reject_task, move_task, archive_task). A chat reads repo code that can contain prompt injection, so set `MCP_BOARD_TOOL_PROFILE=create` (the three create tools) or `readonly` to narrow it, or `admin` to widen it. The value is passed to `mcp-board` as `TOOL_PROFILE`, and the session token is widened to the exact method+path pairs the profile's tools call (no DELETE, no other routes) unless the profile is `create`.
 
 ## External chat client
 
@@ -118,6 +141,9 @@ To create tickets from a chat client outside the app (e.g. Claude Desktop), run
      }
    }
    ```
+
+   Optionally add `"TOOL_PROFILE": "readonly"` (or `full`/`admin`) to `env` for
+   the remote connector's tool sets; the default is the three create tools.
 
 3. **Restart the chat client** and start a conversation: work through a plan,
    then ask it to create the tickets. It will call `list_repos` to find the repo
@@ -335,6 +361,7 @@ woken by CI and review activity.
 |---|---|---|
 | `BACKEND_URL` | ✅ | Base URL of the backend, e.g. `http://localhost:8080` |
 | `API_TOKEN` | — | Bearer token; sent on every request when the backend has `API_TOKEN`/`API_TOKENS` set |
+| `TOOL_PROFILE` | — | `create` (default when unset: list_repos/list_workflows/create_task), `readonly`, `full` or `admin` — the remote connector's tool sets; unknown values exit with an error |
 | `LOG_LEVEL` | — | `debug`/`info`/… (default `info`) |
 
 These are for the stdio `mcp-board` binary. The remote connector is configured

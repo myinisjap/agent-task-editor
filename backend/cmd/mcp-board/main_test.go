@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/myinisjap/agent-task-editor/backend/internal/boardtools"
 )
 
 // newBackend points a backend at a test server.
@@ -337,5 +339,75 @@ func TestServe_SkipsBlankLinesAndMalformedJSON(t *testing.T) {
 	}
 	if resp.Result.ServerInfo.Name != "task-editor-board" {
 		t.Errorf("expected the valid line to still be processed, got %+v", resp.Result)
+	}
+}
+
+func listedTools(t *testing.T, be *backend) (names []string, instr string) {
+	t.Helper()
+	var out bytes.Buffer
+	in := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"initialize"}` + "\n"
+	serve(strings.NewReader(in), &out, be)
+	dec := json.NewDecoder(&out)
+	var l struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	var i struct {
+		Result struct {
+			Instructions string `json:"instructions"`
+		} `json:"result"`
+	}
+	if err := dec.Decode(&l); err != nil {
+		t.Fatal(err)
+	}
+	if err := dec.Decode(&i); err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range l.Result.Tools {
+		names = append(names, tl.Name)
+	}
+	return names, i.Result.Instructions
+}
+
+func TestToolProfiles(t *testing.T) {
+	create := []string{"list_repos", "list_workflows", "create_task"}
+	cases := []struct {
+		profile string
+		want    []string
+		instr   bool
+	}{
+		{"", create, false},
+		{"create", create, false},
+		{"readonly", boardtools.ReadOnlyRemoteTools, true},
+		{"full", boardtools.RemoteTools, true},
+		{"ADMIN", boardtools.AdminRemoteTools, true},
+	}
+	for _, c := range cases {
+		tools, instr, err := resolveProfile(c.profile)
+		if err != nil {
+			t.Fatalf("%q: %v", c.profile, err)
+		}
+		be := newBackend("http://unused", "")
+		be.tools, be.instructions = tools, instr
+		got, gotInstr := listedTools(t, be)
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("profile %q: tools = %v, want %v", c.profile, got, c.want)
+		}
+		if (gotInstr != "") != c.instr {
+			t.Errorf("profile %q: instructions = %q", c.profile, gotInstr)
+		}
+	}
+	// A zero-value backend is the default create set.
+	if got, _ := listedTools(t, newBackend("http://unused", "")); strings.Join(got, ",") != strings.Join(create, ",") {
+		t.Errorf("default tools = %v", got)
+	}
+}
+
+func TestToolProfile_Unknown(t *testing.T) {
+	if _, _, err := resolveProfile("bogus"); err == nil {
+		t.Fatal("expected error for unknown profile")
 	}
 }

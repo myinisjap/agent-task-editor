@@ -80,6 +80,8 @@ services:
       - MCP_SERVER_PATH=/app/mcp-server
       # Path to the board MCP binary; enables the create-task tools in chat sessions
       - MCP_BOARD_PATH=/app/mcp-board
+      # Tool set for chat sessions: full (default), create, readonly or admin
+      - MCP_BOARD_TOOL_PROFILE=${MCP_BOARD_TOOL_PROFILE:-}
       # Bearer token auth. Empty = no auth (the backend then logs a warning and
       # the Health page shows an "API authentication" warning). ./run.sh
       # generates API_TOKEN into .env on first run; otherwise set it in .env.
