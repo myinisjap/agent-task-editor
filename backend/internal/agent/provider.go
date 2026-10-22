@@ -123,6 +123,10 @@ type RunInput struct {
 	// imported from (e.g. its GitHub issue thread). Untrusted external content —
 	// rendered into the prompt inside explicit delimiters, never as instructions.
 	SourceComments []SourceComment
+	// HumanDecisions are human replies to earlier waiting_human escalations on
+	// this task. Trusted human input, rendered as HUMAN DECISIONS ON THIS
+	// TASK, and loaded fresh for every run regardless of label or agent.
+	HumanDecisions []HumanDecision
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
 	// ResumeSessionID, if non-empty, asks the provider to resume this prior
@@ -324,4 +328,13 @@ type AgentConfig struct {
 // Provider is the interface all agent backends must satisfy.
 type Provider interface {
 	Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error)
+}
+
+// HumanDecision is a human's answer to an earlier waiting_human escalation on this task.
+type HumanDecision struct {
+	Question  string // what the agent asked (may be empty for pre-migration rows)
+	Reply     string
+	RepliedAt string // UTC, e.g. "2006-01-02 15:04 UTC"
+	Label     string // label the task was on when asked
+	AgentName string // agent config that asked ("" if deleted)
 }

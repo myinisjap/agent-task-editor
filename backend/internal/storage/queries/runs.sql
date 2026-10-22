@@ -64,7 +64,7 @@ LIMIT 1;
 
 -- name: SetAgentRunSessionCost :exec
 -- Records the provider's cumulative session cost reported at the end of the
--- run (see migration 070). Written only when the provider reported one.
+-- run (see migration 071). Written only when the provider reported one.
 UPDATE agent_runs SET session_cost_usd = ? WHERE id = ?;
 
 -- name: GetSessionCostBaseline :one

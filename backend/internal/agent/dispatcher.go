@@ -784,7 +784,32 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 			}
 		}
 	}
-	return d.startRun(ctx, t, *matched, opts)
+	newRunID, err := d.startRun(ctx, t, *matched, opts)
+	if err != nil {
+		return newRunID, err
+	}
+	// Record after startRun so the reply run's own prompt does not list the
+	// current reply twice (it carries RESPONSE FROM HUMAN) and a failed
+	// dispatch records nothing. Every later run sees it.
+	question := run.Notes
+	if run.Feedback != nil && *run.Feedback != "" {
+		question = run.Feedback
+	}
+	reason := ""
+	if run.EscalationReason != nil {
+		reason = *run.EscalationReason
+	}
+	q := ""
+	if question != nil {
+		q = *question
+	}
+	if rerr := d.q.RecordHumanReply(ctx, gen.RecordHumanReplyParams{
+		RunID: run.ID, TaskID: t.ID, Label: t.Label, EscalationReason: reason,
+		Question: q, Reply: &message, ReplyRunID: &newRunID,
+	}); rerr != nil {
+		slog.Warn("dispatcher: record human reply", "component", "dispatcher", "task_id", taskID, "err", rerr)
+	}
+	return newRunID, nil
 }
 
 // runOptions carries the extras a non-sweep dispatch (currently only the
@@ -869,6 +894,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	}
 	reviewComments := d.loadReviewComments(ctx, t.ID, log)
 	sourceComments := d.loadSourceComments(ctx, t.ID, log)
+	humanDecisions := d.loadHumanDecisions(ctx, t.ID, log)
 
 	var agentNotes *string
 	if t.AgentNotes != "" {
@@ -957,6 +983,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			PriorPlan:            agentNotes,
 			OpenReviewComments:   reviewComments,
 			SourceComments:       sourceComments,
+			HumanDecisions:       humanDecisions,
 			AttachmentAbsPaths:   attachmentAbsPaths,
 			ResumeSessionID:      resumeSessionID,
 			ResumeSessionCostUSD: resumeSessionCostUSD,
@@ -1284,6 +1311,34 @@ func (d *Dispatcher) loadReviewComments(ctx context.Context, taskID string, log 
 		}
 	}
 	return reviewComments
+}
+
+// loadHumanDecisions loads the human replies given on this task so far.
+// Best-effort: a query failure is logged and yields none.
+func (d *Dispatcher) loadHumanDecisions(ctx context.Context, taskID string, log *slog.Logger) []HumanDecision {
+	rows, err := d.q.ListTaskHumanDecisions(ctx, taskID)
+	if err != nil {
+		log.Warn("dispatcher: list task human decisions", "err", err)
+		return nil
+	}
+	var out []HumanDecision
+	for _, r := range rows {
+		if r.Reply == nil || *r.Reply == "" {
+			continue
+		}
+		at := r.AskedAt
+		if r.RepliedAt != nil {
+			at = *r.RepliedAt
+		}
+		out = append(out, HumanDecision{
+			Question:  r.Question,
+			Reply:     *r.Reply,
+			RepliedAt: at.UTC().Format("2006-01-02 15:04 UTC"),
+			Label:     r.Label,
+			AgentName: r.AgentName,
+		})
+	}
+	return out
 }
 
 // loadSourceComments loads the task's ingested source-issue comment thread
