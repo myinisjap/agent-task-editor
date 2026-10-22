@@ -1198,6 +1198,19 @@ components:
             falling back to an internal, approximate pricing table for
             models with no matching row. 0 if unknown/unreported — see
             cost_unknown to distinguish that from a genuinely free run.
+            For a claude run that resumed an earlier session it is that run's
+            own share: the CLI's session total minus session_cost_usd of the
+            session's previous run.
+        session_cost_usd:
+          type: number
+          format: double
+          nullable: true
+          description: >-
+            The provider's own cumulative cost for the run's whole session, as
+            reported when the run ended (claude only; it includes earlier runs
+            resumed into the same session). Null when not reported. Used as
+            the baseline for the next resumed run's cost_usd; sum cost_usd,
+            not this, for spend totals.
         cost_unknown:
           type: integer
           description: >-

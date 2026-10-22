@@ -192,6 +192,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan
 		res, info, err = r.runAttempt(ctx, input, sidecarEnabled, mcpCfg, logCh)
 	}
 	res.CostWarned = info.costWarned
+	res.SessionCostUSD = info.sessionCostUSD
 	return res, err
 }
 
@@ -224,6 +225,31 @@ type attemptInfo struct {
 	// would silently undercount, letting a kill/resume/re-kill cycle
 	// repeatedly overspend the same "budget".
 	costExceededUsage *runUsage
+	// sessionCostUSD is the CLI's terminal total_cost_usd for the whole
+	// session, before ownSessionCost subtracted earlier runs (0 if none was
+	// reported). Run copies it onto Result.SessionCostUSD.
+	sessionCostUSD float64
+}
+
+// ownSessionCost returns u with CostUSD reduced to this run's own share.
+// claude's terminal total_cost_usd covers the whole session, so on a resumed
+// session it also counts every earlier run resumed into it; recording it as
+// is made each resumed run's cost_usd the running session total and
+// over-counted task, daily and monthly spend. The earlier runs' share is
+// input.ResumeSessionCostUSD (the total the previous run of the session
+// reported). A cold start, or a resume that fell back to a new session, keeps
+// the total. The second return value is the unadjusted session total.
+func ownSessionCost(u *runUsage, input agent.RunInput, session string) (*runUsage, float64) {
+	if u == nil || u.CostUSD <= 0 {
+		return u, 0
+	}
+	total := u.CostUSD
+	if input.ResumeSessionID == "" || session != input.ResumeSessionID {
+		return u, total
+	}
+	own := *u
+	own.CostUSD = max(0, total-input.ResumeSessionCostUSD)
+	return &own, total
 }
 
 // shouldFallBackToColdStart reports whether a resumed attempt failed in a way
@@ -504,6 +530,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	finalSession := sessionID
 	truncated := stdoutTruncated || stderrTruncated
 	mu.Unlock()
+	finalUsage, info.sessionCostUSD = ownSessionCost(finalUsage, input, finalSession)
 
 	if info.costExceeded != nil {
 		// The watchdog already cancelled the subprocess (via cancel() in the

@@ -860,6 +860,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	if err != nil {
 		return "", err
 	}
+	resumeSessionCostUSD := d.sessionCostBaseline(ctx, t.ID, resumeSessionID)
 
 	var feedback *string
 	if t.CurrentAgentRunID != nil {
@@ -982,25 +983,26 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		Provider:      provider,
 		SetupWorktree: setup,
 		Input: RunInput{
-			RunID:              runID,
-			Task:               Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), RepoPath: repo.Path, Attachments: attachmentRels},
-			AgentConfig:        agentCfg,
-			RepoPath:           workDir,
-			RepoRemoteURL:      derefStr(repo.RemoteUrl),
-			Transitions:        transitions,
-			Feedback:           feedback,
-			PriorPlan:          agentNotes,
-			OpenReviewComments: reviewComments,
-			SourceComments:     sourceComments,
-			HumanDecisions:     humanDecisions,
-			AttachmentAbsPaths: attachmentAbsPaths,
-			ResumeSessionID:    resumeSessionID,
-			HumanReply:         opts.humanReply,
-			SubtaskConflicts:   subtaskConflicts,
-			CostBudgetUSD:      costBudgetUSD,
-			CostSpentUSD:       costSpentUSD,
-			CostWarnRatio:      d.resolveCostWarnRatio(ctx),
-			Runtime:            runtimeSpec,
+			RunID:                runID,
+			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), RepoPath: repo.Path, Attachments: attachmentRels},
+			AgentConfig:          agentCfg,
+			RepoPath:             workDir,
+			RepoRemoteURL:        derefStr(repo.RemoteUrl),
+			Transitions:          transitions,
+			Feedback:             feedback,
+			PriorPlan:            agentNotes,
+			OpenReviewComments:   reviewComments,
+			SourceComments:       sourceComments,
+			HumanDecisions:       humanDecisions,
+			AttachmentAbsPaths:   attachmentAbsPaths,
+			ResumeSessionID:      resumeSessionID,
+			ResumeSessionCostUSD: resumeSessionCostUSD,
+			HumanReply:           opts.humanReply,
+			SubtaskConflicts:     subtaskConflicts,
+			CostBudgetUSD:        costBudgetUSD,
+			CostSpentUSD:         costSpentUSD,
+			CostWarnRatio:        d.resolveCostWarnRatio(ctx),
+			Runtime:              runtimeSpec,
 		},
 	})
 	if !enqueued {
@@ -1191,6 +1193,21 @@ func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched
 		}
 	}
 	return agentCfg, resumeSessionID, nil
+}
+
+// sessionCostBaseline returns the cumulative session cost recorded by the
+// latest earlier run of sessionID on this task, or 0 when there is no session
+// to resume or none was recorded. Best-effort: a lookup error degrades to 0,
+// which records the provider's full session total as before.
+func (d *Dispatcher) sessionCostBaseline(ctx context.Context, taskID, sessionID string) float64 {
+	if sessionID == "" {
+		return 0
+	}
+	v, err := d.q.GetSessionCostBaseline(ctx, gen.GetSessionCostBaselineParams{TaskID: taskID, SessionID: sessionID})
+	if err != nil || v == nil {
+		return 0
+	}
+	return *v
 }
 
 // persistRunRow creates the run row and claims the task's dispatch lock in a

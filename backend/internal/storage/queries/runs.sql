@@ -68,6 +68,20 @@ WHERE ar.task_id = ?1 AND ar.agent_config_id = ?2 AND ar.session_id != ''
 ORDER BY ar.created_at DESC, ar.id DESC
 LIMIT 1;
 
+-- name: SetAgentRunSessionCost :exec
+-- Records the provider's cumulative session cost reported at the end of the
+-- run (see migration 071). Written only when the provider reported one.
+UPDATE agent_runs SET session_cost_usd = ? WHERE id = ?;
+
+-- name: GetSessionCostBaseline :one
+-- The cumulative session cost recorded by the latest earlier run of this
+-- session, subtracted from a resumed run's reported total so cost_usd holds
+-- only that run's own spend.
+SELECT session_cost_usd FROM agent_runs
+WHERE task_id = ? AND session_id = ? AND session_cost_usd IS NOT NULL
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
 -- name: SetAgentRunCompleted :one
 UPDATE agent_runs
 SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, turns_used = ?, escalation_reason = ?, completed_at = CURRENT_TIMESTAMP

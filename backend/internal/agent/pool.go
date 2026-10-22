@@ -878,6 +878,11 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)
 	}
+	if result.SessionCostUSD > 0 {
+		if err := p.q.SetAgentRunSessionCost(ctx, gen.SetAgentRunSessionCostParams{SessionCostUsd: &result.SessionCostUSD, ID: job.RunID}); err != nil {
+			log.Warn("pool: set run session cost", "err", err)
+		}
+	}
 	if finalStatus == "waiting_human" {
 		q := ""
 		if result.Message != nil {
