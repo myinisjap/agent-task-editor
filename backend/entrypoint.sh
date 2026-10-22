@@ -117,6 +117,27 @@ group_rw() {
   done
 }
 
+# repo_git_rw keeps a repo's .git usable by the agent user even when the
+# top-level dir is already group-writable (which makes group_rw skip it in
+# auto mode). Git run on the host with a 022 umask creates .git/objects/xx
+# dirs owner-only, and the agent's next `git add` then fails. Re-chmod .git
+# when any dir in it lost group write, and set core.sharedRepository=group so
+# git itself creates new object dirs group-writable from now on.
+repo_git_rw() {
+  g="$1/.git"
+  [ -d "$g" ] || return 0
+  if [ -n "$(find "$g" -type d ! -perm -g+w -print -quit 2>/dev/null)" ]; then
+    chmod -R g+rwX "$g" 2>/dev/null || true
+    find "$g" -type d -exec chmod g+s {} + 2>/dev/null || true
+  fi
+  # --file skips the safe.directory ownership check; git rewrites config via a
+  # lock file, so hand it back to .git's owner afterwards.
+  if [ "$(git config --file "$g/config" core.sharedRepository 2>/dev/null)" != "group" ]; then
+    git config --file "$g/config" core.sharedRepository group 2>/dev/null &&
+      chown --reference="$g" "$g/config" 2>/dev/null || true
+  fi
+}
+
 if [ "$ISOLATION" = "false" ] || [ "$ISOLATION" = "0" ] || [ "$ISOLATION" = "no" ] || [ "$ISOLATION" = "off" ]; then
   unset AGENT_UID AGENT_GID AGENT_HOME
   echo "entrypoint: AGENT_ISOLATION=false - agents will run as the server user" >&2
@@ -160,6 +181,7 @@ else
   if [ "$FIX" != "never" ] && [ -n "${REPO_BASE_DIR:-}" ] && [ -d "$REPO_BASE_DIR" ]; then
     for repo in "$REPO_BASE_DIR"/*/; do
       group_rw "$FIX" "${repo%/}"
+      repo_git_rw "${repo%/}"
     done
   fi
 
