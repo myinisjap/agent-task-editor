@@ -874,6 +874,7 @@ so humans aren't paged for problems that will resolve themselves:
   released so it can retry, and at the limit the run becomes `waiting_human`
   with a note such as `Agent asked to move to "review" but the move was
   rejected: ...`. A concurrent human move of the task is not counted.
+- **Low-memory stop** — when `memguard` cancels a run for low container memory the run ends `cancelled` (not a failure, task not paused), and the task gets a cooldown in `next_retry_at` (60s, doubling on back-to-back stops of the same task, capped at 5 minutes; `transient_retry_count` stays 0). It shows as the `retry_backoff` block reason / "Cooling down" badge. Three such stops within 3 minutes across any tasks also pause new sweep dispatch for 60s (in-memory; human-reply dispatch is not gated).
 - **Transient failure** — a network-level error,
   upstream `5xx`, or (for CLI providers) a text match for signals like
   connection resets or `502/503/504`. The match is anchored (word/HTTP-status

@@ -428,9 +428,13 @@ function TaskCard({
           {task.next_retry_at && !isRunning && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
-              title={`Auto-retrying after a transient error (attempt ${task.transient_retry_count ?? '?'}). Next attempt ~${new Date(task.next_retry_at).toLocaleTimeString()}`}
+              title={
+                task.transient_retry_count
+                  ? `Auto-retrying after a transient error (attempt ${task.transient_retry_count}). Next attempt ~${new Date(task.next_retry_at).toLocaleTimeString()}`
+                  : `Run was stopped for low memory; next attempt ~${new Date(task.next_retry_at).toLocaleTimeString()}`
+              }
             >
-              ↻ Retrying ({task.transient_retry_count ?? '?'})
+              {task.transient_retry_count ? `↻ Retrying (${task.transient_retry_count})` : '⏳ Cooling down'}
             </span>
           )}
           <button
