@@ -70,6 +70,7 @@ type AgentRun struct {
 	TurnsUsed        int64      `json:"turns_used"`
 	EscalationReason *string    `json:"escalation_reason"`
 	ProviderConfigID *string    `json:"provider_config_id"`
+	SessionCostUsd   *float64   `json:"session_cost_usd"`
 }
 
 type BackupSetting struct {

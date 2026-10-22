@@ -5292,9 +5292,14 @@ export interface components {
             output_tokens?: number;
             /**
              * Format: double
-             * @description USD cost of the run. For the `claude`/`qwen_code`/`opencode` providers this is the CLI's own authoritative reported cost (which may legitimately be 0, e.g. under a Claude Max subscription); for the codex_cli provider it is *estimated* by computing input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported — see cost_unknown to distinguish that from a genuinely free run.
+             * @description USD cost of the run. For the `claude`/`qwen_code`/`opencode` providers this is the CLI's own authoritative reported cost (which may legitimately be 0, e.g. under a Claude Max subscription); for the codex_cli provider it is *estimated* by computing input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported — see cost_unknown to distinguish that from a genuinely free run. For a claude run that resumed an earlier session it is that run's own share: the CLI's session total minus session_cost_usd of the session's previous run.
              */
             cost_usd?: number;
+            /**
+             * Format: double
+             * @description The provider's own cumulative cost for the run's whole session, as reported when the run ended (claude only; it includes earlier runs resumed into the same session). Null when not reported. Used as the baseline for the next resumed run's cost_usd; sum cost_usd, not this, for spend totals.
+             */
+            session_cost_usd?: number | null;
             /** @description 1 if tokens were consumed but no price entry (user-edited or hardcoded fallback) matched the model, so cost_usd was left at 0 as a placeholder rather than a computed figure — add a row for this model at /settings/pricing to get a real estimate. Only applies to the codex_cli estimation path described under cost_usd. 0 otherwise, including for claude/qwen_code/opencode (which never set this; their cost_usd, including a legitimate 0 under a Claude Max subscription, is always authoritative). */
             cost_unknown?: number;
             /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */

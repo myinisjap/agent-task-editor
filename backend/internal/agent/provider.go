@@ -73,6 +73,13 @@ type Result struct {
 	// legitimate $0 (e.g. under a Claude Max subscription) is never
 	// confused with an unpriced model.
 	CostUnknown bool
+	// SessionCostUSD is the provider's own cumulative cost for the whole
+	// session as reported at the end of this run, or 0 when not reported.
+	// Only the claude provider sets it: its total_cost_usd counts every
+	// earlier run resumed into the same session, so CostUSD above is that
+	// total minus RunInput.ResumeSessionCostUSD. Persisted so the next resume
+	// has a baseline.
+	SessionCostUSD float64
 	// SessionID is the provider-side conversation session for this run (the
 	// claude/qwen CLI stream-json envelope's session_id). Persisted on the run
 	// so a later run on the same task can resume the session with full prior
@@ -123,6 +130,11 @@ type RunInput struct {
 	// `claude` provider (--resume); other providers ignore it. Providers that
 	// resume fall back to a cold start if the session no longer exists.
 	ResumeSessionID string
+	// ResumeSessionCostUSD is the cumulative session cost recorded by the
+	// latest earlier run of ResumeSessionID (see Result.SessionCostUSD), or 0
+	// when none was recorded. The claude provider subtracts it from the
+	// session total it reports so the run records only its own cost.
+	ResumeSessionCostUSD float64
 	// HumanReply is a human's textual answer to the agent's request_human
 	// question, injected into the prompt (and, when combined with
 	// ResumeSessionID, delivered as the next message of the resumed session).
