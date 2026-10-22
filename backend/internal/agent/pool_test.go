@@ -800,6 +800,12 @@ func TestPool_Cancel_MarksCancelledAndPauses(t *testing.T) {
 	if task.Paused == 0 {
 		t.Errorf("expected task to be paused after cancel")
 	}
+	if task.NextRetryAt != nil {
+		t.Errorf("user cancel must not set a cooldown, got %v", task.NextRetryAt)
+	}
+	if _, active := pool.MemoryPressurePause(); active {
+		t.Errorf("user cancel must not trip the memory pause")
+	}
 	if task.ActiveAgentRunID != nil {
 		t.Errorf("expected active_agent_run_id cleared, got %q", *task.ActiveAgentRunID)
 	}
@@ -853,6 +859,52 @@ func TestPool_CancelForResourceConstraint_LeavesTaskUnpausedWithReasonNote(t *te
 	}
 	if task.ActiveAgentRunID != nil {
 		t.Errorf("expected active_agent_run_id cleared, got %q", *task.ActiveAgentRunID)
+	}
+	if task.NextRetryAt == nil {
+		t.Fatalf("expected a cooldown in next_retry_at after a memory-guard cancel")
+	}
+	if d := time.Until(*task.NextRetryAt); d < 55*time.Second || d > 62*time.Second {
+		t.Errorf("expected ~60s cooldown, got %v", d)
+	}
+	if task.TransientRetryCount != 0 || task.ConsecutiveFailureCount != 0 {
+		t.Errorf("memory cancel must not spend retry/failure budgets: transient=%d failures=%d", task.TransientRetryCount, task.ConsecutiveFailureCount)
+	}
+	pickups, err := q.ListAgentPickupTasks(context.Background())
+	if err != nil {
+		t.Fatalf("list pickups: %v", err)
+	}
+	for _, pt := range pickups {
+		if pt.ID == taskID {
+			t.Errorf("task in cooldown must not be eligible for pickup")
+		}
+	}
+
+	// A second back-to-back cancel on the same task doubles the cooldown.
+	run2 := uuid.NewString()
+	if _, err := q.CreateAgentRun(context.Background(), gen.CreateAgentRunParams{ID: run2, TaskID: taskID, AgentConfigID: &agCfgID}); err != nil {
+		t.Fatalf("create run 2: %v", err)
+	}
+	if err := q.SetTaskActiveRun(context.Background(), gen.SetTaskActiveRunParams{
+		CurrentAgentRunID: &run2, ActiveAgentRunID: &run2, ID: taskID,
+	}); err != nil {
+		t.Fatalf("set active run 2: %v", err)
+	}
+	pool.Submit(buildJob(run2, taskID, agCfgID, wfs[0].ID, t.TempDir(), blockingProvider{}))
+	waitForStatus(t, q, run2, "running")
+	if !pool.CancelForResourceConstraint(run2) {
+		t.Fatal("expected second cancel to find the active run")
+	}
+	waitForStatus(t, q, run2, "cancelled")
+	waitForActiveRunCleared(t, q, taskID)
+	task, _ = q.GetTask(context.Background(), taskID)
+	if task.NextRetryAt == nil {
+		t.Fatalf("expected cooldown after second cancel")
+	}
+	if d := time.Until(*task.NextRetryAt); d < 115*time.Second || d > 122*time.Second {
+		t.Errorf("expected ~120s cooldown on repeat, got %v", d)
+	}
+	if _, active := pool.MemoryPressurePause(); active {
+		t.Errorf("two cancels must not trip the global pause")
 	}
 
 	run, err := q.GetAgentRun(context.Background(), runID)

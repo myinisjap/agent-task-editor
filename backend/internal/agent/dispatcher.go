@@ -145,6 +145,16 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 		return
 	}
 
+	// A burst of memory-guard cancels pauses *starting* new work for a short
+	// while. Like the cost ceiling, this gates only the sweep; human-reply
+	// dispatch (DispatchReply) is never gated.
+	if until, active := d.pool.MemoryPressurePause(); active {
+		metrics.DispatchMemoryPauseActive.Set(1)
+		slog.Debug("dispatcher: new dispatch paused after a burst of low-memory cancels", "component", "dispatcher", "paused_until", until)
+		return
+	}
+	metrics.DispatchMemoryPauseActive.Set(0)
+
 	tasks, err := d.q.ListAgentPickupTasks(ctx)
 	if err != nil {
 		slog.Error("dispatcher sweep failed", "component", "dispatcher", "err", err)

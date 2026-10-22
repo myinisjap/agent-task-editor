@@ -23,6 +23,7 @@ whole agent config, which is a different scope from one task's budget.
   increment nor reset it, so alternating transient and genuine failures still
   escalate. Genuine failures and successes do reset the transient counter.
 - `auth` classification escalates immediately instead of retrying.
+- A memguard cancel sets `next_retry_at` (cooldown) with `transient_retry_count = 0`; it spends neither budget. The growth streak and the global dispatch pause are in memory only.
 - A run that completes with no resolvable outcome escalates once
   (`escalateNoOutcome`, lock kept, single `task.needs_human`).
 - `RateLimitRegistry` blocks the whole agent config on 429 and works

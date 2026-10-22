@@ -55,13 +55,15 @@ type WorktreeResult struct {
 
 // Pool manages a bounded set of concurrent agent runs.
 type Pool struct {
-	maxWorkers int
-	jobs       chan Job
-	db         *sql.DB
-	q          *gen.Queries
-	engine     *workflow.Engine
-	pub        Publisher
-	wg         sync.WaitGroup
+	// memPressure throttles re-dispatch after memory-guard cancels. Zero value usable.
+	memPressure memPressureTracker
+	maxWorkers  int
+	jobs        chan Job
+	db          *sql.DB
+	q           *gen.Queries
+	engine      *workflow.Engine
+	pub         Publisher
+	wg          sync.WaitGroup
 	// RateLimits tracks per-agent-config rate-limit blocks. Optional — no-op when nil.
 	RateLimits *RateLimitRegistry
 	// ProviderPauses is the provider circuit breaker, tripped when a run is
@@ -1157,4 +1159,13 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 			flush(ctx)
 		}
 	}
+}
+
+// MemoryPressurePause reports whether new dispatch is globally paused after a
+// burst of memory-guard cancels, and until when. Safe on a nil Pool.
+func (p *Pool) MemoryPressurePause() (until time.Time, active bool) {
+	if p == nil {
+		return time.Time{}, false
+	}
+	return p.memPressure.pausedUntilTime()
 }
