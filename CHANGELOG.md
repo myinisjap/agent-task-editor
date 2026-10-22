@@ -19,8 +19,13 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agents can write to repos' `.git` again after host-side git use.** With `AGENT_FIX_REPO_PERMS=auto` the entrypoint skipped any repo whose top-level dir was already group-writable, so `.git/objects/xx` dirs created by git on the host (umask `022`) stayed owner-only and agent runs failed at `git add`/merge with a permission error. The entrypoint now re-opens `.git` whenever any directory in it lacks group write and sets `core.sharedRepository=group` on each repo, so git keeps new object dirs group-writable.
+
 ### Added
 
+- **`BACKEND_MEMORY_LIMIT`** sets the backend container's memory ceiling in both compose files (default `4g`, unchanged), so it can be raised from `.env` without editing the compose file.
 - **Opt-in tool profiles for the stdio board MCP.** `mcp-board` (Chat tab and Claude Desktop) reads a new `TOOL_PROFILE` env var: unset or `create` keeps today's three tools (`list_repos`, `list_workflows`, `create_task`); `readonly`, `full` and `admin` expose the same tool sets as the remote connector's `MCP_TOOL_PROFILE`, along with its server instructions. An unknown value exits with an error. The in-app Chat tab now defaults to the `full` profile: set the backend setting `MCP_BOARD_TOOL_PROFILE` (passed through in both compose files) to `create`, `readonly`, `full` or `admin` to change it; the session's scoped token is widened to exactly the REST calls that profile's tools make (an exact method+path allowlist; no DELETE or other routes) unless it is `create`. Set `create` if chat sessions read untrusted repo code. Claude Desktop keeps `create` as the default. See `docs/board-mcp.md`.
 
 ### Changed
